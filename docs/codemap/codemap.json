@@ -66807,7 +66807,6 @@
      "path": "src/skill_hub/claim_refinement.rs",
      "purpose": "Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission",
      "surface": {
-      "crate-vis": 2,
       "enum": 1,
       "fn": 10,
       "struct": 3
@@ -67029,7 +67028,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 21,
       "mod": 2,
       "re-export": 21
      }
@@ -67757,7 +67756,7 @@
      "path": "src/skill_hub/refinement_admission.rs",
      "purpose": "Content-free refinement identity and the transaction-local exact-admission capability",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 8
      }
     },
     {
@@ -67781,17 +67780,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "SharedSkillDelta",
-      "SharedSkillLane"
-     ],
+     "notable": [],
      "path": "src/skill_hub/shared_delta.rs",
      "purpose": "Submitted-byte federation merge-back and company PR staging",
      "surface": {
       "crate-vis": 3,
-      "enum": 1,
       "fn": 4,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -69985,6 +69980,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SharedSkillDelta",
+      "SharedSkillLane"
+     ],
+     "path": "src/store/claim_refinement_control.rs",
+     "purpose": "A refinement candidate's content-free control row, the claim base's reserved held-out labels and the offered…",
+     "surface": {
+      "crate-vis": 16,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/claim_vad_owed.rs",
      "purpose": "Owed claim VAD consolidation (FIX 9598)",
@@ -71963,7 +71973,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 90,
-      "mod": 84,
+      "mod": 85,
       "re-export": 31
      }
     },
@@ -90059,7 +90069,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 367,
+     "files": 368,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90299,7 +90309,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6263,
+   "source_files": 6264,
    "test_files": 898
   },
   "oneiron-android": {
