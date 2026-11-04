@@ -204,6 +204,15 @@ for row in ROWS:
             or row.get('context', 'memory') != 'memory'
             or any(admission.get(other) for other in ('owner_grade', 'claim_record_scope', 'credential_record_scope', 'scoped_export', 'born_record_scope'))):
         raise ValueError(f'{row["name"]}: require_granted_scope is only a non-Read lane_record_scope facade row\'s, with no other record-scope admission, and on a host door only a caller or listing one')
+    # FIX 9609: `mcp_off_runtime` marks a plain memory row whose MCP arm runs
+    # its engine call on a blocking thread, on a surface rebuilt there
+    # (`mcp_off_runtime_row`), because the call may wait out a host deadline.
+    # Only a plain memory row reaches that helper: no ladder, no turn, no
+    # other door shape, no owner-grade admission.
+    if row.get('mcp_off_runtime') and (row.get('task_decisions') or row.get('task_work') or row.get('host_door')
+                                        or row.get('server_door') or row.get('context', 'memory') != 'memory'
+                                        or row.get('admission', {}).get('owner_grade')):
+        raise ValueError(f'{row["name"]}: mcp_off_runtime is only a plain memory row\'s, with no ladder, turn or door')
 # OF-063: `refs` lists a row's typed record-ref slots as JSON pointers into its
 # input, `*` taking every item of an array. The row's generated engine fn checks
 # that each ref there resolves under the writer's own scoped read before the
@@ -910,6 +919,13 @@ def mcp_input_dispatch(row):
         if takes_task_decisions(row):
             # Its hooks stay here; the typed row alone crosses to the worker.
             body += (f'let (output, listed) = Box::pin(mcp_task_row(server, tool, actor, surface, move |memory| oneiron::task_verb::sdk::{method}(memory, input))).await?;\n'
+                     '// Derived from the rows its reads listed, on a refusal too.\n'
+                     'served.extend(listed);\n'
+                     'let output = output.map_err(mcp_facade_error)?;\n')
+        elif row.get('mcp_off_runtime'):
+            # Its blocking host call stays off the runtime; the typed row
+            # alone crosses to the worker, on a surface rebuilt there.
+            body += (f'let (output, listed) = Box::pin(mcp_off_runtime_row(server, tool, actor, surface, move |memory| oneiron::task_verb::sdk::{method}(memory, input))).await?;\n'
                      '// Derived from the rows its reads listed, on a refusal too.\n'
                      'served.extend(listed);\n'
                      'let output = output.map_err(mcp_facade_error)?;\n')

@@ -13,6 +13,10 @@ information, but omits type and local-variable debugger information. It does not
 by itself change optimization, assertions, overflow checks, panic behavior,
 features, or release profiles.
 
+The `release` profile sets `lto = "thin"` and otherwise keeps Cargo's defaults.
+Thin LTO lets LLVM inline across the workspace's crate boundaries, so moving
+engine modules into their own crates does not stop hot calls from inlining.
+
 For a debugging session that needs locals, opt back into full debug information:
 
 ```sh

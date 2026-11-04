@@ -110,44 +110,8 @@ pub fn route_membership_lane(
 // Re-entry
 // ---------------------------------------------------------------------------
 
-/// When a paused membership wakes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WakeCondition {
-    /// At a deadline.
-    At(u64),
-    /// When a new trigger arrives.
-    NewTrigger,
-    /// At the deadline OR on a new trigger, whichever comes first.
-    AtOrNewTrigger {
-        /// The deadline half.
-        at: u64,
-    },
-}
-
-/// One snooze-with-wake re-entry directive.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReentryPlan {
-    /// PERSON being paused.
-    pub party_ref: EntityId,
-    /// Campaign the pause is scoped to.
-    pub campaign_ref: EntityId,
-    /// The wake condition written onto the `campaign.member` head.
-    pub wake: WakeCondition,
-    /// Always 0: restart at touch 1.
-    pub restart_touch_index: u32,
-    /// The NEW reason this re-entry exists. Retained, never inferred.
-    pub reason_evidence_ref: EntityId,
-    /// The CA-03 attempt this re-entry re-runs at touch 1, when the caller holds
-    /// the program refs.
-    ///
-    /// `None` pauses without queueing: the wake condition still lands on the
-    /// membership head, and a caller that later resolves the program enqueues
-    /// through this same door. The three refs cannot be derived here — CA-03's
-    /// enqueue takes `{membership_event_ref, campaign_program_ref,
-    /// program_step_ref}` and no campaign-to-program index exists — so they ride
-    /// the plan rather than being invented.
-    pub reentry_attempt: Option<CampaignEnrollmentAttemptPayload>,
-}
+pub use crate::memory::campaign_records::stage_results::ReentryPlan;
+pub use crate::memory::campaign_records::stage_results::WakeCondition;
 
 // ---------------------------------------------------------------------------
 // Snooze with wake

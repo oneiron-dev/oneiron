@@ -56,13 +56,14 @@ use crate::dreamer_promotion::{DreamerRunContext, promote_consolidated_claims_wi
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
-use crate::llm::{
-    DurableStepContext, DurableStepError, ScopeResource, StepOutcome, call_as_step_checked,
-};
+use crate::llm::call_as_step_checked;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::side_table::{self, Named, SideTable};
 use crate::vault::ReadMode;
 use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::ScopeResource;
 
 mod candidates;
 use candidates::{NoteSources, cites, note_candidate};
@@ -228,7 +229,7 @@ impl ConsolidationExecutor<'_> {
         charges: &mut StepChargeTally,
     ) -> Result<Option<DreamerAttemptExecution>> {
         let call = self.role(DREAMER_EXTRACTION_ROLE);
-        let mut scope = crate::llm::Scope::default();
+        let mut scope = oneiron_model::llm::Scope::default();
         scope.project = Some(note.project);
         scope.readable.insert(note.version.clone());
         // The people a reply declares are minted under the review's queued
@@ -540,7 +541,9 @@ const NOTE_FALLBACK: &str = "note review needs the extraction model";
 /// would resume as a Retry is refused inside the step, never memoized, so
 /// the Retry asks the model again; any other reply answers to the extraction
 /// contract, as before.
-fn check_note_review_reply(response: &crate::llm::LlmResponse) -> std::result::Result<(), String> {
+fn check_note_review_reply(
+    response: &oneiron_model::llm::LlmResponse,
+) -> std::result::Result<(), String> {
     if super::step_charge::retry_fallback(response) {
         return Err(NOTE_FALLBACK.to_owned());
     }

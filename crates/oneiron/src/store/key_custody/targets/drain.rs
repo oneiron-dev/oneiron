@@ -160,7 +160,7 @@ impl Journal {
             return fence.ticket();
         }
         let mut token = Zeroizing::new([0u8; 32]);
-        crate::world_keys::os_fill(&mut token[..])?;
+        crate::key_material::os_fill(&mut token[..])?;
         let fence = FenceWire {
             version: WIRE_VERSION,
             target: id.as_str().to_owned(),

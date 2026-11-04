@@ -4,15 +4,15 @@ use super::publication::{OriginKeepRefKind, OriginPublicationReceipt, OriginPubl
 use super::residence::OriginAuthorityLease;
 use super::tree::{OriginTreeFile, read_tree_files};
 use crate::Vault;
-use crate::claim::ClaimSubject;
-use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
     GitCommitRequest, GitOid, GitRefName, GitWire, GitWireRepo, lock_repository,
 };
-use crate::repo_mutation::RepoConflictClaim;
+use crate::store::code_snapshot::entity_id_from_hash_material;
+use crate::store::repo_mutation_record::RepoConflictClaim;
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::ClaimSubject;
 use std::collections::BTreeMap;
 
 pub const CONFLICT_TREE_ENCODING: &str = "oneiron.conflict-tree.v1";

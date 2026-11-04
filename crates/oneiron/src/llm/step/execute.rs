@@ -412,13 +412,32 @@ async fn durable_step(
                 DurableStepError::Llm(LlmError::Fatal(source))
                     if matches!(request.envelope.class, CallClass::BestEffort) =>
                 {
-                    DurableStepError::Llm(LlmError::Fatal(source))
+                    // A corrective attempt that was answered and paid keeps
+                    // its usage on the error (FIX 11562), as schema.rs made
+                    // it; an erased answer stays the plain terminal error.
+                    if source != FatalLlmError::ResponseErased && usage_spent(&failed_usage) {
+                        DurableStepError::SpentLlm {
+                            source: LlmError::Fatal(source),
+                            usage: Box::new(failed_usage),
+                        }
+                    } else {
+                        DurableStepError::Llm(LlmError::Fatal(source))
+                    }
                 }
                 // Nor does a failure policy route it to one.
                 erased @ DurableStepError::Llm(LlmError::Fatal(FatalLlmError::ResponseErased)) => {
                     erased
                 }
-                DurableStepError::Llm(source) => classified_failure(ctx.vault, source)?,
+                DurableStepError::Llm(source) => {
+                    if usage_spent(&failed_usage) {
+                        DurableStepError::SpentLlm {
+                            source,
+                            usage: Box::new(failed_usage),
+                        }
+                    } else {
+                        classified_failure(ctx.vault, source)?
+                    }
+                }
                 other => other,
             });
         }
@@ -676,6 +695,12 @@ fn resolve_failure_policy(
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
     Ok(policy.dreamer_failure_decision(class))
+}
+
+/// Whether a failed corrective attempt's settled usage carries any spend
+/// worth surfacing on the step's error (FIX 11562).
+fn usage_spent(usage: &super::LlmUsage) -> bool {
+    usage.input.total > 0 || usage.output.total > 0
 }
 
 fn settle_failed_usage(guard: &BudgetGuard, lease: &super::BudgetLease, usage: &super::LlmUsage) {

@@ -14,7 +14,8 @@ use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, GateError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 

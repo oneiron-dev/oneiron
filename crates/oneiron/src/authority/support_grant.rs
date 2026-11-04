@@ -35,8 +35,8 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::federation::{Scope, ScopeAxis};
 use crate::store::GateDecisionId;
+use oneiron_authority::federation::{Scope, ScopeAxis};
 
 /// The command a registry row's one-tap revoke names for a support grant:
 /// the support revoke door, never the consent grant revoke.

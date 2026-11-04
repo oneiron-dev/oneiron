@@ -23,7 +23,7 @@ pub const OUTBOUND_BINDING_VERSION: u64 = 2;
 
 pub type IntentLedgerResult<T> = std::result::Result<T, IntentLedgerError>;
 
-pub type IntentId = [u8; 32];
+pub use crate::receipt::intent_id::IntentId;
 
 /// Typed failure surface for durable outbound intent operations.
 #[derive(Debug, thiserror::Error)]
@@ -37,7 +37,7 @@ pub enum IntentLedgerError {
     #[error("the durable step failure is not eligible for an effect")]
     FailureResultIneligible,
     #[error(transparent)]
-    Step(#[from] crate::llm::DurableStepError),
+    Step(#[from] crate::model_step_error::DurableStepError),
     #[error("invalid outbound intent ledger record: {0}")]
     InvalidRecord(&'static str),
     #[error("invalid outbound intent transition: {from:?} -> {to:?}")]
@@ -139,36 +139,7 @@ impl OutboundAuthorizationBinding {
     }
 }
 
-/// Semantic accounting class. It is persisted so recovery never re-derives
-/// whether this intent consumed the sends dimension.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BudgetClass {
-    Send,
-    Operation,
-}
-
-impl BudgetClass {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Send => "send",
-            Self::Operation => "operation",
-        }
-    }
-
-    pub(super) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "send" => Some(Self::Send),
-            "operation" => Some(Self::Operation),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub const fn is_send(self) -> bool {
-        matches!(self, Self::Send)
-    }
-}
+pub use crate::connector_key::budget_class::BudgetClass;
 
 /// Durable proof that accounting and `Pending` were committed together.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -581,32 +552,7 @@ pub(crate) trait OutboundSender {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome;
 }
 
-/// Gate-attested one-send owner approval, minted only while the Gate spends
-/// that tap and the Pending row is inserted on the same write transaction.
-/// It is admission metadata, never a caller-supplied transport payload field.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct AdmittedApproval {
-    intent_id: IntentId,
-    effect_digest: crate::consent::EffectDigest,
-}
-
-impl AdmittedApproval {
-    pub(crate) const fn from_gate(
-        intent_id: IntentId,
-        effect_digest: crate::consent::EffectDigest,
-    ) -> Self {
-        Self {
-            intent_id,
-            effect_digest,
-        }
-    }
-    pub(crate) const fn intent_id(self) -> IntentId {
-        self.intent_id
-    }
-    pub(crate) const fn effect_digest(self) -> crate::consent::EffectDigest {
-        self.effect_digest
-    }
-}
+pub(crate) use crate::consent::approval_proof::AdmittedApproval;
 
 /// Device-local durable record and audit receipt for one effectful call.
 #[derive(Clone, PartialEq, Eq)]

@@ -17,40 +17,7 @@ use super::evidence::{EvidenceRow, evidence_in_txn};
 use super::project::active_heads_in_txn;
 use super::read::read_learning_in_txn;
 
-/// The four measured predicates, not the learned-setting catalog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum MeasuredLearningPredicate {
-    #[serde(rename = "learning.reliability")]
-    Reliability,
-    #[serde(rename = "learning.edit_cost")]
-    EditCost,
-    #[serde(rename = "learning.retest_noise")]
-    RetestNoise,
-    #[serde(rename = "learning.setting")]
-    Setting,
-}
-
-impl From<MeasuredLearningPredicate> for LearningPredicate {
-    fn from(value: MeasuredLearningPredicate) -> Self {
-        match value {
-            MeasuredLearningPredicate::Reliability => Self::Reliability,
-            MeasuredLearningPredicate::EditCost => Self::EditCost,
-            MeasuredLearningPredicate::RetestNoise => Self::RetestNoise,
-            MeasuredLearningPredicate::Setting => Self::Setting,
-        }
-    }
-}
-
-impl From<LearningPredicate> for MeasuredLearningPredicate {
-    fn from(value: LearningPredicate) -> Self {
-        match value {
-            LearningPredicate::Reliability => Self::Reliability,
-            LearningPredicate::EditCost => Self::EditCost,
-            LearningPredicate::RetestNoise => Self::RetestNoise,
-            LearningPredicate::Setting => Self::Setting,
-        }
-    }
-}
+pub use crate::claim::learning_predicate::MeasuredLearningPredicate;
 
 /// A measured cell's key. Judge identity belongs to evidence, never this key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

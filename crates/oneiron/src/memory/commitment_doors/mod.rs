@@ -3,6 +3,7 @@ mod types;
 pub use types::*;
 
 use super::{Memory, MemoryError, MemoryResult};
+use crate::authority::consolidation_evidence::ConsolidationEvidenceEnvelope;
 use crate::claim::{ClaimApprovalStatus, ClaimReadStatus, ClaimSource, ScopedRead};
 use crate::commitment::{self, CommitmentRecord, FulfillmentSource};
 use crate::commitment_schedule::{
@@ -10,7 +11,7 @@ use crate::commitment_schedule::{
     ScheduleError,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
+use crate::dreamer_consolidation::encode_consolidation_evidence;
 use crate::entity_id::EntityId;
 use crate::{Error, TimeRange};
 use rmpv::Value;
