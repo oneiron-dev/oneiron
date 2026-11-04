@@ -286,9 +286,9 @@ pub(crate) fn append_revision(
         let gen_len = decimal_len_u64(u64::from(*generation));
         admitted::reserve(limits, &mut out, num_len + 1 + gen_len + b" obj\n".len())
             .map_err(memory_error)?;
-        push_decimal_u64(out, u64::from(*num));
+        push_decimal_u64(&mut out, u64::from(*num));
         out.push(b' ');
-        push_decimal_u64(out, u64::from(*generation));
+        push_decimal_u64(&mut out, u64::from(*generation));
         out.extend_from_slice(b" obj\n");
         if let Some((sig_num, br_rel, lt_rel)) = sig_info
             && sig_num == *num
@@ -339,7 +339,7 @@ pub(crate) fn append_revision(
     )
     .map_err(memory_error)?;
     out.extend_from_slice(b"startxref\n");
-    push_decimal_u64(out, xref_offset);
+    push_decimal_u64(&mut out, xref_offset);
     out.extend_from_slice(b"\n%%EOF");
     let byte_range = match (br_patch, contents_gap) {
         (Some(p), Some((lt, gt))) => {

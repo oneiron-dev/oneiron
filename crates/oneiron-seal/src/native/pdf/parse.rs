@@ -8,7 +8,7 @@ use super::revision_facts::RevisionAnalysisError;
 use super::{decode, walk};
 use crate::api::{Counter, SealResourceLimits};
 use crate::error::{FatalCode, InputInvalidCode, SealError, SealStage};
-use crate::memory::LedgerHold;
+use crate::memory::{LedgerHold, SealMemoryRefusal};
 use crate::native::held_bytes;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,7 +282,7 @@ pub(super) fn revision_state(
     limits: &SealResourceLimits,
     stage: SealStage,
 ) -> Result<RevisionState, SealError> {
-    let memory_error = |refusal| refusal.seal_error(stage);
+    let memory_error = |refusal: SealMemoryRefusal| refusal.seal_error(stage);
     let trailer = &doc.trailer;
     let root = trailer
         .get(b"Root")
@@ -391,7 +391,6 @@ pub(super) fn revision_state(
     })
 }
 
-
 /// §7.1 rule 2: reject malformed or repaired xref structures. Every
 /// uncompressed in-use xref entry must point at its object header; a reader
 /// that silently skipped unloadable objects leaves exactly this signature.
@@ -484,16 +483,32 @@ fn checked_state(bytes: &[u8], limits: &SealResourceLimits) -> Result<RevisionSt
         }
         Err(_) => return Err(input_invalid(InputInvalidCode::MalformedXref)),
     }
-    let state = revision_state(&doc, bytes, limits, SealStage::InputValidation)?;
-    // The prepared copy is the seal's own buffer: reserved before it is made.
-    limits
-        .memory
-        .admit::<u8>(bytes.len())
-        .map_err(|refusal| refusal.seal_error(SealStage::InputValidation))?;
-    Ok(PreparedInput {
-        bytes: bytes.to_vec(),
-        state,
-    })
+    revision_state(&doc, bytes, limits, SealStage::InputValidation)
+}
+
+/// Admits a prepared input of more than one revision (FIX 6272): each
+/// revision, as its own strict snapshot (`ends` are their `%%EOF` ends),
+/// passes the prepared-input security scan, so an object a later revision
+/// shadows is read too, and none carries signature evidence (a `/DSS`): the
+/// revisions before the signature are unsigned originals. Each snapshot is
+/// a parse pass of its own. Their count is measured, never refused.
+pub(crate) fn admit_prior_revisions(
+    bytes: &[u8],
+    ends: &[usize],
+    limits: &SealResourceLimits,
+) -> Result<(), SealError> {
+    let malformed = || input_invalid(InputInvalidCode::MalformedXref);
+    for &end in ends {
+        let snapshot = bytes.get(..end).ok_or_else(malformed)?;
+        let _pass = limits.memory.pass();
+        let doc = load_strict(snapshot, limits)
+            .map_err(|err| err.seal_error(SealStage::InputValidation, malformed))?;
+        analyze_security(&doc, true)?;
+        if walk::catalog(&doc).is_none_or(|root| root.has(b"DSS")) {
+            return Err(malformed());
+        }
+    }
+    Ok(())
 }
 
 /// Lighter re-parse for stacking later revisions (DSS, DocTimeStamp) on top

@@ -1,15 +1,15 @@
 //! Pure community graph projection, snapshot codecs and configuration.
 
-pub(crate) mod codec;
-pub(crate) mod detection;
-pub(crate) mod refresh;
-pub(crate) mod types;
+pub mod codec;
+pub mod detection;
+pub mod refresh;
+pub mod types;
 
 pub use codec::CommunitySnapshot;
-pub(crate) use codec::decode_community_members;
+pub use codec::decode_community_members;
 pub use detection::{project_graph, projection_weight};
 pub use refresh::compute_communities;
-pub(crate) use types::CommunityQueryView;
+pub use types::CommunityQueryView;
 pub use types::{
     CommunityCacheMeta, CommunityEdge, CommunityError, CommunityGraphInput, CommunityId,
     CommunityMembership, CommunityProjection, CommunityRefreshReport, PPR_COMMUNITY_BETA_DEFAULT,

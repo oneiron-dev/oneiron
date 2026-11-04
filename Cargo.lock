@@ -8778,6 +8778,7 @@ dependencies = [
  "blake3",
  "getrandom 0.4.3",
  "heed",
+ "oneiron-authority",
  "oneiron-base",
  "oneiron-contracts",
  "oneiron-crypto",

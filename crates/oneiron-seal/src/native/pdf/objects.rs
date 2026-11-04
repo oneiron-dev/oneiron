@@ -491,8 +491,9 @@ fn register_field(
         (referenced, seed) => {
             let af_num = next_obj(next)?;
             // A dangling /AcroForm reference keeps no fields to preserve.
-            let fields: &[Object] = if referenced.is_some() {
-                &[]
+            let mut af = seed.unwrap_or_else(lopdf::Dictionary::new);
+            let mut fields = if referenced.is_some() {
+                Vec::new()
             } else {
                 admitted::objects(limits, &state.acroform_fields).map_err(memory_error)?;
                 state.acroform_fields.clone()

@@ -12,7 +12,7 @@
 
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
-pub mod config;
+pub use oneiron_store::config;
 pub mod deletion;
 pub(crate) mod engine_store_hooks;
 pub mod edge {
@@ -76,6 +76,7 @@ pub mod window_key;
 pub use oneiron_base::work_line;
 mod task_work_line;
 pub mod write_envelope;
+pub(crate) mod carry_forward_admission;
 // ===== Read path ===== indexes, retrieval pipeline, standing queries, context packs, LLM seam
 pub use oneiron_base::analyzer;
 pub(crate) mod bm25;
