@@ -669,6 +669,10 @@ impl ExecutorStorage<'_> {
             return Ok(None);
         };
         let mut card = crate::code_run::result_card(self, owner, &output, None)?;
+        // The parent reads its children's findings by content handle, never
+        // by the child's occurrence: name the card by the handle, as the
+        // settle reply does, so its `ref` resolves.
+        card["ref"] = serde_json::json!(handle);
         card["task"] = serde_json::json!(task.to_hex());
         Ok(Some(card))
     }

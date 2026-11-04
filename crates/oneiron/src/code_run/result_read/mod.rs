@@ -161,18 +161,26 @@ pub(crate) struct ResultRead {
     range: Option<(u64, u64)>,
     state: ArtifactTaintState,
     secret: Option<String>,
+    /// Whether the read is for a caller other than `owner` (a delegated
+    /// source or a finding): refs then stay in the caller's own names and
+    /// handles, which are stable for it, instead of naming the foreign
+    /// occurrence.
+    foreign: bool,
 }
 
 impl ResultRead {
     /// `output` as `name` binds it in run `owner`, narrowed to `range`, the
     /// taint of the run's occurrence of it read now. A range that is not
-    /// inside the body is refused.
+    /// inside the body is refused. `foreign` says the read is for a caller
+    /// other than `owner` (a delegated source or a finding), whose refs stay
+    /// in the caller's own names and handles.
     pub(crate) fn new(
         storage: &ExecutorStorage<'_>,
         owner: EntityId,
         output: CodeRunRawOutput,
         name: Option<String>,
         range: Option<(u64, u64)>,
+        foreign: bool,
     ) -> Result<std::result::Result<Self, Value>> {
         if let Some((start, end)) = range
             && (start >= end || end > output.raw_len)
@@ -189,6 +197,7 @@ impl ResultRead {
             range,
             state,
             secret,
+            foreign,
         }))
     }
 
@@ -212,20 +221,32 @@ impl ResultRead {
         self.state.is_tainted()
     }
 
-    /// The reference a reply names the result by: a range by its parent's
-    /// live name when it has one, else its handle; a whole result by its
-    /// name, or its handle when it has none.
+    /// The reference a reply names the result by: a range by its owner's
+    /// immutable occurrence, else by the caller's own name or handle when the
+    /// read is foreign; a whole result by its name, or its handle when it has
+    /// none.
     fn reference(&self) -> String {
-        // A range names its parent by the live name when it has one: the
-        // name resolves through its binding to the exact occurrence, while
-        // a bare handle reads the first occurrence with those bytes.
-        let parent = self
-            .name
-            .clone()
-            .unwrap_or_else(|| self.output.handle.clone());
+        // A range names the immutable occurrence of its owner at its path,
+        // never a rebindable live name: after `x` is rebound, `x#0-2` reads
+        // the new binding's bytes, but `occurrence:<hex>#0-2` still reads
+        // this occurrence's. A foreign read keeps the caller's own name or
+        // handle instead: a delegation's name and a finding's content handle
+        // are stable for their caller, while the foreign occurrence is not
+        // resolvable there.
+        let legacy = || {
+            self.name
+                .clone()
+                .unwrap_or_else(|| self.output.handle.clone())
+        };
         match self.range {
-            Some((start, end)) => format!("{parent}#{start}-{end}"),
-            None => parent,
+            Some((start, end)) if !self.foreign => {
+                match occurrence_ref(self.owner, &self.output.path) {
+                    Some(parent) => format!("{parent}#{start}-{end}"),
+                    None => format!("{}#{start}-{end}", legacy()),
+                }
+            }
+            Some((start, end)) => format!("{}#{start}-{end}", legacy()),
+            None => legacy(),
         }
     }
 
@@ -362,13 +383,22 @@ impl ResultRead {
             watch,
         };
         let reference = self.reference();
-        // Chunk and page refs name the same parent the ref above names, so
-        // a page of a named result reparses to its occurrence, not to the
-        // first result with its bytes.
-        let parent = self
-            .name
-            .clone()
-            .unwrap_or_else(|| self.output.handle.clone());
+        // Chunk and page refs name the same parent the ref above names: the
+        // owner's immutable occurrence, so a page of a renamed result still
+        // reparses to its occurrence, not to the first result with its
+        // bytes. A foreign read keeps the caller's own name or handle, as
+        // its ref does.
+        let parent = if self.foreign {
+            self.name
+                .clone()
+                .unwrap_or_else(|| self.output.handle.clone())
+        } else {
+            occurrence_ref(self.owner, &self.output.path).unwrap_or_else(|| {
+                self.name
+                    .clone()
+                    .unwrap_or_else(|| self.output.handle.clone())
+            })
+        };
         let reply = match facet {
             ResultFacet::Slice => slice::slice(body, &reference, input, &bounds),
             ResultFacet::Search => search::search(body, &reference, input, &bounds),
@@ -405,7 +435,7 @@ impl ResultRead {
         facet: Option<ResultFacet>,
         input: Value,
     ) -> Result<Value> {
-        let read = match Self::new(storage, owner, output, name, range)? {
+        let read = match Self::new(storage, owner, output, name, range, false)? {
             Ok(read) => read,
             Err(refused) => return Ok(refused),
         };
@@ -468,10 +498,19 @@ pub(crate) fn card(
         output.clone(),
         name.map(str::to_owned),
         None,
+        false,
     )? {
         Ok(read) => read.card(storage),
         Err(_) => Err(Error::InvariantViolation("a whole result has no range")),
     }
+}
+
+/// The immutable ref of run `owner`'s occurrence at `path`: `None` when the
+/// derivation fails, which leaves the caller on the legacy name or handle.
+fn occurrence_ref(owner: EntityId, path: &str) -> Option<String> {
+    crate::code_run::ResultOccurrence::owned(owner, path)
+        .ok()
+        .map(|occurrence| format!("occurrence:{}", occurrence.id().to_hex()))
 }
 
 /// The run's result a reference names among `outputs`, and the live name

@@ -463,8 +463,9 @@ fn write_item(
     Ok(())
 }
 
-/// `query`: see the module. `parent` is the live name when the result has
-/// one, else its handle, which a range ref over one picked value names.
+/// `query`: see the module. `parent` is the owner's immutable occurrence
+/// ref, else the caller's own name or handle when the read is foreign, which
+/// a range ref over one picked value names.
 pub(super) fn query(
     body: &dyn ResultBody,
     reference: &str,

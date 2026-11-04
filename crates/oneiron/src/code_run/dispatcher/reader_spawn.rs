@@ -22,7 +22,7 @@ use crate::code_run::types::{
 };
 use crate::code_run::{
     DelegatedSource, ReaderActor, ReaderJobState, ReaderReportReceipt, ReaderRoute,
-    ReaderSpawnReceipt, ScopedChildPorts, ScopedChildSpec, SelfReaderReportCall,
+    ReaderSpawnReceipt, ResultOccurrence, ScopedChildPorts, ScopedChildSpec, SelfReaderReportCall,
     SelfReaderSpawnCall, SpawnHostSeat, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall,
     reader_attempt_id, reader_run_id, reader_task_id, reader_wait_cutoff, reader_wait_id,
     valid_reader_key, vault_ref,
@@ -48,6 +48,11 @@ pub(crate) struct ReaderChildBinding {
     pub(crate) scoped: Option<ScopedChildSpec>,
 }
 
+/// Whether run `owner`'s occurrence at `path` is the `wanted` hex.
+fn matches_occurrence(owner: EntityId, path: &str, wanted: &str) -> bool {
+    ResultOccurrence::owned(owner, path).is_ok_and(|occurrence| occurrence.id().to_hex() == wanted)
+}
+
 impl ReaderChildBinding {
     /// The input `reference` names for this child, by its name (`by_name`)
     /// or by its handle, with the name it is read by: a read child's one
@@ -67,6 +72,22 @@ impl ReaderChildBinding {
             reference == self.source.handle
         };
         names.then_some((READER_SOURCE_NAME, &self.source))
+    }
+
+    /// The delegated source an `occurrence:<hex>` ref names for this child,
+    /// with the name it is read by: the child's authorized sources only, a
+    /// scoped child's lent inputs or the read child's one source, each
+    /// matched by the occurrence of its owner at its path. The caller keeps
+    /// the source's delegated range.
+    pub(crate) fn delegated_occurrence(&self, wanted: &str) -> Option<(&str, &DelegatedSource)> {
+        if let Some(spec) = &self.scoped {
+            return spec.inputs.iter().find_map(|(name, source)| {
+                matches_occurrence(source.owner, &source.path, wanted)
+                    .then_some((name.as_str(), source))
+            });
+        }
+        matches_occurrence(self.source.owner, &self.source.path, wanted)
+            .then_some((READER_SOURCE_NAME, &self.source))
     }
 }
 

@@ -302,10 +302,19 @@ impl RecordingJsHost<'_, '_> {
             .within
             .is_some_and(|range| range == (0, found.output.raw_len));
         let range = target.range.or(found.within.filter(|_| !whole));
-        Ok(
-            ResultRead::new(storage, found.owner, found.output, found.name, range)?
-                .map(|read| (read, rows)),
-        )
+        // A read of another run's result (a delegated source or a finding)
+        // keeps the caller's own names and handles in its refs, which are
+        // stable for it; its own reads name the immutable occurrence.
+        let foreign = found.owner != self.run_id;
+        Ok(ResultRead::new(
+            storage,
+            found.owner,
+            found.output,
+            found.name,
+            range,
+            foreign,
+        )?
+        .map(|read| (read, rows)))
     }
 
     /// What `reference` names for a read by this run: its own result first,
@@ -327,6 +336,28 @@ impl RecordingJsHost<'_, '_> {
             }));
         }
         if let Some(child) = self.gated_write.reader_child() {
+            // An occurrence ref from a foreign (delegated-source) card
+            // resolves against the child's authorized sources only, keeping
+            // the delegated range; names and content handles resolve as
+            // before.
+            if let JsResultRef::Handle(handle) = reference
+                && let Some(wanted) = handle.strip_prefix("occurrence:")
+                && let Some((name, source)) = child.delegated_occurrence(wanted)
+            {
+                let Some(output) =
+                    recorded_output(storage, source.owner, &source.path, &source.handle)?
+                else {
+                    return Ok(None);
+                };
+                return Ok(Some(ResolvedResult {
+                    output,
+                    name: Some(name.to_owned()),
+                    owner: source.owner,
+                    rows: Some(source.rows.clone()),
+                    within: Some(source.range),
+                    child_source: true,
+                }));
+            }
             let named = match reference {
                 JsResultRef::Name(name) => child.delegated(true, name),
                 JsResultRef::Handle(handle) => child.delegated(false, handle),
