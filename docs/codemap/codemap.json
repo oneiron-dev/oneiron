@@ -729,7 +729,7 @@
      "path": "src/agent_def/portable_knowledge.rs",
      "purpose": "The selected-knowledge facet's bytes (`knowledge/selected.json`)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -6837,6 +6837,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/export/agent_knowledge_format.rs",
+     "purpose": "The form of an agent pack's selected-knowledge facet (`knowledge/selected.json`): which of its two encodings…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/export/agent_person_import.rs",
      "purpose": "Model PERSON mint for imported agent definitions (FIX 1162): one pass over the import's inserted rows, after…",
      "surface": {
@@ -7232,7 +7242,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 13
      }
     },
@@ -56461,16 +56471,15 @@
       "DreamerWorkingSetBudget",
       "DreamerWorkingSetCursor",
       "DreamerWorkingSetStopReason",
-      "Signal",
       "WorldScope"
      ],
      "path": "src/pipeline/types.rs",
      "purpose": "—",
      "surface": {
       "crate-vis": 36,
-      "enum": 3,
+      "enum": 2,
       "fn": 5,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 3
      }
     },
@@ -71833,7 +71842,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 71,
-      "mod": 72,
+      "mod": 73,
       "re-export": 29
      }
     },
@@ -72576,6 +72585,18 @@
       "crate-vis": 4,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Signal"
+     ],
+     "path": "src/store/retrieval_signal.rs",
+     "purpose": "The retrieval signals a run scores entities by: which channel ranked a result",
+     "surface": {
+      "enum": 1
      }
     },
     {
@@ -88388,7 +88409,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 182,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89641,7 +89662,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 335,
+     "files": 336,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89881,7 +89902,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6223,
+   "source_files": 6225,
    "test_files": 898
   },
   "oneiron-android": {
