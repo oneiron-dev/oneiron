@@ -51,6 +51,20 @@ impl Vault {
                 Some(Vec::new()),
             ));
         };
+        // A sweep-minted row has no trusted presentation context yet:
+        // only a matching live pass adopts it. The generic resume path
+        // holds it instead of driving it at the route's secret.
+        if pending.sweep_minted {
+            return Ok((
+                ConnectorCallOutcome::Held {
+                    call_ref: *call_ref,
+                    decision_ref: None,
+                    reasons: vec!["connector_call_not_adopted".to_owned()],
+                    approval_digest: None,
+                },
+                pending.source_rows,
+            ));
+        }
         // A call whose connector asked for input answers from its row
         // (FIX 3837).
         if let Some(outcome) = pending.input_outcome(*call_ref) {

@@ -32,11 +32,14 @@ impl PendingConnectorCall {
             (Some(held), Some(asked)) => held.same_use(asked),
             (held, asked) => held.is_none() && asked.is_none(),
         };
-        let presentation_matches = self.sweep_minted
-            || (self.name == other.name
-                && self.credential == other.credential
-                && self.grant == other.grant
-                && same_use);
+        // A sweep-minted row skips the credential-family comparison (the
+        // sweep could not rebuild it), but the live route must still
+        // resolve to the frozen server before its fields are adopted.
+        let presentation_matches = self.name == other.name
+            && (self.sweep_minted
+                || (self.credential == other.credential
+                    && self.grant == other.grant
+                    && same_use));
         let mut held_arguments = arguments(&self.arguments);
         let mut asked_arguments = arguments(&other.arguments);
         if self.sweep_minted

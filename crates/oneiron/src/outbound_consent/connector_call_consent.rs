@@ -26,6 +26,7 @@ use super::approval::{
 use super::connector_call::{
     ConnectorCallInvocation, PENDING_CALLS, PendingConnectorCall, connector_call_ref, now_ms,
 };
+use super::connector_call_erase::put_pending_call_in_txn;
 use super::tool_call::PreparedToolCall;
 
 /// The hold reason an `always ask` replay carries, the Gate's own receipt
@@ -225,6 +226,19 @@ impl Vault {
             .capability_provenance()
             .map(|capability| capability.grant_id());
         let held = self.try_with_write_txn(|txn| -> Result<_, IntentLedgerError> {
+            // The sweep reconstructed this call from an earlier snapshot:
+            // re-read the authoritative ledger row in this writer and mint
+            // nothing unless it is still Pending with the same unerased
+            // payload, so an actor erase committed since is not rebuilt
+            // from stale plaintext.
+            let fresh =
+                read_intent_for_attempt_in_txn(self, txn, record.attempt_id, record.call_seq)?;
+            let live = fresh.is_some_and(|fresh| {
+                fresh.state == IntentState::Pending && fresh.payload() == record.payload()
+            });
+            if !live {
+                return Ok(None);
+            }
             let found = match PENDING_CALLS.get(&self.store, txn, &named)? {
                 Some(row) => Some((named.clone(), row)),
                 None => PENDING_CALLS
@@ -259,13 +273,16 @@ impl Vault {
                         sweep_dry_run_forced: dry_run_forced,
                         live_use: false,
                         code_consent_wait: None,
+                        // The original pass's retention context is unknown: mint
+                        // sealed, so a crash-left off-record request never
+                        // gains a plaintext durable copy before adoption.
+                        off_record: true,
                         // The original pass's complete source union is unknown.
                         source_rows: None,
                         approval: None,
                         input: None,
                         code: None,
                         sealed_arguments: None,
-                        off_record: false,
                         paced_until: None,
                     },
                 )
@@ -276,7 +293,7 @@ impl Vault {
                 return Ok(None);
             }
             retain_held_ask(&mut row, ask.as_ref());
-            PENDING_CALLS.put(&self.store, txn, &call_ref, &row)?;
+            put_pending_call_in_txn(&self.store, txn, &call_ref, &row)?;
             Ok(Some(call_ref))
         })?;
         let Some(call_ref) = held else {
