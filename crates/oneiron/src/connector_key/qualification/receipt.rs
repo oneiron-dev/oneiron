@@ -10,6 +10,11 @@ pub const CONNECTOR_QUALIFICATION_SUITE: &str = "oneiron.connector.qualification
 /// rides its Verified setup connection instead of a probe suite. Only an
 /// embedded built-in source may carry it.
 pub const SETUP_CHECK_QUALIFICATION_SUITE: &str = "oneiron.connector.setup_check.v1";
+/// A built-in connector pack's isolated probe (FIX 710): the host runs each
+/// declared connection's own read-only identity call through the channel's
+/// client, on fresh transports, with no send and no vault write. Only an
+/// embedded built-in source may carry it.
+pub const BUILTIN_PROBE_QUALIFICATION_SUITE: &str = "oneiron.connector.builtin_probe.v1";
 /// The OpenAI proxy's own connector (ARCH-0028): the engine is the
 /// connector, so no probe suite runs. Its admission is the owner's stamp on
 /// the proxy's fixed slate. Only the proxy connector's key may carry it.
@@ -64,6 +69,25 @@ impl ConnectorQualificationReceipt {
             qualified_at,
         };
         receipt.validate_setup_check()?;
+        Ok(receipt)
+    }
+
+    /// The receipt a built-in's isolated probe earns. The revision is the
+    /// engine's, which built-in adapters version with.
+    pub(crate) fn builtin_probe(
+        report_hash: String,
+        engine_revision: String,
+        source_hash: [u8; 32],
+        qualified_at: u64,
+    ) -> Result<Self> {
+        let receipt = Self {
+            suite: BUILTIN_PROBE_QUALIFICATION_SUITE.to_owned(),
+            report_hash,
+            protocol_revision: engine_revision,
+            manifest_hash: source_hash,
+            qualified_at,
+        };
+        receipt.validate_builtin_probe()?;
         Ok(receipt)
     }
 
@@ -125,6 +149,10 @@ impl ConnectorQualificationReceipt {
 
     pub(crate) fn validate_setup_check(&self) -> Result<()> {
         self.validate_as(SETUP_CHECK_QUALIFICATION_SUITE)
+    }
+
+    pub(crate) fn validate_builtin_probe(&self) -> Result<()> {
+        self.validate_as(BUILTIN_PROBE_QUALIFICATION_SUITE)
     }
 
     fn validate_as(&self, suite: &str) -> Result<()> {

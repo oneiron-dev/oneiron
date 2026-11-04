@@ -8,6 +8,7 @@
 use super::DecisionRung;
 use crate::EntityId;
 use rmpv::Value;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Operating limits: how a review paces its units and evidence, never a
@@ -81,10 +82,49 @@ impl SlideReviewLimits {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum SlideReviewPrecedence {
     NestedNarrowing,
     HolderOverrideCappedAtVault,
+}
+
+/// One `slide_review_policy` row of a policy manifest, as the typed policy
+/// door reads and writes it (FIX 9336): the keys [`SlideReviewPolicy::decode`]
+/// reads, which still checks every row a door writes. A precedence row and a
+/// vault row are required, a holder is a 32-hex id, and a route never names
+/// `human`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "scope", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SlideReviewPolicyRow {
+    /// How holder rows meet the vault's.
+    Precedence { value: SlideReviewPrecedence },
+    /// The vault's own pacing.
+    Vault {
+        batch_size: u64,
+        max_units: u64,
+        max_text_bytes: u64,
+        max_image_bytes: u64,
+    },
+    /// The vault's route range.
+    Route {
+        first: DecisionRung,
+        ceiling: DecisionRung,
+    },
+    /// One holder's pacing, capped at the vault's.
+    Holder {
+        holder: String,
+        batch_size: u64,
+        max_units: u64,
+        max_text_bytes: u64,
+        max_image_bytes: u64,
+    },
+    /// One holder's route range, inside the vault's.
+    HolderRoute {
+        holder: String,
+        first: DecisionRung,
+        ceiling: DecisionRung,
+    },
 }
 
 /// Owner route range; a holder may choose a narrower range, not widen it.

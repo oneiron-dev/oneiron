@@ -478,27 +478,63 @@ impl DecisionModel for BigModel {
                 crate::decision_verdict::rung_payer(),
             )
             .sourced(Some(call.evidence.to_vec()));
+        // FIX 12742 sessionless verdict capture: the verdict caller bound on
+        // this thread, when this decide runs inside a verdict's scope. Both
+        // current callers are sessionless by source (facade verb, agent door),
+        // so the gate below binds no session and no room — typed absence, not
+        // a lookup. A future caller WITH a bound session or room MUST thread
+        // it through here instead of silently reusing this sessionless path.
+        let actor = crate::decision_verdict::verdict_actor();
+        let no_record_at_arrival =
+            actor.is_some_and(|actor| self.vault.model_call_keeps_no_record_for(None, Some(actor)));
+        // The admitted request, kept for the evidence row's digests when a
+        // capture runs; the call below moves the original.
+        let record_request = actor.is_some().then(|| request.clone());
         // The decision's clock bounds the whole call (FIX 7792): every send,
         // wait and fallback; past it the call ends incomplete, every rung it
         // admitted settled.
         let deadline = CallDeadline::caller_in(left);
         // A seat's answer names the rung model that served it; one model
         // alone answers or nothing does, so its pin names it already.
-        let (response, served) = self
+        let (response, served, binding) = self
             .runtime
             .block_on(async {
                 match &self.answerer {
                     Answerer::Seat(_) => ladder
-                        .generate_served_by(&run, request, None, &|| true, deadline)
+                        .generate_recorded_by(&run, request, None, &|| true, deadline)
                         .await
-                        .map(|(response, model)| (response, Some(model))),
+                        .map(|(response, binding)| {
+                            (response, Some(binding.rung.model.clone()), binding)
+                        }),
                     Answerer::Model(_) => ladder
-                        .generate_exact_by(&run, request, None, &|| true, deadline)
+                        .generate_exact_recorded_by(&run, request, None, &|| true, deadline)
                         .await
-                        .map(|response| (response, None)),
+                        .map(|(response, binding)| (response, None, binding)),
                 }
             })
             .map_err(|error| failed(format!("the seat failed: {error}")))?;
+        // FIX 12742: the completed call's evidence, before any parse — even a
+        // typed abstain below records the provider terminal it read. Outside
+        // a verdict's scope there is no actor and the capture is skipped:
+        // never the payer, never an actorless row.
+        if let Some(actor) = actor
+            && let Some(record_request) = &record_request
+        {
+            let no_record = no_record_at_arrival
+                || self.vault.model_call_keeps_no_record_for(None, Some(actor));
+            // Evidence-only: the live run above is untouched; this clone
+            // shares its instance and revision so the row erases with it.
+            let evidence_run = run.initiated_by(Some(actor));
+            crate::api::record_raw_response(
+                &self.vault,
+                &ladder,
+                &evidence_run,
+                record_request,
+                &response,
+                Some(&binding),
+                no_record,
+            );
+        }
         if let Some(usage) = &self.trial_usage {
             usage
                 .lock()

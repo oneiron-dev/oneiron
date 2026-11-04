@@ -86,6 +86,18 @@ impl AnthropicMessagesStreamAccumulator {
                             signature,
                         )?);
                     }
+                    Some("redacted_thinking") => {
+                        let data = block["data"]
+                            .as_str()
+                            .ok_or(FatalLlmError::InvalidRequest)?;
+                        events.extend(self.assembly.reasoning_with_kind(
+                            &id,
+                            "",
+                            None,
+                            oneiron::ReasoningPartKind::Encrypted,
+                            Some(data.to_owned()),
+                        )?);
+                    }
                     Some("tool_use") => {
                         let call_id = block["id"]
                             .as_str()

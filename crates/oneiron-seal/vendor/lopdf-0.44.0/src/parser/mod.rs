@@ -7,7 +7,6 @@ use crate::parser_aux::decode_xref_stream_admitted;
 use crate::xref::*;
 use std::cell::Cell;
 use std::collections::HashSet;
-use std::mem::size_of;
 use std::str::{self, FromStr};
 
 use nom::branch::alt;
@@ -23,6 +22,9 @@ use nom::sequence::{delimited, pair, preceded, separated_pair, terminated};
 use nom::{AsBytes, AsChar, IResult, Input, Parser};
 
 pub(crate) mod cmap_parser;
+mod parsed_alloc;
+
+use parsed_alloc::{extend_parsed, fold_parsed, grow_parsed, many_parsed, push_parsed, reserve_dict_parsed};
 
 pub(crate) type ParserInput<'a> = &'a [u8];
 // Change this to something else that implements ParseError to get a
@@ -50,25 +52,6 @@ fn offset_stream(object: &mut Object, offset: usize) {
     if let Object::Stream(stream) = object {
         stream.start_position = stream.start_position.and_then(|sp| sp.checked_add(offset));
     }
-}
-
-/// `value`, its own allocation of `bytes` charged first to the parse scope
-/// open on this thread (FIX 8446). A refusal fails the parse for good; the
-/// scope keeps it for the caller to return.
-fn charged<O>(input: ParserInput, value: O, bytes: usize) -> NomResult<O> {
-    match decode_admission::charge_parsed(bytes) {
-        Ok(()) => Ok((input, value)),
-        Err(_) => Err(nom::Err::Failure(NomError::from_error_kind(input, ErrorKind::Fail))),
-    }
-}
-
-/// What a dictionary's own map allocates: each entry's hash, key and value,
-/// and two index slots with a control byte per entry, as a hash table that
-/// grew by doubling may hold.
-fn dictionary_bytes(dict: &Dictionary) -> usize {
-    let entry = size_of::<usize>() + size_of::<Vec<u8>>() + size_of::<Object>();
-    let slots = 2 * (size_of::<usize>() + 1);
-    dict.as_hashmap().capacity().saturating_mul(entry + slots)
 }
 
 pub(crate) fn eol(input: ParserInput) -> NomResult<ParserInput> {
@@ -153,9 +136,10 @@ fn oct_char(input: ParserInput) -> NomResult<u8> {
 }
 
 pub(crate) fn name(input: ParserInput) -> NomResult<Vec<u8>> {
-    let (i, name) = preceded(
-        tag(&b"/"[..]),
-        many0(alt((
+    let (input, _) = tag(&b"/"[..]).parse(input)?;
+    many_parsed(
+        input,
+        alt((
             preceded(tag(&b"#"[..]), hex_char),
             map_opt(take(1usize), |c: ParserInput| {
                 if c[0] != b'#' && is_regular(c[0]) {
@@ -164,11 +148,8 @@ pub(crate) fn name(input: ParserInput) -> NomResult<Vec<u8>> {
                     None
                 }
             }),
-        ))),
+        )),
     )
-    .parse(input)?;
-    let bytes = name.capacity();
-    charged(i, name, bytes)
 }
 
 fn escape_sequence(input: ParserInput) -> NomResult<Option<u8>> {
@@ -196,18 +177,20 @@ enum InnerLiteralString<'a> {
 }
 
 impl InnerLiteralString<'_> {
-    fn push(&self, output: &mut Vec<u8>) {
+    fn push<'a>(&self, output: &mut Vec<u8>, input: ParserInput<'a>) -> NomResult<'a, ()> {
         match self {
-            InnerLiteralString::Direct(s) | InnerLiteralString::Eol(s) => output.extend_from_slice(s),
-            InnerLiteralString::Escape(e) => output.extend(e),
-            InnerLiteralString::Nested(n) => output.extend_from_slice(n),
+            InnerLiteralString::Direct(s) | InnerLiteralString::Eol(s) => extend_parsed(output, s, input),
+            InnerLiteralString::Escape(Some(byte)) => push_parsed(output, *byte, input),
+            InnerLiteralString::Escape(None) => Ok((input, ())),
+            InnerLiteralString::Nested(n) => extend_parsed(output, n, input),
         }
     }
 }
 
 fn inner_literal_string(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<u8>> {
     move |input| {
-        fold_many0(
+        fold_parsed(
+            input,
             alt((
                 map(take_while1(is_direct_literal_string), InnerLiteralString::Direct),
                 map(escape_sequence, InnerLiteralString::Escape),
@@ -215,12 +198,8 @@ fn inner_literal_string(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<u
                 map(nested_literal_string(depth), InnerLiteralString::Nested),
             )),
             Vec::new,
-            |mut out: Vec<u8>, value| {
-                value.push(&mut out);
-                out
-            },
+            |out, value, input| value.push(out, input),
         )
-        .parse(input)
     }
 }
 
@@ -229,28 +208,23 @@ fn nested_literal_string(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<
         if depth == 0 {
             map(verify(tag(&b"too deep"[..]), |_: &[u8]| false), |_| vec![]).parse(input)
         } else {
-            map(
-                delimited(tag(&b"("[..]), inner_literal_string(depth - 1), tag(&b")"[..])),
-                |mut content| {
-                    content.insert(0, b'(');
-                    content.push(b')');
-                    content
-                },
-            )
-            .parse(input)
+            let (input, mut content) =
+                delimited(tag(&b"("[..]), inner_literal_string(depth - 1), tag(&b")"[..])).parse(input)?;
+            grow_parsed(&mut content, 2, input)?;
+            content.insert(0, b'(');
+            content.push(b')');
+            Ok((input, content))
         }
     }
 }
 
 fn literal_string(input: ParserInput) -> NomResult<Vec<u8>> {
-    let (i, string) = delimited(
+    delimited(
         tag(&b"("[..]),
         inner_literal_string(crate::reader::MAX_BRACKET),
         tag(&b")"[..]),
     )
-    .parse(input)?;
-    let bytes = string.capacity();
-    charged(i, string, bytes)
+    .parse(input)
 }
 
 #[inline]
@@ -262,34 +236,33 @@ fn hex_digit(input: ParserInput) -> NomResult<u8> {
 }
 
 fn hexadecimal_string(input: ParserInput) -> NomResult<Object> {
-    let (i, string) = map(
+    map(
         delimited(
             tag(&b"<"[..]),
             terminated(
-                fold_many0(
-                    preceded(white_space, hex_digit),
-                    || -> (Vec<u8>, bool) { (Vec::new(), false) },
-                    |state, c| match state {
-                        (mut out, false) => {
-                            out.push(c << 4);
-                            (out, true)
-                        }
-                        (mut out, true) => {
-                            *out.last_mut().unwrap() |= c;
-                            (out, false)
-                        }
-                    },
-                ),
+                |input| {
+                    fold_parsed(
+                        input,
+                        preceded(white_space, hex_digit),
+                        || (Vec::new(), false),
+                        |(out, odd), c, input| {
+                            if *odd {
+                                *out.last_mut().unwrap() |= c;
+                            } else {
+                                push_parsed(out, c << 4, input)?;
+                            }
+                            *odd = !*odd;
+                            Ok((input, ()))
+                        },
+                    )
+                },
                 white_space,
             ),
             tag(&b">"[..]),
         ),
-        |(bytes, _)| bytes,
+        |(bytes, _)| Object::String(bytes, StringFormat::Hexadecimal),
     )
-    .parse(input)?;
-    let bytes = string.capacity();
-    let (i, string) = charged(i, string, bytes)?;
-    Ok((i, Object::String(string, StringFormat::Hexadecimal)))
+    .parse(input)
 }
 
 fn boolean(input: ParserInput) -> NomResult<Object> {
@@ -306,14 +279,12 @@ fn null(input: ParserInput) -> NomResult<Object> {
 
 fn array(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<Object>> {
     move |input| {
-        let (i, array) = delimited(
+        delimited(
             pair(tag(&b"["[..]), space),
-            many0(_direct_object(depth)),
+            |input| many_parsed(input, _direct_object(depth)),
             tag(&b"]"[..]),
         )
-        .parse(input)?;
-        let bytes = array.capacity().saturating_mul(size_of::<Object>());
-        charged(i, array, bytes)
+        .parse(input)
     }
 }
 
@@ -327,17 +298,16 @@ fn _dictionary(depth: usize) -> impl Fn(ParserInput) -> NomResult<Dictionary> {
 
 fn inner_dictionary(depth: usize) -> impl Fn(ParserInput) -> NomResult<Dictionary> {
     move |input| {
-        let (i, dict) = fold_many0(
+        fold_parsed(
+            input,
             pair(terminated(name, space), _direct_object(depth)),
             Dictionary::new,
-            |mut dict, (key, value)| {
+            |dict, (key, value), input| {
+                reserve_dict_parsed(dict, &key, input)?;
                 dict.set(key, value);
-                dict
+                Ok((input, ()))
             },
         )
-        .parse(input)?;
-        let bytes = dictionary_bytes(&dict);
-        charged(i, dict, bytes)
     }
 }
 
@@ -353,20 +323,24 @@ pub(crate) fn dict_dup(input: ParserInput) -> NomResult<Dictionary> {
             tag(&b"begin"[..]),
             multispace1,
         ),
-        fold_many0(
-            terminated(
-                pair(
-                    terminated(name, space),
-                    _direct_object(crate::reader::MAX_NESTING_DEPTH),
+        |input| {
+            fold_parsed(
+                input,
+                terminated(
+                    pair(
+                        terminated(name, space),
+                        _direct_object(crate::reader::MAX_NESTING_DEPTH),
+                    ),
+                    pair(tag(&b"def"[..]), multispace1),
                 ),
-                pair(tag(&b"def"[..]), multispace1),
-            ),
-            Dictionary::new,
-            |mut dict, (key, value)| {
-                dict.set(key, value);
-                dict
-            },
-        ),
+                Dictionary::new,
+                |dict, (key, value), input| {
+                    reserve_dict_parsed(dict, &key, input)?;
+                    dict.set(key, value);
+                    Ok((input, ()))
+                },
+            )
+        },
         tag(&b"end"[..]),
     )
     .parse(input)
@@ -983,7 +957,8 @@ startxref
 153804\x20
 %%EOF
 ";
-        match xref(test_span(input)) {
+        let refused = std::cell::Cell::new(None);
+        match xref(test_span(input), None, &refused) {
             Ok((_, re)) => assert_eq!(re.entries.len(), 15),
             Err(err) => panic!("unexpected {:?}", err),
         }
@@ -1096,7 +1071,8 @@ EI";
     fn xref_trailing_space_after_keyword() {
         // Some PDF generators emit "xref \n" with a trailing space.
         let input = b"xref \n0 3\n0000000000 65535 f \n0000000017 00000 n \n0000000081 00000 n \ntrailer\n<</Size 3/Root 1 0 R>>\nstartxref\n175\n%%EOF\n";
-        match xref(test_span(input)) {
+        let refused = std::cell::Cell::new(None);
+        match xref(test_span(input), None, &refused) {
             Ok((_, re)) => assert_eq!(re.entries.len(), 2),
             Err(err) => panic!("xref with trailing space should parse: {:?}", err),
         }

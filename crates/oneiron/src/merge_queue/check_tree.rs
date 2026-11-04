@@ -2,7 +2,7 @@
 //! object store through the shipped GitWire reads, never the live checkout.
 use super::MergeQueue;
 use super::check_inputs::{QueueCheckFile, QueueCheckTreeSource};
-use crate::code_revision::CodeTreeInventory;
+use crate::code_revision::{CodeTreeInventory, CodeTreeInventoryRuntime};
 use crate::contract_oracle::invalid;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};

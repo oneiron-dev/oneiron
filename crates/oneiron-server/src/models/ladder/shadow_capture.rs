@@ -20,7 +20,7 @@ pub(super) fn note_answered(rung: &LadderRung, request: &LlmRequest) {
 /// The route `rung` sends its calls on, as a capsule pins it: its route
 /// (`adapter@origin`), its offer, the catalog revision the offer was bound
 /// at, its wire model and the digest of its route prompt.
-fn route_pin(rung: &LadderRung) -> Option<ReplayRoutePin> {
+pub(super) fn route_pin(rung: &LadderRung) -> Option<ReplayRoutePin> {
     let binding = &rung.offer.binding;
     Some(ReplayRoutePin {
         route_id: format!("{}@{}", binding.route.adapter(), binding.route.origin()),
