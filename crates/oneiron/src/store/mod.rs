@@ -188,7 +188,8 @@ pub mod code_snapshot;
 pub(crate) mod query_memo_codec;
 pub mod query_memos;
 pub(crate) use claim_vad_owed::{
-    owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
+    claim_vad_owed_in_txn, owe_claim_vad_in_txn, owed_claim_vad_count_in_txn,
+    settle_claim_vad_in_txn,
 };
 pub mod body_descriptor;
 mod commitment_due;
@@ -284,7 +285,7 @@ pub(crate) use asset_body::{
     unused_imports,
     reason = "FIX 5489 PR2 and PR3 receive bodies through these"
 )]
-pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody};
+pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody, StagedHold};
 pub(crate) use served_vaults::served_vault_at;
 // FIX 6730: what a commit changes for the backup watermark.
 #[cfg(feature = "sync")]

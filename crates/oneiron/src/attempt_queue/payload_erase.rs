@@ -719,6 +719,43 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
         }
         return;
     }
+    if record.kind == crate::outbound::CONNECTOR_REPLY_JOB_KIND {
+        // A reply job whose agent, actor, receiving identity or known
+        // counterparty bears the marker writes back no event payload
+        // (FIX 10901), as the pass leaves it.
+        let Ok(job) = serde_json::from_slice::<crate::outbound::ConnectorReplyJob>(&record.payload)
+        else {
+            return;
+        };
+        if job.event.payload.is_null() {
+            return;
+        }
+        let mut erased = BTreeSet::new();
+        for id in job.named_ids() {
+            match store.port_deletion_marked(txn, DeletionMarker::HardDelete, &id) {
+                Ok(true) => {
+                    erased.insert(id);
+                }
+                Ok(false) => {}
+                Err(_) => {
+                    tracing::warn!(
+                        attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                        "attempt payload fence: a reply job's hard-delete marker could not be read"
+                    );
+                    return;
+                }
+            }
+        }
+        if !erased.is_empty()
+            && crate::outbound::erase_connector_reply_job_payload(record, &erased).is_err()
+        {
+            tracing::warn!(
+                attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                "attempt payload fence: an erased reply job's event payload could not be removed"
+            );
+        }
+        return;
+    }
     if record.kind == BYOA_ATTEMPT_KIND {
         scrub_hard_erased_task_copy_in_txn(store, txn, record);
         return;

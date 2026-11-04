@@ -194,6 +194,11 @@ impl DetachedWrites {
         self.counts().settled
     }
 
+    /// The writes queued so far.
+    fn queued_count(&self) -> u64 {
+        self.counts().queued
+    }
+
     /// Blocks until every write queued so far is decided.
     pub(super) fn wait_settled(&self) {
         let counts = self.counts();
@@ -427,7 +432,14 @@ impl Store {
     /// by name.
     pub(crate) fn finish_detached_writes(&self, closing: Option<&Vault>) {
         let group = &self.group_commit;
-        while group.lock().detached > 0 {
+        // Until every write queued so far is decided, including one another
+        // thread dequeued but has not run yet (REVIEW-4327 P1): `detached`
+        // falls to zero while such a write is in hand, before its leader
+        // upgrades its vault reference, so an empty queue is not a drained
+        // one. A write in hand is mid-group, and a group holds `leading`
+        // until it passes the writer on, so the stuck check below still only
+        // fires when no thread can run what is left.
+        while group.detached.settled_count() < group.detached.queued_count() {
             let settled = group.detached.settled_count();
             let led = self.queue_write(
                 Callback::Opaque,

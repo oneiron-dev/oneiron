@@ -332,8 +332,9 @@ impl Store {
     ///
     /// A detached write (FIX 12023): it queues behind the run's provisional
     /// row, in arrival order, and returns at once, since the reply needs only
-    /// the run's id. A failure once its group runs it rolls back only this
-    /// publication and is said in a warn.
+    /// the run's id. A failure once its group runs it rolls back this
+    /// publication, discards the committed provisional run, and is said in a
+    /// warn.
     pub(crate) fn finalize_context_pack_retrieval_run(
         &self,
         finalize: RetrievalRunFinalize<'_>,
@@ -365,11 +366,19 @@ impl Store {
                     empty_reason,
                     pack_config,
                 };
-                stage_retained_context_pack_retrieval_run_finalize(
+                if let Err(error) = stage_retained_context_pack_retrieval_run_finalize(
                     &core.canonical_dbs(),
                     wtxn,
                     finalize,
-                )
+                ) {
+                    stage_retrieval_run_delete(&core.canonical_dbs(), wtxn, run_id)?;
+                    tracing::warn!(
+                        write = "context-pack retrieval run, finalize",
+                        %error,
+                        "a detached write failed; its provisional run is discarded"
+                    );
+                }
+                Ok(())
             },
         ));
         Ok(())
