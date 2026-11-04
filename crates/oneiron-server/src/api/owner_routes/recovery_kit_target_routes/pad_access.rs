@@ -253,9 +253,11 @@ struct RelayView {
     taken: Option<TakenView>,
     /// The generation this machine published for the slot.
     published: Option<String>,
-    /// Worlds whose published capsule could not be sealed fresh; old capsule or none remains. Empty when nothing was published.
+    /// Worlds whose published capsule could not be sealed fresh; the old capsule
+    /// or none remains. Empty when nothing was published.
     incomplete_authority: Vec<String>,
-    /// Worlds whose capsule in the last taken/published generation is sealed to no currently pinned recovery root here. Empty when no root is pinned or neither take nor publication occurred.
+    /// Worlds whose last taken/published capsule is sealed to no recovery root
+    /// pinned here. Empty when no root is pinned or neither take nor publication occurred.
     awaiting_reader: Vec<String>,
     /// Erased worlds and hard-erased keys stripped from the kept pad objects.
     erased: usize,
@@ -329,8 +331,16 @@ fn relay_views(observation: Option<SealedBundleRelayObservation>) -> RelayViews 
                     },
                 }),
                 published: relay.published.as_ref().map(sealed_generation_hex),
-                incomplete_authority: relay.incomplete_authority.iter().map(|world| world.to_hex()).collect(),
-                awaiting_reader: relay.awaiting_reader.iter().map(|world| world.to_hex()).collect(),
+                incomplete_authority: relay
+                    .incomplete_authority
+                    .iter()
+                    .map(|world| world.to_hex())
+                    .collect(),
+                awaiting_reader: relay
+                    .awaiting_reader
+                    .iter()
+                    .map(|world| world.to_hex())
+                    .collect(),
                 erased: relay.erased,
                 offered: relay.offered,
             },
