@@ -250,6 +250,9 @@ vaultInboxGroupsResolve(input: unknown): unknown
 vaultWeaveDigestRender(input: unknown): unknown
 vaultWeaveLinkCorrections(input: unknown): unknown
 selfInboxLens(input: unknown): unknown
+selfInboxGet(input: unknown): unknown
+selfInboxDone(input: unknown): unknown
+selfInboxLater(input: unknown): unknown
 vaultSkillsBootstrap(input: unknown): unknown
 vaultSkillHubsDefaultGet(input: unknown): unknown
 vaultSkillsRestoredefaults(input: unknown): unknown
@@ -532,6 +535,7 @@ vaultLegalHoldsWiden(input: unknown): unknown
 vaultLegalHoldsList(input: unknown): unknown
 vaultLegalHoldsLog(input: unknown): unknown
 vaultLegalHoldsLiftAndErase(input: unknown): unknown
+vaultLegalHoldsWithdrawErase(input: unknown): unknown
 vaultCourtesyDeleteSend(input: unknown): unknown
 vaultCourtesyDeleteSent(input: unknown): unknown
 vaultCourtesyDeleteIncoming(input: unknown): unknown

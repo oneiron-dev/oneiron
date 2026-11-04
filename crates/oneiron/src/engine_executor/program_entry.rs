@@ -26,9 +26,9 @@ use super::record::{
     previous_state_hash, record_terminal_output, verify_code_consent_park, wait_key,
 };
 use super::store::{
-    checkpoint_label, load_utf8_output, observation_output_path, pinned_executed_output_path,
-    pinned_source_map_output_path, record_output, record_script_output, record_text_output,
-    resumed_output_wait,
+    bind_published_output, checkpoint_label, load_utf8_output, observation_output_path,
+    pinned_executed_output_path, pinned_source_map_output_path, record_output,
+    record_script_output, record_text_output, resumed_output_wait,
 };
 use super::types::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus,
@@ -500,7 +500,7 @@ impl<'a> EngineNativeExecutor<'a> {
         record.record_callable_rows(host.result_rows());
         record.bridge_calls.extend(host.bridge_calls);
         record.outputs.extend(host.captured);
-        let bindings: Vec<(String, String)> = host
+        let mut bindings: Vec<(String, String)> = host
             .bound
             .iter()
             .map(|binding| (binding.name.clone(), binding.handle.clone()))
@@ -533,6 +533,15 @@ impl<'a> EngineNativeExecutor<'a> {
             observation_output_path(seq),
             observation,
         )?;
+        let Some(observation_output) = record.outputs.last().cloned() else {
+            return Err(
+                Error::InvariantViolation("a pinned entry published no observation").into(),
+            );
+        };
+        if observation_output.path != observation_output_path(seq) {
+            return Err(Error::InvariantViolation("a pinned entry bound no observation").into());
+        }
+        bind_published_output(&mut record, &mut bindings, &observation_output);
         record_terminal_output(&self.storage, &mut record, seq, &status)?;
         let preparation = self
             .keep_preparation(&mut record, ran)?

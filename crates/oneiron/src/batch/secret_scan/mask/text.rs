@@ -29,13 +29,7 @@ impl Masker {
     /// each handle went.
     pub(super) fn mask_text(&mut self, text: &str) -> Result<Option<String>> {
         let spans = self.text_spans(text);
-        // A value the owner ruled no secret in the record the pass reads
-        // stays as written: that ruling wins over the known-value sweep.
-        let known: Vec<(Range<usize>, String)> = spans
-            .known
-            .into_iter()
-            .filter(|(span, _)| !self.is_kept(&text.as_bytes()[span.clone()]))
-            .collect();
+        let known = spans.known;
         let mut hits: Vec<(Range<usize>, TextHit)> = spans
             .shapes
             .into_iter()
@@ -103,17 +97,17 @@ impl Masker {
         Ok(Some(out))
     }
 
-    /// Each value custody holds in `text`, with its record's handle, and
-    /// each span the door's text rules place, before the record's rulings:
-    /// taken from the plan's log when this pass reads the text the plan read
-    /// at this place (speed), else found and, by a plan, logged.
+    /// Each non-kept known value in `text`, with its record's handle, and
+    /// each span the door's text rules place: taken from the plan's log when
+    /// this pass reads the text the plan read at this place (speed), else
+    /// found and, by a plan, logged.
     fn text_spans(&mut self, text: &str) -> TextSpans {
         if let Some(spans) = self.text_log.take(text.as_bytes()) {
             return spans;
         }
         let known = match &self.known {
             Some(known) => known
-                .spans(text.as_bytes())
+                .spans_except(text.as_bytes(), |value| self.is_kept(value))
                 .into_iter()
                 .map(|hit| (hit.span, hit.handle.to_owned()))
                 .collect(),

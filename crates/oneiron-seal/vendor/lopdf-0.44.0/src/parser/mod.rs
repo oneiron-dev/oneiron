@@ -1,7 +1,7 @@
 use super::{Dictionary, Object, ObjectId, Reader, Stream, StringFormat};
 use crate::Error;
 use crate::content::*;
-use crate::decode_admission::{self, DecodeAdmissionError};
+use crate::decode_admission::{self, DecodeAdmission, DecodeAdmissionError};
 use crate::error;
 use crate::parser_aux::decode_xref_stream_admitted;
 use crate::xref::*;
@@ -527,26 +527,85 @@ pub fn binary_mark(input: ParserInput) -> Option<Vec<u8>> {
 }
 
 /// Decode CrossReferenceTable
-fn xref(input: ParserInput) -> NomResult<Xref> {
-    let xref_eol = map(alt((tag(&b" \r"[..]), tag(&b" \n"[..]), tag(&b"\r\n"[..]))), |_| ());
-    let xref_entry = pair(
-        separated_pair(unsigned_int, tag(&b" "[..]), unsigned_int::<u32>),
-        delimited(tag(&b" "[..]), map(one_of("nf"), |k| k == 'n'), xref_eol),
-    );
+fn xref<'a>(
+    input: ParserInput<'a>, admission: Option<&dyn DecodeAdmission>,
+    refused: &Cell<Option<DecodeAdmissionError>>,
+) -> NomResult<'a, Xref> {
+    if let Some(admission) = admission {
+        // One node of the entry map up front; a share of one before each insert below.
+        if let Err(err) = decode_admission::admit_btree::<u32, XrefEntry>(admission, 0) {
+            refused.set(Some(err));
+            return Err(nom::Err::Failure(NomError::from_error_kind(input, ErrorKind::Fail)));
+        }
+    }
 
-    let xref_section = pair(
-        separated_pair(unsigned_int::<usize>, tag(&b" "[..]), unsigned_int::<u32>),
-        preceded(pair(opt(tag(&b" "[..])), eol), many0(xref_entry)),
-    );
+    // An xref table entry as parsed: ((offset: u32, generation: u32), is_normal: bool).
+    // `generation` parses as u32 and is tried into u16 at the insert, matching
+    // `XrefEntry::Normal { offset: u32, generation: u16 }` in xref.rs.
+    fn section<'a>(
+        input: ParserInput<'a>, admission: Option<&dyn DecodeAdmission>,
+        refused: &Cell<Option<DecodeAdmissionError>>,
+    ) -> NomResult<'a, (usize, Vec<((u32, u32), bool)>)> {
+        let xref_eol = map(alt((tag(&b" \r"[..]), tag(&b" \n"[..]), tag(&b"\r\n"[..]))), |_| ());
+        let mut xref_entry = pair(
+            separated_pair(unsigned_int::<u32>, tag(&b" "[..]), unsigned_int::<u32>),
+            delimited(tag(&b" "[..]), map(one_of("nf"), |k| k == 'n'), xref_eol),
+        );
+
+        let (input, (start, _count)) =
+            separated_pair(unsigned_int::<usize>, tag(&b" "[..]), unsigned_int::<u32>).parse(input)?;
+        let (mut input, _) = pair(opt(tag(&b" "[..])), eol).parse(input)?;
+        let mut entries: Vec<((u32, u32), bool)> = Vec::new();
+        loop {
+            let aborted = refused.take();
+            if aborted.is_some() {
+                refused.set(aborted);
+                return Err(nom::Err::Failure(NomError::from_error_kind(input, ErrorKind::Fail)));
+            }
+            match xref_entry.parse(input) {
+                Ok((next, entry)) => {
+                    if let Some(admission) = admission {
+                        if let Err(err) = decode_admission::reserve(admission, &mut entries, 1) {
+                            refused.set(Some(err));
+                            return Err(nom::Err::Failure(NomError::from_error_kind(input, ErrorKind::Fail)));
+                        }
+                    }
+                    entries.push(entry);
+                    input = next;
+                }
+                Err(nom::Err::Error(_)) => break,
+                Err(err) => return Err(err),
+            }
+        }
+        Ok((input, (start, entries)))
+    }
 
     delimited(
         pair(tag(&b"xref"[..]), preceded(opt(tag(&b" "[..])), eol)),
         fold_many1(
-            xref_section,
+            |input| section(input, admission, refused),
             || -> Xref { Xref::new(0, XrefType::CrossReferenceTable) },
-            |mut xref, ((start, _count), entries)| {
+            |mut xref, (start, entries)| {
+                let aborted = refused.take();
+                if aborted.is_some() {
+                    refused.set(aborted);
+                    return xref;
+                }
                 for (index, ((offset, generation), is_normal)) in entries.into_iter().enumerate() {
+                    let aborted = refused.take();
+                    if aborted.is_some() {
+                        refused.set(aborted);
+                        return xref;
+                    }
                     if is_normal && let Ok(generation) = generation.try_into() {
+                        if let Some(admission) = admission {
+                            if let Err(err) =
+                                admission.admit(decode_admission::btree_entry_bytes::<u32, XrefEntry>())
+                            {
+                                refused.set(Some(err));
+                                continue;
+                            }
+                        }
                         xref.insert((start + index) as u32, XrefEntry::Normal { offset, generation });
                     }
                 }
@@ -564,7 +623,8 @@ fn trailer(input: ParserInput) -> NomResult<Dictionary> {
 
 pub fn xref_and_trailer(input: ParserInput, reader: &Reader) -> crate::Result<(Xref, Dictionary)> {
     let refused = Cell::new(None);
-    let xref_trailer = map(pair(xref, trailer), |(mut xref, trailer)| {
+    let admission = reader.decode_admission.as_deref();
+    let xref_trailer = map(pair(|i| xref(i, admission, &refused), trailer), |(mut xref, trailer)| {
         xref.size = trailer
             .get(b"Size")
             .and_then(Object::as_i64)
@@ -914,7 +974,8 @@ startxref
 153804\x20
 %%EOF
 ";
-        match xref(test_span(input)) {
+        let refused = std::cell::Cell::new(None);
+        match xref(test_span(input), None, &refused) {
             Ok((_, re)) => assert_eq!(re.entries.len(), 15),
             Err(err) => panic!("unexpected {:?}", err),
         }
@@ -1027,7 +1088,8 @@ EI";
     fn xref_trailing_space_after_keyword() {
         // Some PDF generators emit "xref \n" with a trailing space.
         let input = b"xref \n0 3\n0000000000 65535 f \n0000000017 00000 n \n0000000081 00000 n \ntrailer\n<</Size 3/Root 1 0 R>>\nstartxref\n175\n%%EOF\n";
-        match xref(test_span(input)) {
+        let refused = std::cell::Cell::new(None);
+        match xref(test_span(input), None, &refused) {
             Ok((_, re)) => assert_eq!(re.entries.len(), 2),
             Err(err) => panic!("xref with trailing space should parse: {:?}", err),
         }
