@@ -230,6 +230,7 @@ both bindings and their export-census tests in one change.
 - `vault.skills.restoreDefaults`
 - `vault.skill_hubs.put`
 - `vault.skill_hubs.get`
+- `vault.skill_hubs.clawhub.search`
 - `vault.skill_hubs.publishers.admit`
 - `vault.skill_hubs.publishers.revoke`
 - `vault.skill_hubs.refs.get`

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1225 facade rows, 4462 declarations.
-Inputs: 1156 of 1225 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1061 of 1225 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1226 facade rows, 4466 declarations.
+Inputs: 1157 of 1226 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1062 of 1226 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -5380,6 +5380,35 @@ class SkillHubConfigured(TypedDict):
     consent: HubConsentReceipt
 class SkillHubRequest(TypedDict):
     hub: EntityId
+class ClawHubSearchRequest(TypedDict):
+    hub: EntityId
+    q: str
+    limit: NotRequired[int | None]
+    highlighted_only: NotRequired[bool | None]
+    non_suspicious_only: NotRequired[bool | None]
+    response_limit_bytes: NotRequired[int | None]
+class ClawHubSearchOwner(TypedDict):
+    handle: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    image: NotRequired[str | None]
+class ClawHubSearchHit(TypedDict):
+    score: NotRequired[float | None]
+    slug: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    summary: NotRequired[str | None]
+    version: NotRequired[str | None]
+    updatedAt: NotRequired[float | None]
+    ownerHandle: NotRequired[str | None]
+    owner: NotRequired[ClawHubSearchOwner | None]
+class ClawHubSearchReplyResults(TypedDict):
+    outcome: Literal["results"]
+    results: NotRequired[list[ClawHubSearchHit] | None]
+class ClawHubSearchReplyProviderError(TypedDict):
+    outcome: Literal["provider_error"]
+    status: int
+    retry_after: NotRequired[str | None]
+    body: str
+ClawHubSearchReply = ClawHubSearchReplyResults | ClawHubSearchReplyProviderError
 class SkillPublisherRequest(TypedDict):
     hub: EntityId
     identity: str

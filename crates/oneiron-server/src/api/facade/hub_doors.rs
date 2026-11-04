@@ -395,3 +395,21 @@ pub(crate) async fn vault_packs_hooks_qualify(
     .await
     .unwrap_or_else(|_| (Err(internal(VERB)), Vec::new()))
 }
+
+/// `vault.skill_hubs.clawhub.search`: public provider metadata, not package admission.
+pub(crate) async fn vault_skill_hubs_clawhub_search(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ClawHubSearchRequest,
+) -> Listed<oneiron::skill_hub::ClawHubSearchReply> {
+    owner_call(
+        server,
+        auth,
+        "vault.skill_hubs.clawhub.search",
+        move |server, owner| {
+            let answer = sdk::skill_hub_clawhub_search_as_owner(server.vault(), owner, &input)?;
+            Ok((answer, vec![input.hub]))
+        },
+    )
+    .await
+}

@@ -1121,6 +1121,11 @@ export_facade! {
     let output = client.vault_skill_hubs_get(&input)?;
     crate::codec::lift_record("vault.skill_hubs.get", &output)
 };
+"vault.skill_hubs.clawhub.search" => fn vault_skill_hubs_clawhub_search(&self, input: ClawHubSearchRequest) -> ClawHubSearchReply = |client| {
+    let input: oneiron::task_verb::sdk::ClawHubSearchRequest = crate::codec::lower_record("vault.skill_hubs.clawhub.search", input)?;
+    let output = client.vault_skill_hubs_clawhub_search(&input)?;
+    crate::codec::lift_record("vault.skill_hubs.clawhub.search", &output)
+};
 "vault.skill_hubs.publishers.admit" => fn vault_skill_hubs_publishers_admit(&self, input: SkillPublisherRequest) -> SkillPublisherAdmission = |client| {
     let input: oneiron::task_verb::sdk::SkillPublisherRequest = crate::codec::lower_record("vault.skill_hubs.publishers.admit", input)?;
     let output = client.vault_skill_hubs_publishers_admit(&input)?;
