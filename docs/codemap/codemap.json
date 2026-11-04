@@ -20393,158 +20393,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "Bm25RankProfile",
-      "HnswConfig",
-      "VaultConfig"
-     ],
-     "path": "src/config.rs",
-     "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…",
-     "surface": {
-      "crate-vis": 2,
-      "fn": 6,
-      "mod": 4,
-      "re-export": 2,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "Bm25Formula"
-     ],
-     "path": "src/config/bm25.rs",
-     "purpose": "Rank-profile config: field/channel params, formula, recency, defaults",
-     "surface": {
-      "crate-vis": 10,
-      "enum": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CommunitySnapshot"
-     ],
-     "path": "src/config/community_graph/codec.rs",
-     "purpose": "Snapshot and membership encode/decode with strict guards",
-     "surface": {
-      "crate-vis": 4,
-      "fn": 5,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/config/community_graph/detection.rs",
-     "purpose": "Graph projection and Leiden/CPM partition detection",
-     "surface": {
-      "crate-vis": 8,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/config/community_graph/mod.rs",
-     "purpose": "Pure community graph projection, snapshot codecs and configuration",
-     "surface": {
-      "crate-vis": 6,
-      "re-export": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/config/community_graph/refresh.rs",
-     "purpose": "Refresh policy, affected-set expansion and read-side cache view",
-     "surface": {
-      "crate-vis": 2,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CommunityCacheMeta",
-      "CommunityEdge",
-      "CommunityGraphInput",
-      "CommunityId",
-      "CommunityMembership",
-      "CommunityProjection",
-      "CommunityRefreshReport",
-      "PprCommunityCache"
-     ],
-     "path": "src/config/community_graph/types.rs",
-     "purpose": "Community constants, error, ids, config and shared shells",
-     "surface": {
-      "const": 6,
-      "crate-vis": 3,
-      "fn": 3,
-      "re-export": 1,
-      "struct": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "ChatProjection",
-      "ContextSpec",
-      "MemoryProjection"
-     ],
-     "path": "src/config/context_spec.rs",
-     "purpose": "The `ContextSpec` descriptor, its bounds, normalization, and structural validation",
-     "surface": {
-      "const": 9,
-      "crate-vis": 3,
-      "enum": 2,
-      "fn": 5,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "AffectRetrievalPolicy"
-     ],
-     "path": "src/config/retrieval_affect.rs",
-     "purpose": "Per-vault read-side affect retrieval policy",
-     "surface": {
-      "const": 3,
-      "crate-vis": 2,
-      "fn": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "TaggingMarkerConfig",
-      "TaggingMode",
-      "TaggingTraceHistory"
-     ],
-     "path": "src/config/tagging.rs",
-     "purpose": "Tagging marker configuration and identity validation",
-     "surface": {
-      "const": 6,
-      "crate-vis": 2,
-      "enum": 1,
-      "fn": 8,
-      "struct": 2
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -42713,8 +42561,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 28,
-      "mod": 206,
-      "re-export": 98
+      "mod": 205,
+      "re-export": 99
      }
     },
     {
@@ -90094,13 +89942,6 @@
      "layout": "dir",
      "purpose": "Companion task queue and PERSON/FACET persona compilation"
     },
-    "config": {
-     "files": 10,
-     "impl_vault": false,
-     "largest_src_bucket": "m",
-     "layout": "file+dir",
-     "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
-    },
     "connect_delivery": {
      "files": 1,
      "impl_vault": false,
@@ -91357,7 +91198,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6317,
+   "source_files": 6307,
    "test_files": 898
   },
   "oneiron-android": {
@@ -126830,6 +126671,161 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Bm25RankProfile",
+      "HnswConfig",
+      "VaultConfig"
+     ],
+     "path": "src/config.rs",
+     "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…",
+     "surface": {
+      "fn": 7,
+      "mod": 5,
+      "re-export": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Bm25Config",
+      "Bm25Formula",
+      "Bm25RecencyConfig",
+      "FieldConfig",
+      "FieldLengthPolicy"
+     ],
+     "path": "src/config/bm25.rs",
+     "purpose": "Rank-profile config: field/channel params, formula, recency, defaults",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommunitySnapshot"
+     ],
+     "path": "src/config/community_graph/codec.rs",
+     "purpose": "Snapshot and membership encode/decode with strict guards",
+     "surface": {
+      "fn": 9,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Graph"
+     ],
+     "path": "src/config/community_graph/detection.rs",
+     "purpose": "Graph projection and Leiden/CPM partition detection",
+     "surface": {
+      "fn": 9,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/community_graph/mod.rs",
+     "purpose": "Pure community graph projection, snapshot codecs and configuration",
+     "surface": {
+      "mod": 4,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/community_graph/refresh.rs",
+     "purpose": "Refresh policy, affected-set expansion and read-side cache view",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommunityCacheMeta",
+      "CommunityEdge",
+      "CommunityGraphInput",
+      "CommunityId",
+      "CommunityMembership",
+      "CommunityProjection",
+      "CommunityQueryView",
+      "CommunityRefreshReport",
+      "PprCommunityCache"
+     ],
+     "path": "src/config/community_graph/types.rs",
+     "purpose": "Community constants, error, ids, config and shared shells",
+     "surface": {
+      "const": 7,
+      "fn": 3,
+      "re-export": 1,
+      "struct": 9,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChatProjection",
+      "ContextSpec",
+      "MemoryProjection"
+     ],
+     "path": "src/config/context_spec.rs",
+     "purpose": "The `ContextSpec` descriptor, its bounds, normalization, and structural validation",
+     "surface": {
+      "const": 9,
+      "enum": 2,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AffectRetrievalPolicy"
+     ],
+     "path": "src/config/retrieval_affect.rs",
+     "purpose": "Per-vault read-side affect retrieval policy",
+     "surface": {
+      "const": 3,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaggingMarkerConfig",
+      "TaggingMode",
+      "TaggingTraceHistory"
+     ],
+     "path": "src/config/tagging.rs",
+     "purpose": "Tagging marker configuration and identity validation",
+     "surface": {
+      "const": 7,
+      "enum": 1,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -126892,7 +126888,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 14
+      "mod": 15
      }
     },
     {
@@ -127271,6 +127267,13 @@
      "layout": "file",
      "purpose": "Host recipient and sealing policy for checkpoint legal-hold members"
     },
+    "config": {
+     "files": 10,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
+    },
     "connector_key_status": {
      "files": 1,
      "impl_vault": false,
@@ -127358,7 +127361,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 28,
+   "source_files": 38,
    "test_files": 1
   },
   "oneiron-uniffi": {
