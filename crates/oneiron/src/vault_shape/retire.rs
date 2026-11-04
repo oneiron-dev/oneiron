@@ -91,53 +91,122 @@ impl Vault {
     /// more) stays, so retiring a world never unwears a mask. The pick
     /// runs on a read snapshot, so each orphan's delete re-proves unworn
     /// inside its own destructive write transaction and skips a facet a
-    /// concurrent wear claimed first. Returns the world's delete receipt;
+    /// concurrent wear claimed first; a facet created after the pick lands
+    /// in the next round's rescan, and the world's own delete re-proves no
+    /// live unworn facet stays attached inside its destructive write
+    /// transaction, refusing the retire instead of orphaning when a
+    /// creation races the final delete. Returns the world's delete receipt;
     /// every orphan keeps its own receipt on its tombstone.
     pub(super) fn retire_shape_world(
         &self,
         owner: &AuthenticatedOwner,
         world: EntityId,
     ) -> Result<String> {
-        let orphans = {
-            let txn = self.store.env.read_txn()?;
-            let mut orphans = Vec::new();
-            for facet in self.filtered_edge_peers(
-                &txn,
-                EdgeDirection::In,
-                &world,
-                EdgeKind::InWorld,
-                Some(ENTITY_TYPE_FACET),
-            )? {
-                let LiveEntityRow::Live { .. } = live_entity_row_in_txn(&self.store, &txn, &facet)?
-                else {
-                    continue;
-                };
-                if self
-                    .filtered_edge_peers(&txn, EdgeDirection::In, &facet, EdgeKind::HasFacet, None)?
-                    .is_empty()
-                {
-                    orphans.push(facet);
+        // Bounded rescan-and-retry: a facet created after one pick lands in
+        // the next round's pick, and the world's guarded delete fails the
+        // round when a creation races it. Past three rounds a creation storm
+        // refuses the retire instead of leaving a live facet on a retired
+        // world; the refusal stays item-scoped.
+        for _ in 0..3 {
+            for orphan in self.retire_orphan_pick(world)? {
+                match self.delete_shape_orphan(owner, orphan) {
+                    Ok(_) => {}
+                    Err(Error::ConcurrentWrite(_)) => {
+                        // A `HasFacet` landed after the pick (or another writer
+                        // invalidated the preview): the facet stays as it is and
+                        // the world still retires. Skipping is the safe side;
+                        // tombstoning a now-worn mask would unwear it.
+                        tracing::info!(
+                            facet = %orphan.to_hex(),
+                            "world retire skipped a facet worn before commit"
+                        );
+                    }
+                    Err(error) => return Err(error),
                 }
             }
-            orphans
-        };
-        for orphan in orphans {
-            match self.delete_shape_orphan(owner, orphan) {
-                Ok(_) => {}
-                Err(Error::ConcurrentWrite(_)) => {
-                    // A `HasFacet` landed after the pick (or another writer
-                    // invalidated the preview): the facet stays as it is and
-                    // the world still retires. Skipping is the safe side;
-                    // tombstoning a now-worn mask would unwear it.
-                    tracing::info!(
-                        facet = %orphan.to_hex(),
-                        "world retire skipped a facet worn before commit"
-                    );
-                }
+            match self.delete_retired_world(owner, world) {
+                Ok(receipt) => return Ok(receipt),
+                Err(Error::ConcurrentWrite(_)) => continue,
                 Err(error) => return Err(error),
             }
         }
-        self.delete_shape_entity(owner, world)
+        Err(Error::ConcurrentWrite(
+            "a world facet landed racing the retire",
+        ))
+    }
+
+    /// The live facets the world `world` holds that no one wears (FIX 11508):
+    /// retiring the world must delete exactly these, or the retired world
+    /// keeps live orphaned facets.
+    fn retire_orphan_pick(&self, world: EntityId) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        self.retire_orphan_pick_in_txn(&txn, &world)
+    }
+
+    /// [`Self::retire_orphan_pick`] against the caller's transaction: the
+    /// world's guarded delete runs it inside its destructive write
+    /// transaction, atomically with the tear under LMDB's single writer.
+    fn retire_orphan_pick_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        world: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut orphans = Vec::new();
+        for facet in self.filtered_edge_peers(
+            txn,
+            EdgeDirection::In,
+            world,
+            EdgeKind::InWorld,
+            Some(ENTITY_TYPE_FACET),
+        )? {
+            let LiveEntityRow::Live { .. } = live_entity_row_in_txn(&self.store, txn, &facet)?
+            else {
+                continue;
+            };
+            if self
+                .filtered_edge_peers(txn, EdgeDirection::In, &facet, EdgeKind::HasFacet, None)?
+                .is_empty()
+            {
+                orphans.push(facet);
+            }
+        }
+        Ok(orphans)
+    }
+
+    /// Deletes the retired world `world` as `owner` (FIX 11508): the same
+    /// owner-gated user delete as [`Self::delete_shape_entity`], plus a
+    /// pre-scrub check that refuses the delete while a live unworn facet
+    /// still names the world, atomically with the tear under LMDB's single
+    /// writer. A facet created after the orphan pick fails the check as
+    /// [`Error::ConcurrentWrite`], which the caller maps to rescan-and-retry.
+    fn delete_retired_world(&self, owner: &AuthenticatedOwner, world: EntityId) -> Result<String> {
+        let actor = owner.revalidate(self)?;
+        let context = {
+            let txn = self.store.env.read_txn()?;
+            let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+            DeletionGateContext::new(
+                actor,
+                EdgeActorClass::Human,
+                crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+                policy.read_frontier_hash()?,
+            )
+        };
+        let reverify = |txn: &heed::RoTxn<'_>| owner.revalidate_in_txn(self, txn).map(|_| ());
+        let no_live_orphans = |txn: &heed::RoTxn<'_>| {
+            if self.retire_orphan_pick_in_txn(txn, &world)?.is_empty() {
+                Ok(())
+            } else {
+                Err(Error::ConcurrentWrite(
+                    "a world facet landed racing the retire",
+                ))
+            }
+        };
+        let outcome = self.delete_entity_with_reason_gated(
+            &world,
+            DeleteReason::UserDelete,
+            GatedDeletion::with_pre_scrub_check(context, &reverify, &no_live_orphans),
+        )?;
+        Ok(outcome.receipt_id.unwrap_or(world).to_hex())
     }
 
     /// Deletes the orphan facet `id` as `owner` (FIX 11508): the same

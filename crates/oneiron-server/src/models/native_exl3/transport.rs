@@ -754,6 +754,12 @@ impl Call {
                 }
                 "released" => {
                     self.ended = true;
+                    // A server-side cancel (a session.generate its session
+                    // dropped, e.g. under vault lock/erase) ends the call
+                    // here, not in the cancel task, so its partial receipt
+                    // and cheap stats go to the device ledger and supervisor
+                    // from this branch; never the settlement sink (FIX 9297).
+                    report_released(self.worker_id.as_deref(), &self.epoch, &frame.body);
                     return Err(Cut(unexpected("released", "before `final`")));
                 }
                 _ => {}

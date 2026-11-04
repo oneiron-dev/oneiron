@@ -430,6 +430,10 @@ async fn execute(
     report(&route, &last);
     stamp_physical(&mut last, sent.physical);
     stamp_scheduling(&mut last);
+    // The tie downgrade lands before the receipt is parsed and published:
+    // otherwise the ledger and settlement keep VerifiedArtifacts while the
+    // reply carries Unknown, and settlement retains the call twice (FIX 9297).
+    sent.tie.apply(&mut last);
     // The final's receipt, done or error, is this call's final one; the
     // Failed settlement records what its lease observed (FIX 9297).
     if let Some(mut receipt) = record_receipt(&route, &sent, &last) {
@@ -865,6 +869,8 @@ impl Live {
                     report(&self.route, &last);
                     stamp_physical(&mut last, self.sent.physical);
                     stamp_scheduling(&mut last);
+                    // Same tie-before-publish as the buffered path (FIX 9297).
+                    self.sent.tie.apply(&mut last);
                     // The final's receipt, done or error, is this call's
                     // final one; a cut stream keeps its progress (FIX 9297).
                     if let Some(mut receipt) = record_receipt(&self.route, &self.sent, &last) {
