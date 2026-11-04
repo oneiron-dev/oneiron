@@ -40,7 +40,10 @@ pub(crate) fn attaches_as_file_read(entity_type: u8, read: &mut dyn Read) -> Res
     let head = &body.head[..body.head_len];
     Ok(entity_type == ENTITY_TYPE_ASSET
         && !body.utf8.text()
-        && matches!(crate::store::skill_source_carrier::decode_source_carrier(head), Ok(None))
+        && matches!(
+            crate::store::skill_source_carrier::decode_source_carrier(head),
+            Ok(None)
+        )
         && !marker
         && !crate::store::receipt_identity::is_receipt_archive_source(head))
 }

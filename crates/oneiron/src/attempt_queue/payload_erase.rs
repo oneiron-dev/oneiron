@@ -44,37 +44,30 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
-use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::agent_dispatch::{
-     agent_dispatch_actor, decode_agent_dispatch_input, record_dispatch_input,
+    agent_dispatch_actor, decode_agent_dispatch_input, record_dispatch_input,
 };
-use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_INPUT_KEYS;
-use crate::browser_library::{admission_payload_actor};
 use crate::attempt_queue::browser_admission::PROGRAM_ADMISSION_KIND;
-use crate::conversation::TurnActionAttempt;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_INPUT_KEYS;
 use crate::attempt_queue::turn_action_kind::TURN_ACTION_ATTEMPT_KIND;
-use crate::{
-    store::dispatch_attempt_kind::BYOA_ATTEMPT_KIND,
-    dispatch_byoa::{
-        ByoaAttemptPayload,
-        ByoaConnectorSpec,
-        ERASED_TASK_FAILURE_REASON,
-        RunnerTaskSource,
-        StagedInputPin,
-        decode_byoa_attempt_payload,
-        encode_byoa_attempt_payload,
-    },
-};
-use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
-use crate::dreamer_runner::{
-    decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
-};
+use crate::browser_library::admission_payload_actor;
+use crate::conversation::TurnActionAttempt;
+use crate::dreamer_runner::{decode_dreamer_attempt_payload, encode_dreamer_attempt_payload};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::store::Store;
+use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::write_envelope::WriteActor;
+use crate::{
+    dispatch_byoa::{
+        ByoaAttemptPayload, ByoaConnectorSpec, ERASED_TASK_FAILURE_REASON, RunnerTaskSource,
+        StagedInputPin, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
+    },
+    store::dispatch_attempt_kind::BYOA_ATTEMPT_KIND,
+};
 use oneiron_authority::federation::RepoAccessRefusal;
 
 use super::encoding::{decode_record, encode_record};

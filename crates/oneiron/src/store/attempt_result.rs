@@ -75,4 +75,3 @@ pub(crate) fn validate_result_ref(result_ref: &str) -> Result<()> {
     }
     Ok(())
 }
-
