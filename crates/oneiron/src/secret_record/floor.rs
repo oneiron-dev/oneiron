@@ -195,10 +195,7 @@ pub(crate) fn policy_manifest_bodies_strict(
 }
 
 impl oneiron_store::secret_record::SecretCustodyFloorSource for Store {
-    fn resolve_secret_custody_floor(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<SecretCustodyFloor> {
+    fn resolve_secret_custody_floor(&self, txn: &heed::RoTxn<'_>) -> Result<SecretCustodyFloor> {
         let mut floor = SecretCustodyFloor::default();
         for entries in policy_manifest_bodies_strict(self, txn).map_err(floor_walk_refusal)? {
             floor.merge(decode_floor_keys(&entries)?);

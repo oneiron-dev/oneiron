@@ -2,10 +2,10 @@
 
 use super::codec::derive_confirmation_status;
 use super::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
+use crate::write_envelope::claim_body::ClaimBody;
 use oneiron_base::edge::{EdgeActorClass, EdgeProvenanceFlags};
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{ClaimError, Error, Result};
-use crate::write_envelope::claim_body::ClaimBody;
 
 /// D14 precedence key of one live provenance Claim, used to pick the
 /// deterministic flag-stamp WINNER.
