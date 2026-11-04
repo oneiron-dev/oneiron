@@ -461,10 +461,6 @@ pub use ask_types::{
     TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
 
-// The lift sweep's typed acceptance for this module's authored side
-// tables (FIX 2680), named by their declarations.
-pub(crate) use self::linear_store::linear_pull_cursor_accepts_masked;
-
 use crate::memory::{MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
 

@@ -119,6 +119,8 @@ pub mod ports {
     };
 }
 
+pub(crate) mod agent_birth_custody;
+pub(crate) mod agent_birth_identity;
 pub mod agent_record;
 pub mod attempt_cancel;
 pub mod attempt_cleanup;
@@ -146,7 +148,17 @@ pub use delete_guards::StoreDeleteGuards;
 mod hooks;
 pub use hooks::StoreHooks;
 mod scope_stamps;
-pub use scope_stamps::StoreScopeStamps;
+pub(crate) use scope_stamps::StoreScopeStamps;
+mod project_writes;
+pub use project_writes::StoreProjectWrites;
+mod record_hooks;
+pub use record_hooks::StoreRecordHooks;
+pub(crate) mod actor_scrubs;
+pub use actor_scrubs::StoreActorScrubs;
+#[cfg(feature = "sync")]
+mod sync_hooks;
+#[cfg(feature = "sync")]
+pub(crate) use sync_hooks::StoreSyncHooks;
 #[cfg(feature = "sync")]
 pub mod document_frame_tags;
 pub mod housekeeping_report;
@@ -157,8 +169,12 @@ pub(crate) mod loro_document;
 pub(crate) mod loro_tombstones;
 #[cfg(feature = "sync")]
 pub mod materialization_event;
+pub mod model_description_rows;
+pub mod model_score_diff;
+pub(crate) mod model_stream_row;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
+pub mod pack_hook_actor_class;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
 pub(crate) mod project_kind;
@@ -213,6 +229,8 @@ pub mod body_descriptor;
 mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
+pub mod decision_ask_role;
+pub(crate) mod decision_question_watches;
 pub mod derivation;
 pub mod diagnostic_record;
 mod diagnostics;
@@ -225,7 +243,10 @@ pub(crate) mod graph_version;
 pub(crate) mod known_value_index;
 pub(crate) mod l2_evidence;
 pub mod receipt_identity;
+pub(crate) mod result_body_erasure;
+pub(crate) mod result_body_rows;
 pub mod retrieval_deadline;
+pub mod retrieval_signal;
 pub mod row_birth;
 pub(crate) mod pending_custody_revoke;
 pub(crate) mod secret_handle_labels;
@@ -235,6 +256,7 @@ mod scan_kind;
 mod scan_kind_table;
 pub(crate) mod text_index;
 pub(crate) mod vector_index;
+pub mod workflow_definition;
 
 pub use scan_checks::ScanCheck;
 pub(crate) use scan_checks::{CheckKey, PendingScanChecks};
@@ -258,6 +280,7 @@ mod key_custody;
 mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
+pub(crate) mod linear_pull_cursor;
 mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
@@ -285,8 +308,11 @@ mod send_receipt_audit;
 mod served_vaults;
 mod short_id_alias;
 pub(crate) mod skill_content_index;
+pub mod skill_hub_predicates;
 pub mod skill_package;
+pub(crate) mod skill_refinement_custody;
 pub(crate) mod skill_source_carrier;
+pub(crate) mod skill_source_custody;
 mod structural_kind_registry;
 mod sync_responses;
 pub(crate) mod task_body_checks;
