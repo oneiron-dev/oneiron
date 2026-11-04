@@ -59,8 +59,16 @@ impl Vault {
         if !crate::vault::live_entity_row_in_txn(&self.store, &txn, grant_ref)?.is_live() {
             return Ok(false);
         }
-        let grant =
-            crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        // An erased history authorizes nothing (FIX 4981): denied, as a
+        // deleted grant is.
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let grant = match crate::access_grant::decode_access_grant_body(body) {
+            Ok(grant) => grant,
+            Err(_) if crate::access_grant::decode_erased_grant_body(body).is_ok() => {
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        };
         let AccessGrantScope::ChannelIdentity {
             identity_ref,
             envelope_ref,
@@ -184,8 +192,16 @@ impl Vault {
             {
                 return Err(invalid_autonomy());
             }
-            let existing =
-                crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            // An erased history is not the live grant this mint checks
+            // (FIX 4981): absent or mismatched autonomy, as a deleted row is.
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            let existing = match crate::access_grant::decode_access_grant_body(body) {
+                Ok(existing) => existing,
+                Err(_) if crate::access_grant::decode_erased_grant_body(body).is_ok() => {
+                    return Err(invalid_autonomy());
+                }
+                Err(error) => return Err(error),
+            };
             if existing.scope != read_grant.scope
                 || existing.principal_ref != desired.actor_ref
                 || existing.effective_status_at(now) != AccessGrantStatus::Active
@@ -505,8 +521,16 @@ impl AutonomyReader<'_> {
         {
             return Err(invalid_autonomy());
         }
-        let grant =
-            crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        // An erased history authorizes nothing (FIX 4981): absent or
+        // mismatched autonomy, as a deleted row is.
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let grant = match crate::access_grant::decode_access_grant_body(body) {
+            Ok(grant) => grant,
+            Err(_) if crate::access_grant::decode_erased_grant_body(body).is_ok() => {
+                return Err(invalid_autonomy());
+            }
+            Err(error) => return Err(error),
+        };
         let AccessGrantScope::ChannelIdentity {
             identity_ref,
             envelope_ref,

@@ -52,10 +52,11 @@ use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::{ASSET_BODY_FILE, ASSET_BODY_HELD};
 use crate::error::{Error, Result};
 use crate::provenance::body::{
-    owned_body_in_txn, publish_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn,
+    publish_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn,
 };
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody};
+use crate::store::owned_body::owned_body_in_txn;
 
 /// FIX 3677 (CALLS "ASSET inline body bound"): an opaque ASSET body longer
 /// than this lives in a body file; a body this long or shorter, and every
@@ -396,7 +397,7 @@ pub(crate) fn file_put_body_in_txn(
     // A marked file keeps its row: a serving door reads its keys' spans over
     // the bytes it holds. Any other stays there too, with no instance minted
     // inside this writer.
-    crate::secret_custody::masked_file_in_txn(store, txn, &AssetBodyFacts::of(data).blake3)?;
+    crate::store::file_key_masks::masked_file_in_txn(store, txn, &AssetBodyFacts::of(data).blake3)?;
     Ok(None)
 }
 
