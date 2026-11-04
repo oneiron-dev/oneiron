@@ -13,6 +13,7 @@ use super::super::store::owned_head;
 use super::unit_receipts::artifact_unit_receipts;
 use super::{ASKED, ArtifactAskRecord, ArtifactAskStanding, ArtifactAsked, Asking, baseline};
 use crate::edit_roundtrip::ArtifactAskRun;
+use crate::edit_roundtrip::SheetRowSelection;
 use crate::edit_settle::PendingProposalView;
 use crate::{EntityId, ErrorKind, Result, Vault};
 
@@ -28,7 +29,9 @@ impl Asking<'_> {
         artifact: EntityId,
         observed: Vec<(EntityId, u64)>,
         kind: &str,
-        ask: impl FnOnce(&str) -> Result<ArtifactAskRun>,
+        selection_ref: [u8; 32],
+        selected_rows: Option<SheetRowSelection>,
+        ask: impl FnOnce(&str, Option<&SheetRowSelection>) -> Result<ArtifactAskRun>,
     ) -> Result<Option<PendingProposalView>> {
         let vault = self.vault;
         // The live bodies it reads, pinned as the ask starts (FIX 2115).
@@ -64,7 +67,21 @@ impl Asking<'_> {
                 next_sheet_row,
             }
         };
-        let committed = ask(&reference).and_then(|run| {
+        let committed = ask(&reference, selected_rows.as_ref()).and_then(|run| {
+            let remaining_sheet_rows = match run.next_sheet_row {
+                Some(next) => {
+                    let mut selected = selected_rows
+                        .ok_or(crate::Error::InvariantViolation("partial sheet selection"))?;
+                    selected.trim_before(next);
+                    if selected.is_empty() {
+                        return Err(crate::Error::InvariantViolation(
+                            "empty partial sheet selection",
+                        ));
+                    }
+                    Some(selected)
+                }
+                None => None,
+            };
             vault.with_write_txn_grouped(|wtxn| {
                 let proposed = match &run.proposal {
                     Some(proposal) => Some(vault.retain_edit_proposal_in_txn(
@@ -80,14 +97,12 @@ impl Asking<'_> {
                     proposal_ref: proposal_ref.clone(),
                     ask_id: Some(ask_id),
                     live: live.clone(),
+                    selection_ref: Some(selection_ref),
+                    remaining_sheet_rows,
                 };
-                if run.next_sheet_row.is_none() {
-                    ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)?;
-                } else {
-                    // A previous stamp on the same frontier must not hide
-                    // the suffix this refresh left unfinished.
-                    ASKED.delete(&vault.store, wtxn, &(self.question, artifact))?;
-                }
+                // An unfinished selection is explicit in this same latest
+                // projection; it neither completes nor forgets the suffix.
+                ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)?;
                 let principal = self.record.principal;
                 let asked = event(
                     proposal_ref,
@@ -131,6 +146,9 @@ pub(in crate::llm::decision::questions) fn artifact_event_record(
         proposal_ref: event.proposal_ref.clone(),
         ask_id: Some(event.ask_id),
         live: Vec::new(),
+        // This stamp is only a history view, never a scheduling cursor.
+        selection_ref: None,
+        remaining_sheet_rows: None,
     };
     let mut record = ask_record(vault, event.artifact, &stamp, event.failed)?;
     record

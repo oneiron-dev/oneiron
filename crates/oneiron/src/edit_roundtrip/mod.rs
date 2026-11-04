@@ -88,6 +88,7 @@ pub mod paragraph_review;
 mod pipeline;
 pub mod pptx;
 mod session_validate;
+mod sheet_rows;
 pub mod slides_review;
 use oneiron_docedit::opc_xml as xml;
 
@@ -114,6 +115,7 @@ pub use self::pipeline::{EditOutcome, EditProposal, RecalcStatus, run_edit_round
 pub use self::session_validate::{
     AppliedEdit, EditPlan, EditSession, OfficeDoc, RecalcPolicy, ValidationCheck, ValidationReport,
 };
+pub use self::sheet_rows::SheetRowSelection;
 /// The folder and file name a session gives the in-process recalc
 /// ([`EditSession::recalc_location`]).
 pub use oneiron_xlsx_formula::DocumentLocation;

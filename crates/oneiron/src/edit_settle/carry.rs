@@ -44,8 +44,8 @@ use crate::edit_roundtrip::slides_review::{
 };
 use crate::edit_roundtrip::{
     ArtifactAsk, CellRef, CellValue, EditOp, EditProposal, FolderAsk, FolderItem, OfficeFormat,
-    ParagraphAsk, ParagraphJudgment, RangeRef, SheetAnswerBundle, SheetRowReads, SheetRowsAsk,
-    UnitDecider,
+    ParagraphAsk, ParagraphJudgment, RangeRef, SheetAnswerBundle, SheetRowReads, SheetRowSelection,
+    SheetRowsAsk, UnitDecider,
 };
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -1323,6 +1323,7 @@ impl Vault {
                 else {
                     return Ok((Reasked::Nothing, reask_ref));
                 };
+                let selected: SheetRowSelection = rows.iter().copied().collect();
                 let run = self.ask_blob_artifact_sheet_rows(
                     &wake.artifact,
                     &SheetRowsAsk {
@@ -1341,7 +1342,7 @@ impl Vault {
                         answer_col: *answer_col,
                         header_row: reads.header_row,
                         max_count_override: *max_count_override,
-                        only_rows: Some(&rows),
+                        only_rows: Some(&selected),
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
