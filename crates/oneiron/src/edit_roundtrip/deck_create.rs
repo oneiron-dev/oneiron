@@ -777,9 +777,7 @@ fn outline_content_equal(held: &Value, current: &Value) -> bool {
             // an outline edit (blind review of #4387).
             let engine_mapped = note_pin(pin).is_some()
                 || engine_span(pin).is_some_and(|span| span.claim.is_none());
-            if engine_mapped
-                && let Some(object) = pin.as_object_mut()
-            {
+            if engine_mapped && let Some(object) = pin.as_object_mut() {
                 object.remove("drift");
             }
         });

@@ -4,7 +4,7 @@ use super::LiveLeaseBackend;
 use super::actors::McpResolvedActor;
 use super::run_seats::RunSeats;
 use crate::admission::Admission;
-use crate::ai_host::live_lease::LeaseLine;
+use crate::ai_host::live_lease::{LeaseLine, LiveLeaseState};
 use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use oneiron::agent_def::AgentModel;
@@ -234,6 +234,19 @@ pub trait McpCodeModeProvider: Send + Sync {
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
+    /// [`Self::reader_backend`] with the caller's shared live-lease state.
+    /// The default returns None, so an unmodified provider keeps the existing
+    /// LiveLeaseBackend wrapper and exactly one look per backend call. A Some
+    /// backend MUST look per rung on the threaded lease; one that cannot look
+    /// MUST return None and keep that wrapper.
+    fn reader_backend_with_lease(
+        &self,
+        _meter: BudgetGuard,
+        _payer: Option<PayerPerson>,
+        _lease: Option<LiveLeaseState>,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
     /// The meter the host runs a run's own model calls on when the run
     /// spends under no scope (served code mode's shared guard): the reader
     /// children of such a run spend on it too. `None`: the provider has none
@@ -359,6 +372,18 @@ pub trait McpCodeModeProvider: Send + Sync {
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
+    /// [`Self::planned_backend`] with the caller's shared live-lease state.
+    /// A Some backend MUST look per rung on the threaded lease; one that cannot
+    /// look MUST return None and keep the existing LiveLeaseBackend wrapper.
+    fn planned_backend_with_lease(
+        &self,
+        _meter: BudgetGuard,
+        _payer: Option<PayerPerson>,
+        _planned: &PlannedModel,
+        _lease: Option<LiveLeaseState>,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
     /// [`Self::compaction`] for a planned child (FIX 2310, Engine C5): its
     /// live admission sees the same binding its calls do. The default is
     /// [`Self::compaction`]'s.
@@ -404,7 +429,14 @@ pub type PlannedRoute =
 /// is given and billed to the payer, when one is given, bound to its plan
 /// (`McpCodeModeProvider::planned_backend`).
 pub type PlannedMeter = Arc<
-    dyn Fn(BudgetGuard, Option<PayerPerson>, &PlannedModel) -> Arc<dyn LlmBackend> + Send + Sync,
+    dyn Fn(
+            BudgetGuard,
+            Option<PayerPerson>,
+            &PlannedModel,
+            Option<LiveLeaseState>,
+        ) -> Arc<dyn LlmBackend>
+        + Send
+        + Sync,
 >;
 
 /// Builds one run's compaction seat from the run's authenticated host
@@ -416,8 +448,11 @@ pub type RunCompactionSeat =
 
 /// Builds one reader child's backend over the host's model, its calls spent
 /// on the guard it is given and billed to the payer, when one is given.
-pub type ReaderMeter =
-    Arc<dyn Fn(BudgetGuard, Option<PayerPerson>) -> Arc<dyn LlmBackend> + Send + Sync>;
+pub type ReaderMeter = Arc<
+    dyn Fn(BudgetGuard, Option<PayerPerson>, Option<LiveLeaseState>) -> Arc<dyn LlmBackend>
+        + Send
+        + Sync,
+>;
 
 /// How many `execute_code` runs one server works on at once.
 ///
@@ -895,26 +930,56 @@ pub(crate) fn enter_engine_native_run(
             vault, provider, backend, bound, config, compaction, reactor, seat,
         );
     };
-    // The backend a reader child's calls take, on this scope's guard; a
-    // planned child's is bound to its plan as well.
-    let backend = planned
-        .and_then(|planned| provider.planned_backend(guard.clone(), payer.clone(), planned))
-        .or_else(|| provider.reader_backend(guard.clone(), payer));
+    // The lease the entry's door and planner runner were lent: one ledger.
+    let live = lease.on(vault);
+    let scoped = live.state();
+    let scoped_backend = planned
+        .and_then(|planned| {
+            provider.planned_backend_with_lease(
+                guard.clone(),
+                payer.clone(),
+                planned,
+                Some(scoped.clone()),
+            )
+        })
+        .or_else(|| {
+            provider.reader_backend_with_lease(guard.clone(), payer.clone(), Some(scoped.clone()))
+        });
+    let per_rung = scoped_backend.is_some();
+    // An unmodified provider takes its old wrapper; the scoped code-mode
+    // backend looks per rung on this same ledger instead.
+    let backend = match scoped_backend {
+        Some(backend) => Some(backend),
+        None => planned
+            .and_then(|planned| provider.planned_backend(guard.clone(), payer.clone(), planned))
+            .or_else(|| provider.reader_backend(guard.clone(), payer)),
+    };
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
     })?;
-    // The lease the entry's door and planner runner were lent: one ledger.
-    let live = lease.on(vault);
-    let entered = enter_on(
-        vault,
-        provider,
-        &LiveLeaseBackend::new(&live, backend.as_ref()),
-        bound,
-        config,
-        compaction,
-        reactor,
-        seat,
-    );
+    let entered = if per_rung {
+        enter_on(
+            vault,
+            provider,
+            backend.as_ref(),
+            bound,
+            config,
+            compaction,
+            reactor,
+            seat,
+        )
+    } else {
+        enter_on(
+            vault,
+            provider,
+            &LiveLeaseBackend::new(&live, backend.as_ref()),
+            bound,
+            config,
+            compaction,
+            reactor,
+            seat,
+        )
+    };
     live.book_rest()
         .map_err(|error| EngineRunError::Binding(error.to_string()))?;
     entered

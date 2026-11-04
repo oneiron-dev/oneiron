@@ -336,7 +336,9 @@ impl Vault {
             bytes: bytes.to_vec(),
             report: serde_json::json!({}),
             made_by: made_by.cloned().or_else(|| {
-                Some(default_version_made_by(&actor, provenance, None, learned_at))
+                Some(default_version_made_by(
+                    &actor, provenance, None, learned_at,
+                ))
             }),
         };
         self.propose_native_output_with_write_grant(
