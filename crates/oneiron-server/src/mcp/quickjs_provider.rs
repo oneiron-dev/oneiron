@@ -548,9 +548,19 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig> {
         self.run_config(vault, run_id, task, || {
-            Ok(vault
+            vault
                 .get_code_run_replay_record(&run_id)?
-                .map(|record| record.determinism.frozen_unix_ms))
+                .map(|record| {
+                    record
+                        .determinism
+                        .map(|determinism| determinism.frozen_unix_ms)
+                        .ok_or_else(|| {
+                            oneiron::Error::InvalidConfig(
+                                "code run has unknown determinism".to_owned(),
+                            )
+                        })
+                })
+                .transpose()
         })
     }
     /// A session-bound run's first start is its room's record's: a resumed
