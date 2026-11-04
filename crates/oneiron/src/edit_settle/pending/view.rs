@@ -67,18 +67,18 @@ impl PendingRow {
                     })
                     .unwrap_or("null");
                 let mut text = String::with_capacity(deck_text.len() + 64);
-                text.push_str("{\"deck\":");
-                text.push_str(deck_text);
-                text.push_str(",\"format\":");
+                text.push_str("{\"format\":");
                 text.push_str(format_text);
                 text.push_str(",\"ops\":");
                 text.push_str(&ops.to_string());
+                text.push_str(",\"deck\":");
+                text.push_str(deck_text);
                 text.push('}');
-                // SAFETY: `deck_text` is a validated single JSON value or
-                // `null`, `format_text` is a quoted literal, and `ops` is a
-                // number, so the object is one well-formed value with no
-                // surrounding whitespace.
-                RawJson(unsafe { serde_json::value::RawValue::from_string_unchecked(text) })
+                // `deck_text` is a validated single JSON value or `null`,
+                // `format_text` a quoted literal and `ops` a number, so the
+                // checked build below always succeeds; the null fallback is
+                // unreachable.
+                RawJson(serde_json::value::RawValue::from_string(text).unwrap_or_default())
             }
             PendingBody::Output {
                 name,
@@ -90,18 +90,18 @@ impl PendingRow {
                     serde_json::to_string(media_type).unwrap_or_else(|_| "\"\"".to_owned());
                 let mut text =
                     String::with_capacity(report.len() + name_json.len() + media_json.len() + 64);
-                text.push_str("{\"media_type\":");
-                text.push_str(&media_json);
-                text.push_str(",\"name\":");
+                text.push_str("{\"name\":");
                 text.push_str(&name_json);
+                text.push_str(",\"media_type\":");
+                text.push_str(&media_json);
                 text.push_str(",\"report\":");
                 text.push_str(report);
                 text.push('}');
-                // SAFETY: `name`/`media_type` are serializer-quoted strings
-                // and `report` is stored report text validated at proposal
-                // time, so the object is one well-formed value with no
-                // surrounding whitespace.
-                RawJson(unsafe { serde_json::value::RawValue::from_string_unchecked(text) })
+                // `name`/`media_type` are serializer-quoted strings and
+                // `report` is stored report text validated at proposal time,
+                // so the checked build below always succeeds; the null
+                // fallback is unreachable.
+                RawJson(serde_json::value::RawValue::from_string(text).unwrap_or_default())
             }
         };
         PendingProposalView {

@@ -155,18 +155,18 @@ pub(super) struct ProposeOutput {
 /// Typed proposal listings (FIX 12431): the summary's raw report text
 /// serializes verbatim, never through a recursive `Value`.
 #[derive(Serialize)]
-struct ProposalsResponse {
+pub(super) struct ProposalsResponse {
     proposals: Vec<PendingProposalView>,
 }
 
 #[derive(Serialize)]
-struct ProposedResponse {
+pub(super) struct ProposedResponse {
     proposed: PendingProposalView,
 }
 
 #[derive(Serialize)]
 #[serde(untagged)]
-enum DeckProposeResponse {
+pub(super) enum DeckProposeResponse {
     Proposed { proposed: PendingProposalView },
     Rejected { rejected: DeckProposeRejection },
 }
