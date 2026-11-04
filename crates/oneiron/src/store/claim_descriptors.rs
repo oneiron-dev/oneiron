@@ -61,6 +61,18 @@ pub(crate) const DESCRIPTOR_PUT_OPERATION: &str = "comm.claim_class_descriptor.p
 /// The engine keyword bounding a string's UTF-8 length.
 const KEYWORD_MAX_UTF8_BYTES: &str = "maxUtf8Bytes";
 
+/// A CRM-pack token's first and last character: no ASCII capital, no control
+/// character and no white space (what `trim` removes).
+const TOKEN_END_CHAR: &str =
+    r"[^A-Z\u0000-\u0020\u007F-\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]";
+
+/// A CRM-pack token's inner character: no ASCII capital and no control
+/// character.
+const TOKEN_INNER_CHAR: &str = r"[^A-Z\u0000-\u001F\u007F-\u009F]";
+
+/// A CRM-pack text field's bound, in UTF-8 bytes.
+const TOKEN_MAX_UTF8_BYTES: u64 = 512;
+
 /// One compiled `generic` claim class: the subject its claims may name, its
 /// value schema, and that schema compiled once.
 pub(crate) struct GenericClassSeed {
