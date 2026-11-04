@@ -559,8 +559,17 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
     while more {
         let (len, next) = recv_header(stream, wait, &mut fds)?;
         bound.check(len, body.len() as u64)?;
+        // The old buffer can outlive the realloc; the budget release is
+        // exact via shrink, and the floor hold stays conservative until the lease drops.
+        let existing = body.len() as u64;
+        if existing > 0 {
+            booking.value(&mut held, existing)?;
+        }
         booking.more(&mut held, u64::from(len))?;
         recv_body(stream, wait, &mut body, len)?;
+        if existing > 0 {
+            booking.body_gone(&mut held, existing);
+        }
         more = next;
     }
     let total = body.len() as u64;

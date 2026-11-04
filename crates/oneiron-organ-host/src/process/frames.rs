@@ -53,6 +53,11 @@ impl FrameBooking for Reading<'_> {
             .map_err(unroomed)
     }
 
+    fn more(&mut self, held: &mut Lease, len: u64) -> Result<(), FrameError> {
+        held.add_frame_bytes(len);
+        self.value(held, len)
+    }
+
     fn value(&mut self, held: &mut Lease, bytes: u64) -> Result<(), FrameError> {
         let stopped = || self.stopped();
         self.inbox

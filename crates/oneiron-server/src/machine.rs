@@ -588,7 +588,8 @@ impl MemoryShared {
     /// Whether `bytes` more fit past every other holder. Growth excludes
     /// only its own pending bytes from the live-reading check, or all its
     /// own bytes when that reading is unavailable; every other lease and
-    /// the reserve still count in full.
+    /// the reserve still count in full. The fallback compares the lease's
+    /// whole, its own bytes with the growth, against the machine's memory.
     fn fits_excluding(
         &self,
         line: &MemoryLine,
@@ -596,13 +597,21 @@ impl MemoryShared {
         own_pending: u64,
         own_leased: u64,
     ) -> bool {
-        let (room, held, excluded) = match oneiron_contracts::limit_ask::available_memory_bytes() {
-            Some(available) => (available, line.pending, own_pending),
-            None => (self.total, line.leased, own_leased),
-        };
-        room.saturating_sub(self.reserve)
-            .saturating_sub(held.saturating_sub(excluded))
-            >= bytes
+        let whole = own_leased.saturating_add(bytes);
+        match oneiron_contracts::limit_ask::available_memory_bytes() {
+            Some(available) => {
+                available
+                    .saturating_sub(self.reserve)
+                    .saturating_sub(line.pending.saturating_sub(own_pending))
+                    >= bytes
+            }
+            None => {
+                self.total
+                    .saturating_sub(self.reserve)
+                    .saturating_sub(line.leased.saturating_sub(own_leased))
+                    >= whole
+            }
+        }
     }
 }
 

@@ -289,6 +289,11 @@ impl Lease {
         self.frame
     }
 
+    /// Counts continuation-frame bytes in the measured encoded length.
+    pub(crate) fn add_frame_bytes(&mut self, len: u64) {
+        self.frame = self.frame.saturating_add(len);
+    }
+
     /// Gives back `bytes` of the budget's room for bytes that are gone: a
     /// frame's body, once only its value is left. The machine's leases stay
     /// until the frame drops.
