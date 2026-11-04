@@ -141,6 +141,11 @@ pub enum OwnerActKind {
     /// `target` is the agent the policy is for and its `seen` that
     /// agent's live acts.
     FreeTimePolicy,
+    /// The owner's grant or revoke of a connector witness-read AccessGrant
+    /// (FIX 10980; L02 kind ruling 2026-11-05 00:01 JST). A local typed
+    /// receipt records it, not a signed authority op; its `seen` is zero.
+    /// No agent Grant line names this act.
+    AccessGrant,
 }
 
 impl OwnerActKind {
@@ -166,6 +171,7 @@ impl OwnerActKind {
             Self::GrantRevoke => "grant_revoke",
             Self::OwnerKeyEnrollment => "owner_key_enrollment",
             Self::FreeTimePolicy => "free_time_policy",
+            Self::AccessGrant => "access_grant",
         }
     }
 
@@ -191,6 +197,7 @@ impl OwnerActKind {
             "grant_revoke" => Self::GrantRevoke,
             "owner_key_enrollment" => Self::OwnerKeyEnrollment,
             "free_time_policy" => Self::FreeTimePolicy,
+            "access_grant" => Self::AccessGrant,
             _ => return None,
         })
     }
