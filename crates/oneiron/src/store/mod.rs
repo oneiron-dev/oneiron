@@ -276,6 +276,7 @@ mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
 pub(crate) mod linear_pull_cursor;
+pub(crate) mod linear_task_revision;
 mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
