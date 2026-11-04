@@ -195,6 +195,10 @@ struct Nonces {
     /// Admitted entries whose replay window ended before their rows landed:
     /// their journal records are still owed a replay, so the journal keeps
     /// them and a restore's fence still counts them, until the rows land.
+    /// One that never lands (its tries spent) keeps the journal for the
+    /// process's life: past the journal's cap every spend takes the writer's
+    /// path until a restart replays and truncates it (L02 11-04 10:39, an
+    /// accepted availability cost, never a double admission).
     expired_unlanded: HashSet<SpentKey>,
     /// Spent in a writer whose transaction is not known to be decided, each
     /// with the id that transaction commits as.
@@ -643,7 +647,10 @@ impl SpentNonces {
         // committed, for the snapshot below, which is taken after.
         let decided = vault.store.env.info().last_txn_id;
         nonces.staged.retain(|_, commits_as| *commits_as > decided);
-        if nonces.admitted.contains_key(&key) || nonces.staged.contains_key(&key) {
+        if nonces.admitted.contains_key(&key)
+            || nonces.expired_unlanded.contains(&key)
+            || nonces.staged.contains_key(&key)
+        {
             return false;
         }
         let committed = match vault.store.env.read_txn() {
@@ -695,7 +702,7 @@ impl SpentNonces {
         let commits_as = vault.store.env.info().last_txn_id + 1;
         let mut nonces = self.lock();
         nonces.staged.retain(|_, staged| *staged >= commits_as);
-        if nonces.admitted.contains_key(&key) {
+        if nonces.admitted.contains_key(&key) || nonces.expired_unlanded.contains(&key) {
             return false;
         }
         nonces.staged.insert(key, commits_as);
@@ -860,6 +867,10 @@ impl SpentNonces {
     /// so a floor [`WINDOW_SECS`] + 1 past the clock now refuses every one;
     /// a fresh proof is refused only until the clock passes the floor, and no
     /// slip is touched. A floor that does not commit fails the caller.
+    /// Residual corner (L02 11-04 10:39): a proof signed up to WINDOW_SECS
+    /// ahead of the clock, met again after the wall stepped back across the
+    /// crash, can sit past this floor; the floor is never lowered, and the
+    /// proof clock's own floor holds the clock at or above its last reading.
     fn refuse_journaled_proofs(
         &self,
         vault: &Vault,
