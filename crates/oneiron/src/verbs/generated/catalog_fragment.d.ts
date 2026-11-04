@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1278 code-mode rows (1238 host rows, 40 run rows), 4518 declarations.
-// Replies: 1093 fully typed, 184 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1279 code-mode rows (1239 host rows, 40 run rows), 4523 declarations.
+// Replies: 1094 fully typed, 184 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -2215,6 +2215,11 @@ declare namespace Sdk {
   type LearningSettingsView = { catalog: LearningSettingSpecView[]; rows: LearningSettingRowView[] };
   type LearningSettingPut = { key: string; mode: LearningSettingMode; value?: number | null; choice?: LearningChoiceValue | null; weight_runs?: number | null; why: string; goal?: string | null; project?: string | null; task_type?: string | null };
   type LearningSettingClear = { key: string; mode: LearningSettingMode; goal?: string | null; project?: string | null; task_type?: string | null };
+  type CodeRunSecretLiftDismiss = { handle: string; occurrence: string };
+  type CodeRunSecretLiftRequest = { dismiss?: CodeRunSecretLiftDismiss | null };
+  type CodeRunSecretLiftProposalView = { handle: string; occurrence: string; detector_reason: string; suggested_secret_name: string };
+  type CodeRunSecretLiftDismissal = { handle: string; occurrence: string; dismissed_by: string; dismissed_at: number; receipt: string };
+  type CodeRunSecretLiftStatus = { proposals: CodeRunSecretLiftProposalView[]; dismissed?: CodeRunSecretLiftDismissal | null };
   type LiftCloseReason = "not_a_secret" | "rotated" | "accepted" | "read_clean" | "answered" | "deleted";
   type SecretLiftClose = { proposal: string; reason: LiftCloseReason };
   type SecretLiftRequest = { start?: boolean; close?: SecretLiftClose | null };
@@ -7226,6 +7231,8 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   secrets: {
+    /** The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged. */
+    code_run_lifts(input: Sdk.CodeRunSecretLiftRequest): Promise<Sdk.CodeRunSecretLiftStatus | StoredResult>;
     custody: {
       /** The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to. */
       get(input: Sdk.SecretCustodyGetRequest): Promise<Sdk.SecretCustodyViewReply | StoredResult>;
