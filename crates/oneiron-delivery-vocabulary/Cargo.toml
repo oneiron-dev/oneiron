@@ -1,0 +1,16 @@
+[package]
+name = "oneiron-delivery-vocabulary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Delivery-window vocabulary of the oneiron engine: claim keys, decisions and the outbound schedule context"
+repository.workspace = true
+
+[dependencies]
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+schemars = "=0.8.22"
+serde = { workspace = true }
+
+[lints]
+workspace = true

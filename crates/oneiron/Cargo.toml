@@ -25,6 +25,12 @@ oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
 oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
 oneiron-skill-attribution = { version = "0.1.0", path = "../oneiron-skill-attribution" }
+oneiron-web-fetch = { version = "0.1.0", path = "../oneiron-web-fetch" }
+oneiron-lens-wire = { version = "0.1.0", path = "../oneiron-lens-wire" }
+oneiron-policy-vocabulary = { version = "0.1.0", path = "../oneiron-policy-vocabulary" }
+oneiron-run-budget = { version = "0.1.0", path = "../oneiron-run-budget" }
+oneiron-code-source = { version = "0.1.0", path = "../oneiron-code-source" }
+oneiron-delivery-vocabulary = { version = "0.1.0", path = "../oneiron-delivery-vocabulary" }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 # The OF-570 envelope: world keys (P6b), and the recovery kit's passphrase
 # stretch (P6a).
