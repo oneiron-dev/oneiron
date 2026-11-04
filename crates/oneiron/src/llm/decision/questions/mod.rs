@@ -34,7 +34,7 @@ pub use answer_scope::{
     read_question_in_lane, schedule_backfill_in_lane,
 };
 pub use answers::question_answers;
-pub(crate) use arrival::project_arrivals_in_txn;
+pub(crate) use arrival::{project_arrivals_for_changes_in_txn, project_arrivals_in_txn};
 pub(crate) use artifact_refresh::artifact_unit_receipts;
 pub use artifact_refresh::{
     ArtifactAskRecord, ArtifactAskStanding, ArtifactUnitReceipt, artifact_ask_records,
