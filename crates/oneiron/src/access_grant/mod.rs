@@ -30,8 +30,8 @@ pub use self::codec::{
 pub(crate) use self::codec::{
     ACCESS_GRANT_FIELDS_FULL, ACCESS_GRANT_FIELDS_MINIMAL, ACCESS_GRANT_FIELDS_STANDARD,
     decode_entity_ref, decode_erased_grant_body, decode_live_access_grant_body,
-    encode_erased_grant_body, invalid_grant, required_value, validate_access_grant_body_bytes,
-    validate_keys,
+    encode_erased_grant_body, erased_grant, invalid_grant, required_value,
+    validate_access_grant_body_bytes, validate_keys,
 };
 pub use self::record::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow,
