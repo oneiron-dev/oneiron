@@ -9,7 +9,6 @@ use sha2::Sha256;
 use std::collections::BTreeMap;
 
 use crate::Vault;
-use oneiron_contracts::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, decode_claim_body,
@@ -28,6 +27,7 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
 use oneiron_authority::federation::Scope;
+use oneiron_contracts::affect::Vad;
 
 use super::disclosable_set::DisclosableSet;
 use super::disclosure_tier;

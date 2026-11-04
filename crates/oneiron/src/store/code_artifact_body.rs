@@ -1,7 +1,7 @@
 //! Code artifact body values and the pinned MessagePack codec.
 
-use rmpv::Value;
 use crate::error::{ArtifactError, Error, Result};
+use rmpv::Value;
 
 pub const CODE_ARTIFACT_BODY_KEYS: [&str; 5] = [
     "summary_prompt",
@@ -303,4 +303,3 @@ fn hash_from_value(value: &Value) -> Result<[u8; CODE_ARTIFACT_SUMMARY_HASH_LEN]
         ))
     })
 }
-

@@ -15,4 +15,3 @@ pub fn commitment_projection_actor() -> crate::Result<WriteActor> {
         EdgeActorClass::System,
     ))
 }
-
