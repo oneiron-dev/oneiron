@@ -18,7 +18,7 @@ pub(super) fn validate_local_agent_definition_create(
     store: &Store,
     wtxn: &RwTxn<'_>,
     id: &EntityId,
-    created: &crate::agent_def::AgentDefinition,
+    created: &crate::store::agent_definition::AgentDefinition,
 ) -> Result<()> {
     if let Some(parent) = created.forked_from {
         if parent == *id {
