@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::build_cache::DeclaredOutputPath;
-use crate::contract_oracle::ContractSpec;
+use crate::store::contract_oracle::ContractSpec;
 use crate::memory::code_view_doors::CodeBuildSpec;
 
 /// Where a repository keeps its check plan, relative to its root.
