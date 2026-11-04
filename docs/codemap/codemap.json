@@ -66093,7 +66093,11 @@
       "AgentPackRefusalLevel",
       "AgentPackScope",
       "AgentPackSkill",
+      "AgentPackSkillCall",
+      "AgentPackSkillDependency",
+      "AgentPackSkillFormat",
       "AgentPackSkillRef",
+      "AgentPackSkillRole",
       "AgentPackTravelProjection",
       "AgentPackView",
       "AgentPackWakeCadence"
@@ -66102,9 +66106,9 @@
      "purpose": "The AgentPack a sharer sends to another party (OF-491, FIX 2040): a reference-free projection of an agent…",
      "surface": {
       "const": 1,
-      "enum": 8,
-      "fn": 8,
-      "struct": 11
+      "enum": 10,
+      "fn": 9,
+      "struct": 13
      }
     },
     {
@@ -67480,7 +67484,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 2,
       "re-export": 20
      }
@@ -83587,7 +83591,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EraseHeldBytes",
@@ -83602,6 +83606,7 @@
      "path": "src/verbs/record_erase.rs",
      "purpose": "The served erase of one record (OF-150 / OF-163): `vault.records.erase_preview` shows what an erase would…",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 8
      }
