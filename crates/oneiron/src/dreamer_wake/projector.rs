@@ -820,29 +820,34 @@ pub(crate) fn carrier_round_live_in_txn(
 /// no other stamp covers it. Fires only while taken is `None` -
 /// ordinary members keep exactly what their enqueue stamped - and only
 /// while the turn still reads as frozen in its frozen partition. No
-/// membership write: the enqueue already linked it.
+/// membership write: the enqueue already linked it. Returns whether
+/// it stamped: only a fired stamp joins the caller's assignment set,
+/// so the chain moves past the returned words and their riders
+/// release - an unrided-but-untaken turn would strand, and untaken
+/// words must re-enter through the usual doors, never become latest.
 pub(crate) fn take_returned_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
     frozen: [u8; 32],
     partition: [u8; 32],
-) -> Result<()> {
+) -> Result<bool> {
     let taken = GIVEN
         .get(&vault.store, txn, turn)?
         .and_then(|given| given.taken);
     if taken.is_some() {
-        return Ok(());
+        return Ok(false);
     }
     if !reading_current_in_txn(vault, txn, turn, frozen)? {
-        return Ok(());
+        return Ok(false);
     }
     if crate::dreamer_consolidation::turn_partition_hash_in_txn(vault, txn, turn)?
         != Some(partition)
     {
-        return Ok(());
+        return Ok(false);
     }
-    take_reading_in_txn(vault, txn, turn, frozen)
+    take_reading_in_txn(vault, txn, turn, frozen)?;
+    Ok(true)
 }
 
 /// The latest-round bookkeeping of `hold_in_txn` for an assignment a

@@ -202,7 +202,8 @@ impl ConsolidationExecutor<'_> {
     /// (`widened_round`), in the stamp's own commit after the candidates'
     /// (FIX 12246). The same stamp fills queued originals no round has
     /// taken (`returned` - an away chunk member at enqueue - revalidated
-    /// against `originals`), and skips entirely when a gap erasure
+    /// against `originals`; fired returned stamps join `current`), and
+    /// skips entirely when a gap erasure
     /// retired the carrier round. An attempt with no round of its own
     /// records nothing.
     async fn commit_candidates(
@@ -274,11 +275,16 @@ impl ConsolidationExecutor<'_> {
                 }
                 // Originals no round has taken (an away chunk member at
                 // enqueue) are stamped at their frozen readings now that
-                // the run that extracted them has landed.
+                // the run that extracted them has landed; each fired
+                // stamp joins the assignment the widened turns carry, so
+                // the chain moves past the returned words and their
+                // riders release with the widened ones'.
                 for (turn, reading, partition) in returned {
-                    crate::dreamer_wake::take_returned_in_txn(
+                    if crate::dreamer_wake::take_returned_in_txn(
                         ctx.vault, txn, turn, *reading, *partition,
-                    )?;
+                    )? {
+                        current.push((*turn, *reading));
+                    }
                 }
                 crate::dreamer_wake::note_assignment_in_txn(ctx.vault, txn, widened_round, &current)
             });
