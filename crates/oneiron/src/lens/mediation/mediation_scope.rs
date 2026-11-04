@@ -1,8 +1,8 @@
 //! Ordinary world-id and repository membership clamps on every frame-bound read.
 
 use super::LensRenderFrame;
-use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadResult};
 use crate::claim::world_access::WorldAuthoritySet;
+use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadResult};
 use crate::pipeline::WorldScope;
 use crate::{EntityId, Error, Result};
 

@@ -1,8 +1,8 @@
 //! CRDT-independent EntityDoc snapshot values and causal history.
 
-use std::collections::BTreeMap;
-use serde::{Deserialize, Serialize};
 use crate::error::{ArtifactError, Error, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Current generic EntityDoc value, independent of the document's Loro op log.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,7 +21,8 @@ pub struct CanonicalEntityDocument {
     pub summary_meta: BTreeMap<String, Vec<u8>>,
     /// Native record fields projected by the immutable adapter at birth.
     pub record_fields: Vec<String>,
-    /// None once the birth's actor was erased (FIX 6072): it stays no one.
+    /// The stamp token the birth names, as stored (FIX 11964); None once the
+    /// birth named no one (FIX 6072): it stays no one.
     pub birth_actor: Option<[u8; 16]>,
     pub birth_at: u64,
     /// The document's causal state, by value. Absent for a document with no

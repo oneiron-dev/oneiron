@@ -139,8 +139,18 @@ pub enum FeedbackTriageStep {
         batches: Vec<Vec<u32>>,
     },
     /// Nothing changes: the owed children are queued again, and the job
-    /// waits on them or on the next sweep.
+    /// waits on them; a complete current level lets the same run continue.
     Wait,
+}
+
+/// Whether a planned step parked its revision's job or found no child to wait for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FeedbackTriageParkOutcome {
+    /// The job parked on its graph under its current lease.
+    Parked(FeedbackTriageWork),
+    /// A `Wait` — or an empty-split `Repartition` (FIX 12546) — found a
+    /// complete current level, so the same run can continue.
+    Ready(FeedbackTriageWork),
 }
 
 /// One unanswered node cut again for a changed window.

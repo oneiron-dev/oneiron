@@ -3,10 +3,10 @@
 //! WORLDS, MEMORIES, TASKS, SKILLS, ROOM, INBOX, SCRATCHPAD, the cached
 //! `people` roster, session read-set riders and stream projections.
 
-pub mod consult_result;
-pub mod task_kind;
 mod capabilities;
 mod children;
+pub mod consult_result;
+pub mod task_kind;
 pub use children::{
     ChildState, ForkState, child_states_for_actor, fork_states_for_actor, render_you_line,
 };
@@ -121,6 +121,7 @@ pub use notifications::{
     caller_marker_contains, notification_body_json, notification_scoped_to_caller,
 };
 pub(crate) use plugin::erase_section_fit_receipts_in_txn;
+pub(crate) use plugin::scrub_section_fit_receipt_actors_in_txn;
 pub use plugin::{
     AdmittedPluginSection, ApprovedPluginIdentity, AuthorityLaneRef, BoardBlockKind,
     BoardBlockPage, BoardBlockRecord, BoardBlockScope, BoardBlockWriteEnvelope, CORE_SECTION_IDS,

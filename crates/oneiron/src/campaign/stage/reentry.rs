@@ -110,8 +110,8 @@ pub fn route_membership_lane(
 // Re-entry
 // ---------------------------------------------------------------------------
 
-pub use crate::memory::campaign_records::stage_results::WakeCondition;
 pub use crate::memory::campaign_records::stage_results::ReentryPlan;
+pub use crate::memory::campaign_records::stage_results::WakeCondition;
 
 // ---------------------------------------------------------------------------
 // Snooze with wake

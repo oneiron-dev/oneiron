@@ -7,13 +7,11 @@ use crate::attempt_queue::encoding::{
 };
 use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState, attempt_record_order};
 use crate::attempt_queue::validate::validate_optional_run_id;
-use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
-use crate::dreamer_runner::{
-    DreamerAttemptPayload, decode_dreamer_attempt_payload,
-};
+use crate::dreamer_runner::{DreamerAttemptPayload, decode_dreamer_attempt_payload};
 use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 
 use super::AttemptQueue;
 use super::ERR_DEDUPE_ACTOR_MISMATCH;

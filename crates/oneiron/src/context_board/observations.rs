@@ -129,8 +129,12 @@ fn lifecycle(
                 Ok(record) => record.lifecycle_status,
                 Err(_) => return Ok((None, None)),
             } {
-                crate::write_envelope::skill_record::SkillLifecycle::Active => Ok((Some(ServedLifecycle::Active), None)),
-                crate::write_envelope::skill_record::SkillLifecycle::Superseded => successor(read, id, kind),
+                crate::write_envelope::skill_record::SkillLifecycle::Active => {
+                    Ok((Some(ServedLifecycle::Active), None))
+                }
+                crate::write_envelope::skill_record::SkillLifecycle::Superseded => {
+                    successor(read, id, kind)
+                }
                 _ => Ok((None, None)),
             };
         }

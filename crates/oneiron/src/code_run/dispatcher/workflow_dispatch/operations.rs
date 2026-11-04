@@ -2,7 +2,9 @@
 use serde::{Deserialize, Serialize};
 
 mod agent_definition;
-pub use self::agent_definition::{AgentCeilingInput, AgentDefinitionSpec, AgentMcpInput, AgentScopeInput, AgentSkillInput};
+pub use self::agent_definition::{
+    AgentCeilingInput, AgentDefinitionSpec, AgentMcpInput, AgentScopeInput, AgentSkillInput,
+};
 use crate::agent_def::workflow::WorkflowDefinition;
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
