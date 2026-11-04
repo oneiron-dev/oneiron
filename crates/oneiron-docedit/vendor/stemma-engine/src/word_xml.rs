@@ -619,11 +619,17 @@ fn element_from_start(
             .into_owned();
 
         if key.as_ref() == "xmlns" {
-            // Default namespace declaration.
-            ns_decls.push((
-                String::new(),
-                canonicalize_ooxml_namespace(&value).into_owned(),
-            ));
+            // Default namespace declaration. The xmlns namespace itself is
+            // never declarable, on a default binding either (FIX 6131
+            // review); the XML namespace as a default is legal and stays.
+            let uri = canonicalize_ooxml_namespace(&value).into_owned();
+            if uri == XMLNS {
+                return Err(WordXmlError::QuickXml {
+                    position: reader.buffer_position(),
+                    reason: "the 'xmlns' namespace must not be declared".to_string(),
+                });
+            }
+            ns_decls.push((String::new(), uri));
             continue;
         }
         let (akey_prefix, akey_local) = split_qname(key);
@@ -638,10 +644,25 @@ fn element_from_start(
                 });
             }
             let uri = canonicalize_ooxml_namespace(&value).into_owned();
-            if akey_local == "xml" && uri != "http://www.w3.org/XML/1998/namespace" {
+            // The xmlns namespace is never declarable, and only the xml
+            // prefix may bind the XML namespace (FIX 6131 review).
+            if uri == XMLNS {
                 return Err(WordXmlError::QuickXml {
                     position: reader.buffer_position(),
-                    reason: format!("reserved prefix 'xml' bound to wrong URI: {uri}"),
+                    reason: "the 'xmlns' namespace must not be declared".to_string(),
+                });
+            }
+            if akey_local == "xml" {
+                if uri != XML_URI {
+                    return Err(WordXmlError::QuickXml {
+                        position: reader.buffer_position(),
+                        reason: format!("reserved prefix 'xml' bound to wrong URI: {uri}"),
+                    });
+                }
+            } else if uri == XML_URI {
+                return Err(WordXmlError::QuickXml {
+                    position: reader.buffer_position(),
+                    reason: "only the 'xml' prefix may bind the XML namespace".to_string(),
                 });
             }
             ns_decls.push((akey_local, uri));
@@ -801,6 +822,11 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
     // An XML declaration is only legal once, before the document element.
     // Anything else (a second declaration, or one mid-document) is malformed.
     let mut decl_seen = false;
+    // Prolog content before the root: comments, PIs and whitespace text are
+    // dropped, but a declaration after any of them is malformed (it is only
+    // legal as the first construct). Tracked separately because the dropped
+    // constructs leave no trace on the stack or root (FIX 6131 review).
+    let mut prolog_seen = false;
     loop {
         let event = reader
             .read_event_into(&mut buf)
@@ -831,11 +857,16 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
                 // Raw text, EOLs untouched. It holds no references: quick-xml
                 // reports each one as a `GeneralRef` event. Whitespace outside
                 // the root is dropped; any other character data is malformed.
-                if stack.is_empty() && t.as_ref().chars().any(|ch| !is_xml_whitespace(ch)) {
-                    return Err(WordXmlError::QuickXml {
-                        position: reader.buffer_position(),
-                        reason: "character data outside the document element".to_string(),
-                    });
+                // Dropped prolog whitespace still counts: a declaration after
+                // it is malformed (FIX 6131 review).
+                if stack.is_empty() {
+                    if t.as_ref().chars().any(|ch| !is_xml_whitespace(ch)) {
+                        return Err(WordXmlError::QuickXml {
+                            position: reader.buffer_position(),
+                            reason: "character data outside the document element".to_string(),
+                        });
+                    }
+                    prolog_seen = true;
                 }
                 push_text(&mut stack, &t);
             }
@@ -866,6 +897,9 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
             }
             Event::Comment(c) => {
                 // Comment content is literal: do NOT unescape.
+                if stack.is_empty() {
+                    prolog_seen = true;
+                }
                 if let Some(parent) = stack.last_mut() {
                     parent
                         .children
@@ -875,6 +909,9 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
             Event::PI(pi) => {
                 // Processing instruction: split into (target, data). xmltree
                 // stores them as (name, Option<data>).
+                if stack.is_empty() {
+                    prolog_seen = true;
+                }
                 let raw = pi.into_inner();
                 let (target, data) = match raw.split_once(char::is_whitespace) {
                     Some((t, d)) => (t.to_string(), Some(d.trim_start().to_string())),
@@ -893,9 +930,10 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
             Event::Decl(_) => {
                 // XML declaration (<?xml ...?>): no tree node, like xml-rs.
                 // Only a single declaration before the document element is
-                // legal; a mid-body declaration means malformed XML that must
-                // not pass (FIX 6131 review).
-                if decl_seen || !stack.is_empty() || root.is_some() {
+                // legal, and only as the first construct: prolog whitespace,
+                // comments or PIs before it mean malformed XML that must not
+                // pass (FIX 6131 review).
+                if decl_seen || prolog_seen || !stack.is_empty() || root.is_some() {
                     return Err(WordXmlError::QuickXml {
                         position: reader.buffer_position(),
                         reason: "misplaced XML declaration".to_string(),
