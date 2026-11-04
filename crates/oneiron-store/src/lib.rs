@@ -11,6 +11,7 @@ pub mod conversation_record;
 pub mod core_write;
 pub mod critical_confirm_retry;
 pub mod embedding_vocabulary;
+pub mod esign_rate_thresholds;
 pub mod file_secret_marks;
 pub mod identity_hints;
 pub mod index_keys;
