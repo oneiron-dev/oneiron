@@ -446,7 +446,7 @@ side_tables! {
     /// 33-byte event key.
     LINEAR_MIRROR_EVENT_BY_TASK: VaultMeta b"linear.mirror_event_by_task.v1/" Raw;
     /// Tracker pull-page cursor. Key: ().
-    LINEAR_PULL_CURSOR: VaultMeta b"linear.pull_cursor.v1" Raw Authored [accepts: crate::task_verb::linear_pull_cursor_accepts_masked];
+    LINEAR_PULL_CURSOR: VaultMeta b"linear.pull_cursor.v1" Raw Authored [accepts: crate::store::linear_pull_cursor::linear_pull_cursor_accepts_masked];
     /// Tracker-mirror outbox marker. Key: id16.
     LINEAR_TASK_DIRTY: VaultMeta b"linear.task_dirty.v1/" Raw Engine;
     /// Tracker-mirror revision counter of a task. Key: id16.
