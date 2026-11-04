@@ -30,7 +30,7 @@ use axum::routing::{get, post};
 use base64::Engine as _;
 use oneiron::authority::{CustodyChange, CustodyRecipientPermit};
 use oneiron::secret_custody::{
-    SealedCustodyChange, SealedInput, SecretCustodyStatus, SecretCustodyView,
+    SealedCustodyChange, SealedInput, SecretCustodyFloor, SecretCustodyStatus, SecretCustodyView,
 };
 use serde::{Deserialize, Serialize};
 
@@ -277,6 +277,8 @@ struct ViewReply {
     live: Vec<OwnerWorkReceiptView>,
     candidates: Vec<CandidateReply>,
     delivery: &'static str,
+    /// The live floor a sealed custody change must satisfy.
+    floor: SecretCustodyFloor,
 }
 
 impl From<SecretCustodyView> for ViewReply {
@@ -310,6 +312,7 @@ impl From<SecretCustodyView> for ViewReply {
                 })
                 .collect(),
             delivery: view.delivery.as_str(),
+            floor: view.floor,
         }
     }
 }

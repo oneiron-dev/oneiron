@@ -74,6 +74,7 @@ mod doors;
 mod floor;
 mod found_keys;
 pub(crate) use self::found_keys::{HANDLE_TEXT_OPEN, unmask_value};
+mod handle_labels;
 pub(crate) mod holder_export;
 mod known_values;
 mod leaf_delivery;
@@ -128,13 +129,23 @@ pub(crate) use self::doors::{
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 // KS-6: the stored schema-2 form, its value sealed under its custody key.
 pub use self::found_keys::{
-    FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyCursor, FoundKeyNotice,
-    FoundKeyNoticePage, FoundKeySettled, NOTIFICATION_PRODUCER_FOUND_KEY,
+    FOUND_KEY_REASON_KEPT_AS_TEXT, FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard,
+    FoundKeyCursor, FoundKeyNotice, FoundKeyNoticePage, FoundKeySettled,
+    NOTIFICATION_PRODUCER_FOUND_KEY,
 };
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
-    found_key_notices_due_in_txn, note_found_keys_in_txn, raise_found_key_notices_in_txn,
-    raise_found_key_notices_page, ruled_no_secret_in_txn, settle_found_key_in_txn,
+    found_key_notices_due_in_txn, kept_as_text_in_txn, note_found_keys_in_txn,
+    raise_found_key_notices_in_txn, raise_found_key_notices_page, ruled_no_secret_in_txn,
+    settle_found_key_in_txn,
+};
+pub use self::handle_labels::{
+    SecretHandleLabel, SecretHandleLabelSet, suggest_secret_handle_label_for_kind,
+    suggest_secret_handle_label_for_prefix,
+};
+pub(crate) use self::handle_labels::{
+    erase_secret_handle_label_in_txn, secret_handle_label_in_txn,
+    suggested_secret_handle_label_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues, known_index_scope};
