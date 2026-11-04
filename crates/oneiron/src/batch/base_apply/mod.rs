@@ -247,7 +247,7 @@ pub(super) fn apply_ops_with_authority_beside(
     text_index_trusted: bool,
     mut gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
-    authority_beside: Option<crate::authority::RowsBeside<'_>>,
+    authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
 ) -> Result<()> {
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
