@@ -208,6 +208,7 @@ pub(crate) mod known_value_index;
 pub(crate) mod l2_evidence;
 pub mod receipt_identity;
 pub mod retrieval_deadline;
+pub mod retrieval_signal;
 pub mod row_birth;
 pub(crate) mod pending_custody_revoke;
 pub(crate) mod secret_handle_labels;
