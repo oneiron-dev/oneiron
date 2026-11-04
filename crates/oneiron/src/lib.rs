@@ -62,7 +62,7 @@ pub mod registry {
     pub(crate) use oneiron_contracts::registry::validate_entity_type_for_mode;
 }
 pub use oneiron_base::request_limits;
-pub mod heap_drop;
+pub use oneiron_store::heap_drop;
 pub mod result_body;
 pub mod result_memory;
 pub(crate) use oneiron_store::session_overlay;
