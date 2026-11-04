@@ -127,7 +127,7 @@ pub mod attempt_manifest;
 pub mod attempt_result;
 pub mod canonical_document;
 pub mod checkout_task;
-pub mod checkpoint_host_recipient;
+pub use oneiron_store::checkpoint_host_recipient;
 pub mod code_tree_blob;
 pub mod conversation_body;
 pub mod conversation_record;
@@ -139,6 +139,8 @@ pub mod housekeeping_schedule;
 #[cfg(feature = "sync")]
 pub(crate) mod loro_document;
 #[cfg(feature = "sync")]
+pub(crate) mod loro_tombstones;
+#[cfg(feature = "sync")]
 pub mod materialization_event;
 pub mod note_body;
 pub mod note_kind;
@@ -147,6 +149,7 @@ pub mod outbound_outcome;
 pub mod outbound_trigger;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
+pub(crate) mod project_kind;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
 pub(crate) mod repo_environment;
@@ -240,6 +243,8 @@ mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
 pub(crate) mod local_replica;
+#[cfg(feature = "sync")]
+pub(crate) mod replica_edge_key;
 mod notification_updates;
 mod open_gates;
 mod outbound_send_receipt;
