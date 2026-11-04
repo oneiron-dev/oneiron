@@ -7,6 +7,7 @@ mod database_digests;
 mod doctor_manifest;
 mod edges;
 mod entities;
+pub mod entity_refs;
 pub(crate) mod entity_revision;
 pub(crate) mod speculative_passes;
 #[cfg(feature = "sync")]

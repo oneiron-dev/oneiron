@@ -39,6 +39,7 @@ mod family;
 mod holders;
 mod lifecycle;
 mod made_by;
+pub mod office_address;
 mod provenance;
 mod references;
 mod review_request;

@@ -16,7 +16,7 @@ use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::contract_oracle::invalid;
 use crate::error::Result;
-use crate::memory::code_view_doors::CodeBuildSpec;
+use crate::build_cache::command_spec::CodeBuildSpec;
 
 /// The candidate-key prefix of a verdict a bound queue check recorded. An
 /// older verdict, recorded by the low-level callback path, has none.

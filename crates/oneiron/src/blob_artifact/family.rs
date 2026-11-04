@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::edit_roundtrip::OfficeFormat;
+use crate::blob_artifact::office_address::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::lens::RecordRef;

@@ -175,7 +175,7 @@ impl Vault {
         }
         self.try_with_write_txn_grouped(|wtxn| {
             if self.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
-                return Err(crate::memory::hard_deleted_refusal(&owner));
+                return Err(crate::vault::entity_refs::hard_deleted_refusal(&owner));
             }
             let now = self.store.clock.now_recorded_at();
             Ok(self.stage_embedded_owner_actor_in_txn(wtxn, now)?)
@@ -211,7 +211,7 @@ impl Vault {
         .map_err(|_| Error::InvariantViolation("agent principal body encode"))?;
         self.try_with_write_txn_grouped(|wtxn| {
             if self.local_hard_delete_marker_exists_in_txn(wtxn, &principal)? {
-                return Err(crate::memory::hard_deleted_refusal(&principal));
+                return Err(crate::vault::entity_refs::hard_deleted_refusal(&principal));
             }
             match self.get_entity_type_in_txn(wtxn, &principal)? {
                 Some(crate::registry::ENTITY_TYPE_PERSON) => return Ok(principal),
