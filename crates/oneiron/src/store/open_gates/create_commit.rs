@@ -64,7 +64,7 @@ pub(super) fn create_commit(
     rekey_short_ids_if_needed_in_txn(&raw, vault_meta_view, &mut wtxn)?;
 
     if is_new_vault && matches!(seed_mode, DefaultPolicySeedMode::Required) {
-        let id = crate::gate::default_policy_manifest_id()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
         let entities = OverlayDb::canonical(raw.entities);
         let type_index = OverlayDb::canonical(raw.type_index);
         let temporal_occurred_start = OverlayDb::canonical(raw.temporal_occurred_start);
