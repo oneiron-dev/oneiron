@@ -15,7 +15,7 @@
      "kind": "src",
      "notable": [],
      "path": "benches/sync_memory.rs",
-     "purpose": "yrs memory benchmark for Oneiron sync GO/NO-GO gate",
+     "purpose": "Loro memory benchmark for Oneiron sync GO/NO-GO gate",
      "surface": {}
     },
     {
@@ -16538,6 +16538,7 @@
       "ContributionForkScorer",
       "ContributionReplayUnavailable",
       "ForkScoring",
+      "ForkScoringIdentity",
       "ForkTreatment",
       "ReplayAnchor",
       "ScoredFork"
@@ -16549,7 +16550,7 @@
       "enum": 2,
       "fn": 4,
       "re-export": 1,
-      "struct": 4,
+      "struct": 5,
       "trait": 2
      }
     },
