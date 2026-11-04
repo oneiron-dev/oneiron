@@ -770,7 +770,7 @@ pub(crate) fn transition_campaign_programs_in_txn(
             .definition
             .take()
             .map(decode_program_definition)
-            .transpose?;
+            .transpose()?;
         let program = decode_program(program_ref, row)?;
         if program.campaign_ref == campaign_ref {
             programs.push((program, definition));
