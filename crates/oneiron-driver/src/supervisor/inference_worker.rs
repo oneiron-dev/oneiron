@@ -42,6 +42,7 @@ use super::inference_admission::{DeviceAdmission, LoadGrant};
 use super::inference_device::{DeclaredEnvelope, DeviceLedger, ResidentReport, ResidentSource};
 
 mod drive;
+mod startup;
 
 use drive::drive;
 
@@ -268,6 +269,7 @@ struct Inner {
     policy: WorkerPolicy,
     device: Option<(Arc<DeviceLedger>, DeclaredEnvelope)>,
     admission: Mutex<Option<Arc<DeviceAdmission>>>,
+    predecessors: Mutex<Vec<InferenceWorker>>,
     state: Mutex<State>,
     changed: watch::Sender<u64>,
 }
@@ -451,6 +453,7 @@ impl InferenceWorker {
                 policy,
                 device,
                 admission: Mutex::new(None),
+                predecessors: Mutex::new(Vec::new()),
                 state: Mutex::new(state),
                 changed: watch::Sender::new(0),
             }),
