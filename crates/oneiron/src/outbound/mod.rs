@@ -15,7 +15,7 @@ mod dispatch_types;
 mod executor;
 mod fair_line;
 mod intent;
-pub mod linkedin_policy;
+pub use oneiron_linkedin_policy as linkedin_policy;
 mod manifests;
 mod receipt_fields;
 mod recovery_suggestions;

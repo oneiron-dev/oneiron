@@ -82,14 +82,14 @@ mod judgment;
 pub(crate) mod judgment_cells;
 mod manifest;
 mod native_recalc;
-mod opc;
+use oneiron_docedit::opc_package as opc;
 mod ops;
 pub mod paragraph_review;
 mod pipeline;
 pub mod pptx;
 mod session_validate;
 pub mod slides_review;
-mod xml;
+use oneiron_docedit::opc_xml as xml;
 
 pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
 pub use self::artifact_question::{
