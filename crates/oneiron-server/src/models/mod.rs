@@ -250,7 +250,7 @@ fn build_provider(
                 .map(|entry| (entry.model.clone(), entry.clone()))
                 .collect();
             return Ok(Some(Arc::new(broker_responses::BrokerResponses::new(
-                broker::broker_backend(provider, catalog, output_cap(provider), site, keys)?,
+                broker::broker_backend(provider, catalog, output_cap(provider), solo, site, keys)?,
                 config,
                 original_catalog,
                 responses.clone(),
