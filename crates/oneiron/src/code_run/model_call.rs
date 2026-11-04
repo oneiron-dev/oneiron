@@ -267,6 +267,16 @@ pub fn native_read_digests(
     Ok(NativeReadDigests { request_hash })
 }
 
+/// Canonical JSON-tree fingerprint of the actual built native-seat body.
+/// This is not a hash of wire bytes, headers or credentials.
+pub fn native_seat_read_digests(body: &serde_json::Value) -> Result<NativeReadDigests> {
+    let canonical = crate::llm::canonical_json_bytes(body)
+        .map_err(|_| invalid("native seat request did not canonicalize"))?;
+    Ok(NativeReadDigests {
+        request_hash: *blake3::hash(&canonical).as_bytes(),
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NativeReadFailure {
@@ -308,6 +318,12 @@ pub enum ModelCallKind {
         finish_reason: crate::FinishReason,
     },
     LabelRead {
+        run_source: NativeReadRunSource,
+        digests: NativeReadDigests,
+        revision: String,
+        outcome: NativeReadOutcome,
+    },
+    SeatDecision {
         run_source: NativeReadRunSource,
         digests: NativeReadDigests,
         revision: String,
@@ -408,10 +424,19 @@ impl ModelCallRecord {
         for part in &self.reasoning {
             part.validate()?;
         }
-        if let ModelCallKind::LabelRead { revision, .. } = &self.kind {
-            if revision.trim().is_empty() {
+        match &self.kind {
+            ModelCallKind::LabelRead { revision, .. }
+            | ModelCallKind::SeatDecision { revision, .. }
+                if revision.trim().is_empty() =>
+            {
                 return Err(invalid("a native read needs a revision"));
             }
+            ModelCallKind::SeatDecision { run_source, .. }
+                if *run_source != NativeReadRunSource::Caller =>
+            {
+                return Err(invalid("a seat decision needs its caller's run"));
+            }
+            _ => {}
         }
         match (
             &self.read_world_epoch,
@@ -465,7 +490,8 @@ impl ErasedForm for ModelCallRecord {
             }
             // A native row keeps its source, hash, revision and failure; only
             // provider usage is scrubbed, and unknown stays unknown.
-            ModelCallKind::LabelRead { outcome, .. } => match outcome {
+            ModelCallKind::LabelRead { outcome, .. }
+            | ModelCallKind::SeatDecision { outcome, .. } => match outcome {
                 NativeReadOutcome::Completed { usage } => {
                     usage.raw_provider = Default::default();
                 }
