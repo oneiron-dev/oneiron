@@ -41,7 +41,6 @@ pub use crate::request_limits::RECORD_REF_MAX_BYTES;
 /// and the page size when the caller names none.
 pub const RECORD_LINKS_TURN_PAGE_MAX: usize = 32;
 
-
 /// The body fields a snippet is read from; the first one holding text wins.
 const SNIPPET_FIELDS: [&str; 6] = [
     "content",

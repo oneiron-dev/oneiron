@@ -584,34 +584,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/agent_def/codec.rs",
-     "purpose": "Pinned-key MessagePack encode and top-level body decode",
+     "purpose": "The AGENT_DEF body codec's old paths: the codec lives in `store::agent_definition_codec`, the legacy `sys.*`…",
      "surface": {
-      "crate-vis": 3,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/agent_def/codec/value.rs",
-     "purpose": "Agent definition value and field decoding",
-     "surface": {
-      "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/agent_def/decode.rs",
-     "purpose": "Per-field MessagePack decoders, the validate_* ladder, and text helpers",
-     "surface": {
-      "crate-vis": 8
+      "crate-vis": 2,
+      "re-export": 1
      }
     },
     {
@@ -655,7 +635,7 @@
      "path": "src/agent_def/manifest.rs",
      "purpose": "Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 8
      }
     },
     {
@@ -678,22 +658,20 @@
      "purpose": "The owner's per-agent model list (FIX 4472): the models an agent may run on, each with the owner's own words…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 3,
       "fn": 7,
       "re-export": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/agent_def/optional_memory.rs",
      "purpose": "How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget)",
      "surface": {
-      "const": 2,
-      "crate-vis": 2,
       "fn": 4,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -748,17 +726,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RefusalDomain",
       "RefusalOutcome",
       "VaultKind"
      ],
      "path": "src/agent_def/refusal.rs",
      "purpose": "The refusal dial (OF-533): an agent's own disposition to object to, or decline, what she is asked to do, set…",
      "surface": {
-      "const": 1,
-      "crate-vis": 4,
-      "enum": 3,
-      "fn": 12,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 5,
       "re-export": 1
      }
     },
@@ -771,13 +747,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/agent_def/types.rs",
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
-      "crate-vis": 59,
+      "crate-vis": 4,
       "fn": 17,
       "re-export": 17
      }
@@ -2768,7 +2744,7 @@
      "path": "src/attempt_queue/payload_erase.rs",
      "purpose": "An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -2828,7 +2804,7 @@
      "path": "src/attempt_queue/payload_erase/response.rs",
      "purpose": "An agent dispatch's payload text in checkpoint images (FIX 7115, KEY STORE = A): its attempt row is a…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 1
      }
     },
     {
@@ -8340,7 +8316,7 @@
      "path": "src/batch/types.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -22962,7 +22938,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 69,
+      "fn": 70,
       "struct": 1
      }
     },
@@ -64848,7 +64824,7 @@
      "surface": {
       "const": 4,
       "crate-vis": 7,
-      "fn": 4,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -69088,6 +69064,88 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/decode.rs",
+     "purpose": "Per-field MessagePack decoders, the validate_* ladder, and text helpers",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/keys.rs",
+     "purpose": "The AGENT_DEF body's pinned MessagePack keys, by name: the body, model entry, memory profile, budget split…",
+     "surface": {
+      "crate-vis": 52
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/mod.rs",
+     "purpose": "Pinned-key MessagePack encode and top-level body decode",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/models.rs",
+     "purpose": "The AGENT_DEF `models` list and `compaction_model` codec (FIX 4472): the strict decode, the pinned-key…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/optional_memory.rs",
+     "purpose": "The AGENT_DEF memory profile's `optional_memory` sub-map codec (ZERO-RETRIEVAL = A): the pinned-key encode…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/refusal.rs",
+     "purpose": "The AGENT_DEF `refusal` dial codec (OF-533): the pinned-key encode, the strict decode and the dial rule…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/value.rs",
+     "purpose": "Agent definition value and field decoding",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_manifest/mod.rs",
+     "purpose": "The embedded seeded-roster manifest (OF-334 / ONE-1890): its parsed form, the one cached parse, and the…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -69150,12 +69208,15 @@
      "kind": "src",
      "notable": [
       "RefusalDial",
+      "RefusalDomain",
       "RefusalLevel"
      ],
      "path": "src/store/agent_refusal.rs",
      "purpose": "The refusal dial (OF-533) an agent definition stores: one position from none to full, and the agent's…",
      "surface": {
-      "enum": 1,
+      "const": 1,
+      "enum": 2,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -69168,6 +69229,7 @@
      "path": "src/store/agent_scope.rs",
      "purpose": "The run scope persisted with an agent definition: every world, base reality only, or one world plus base…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1
      }
     },
@@ -69378,6 +69440,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/attempt_payload_response.rs",
+     "purpose": "An agent dispatch's attempt row as a row-held response of a checkpoint image (FIX 7115, KS-2B1): whether the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/attempt_payload_retire.rs",
      "purpose": "Retiring an attempt row's payload text in place: the row takes its text-free form when the body instance it…",
      "surface": {
@@ -69456,7 +69528,7 @@
      "path": "src/store/attempt_record_codec/mod.rs",
      "purpose": "The attempt record's strict codec (`job_records` rows): the version byte and named MessagePack body, the…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -71488,7 +71560,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/graph_version.rs",
-     "purpose": "Transactional graph-version metadata",
+     "purpose": "Transactional graph-version metadata, defined in `oneiron_store::graph_version`: the counter is read and…",
      "surface": {
       "crate-vis": 3
      }
@@ -72473,7 +72545,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 142,
+      "crate-vis": 145,
       "mod": 115,
       "re-export": 31
      }
@@ -88338,7 +88410,7 @@
       "crate-vis": 4,
       "enum": 3,
       "fn": 4,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2
      }
     },
@@ -88363,6 +88435,19 @@
      "purpose": "Recording one owner work request in the act's own transaction, and the one rule that names its executor; and…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeviceSyncStart"
+     ],
+     "path": "src/world_keys/owner_work/relay_start.rs",
+     "purpose": "The host's last observed device-sync start outcome, never current health",
+     "surface": {
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -89616,7 +89701,7 @@
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes"
     },
     "agent_def": {
-     "files": 24,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90925,7 +91010,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 463,
+     "files": 472,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91156,7 +91241,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91165,7 +91250,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6346,
+   "source_files": 6354,
    "test_files": 895
   },
   "oneiron-android": {
@@ -92659,7 +92744,7 @@
      "surface": {
       "const": 2,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "trait": 1
      }
     },
@@ -93186,7 +93271,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/beam/model_scaffold.rs",
@@ -94570,7 +94655,7 @@
     "beam": {
      "files": 42,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
@@ -94673,7 +94758,7 @@
      "purpose": "`vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120)"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "oneiron-bench — benchmark harness drivers",
    "source_files": 153,
    "test_files": 18
@@ -97773,11 +97858,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "EntityMetadataHeader"
+     ],
      "path": "src/record_layout.rs",
      "purpose": "Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred…",
      "surface": {
-      "const": 6
+      "const": 6,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -127609,6 +127698,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/graph_version.rs",
+     "purpose": "The graph version counter in `hnsw_meta`, which PPR caches are keyed and validated by, and its little-endian…",
+     "surface": {
+      "const": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/identity_hints.rs",
      "purpose": "Per-kind declared identity fields (human-facing identity hints)",
      "surface": {
@@ -127647,7 +127747,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 36
+      "mod": 37
      }
     },
     {
@@ -129502,6 +129602,13 @@
      "layout": "file",
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
+    "graph_version": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The graph version counter in `hnsw_meta`, which PPR caches are keyed and validated by, and its little-endian…"
+    },
     "identity_hints": {
      "files": 1,
      "impl_vault": false,
@@ -129666,7 +129773,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 150,
+   "source_files": 151,
    "test_files": 4
   },
   "oneiron-uniffi": {
