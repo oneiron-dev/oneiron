@@ -19570,6 +19570,37 @@ async fn host_budget_hit(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_hooks_checks(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.hooks.checks")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.hooks.checks", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.hooks.checks", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_hooks_checks(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_hooks_replay(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40193,6 +40224,7 @@ async fn call_verb_row(
         "host.compact" => Box::pin(host_compact(server, call, input)).await,
         "host.wake" => Box::pin(host_wake(server, call, input)).await,
         "host.budget.hit" => Box::pin(host_budget_hit(server, call, input)).await,
+        "vault.hooks.checks" => Box::pin(vault_hooks_checks(server, call, input)).await,
         "vault.hooks.replay" => Box::pin(vault_hooks_replay(server, call, input)).await,
         "vault.hooks.regen.due" => Box::pin(vault_hooks_regen_due(server, call, input)).await,
         "vault.hooks.regen.get" => Box::pin(vault_hooks_regen_get(server, call, input)).await,

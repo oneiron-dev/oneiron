@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1224 facade rows, 4456 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1176.
+// UniFFI census: 1225 facade rows, 4459 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1177.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -36803,6 +36803,43 @@ pub struct HostBudgetHitResult {
     pub accounting: HostBudgetAccounting,
 }
 
+/// `oneiron::runtime_hooks::lineage::HookCheckReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HookCheckReason {
+    #[serde(rename = "cycle")]
+    Cycle,
+    #[serde(rename = "depth")]
+    Depth,
+}
+
+/// `oneiron::runtime_hooks::lineage::LineageLink`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LineageLink {
+    #[serde(rename = "binding")]
+    pub binding: String,
+    #[serde(rename = "run_key")]
+    pub run_key: String,
+    #[serde(rename = "entity")]
+    pub entity: String,
+    #[serde(rename = "position")]
+    pub position: String,
+}
+
+/// `oneiron::runtime_hooks::lineage::HookCheck`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookCheck {
+    #[serde(rename = "binding")]
+    pub binding: String,
+    #[serde(rename = "run_key")]
+    pub run_key: String,
+    #[serde(rename = "reason")]
+    pub reason: HookCheckReason,
+    #[serde(rename = "chain")]
+    pub chain: Vec<LineageLink>,
+    #[serde(rename = "raised_at")]
+    pub raised_at: u64,
+}
+
 /// `oneiron::verbs::host::hooks_replay::HooksReplayRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -64530,7 +64567,7 @@ pub struct SieveEvidenceView {
     pub continuing: bool,
 }
 
-/// `oneiron::dreamer_wake::policy::AgentWakeRole`.
+/// `oneiron::store::dreamer_wake_policy::AgentWakeRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AgentWakeRole {
     #[serde(rename = "companion")]
@@ -64541,7 +64578,7 @@ pub enum AgentWakeRole {
     Worker,
 }
 
-/// `oneiron::dreamer_wake::policy::CadencePrecedence`.
+/// `oneiron::store::dreamer_wake_policy::CadencePrecedence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CadencePrecedence {
     #[serde(rename = "vault_floor")]
@@ -64550,7 +64587,7 @@ pub enum CadencePrecedence {
     AgentOverride,
 }
 
-/// `oneiron::dreamer_wake::policy::AgentWakeTriggers`.
+/// `oneiron::store::dreamer_wake_policy::AgentWakeTriggers`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentWakeTriggers {
@@ -64564,7 +64601,7 @@ pub struct AgentWakeTriggers {
     pub event: bool,
 }
 
-/// `oneiron::dreamer_wake::policy::AgentWakePolicy`.
+/// `oneiron::store::dreamer_wake_policy::AgentWakePolicy`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentWakePolicy {
@@ -64580,7 +64617,7 @@ pub struct AgentWakePolicy {
     pub worker: AgentWakeTriggers,
 }
 
-/// `oneiron::dreamer_wake::policy::WeaveRecipePriority`.
+/// `oneiron::store::dreamer_wake_policy::WeaveRecipePriority`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum WeaveRecipePriority {
     #[serde(rename = "before_connector_event")]
@@ -64589,7 +64626,7 @@ pub enum WeaveRecipePriority {
     AfterConnectorEvent,
 }
 
-/// `oneiron::dreamer_wake::policy::DreamerWakePolicy`.
+/// `oneiron::store::dreamer_wake_policy::DreamerWakePolicy`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DreamerWakePolicy {
