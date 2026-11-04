@@ -71,6 +71,42 @@ impl Vault {
         Ok(staged)
     }
 
+    /// Drops the slate staged beside admitted key `id`'s routing one: a
+    /// refresh that reaches no further than the routing slate reports
+    /// `staged:false`, and must not leave qualify/attest targeting an
+    /// obsolete expansion. A key with nothing staged is returned unchanged,
+    /// with no op record.
+    pub fn drop_staged_connector_slate(
+        &self,
+        id: &EntityId,
+        at: u64,
+    ) -> Result<ConnectorKeyRecord> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let record =
+            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        if record.staged_slate_ref.is_none() {
+            return Ok(record);
+        }
+        let dropped = ConnectorKeyRecord {
+            staged_slate_ref: None,
+            ..record
+        };
+        dropped.validate()?;
+        rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &dropped)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        append_connector_key_op_record(
+            &self.store,
+            &mut wtxn,
+            id,
+            "gate.connector_key.drop_staged_slate",
+            &dropped,
+            policy.read_frontier_hash()?,
+            at,
+        )?;
+        wtxn.commit()?;
+        Ok(dropped)
+    }
+
     /// Runs all ARCH-0028 probes on the slate staged beside admitted key
     /// `id` at `expected_revision`, under the owner's current stamp on it.
     /// A pass swaps it in: the key routes on the staged slate, with its new

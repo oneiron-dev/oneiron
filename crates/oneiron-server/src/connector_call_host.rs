@@ -238,7 +238,7 @@ impl ServedConnectorCallHost {
         };
         // The setting is read before the exchange starts.
         let elicitation = self.declared(call, &view);
-        let Some(exchange) = Exchange::new(&self.client, &view, elicitation) else {
+        let Some(exchange) = Exchange::new(&self.client, &view, &self.vault, elicitation) else {
             return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
         };
         let Some(presenting) = presenting else {
@@ -528,6 +528,10 @@ struct Exchange<'a> {
     tool_headers: HeaderMap,
     /// The elicitation this send declares, if any.
     elicitation: Option<Declared<'a>>,
+    /// The call's issuer binding, kept independently of elicitation: a
+    /// send without elicitation still rechecks the hold before it answers
+    /// a server request with the kept header.
+    issuer: Option<(&'a Arc<Vault>, EntityId, &'a str)>,
 }
 
 impl<'a> Exchange<'a> {
@@ -535,6 +539,7 @@ impl<'a> Exchange<'a> {
     fn new(
         client: &'a reqwest::blocking::Client,
         view: &'a FrozenToolCallView,
+        vault: &'a Arc<Vault>,
         elicitation: Option<Declared<'a>>,
     ) -> Option<Self> {
         let revision = view.protocol_revision()?;
@@ -564,6 +569,10 @@ impl<'a> Exchange<'a> {
             ),
             tool_headers,
             elicitation,
+            issuer: view
+                .key_ref()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .map(|key_ref| (vault, key_ref, view.tool())),
         })
     }
 
@@ -725,7 +734,16 @@ impl<'a> Exchange<'a> {
                                     &declared.binding.key_ref,
                                     &declared.binding.tool,
                                 ),
-                                None => live.refuse(request),
+                                // A keyed call without elicitation still rechecks
+                                // the issuer hold before its refusal goes out
+                                // with the kept header; a keyless call keeps
+                                // the plain refusal.
+                                None => match &self.issuer {
+                                    Some((vault, key_ref, tool)) => {
+                                        live.refuse_unless_held(request, vault, key_ref, tool)
+                                    }
+                                    None => live.refuse(request),
+                                },
                             },
                             None => zeroize_json(request),
                         }
