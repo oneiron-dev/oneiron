@@ -81,7 +81,7 @@ fn retirement_of_name(name: &str) -> Option<(CustodyKind, Vec<u8>, u64)> {
 /// Whether the pad `item` (its key's full id) is of a world among
 /// `records`, or its key's pad row is one of them.
 fn pad_of(records: &BTreeSet<&[u8]>, item: &[u8]) -> bool {
-    let row = crate::world_keys::pad_row_of_item(item);
+    let row = oneiron_store::world_pad_codec::pad_row_of_item(item);
     matches!(item.get(..16), Some(world) if records.contains(world))
         || matches!(row, Ok(Some(row)) if records.contains(row.as_bytes().as_slice()))
 }
