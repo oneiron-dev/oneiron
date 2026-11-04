@@ -448,6 +448,7 @@ impl Memory<'_> {
                     author,
                     message_type: "text".to_owned(),
                     content: text.to_owned(),
+                    parts: None,
                     metadata: None,
                     is_visible: true,
                     order: 0,

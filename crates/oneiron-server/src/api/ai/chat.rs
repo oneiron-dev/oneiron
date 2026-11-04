@@ -418,6 +418,7 @@ pub(crate) fn witness_turn(
             author,
             message_type: MESSAGE_TYPE.to_owned(),
             content,
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 0,
