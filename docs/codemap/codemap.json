@@ -100876,7 +100876,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 3,
-      "fn": 21,
+      "fn": 22,
       "re-export": 1,
       "struct": 8,
       "type": 2
@@ -100928,7 +100928,7 @@
      "path": "src/supervisor/inference_admission/ticket.rs",
      "purpose": "Ticket waits and cancellation for the parent device queue",
      "surface": {
-      "fn": 8
+      "fn": 10
      }
     },
     {
@@ -100948,12 +100948,12 @@
      "purpose": "One physical device's memory ledger (DESIGN-V2 §7, INFERENCE R2/R4): declarations and measured residency…",
      "surface": {
       "enum": 2,
-      "fn": 20,
+      "fn": 21,
       "struct": 6
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "InferenceWorker",
@@ -100972,7 +100972,7 @@
      "surface": {
       "const": 5,
       "enum": 1,
-      "fn": 22,
+      "fn": 23,
       "struct": 7,
       "trait": 2,
       "type": 1
@@ -101287,7 +101287,7 @@
     "supervisor": {
      "files": 27,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter…"
     },
@@ -101313,7 +101313,7 @@
      "purpose": "Bounded, per-item delivery of durable wave TASKs to a host dispatcher"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
    "source_files": 34,
    "test_files": 10
@@ -104003,7 +104003,7 @@
      "surface": {
       "const": 3,
       "enum": 5,
-      "fn": 8,
+      "fn": 9,
       "struct": 9,
       "type": 1
      }
@@ -121634,7 +121634,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/models/worker_host.rs",
@@ -125380,7 +125380,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 35,
+   "over_bar": 36,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1497,
    "test_files": 182
