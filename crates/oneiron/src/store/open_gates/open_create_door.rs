@@ -4,24 +4,20 @@ use std::path::Path;
 
 use crate::config::VaultConfig;
 use crate::error::{Error, Result};
-use crate::store::{Store, StoreDeleteGuards, VaultWriterLease};
+use crate::store::{Store, StoreHooks, VaultWriterLease};
 
 use super::open_version_keys::{DefaultPolicySeedMode, STORAGE_ABI_VERSION};
 use super::vault_root_bind::{VaultRootPreflight, preflight_vault_root};
 
 impl Store {
     /// Opens or creates a store at `path` and initializes all named databases.
-    pub fn open(
-        path: impl AsRef<Path>,
-        config: &VaultConfig,
-        delete_guards: &'static dyn StoreDeleteGuards,
-    ) -> Result<Self> {
+    pub fn open(path: impl AsRef<Path>, config: &VaultConfig, hooks: StoreHooks) -> Result<Self> {
         Self::open_with_storage_abi_version(
             path,
             config,
             STORAGE_ABI_VERSION,
             DefaultPolicySeedMode::Required,
-            delete_guards,
+            hooks,
         )
     }
 
@@ -30,14 +26,14 @@ impl Store {
         path: impl AsRef<Path>,
         config: &VaultConfig,
         storage_abi_version: u16,
-        delete_guards: &'static dyn StoreDeleteGuards,
+        hooks: StoreHooks,
     ) -> Result<Self> {
         Self::open_with_storage_abi_version(
             path,
             config,
             storage_abi_version,
             DefaultPolicySeedMode::Required,
-            delete_guards,
+            hooks,
         )
     }
 
@@ -45,14 +41,14 @@ impl Store {
     pub(crate) fn open_unseeded_for_test(
         path: impl AsRef<Path>,
         config: &VaultConfig,
-        delete_guards: &'static dyn StoreDeleteGuards,
+        hooks: StoreHooks,
     ) -> Result<Self> {
         Self::open_with_storage_abi_version(
             path,
             config,
             STORAGE_ABI_VERSION,
             DefaultPolicySeedMode::TestUnseeded,
-            delete_guards,
+            hooks,
         )
     }
 
@@ -61,16 +57,9 @@ impl Store {
         config: &VaultConfig,
         storage_abi_version: u16,
         seed_mode: DefaultPolicySeedMode,
-        delete_guards: &'static dyn StoreDeleteGuards,
+        hooks: StoreHooks,
     ) -> Result<Self> {
-        Self::open_with_lease(
-            path,
-            config,
-            storage_abi_version,
-            seed_mode,
-            None,
-            delete_guards,
-        )
+        Self::open_with_lease(path, config, storage_abi_version, seed_mode, None, hooks)
     }
 
     pub(in crate::store) fn open_with_lease(
@@ -79,7 +68,7 @@ impl Store {
         storage_abi_version: u16,
         seed_mode: DefaultPolicySeedMode,
         lease: Option<&VaultWriterLease>,
-        delete_guards: &'static dyn StoreDeleteGuards,
+        hooks: StoreHooks,
     ) -> Result<Self> {
         let (mut torn_creation_cleanup, env, registered_path, is_new_vault) =
             super::create_env::create_env(path, config, lease)?;
@@ -101,7 +90,7 @@ impl Store {
             registered_path,
             config,
             seed_mode,
-            delete_guards,
+            hooks,
         )
     }
 }
