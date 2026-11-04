@@ -20996,19 +20996,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ConnectorKeyStatus"
-     ],
-     "path": "src/connector_key_status.rs",
-     "purpose": "Connector-key lifecycle status and its pinned wire strings",
-     "surface": {
-      "enum": 1,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/consent/adapters.rs",
      "purpose": "—",
@@ -23888,7 +23875,7 @@
      "purpose": "Atomic append, explicit HEAD moves and canonical-index repair",
      "surface": {
       "crate-vis": 5,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -25537,6 +25524,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dispatch_byoa/json_lines.rs",
+     "purpose": "One JSON object per line, read whole from a stream's start in order (FIX 9240)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dispatch_byoa/mod.rs",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
@@ -26268,7 +26265,7 @@
      "path": "src/dreamer_consolidation/neighbourhood.rs",
      "purpose": "The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -31327,7 +31324,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 11,
       "mod": 11,
@@ -33187,7 +33184,7 @@
      "path": "src/embed/release.rs",
      "purpose": "Which pending rows may leave this device, judged row by row (FIX 9486): the release a host asks before it…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -34095,13 +34092,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/commit_receipts.rs",
      "purpose": "Every generic entity-document commit carries its made_by receipt (FIX 7790, ARCH-0035): the engine stamp…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -34213,7 +34210,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 2,
       "re-export": 10
      }
@@ -42593,8 +42590,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 212,
-      "re-export": 92
+      "mod": 211,
+      "re-export": 93
      }
     },
     {
@@ -43420,7 +43417,7 @@
      "purpose": "Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves",
      "surface": {
       "crate-vis": 3,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -50811,7 +50808,7 @@
      "path": "src/model_decision/state.rs",
      "purpose": "Caller-prepared decision state fitting",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -50923,7 +50920,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 47,
+      "crate-vis": 48,
       "enum": 3,
       "fn": 4,
       "re-export": 18,
@@ -54816,9 +54813,9 @@
      "purpose": "The durable connector reply job (FIX 2405)",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -56490,7 +56487,7 @@
      "path": "src/pipeline/filters.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -56604,7 +56601,7 @@
      "path": "src/pipeline/support.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -56803,7 +56800,7 @@
      "path": "src/pipeline/types.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 36,
       "enum": 3,
       "fn": 5,
       "re-export": 5,
@@ -60132,7 +60129,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/decisions/reads.rs",
@@ -60865,13 +60862,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/privacy_kit/store.rs",
      "purpose": "This machine's own kit pieces (FIX 1957, 2063): the piece of a kit issued with a `ThisMachine` home, kept in…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -63561,7 +63558,7 @@
      "path": "src/secret_custody/holder_export.rs",
      "purpose": "The holder's side of a holder-mediated export (FIX 4624(b)), and the owner's fetch and open of what it sealed",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -65837,8 +65834,8 @@
      "path": "src/settings/device_local.rs",
      "purpose": "Which rows a device-local world keeps from a caller (DEC-0005): every judge a door asks, built on…",
      "surface": {
-      "crate-vis": 4,
-      "fn": 9
+      "crate-vis": 5,
+      "fn": 10
      }
     },
     {
@@ -71015,7 +71012,7 @@
       "const": 10,
       "crate-vis": 9,
       "enum": 5,
-      "fn": 10,
+      "fn": 11,
       "struct": 9,
       "trait": 3,
       "type": 1
@@ -79953,7 +79950,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 24,
+      "fn": 25,
       "struct": 1
      }
     },
@@ -87419,8 +87416,8 @@
      "purpose": "The maximum tier (OF-570): every LMDB page of a vault sealed under a page key",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
-      "fn": 11,
+      "crate-vis": 19,
+      "fn": 13,
       "re-export": 2,
       "struct": 1
      }
@@ -87676,8 +87673,8 @@
      "path": "src/world_keys/vault_key/kit.rs",
      "purpose": "The data-key kit (FIX 4532): the owner's 2-of-3 copy of the vault data key this handle holds, issued on his…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 2,
+      "crate-vis": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -89938,13 +89935,6 @@
      "layout": "dir",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
-    "connector_key_status": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Connector-key lifecycle status and its pinned wire strings"
-    },
     "consent": {
      "files": 40,
      "impl_vault": true,
@@ -90065,7 +90055,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91206,7 +91196,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 116,
+   "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6274,
    "test_files": 900
@@ -98341,6 +98331,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "A1"
+     ],
+     "path": "src/a1.rs",
+     "purpose": "One permissive A1 core (FIX 9207, ruling B): trim + any case + `$` + unbounded letters/digits + full…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/bin/deck-gate-cases.rs",
      "purpose": "`deck-gate-cases`: the engine half of the OF-510 deck gate runner",
@@ -99195,7 +99199,7 @@
      "path": "src/lib.rs",
      "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 15,
       "mod": 16,
@@ -100312,7 +100316,7 @@
      "path": "src/xlsx_body.rs",
      "purpose": "SpreadsheetML workbook read and projection seam",
      "surface": {
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -100550,6 +100554,13 @@
     }
    ],
    "modules": {
+    "a1": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "One permissive A1 core (FIX 9207, ruling B): trim + any case + `$` + unbounded letters/digits + full…"
+    },
     "contract": {
      "files": 2,
      "impl_vault": false,
@@ -100686,7 +100697,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 157,
+   "source_files": 158,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -104030,7 +104041,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 6,
-      "fn": 16,
+      "fn": 17,
       "struct": 5
      }
     },
@@ -110812,13 +110823,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/invoke.rs",
      "purpose": "How a facade row invokes its door: in the caller's room turn, on a scoped credential",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -115361,12 +115372,13 @@
       "SecretImportSupplementArgs",
       "SecretPendingArgs",
       "SecretRefArgs",
+      "SecretShowSupplementArgs",
       "SecretUnbindArgs"
      ],
      "path": "src/cli/secret_control_args.rs",
-     "purpose": "Flags for `oneiron secrets bind`, `unbind`, `pending` and `import-supplement` (FIX 2620, 11158, 12068): the…",
+     "purpose": "Flags for `oneiron secrets bind`, `unbind`, `pending`, `show-supplement` and `import-supplement` (FIX 2620…",
      "surface": {
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -121706,7 +121718,7 @@
      "path": "src/models/worker_host/session.rs",
      "purpose": "Exact conversation sessions on this process's managed EXL3 workers (DESIGN-V2 §3.2, R2), host side: the…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -121716,7 +121728,7 @@
      "path": "src/models/worker_host/session/commit.rs",
      "purpose": "A committed reply's canonical successor (DESIGN-V2 §3.2 steps 4-5): the turn's canonical path with its…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -122428,7 +122440,7 @@
      "path": "src/owner/export_supplement.rs",
      "purpose": "The owner's import of one export secret supplement on the recipient machine his export named (FIX 11846…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -125414,6 +125426,46 @@
    "source_files": 1,
    "test_files": 2
   },
+  "oneiron-store": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorKeyStatus"
+     ],
+     "path": "src/connector_key_status.rs",
+     "purpose": "Connector-key lifecycle status and its pinned wire strings",
+     "surface": {
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The store layer of the oneiron engine",
+     "surface": {
+      "mod": 1
+     }
+    }
+   ],
+   "modules": {
+    "connector_key_status": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Connector-key lifecycle status and its pinned wire strings"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The store layer of the oneiron engine",
+   "source_files": 2,
+   "test_files": 0
+  },
   "oneiron-uniffi": {
    "files": [
     {
@@ -125743,7 +125795,6 @@
       "ArtifactExportRequest",
       "ArtifactKind",
       "ArtifactLinkToken",
-      "ArtifactPin",
       "ArtifactPointer",
       "ArtifactPointerChannel",
       "ArtifactPointerRequest",
@@ -125764,7 +125815,6 @@
       "ArtifactServeTier",
       "ArtifactUnitReceipt",
       "ArtifactUnitView",
-      "ArtifactUnits",
       "ArtifactUnitsRequest",
       "ArtifactUnitsView",
       "ArtifactUnpublished",
@@ -125856,10 +125906,6 @@
       "BatchStopCause",
       "BeginMessageStreamRequest",
       "BillingAccountFiling",
-      "BindingMoveLink",
-      "BindingMoveState",
-      "BindingNotApplied",
-      "BindingSource",
       "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
@@ -126000,7 +126046,6 @@
       "CalendarSel",
       "CalendarSyncOutcome",
       "CalibrationPair",
-      "CalibrationResult",
       "CallAttemptRef",
       "CallClass",
       "CallEnvelope",
@@ -126061,14 +126106,12 @@
       "CancelStreamRequest",
       "CandidateLabel",
       "CandidateRef",
-      "CandleParityCheck",
       "Care",
       "CareLevel",
       "CaseDecision",
       "CatalogSeed",
       "CatastropheClass",
       "CategoryField",
-      "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
       "ChannelIdentityBindRequest",
@@ -126142,8 +126185,6 @@
       "CheckoutTakeoverInput",
       "CheckoutTeardownInput",
       "CheckoutTornDown",
-      "CheckpointFileKind",
-      "CheckpointFilePin",
       "CheckpointReadRequest",
       "CheckpointResumeView",
       "CheckpointStepView",
@@ -126692,11 +126733,9 @@
       "DecisionBandLearnRequest",
       "DecisionBandReadRequest",
       "DecisionClass",
-      "DecisionDial",
       "DecisionMedia",
       "DecisionMediaRef",
       "DecisionQuestion",
-      "DecisionQuestionInput",
       "DecisionReceipt",
       "DecisionRung",
       "DecisionTime",
@@ -126881,7 +126920,6 @@
       "EditNoteRequest",
       "EffectReceipt",
       "EmbeddingMatchEvidence",
-      "EmbeddingSpace",
       "EmbeddingSpaceBindRequest",
       "EmbeddingSpaceCandidateRequest",
       "EmbeddingSpaceMoveChecked",
@@ -126893,7 +126931,6 @@
       "EmbeddingSpaceProbePutRequest",
       "EmbeddingSpaceProbes",
       "EmbeddingSpaceRequest",
-      "EmbeddingSpacesView",
       "EncoderExecution",
       "EncoderOutput",
       "EngineSwitchRecord",
@@ -126951,7 +126988,6 @@
       "EsignSigningSignatureView",
       "EsignVoidRequest",
       "EstimateLabels",
-      "EstimateWindow",
       "EvalAuthoringInventory",
       "EvalAuthoringRef",
       "EvalAuthoringReport",
@@ -127014,7 +127050,6 @@
       "ExplainScoreEvidence",
       "ExportAnswer",
       "ExportChannel",
-      "ExportCheck",
       "ExportDiaryRead",
       "ExportTransfer",
       "ExportTransferPiece",
@@ -127180,7 +127215,6 @@
       "FreeTimeSchedule",
       "FreeTimeSpendView",
       "FreeTimeSplit",
-      "FrozenReadLane",
       "FrozenTrialCase",
       "GateCheckerReceipt",
       "GateCheckerSet",
@@ -127320,7 +127354,6 @@
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
-      "HeldOutResult",
       "HeldOutSelection",
       "HolderExportRequest",
       "HolderExportState",
@@ -127366,7 +127399,6 @@
       "HostedPassEvidence",
       "HostedPlaneAttestation",
       "HostedRelayDecision",
-      "HostingPrivacyPosture",
       "HubAdmissionReceipt",
       "HubConsentOutcome",
       "HubConsentReceipt",
@@ -127544,6 +127576,7 @@
       "LearningCellKey",
       "LearningCellView",
       "LearningChoiceValue",
+      "LearningEstimateWindow",
       "LearningEvidenceView",
       "LearningHeadView",
       "LearningMeanValue",
@@ -128280,7 +128313,6 @@
       "PendingActMatured",
       "PendingActStarted",
       "PendingAuthorityAct",
-      "PendingEmbedderBinding",
       "PendingProposalKind",
       "PendingProposalView",
       "PendingRootRequestView",
@@ -128301,7 +128333,6 @@
       "PersonaSnapshotPreviewRequest",
       "PersonaSnapshotPreviewRow",
       "PersonaSnapshotTextEdit",
-      "PinnedCheckpoint",
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
@@ -128503,22 +128534,14 @@
       "QualificationLimits",
       "QualificationPlan",
       "Quarantine",
-      "QuestionActivation",
       "QuestionAnswer",
       "QuestionAnswersPage",
       "QuestionAnswersReply",
       "QuestionAnswersRequest",
-      "QuestionAskerClass",
-      "QuestionAudience",
       "QuestionBackfillRequest",
       "QuestionCreateRequest",
       "QuestionCriteriaCriterion",
       "QuestionCriteriaString",
-      "QuestionDefinitionDecisionQuestion",
-      "QuestionDefinitionDecisionQuestionInput",
-      "QuestionEditRequest",
-      "QuestionExportCheck",
-      "QuestionMedia",
       "QuestionOutcomeWindowsRequest",
       "QuestionOutcomes",
       "QuestionOutcomesProjectRequest",
@@ -128527,7 +128550,6 @@
       "QuestionPauseRequest",
       "QuestionPaused",
       "QuestionReadRequest",
-      "QuestionRecord",
       "QuestionRefreshRequest",
       "QuestionScheduleHead",
       "QuestionScheduleRequest",
@@ -128592,7 +128614,6 @@
       "RecordedStep",
       "RecordingGap",
       "RecordingGapKind",
-      "RefreshPolicy",
       "RefusalDial",
       "RefusalLevel",
       "RefusalOutcome",
@@ -128847,7 +128868,6 @@
       "RevokeGrantRequest",
       "RoleHolder",
       "RoleRank",
-      "RoleSwapReceipt",
       "RoomClaimOutcome",
       "RoomClaimReceipt",
       "RoomClaimRequest",
@@ -129402,7 +129422,6 @@
       "SnapshotSecretLiftProposal",
       "SourceConflict",
       "SourceFamily",
-      "SourcePin",
       "SourceSpan",
       "SourceTrust",
       "SourceTrustRow",
@@ -129524,7 +129543,6 @@
       "SupportHolderClass",
       "SupportRepair",
       "SurfaceBand",
-      "SwapChoice",
       "SwitchCarried",
       "SwitchComponent",
       "SwitchEngineInput",
@@ -129624,6 +129642,7 @@
       "TaskTtl",
       "TaskTypeNodeSpec",
       "TaskTypeNodeView",
+      "TaskTypeRefTypeRef",
       "TaskTypeTreePin",
       "TaskTypeTreePinReceipt",
       "TaskTypeTreeRead",
@@ -129783,7 +129802,6 @@
       "Vad",
       "VadAnnotationSource",
       "VadBadge",
-      "VectorEvidenceFloors",
       "VectorPutReceipt",
       "VectorPutRequest",
       "VectorRefinement",
@@ -129994,8 +130012,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1094,
-      "struct": 3327
+      "enum": 1085,
+      "struct": 3302
      }
     },
     {
