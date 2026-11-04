@@ -1,7 +1,8 @@
 //! Native decision-read evidence shared by the probe and the house rung.
 use oneiron::code_run::model_call::{
     MODEL_CALL_SCHEMA, ModelCallInputPart, ModelCallKind, ModelCallRecord, NativeReadDigests,
-    NativeReadFailure, NativeReadOutcome, native_read_digests, record_model_call_in_txn,
+    NativeReadFailure, NativeReadOutcome, NativeReadRunSource, native_read_digests,
+    record_model_call_in_txn,
 };
 use oneiron::code_run::{CapsuleRungBinding, ReadWorldUnknown};
 use oneiron::llm::run_admission::RunAdmission;
@@ -16,6 +17,7 @@ pub(crate) struct NativeReadCapture<'a> {
     session: Option<String>,
     no_record_at_arrival: bool,
     digests: NativeReadDigests,
+    run_source: NativeReadRunSource,
 }
 
 impl<'a> NativeReadCapture<'a> {
@@ -25,6 +27,7 @@ impl<'a> NativeReadCapture<'a> {
         actor: Option<EntityId>,
         session: Option<String>,
         no_record_at_arrival: bool,
+        run_source: NativeReadRunSource,
     ) -> Option<Self> {
         let Some(actor) = actor else {
             tracing::debug!("decision-read evidence skipped: actor is unresolved");
@@ -43,6 +46,7 @@ impl<'a> NativeReadCapture<'a> {
             session,
             no_record_at_arrival,
             digests,
+            run_source,
         })
     }
 
@@ -78,6 +82,7 @@ impl<'a> NativeReadCapture<'a> {
             lease_generation: u64::from(evidence.revision()),
             call_index: call_index(),
             kind: ModelCallKind::LabelRead {
+                run_source: self.run_source,
                 digests: self.digests.clone(),
                 revision: revision.to_owned(),
                 outcome,

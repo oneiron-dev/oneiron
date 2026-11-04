@@ -34,10 +34,13 @@ eval arms pass their recording principal directly.
 
 ## Native house reads
 
-A house escalation read with a caller-supplied run uses the same caller context
-on the blocking decision thread. Only a bound context can write evidence; a
-missing context skips evidence, not the read. The run-less house gate, System
-One, Local-vision, embedder and tagger paths are not covered by this hook.
+A house escalation read uses the same caller context on the blocking decision
+thread. Only a bound context can write evidence; a missing context skips
+evidence, not the read. A read with a caller-supplied run records that run. A
+read without one carries the house gate's actual funded run to the observer
+only after its existing settlement attempt. The run stays in that decision
+frame and never enters the typed answer. System One, Local-vision, embedder
+and tagger paths are not covered by this hook.
 
 The engine lends the exact admitted native request and its terminal result to
 an optional observer after the gate has attempted settlement. The observer
@@ -50,8 +53,11 @@ unmapped failure skips evidence without changing the original error.
 The owner probe and this hook share one native record initializer and request
 canonicalizer. They record the actual reader model, opaque revision and
 connector locality. The probe retains its existing per-attempt retry indices;
-house reads use the caller run's shared evidence sequence. No generative request,
-finish reason, route, issuer or read-world identity is invented.
+house reads use their actual run's shared evidence sequence. Each native row
+explicitly records its run source: `probe`, `caller`, or `house_gate`. These
+are required current-format tags, not inferred identities or replay permission;
+erasure keeps the nonpersonal source tag. No generative request, finish reason,
+route, issuer or read-world identity is invented.
 
 ## Recording and privacy
 

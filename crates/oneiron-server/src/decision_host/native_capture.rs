@@ -1,5 +1,5 @@
-//! Post-settlement evidence for house reads on a caller-supplied run.
-use oneiron::code_run::model_call::{NativeReadFailure, NativeReadOutcome};
+//! Post-settlement evidence for house reads on their actual admitted run.
+use oneiron::code_run::model_call::{NativeReadFailure, NativeReadOutcome, NativeReadRunSource};
 use oneiron::llm::decision::{DecisionReadObserver, DecisionReadOutcome};
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::llm::{LabelReadFailure, LabelReadRequest};
@@ -9,15 +9,20 @@ use crate::models::native_call_capture::{NativeReadCapture, native_read_failure}
 
 use super::HouseRead;
 
+pub(super) enum HouseReadRun<'a> {
+    Caller(&'a RunAdmission),
+    HouseGate,
+}
+
 pub(super) struct HouseReadObserver<'a> {
     house: &'a HouseRead,
-    run: &'a RunAdmission,
+    run: HouseReadRun<'a>,
     caller: Option<ModelCallCaller>,
     no_record_at_arrival: bool,
 }
 
 impl<'a> HouseReadObserver<'a> {
-    pub(super) fn new(house: &'a HouseRead, run: &'a RunAdmission) -> Self {
+    pub(super) fn new(house: &'a HouseRead, run: HouseReadRun<'a>) -> Self {
         let caller = model_call_context();
         let no_record_at_arrival = caller.as_ref().is_some_and(|caller| {
             house
@@ -34,9 +39,22 @@ impl<'a> HouseReadObserver<'a> {
 }
 
 impl DecisionReadObserver for HouseReadObserver<'_> {
-    fn observe(&self, request: &LabelReadRequest<'_>, outcome: DecisionReadOutcome<'_>) {
+    fn observe(
+        &self,
+        request: &LabelReadRequest<'_>,
+        outcome: DecisionReadOutcome<'_>,
+        gate_run: Option<&RunAdmission>,
+    ) {
         let Some(caller) = &self.caller else {
             return;
+        };
+        let (run, run_source) = match (&self.run, gate_run) {
+            (HouseReadRun::Caller(run), None) => (*run, NativeReadRunSource::Caller),
+            (HouseReadRun::HouseGate, Some(run)) => (run, NativeReadRunSource::HouseGate),
+            _ => {
+                tracing::warn!("decision-read evidence skipped: gate run source differs");
+                return;
+            }
         };
         let outcome = match outcome {
             DecisionReadOutcome::Failed(error) => {
@@ -64,12 +82,13 @@ impl DecisionReadObserver for HouseReadObserver<'_> {
             Some(caller.principal),
             caller.session.clone(),
             self.no_record_at_arrival,
+            run_source,
         ) else {
             return;
         };
         capture.record(
-            self.run,
-            || self.run.next_model_call_index(),
+            run,
+            || run.next_model_call_index(),
             self.house.reader.model(),
             self.house.reader.revision(),
             self.house.gate.connector.locality,
