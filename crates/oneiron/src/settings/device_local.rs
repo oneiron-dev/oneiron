@@ -21,10 +21,21 @@ impl Vault {
     /// answer across a later send.
     #[cfg(feature = "sync")]
     pub fn rows_may_leave_device(&self, rows: &[EntityId]) -> Result<bool> {
+        self.rows_may_leave_for(rows, &crate::settings::CallerLocality::OffDevice.into())
+    }
+
+    /// [`Self::rows_may_leave_device`] toward `destination`: every row goes
+    /// only while no world withheld from one of its machines keeps it
+    /// (FIX 5588). Nothing is kept from a caller on this device.
+    #[cfg(feature = "sync")]
+    pub fn rows_may_leave_for(
+        &self,
+        rows: &[EntityId],
+        destination: &ReadDestination,
+    ) -> Result<bool> {
         let _acceptance = self.device_only_acceptance();
         let rtxn = self.store.env.read_txn()?;
-        let flagged =
-            device_local_worlds_at(self, &rtxn, crate::settings::CallerLocality::OffDevice)?;
+        let flagged = device_local_worlds_for(self, &rtxn, destination)?;
         for row in rows {
             match device_only_withholds(&self.store, &rtxn, &flagged, row) {
                 Ok(false) => {}
