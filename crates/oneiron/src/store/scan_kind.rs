@@ -355,6 +355,10 @@ pub enum EngineScan {
     /// One receipt-family source ledger a receipt query reads, named by its
     /// scope (once cut short or refused past 100,000; FIX 3582).
     ReceiptSourceRows,
+    /// One sync-state, sync-queue or window update-key prefix scan, named by
+    /// its scope (past the advisory 10,000-row threshold it raises one check
+    /// and reads on).
+    SyncPrefixRows,
 }
 
 /// Rows one engine scan reads past which it asks whether everything is
