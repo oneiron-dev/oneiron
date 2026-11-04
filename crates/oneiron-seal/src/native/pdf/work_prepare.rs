@@ -487,13 +487,13 @@ const fn btree_entry_bytes<K, V>() -> usize {
 /// One fresh `Dictionary` entry: key bytes plus a BTree entry share.
 fn dictionary_insert(ledger: &MemoryLedger, key_len: usize) -> Result<(), WorkError> {
     let bytes = btree_entry_bytes::<Vec<u8>, Object>().checked_add(key_len).ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
-    ledger.take(wide(bytes)).map_err(WorkError::Memory)
+    ledger.admit_len::<u8>(bytes).map_err(WorkError::Memory)
 }
 
 /// One fresh `Document` object: the objects-map entry share. The object's
 /// heap (stream bytes, dictionaries) is admitted where it is built.
 fn object_insert(ledger: &MemoryLedger) -> Result<(), WorkError> {
-    ledger.take(wide(btree_entry_bytes::<ObjectId, Object>())).map_err(WorkError::Memory)
+    ledger.admit_len::<u8>(btree_entry_bytes::<ObjectId, Object>()).map_err(WorkError::Memory)
 }
 
 /// One fresh dictionary built whole via `dictionary!`: `entries` shares plus
@@ -504,5 +504,5 @@ fn dictionary_built(ledger: &MemoryLedger, entries: usize, key_bytes: usize, nam
         .and_then(|shares| shares.checked_add(btree_node_bytes::<Vec<u8>, Object>()))
         .and_then(|shares| shares.checked_add(key_bytes)).and_then(|shares| shares.checked_add(name_bytes))
         .ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
-    ledger.take(wide(bytes)).map_err(WorkError::Memory)
+    ledger.admit_len::<u8>(bytes).map_err(WorkError::Memory)
 }

@@ -45,7 +45,7 @@ impl<'a> Scope<'a> {
     /// Admits `bytes` about to be allocated under this scope.
     fn take(&self, bytes: usize) -> Result<(), WorkError> {
         let wide = u64::try_from(bytes).unwrap_or(u64::MAX);
-        self.ledger.take(wide).map_err(WorkError::Memory)?;
+        self.ledger.admit_len::<u8>(bytes).map_err(WorkError::Memory)?;
         self.taken.fetch_add(wide, Ordering::Relaxed);
         Ok(())
     }

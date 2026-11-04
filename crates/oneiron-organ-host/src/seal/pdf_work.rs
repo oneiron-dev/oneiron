@@ -351,7 +351,7 @@ impl HostedSealer<'_> {
         if original_sha256 != digest
             || audit_chain_sha256 != chain
             || original_pages == 0
-            || prepared.bytes.len() as u64 > PDF_FORMAT_BYTES
+            || prepared.len() as u64 > PDF_FORMAT_BYTES
         {
             return Err(reply_invalid());
         }

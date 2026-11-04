@@ -20,7 +20,7 @@ pub(super) fn decoded_admitted(
         // organ: admitted, not refused (FIX 7980)
         decode_admitted(stream, limits)
     } else {
-        limits.ledger.take(wide(stream.content.len())).map_err(WorkError::Memory)?;
+        limits.ledger.admit_len::<u8>(stream.content.len()).map_err(WorkError::Memory)?;
         Ok(stream.content.clone())
     }
 }
@@ -37,7 +37,7 @@ pub(crate) fn decode_stream(stream: &Stream, limits: &WorkLimits) -> Result<Vec<
 fn decode_admitted(stream: &Stream, limits: &WorkLimits) -> Result<Vec<u8>, WorkError> {
     if !stream.dict.has(b"Filter") {
         // organ: admitted, not refused (FIX 7980)
-        limits.ledger.take(wide(stream.content.len())).map_err(WorkError::Memory)?;
+        limits.ledger.admit_len::<u8>(stream.content.len()).map_err(WorkError::Memory)?;
         return Ok(stream.content.clone());
     }
     if stream
@@ -144,7 +144,7 @@ fn predictor(stream: &Stream, data: Vec<u8>, limits: &WorkLimits) -> Result<Vec<
     // The output, the previous row and the row being decoded.
     limits
         .ledger
-        .take(wide(data.len().saturating_add(width.saturating_mul(2))))
+        .admit_len::<u8>(data.len().saturating_add(width.saturating_mul(2)))
         .map_err(WorkError::Memory)?;
     let mut output = Vec::with_capacity(data.len());
     let mut previous = vec![0u8; width];
@@ -191,9 +191,4 @@ fn lopdf_error(limits: &WorkLimits, err: lopdf::Error) -> WorkError {
         WorkError::Invalid(InputInvalidCode::MalformedPdf),
         WorkError::Memory,
     )
-}
-
-/// A length as the ledger counts bytes.
-fn wide(bytes: usize) -> u64 {
-    u64::try_from(bytes).unwrap_or(u64::MAX)
 }
