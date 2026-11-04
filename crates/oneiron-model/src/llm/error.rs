@@ -307,6 +307,10 @@ pub enum FatalLlmError {
     /// error text, bounded.
     #[error("invalid request: {message}")]
     InvalidRequestDetail { message: String },
+    /// A provider's structured refusal because the input exceeds its context
+    /// window, with the same bounded provider message as other request errors.
+    #[error("context window exceeded: {message}")]
+    ContextWindowExceeded { message: String },
     #[error("authentication failed")]
     Auth,
     #[error("content filtered")]

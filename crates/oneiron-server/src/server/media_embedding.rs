@@ -131,6 +131,7 @@ impl MediaEmbedRefusal {
                 | Self::Call(LlmError::Fatal(
                     FatalLlmError::InvalidRequest
                         | FatalLlmError::InvalidRequestDetail { .. }
+                        | FatalLlmError::ContextWindowExceeded { .. }
                         | FatalLlmError::ContentFiltered
                         | FatalLlmError::EmptyResponse
                 ))
