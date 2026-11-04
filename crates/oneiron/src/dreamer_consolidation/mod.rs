@@ -115,7 +115,7 @@ pub(crate) use person_about::{
 };
 pub use provenance::*;
 pub(crate) use provenance::{
-    decode_verified_citations, decode_verified_locators,
+    VerifiedLocator, decode_verified_citations, decode_verified_locators,
     encode_consolidation_evidence_with_locators, kept_decisions_value,
 };
 pub use request_sources::SourcedBackend;
