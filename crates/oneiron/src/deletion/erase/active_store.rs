@@ -181,7 +181,7 @@ impl Vault {
             // Erase-only: an erased MESSAGE's model-call rows go with the
             // custody they lifted, under this erase's act.
             crate::code_run::model_call::erase_message_model_calls_in_txn(self, wtxn, id, act)?;
-            crate::secret_custody::revoke_side_row_custody_in_txn(self, wtxn, id, act)?;
+            crate::secret_custody::revoke_message_part_custody_in_txn(self, wtxn, id, act)?;
         }
         let had_refinement = crate::store::claim_refinement_control::erase_claim_refinement_in_txn(
             &self.store,
@@ -286,7 +286,7 @@ impl Vault {
             // Erase-only: an erased MESSAGE's model-call rows go with the
             // custody they lifted, under this erase's act (first consume carries).
             crate::code_run::model_call::erase_message_model_calls_in_txn(self, wtxn, id, act)?;
-            crate::secret_custody::revoke_side_row_custody_in_txn(self, wtxn, id, act)?;
+            crate::secret_custody::revoke_message_part_custody_in_txn(self, wtxn, id, act)?;
         }
         // Capture before the body is scrubbed (see the purge).
         self.capture_project_before_tear_in_txn(wtxn, *id)?;

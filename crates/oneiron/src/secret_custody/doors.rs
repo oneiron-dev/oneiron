@@ -530,6 +530,43 @@ pub(crate) fn restore_secret_custody_in_txn(
     Ok(true)
 }
 
+/// Revokes only custody minted at this MESSAGE's ordered part positions.
+/// The origin inventory remains usable after the MESSAGE body has gone.
+pub(crate) fn revoke_message_part_custody_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    message: &EntityId,
+    act: Option<&super::EraseOwnerAct<'_>>,
+) -> Result<()> {
+    let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    for id in super::found_keys::found_key_custody_in_txn(&vault.store, wtxn, message)? {
+        let part = crate::batch::secret_scan::mask_origin_in_txn(&vault.store, wtxn, &id)?
+            .is_some_and(|origin| {
+                origin.record == *message
+                    && origin
+                        .place
+                        .strip_prefix("parts/")
+                        .is_some_and(|index| index.parse::<usize>().is_ok())
+            });
+        if !part {
+            continue;
+        }
+        let Some(record) = super::read_secret_custody_meta_in_txn(&vault.store, wtxn, &id)? else {
+            continue;
+        };
+        let cause = crate::secret_rotation::RevokeCause::Revoked;
+        if record.status == SecretCustodyStatus::Revoked {
+            crate::secret_rotation::revoke_custody_in_txn(vault, wtxn, &id, cause, at)?;
+        } else {
+            vault.revoke_secret_in_txn(wtxn, &record.name, cause, at)?;
+            if let Some(act) = act {
+                act.carry_revoke_in_txn(vault, wtxn, &record.name, at)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Revokes, in `wtxn`, each custody record the side-row wall minted from the
 /// row outside the entity tables that `origin` names (FIX 6710): an erase
 /// that takes the row reaches every value it lifted. A record is minted from

@@ -74,7 +74,7 @@ const MAX_WITNESS_METADATA_BYTES: usize = 64 * 1024;
 /// One durable ordered MESSAGE part. Custody references carry no part bytes;
 /// revealing one still requires the existing secret entry grant.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(untagged, deny_unknown_fields)]
+#[serde(untagged)]
 pub(crate) enum StoredMessagePart {
     Inline(crate::ContentPart),
     Custody { custody: String },
