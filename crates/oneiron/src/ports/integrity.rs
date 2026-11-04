@@ -9,8 +9,8 @@ use crate::settings::CarriedWorlds;
 use crate::store::{ManifestDbs, SessionStoreView, Store};
 use heed::{RoTxn, RwTxn};
 pub(super) const DEP: &[u8] = b"ports:dependency:v1:";
-const STALE: &[u8] = b"ports:stale:v1:";
-const TOMBSTONE: &[u8] = b"ports:tombstone:v1:";
+pub(super) const STALE: &[u8] = b"ports:stale:v1:";
+pub(super) const TOMBSTONE: &[u8] = b"ports:tombstone:v1:";
 const WITHDRAWN: &[u8] = b"ports:withdrawn:v1:";
 pub(super) fn tombstone_key(id: &EntityId) -> Vec<u8> {
     [TOMBSTONE, id.as_bytes()].concat()
