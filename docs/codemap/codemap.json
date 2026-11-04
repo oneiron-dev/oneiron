@@ -686,18 +686,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "OptionalMemory",
-      "OptionalMemoryProfile"
-     ],
+     "notable": [],
      "path": "src/agent_def/optional_memory.rs",
      "purpose": "How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget)",
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "enum": 1,
       "fn": 4,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -752,9 +748,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RefusalDial",
       "RefusalDomain",
-      "RefusalLevel",
       "RefusalOutcome",
       "VaultKind"
      ],
@@ -763,9 +757,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "enum": 4,
+      "enum": 3,
       "fn": 12,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -779,17 +773,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "AgentDefinition",
-      "MemoryProfile"
-     ],
+     "notable": [],
      "path": "src/agent_def/types.rs",
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "crate-vis": 59,
       "fn": 17,
-      "re-export": 15,
-      "struct": 2
+      "re-export": 17
      }
     },
     {
@@ -69066,7 +69056,7 @@
      "path": "src/store/actor_scrubs.rs",
      "purpose": "The actor scrubs of side tables whose eraser lives in the engine: the trait the engine implements, and the…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "trait": 1
      }
     },
@@ -69094,11 +69084,49 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AgentDefinition"
+     ],
+     "path": "src/store/agent_definition.rs",
+     "purpose": "The stored agent definition record (AGENT_DEF): a saved, host-agnostic agent composition and the shared…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemoryProfile"
+     ],
+     "path": "src/store/agent_memory_profile.rs",
+     "purpose": "The per-agent context-window memory profile (RT-05, ONE-1687) an agent definition stores: its window budget…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AgentModel"
      ],
      "path": "src/store/agent_model.rs",
      "purpose": "One model on an agent's model list (FIX 4472): the revision-pinned model and the owner's words on when the…",
      "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OptionalMemory",
+      "OptionalMemoryProfile"
+     ],
+     "path": "src/store/agent_optional_memory.rs",
+     "purpose": "How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): the…",
+     "surface": {
+      "enum": 1,
       "struct": 1
      }
     },
@@ -69120,6 +69148,20 @@
       "enum": 4,
       "fn": 10,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RefusalDial",
+      "RefusalLevel"
+     ],
+     "path": "src/store/agent_refusal.rs",
+     "purpose": "The refusal dial (OF-533) an agent definition stores: one position from none to full, and the agent's…",
+     "surface": {
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -72232,7 +72274,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 120,
+      "crate-vis": 124,
       "mod": 108,
       "re-export": 31
      }
@@ -90579,7 +90621,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 431,
+     "files": 435,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90819,7 +90861,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6313,
+   "source_files": 6317,
    "test_files": 895
   },
   "oneiron-android": {
@@ -127233,6 +127275,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EsignRateThresholds"
+     ],
+     "path": "src/esign_rate_thresholds.rs",
+     "purpose": "The e-sign send-rate thresholds a policy manifest resolves to",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "KeySpan",
       "MemberStep",
       "SecretSight"
@@ -127289,7 +127343,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 35
+      "mod": 36
      }
     },
     {
@@ -129130,6 +129184,13 @@
      "layout": "file",
      "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…"
     },
+    "esign_rate_thresholds": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The e-sign send-rate thresholds a policy manifest resolves to"
+    },
     "file_secret_marks": {
      "files": 1,
      "impl_vault": false,
@@ -129301,7 +129362,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 149,
+   "source_files": 150,
    "test_files": 4
   },
   "oneiron-uniffi": {
