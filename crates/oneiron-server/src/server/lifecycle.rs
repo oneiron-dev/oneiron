@@ -7,10 +7,8 @@ use std::time::{Duration, Instant};
 
 use loro::{ExportMode, VersionVector};
 use oneiron::SyncEngineContext;
-use oneiron::attempt_queue::AttemptQueue;
 use oneiron::sync::lease::{self, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron::sync::{self, WindowKey};
-use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use super::core::{SyncServer, unix_seconds_now};
@@ -68,20 +66,27 @@ pub(super) enum LifecycleJobKind {
     MergeQueueChecks,
 }
 
-/// The lifecycle loop, and the housekeeping pass it last started. Dropping it
-/// stops the loop; [`Self::stop`] also waits out the pass.
+/// The lifecycle loop and the housekeeping pass it last started, beside the
+/// claim VAD payment worker's loop. Dropping it stops both loops;
+/// [`Self::stop`] also waits out the pass and the payment run in flight.
 pub(crate) struct LifecycleScheduler {
     tick: JoinHandle<()>,
+    /// The claim VAD payment worker (FIX 11702): while it runs, the vault's
+    /// write door answers before the consolidations its write owes.
+    claim_vad_payment: JoinHandle<()>,
     server: Arc<SyncServer>,
 }
 
 impl LifecycleScheduler {
-    /// Stops the loop, then asks every housekeeping pass in flight, the
+    /// Stops both loops, then asks every housekeeping pass in flight, the
     /// owner's included, to start no further sweep or page, and waits for
-    /// each, so nothing a pass writes lands after this returns.
+    /// each, so nothing a pass or a payment run writes lands after this
+    /// returns.
     pub(crate) async fn stop(mut self) {
         self.tick.abort();
+        self.claim_vad_payment.abort();
         let _ = (&mut self.tick).await;
+        let _ = (&mut self.claim_vad_payment).await;
         self.server.housekeeping_passes.stop().await;
     }
 }
@@ -89,6 +94,7 @@ impl LifecycleScheduler {
 impl Drop for LifecycleScheduler {
     fn drop(&mut self) {
         self.tick.abort();
+        self.claim_vad_payment.abort();
     }
 }
 
@@ -105,7 +111,8 @@ impl SyncServer {
     /// Starts the periodic lifecycle loop. Each tick, the first at once,
     /// expires sync leases, drains reassert markers, finishes the dependent
     /// walks left past their first batch and starts a housekeeping pass,
-    /// each through `admit`, the host's write gate.
+    /// each through `admit`, the host's write gate. Beside it starts the
+    /// claim VAD payment worker, whose runs pass the same gate (FIX 11702).
     pub(crate) fn spawn_lifecycle_scheduler(
         self: &Arc<Self>,
         admit: HousekeepingAdmission,
@@ -118,6 +125,7 @@ impl SyncServer {
         tick: Duration,
         admit: HousekeepingAdmission,
     ) -> LifecycleScheduler {
+        let claim_vad_payment = self.spawn_claim_vad_payment_worker(Arc::clone(&admit));
         let server = Arc::clone(self);
         let tick = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tick);
@@ -125,10 +133,6 @@ impl SyncServer {
             // The served repositories' maintenance runs on the first tick and
             // then once an interval.
             let mut repositories_due = Instant::now();
-            // A committed queue write wakes the merge queue checker alone
-            // (FIX 6868, G2 PR2): subscribed before its first snapshot.
-            let mut queue_writes = AttemptQueue::new(server.vault()).subscribe();
-            let mut queue_writes_open = true;
             loop {
                 // A published-ref move or a green landing wakes the mirror
                 // pushes alone, at once (FIX 6866); every other job keeps
@@ -136,12 +140,11 @@ impl SyncServer {
                 let woken = tokio::select! {
                     _ = interval.tick() => false,
                     () = server.vault().origin_mirror_wake().notified() => true,
-                    written = queue_writes.recv(), if queue_writes_open => {
-                        if matches!(written, Err(broadcast::error::RecvError::Closed)) {
-                            queue_writes_open = false;
-                        } else {
-                            server.wake_merge_queue_checker(&admit).await;
-                        }
+                    // A committed queue write wakes the merge queue checker
+                    // alone (FIX 6868, G2 PR2), on its own wake, never on
+                    // another attempt commit (FIX 7306).
+                    () = server.vault().merge_queue_wake().notified() => {
+                        server.wake_merge_queue_checker(&admit).await;
                         continue;
                     }
                 };
@@ -191,6 +194,7 @@ impl SyncServer {
         });
         LifecycleScheduler {
             tick,
+            claim_vad_payment,
             server: Arc::clone(self),
         }
     }

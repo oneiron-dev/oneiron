@@ -92,6 +92,8 @@ pub enum ComplianceBlockReason {
     MissingRequiredMessageElement,
     /// No branch of a consent-class row's lawful-basis requirement holds.
     MissingLawfulBasis,
+    /// Consent evidence missing.
+    ConsentEvidenceMissing,
     /// The governing row is older than the pack's verification-age dial.
     StaleRule,
     /// The row is violated on its own terms, or the pack cannot apply it.
@@ -118,6 +120,7 @@ impl ComplianceBlockReason {
                 "counterparty_compliance_missing_message_element"
             }
             Self::MissingLawfulBasis => "counterparty_compliance_missing_lawful_basis",
+            Self::ConsentEvidenceMissing => "counterparty_compliance_consent_evidence_missing",
             Self::StaleRule => "counterparty_compliance_stale_rule",
             Self::RuleViolation => "counterparty_compliance_rule_violation",
         }
@@ -145,6 +148,21 @@ fn block(reason: ComplianceBlockReason, row: &ComplianceRuleRow) -> ComplianceVe
         reason,
         jurisdiction: Some(row.jurisdiction.clone()),
         rule_kind: Some(row.rule_kind),
+    }
+}
+
+impl std::fmt::Display for ComplianceBlockReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::UnknownLegalForm => "legal form unknown",
+            Self::UnknownListProvenance => "list provenance unknown",
+            Self::MissingPublicationContext => "publication context missing",
+            Self::MissingRequiredMessageElement => "required message element missing",
+            Self::MissingLawfulBasis => "lawful basis missing",
+            Self::ConsentEvidenceMissing => "consent evidence missing",
+            Self::StaleRule => "stale rule",
+            Self::RuleViolation => "rule violation",
+        })
     }
 }
 
@@ -332,8 +350,15 @@ fn evaluate_consent_class(
     facts: &DispatchComplianceFacts,
 ) -> Option<ComplianceVerdict> {
     if let Some(requirement) = &row.consent {
-        return (!requirement.holds(facts))
-            .then(|| block(ComplianceBlockReason::MissingLawfulBasis, row));
+        if requirement.holds(facts) {
+            return None;
+        }
+        let reason = if facts.consent.record_ref.is_none() {
+            ComplianceBlockReason::ConsentEvidenceMissing
+        } else {
+            ComplianceBlockReason::MissingLawfulBasis
+        };
+        return Some(block(reason, row));
     }
     if row.b2b_exemption != B2bExemption::Conditional {
         return None;

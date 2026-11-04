@@ -66,7 +66,7 @@ use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, MemoryError, Result, Vault};
 
 use super::record::{self, HookVerbRunRecord};
-use super::{VerbArgsCheck, VerbCall, VerbHookPre, VerbHookStop, chain};
+use super::{VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, chain};
 
 mod named_pause;
 mod room_pause;
@@ -267,6 +267,9 @@ pub(super) struct SessionVerbAsk {
     pub(super) ask: EntityId,
     /// Set once a retry resumed the call on a proceed answer it used up.
     pub(super) used: bool,
+    /// Whether the asking hook reads (FIX 1443: a used-but-unfinished READ
+    /// re-opens inline) or writes (an honest unknown-outcome Skipped).
+    pub(super) domain: VerbDomain,
     /// The route a room's call ran on when its hook asked, in RAM only; a
     /// resume refuses once it no longer holds (FIX 5524). `None` with no room.
     pub(super) route: Option<PausedRoute>,
@@ -367,6 +370,29 @@ impl SessionHookKeep {
             Some(row) if row.ask.ask == ask && !row.ask.used => {
                 row.ask.used = true;
                 row.used_at = Some(now);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Clears the used mark `use_ask` set (FIX 1431), under the same guard:
+    /// false when no used call of that ask stands there. `used_at` clears
+    /// with it so the prune horizon keeps the re-opened pause.
+    pub(super) fn unuse_ask(
+        &self,
+        key: &SessionHookKey,
+        invocation: [u8; 16],
+        ask: EntityId,
+    ) -> bool {
+        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        match kept
+            .get_mut(key)
+            .and_then(|kept| kept.asks.get_mut(&invocation))
+        {
+            Some(row) if row.ask.ask == ask && row.ask.used => {
+                row.ask.used = false;
+                row.used_at = None;
                 true
             }
             _ => false,
@@ -704,6 +730,7 @@ impl Vault {
                     carry: None,
                     landing: None,
                     session: Some(hooks.carry()),
+                    resumed_ask: None,
                 }));
             }
         };

@@ -17,7 +17,7 @@ use oneiron::settings::backup::BackupPolicy;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::has_json_content_type;
 use crate::api::transfer::{self, BodyReader};
 use crate::auth::CoreAuth;
@@ -37,6 +37,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/settings/backup",
                 summary: "The owner's backup setting (FIX 5621): `stored`, his choice {enabled, every_hours, keep} or null while he has made none, and `effective`, what the schedule follows now (the stored choice whole, else this server's `[backup]` section; null on a server started without its vault's backup storage).",
                 row: None,
+                shape: None,
             },
             get(read),
         ),
@@ -46,6 +47,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/settings/backup",
                 summary: "Stores the owner's backup choice, the whole {enabled, every_hours, keep} (every_hours and keep each greater than zero; enabled false is a choice, not a reset), and answers as the GET does. The schedule's next tick reads it; it prunes nothing and stops no backup already being written. `enabled` gates only scheduled backups; `keep` applies to every backup this server takes.",
                 row: None,
+                shape: Some(RestShape::json(
+                    backup_policy_body_schema,
+                    backup_setting_schema,
+                )),
             },
             axum::routing::put(put),
         ),

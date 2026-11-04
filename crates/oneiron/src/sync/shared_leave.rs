@@ -28,7 +28,7 @@ use crate::side_table::{self, Named, Raw, SideTable};
 mod collect;
 
 pub(crate) use collect::{
-    collect_left_env_bodies, collect_left_env_bodies_at_open, left_env_body_collect_due_at,
+    collect_left_env_bodies, collect_left_env_bodies_admitted, left_env_body_collect_due_at,
 };
 
 /// This device's leave records, keyed by the notice's receipt id.
@@ -281,7 +281,7 @@ fn confirm_leave(
 ) -> Result<SharedLeaveReceipt> {
     let purge = |wtxn: &mut heed::RwTxn<'_>, receipt: &mut SharedLeaveReceipt| -> Result<bool> {
         let pass = crate::store::local_replica::purge_left_shared_env_in_txn(
-            &vault.store,
+            vault,
             wtxn,
             LEAVE_PURGE_ROWS_PER_PASS,
         )?;

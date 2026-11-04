@@ -18,7 +18,7 @@
 use std::fmt;
 
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId, decode_agent_dispatch_input};
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
+use oneiron::attempt_queue::{AttemptId, AttemptState};
 use oneiron::dreamer_runner::{
     DreamerParkCause, ParkDreamerAttempt, decode_dreamer_attempt_payload,
 };
@@ -344,7 +344,10 @@ pub(crate) fn resume_payer_parks(
     now: u64,
     restore: Option<&std::sync::Mutex<std::collections::HashMap<AttemptId, u64>>>,
 ) -> usize {
-    let rows = match AttemptQueue::new(vault).list() {
+    let runner = DreamerRunnerStore::new(vault);
+    // Only parked attempts are read, so a pass costs its parks, not the
+    // ledger (FIX 12253).
+    let rows = match runner.parked_working_rows() {
         Ok(rows) => rows,
         Err(error) => {
             tracing::warn!(%error, "payer parks could not be listed");
@@ -352,7 +355,6 @@ pub(crate) fn resume_payer_parks(
             return 1;
         }
     };
-    let runner = DreamerRunnerStore::new(vault);
     let dispatcher = AgentDispatcher::new(vault);
     let mut resumed = 0;
     let mut waiting = 0;

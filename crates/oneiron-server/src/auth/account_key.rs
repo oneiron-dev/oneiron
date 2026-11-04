@@ -321,6 +321,17 @@ impl AccountKeys {
         })
     }
 
+    /// Whether the cached verdict for `instrument` is still live now:
+    /// present, lease-unexpired, key-unexpired and unpunched. Probe only:
+    /// no insert, no `last_used` bump, no central check. A duplicate waiter
+    /// is judged on the verdict the first call was admitted on
+    /// (review-4320 P1).
+    pub fn instrument_is_live(&self, instrument: &[u8; 32], now: u64) -> bool {
+        let mut state = self.lock();
+        state.prune(now);
+        state.entries.contains_key(instrument)
+    }
+
     /// How many positive verdicts are currently cached. Diagnostics only.
     pub fn cached_verdicts(&self) -> usize {
         self.lock().entries.len()

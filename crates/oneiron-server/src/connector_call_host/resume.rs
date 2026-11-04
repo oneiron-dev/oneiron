@@ -321,7 +321,7 @@ impl ServedConnectorCallHost {
             .ok_or("connector_route_gone")?;
         let presented = self
             .presenting(route)
-            .present_again(&self.vault)
+            .present_again(&self.vault, Some((&binding.key_ref, binding.tool.as_str())))
             .ok_or("credential_not_presented")?;
         let live = LiveSession {
             client: self.client.clone(),
@@ -339,8 +339,8 @@ impl ServedConnectorCallHost {
                 let (tool, arguments, tool_headers) = {
                     let view =
                         FrozenToolCallView::read(&original).map_err(|_| "original_call_unread")?;
-                    let exchange =
-                        Exchange::new(&self.client, &view, None).ok_or("original_call_unread")?;
+                    let exchange = Exchange::new(&self.client, &view, &self.vault, None)
+                        .ok_or("original_call_unread")?;
                     (
                         exchange.tool.to_owned(),
                         exchange.arguments,
