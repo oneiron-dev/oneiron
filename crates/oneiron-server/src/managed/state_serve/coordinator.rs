@@ -160,8 +160,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let broker = crate::models::BrokerContext::for_serve(&vault, &config);
     // The embedder slot and the pods' health poller, as plain serve builds
     // them; the worker that fills the slot starts under the write admission.
-    let (embedder, gpu_poller) =
-        crate::commands::build_embedder(&vault, &config, broker.as_ref()).await?;
+    let crate::commands::BuiltEmbedder {
+        slot: embedder,
+        gpu_pool,
+        poller: gpu_poller,
+    } = crate::commands::build_embedder(&vault, &config, broker.as_ref()).await?;
     // The tagger slot `[oneironer]` names, as plain serve builds it; its
     // worker starts under the write admission too. Its engine rows sit in
     // the data directory: managed mode reads no HOME or XDG (FIX 6873).
@@ -176,6 +179,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
+        .with_model_setup_config(&config, &crate::config::ServeArgs::default())
+        .with_gpu_pool(gpu_pool)
         .with_broker(broker)
         .with_owner_host(owner_host)
         .with_browser_guest(
@@ -710,7 +715,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         let _ = failure_signals.await;
         let _ = futures_util::future::OptionFuture::from(tagging.take()).await;
         // Tagging has ended: each platform child is shut down and reaped (FIX 7383).
-        if let Some(slot) = sync_server.tagger.as_ref() {
+        if let Some(slot) = sync_server.tagger_slot() {
             slot.closer().close().await;
         }
         for worker in ladder_workers {
@@ -770,7 +775,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         shutdown.trigger();
         let _ = tagging.await;
         // A failed start reaps its platform children too (FIX 7383).
-        if let Some(slot) = sync_server.tagger.as_ref() {
+        if let Some(slot) = sync_server.tagger_slot() {
             slot.closer().close().await;
         }
     }
