@@ -661,7 +661,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
             }
             let rtxn: &heed::RoTxn<'_> = wtxn;
             receipt.mark_unresolved(|named| {
-                Ok(crate::provenance::body::owned_body_in_txn(
+                Ok(crate::store::owned_body::owned_body_in_txn(
                     &vault.store,
                     rtxn,
                     &named.owner,
