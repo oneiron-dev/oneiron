@@ -90,6 +90,7 @@ impl WitnessTurnInput {
                 author: message.author,
                 message_type: message.message_type,
                 content: message.content,
+                parts: None,
                 metadata: message.metadata,
                 is_visible: message.is_visible.unwrap_or(true),
                 order: message.order,

@@ -501,6 +501,7 @@ impl Memory<'_> {
                         .ok_or(Error::CorruptedIndex("message type"))?
                         .to_owned(),
                     content: String::new(),
+                    parts: None,
                     metadata: field("metadata").filter(|value| !value.is_null()).cloned(),
                     is_visible: field("is_visible")
                         .and_then(serde_json::Value::as_bool)
@@ -740,8 +741,16 @@ pub(super) fn committed_text(
         .and_then(|v| v.as_str())
         .ok_or(Error::CorruptedIndex("message text"))?
         .to_owned();
+    // The stored birth parts ride the expected envelope, so a Continue on a
+    // parted MESSAGE compares the full body it was born with instead of
+    // failing against a part-less rebuild. Absent on a text-only MESSAGE.
+    let parts: Option<Vec<crate::ContentPart>> = value
+        .get("parts")
+        .map(|parts| serde_json::from_value(parts.clone()))
+        .transpose()
+        .map_err(|_| Error::CorruptedIndex("message parts"))?;
     let expected: serde_json::Value = rmp_serde::from_slice(
-        &witness_message_envelope(&seed.message(text.clone())).encode_body()?,
+        &witness_message_envelope(&seed.message_with_parts(text.clone(), parts)).encode_body()?,
     )
     .map_err(|_| Error::CorruptedIndex("message envelope"))?;
     if value != expected {
