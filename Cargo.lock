@@ -8750,11 +8750,14 @@ dependencies = [
  "blake3",
  "getrandom 0.4.3",
  "heed",
+ "oneiron-base",
  "oneiron-contracts",
+ "oneiron-docedit",
  "oneiron-model",
  "rmpv",
  "schemars 0.8.22",
  "serde",
+ "serde_json",
  "zeroize",
 ]
 
