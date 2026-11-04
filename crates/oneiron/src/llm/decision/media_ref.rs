@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 pub const MEDIA_FIELD: &str = "media";
 
 /// An image by reference.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImageRef {
     /// What the pixels are of: an image ASSET at the hash of its bytes, or the document a
@@ -98,7 +98,7 @@ pub(super) fn dimensions(image: &ImageBytes) -> LlmResult<(u32, u32)> {
 
 /// Audio by reference, on meeting_audio's clocks: `duration_ms`, `window` and the speaker
 /// tracks run on the full-file clock; a speech pack adds its source map.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AudioRef {
     /// The audio ASSET at the hash of its bytes.
@@ -154,7 +154,7 @@ impl AudioRef {
 }
 
 /// One medium by reference.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionMediaRef {
     Image(ImageRef),
@@ -171,7 +171,7 @@ impl DecisionMediaRef {
 }
 
 /// How a referenced medium reached the call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MediaServed {
     /// The bytes the ref names rode beside the state.
@@ -186,7 +186,7 @@ pub enum MediaServed {
 }
 
 /// One entry of `state.media`: the name the question uses, the ref and what was served.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionMedia {
     pub name: String,
