@@ -140,12 +140,15 @@ impl ExportBodyFile {
 pub(crate) fn attaches_as_file(entity_type: u8, body: &[u8]) -> bool {
     entity_type == crate::registry::ENTITY_TYPE_ASSET
         && std::str::from_utf8(body).is_err()
-        && matches!(crate::skill_hub::decode_source_carrier(body), Ok(None))
+        && matches!(
+            crate::store::skill_source_carrier::decode_source_carrier(body),
+            Ok(None)
+        )
         && matches!(
             crate::skill_hub::pack_catalog::decode_source_body(body),
             Ok(None)
         )
-        && !crate::receipt::is_receipt_archive_source(body)
+        && !crate::store::receipt_identity::is_receipt_archive_source(body)
 }
 
 impl ExportBody {
@@ -157,7 +160,7 @@ impl ExportBody {
             };
         }
         if entity_type == crate::registry::ENTITY_TYPE_ASSET {
-            match crate::skill_hub::decode_source_carrier(bytes) {
+            match crate::store::skill_source_carrier::decode_source_carrier(bytes) {
                 Ok(Some((holder, package))) => {
                     return super::ExportHubSource::from_package(&holder, &package)
                         .map_or(Self::Nulled, |source| Self::HubSource(Box::new(source)));
@@ -399,13 +402,20 @@ fn export_provenance_references(bytes: &[u8], exported: &mut ExportValue) {
     let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(bytes, true) else {
         return;
     };
-    if claim.predicate != crate::provenance::PREDICATE_EDGE_PROVENANCE {
+    if claim.predicate != crate::write_envelope::provenance::PREDICATE_EDGE_PROVENANCE {
         return;
     }
-    let Ok(record) = crate::provenance::decode_edge_provenance_body(&claim.value) else {
+    let Ok(record) =
+        crate::write_envelope::provenance::codec::decode_edge_provenance_body(&claim.value)
+    else {
         return;
     };
-    if crate::provenance::resolve_persisted_actor_class(&record, claim.evidence.as_ref()).is_err() {
+    if crate::write_envelope::provenance::actor_substrate::resolve_persisted_actor_class(
+        &record,
+        claim.evidence.as_ref(),
+    )
+    .is_err()
+    {
         return;
     }
     let ExportValue::Map(entries) = exported else {

@@ -686,7 +686,7 @@ impl GrantBound {
                 hasher.update(&[u8::from(envelope.receipt_required)]);
             }
         }
-        EffectDigest(*hasher.finalize().as_bytes())
+        EffectDigest::from_bytes(*hasher.finalize().as_bytes())
     }
 }
 

@@ -3,7 +3,7 @@
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::skill_reliability::{skill_reliability_posterior, skill_reliability_prior};
-use crate::{Vault, skill::SkillContentHash};
+use crate::{Vault, write_envelope::skill_record::SkillContentHash};
 use oneiron_authority::federation::Scope;
 use oneiron_model::llm::BudgetRead;
 

@@ -2,7 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::autoreason_campaign::selection::{SelectionPolicy, SelectionPrecedence};
+use crate::gate::experiment_selection_policy::SelectionPolicy;
+use crate::gate::experiment_selection_policy::SelectionPrecedence;
 use sha2::{Digest, Sha256};
 
 use crate::EntityId;
@@ -79,7 +80,7 @@ impl PolicyManifestResolution {
     /// shipped default row; a malformed or unreadable manifest refuses.
     pub(crate) fn consult_fanout_policy_for(
         &self,
-        scope: &crate::task_verb::ConsultFanOutScope,
+        scope: &crate::gate::consult_fanout_values::ConsultFanOutScope,
     ) -> crate::error::Result<crate::gate::fanout_policy::ResolvedFanoutPolicy> {
         if self.diagnostics.is_fail_closed() {
             return Err(crate::error::Error::InvalidConfig(
@@ -239,7 +240,7 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(crate) fn judge_calibration_policy(
         &self,
-    ) -> Option<crate::skill_optimize::policy::JudgeCalibrationPolicy> {
+    ) -> Option<crate::gate::judge_calibration::JudgeCalibrationPolicy> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             None
         } else {
@@ -411,7 +412,7 @@ impl PolicyManifestResolution {
     pub(crate) fn voice_ref_limits(
         &self,
         owner: &crate::EntityId,
-    ) -> Option<crate::voice_identity::ref_limits::VoiceRefLimits> {
+    ) -> Option<crate::gate::voice_ref_limits::VoiceRefLimits> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             None
         } else {

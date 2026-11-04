@@ -38,7 +38,7 @@ pub(super) const DREAMER_DEGENERATE_VALUE_PREFIXES: [&str; 8] = [
 /// existing predicate constants rather than re-literalized, so a rename
 /// cannot silently desync this exemption table from the writers.
 pub(super) const DREAMER_RUNTIME_RECORD_PREDICATES: [&str; 3] = [
-    crate::dreamer_runner::DREAMER_MILESTONE_PREDICATE,
+    crate::store::dreamer_attempt_kind::DREAMER_MILESTONE_PREDICATE,
     crate::model_step_record::DREAMER_STEP_PREDICATE,
     crate::model_step_record::DREAMER_TRAP_PREDICATE,
 ];

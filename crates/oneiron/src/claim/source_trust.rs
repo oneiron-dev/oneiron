@@ -206,6 +206,16 @@ pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
         && !body.stale
 }
 
+/// The text a surfaced claim indexes under `val`: its value's string, or the
+/// value's MessagePack display for any other kind. The claim commit and the
+/// indexed-revision idle pass both index this, so a republish keeps the
+/// claim's postings (FIX 12368).
+pub(crate) fn claim_value_index_text(value: &Value) -> String {
+    value
+        .as_str()
+        .map_or_else(|| value.to_string(), str::to_owned)
+}
+
 /// Read-admission predicate for authority-consuming consolidation paths.
 ///
 /// This is intentionally stricter than [`claim_surfaceable`]: first-party or
@@ -284,13 +294,16 @@ pub(crate) fn claim_evidence_admissible(body: &ClaimBody) -> bool {
 
 pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> Result<f32> {
     let salience = body.salience.unwrap_or(0.0);
-    let affect = crate::affect::decode_affect_trigger_claim(body)?.map_or(0.0, |trigger| {
-        let delta = trigger.vad_delta();
-        let valence = (delta.valence().abs() / 2.0).clamp(0.0, 1.0);
-        let arousal = delta.arousal().abs().clamp(0.0, 1.0);
-        let dominance = delta.dominance().abs().clamp(0.0, 1.0);
-        ((valence + arousal + dominance) / 3.0) * trigger.confidence()
-    });
+    let affect = crate::write_envelope::affect_trigger::decode_affect_trigger_claim(body)?.map_or(
+        0.0,
+        |trigger| {
+            let delta = trigger.vad_delta();
+            let valence = (delta.valence().abs() / 2.0).clamp(0.0, 1.0);
+            let arousal = delta.arousal().abs().clamp(0.0, 1.0);
+            let dominance = delta.dominance().abs().clamp(0.0, 1.0);
+            ((valence + arousal + dominance) / 3.0) * trigger.confidence()
+        },
+    );
     Ok(salience.max(affect).clamp(0.0, 1.0))
 }
 

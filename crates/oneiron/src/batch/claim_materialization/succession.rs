@@ -8,11 +8,11 @@ use super::{ClaimMaterialization, binding_error};
 use crate::batch::{ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::provenance::birth::RowBirth;
-use crate::provenance::made_by::MadeByClass;
+use crate::store::row_birth::RowBirth;
 use crate::write_envelope::claim_body::{
     ClaimBody, ClaimSuccession, decode_claim_body, encode_claim_body,
 };
+use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::write_envelope::{
     MachineWriteSignature, SourceLineage, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
     WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY,
@@ -405,7 +405,7 @@ impl ClaimMaterialization {
                 kind: crate::edge::EdgeKind::ClaimOf,
                 tgt: subject,
                 weight,
-                vad: crate::affect::Vad::NEUTRAL,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
             });
         }
         for (facet, weight) in stamps {
@@ -414,7 +414,7 @@ impl ClaimMaterialization {
                 kind: crate::edge::EdgeKind::FacetOf,
                 tgt: facet,
                 weight,
-                vad: crate::affect::Vad::NEUTRAL,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
             });
         }
         let transition = crate::batch::VerifiedClaimTransition::after_validated_succession(

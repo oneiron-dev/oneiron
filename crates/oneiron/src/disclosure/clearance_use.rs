@@ -9,10 +9,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{DisclosureScopeStatus, contact_clearance_in_txn};
 use crate::Vault;
-use crate::consent::EffectDigest;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::interlocutor::InterlocutorSet;
+use crate::write_envelope::EffectDigest;
 use oneiron_authority::federation::{Scope, Sensitivity, SensitivityCeiling};
 
 const USE_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.contact_clearance_use.v1\0";

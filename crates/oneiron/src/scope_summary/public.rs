@@ -2,11 +2,12 @@
 
 use super::public_types::*;
 use crate::claim::{ClaimReadStatus, PointRead};
-use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, ForkRequest, SettleVerb};
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::Memory;
 use crate::ports::ScopedReadResult;
+use crate::store::conversation_record::{ScopePath, ScopeSelector};
 use crate::{EntityId, WriteActor};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 fn side_id(value: &str) -> MemoryResult<EntityId> {
     EntityId::from_hex(value).map_err(|_| MemoryError::bad_request("expected a full hex id"))
@@ -14,7 +15,7 @@ fn side_id(value: &str) -> MemoryResult<EntityId> {
 
 fn absent() -> MemoryError {
     MemoryError::new(
-        crate::memory::MEMORY_CODE_NOT_FOUND,
+        oneiron_contracts::memory::MEMORY_CODE_NOT_FOUND,
         "SUMMARY or proposal member is absent or not readable",
         &[],
     )

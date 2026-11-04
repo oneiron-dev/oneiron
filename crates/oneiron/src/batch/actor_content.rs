@@ -104,7 +104,8 @@ impl ContentWriteSet {
         let parents = habit_streak_recompute_candidates(&vault.store, txn, ops, &overlay)?;
         let mut derived_parents = BTreeSet::new();
         for parent in parents {
-            if stored_task_role(&vault.store, txn, &parent)? == Some(crate::habit::TaskRole::Habit)
+            if stored_task_role(&vault.store, txn, &parent)?
+                == Some(crate::write_envelope::task_body::TaskRole::Habit)
             {
                 derived_parents.insert(parent);
                 ids.insert(parent);

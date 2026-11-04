@@ -6,9 +6,9 @@ use crate::codebase::RepoRef;
 use crate::disclosure::DisclosureContext;
 use crate::entity_id::EntityId;
 use crate::pipeline::{PipelineBuilder, Signal, WorldScope};
-use crate::psych_profile::PsychProfileKey;
 use crate::store::RetrievalAction;
 use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
+use crate::write_envelope::profile_snapshot::PsychProfileKey;
 
 use oneiron_model::llm::ModelId;
 
@@ -95,9 +95,9 @@ impl<'a> ContextPackBuilder<'a> {
     pub fn search_media(
         mut self,
         space_id: &str,
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         vector: &[f32],
-        kinds: &[crate::embed::InputKind],
+        kinds: &[crate::store::embedding::InputKind],
         limit: usize,
     ) -> Self {
         self.pipeline = self
@@ -130,13 +130,16 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     /// Replaces the vault's affect retrieval policy for this pack (OF-423).
-    pub fn affect_policy(mut self, policy: crate::pipeline::AffectRetrievalPolicy) -> Self {
+    pub fn affect_policy(
+        mut self,
+        policy: crate::config::retrieval_affect::AffectRetrievalPolicy,
+    ) -> Self {
         self.pipeline = self.pipeline.affect_policy(policy);
         self
     }
 
     /// The current turn's VAD, the query side of emotion congruence.
-    pub fn query_affect(mut self, vad: crate::affect::Vad) -> Self {
+    pub fn query_affect(mut self, vad: oneiron_contracts::affect::Vad) -> Self {
         self.pipeline = self.pipeline.query_affect(vad);
         self
     }
@@ -425,7 +428,10 @@ impl<'a> ContextPackBuilder<'a> {
 
     /// Returns each MESSAGE hit as its TURN — the pack-surface twin of
     /// [`PipelineBuilder::fold_messages_into_turns`].
-    pub(crate) fn fold_messages_into_turns(mut self, fold: crate::pipeline::TurnFold) -> Self {
+    pub(crate) fn fold_messages_into_turns(
+        mut self,
+        fold: crate::context_pack::turn_fold::TurnFold,
+    ) -> Self {
         self.pipeline = self.pipeline.fold_messages_into_turns(fold);
         self
     }

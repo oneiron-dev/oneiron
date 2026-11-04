@@ -47,7 +47,7 @@ pub struct ExportSkillBundle {
     /// Actual persisted SKILL.md/scripts, not a rendering of the record metadata.
     pub source_tree: Option<ExportFileTree>,
     /// Source syntax, never an approval or a provenance assertion.
-    pub source_format: Option<crate::skill_hub::SkillPackageFormat>,
+    pub source_format: Option<crate::write_envelope::skill_source::SkillPackageFormat>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

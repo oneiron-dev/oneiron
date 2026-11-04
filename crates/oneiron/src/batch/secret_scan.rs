@@ -255,7 +255,7 @@ pub(crate) fn scan_undecoded_body(bytes: &[u8]) -> Option<&'static str> {
 /// whole-body decode reaches its fields, so every door decodes the wrapped
 /// body as a body too.
 fn framed_payload(data: &[u8]) -> Option<&[u8]> {
-    crate::skill_hub::refinement_carrier_payload(data)
+    crate::store::refinement_carrier::refinement_carrier_payload(data)
 }
 
 /// A structured body with every member it holds: JSON read into a MessagePack

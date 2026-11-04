@@ -6,7 +6,6 @@ use rmpv::Value;
 
 use super::decode_docedit_resource::parse_docedit_resource_policy;
 use super::experiment_selection::parse_experiment_selection;
-use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::gate::PackInstallPolicy;
 use crate::gate::SkillEditGoalPolicy;
 use crate::gate::ceiling::{
@@ -42,6 +41,7 @@ use crate::gate::constants::{
     POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
+use crate::gate::experiment_selection_policy::SelectionPolicyRow;
 use crate::gate::fanout_policy::{
     FanoutControls, FanoutPrecedence, FanoutScopedRow, parse_controls, parse_precedence,
     parse_scoped_rows,
@@ -63,7 +63,7 @@ use crate::gate::resolution::{
 use crate::gate::retrieval_retention::{
     RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
 };
-use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
+use crate::gate::voice_ref_limits::VoiceRefLimitPolicy;
 use oneiron_model::llm::{
     BudgetExhaustionPolicy, BudgetPolicyTable, DreamerFailurePrecedence, DreamerFailureRule,
     parse_failure_rules,
@@ -158,12 +158,12 @@ pub(in crate::gate) struct DecodedPolicyManifest {
 
     pub(in crate::gate) diagnostic_bounds:
         Option<crate::self_heal::tripwires::ManifestTripwireBounds>,
-    pub(in crate::gate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
+    pub(in crate::gate) failure_signal_policy: Vec<crate::gate::failure_signal_policy::Row>,
     pub(in crate::gate) residence_operation_budgets: Option<ResidenceOperationBudgetRow>,
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) retrieval_retention: Option<RetrievalRetentionRows>,
-    pub(in crate::gate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
+    pub(in crate::gate) goal_limits: Option<crate::policy_model::goal_limits::GoalLimits>,
     pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
     pub(in crate::gate) sheet_answer_limits: Vec<crate::gate::resolution::SheetAnswerLimitRow>,
     pub(in crate::gate) sheet_answer_precedence:
@@ -185,7 +185,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) carry_forward_confidence:
         Option<crate::gate::carry_forward_policy::CarryForwardPolicy>,
     pub(in crate::gate) judge_calibration:
-        Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
+        Option<crate::gate::judge_calibration::JudgeCalibrationPolicy>,
     pub(in crate::gate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(in crate::gate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
     pub(in crate::gate) sync_world_default: Option<bool>,

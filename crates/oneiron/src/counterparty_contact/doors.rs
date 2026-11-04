@@ -285,7 +285,7 @@ impl Vault {
                     kind: crate::edge::EdgeKind::ClaimOf,
                     tgt: subject,
                     weight: crate::vault::CLAIM_OF_DEFAULT_WEIGHT,
-                    vad: crate::affect::Vad::NEUTRAL,
+                    vad: oneiron_contracts::affect::Vad::NEUTRAL,
                 },
             ],
             self.text_index_trusted

@@ -25,13 +25,9 @@ use crate::learning::TypeRef;
 use crate::runtime_hooks::InvocationId;
 use crate::runtime_hooks::verb::VerbAskCredentialRef;
 
-/// The predicate of a solved run's evidence claim (CUA E8a).
-pub const SOLVED_RUN_PREDICATE: &str = "browser.solved_run";
+pub use crate::memory::browser_capture::SOLVED_RUN_PREDICATE;
 
-/// The predicate of a filed program's anchor claim (FIX 10513): the
-/// scoped filing evidence through which a reader is granted the
-/// program's coverage of its group.
-pub const WORKFLOW_FILING_PREDICATE: &str = "browser.workflow.filing";
+pub use crate::memory::browser_capture::WORKFLOW_FILING_PREDICATE;
 
 /// The domain a filing anchor's claim id is hashed in (FIX 10513): its
 /// program and the digest of the group it covers, so one program's
@@ -51,9 +47,7 @@ pub const SOLVED_GROUP_DOMAIN: &[u8] = b"oneiron:browser-solved-group:v1";
 /// The domain a caller's credential reference is hashed in for its scope.
 pub const SOLVED_SCOPE_DOMAIN: &[u8] = b"oneiron:browser-solved-scope:v1";
 
-/// The domain a candidate program's input fingerprint is hashed in (CUA E8,
-/// CALLS row "candidate dedup"), for the Coach's seen marker.
-pub const CANDIDATE_DOMAIN: &[u8] = b"oneiron:browser-program-induction:v1";
+pub use crate::dreamer_runner::maintenance::browser_candidate::CANDIDATE_DOMAIN;
 
 /// The version of the evidence body this capture writes.
 pub const SOLVED_CAPTURE_VERSION: u32 = 1;
@@ -369,24 +363,4 @@ pub struct SavedBrowserCaller {
     pub witness: Option<InvocationSlipBinding>,
 }
 
-/// What a capture came to (CUA E8a).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SolvedCaptureReceipt {
-    /// The evidence claim `id` stands in `group`; `fresh` is false when the
-    /// same capture had landed before, which moves no generation.
-    Captured {
-        id: EntityId,
-        group: [u8; 32],
-        fresh: bool,
-    },
-    /// Nothing was captured, for this cause.
-    Unavailable(SolvedCaptureGap),
-}
-
-/// Why a capture kept nothing (CUA E8a).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SolvedCaptureGap {
-    /// The caller's call is off the record: its session's writer keeps its
-    /// lifecycle, and the base vault keeps no evidence of it.
-    OffRecord,
-}
+pub use crate::memory::browser_capture::{SolvedCaptureGap, SolvedCaptureReceipt};

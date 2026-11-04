@@ -145,7 +145,8 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "failure_signal_policy");
         hash_len(hasher, resolution.failure_signal_policy.len());
         for row in &resolution.failure_signal_policy {
-            use crate::failure_signals::policy::{Precedence, Scope};
+            use crate::gate::failure_signal_policy::Precedence;
+            use crate::gate::failure_signal_policy::Scope;
             match row.scope {
                 Scope::Default => hash_str(hasher, "default"),
                 Scope::Vault => hash_str(hasher, "vault"),
@@ -191,8 +192,7 @@ pub(super) fn hash_policy_frontier_v0(
     if let Some(defaults) = resolution.voice_ref_defaults.as_ref() {
         hash_voice_ref_policy(hasher, "voice_ref_defaults", defaults);
     }
-    if resolution.voice_ref_limits
-        != crate::voice_identity::ref_limits::VoiceRefLimitPolicy::default()
+    if resolution.voice_ref_limits != crate::gate::voice_ref_limits::VoiceRefLimitPolicy::default()
     {
         hash_voice_ref_policy(
             hasher,
@@ -849,7 +849,7 @@ fn hash_len(hasher: &mut Sha256, value: usize) {
 fn hash_voice_ref_policy(
     hasher: &mut Sha256,
     tag: &str,
-    policy: &crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
+    policy: &crate::gate::voice_ref_limits::VoiceRefLimitPolicy,
 ) {
     hash_str(hasher, tag);
     hash_str(

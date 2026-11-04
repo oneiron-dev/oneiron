@@ -11,21 +11,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use oneiron::ModelId;
 use oneiron::agent_def::DreamingMode;
 use oneiron::attempt_queue::AttemptQueue;
 use oneiron::dreamer_consolidation::{
     CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE,
-    DREAMER_ROLES, ResidentDreamModel, RoleBackend, RoleBackends, TASK_REALIZE_UNLENT_PARK_REASON,
-    TaskRealizeModel, WEAVE_LENS_UNLENT_PARK_REASON, WeaveLensModel, resident_of_dream_input,
-    run_resident_dream, run_task_realize, run_weave_lens, settle_parked_conflicts_while,
+    DREAMER_ROLES, ResidentDreamModel, RoleBackend, RoleBackends, SourcedBackend,
+    TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, WEAVE_LENS_UNLENT_PARK_REASON,
+    WeaveLensModel, resident_of_dream_input, run_resident_dream, run_task_realize, run_weave_lens,
+    settle_parked_conflicts_while,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
+use oneiron::llm::{HostInferenceBinding, HostInferenceContext, WorkClass, WorkContext};
 use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
@@ -350,6 +352,7 @@ async fn supervise(
             windows,
             weaver: None,
             weaver_ladder: None,
+            weaver_run: None,
             task_route: None,
             inner: None,
             status: Arc::clone(&status),
@@ -481,6 +484,9 @@ struct ObservedFactory {
     /// on the weaver's model sends there on a run of its own, never on the
     /// pass's line (FIX 4453).
     weaver_ladder: Option<Arc<OfferLadder>>,
+    /// The run the ladder above sends on: an inherited resident lends it with
+    /// the pass's remaining deadline overlaid, its meter and identity unchanged.
+    weaver_run: Option<RunAdmission>,
     /// The route a TASK realizes on: narrative, else extraction, with the
     /// ladder and run its backend sends on.
     task_route: Option<(ModelRole, RoleBackend, RoleSends)>,
@@ -582,10 +588,16 @@ impl ObservedFactory {
         let mut roles = RoleBackends::default();
         let mut runs = BTreeMap::new();
         for (role, route) in &routes {
-            let run = self.runtime.undeclared_run(
-                format!("{DREAMER_PASS_RUN}/{}", role_key(*role)),
-                line.clone(),
-            );
+            let run = self
+                .runtime
+                .undeclared_run(
+                    format!("{DREAMER_PASS_RUN}/{}", role_key(*role)),
+                    line.clone(),
+                )
+                .with_work_context(WorkContext {
+                    class: WorkClass::Background,
+                    ..Default::default()
+                });
             runs.insert(*role, (Arc::clone(&route.ladder), run.clone()));
             // Each call the engine knows the rows of sends under them, on
             // this same run (FIX 6998).
@@ -608,6 +620,9 @@ impl ObservedFactory {
         self.weaver_ladder = runs
             .get(&DREAMER_NARRATIVE_ROLE)
             .map(|(ladder, _)| Arc::clone(ladder));
+        self.weaver_run = runs
+            .get(&DREAMER_NARRATIVE_ROLE)
+            .map(|(_, run)| run.clone());
         self.task_route = [DREAMER_NARRATIVE_ROLE, DREAMER_EXTRACTION_ROLE]
             .into_iter()
             .find_map(|role| Some((role, roles.get(role).cloned()?, runs.remove(&role)?)));
@@ -706,6 +721,7 @@ impl PassExecutorFactory for ObservedFactory {
                 runtime: &self.runtime,
                 weaver,
                 weaver_ladder: self.weaver_ladder.as_ref(),
+                weaver_run: self.weaver_run.as_ref(),
                 guard,
                 egress: self.egress,
                 instruction,
@@ -762,6 +778,7 @@ impl PassExecutorFactory for ObservedFactory {
                 runtime: &self.runtime,
                 weaver,
                 weaver_ladder: self.weaver_ladder.as_ref(),
+                weaver_run: self.weaver_run.as_ref(),
                 guard,
                 egress: self.egress,
                 instruction,
@@ -1157,6 +1174,8 @@ struct ResidentLend<'p> {
     weaver: &'p RoleBackend,
     /// The ladder `weaver` sends on, for a free-time item's own run.
     weaver_ladder: Option<&'p Arc<OfferLadder>>,
+    /// The run that ladder sends on, for an inherited resident's lend.
+    weaver_run: Option<&'p RunAdmission>,
     guard: &'p oneiron::BudgetGuard,
     egress: bool,
     instruction: &'p str,
@@ -1194,13 +1213,20 @@ impl ResidentLend<'_> {
                 WriteActor::new(resident, oneiron::EdgeActorClass::Agent),
             )?;
             let keyless = ladder.all_keyless_own_server();
-            let backend = SourcedRunBackend::new(
-                ladder,
-                self.runtime.undeclared_run(
+            let deadline =
+                Instant::now().checked_add(Duration::from_millis(ctx.deadline.remaining_ms()));
+            let run = self
+                .runtime
+                .undeclared_run(
                     format!("{DREAMER_PASS_RUN}/resident/{}", resident.to_hex()),
                     line,
-                ),
-            );
+                )
+                .with_work_context(WorkContext {
+                    class: WorkClass::Background,
+                    deadline,
+                    ..Default::default()
+                });
+            let backend = SourcedRunBackend::new(ladder, run);
             let egress = self
                 .egress
                 .then(|| extraction_egress(BTreeSet::from([model.clone()])));
@@ -1248,11 +1274,29 @@ impl ResidentLend<'_> {
         let egress = self
             .egress
             .then(|| extraction_egress(BTreeSet::from([self.weaver.model.clone()])));
+        // An inherited resident lends the weaver's own run with the pass's
+        // remaining deadline overlaid: the same meter and identity, the same
+        // sourced view, only the deadline added. Without this the call sends
+        // with deadline=None, against the body's promise.
+        let lent;
+        let (backend, sourced): (&dyn LlmBackend, Option<&dyn SourcedBackend>) =
+            match (self.weaver_ladder, self.weaver_run) {
+                (Some(ladder), Some(run)) => {
+                    let deadline = Instant::now()
+                        .checked_add(Duration::from_millis(ctx.deadline.remaining_ms()));
+                    let mut context = run.work_context();
+                    context.deadline = deadline;
+                    lent =
+                        SourcedRunBackend::new(Arc::clone(ladder), run.with_work_context(context));
+                    (&lent, Some(&lent))
+                }
+                _ => (self.weaver.backend.as_ref(), self.weaver.sourced.as_deref()),
+            };
         run_resident_dream(
             attempt,
             ctx,
             ResidentDreamModel {
-                backend: self.weaver.backend.as_ref(),
+                backend,
                 guard: self.guard,
                 model: self.weaver.model.clone(),
                 inference: HostInferenceContext {
@@ -1262,7 +1306,7 @@ impl ResidentLend<'_> {
                 role: Some(DREAMER_NARRATIVE_ROLE),
                 instruction: self.instruction,
                 window_tokens: self.windows.get(&self.weaver.model).copied(),
-                sourced: self.weaver.sourced.as_deref(),
+                sourced,
             },
         )
         .await

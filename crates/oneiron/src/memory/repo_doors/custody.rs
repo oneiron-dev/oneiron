@@ -442,6 +442,6 @@ fn served_repo_name(vault: &crate::Vault, anchor: &RepoRef) -> Option<String> {
 }
 
 /// A checkout port refusal, as the run reads it.
-fn checkout_refusal(error: crate::checkout::lease::CheckoutError) -> MemoryError {
+fn checkout_refusal(error: crate::store::checkout_lease::CheckoutError) -> MemoryError {
     crate::memory::checkout_doors::refusal(error)
 }

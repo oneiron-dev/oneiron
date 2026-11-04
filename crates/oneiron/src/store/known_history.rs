@@ -336,7 +336,7 @@ impl Store {
         };
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
         let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
-        let subkey = crate::world_keys::derive_guarded(CONTEXT, &[&master[..]]);
+        let subkey = crate::key_material::derive_guarded(CONTEXT, &[&master[..]]);
         Ok(Some(*blake3::keyed_hash(&subkey, input).as_bytes()))
     }
 
@@ -363,7 +363,7 @@ impl Store {
         };
         let custody = self.core.key_custody.bind_in_txn(self, txn)?;
         let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
-        let subkey = crate::world_keys::derive_guarded(CONTEXT, &[&master[..]]);
+        let subkey = crate::key_material::derive_guarded(CONTEXT, &[&master[..]]);
         Ok(Some(*blake3::keyed_hash(&subkey, rationale).as_bytes()))
     }
 

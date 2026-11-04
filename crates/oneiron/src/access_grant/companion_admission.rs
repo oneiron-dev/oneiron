@@ -15,7 +15,7 @@
 
 use crate::authority::VerifiedSlip;
 use crate::error::{Error, GateError, RecordError, Result};
-use crate::psych_profile::PsychProfileKey;
+use crate::write_envelope::profile_snapshot::PsychProfileKey;
 use crate::{EntityId, Vault};
 use oneiron_authority::federation::Scope;
 

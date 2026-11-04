@@ -3,6 +3,8 @@
 //! Defined in `oneiron-contracts` and re-exported here; the vault-backed pack byte map
 //! is `oneiron::registry::pack_byte_map`.
 
+pub mod pack_namespaces;
+
 pub use oneiron_contracts::registry::{
     ArtifactFamilyId, ArtifactFamilyKindId, artifact_family_kind_of,
 };

@@ -6,10 +6,10 @@ use super::ceiling::{
 use super::definition_ceiling::definition_only_ceiling_for_actor;
 use super::input::{GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles};
 use super::{GateOutcome, PolicyCriticality, resolve_policy_manifest};
-use crate::agent_def::AgentCeiling;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::agent_record::AgentCeiling;
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};

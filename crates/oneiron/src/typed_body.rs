@@ -17,12 +17,12 @@ use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::provenance::made_by::{MadeBy, MadeByClass};
-use crate::provenance::text_commit::{RowProvenance, TextCommitReceipt};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::provenance::made_by::{MadeBy, MadeByClass};
+use crate::write_envelope::provenance::text_commit::{RowProvenance, TextCommitReceipt};
 use heed::{RoTxn, RwTxn};
 use loro::{CommitOptions, ExportMode, Frontiers, LoroDoc};
 use serde::{Deserialize, Serialize};
@@ -629,7 +629,9 @@ pub(crate) fn bind_peer(
             (rmpv::Value::from("peer"), rmpv::Value::from(peer)),
             (
                 rmpv::Value::from("class"),
-                rmpv::Value::from(crate::edit_distance::actor_class_token(actor.actor_class())),
+                rmpv::Value::from(crate::write_envelope::actor_tokens::actor_class_token(
+                    actor.actor_class(),
+                )),
             ),
         ]),
         1.0,
@@ -652,7 +654,7 @@ fn validate_actor(vault: &Vault, txn: &RoTxn<'_>, actor: WriteActor) -> Result<(
     crate::memory::verify_actor_binding_in_txn(vault, txn, actor.entity_ref(), actor.actor_class())
         .map_err(|_| invalid("typed body actor class does not match store truth"))?;
     if vault.entity_lifecycle_state_in_txn(txn, &actor.entity_ref())?
-        != crate::identity_topology::EntityLifecycleState::Active
+        != oneiron_contracts::identity_topology::EntityLifecycleState::Active
     {
         return Err(invalid("typed body actor is not active"));
     }

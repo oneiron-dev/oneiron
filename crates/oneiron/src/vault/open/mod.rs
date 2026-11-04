@@ -353,7 +353,7 @@ impl Vault {
         // The stock Generated rows bind the commitment projector and, since
         // ARCH-0026's warm default, the Dreamer; the projector's is rebound.
         let projector = Value::from(
-            crate::commitment_schedule::commitment_projection_actor()?
+            crate::write_envelope::commitment_actor::commitment_projection_actor()?
                 .entity_ref()
                 .to_hex(),
         );
@@ -555,6 +555,7 @@ impl Vault {
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
             owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64::new(0),
+            claim_vad_payment: Default::default(),
             // Opens FULL; only a ctl-driven shed parks it, an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
@@ -620,7 +621,7 @@ impl Vault {
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
-        crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
+        crate::store::skill_content_index::backfill_content_hash_index_if_needed(&vault)?;
         vault.backfill_widen_contact_verdict_index(false)?;
         crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
         vault.backfill_row_deletion_fences_on_open()?;
@@ -752,7 +753,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub(crate) fn live_window(
         &self,
-        key: &crate::sync::WindowKey,
+        key: &crate::window_key::WindowKey,
     ) -> Option<(
         std::sync::Arc<crate::sync::window::LoadedWindow>,
         std::sync::Arc<crate::sync::bridge::Materializer>,
@@ -843,7 +844,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub(crate) fn while_window_closed<T>(
         &self,
-        key: &crate::sync::WindowKey,
+        key: &crate::window_key::WindowKey,
         f: impl FnOnce() -> T,
     ) -> Option<T> {
         let attached = self

@@ -9,12 +9,12 @@ use crate::access_grant::{
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity_selection::RelationshipContext;
+use crate::consent::ConsentGrantStatus as StandingOutboundGrantStatus;
 use crate::consent::{AuthenticatedOwner, GrantBound};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound_grant::{
-    StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
-    standing_outbound_grant_in_txn,
+    StandingOutboundGrant, StandingOutboundGrantScope, standing_outbound_grant_in_txn,
 };
 
 use super::codec::{

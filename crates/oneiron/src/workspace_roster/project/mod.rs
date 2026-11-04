@@ -151,7 +151,7 @@ const STRIPPED_PROOF: SideTable<EntityId, [u8; 1], Raw> =
 /// id16 (change event id).
 const CHANGES: SideTable<(EntityId, EntityId), ProjectRoomChange, Named> =
     SideTable::new(&side_table::PROJECT_ROOM_CHANGES);
-pub(crate) const HUB_BELONGS_TO_LAMBDA: f32 = 0.05;
+pub(crate) use crate::ppr::project_weight::HUB_BELONGS_TO_LAMBDA;
 
 const HUB_MEMBERSHIP_WEIGHT: f32 = 0.05;
 
@@ -502,29 +502,7 @@ impl ProjectRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectRoom {
-    pub schema_version: u8,
-    pub kind: String,
-    pub project_id: String,
-    #[serde(rename = "memberIds")]
-    pub member_ids: Vec<String>,
-    /// Membership never grants additional memory scope.
-    pub claims_scope_ref: String,
-    /// Absent on an ordinary room, so its body and API shape stay unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin: Option<RoomOriginCard>,
-}
-/// A reference to the original thread, not a second copy of its messages.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomOriginCard {
-    pub room: String,
-    pub thread: String,
-    pub message: String,
-    pub at: u64,
-}
+pub use crate::store::conversation_body::{ProjectRoom, RoomOriginCard};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectRoomChange {

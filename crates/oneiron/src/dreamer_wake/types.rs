@@ -96,15 +96,7 @@ pub enum WakePassStop {
     HookSkipped,
 }
 
-/// Why a pass authored its claims single-pass under a promoted
-/// claim-authoring default (FIX 897). Never a refusal: the pass ran.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClaimAuthoringFallback {
-    /// Several bound campaigns carry the default, in root order; none is
-    /// chosen for the host (Engine 10-18).
-    AmbiguousCampaigns { roots: Vec<AttemptId> },
-}
+pub use crate::memory::wake_observation::ClaimAuthoringFallback;
 
 /// Wake-pass tally.
 #[derive(Debug, Clone, PartialEq, Eq)]

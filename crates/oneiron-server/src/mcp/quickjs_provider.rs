@@ -3,6 +3,7 @@
 use super::{
     McpCodeModeProvider, PlannedMeter, PlannedModel, PlannedRoute, ReaderMeter, RunCompactionSeat,
 };
+use crate::ai_host::live_lease::LiveLeaseState;
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::code_run::{
     CodeRunDeterminism, CompactionHostBinding, GatedActorWrite, ReaderJob, ScopedChildHosts,
@@ -127,14 +128,16 @@ fn injected_meter(
     backend: Arc<dyn SingleRouteBackend>,
     receipts: Arc<dyn RunReceiptSink>,
 ) -> ReaderMeter {
-    Arc::new(move |meter: BudgetGuard, payer: Option<PayerPerson>| {
-        Arc::new(InjectedRuns::funded(
-            Arc::clone(&backend),
-            meter,
-            Arc::clone(&receipts),
-            payer,
-        )) as Arc<dyn LlmBackend>
-    })
+    Arc::new(
+        move |meter: BudgetGuard, payer: Option<PayerPerson>, _lease: Option<LiveLeaseState>| {
+            Arc::new(InjectedRuns::funded(
+                Arc::clone(&backend),
+                meter,
+                Arc::clone(&receipts),
+                payer,
+            )) as Arc<dyn LlmBackend>
+        },
+    )
 }
 
 /// A planned child's backend over the host-injected model (FIX 2310): its
@@ -146,7 +149,10 @@ fn injected_planned(
     receipts: Arc<dyn RunReceiptSink>,
 ) -> PlannedMeter {
     Arc::new(
-        move |meter: BudgetGuard, payer: Option<PayerPerson>, planned: &PlannedModel| {
+        move |meter: BudgetGuard,
+              payer: Option<PayerPerson>,
+              planned: &PlannedModel,
+              _lease: Option<LiveLeaseState>| {
             Arc::new(
                 InjectedRuns::funded(Arc::clone(&backend), meter, Arc::clone(&receipts), payer)
                     .with_plan(planned.clone()),
@@ -439,7 +445,22 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         meter: BudgetGuard,
         payer: Option<PayerPerson>,
     ) -> Option<Arc<dyn LlmBackend>> {
-        self.reader_meter.as_ref().map(|build| build(meter, payer))
+        self.reader_meter
+            .as_ref()
+            .map(|build| build(meter, payer, None))
+    }
+    fn reader_backend_with_lease(
+        &self,
+        meter: BudgetGuard,
+        payer: Option<PayerPerson>,
+        lease: Option<LiveLeaseState>,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        if self.injected.is_some() {
+            return None;
+        }
+        self.reader_meter
+            .as_ref()
+            .map(|build| build(meter, payer, lease))
     }
     fn host_meter(&self) -> Option<BudgetGuard> {
         self.host_meter.clone()
@@ -457,7 +478,21 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     ) -> Option<Arc<dyn LlmBackend>> {
         self.planned_meter
             .as_ref()
-            .map(|build| build(meter, payer, planned))
+            .map(|build| build(meter, payer, planned, None))
+    }
+    fn planned_backend_with_lease(
+        &self,
+        meter: BudgetGuard,
+        payer: Option<PayerPerson>,
+        planned: &PlannedModel,
+        lease: Option<LiveLeaseState>,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        if self.injected.is_some() {
+            return None;
+        }
+        self.planned_meter
+            .as_ref()
+            .map(|build| build(meter, payer, planned, lease))
     }
     fn planned_compaction(
         &self,

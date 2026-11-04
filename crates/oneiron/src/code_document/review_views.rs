@@ -21,8 +21,8 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::repo_mutation::mount::RepoMountRef;
-use crate::repo_mutation::proposal::RepoProposalStatus;
 use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::repo_proposal_record::RepoProposalStatus;
 
 /// One repo proposal, by ref.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

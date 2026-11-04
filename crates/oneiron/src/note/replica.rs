@@ -8,10 +8,11 @@ use super::document::{NoteDocument, invalid};
 use super::document_store::{load, persist_replica};
 use super::sync_rows::SYNC_DS_E;
 use super::{NotePin, NoteSpanResolution};
+use crate::claim::selector_world::SyncSelectorWorld;
+use crate::note::frame_envelope::NoteStateEnvelope;
 use crate::side_table::HexId;
-use crate::sync::documents::note_state::NoteStateEnvelope;
-use crate::sync::transport::document_sub_tags;
-use crate::sync::{SyncSelector, SyncSelectorWorld};
+use crate::store::document_frame_tags::document_sub_tags;
+use crate::sync::SyncSelector;
 use crate::{EntityId, FederationGrantScope, Result, Vault};
 
 pub(super) fn admit_pin_disclosure(
@@ -122,7 +123,7 @@ pub(crate) fn import_note_from_authority(
         let staged = match kind {
             document_sub_tags::STATE => loro::LoroDoc::new(),
             document_sub_tags::UPDATE => {
-                crate::sync::loro_support::doc_from_snapshot(&previous.snapshot()?)?
+                crate::store::loro_document::doc_from_snapshot(&previous.snapshot()?)?
             }
             _ => return Err(invalid("invalid NOTE authority frame")),
         };

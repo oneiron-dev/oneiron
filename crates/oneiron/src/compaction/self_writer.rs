@@ -33,7 +33,7 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::provenance::birth::RowBirth;
+use crate::store::row_birth::RowBirth;
 use crate::vault::Vault;
 use oneiron_model::llm::SelfCompactionSource;
 

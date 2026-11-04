@@ -30,7 +30,9 @@ pub(super) fn is_provenance(row: &ExportEntity) -> bool {
             .to_bytes()
             .ok()
             .and_then(|bytes| decode_claim_body(&bytes, true).ok())
-            .is_some_and(|body| body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE)
+            .is_some_and(|body| {
+                body.predicate == crate::write_envelope::provenance::PREDICATE_EDGE_PROVENANCE
+            })
 }
 pub(super) struct ModelImports {
     pub(super) inserted: usize,
@@ -61,7 +63,8 @@ pub(super) fn restore_models<R: Read + Seek>(
             .entity(&id)?
             .ok_or(Error::InvariantViolation("archive index lost a MODEL"))?;
         let bytes = row.body.to_bytes()?;
-        let (name, version) = crate::provenance::decode_model_entity_body(&bytes)?;
+        let (name, version) =
+            crate::write_envelope::provenance::actor_substrate::decode_model_entity_body(&bytes)?;
         let local = vault.ensure_model_substrate_in_txn(txn, &name, &version, row.learned_at)?;
         if archive
             .index
@@ -129,9 +132,10 @@ fn provenance_body(
         *target = mapped(index, *target)?;
     }
     let mut models = BTreeMap::new();
-    if let Some(substrate) = crate::provenance::decode_edge_provenance_body(&body.value)
-        .ok()
-        .and_then(|record| record.substrate_ref)
+    if let Some(substrate) =
+        crate::write_envelope::provenance::codec::decode_edge_provenance_body(&body.value)
+            .ok()
+            .and_then(|record| record.substrate_ref)
         && let Some(local) = index.get(Tag::Model, substrate.as_bytes())?
     {
         models.insert(substrate, id_at(&local, 0)?);
@@ -140,7 +144,8 @@ fn provenance_body(
     let ClaimSubject::Edge { source, target, .. } = body.subject else {
         return Err(invalid("provenance subject must be an edge"));
     };
-    let record = crate::provenance::decode_edge_provenance_body(&body.value)?;
+    let record =
+        crate::write_envelope::provenance::codec::decode_edge_provenance_body(&body.value)?;
     let waits = [source, target, record.actor_entity_ref]
         .into_iter()
         .chain(record.substrate_ref)

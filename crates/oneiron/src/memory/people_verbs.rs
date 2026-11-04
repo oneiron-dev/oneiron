@@ -16,7 +16,7 @@ use crate::agent_dispatch::{
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimReadStatus;
 use crate::context_board::{People, PersonRow};
-use crate::conversation::{ConversationBody, ConversationKind};
+use crate::store::conversation_body::{ConversationBody, ConversationKind};
 use crate::{EdgeActorClass, EntityId};
 
 mod grants;

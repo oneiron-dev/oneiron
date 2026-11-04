@@ -57,7 +57,7 @@ pub(super) struct Seed {
     /// pinned by the terminal witness that births the MESSAGE, so a quote
     /// whose source stopped being readable mid-stream is refused there.
     /// `None` on a continuation, which keeps its MESSAGE's birth quote.
-    pub quote: Option<crate::conversation_dag::QuoteSpan>,
+    pub quote: Option<crate::store::conversation_record::QuoteSpan>,
     /// The verified read proof the stream's opener held, when a host bound
     /// one (FIX 1667): the terminal reads its links under that same proof,
     /// after a restart too. `None` is an opener with no bound proof. Every
