@@ -112,14 +112,9 @@ pub(super) fn stage_put_projections(
     } else {
         crate::batch::row_put::RowPut::Birth
     };
-    crate::federation::record_scope::stamp_put(
-        store,
-        wtxn,
-        fixed.id,
-        fixed.entity_type,
-        data,
-        row_put,
-    )?;
+    store
+        .scope_stamps
+        .stamp_put(store, wtxn, fixed.id, fixed.entity_type, data, row_put)?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_PERSON {
         super::super::super::person_substrate::ensure_person_substrate(
             store,

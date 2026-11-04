@@ -137,7 +137,7 @@ pub use delete_guards::StoreDeleteGuards;
 mod hooks;
 pub use hooks::StoreHooks;
 mod scope_stamps;
-pub use scope_stamps::StoreScopeStamps;
+pub(crate) use scope_stamps::StoreScopeStamps;
 mod project_writes;
 pub use project_writes::StoreProjectWrites;
 mod record_hooks;
@@ -147,7 +147,7 @@ pub use actor_scrubs::StoreActorScrubs;
 #[cfg(feature = "sync")]
 mod sync_hooks;
 #[cfg(feature = "sync")]
-pub use sync_hooks::StoreSyncHooks;
+pub(crate) use sync_hooks::StoreSyncHooks;
 #[cfg(feature = "sync")]
 pub mod document_frame_tags;
 pub mod housekeeping_report;
@@ -256,8 +256,6 @@ mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
 pub(crate) mod local_replica;
-#[cfg(feature = "sync")]
-pub(crate) mod replica_edge_key;
 mod notification_updates;
 mod open_gates;
 mod outbound_send_receipt;
@@ -268,6 +266,8 @@ mod ppr_community;
 mod ppr_community_indexed;
 pub(crate) mod reader_fold_receipt;
 pub(crate) mod refinement_carrier;
+#[cfg(feature = "sync")]
+pub(crate) mod replica_edge_key;
 pub mod result_manifest;
 pub mod retrieval_policy;
 mod retrieval_telemetry;
