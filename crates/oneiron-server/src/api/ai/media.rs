@@ -700,6 +700,11 @@ pub(super) async fn video_job(
             "answer": AiAnswer::new(response),
         }))
         .into_response(),
+        // A lost job reads as its typed loss (FIX 11464): the 502/job_lost
+        // mapping, never the generic 200 failed body.
+        Ok(MediaJobState::Failed {
+            error: error @ LlmError::Fatal(FatalLlmError::JobLost),
+        }) => failure(&error),
         Ok(MediaJobState::Failed { error }) => Json(serde_json::json!({
             "state": "failed",
             "error": {"llm": error},
