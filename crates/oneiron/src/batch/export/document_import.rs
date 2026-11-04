@@ -875,7 +875,7 @@ fn rebind_run_results(
                 }
                 if let Some(restored) = outputs.iter().find(|restored| {
                     restored.source_handle == handle.as_str()
-                        && (binding.path.is_empty() || restored.output.path == binding.path)
+                        && restored.output.path == binding.path
                 }) {
                     bound.push(crate::code_run::CodeRunResultBinding::new(
                         binding.name.clone(),

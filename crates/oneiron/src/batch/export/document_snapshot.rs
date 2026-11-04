@@ -666,10 +666,8 @@ impl Vault {
             // A binding travels only beside the occurrence its handle and
             // path name; a dangling name is not evidence of a result. Same
             // bytes under another path are another occurrence, so a binding
-            // never takes a same-hash occurrence's judgment. A legacy
-            // binding with no path keeps the standing rule and matches any
-            // occurrence with its handle. Withholding the occurrence
-            // withholds the handle too, never the name, path or reason.
+            // never takes a same-hash occurrence's judgment. Withholding the
+            // occurrence withholds the handle too, never the name, path or reason.
             let bindings = bindings
                 .into_iter()
                 .filter_map(|binding| {
@@ -677,7 +675,7 @@ impl Vault {
                         .iter()
                         .find(|(output, _)| {
                             output.handle == binding.handle
-                                && (binding.path.is_empty() || output.path == binding.path)
+                                && output.path == binding.path
                         })
                         .map(|(_, withheld)| (binding, *withheld))
                 })
