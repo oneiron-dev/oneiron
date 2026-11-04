@@ -82,6 +82,9 @@ pub(super) struct ModelRow {
     pub scoring: ScoreReport,
     pub query_cost: CostComponentReport,
     pub judge_overhead: CostComponentReport,
+    /// This benchmark run's Oneiron-vault secret-scan mode, read from the
+    /// case vault — not a claim about any competitor's own scanner.
+    pub secret_scan: String,
 }
 #[derive(Debug, Serialize)]
 pub(super) struct AblationUnavailable {
@@ -345,6 +348,7 @@ pub(super) fn run_with_session(
     for id in &manifest.case_ids {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), beam_vault_config())?;
+        let secret_scan = super::util::scan_stamp(&vault)?;
         let mut one = manifest.clone();
         one.case_ids = vec![id.clone()];
         let receipt_start = session.receipts().len();
@@ -584,6 +588,7 @@ pub(super) fn run_with_session(
                         }])?,
                         query_cost,
                         judge_overhead: sum_costs(&judge_costs)?,
+                        secret_scan: secret_scan.clone(),
                     };
                     if leg.is_some() {
                         ablation_rows.push(row);
