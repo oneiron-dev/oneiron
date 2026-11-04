@@ -3,7 +3,7 @@
 //! sealed admission and the stamp it leaves on the push's evidence, intent
 //! and recovery.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use rmpv::Value;
@@ -342,13 +342,7 @@ impl GitPushAdmission {
     }
 }
 
-/// One ref a checkout push moves and every path that move changes, the old
-/// and new name of a rename and the path of a delete among them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GitPushRefChange {
-    pub(crate) git_ref: String,
-    pub(crate) paths: BTreeSet<String>,
-}
+pub(crate) use crate::origin::git_ref_change::GitPushRefChange;
 
 /// The stored byte of an actor class, as [`EdgeActorClass::try_from_u8`]
 /// reads it back.

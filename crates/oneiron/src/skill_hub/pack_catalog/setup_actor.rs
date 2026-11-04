@@ -58,6 +58,33 @@ impl PackSetupActor<'_> {
         }
     }
 
+    /// Revalidates this actor for a session principal selected before an
+    /// external connection check, without selecting another owner's session.
+    pub(crate) fn validate_principal_in_txn(
+        self,
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        principal: &str,
+    ) -> Result<()> {
+        match self {
+            Self::Owner(owner) => {
+                if owner.principal_ref_in_txn(vault, txn)? != principal {
+                    return Err(invalid("the setup session belongs to another owner"));
+                }
+            }
+            Self::Agent(agent) => {
+                if !vault
+                    .agent_setup_owners_in_txn(txn, agent)?
+                    .iter()
+                    .any(|owner| owner == principal)
+                {
+                    return Err(invalid("the setup session's owner is no longer live"));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The entity this actor is: the owner's person, or the agent.
     pub(crate) fn entity_for_read(self, vault: &Vault) -> Result<EntityId> {
         match self {
@@ -68,6 +95,19 @@ impl PackSetupActor<'_> {
 }
 
 impl Vault {
+    fn agent_setup_owners_in_txn(&self, txn: &RoTxn<'_>, agent: WriteActor) -> Result<Vec<String>> {
+        if agent.actor_class() != EdgeActorClass::Agent {
+            return Err(invalid(
+                "a pack setup is worked by its owner or by an agent acting for the owner",
+            ));
+        }
+        self.verify_write_actor_in_txn(txn, &agent)?;
+        Ok(crate::policy_model::owners_in_txn(self, txn)?
+            .iter()
+            .map(EntityId::to_hex)
+            .collect())
+    }
+
     /// The owner whose session `agent` works, read in `txn` once the agent
     /// is verified there as a bound writer: of the vault's live owners, the
     /// one whose session over the exact source moved last, or before any
@@ -79,16 +119,7 @@ impl Vault {
         pack: &str,
         content_hash: Option<&str>,
     ) -> Result<String> {
-        if agent.actor_class() != EdgeActorClass::Agent {
-            return Err(invalid(
-                "a pack setup is worked by its owner or by an agent acting for the owner",
-            ));
-        }
-        self.verify_write_actor_in_txn(txn, &agent)?;
-        let owners: Vec<String> = crate::policy_model::owners_in_txn(self, txn)?
-            .iter()
-            .map(EntityId::to_hex)
-            .collect();
+        let owners = self.agent_setup_owners_in_txn(txn, agent)?;
         let receipt = self.pack_setup_receipt_in_txn(txn, pack, content_hash)?;
         let worked = self
             .pack_setup_sessions_in_txn(txn, pack, &receipt.content_hash)?
