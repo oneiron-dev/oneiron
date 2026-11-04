@@ -30,7 +30,7 @@ The capture uses the actual caller at each entry:
 The Big-rung caller context is one thread-local scope on the blocking decision
 thread. It restores the entire previous context on return or panic. It is not
 authority, a payer, or an async context propagated to another thread. Generative
-eval arms and the Coach distill pass their recording principal directly.
+eval arms, the Coach distill and code-fix drafts pass their recording principal directly.
 
 ## Native house reads
 
@@ -120,6 +120,22 @@ check suppressing evidence. Only a post-terminal run clone carries that actor
 for evidence. A successful provider answer that later fails notes parsing can
 still have evidence; provider errors add no record or retry.
 
+## Coach code-fix drafts
+
+Only the generative draft of an admitted `coach.code_fix` attempt uses the same
+recorded-call path. Its explicit actor comes from that attempt's validated
+execution stamp with an exact facet match. The core code-fix door validates the
+stamp against the Coach authority before invoking the draft. The separate owner
+principal used for the code-fix judgments stays unchanged and is not substituted
+for the generative worker's actor.
+
+The draft's source rows, messages, budget, route, full fallback walk, host wait,
+text and parsed result stay unchanged. A provider success is recorded before
+draft parsing; an unusable draft can therefore still have raw call evidence.
+The standing execution has no calling session and uses the same actor's arrival
+or terminal NoRecord check. Missing identity suppresses only evidence. Replies,
+exact replays, shadow runs and other Coach calls are not captured by this hook.
+
 ## Recording and privacy
 
 For a bound session, the existing NoRecord/off-record check runs both before the
@@ -133,7 +149,7 @@ or typed decision. A failed evidence write is logged and never fails the answer.
 An unbound call records as usual; a call outside every capture scope is not
 assigned a guessed actor.
 
-Each captured raw, Big, generative-eval, Coach-distill, Local-vision, house or caller-System-One
+Each captured raw, Big, generative-eval, Coach-distill/draft, Local-vision, house or caller-System-One
 evidence row takes a distinct record
 stamp from its shared run. This is an evidence-key sequence, not an admission or receipt
 number. Cloned handles share it and declaration revisions do not reset it.
