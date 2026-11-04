@@ -123,6 +123,7 @@ pub(crate) mod agent_birth_custody;
 pub(crate) mod agent_birth_identity;
 pub(crate) mod agent_model;
 pub mod agent_record;
+pub(crate) mod agent_scope;
 pub mod attempt_cancel;
 pub mod attempt_cleanup;
 pub mod attempt_hold;
