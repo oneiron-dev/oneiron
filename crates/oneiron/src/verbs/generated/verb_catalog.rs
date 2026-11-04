@@ -1213,6 +1213,8 @@ pub enum AgentVerb {
     VaultCustodyMembersDrainCommit,
     VaultCustodyMembersDrainFolder,
     VaultCustodyMembersReenrol,
+    VaultSyncRepoManifestsConflictReview,
+    VaultSyncRepoManifestsConflictDiscard,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -2463,6 +2465,8 @@ impl AgentVerb {
         Self::VaultCustodyMembersDrainCommit,
         Self::VaultCustodyMembersDrainFolder,
         Self::VaultCustodyMembersReenrol,
+        Self::VaultSyncRepoManifestsConflictReview,
+        Self::VaultSyncRepoManifestsConflictDiscard,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -3750,6 +3754,12 @@ impl AgentVerb {
             Self::VaultCustodyMembersDrainCommit => "vault.custody.members.drain.commit",
             Self::VaultCustodyMembersDrainFolder => "vault.custody.members.drain.folder",
             Self::VaultCustodyMembersReenrol => "vault.custody.members.reenrol",
+            Self::VaultSyncRepoManifestsConflictReview => {
+                "vault.sync.repo_manifests.conflict.review"
+            }
+            Self::VaultSyncRepoManifestsConflictDiscard => {
+                "vault.sync.repo_manifests.conflict.discard"
+            }
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -4980,6 +4990,8 @@ impl AgentVerb {
                 | Self::VaultCustodyMembersDrainCommit
                 | Self::VaultCustodyMembersDrainFolder
                 | Self::VaultCustodyMembersReenrol
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -6259,6 +6271,8 @@ impl AgentVerb {
                 | Self::VaultCustodyMembersDrainCommit
                 | Self::VaultCustodyMembersDrainFolder
                 | Self::VaultCustodyMembersReenrol
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -7626,6 +7640,8 @@ impl AgentVerb {
                 | Self::VaultCustodyMembersDrainCommit
                 | Self::VaultCustodyMembersDrainFolder
                 | Self::VaultCustodyMembersReenrol
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -8371,6 +8387,7 @@ impl AgentVerb {
                 | Self::VaultCustodyMembersDrainCommit
                 | Self::VaultCustodyMembersDrainFolder
                 | Self::VaultCustodyMembersReenrol
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
@@ -9661,6 +9678,8 @@ impl AgentVerb {
             Self::VaultCustodyMembersDrainCommit => &["spec"],
             Self::VaultCustodyMembersDrainFolder => &["spec"],
             Self::VaultCustodyMembersReenrol => &["spec"],
+            Self::VaultSyncRepoManifestsConflictReview => &["spec"],
+            Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -10912,6 +10931,8 @@ impl AgentVerb {
             Self::VaultCustodyMembersDrainCommit => &["spec"],
             Self::VaultCustodyMembersDrainFolder => &["spec"],
             Self::VaultCustodyMembersReenrol => &["spec"],
+            Self::VaultSyncRepoManifestsConflictReview => &["spec"],
+            Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -14497,6 +14518,12 @@ impl AgentVerb {
             }
             Self::VaultCustodyMembersReenrol => {
                 "The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision."
+            }
+            Self::VaultSyncRepoManifestsConflictReview => {
+                "The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier."
+            }
+            Self::VaultSyncRepoManifestsConflictDiscard => {
+                "The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."

@@ -1193,3 +1193,5 @@ both bindings and their export-census tests in one change.
 - `vault.custody.members.drain.commit`
 - `vault.custody.members.drain.folder`
 - `vault.custody.members.reenrol`
+- `vault.sync.repo_manifests.conflict.review`
+- `vault.sync.repo_manifests.conflict.discard`

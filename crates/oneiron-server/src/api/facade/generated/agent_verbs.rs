@@ -1305,6 +1305,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.custody.members.drain.commit", post(facade_route))
         .route("/vault.custody.members.drain.folder", post(facade_route))
         .route("/vault.custody.members.reenrol", post(facade_route))
+        .route(
+            "/vault.sync.repo_manifests.conflict.review",
+            post(facade_route),
+        )
+        .route(
+            "/vault.sync.repo_manifests.conflict.discard",
+            post(facade_route),
+        )
         .route("/connector.answer", post(facade_route))
         .route("/self.browser.open", post(facade_route))
         .route("/self.browser.observe", post(facade_route))

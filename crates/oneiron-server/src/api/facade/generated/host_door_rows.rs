@@ -131,6 +131,8 @@
 //! - `self.run.attach`
 //! - `self.folds.describe`
 //! - `self.history`
+//! - `vault.sync.repo_manifests.conflict.review`
+//! - `vault.sync.repo_manifests.conflict.discard`
 //! - `connector.answer`
 //! - `self.browser.open`
 //! - `self.browser.observe`

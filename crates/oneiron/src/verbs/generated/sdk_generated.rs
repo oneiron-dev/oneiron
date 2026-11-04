@@ -6661,6 +6661,20 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                     crate::task_verb::sdk::CustodyMemberReenrolRequest,
                 >(),
             ),
+            #[cfg(feature = "sync")]
+            (
+                "vault.sync.repo_manifests.conflict.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RepoManifestConflictReviewRequest,
+                >(),
+            ),
+            #[cfg(feature = "sync")]
+            (
+                "vault.sync.repo_manifests.conflict.discard",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RepoManifestConflictDiscardRequest,
+                >(),
+            ),
             (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
@@ -7883,6 +7897,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.identity.events.get",
     "vault.identity.proposals.resolve",
     "vault.identity.proposals.for_pair",
+    "vault.sync.repo_manifests.conflict.review",
+    "vault.sync.repo_manifests.conflict.discard",
     "self.browser.open",
     "self.browser.observe",
     "self.browser.find",
@@ -10419,6 +10435,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.identity.proposals.for_pair" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::IdentityPairProposals,
         >(),
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.review" => {
+            crate::code_run::vault_read::request_schema::<
+                Option<crate::task_verb::sdk::RepoManifestConflictReviewView>,
+            >()
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.discard" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::RepoManifestConflictDiscardView,
+            >()
+        }
         "self.browser.open" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserObservationPage,
         >(),
@@ -18906,6 +18934,22 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.discard" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -23186,6 +23230,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.custody.members.reenrol" => {
             let _input: crate::task_verb::sdk::CustodyMemberReenrolRequest = decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.review" => {
+            let _input: crate::task_verb::sdk::RepoManifestConflictReviewRequest =
+                decode(value.clone())?;
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.discard" => {
+            let _input: crate::task_verb::sdk::RepoManifestConflictDiscardRequest =
+                decode(value.clone())?;
+        }
         "connector.answer" => {
             let _input: crate::task_verb::sdk::ConnectorAnswerRequest = decode(value.clone())?;
         }
@@ -25713,6 +25767,14 @@ pub fn invoke(
         "vault.custody.members.reenrol" => {
             encode(vault_custody_members_reenrol(memory, decode(value)?)?)
         }
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.review" => encode(
+            vault_sync_repo_manifests_conflict_review(memory, decode(value)?)?,
+        ),
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.discard" => encode(
+            vault_sync_repo_manifests_conflict_discard(memory, decode(value)?)?,
+        ),
         "connector.answer" => encode(connector_answer(memory, decode(value)?)?),
         "self.browser.open" => encode(self_browser_open(memory, decode(value)?)?),
         "self.browser.observe" => encode(self_browser_observe(memory, decode(value)?)?),
@@ -36093,6 +36155,28 @@ pub fn vault_custody_members_reenrol(
     crate::task_verb::sdk::custody_member_reenrol_as(
         memory.vault(),
         &memory.embedded_owner("vault.custody.members.reenrol")?,
+        input,
+    )
+}
+#[cfg(feature = "sync")]
+pub fn vault_sync_repo_manifests_conflict_review(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RepoManifestConflictReviewRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::RepoManifestConflictReviewView>> {
+    crate::task_verb::sdk::repo_manifest_conflict_review_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sync.repo_manifests.conflict.review")?,
+        input,
+    )
+}
+#[cfg(feature = "sync")]
+pub fn vault_sync_repo_manifests_conflict_discard(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RepoManifestConflictDiscardRequest,
+) -> MemoryResult<crate::task_verb::sdk::RepoManifestConflictDiscardView> {
+    crate::task_verb::sdk::repo_manifest_conflict_discard_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sync.repo_manifests.conflict.discard")?,
         input,
     )
 }

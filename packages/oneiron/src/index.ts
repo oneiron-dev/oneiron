@@ -3162,6 +3162,16 @@ export class Oneiron {
         reenrol: (input: Facade.CustodyMemberReenrolRequest): Facade.CustodySetRevision => this.#call(() => this.#client.vaultCustodyMembersReenrol(input) as Facade.CustodySetRevision),
       },
     },
+    sync: {
+      repo_manifests: {
+        conflict: {
+          /** The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier. */
+          review: (input: Facade.RepoManifestConflictReviewRequest): Facade.RepoManifestConflictReviewView | null => this.#call(() => this.#client.vaultSyncRepoManifestsConflictReview(input) as Facade.RepoManifestConflictReviewView | null),
+          /** The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery. */
+          discard: (input: Facade.RepoManifestConflictDiscardRequest): Facade.RepoManifestConflictDiscardView => this.#call(() => this.#client.vaultSyncRepoManifestsConflictDiscard(input) as Facade.RepoManifestConflictDiscardView),
+        },
+      },
+    },
   }
   /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
   fetch(input: Facade.WebFetchRequest): Facade.FetchResult { return this.#call(() => this.#client.fetch(input) as Facade.FetchResult) }

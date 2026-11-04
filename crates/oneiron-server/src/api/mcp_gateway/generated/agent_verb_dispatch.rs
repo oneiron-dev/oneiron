@@ -1447,6 +1447,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.custody.members.drain.commit" => a.spec.clone().ok_or_else(invalid),
         "vault.custody.members.drain.folder" => a.spec.clone().ok_or_else(invalid),
         "vault.custody.members.reenrol" => a.spec.clone().ok_or_else(invalid),
+        "vault.sync.repo_manifests.conflict.review" => a.spec.clone().ok_or_else(invalid),
+        "vault.sync.repo_manifests.conflict.discard" => a.spec.clone().ok_or_else(invalid),
         "connector.answer" => a.spec.clone().ok_or_else(invalid),
         "self.browser.open" => a.spec.clone().ok_or_else(invalid),
         "self.browser.observe" => a.spec.clone().ok_or_else(invalid),
@@ -5144,6 +5146,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.custody.members.reenrol" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.sync.repo_manifests.conflict.review" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.sync.repo_manifests.conflict.discard" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "connector.answer" => {
@@ -25328,6 +25336,52 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_custody_members_reenrol(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.sync.repo_manifests.conflict.review" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.sync.repo_manifests.conflict.review",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::RepoManifestConflictReviewRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_sync_repo_manifests_conflict_review(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.sync.repo_manifests.conflict.discard" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.sync.repo_manifests.conflict.discard",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::RepoManifestConflictDiscardRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_sync_repo_manifests_conflict_discard(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

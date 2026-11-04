@@ -767,6 +767,8 @@ class Oneiron:
             """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
         @property
         def custody(self) -> "Oneiron._VaultCustodyVerbs": ...
+        @property
+        def sync(self) -> "Oneiron._VaultSyncVerbs": ...
     class _VaultCommitmentsVerbs:
         def create(self, spec: Facade.CommitmentCreateRequest) -> Facade.CommitmentCreateReceipt:
             """Creates an authored commitment series and its due index atomically, without approving a reminder."""
@@ -3528,6 +3530,17 @@ class Oneiron:
             """The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row."""
         def folder(self, spec: Facade.CustodyMemberRef) -> Facade.CustodySetRevision:
             """The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision."""
+    class _VaultSyncVerbs:
+        @property
+        def repo_manifests(self) -> "Oneiron._VaultSyncRepoManifestsVerbs": ...
+    class _VaultSyncRepoManifestsVerbs:
+        @property
+        def conflict(self) -> "Oneiron._VaultSyncRepoManifestsConflictVerbs": ...
+    class _VaultSyncRepoManifestsConflictVerbs:
+        def review(self, spec: Facade.RepoManifestConflictReviewRequest) -> Facade.RepoManifestConflictReviewView | None:
+            """The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier."""
+        def discard(self, spec: Facade.RepoManifestConflictDiscardRequest) -> Facade.RepoManifestConflictDiscardView:
+            """The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."""
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""

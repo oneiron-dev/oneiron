@@ -918,6 +918,9 @@ class Oneiron:
         @property
         def custody(self) -> "Oneiron._VaultCustodyVerbs":
             return Oneiron._VaultCustodyVerbs(self._client)
+        @property
+        def sync(self) -> "Oneiron._VaultSyncVerbs":
+            return Oneiron._VaultSyncVerbs(self._client)
     class _VaultCommitmentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5640,6 +5643,27 @@ class Oneiron:
         def folder(self, spec):
             """The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision."""
             return json.loads(_translate(lambda: self._client.vault_custody_members_drain_folder(json.dumps(spec))))
+    class _VaultSyncVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def repo_manifests(self) -> "Oneiron._VaultSyncRepoManifestsVerbs":
+            return Oneiron._VaultSyncRepoManifestsVerbs(self._client)
+    class _VaultSyncRepoManifestsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def conflict(self) -> "Oneiron._VaultSyncRepoManifestsConflictVerbs":
+            return Oneiron._VaultSyncRepoManifestsConflictVerbs(self._client)
+    class _VaultSyncRepoManifestsConflictVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def review(self, spec):
+            """The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier."""
+            return json.loads(_translate(lambda: self._client.vault_sync_repo_manifests_conflict_review(json.dumps(spec))))
+        def discard(self, spec):
+            """The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."""
+            return json.loads(_translate(lambda: self._client.vault_sync_repo_manifests_conflict_discard(json.dumps(spec))))
     class _FeedbackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
