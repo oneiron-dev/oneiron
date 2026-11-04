@@ -79,8 +79,33 @@ impl Vault {
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<(super::SigningPage, Vec<u8>)> {
-        let super::SigningOutcome::Page(page) =
-            self.execute_signing_action(token, &SigningAction::Load, ip, user_agent)?
+        self.esign_preview_for_capability_as(
+            token,
+            item,
+            super::SigningCaller::Bearer,
+            None,
+            ip,
+            user_agent,
+        )
+    }
+    /// [`Self::esign_preview_for_capability`] with the verified caller's receipt evidence.
+    pub fn esign_preview_for_capability_as(
+        &self,
+        token: &EsignCapability,
+        item: usize,
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<(super::SigningPage, Vec<u8>)> {
+        let super::SigningOutcome::Page(page) = self.execute_signing_action_as(
+            token,
+            &SigningAction::Load,
+            caller,
+            verified_actor,
+            ip,
+            user_agent,
+        )?
         else {
             return Err(invalid("preview is unavailable"));
         };

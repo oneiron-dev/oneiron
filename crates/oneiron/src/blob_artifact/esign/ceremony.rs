@@ -293,10 +293,13 @@ impl Vault {
                 ip,
                 user_agent,
             };
-            // Gate 3: first-open is an event, idempotent on refresh.
+            // Gate 3: first-open is an event, idempotent on refresh. Viewed
+            // is human-action-only evidence (FIX 7855): a known agent call
+            // never marks viewed, while Bearer/Person acts still do.
             if !matches!(action, SigningAction::Load)
                 && progress.delivery != DeliveryStatus::Viewed
                 && !held
+                && caller != SigningCaller::Agent
             {
                 state = append(
                     self,

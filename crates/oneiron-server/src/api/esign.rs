@@ -18,7 +18,7 @@ pub(crate) mod seal_worker;
 use crate::machine::MemoryRefusal;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{HeaderMap, StatusCode, header, request::Parts};
+use axum::http::{StatusCode, header, request::Parts};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -194,11 +194,12 @@ fn refused() -> Response {
 async fn pdf(
     State(server): State<Arc<SyncServer>>,
     SigningIngress { token, admitted }: SigningIngress,
-    headers: HeaderMap,
+    parts: Parts,
     peer: NetworkPeer,
     local_peer: LocalPeer,
     body: Body,
 ) -> Response {
+    let headers = &parts.headers;
     let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
@@ -206,14 +207,22 @@ async fn pdf(
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let request: ingress::ItemBody = match ingress::payload(&server, admitted, &headers, body).await
+    let Ok((caller, verified_actor)) = signing_caller(&parts, &server) else {
+        return refused();
+    };
+    let request: ingress::ItemBody = match ingress::payload(&server, admitted, headers, body).await
     {
         Ok(request) => request,
         Err(response) => return response,
     };
-    match server
-        .vault
-        .esign_pdf_for_capability(&token, request.item, ip, ua)
+    match server.vault.esign_pdf_for_capability_as(
+        &token,
+        request.item,
+        caller,
+        verified_actor,
+        ip,
+        ua,
+    )
     {
         Ok(bytes) => {
             let mut response = (
@@ -268,9 +277,13 @@ enum ImageUpload {
 async fn image(
     State(server): State<Arc<SyncServer>>,
     SigningIngress { token, admitted }: SigningIngress,
-    headers: HeaderMap,
+    parts: Parts,
     body: Body,
 ) -> Response {
+    let headers = &parts.headers;
+    let Ok((caller, verified_actor)) = signing_caller(&parts, &server) else {
+        return refused();
+    };
     let vault = Arc::clone(&server.vault);
     let memory = server.memory.clone();
     let uploaded = ingress::spooled(&server, admitted, &headers, body, move |file, bytes| {
@@ -294,7 +307,7 @@ async fn image(
         // pending on the lease until the upload returns.
         let read = u64::try_from(image.len()).unwrap_or(u64::MAX);
         lease.materialized(read, read);
-        match vault.upload_esign_signature_image(&token, &image) {
+        match vault.upload_esign_signature_image_as(&token, &image, caller, verified_actor) {
             Ok(image_ref) => ImageUpload::Stored(image_ref),
             Err(_) => ImageUpload::Refused,
         }
