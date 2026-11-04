@@ -548,8 +548,8 @@ fn workbook_relationship_target(
     std::str::from_utf8(rels).map_err(|_| invalid())?;
     let mut reader = NsReader::from_reader(rels);
     // The matched relationship with its scope.
-    let mut matched: Option<(String, String, Option<String>)> = None;
     let mut matched_scope = temp_scope(bounds);
+    let mut matched: Option<(String, String, Option<String>)> = None;
     let mut matched_live: u64 = 0;
     loop {
         checkpoint(bounds)?;
