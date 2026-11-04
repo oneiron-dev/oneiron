@@ -52429,7 +52429,7 @@
      "path": "src/office_body/actor_erase.rs",
      "purpose": "An erased actor out of the office rows that name it (FIX 3520): the export records, the deck forks' records…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -52443,13 +52443,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/office_body/author_token/carrier.rs",
      "purpose": "Byte-bound DOCX revision-author carriers over the existing export rows",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -52484,10 +52484,20 @@
      "purpose": "Office proposals (DEC-0006, \"A content proposal is a set of forks that share its id\"; ARCH-0035's embedded…",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 4,
       "fn": 2,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/consent/live_edit.rs",
+     "purpose": "Live DOCX/XLSX edit admission and grant lifecycle (FIX 596)",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -52514,7 +52524,7 @@
      "path": "src/office_body/doors.rs",
      "purpose": "Vault doors for office body import, edits, forks and export",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 17
      }
     },
@@ -52544,7 +52554,17 @@
      "path": "src/office_body/holder_ask.rs",
      "purpose": "Holder asks for office proposals (DEC-0006: \"The rest wait together as one review bundle, offered to every…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/holder_ask/live_edit.rs",
+     "purpose": "Live DOCX/XLSX edit holder asks and ACCEPT grant minting (FIX 596)",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -52762,6 +52782,7 @@
       "ForkState",
       "OfficeBodyEdit",
       "OfficeBodyExport",
+      "OfficeBodyExportAuthor",
       "OfficeBodyExportRecord",
       "OfficeBodyExportRequest",
       "OfficeBodyFork",
@@ -52773,10 +52794,10 @@
      "path": "src/office_body/records.rs",
      "purpose": "Office body records and side-table bindings",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 1,
-      "struct": 8
+      "struct": 9
      }
     },
     {
@@ -52794,13 +52815,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/revision_window.rs",
+     "purpose": "FIX 595 sequential per-actor DOCX projection, in memory (Engine 16:22)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/office_body/support.rs",
      "purpose": "Shared office body storage, validation and projection helpers",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
      }
     },
     {
@@ -91032,7 +91063,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 38,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91713,7 +91744,7 @@
    },
    "over_bar": 131,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6316,
+   "source_files": 6319,
    "test_files": 900
   },
   "oneiron-android": {
@@ -99224,7 +99255,23 @@
       "const": 1,
       "enum": 5,
       "fn": 7,
+      "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DocxGroupEvents",
+      "DocxProjection"
+     ],
+     "path": "src/docx_body/projection.rs",
+     "purpose": "In-memory multi-revision DOCX projection and its shared op builder",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -101098,10 +101145,10 @@
      "purpose": "Compile a kept brief into a validated `DesignPlan` (ARCH-0077, \"Create: an approved argument, then a design\")"
     },
     "docx_body": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
@@ -101212,7 +101259,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 158,
+   "source_files": 159,
    "test_files": 14
   },
   "oneiron-driver": {
