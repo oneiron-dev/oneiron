@@ -47,7 +47,7 @@ pub(super) struct Owners {
 pub(super) struct Dispatch {
     pub(super) is_lexical_query_hint_claim: bool,
     pub(super) new_skill_record: Option<crate::write_envelope::skill_record::SkillRecord>,
-    pub(super) new_agent_definition: Option<crate::agent_def::AgentDefinition>,
+    pub(super) new_agent_definition: Option<crate::store::agent_definition::AgentDefinition>,
     pub(super) new_workflow: Option<crate::store::workflow_definition::WorkflowDefinition>,
     pub(super) decoded_claim_body: Option<ClaimBody>,
     pub(super) authority_entry_hash_pin: Option<oneiron_contracts::authority::AuthorityEntryHash>,
