@@ -267,6 +267,16 @@ impl CoreAuth {
         if invited && INVITEE_DOORS.contains(&verb) {
             self.scopes = BTreeSet::from([CoreScope::Read, CoreScope::Write]);
         }
+        // A share-only credential acquires the row's Read scope only on its
+        // two rendering doors. It never gains general core:read authority.
+        if matches!(verb, "vault.shares.view" | "vault.notes.follow_citation")
+            && self
+                .verified_slip
+                .as_ref()
+                .is_some_and(|slip| slip.claims().share_ref.is_some() && slip.allows_verb(verb))
+        {
+            self.scopes.insert(CoreScope::Read);
+        }
         self
     }
     /// An adapter without record-Scope enforcement cannot accept a narrowed
