@@ -271,6 +271,7 @@ fn chart(categories: ChartCategories, own: Option<ChartCategories>) -> NodePaylo
             x: None,
             x_labels: None,
             plot: None,
+            plot_id: None,
             categories: own,
             bubble_size: None,
             bubble_3d: None,
