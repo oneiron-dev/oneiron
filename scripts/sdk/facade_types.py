@@ -26,6 +26,8 @@ sys.setrecursionlimit(20000)
 # The crates a facade type can live in, by the name a Rust path gives them.
 CRATES = {
     'oneiron': 'crates/oneiron/src',
+    'oneiron_base': 'crates/oneiron-base/src',
+    'oneiron_store': 'crates/oneiron-store/src',
     'oneiron_contracts': 'crates/oneiron-contracts/src',
     'oneiron_authority': 'crates/oneiron-authority/src',
     'oneiron_crypto': 'crates/oneiron-crypto/src',

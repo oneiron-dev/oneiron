@@ -131,7 +131,12 @@ fn responses_items(message: &LlmMessage, wire: Option<&str>) -> Vec<JsonValue> {
             // Its summary stays out: the encrypted content is the reasoning,
             // and a streamed summary's text is joined differently from a
             // whole one's, which would break the socket's chain.
-            ContentPart::Reasoning { signature, .. } => {
+            ContentPart::Reasoning {
+                signature,
+                reasoning_kind:
+                    oneiron::ReasoningPartKind::Full | oneiron::ReasoningPartKind::Encrypted,
+                ..
+            } => {
                 if let Some((_, id, encrypted)) = signature
                     .as_deref()
                     .and_then(encrypted_reasoning)
@@ -146,6 +151,11 @@ fn responses_items(message: &LlmMessage, wire: Option<&str>) -> Vec<JsonValue> {
                     }));
                 }
             }
+            ContentPart::Reasoning {
+                reasoning_kind:
+                    oneiron::ReasoningPartKind::Summary | oneiron::ReasoningPartKind::Count,
+                ..
+            } => {}
             ContentPart::Audio { .. } => {}
             ContentPart::Image { media_type, image } => {
                 let url = match image {
@@ -210,14 +220,13 @@ fn item_digest(item: &JsonValue) -> u64 {
     hasher.finish()
 }
 
-fn reasoning_text(item: &JsonValue) -> String {
-    ["summary", "content"]
+fn reasoning_part_texts<'a>(item: &'a JsonValue, key: &str) -> Vec<&'a str> {
+    item.get(key)
+        .and_then(JsonValue::as_array)
         .into_iter()
-        .filter_map(|key| item.get(key)?.as_array())
         .flatten()
         .filter_map(|part| part.get("text")?.as_str())
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect()
 }
 
 fn parse_function_call(item: &JsonValue) -> Option<ContentPart> {

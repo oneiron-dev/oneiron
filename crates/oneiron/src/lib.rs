@@ -508,8 +508,8 @@ pub use crate::llm::{
     IncompleteReason, LlmBackend, LlmCapability, LlmCatalogEntry, LlmError, LlmGenerateFuture,
     LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult,
     LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality,
-    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RetryableLlmError,
-    TierPrecedence, UnsupportedCapability,
+    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ReasoningPartKind, ResponseFormat,
+    RetryableLlmError, TierPrecedence, UnsupportedCapability,
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,

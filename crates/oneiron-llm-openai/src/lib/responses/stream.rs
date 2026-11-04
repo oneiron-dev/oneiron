@@ -77,7 +77,7 @@ impl OpenAiResponsesStreamAccumulator {
                     {
                         match reasoning_signature(item, &self.model) {
                             Some(signature) => self.assembly.reasoning(
-                                &format!("reasoning-{}", index()),
+                                &format!("reasoning-{}-0", index()),
                                 "",
                                 Some(signature),
                             ),
@@ -108,9 +108,27 @@ impl OpenAiResponsesStreamAccumulator {
                 self.assembly
                     .text(&format!("text-{}-{content}", index()), delta())
             }
-            "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => self
-                .assembly
-                .reasoning(&format!("reasoning-{}", index()), delta(), None),
+            "response.reasoning_summary_text.delta" => {
+                let part = event
+                    .get("summary_index")
+                    .and_then(JsonValue::as_u64)
+                    .unwrap_or(0);
+                self.assembly.reasoning_with_kind(
+                    &format!("reasoning-summary-{}-{part}", index()),
+                    delta(),
+                    None,
+                    oneiron::ReasoningPartKind::Summary,
+                    None,
+                )
+            }
+            "response.reasoning_text.delta" => {
+                let part = event
+                    .get("content_index")
+                    .and_then(JsonValue::as_u64)
+                    .unwrap_or(0);
+                self.assembly
+                    .reasoning(&format!("reasoning-{}-{part}", index()), delta(), None)
+            }
             "response.function_call_arguments.delta" => {
                 let header = self
                     .tools

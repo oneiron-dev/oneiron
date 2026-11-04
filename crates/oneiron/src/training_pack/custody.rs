@@ -13,7 +13,7 @@ use crate::write_envelope::WriteActor;
 
 use super::{
     ArtifactPin, CheckpointFileKind, CheckpointFilePin, CheckpointUpload, PinnedCheckpoint,
-    SourcePin, hash_json, invalid,
+    SourcePin, TrainingOwner, TrainingState, hash_json, invalid, run_in_txn,
 };
 
 pub(super) mod stream;
@@ -299,6 +299,31 @@ impl Vault {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let id = self.store.clock.entity_id()?;
             keep_bytes(self, txn, actor, id, name, bytes)
+        })
+    }
+
+    /// Retain one background evaluator's verifier log under the run's already-authorized
+    /// owner and run id. The held-out door has opened its exposure; no second live owner
+    /// proof is needed for this run-bound trusted-host write.
+    pub fn keep_training_verifier_log_for_run(
+        &self,
+        id: &EntityId,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<ArtifactPin> {
+        self.with_write_txn_grouped(|txn| {
+            let run = run_in_txn(self, txn, id)?;
+            if run.state != TrainingState::Returned || run.eval_exposure.is_none() {
+                return Err(invalid(
+                    "training verifier logs need a returned run with a held-out exposure",
+                ));
+            }
+            let TrainingOwner::Actor(actor) = run.owner else {
+                return Err(invalid(
+                    "the training run's owner was erased; its verifier log is not kept",
+                ));
+            };
+            keep_bytes(self, txn, actor, *id, name, bytes)
         })
     }
 

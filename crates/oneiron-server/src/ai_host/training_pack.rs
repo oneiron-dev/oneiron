@@ -20,7 +20,9 @@
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
-use oneiron::llm::run_admission::{BudgetLine, PaidConnector, RunAdmission, RunDeclaration};
+use oneiron::llm::run_admission::{
+    BudgetLine, CallOutcome, PaidConnector, RunAdmission, RunDeclaration,
+};
 use oneiron::training_pack::{
     HeldOutResult, TrainingConnector, TrainingEvalInput, TrainingRun, TrainingState,
 };
@@ -51,9 +53,9 @@ const HOLD_PARITY_FAILED: &str = "training.parity_failed";
 /// served against the returned checkpoint, and records nothing itself.
 type TrainingEvaluator = Box<dyn Fn(&TrainingEvalInput) -> oneiron::Result<HeldOutResult>>;
 
-/// Trains or scores the run one leased `coach.training_run` attempt names.
-/// A run that moved on, or whose spec is not the one its owner authorized,
-/// leaves nothing to do.
+/// Trains, recovers or scores the run one leased `coach.training_run`
+/// attempt names. A run that moved on, or whose spec is not the one its
+/// owner authorized, leaves nothing to do.
 pub(super) fn run(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
@@ -64,6 +66,8 @@ pub(super) fn run(
     };
     if run.state == TrainingState::Authorized {
         train(server, &run, now)
+    } else if run.state == TrainingState::Running {
+        recover(server, &run)
     } else {
         evaluate(server, &run, now)
     }
@@ -200,6 +204,85 @@ fn dispatch(
         {
             tracing::warn!(kind = ?error.kind(), "a refused training run kept no hold");
         }
+    }
+}
+
+/// Recovers a Running run whose waiter was lost: polls its trainer for a
+/// terminal receipt and completes it, or leaves it Running. A missing
+/// trainer, binding or admission stays Running without a new hold (a Running
+/// run does not await the host); a still-outstanding job polls None and is a
+/// no-op. `ConnectorFailed` stays terminal. A first completion settles the
+/// run's paid reservation as used, as the dispatch does; a run that already
+/// holds its result needs no new settlement.
+fn recover(server: &SyncServer, run: &TrainingRun) -> oneiron::Result<()> {
+    let Some(binding) = trainer_binding(server, &run.compute.connector) else {
+        return Ok(());
+    };
+    let Some(connector) = training_connector(server, run) else {
+        return Ok(());
+    };
+    let Ok(declaration) = training_declaration(run) else {
+        return Ok(());
+    };
+    let admission = server
+        .ai
+        .declared_run(run.admission_ref(), declaration, None)
+        .admission()
+        .clone();
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return Err(Error::InvalidConfig(
+                "the training run's runtime did not start".into(),
+            ));
+        }
+    };
+    let output = runtime.block_on(connector.poll(&run.id, &run.spec_blake3))?;
+    match output {
+        Some(output) => {
+            // A result recorded since this recovery started was settled by
+            // its own waiter; only a first completion settles here.
+            let fresh = server
+                .vault()
+                .training_run(&run.id)?
+                .ok_or_else(|| Error::InvalidConfig("training run not found".into()))?;
+            if fresh.result.is_some() {
+                server.vault().complete_training_pack(&admission, output)?;
+                return Ok(());
+            }
+            let service_units = output.service_units;
+            let permit = admission
+                .sourced(fresh.source_rows.clone())
+                .admit_paid(&binding, fresh.compute.quantity)
+                .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+            match server.vault().complete_training_pack(&admission, output) {
+                Ok((_, true)) => {
+                    // Keep completed work even when the meter reports a
+                    // settlement error, as the dispatch does.
+                    permit
+                        .settle(CallOutcome::Used(service_units))
+                        .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+                    Ok(())
+                }
+                Ok((_, false)) => {
+                    // The live waiter completed and settled first: this
+                    // permit settles Kept, charging nothing, so the one
+                    // GPU job is never charged twice.
+                    permit
+                        .settle(CallOutcome::Kept)
+                        .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+                    Ok(())
+                }
+                Err(error) => {
+                    drop(permit);
+                    Err(error)
+                }
+            }
+        }
+        None => Ok(()),
     }
 }
 

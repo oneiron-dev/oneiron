@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1220 facade rows, 4424 declarations.
-Inputs: 1147 of 1220 fully typed, 71 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 1046 of 1220 fully typed, 163 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
-Opaque serde_json::Value leaves: 122; unread shapes: 1.
+Census: 1220 facade rows, 4427 declarations.
+Inputs: 1148 of 1220 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1054 of 1220 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -9889,12 +9889,15 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     delete: NotRequired[list[str]]
     hold: NotRequired[list[str]]
     reply_to: NotRequired[str | None]
+class VectorEvidenceFloors(TypedDict):
+    floor: float
+    strong: float
 class EmbeddingSpace(TypedDict):
     id: str
     dimensions: int
     accepts: list[InputKind]
     query_towers: list[InputKind]
-    evidence: NotRequired[Any | None]
+    evidence: NotRequired[VectorEvidenceFloors | None]
 class SpaceRefDeclared(TypedDict):
     declared: str
 SpaceRef = Literal["text_index"] | SpaceRefDeclared
@@ -16072,6 +16075,7 @@ class ResponseFormatJson(TypedDict):
 ResponseFormat = ResponseFormatText | ResponseFormatJson
 CallEnvelope = TypedDict("CallEnvelope", {"scope": NotRequired[ScopeScope], "purpose": CallPurpose, "class": CallClass, "tier": TierPrecedence, "response_format": ResponseFormat, "locality": ModelLocality, "seat_effort": NotRequired[ReasoningEffort | None]})
 LlmMessageRole = Literal["system", "user", "assistant", "tool"]
+ReasoningPartKind = Literal["full", "summary", "encrypted", "count"]
 class ImageContentBase64(TypedDict):
     source: Literal["base64"]
     data: str
@@ -16086,6 +16090,8 @@ class ContentPartReasoning(TypedDict):
     kind: Literal["reasoning"]
     text: str
     signature: NotRequired[str | None]
+    reasoning_kind: NotRequired[ReasoningPartKind]
+    data: NotRequired[str | None]
 class ContentPartToolCall(TypedDict):
     kind: Literal["tool_call"]
     call_id: str
@@ -16392,7 +16398,7 @@ class FatalLlmErrorUnsupported(TypedDict):
     Unsupported: UnsupportedCapability
 class FatalLlmErrorLabelRead(TypedDict):
     LabelRead: LabelReadFailure
-FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse", "ResponseErased"] | FatalLlmErrorInvalidRequestDetail | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
+FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse", "ResponseErased", "JobLost"] | FatalLlmErrorInvalidRequestDetail | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
 ModelStepFailureClass = Literal["retryable", "fatal", "budget_denied", "schema_validation", "fallback", "finalize_refused", "deadline_hard_cut", "engine"]
 TransportFaultKind = Literal["not_sent", "io_after_send", "refused", "unexpected_frame", "ended_with_error"]
 class TransportFault(TypedDict):
@@ -16487,6 +16493,8 @@ class LlmStreamEventReasoningStart(TypedDict):
     event: Literal["reasoning_start"]
     part_id: str
     signature: NotRequired[str | None]
+    reasoning_kind: NotRequired[ReasoningPartKind]
+    data: NotRequired[str | None]
 class LlmStreamEventReasoningDelta(TypedDict):
     event: Literal["reasoning_delta"]
     part_id: str
@@ -17365,13 +17373,14 @@ class AiVerdict(TypedDict):
 class GraphAskSelection(TypedDict):
     entity_type: int
     limit: int
+HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
 class GraphAskRequest(TypedDict):
     question: DecisionQuestion
     units: NotRequired[list[EntityId]]
     select: NotRequired[GraphAskSelection | None]
     ceiling: NotRequired[DecisionRung | None]
     unit_deadline_ms: NotRequired[int | None]
-    posture: NotRequired[str | None]
+    posture: NotRequired[HostingPrivacyPosture | None]
     criteria: NotRequired[QuestionCriteria[str] | None]
 SourceConflict = Literal["facet", "project", "world", "relationship", "scope_term", "principal", "unrepresentable"]
 class OmittedNeighbor(TypedDict):
@@ -17435,14 +17444,14 @@ class QuestionDefinition(TypedDict, Generic[Q]):
     binding: NotRequired[OutcomeBinding | None]
     criteria: NotRequired[QuestionCriteria[str]]
     audience: NotRequired[QuestionAudience]
-    posture: NotRequired[Any | None]
+    posture: NotRequired[HostingPrivacyPosture | None]
     media: NotRequired[QuestionMedia]
     deadline_ms: NotRequired[int | None]
     artifacts: NotRequired[list[ArtifactUnits]]
 DecisionQuestionInput = TypedDict("DecisionQuestionInput", {"text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 QuestionDefinitionInput = QuestionDefinition[DecisionQuestionInput]
 class QuestionCreateRequest(TypedDict):
-    definition: Any
+    definition: QuestionDefinitionInput
 QuestionAskerClass = Literal["human", "agent", "system"]
 class FrozenReadLane(TypedDict):
     credential: NotRequired[list[int] | None]

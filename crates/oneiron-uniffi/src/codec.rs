@@ -496,6 +496,22 @@ impl Lift<engine::WitnessReceipt> for WitnessReceipt {
             turn_short_id: value.turn_short_id,
             message_short_ids: value.message_short_ids,
             receipt_ref: value.receipt_ref,
+            turn: value.turn.map(|record| crate::RecordRef {
+                kind: record.kind,
+                id: record.id,
+                short_id: record.short_id,
+                label: record.label,
+            }),
+            messages: value
+                .messages
+                .into_iter()
+                .map(|record| crate::RecordRef {
+                    kind: record.kind,
+                    id: record.id,
+                    short_id: record.short_id,
+                    label: record.label,
+                })
+                .collect(),
             wake_outcome: value
                 .wake_outcome
                 .map(TurnProgramWakeOutcome::lift)
@@ -610,6 +626,18 @@ impl Lift<engine::CommitReceipt> for CommitReceipt {
             approval: value.approval,
             superseded_short_id: value.superseded_short_id,
             receipt_ref: value.receipt_ref,
+            claim: value.claim.map(|record| crate::RecordRef {
+                kind: record.kind,
+                id: record.id,
+                short_id: record.short_id,
+                label: record.label,
+            }),
+            superseded: value.superseded.map(|record| crate::RecordRef {
+                kind: record.kind,
+                id: record.id,
+                short_id: record.short_id,
+                label: record.label,
+            }),
         })
     }
 }
@@ -969,6 +997,12 @@ impl Lift<engine::EntityRefReceipt> for EntityRefReceipt {
             entity_ref: value.entity_ref,
             id_hex: value.id_hex,
             receipt_ref: value.receipt_ref,
+            record: value.record.map(|record| crate::RecordRef {
+                kind: record.kind,
+                id: record.id,
+                short_id: record.short_id,
+                label: record.label,
+            }),
         })
     }
 }
@@ -1187,6 +1221,7 @@ impl Lower<engine::RecallScope> for Option<RecallScope> {
                 world_ref: scope.world_ref,
                 facet: scope.facet,
                 kinds: scope.kinds,
+                project_refs: scope.project_refs.unwrap_or_default(),
                 conversation_refs: scope.conversation_refs.unwrap_or_default(),
                 person_ref: scope.person_ref,
                 ..Default::default()

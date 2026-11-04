@@ -114,6 +114,11 @@ impl DeclaredTeachers {
     pub(crate) fn alias(&self, selector: &str) -> Option<&ModelId> {
         self.aliases.get(selector)
     }
+
+    /// The frozen alias mappings, in selector order.
+    pub(crate) fn aliases(&self) -> impl Iterator<Item = (&String, &ModelId)> {
+        self.aliases.iter()
+    }
 }
 
 /// What a run states about itself. Only the owner or the host changes it, and
@@ -203,6 +208,16 @@ impl RunDeclaration {
 
     pub(crate) fn overrides_custody(&self, offer: &str) -> bool {
         self.custody_overrides.contains(offer)
+    }
+
+    /// The paid connectors the run may call, in name order.
+    pub(crate) fn connectors(&self) -> impl Iterator<Item = &String> {
+        self.connectors.iter()
+    }
+
+    /// The offers the owner lets serve this run from a T1 key, in name order.
+    pub(crate) fn custody_overrides(&self) -> impl Iterator<Item = &String> {
+        self.custody_overrides.iter()
     }
 }
 

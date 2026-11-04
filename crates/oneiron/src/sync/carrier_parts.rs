@@ -106,7 +106,7 @@ const JOIN_RESERVE_FLOOR_BYTES: u64 = 256 << 20;
 /// past the reserve (FIX 8880). Where the memory available cannot be read,
 /// the machine's whole memory stands in; where neither can, the allocation
 /// alone decides.
-fn assembly_fits(len: u64) -> bool {
+pub(crate) fn assembly_fits(len: u64) -> bool {
     use oneiron_contracts::limit_ask::{available_memory_bytes, machine_memory_bytes};
     let reserve = machine_memory_bytes().map_or(JOIN_RESERVE_FLOOR_BYTES, |total| {
         (total / 16).max(JOIN_RESERVE_FLOOR_BYTES)

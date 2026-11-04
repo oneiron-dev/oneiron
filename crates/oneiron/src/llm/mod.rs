@@ -169,7 +169,7 @@ pub use oneiron_model::llm::{
     LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmRole,
     LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError,
     ModelLocality, ModelTierRef, PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM,
-    ReasoningEffort, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
+    ReasoningEffort, ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
     SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
     UnsupportedCapability,
 };

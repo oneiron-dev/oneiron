@@ -329,6 +329,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         LlmError::Fatal(FatalLlmError::Auth) => "auth",
         LlmError::Fatal(FatalLlmError::ContentFiltered) => "content_filtered",
         LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
+        LlmError::Fatal(FatalLlmError::JobLost) => "job_lost",
         LlmError::Fatal(FatalLlmError::Unsupported(_)) => "unsupported",
         LlmError::Fatal(FatalLlmError::LabelRead(_)) => "label_read",
         LlmError::Fatal(FatalLlmError::ResponseErased) => "response_erased",
