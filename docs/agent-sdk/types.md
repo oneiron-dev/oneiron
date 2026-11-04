@@ -2025,12 +2025,17 @@ class Oneiron:
         def get(self, spec: Facade.SkillHubRequest) -> Facade.SkillHubRecord:
             """Reads one configured hub as the owner."""
         @property
+        def clawhub(self) -> "Oneiron._VaultSkillHubsClawhubVerbs": ...
+        @property
         def publishers(self) -> "Oneiron._VaultSkillHubsPublishersVerbs": ...
         @property
         def refs(self) -> "Oneiron._VaultSkillHubsRefsVerbs": ...
     class _VaultSkillHubsDefaultVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.DefaultSkillHub:
             """Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source."""
+    class _VaultSkillHubsClawhubVerbs:
+        def search(self, spec: Facade.ClawHubSearchRequest) -> Facade.ClawHubSearchReply:
+            """Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages."""
     class _VaultSkillHubsPublishersVerbs:
         def admit(self, spec: Facade.SkillPublisherRequest) -> Facade.SkillPublisherAdmission:
             """The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."""

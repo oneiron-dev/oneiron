@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1276 code-mode rows (1236 host rows, 40 run rows), 4517 declarations.
-// Replies: 1091 fully typed, 184 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1277 code-mode rows (1237 host rows, 40 run rows), 4521 declarations.
+// Replies: 1092 fully typed, 184 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -1053,6 +1053,10 @@ declare namespace Sdk {
   type HubConsentReceipt = { outcome: HubConsentOutcome; decision: string; grant_ref?: string | null };
   type SkillHubConfigured = { hub: EntityId; consent: HubConsentReceipt };
   type SkillHubRequest = { hub: EntityId };
+  type ClawHubSearchRequest = { hub: EntityId; q: string; limit?: number | null; highlighted_only?: boolean | null; non_suspicious_only?: boolean | null; response_limit_bytes?: number | null };
+  type ClawHubSearchOwner = { handle?: string | null; displayName?: string | null; image?: string | null };
+  type ClawHubSearchHit = { score?: number | null; slug?: string | null; displayName?: string | null; summary?: string | null; version?: string | null; updatedAt?: number | null; ownerHandle?: string | null; owner?: ClawHubSearchOwner | null };
+  type ClawHubSearchReply = { outcome: "results"; results?: ClawHubSearchHit[] | null } | { outcome: "provider_error"; status: number; retry_after?: string | null; body: string };
   type SkillPublisherRequest = { hub: EntityId; identity: string };
   type SkillPublisherAdmission = { hub: EntityId; identity: string; grant_ref: string };
   type HubRefRequest = { hub: EntityId; ref_string: string };
@@ -7365,6 +7369,10 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   skill_hubs: {
+    clawhub: {
+      /** Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages. */
+      search(input: Sdk.ClawHubSearchRequest): Promise<Sdk.ClawHubSearchReply | StoredResult>;
+    };
     default: {
       /** Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source. */
       get(input: Sdk.EmptyRequest): Promise<Sdk.DefaultSkillHub | StoredResult>;

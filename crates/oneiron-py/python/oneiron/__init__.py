@@ -2092,6 +2092,9 @@ class Oneiron:
             """Reads one configured hub as the owner."""
             return json.loads(_translate(lambda: self._client.vault_skill_hubs_get(json.dumps(spec))))
         @property
+        def clawhub(self) -> "Oneiron._VaultSkillHubsClawhubVerbs":
+            return Oneiron._VaultSkillHubsClawhubVerbs(self._client)
+        @property
         def publishers(self) -> "Oneiron._VaultSkillHubsPublishersVerbs":
             return Oneiron._VaultSkillHubsPublishersVerbs(self._client)
         @property
@@ -2103,6 +2106,12 @@ class Oneiron:
         def get(self, spec=None):
             """Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source."""
             return json.loads(_translate(lambda: self._client.vault_skill_hubs_default_get(json.dumps({} if spec is None else spec))))
+    class _VaultSkillHubsClawhubVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def search(self, spec):
+            """Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_clawhub_search(json.dumps(spec))))
     class _VaultSkillHubsPublishersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

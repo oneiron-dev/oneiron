@@ -232,6 +232,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.skills.restoreDefaults", post(facade_route))
         .route("/vault.skill_hubs.put", post(facade_route))
         .route("/vault.skill_hubs.get", post(facade_route))
+        .route("/vault.skill_hubs.clawhub.search", post(facade_route))
         .route("/vault.skill_hubs.publishers.admit", post(facade_route))
         .route("/vault.skill_hubs.publishers.revoke", post(facade_route))
         .route("/vault.skill_hubs.refs.get", post(facade_route))
