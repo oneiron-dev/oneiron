@@ -7933,6 +7933,7 @@ dependencies = [
  "lopdf",
  "loro",
  "lzma-rust2",
+ "memmap2",
  "ocrs",
  "oneiron",
  "oneiron-authority",
