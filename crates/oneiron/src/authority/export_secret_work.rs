@@ -202,7 +202,9 @@ pub struct ExportSecretSupplement {
     pub sealed: Option<String>,
 }
 
-pub use crate::batch::export::secret_supplement_record::{OpenedSecretSupplement, SecretSupplementImport};
+pub use crate::batch::export::secret_supplement_record::{
+    OpenedSecretSupplement, SecretSupplementImport,
+};
 
 /// What an owner export names for its holders, in its audit write.
 pub(crate) struct HolderExportBasis<'a> {

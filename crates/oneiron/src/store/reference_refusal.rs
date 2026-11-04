@@ -1,8 +1,8 @@
 //! Content-free reference-refusal facts and their receipt projection.
 
-use std::collections::BTreeMap;
 use crate::entity_id::EntityId;
 use crate::store::receipt_row::{ReceiptKind, ReceiptRecord};
+use std::collections::BTreeMap;
 
 // Stable reasons recorded by reference-refusal receipts.
 
