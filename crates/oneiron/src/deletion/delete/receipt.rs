@@ -81,6 +81,7 @@ impl Vault {
         // The custody revokes the actor sweeps make reach the owner's other
         // machines under the act the delete carries out (FIX 11883).
         let owner_act = gate.as_ref().and_then(GatedDeletion::owner_act);
+        let mut cancelled = Vec::new();
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,
@@ -125,10 +126,10 @@ impl Vault {
                 crate::store::erase_sync_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                 crate::store::erase_response_owner_in_txn(&self.store, &mut wtxn, id)?;
             }
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(
+            cancelled.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
                 crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id),
                 owner_act,
-            )?;
+            )?);
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
                 && !self.store.discard_pending_deletion_gate_decision_in_txn(
@@ -153,6 +154,8 @@ impl Vault {
             )?;
             self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
             wtxn.commit()?;
+            crate::attempt_queue::AttemptQueue::new(self)
+                .erased_payload_cancellations_committed(&cancelled);
             return Ok(DeleteEntityOutcome {
                 existed: false,
                 receipt_id: None,
@@ -180,9 +183,10 @@ impl Vault {
         // primary witness — and in this same transaction, so a head can
         // never be erased while a shell of it stays readable.
         let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
-        let (cascaded_shells, changed_documents) =
+        let (cascaded_shells, changed_documents, shell_cancelled) =
             self.cascade_hard_erase_to_redirect_shells_in_txn(&mut wtxn, id, owner_act)?;
         affected.extend(changed_documents);
+        cancelled.extend(shell_cancelled);
         // The shells' historical carriers ride THIS erasure's sweep row:
         // clearing the active store while history keeps the bytes would
         // erase nothing.
@@ -203,7 +207,7 @@ impl Vault {
         // A FEDERATION_GRANT row erased here is marked withdrawn; this door's
         // own `dt:` marker and tombstone carry its erasure (FIX 11779).
         crate::authority::mark_if_withdrawn_grant_in_txn(&self.store, &mut wtxn, *id)?;
-        let (existed, citing) = self.purge_entity_active_store_in_txn(
+        let (existed, citing, purged_cancelled) = self.purge_entity_active_store_in_txn(
             &mut wtxn,
             id,
             Some(&tombstone.request_id),
@@ -211,6 +215,7 @@ impl Vault {
             owner_act,
         )?;
         affected.extend(citing);
+        cancelled.extend(purged_cancelled);
 
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
@@ -280,6 +285,8 @@ impl Vault {
         self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
 
         wtxn.commit()?;
+        crate::attempt_queue::AttemptQueue::new(self)
+            .erased_payload_cancellations_committed(&cancelled);
         self.notify_local_delete_materialized(&affected);
         // The CRDT record (tombstone-first, above) is durable — the crash
         // marker has served its purpose. In non-`sync` builds the marker

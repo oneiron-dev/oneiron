@@ -153,6 +153,15 @@ impl ForceCancelAuthority {
         }
     }
 
+    /// Scrubs and cancels the accepted hard writer's exact owned BYOA
+    /// rows. The authority is minted and consumed before this borrow ends.
+    pub(crate) fn erase_actor_payloads_in_txn(
+        erase: &mut crate::deletion::ActorErasureWriter<'_, '_>,
+    ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+        let (vault, wtxn, actor) = erase.parts();
+        Self::erase_owned_payloads_in_txn(vault, wtxn, &std::collections::BTreeSet::from([actor]))
+    }
+
     /// Scrubs and cancels the authenticated image writer's owned BYOA
     /// rows. The original borrowed continuation supplies the erase targets;
     /// no cancellation authority leaves this operation.
@@ -161,10 +170,18 @@ impl ForceCancelAuthority {
     ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
         let erased = crate::deletion::restore_erased_payload_targets_in_txn(restore)?;
         let (vault, wtxn, _) = restore.parts();
+        Self::erase_owned_payloads_in_txn(vault, wtxn, &erased)
+    }
+
+    fn erase_owned_payloads_in_txn(
+        vault: &crate::Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+        actors: &std::collections::BTreeSet<crate::EntityId>,
+    ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
         let owned = crate::attempt_queue::payload_erase::erase_attempt_payload_actors_owned_in_txn(
             &vault.store,
             wtxn,
-            &erased,
+            actors,
         )?;
         // Every stale payload, archive mark and run reference has been
         // rewritten before native cancellation can replace a queue row.

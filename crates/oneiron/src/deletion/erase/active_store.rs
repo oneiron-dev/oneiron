@@ -59,7 +59,11 @@ impl Vault {
         request_id: Option<&[u8; 16]>,
         erase: bool,
         act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
-    ) -> Result<(bool, Vec<EntityId>)> {
+    ) -> Result<(
+        bool,
+        Vec<EntityId>,
+        Vec<(crate::attempt_queue::AttemptId, u32)>,
+    )> {
         // A held record keeps its bytes on every door that purges it, and a
         // held world keeps its pads (OF-470).
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
@@ -173,8 +177,9 @@ impl Vault {
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         // An erased actor's receipts and rows keep their times, not who acted (FIX 812).
         // A soft delete's headerless purge keeps them: delete restores, erase is one-way (FIX 6640).
+        let mut cancelled = Vec::new();
         if erase {
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(
+            cancelled = crate::deletion::actor_fields::erase_actor_fields_in_txn(
                 crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
                 act,
             )?;
@@ -239,6 +244,7 @@ impl Vault {
                 || had_tags
                 || had_missing,
             citing,
+            cancelled,
         ))
     }
 
