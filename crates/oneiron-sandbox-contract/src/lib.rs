@@ -9,6 +9,9 @@ pub use budget::ProgramBudget;
 pub use path::{MAX_PATH_COMPONENT_BYTES, MAX_WORKSPACE_PATH_BYTES, WORKSPACE_ROOT, WorkspacePath};
 pub use workspace::{OutputReservation, WorkspaceShape};
 
+/// The streaming snapshot host/guest wire. Hosts and guests must match exactly.
+pub const GUEST_PROTOCOL_VERSION: u32 = 2;
+
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_COMPONENT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_REQUESTS: usize = 16_384;

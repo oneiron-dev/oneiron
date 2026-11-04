@@ -42,7 +42,7 @@ Both also print an `embedder` section, which keeps three things apart:
 running server's `GET /v1/owner/status` is what says which model serves, and `serve` logs the same
 facts once the vault admits the model (`embedder model loaded and admitted`).
 
-The server's status also carries `link_bytes`: what every sync link moved since the process
+The server's status also carries `link_bytes`: what every sync and LLM mesh link moved since the process
 started, one row per inner frame tag (`tag`; 63 also holds every higher tag). Each row has
 `out_frames`, `out_raw` and `out_sent` (bytes before and after the link's codec), and
 `in_frames`, `in_raw` and `in_received`. `doctor` has no such field: it runs no links.
@@ -2531,6 +2531,15 @@ It prints `{"name", "signed"}`. `signed` is false for a record that stays on its
 and tells you to rewrap the secret as its holder instead. No SDK verb takes the kit. A running
 server takes it in the body of `POST /v1/owner/secrets/anchor-sign`, for that call alone
 ([owner-custody.md](owner-custody.md)).
+
+## Pack lens slot decisions
+
+Selecting or clearing a pack lens slot records one decision in the shared Gate ledger in the
+same transaction as the slot change. The returned `LensActivationReceipt.decision_ref` is that
+ledger decision's id; it also names the selected slot's decision while the slot is active.
+The ledger records the authenticated owner and a digest of the returned receipt. Clearing a
+slot deletes its active selection but keeps this audit record. These records grant no standing
+consent and change no revision, installation or expected-active checks.
 
 ## Calling the owner routes
 

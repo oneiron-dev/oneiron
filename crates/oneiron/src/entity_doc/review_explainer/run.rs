@@ -7,7 +7,6 @@ use super::{
     ReviewExplainerEscalation, ReviewExplainerOutput, ReviewExplainerReceipt,
 };
 use crate::attempt_queue::AttemptRecord;
-use crate::inference_context::HostInferenceContext;
 use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_read_producer::ReadSetProducer;
 use crate::{EntityId, Error, Vault};
@@ -16,6 +15,7 @@ use oneiron_model::llm::{
     FinishReason, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole, LlmRequest,
     ModelId, ModelLocality, ReasoningEffort, ResponseFormat, Scope, TierPrecedence,
 };
+use oneiron_store::inference_context::HostInferenceContext;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReviewExplainerError {

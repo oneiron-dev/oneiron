@@ -20,6 +20,7 @@
 //! kit's recovery root, or an admitted machine's key (FIX 9178): a world's
 //! pads open only with the kit or a machine that world admits.
 
+mod backup_folder;
 mod drain;
 mod home_fetch;
 mod pad_worlds;
@@ -307,7 +308,7 @@ impl Vault {
         outbox: Option<&CustodyOutbox>,
         anchor: Option<&dyn AnchorStore>,
     ) -> Result<CustodyStatus> {
-        let status = self.publish_custody_pass(folder, declared, outbox, anchor)?;
+        let status = self.publish_custody_backup_folder(folder, declared, outbox, anchor)?;
         self.finish_redaction_erases_logged();
         Ok(status)
     }

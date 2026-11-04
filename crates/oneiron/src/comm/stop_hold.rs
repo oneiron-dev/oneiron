@@ -52,18 +52,6 @@ pub(crate) use crate::store::pending_comm_stop::{
     clear_pending_stop_for_delete, maintain_pending_stop_put,
 };
 
-
-
-
-
-
-
-
-
-
-
-
-
 /// Whether a STOP this replica has not projected yet holds a send on
 /// `channel_class` to one of `subjects`: the PERSONs that carry the send's
 /// key and the redirect shells around them, where its opt-out will stand.
