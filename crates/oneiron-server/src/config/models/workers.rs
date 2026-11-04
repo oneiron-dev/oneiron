@@ -74,6 +74,9 @@ pub(super) struct WorkerFile {
     hub_token_env: Option<String>,
     python: Option<PathBuf>,
     env_lock: Option<PathBuf>,
+    /// A VoxCPM2 row's serving-policy file, named directly (FIX 11377):
+    /// the vault's resolved ceiling, as the worker reads it.
+    policy_file: Option<PathBuf>,
     server: Option<PathBuf>,
     server_sha256: Option<String>,
     endpoint: Option<String>,
@@ -532,15 +535,37 @@ impl WorkerFile {
                 field("env")
             );
         }
-        let policy_file = match (kind, policy) {
-            (WorkerKind::VoxCpm2, Some(path)) => Some(absolute(
+        // A directly named file wins over the row's variable (FIX 11377);
+        // naming both at once is contradictory, never a fallback.
+        let named = match (&self.policy_file, policy) {
+            (Some(path), None) => Some(absolute(
+                &format!("models.workers.{id}.policy_file"),
+                path,
+                base,
+            )?),
+            (Some(_), Some(_)) => anyhow::bail!(
+                "{}.policy_file and {}.{} name two serving-policy files: keep one",
+                field("policy_file"),
+                field("env"),
+                VOICE_POLICY_ENV
+            ),
+            (None, Some(path)) => Some(absolute(
                 &format!("{}.{VOICE_POLICY_ENV}", field("env")),
                 Path::new(path),
                 base,
             )?),
+            (None, None) => None,
+        };
+        let policy_file = match (kind, named) {
+            (WorkerKind::VoxCpm2, Some(path)) => Some(path),
             (WorkerKind::VoxCpm2, None) => anyhow::bail!(
-                "{}.{VOICE_POLICY_ENV} is required: the serving-policy file with the vault's ceiling",
-                field("env")
+                "{}.{VOICE_POLICY_ENV} or {}.policy_file is required: the serving-policy file with the vault's ceiling",
+                field("env"),
+                field("policy_file")
+            ),
+            (_, Some(_)) => anyhow::bail!(
+                "{}.policy_file: only a VoxCPM2 row names a serving-policy file",
+                field("policy_file")
             ),
             _ => None,
         };
