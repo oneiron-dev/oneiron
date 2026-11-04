@@ -90,8 +90,8 @@ impl SlideReviewImage {
     }
 }
 
-pub use crate::blob_artifact::slide_review::{SlideRenderer, review_image_key};
 pub(crate) use crate::blob_artifact::slide_review::review_copy_bytes;
+pub use crate::blob_artifact::slide_review::{SlideRenderer, review_image_key};
 
 /// User-configured display words, including the severity words in comments.
 /// No question, glossary, prompt or user-facing label is compiled into Rust.

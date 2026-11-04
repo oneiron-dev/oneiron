@@ -5,8 +5,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 pub use crate::store::note_body::{
-    NOTE_BODY_KEYS, NoteBody, NoteKind, NoteScope, NoteWriteEnvelope, TakeTarget,
-    decode_note_body, encode_note_body,
+    NOTE_BODY_KEYS, NoteBody, NoteKind, NoteScope, NoteWriteEnvelope, TakeTarget, decode_note_body,
+    encode_note_body,
 };
 pub(crate) use crate::store::note_body::{decode_note_body_using, validate_markdown};
 

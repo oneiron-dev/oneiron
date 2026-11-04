@@ -13991,14 +13991,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "CheckoutAttemptBinding"
-     ],
+     "notable": [],
      "path": "src/checkout/lease/attempt_binding.rs",
      "purpose": "One attempt's custody of a checkout epoch (FIX 6867, G1 PR3b; ASK 2)",
      "surface": {
       "crate-vis": 10,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -14059,16 +14057,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "CheckoutLeaseAct",
-      "CheckoutRepoOps"
-     ],
+     "notable": [],
      "path": "src/checkout/lease/types.rs",
-     "purpose": "Checkout lease record and repository operations requiring an attempt binding",
+     "purpose": "Checkout lease values, re-exported from the store layer, where they live",
      "surface": {
-      "re-export": 1,
-      "struct": 1,
-      "trait": 1
+      "re-export": 1
      }
     },
     {
@@ -69987,20 +69980,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "CheckoutAttemptBinding",
       "CheckoutClaimRequest",
       "CheckoutError",
       "CheckoutFactMutation",
       "CheckoutFactSink",
       "CheckoutId",
+      "CheckoutLeaseAct",
       "CheckoutLeaseFence",
       "CheckoutLeaseGrant",
       "CheckoutLeaseState",
       "CheckoutLiveness",
       "CheckoutLivenessPulse",
       "CheckoutMaterializationOptions",
+      "CheckoutRepoOps",
       "CheckoutRetainReason",
       "CheckoutSettlementDisposition",
       "CheckoutSettlementReceipt",
@@ -70013,14 +70009,14 @@
       "TeardownReceiptMatch"
      ],
      "path": "src/store/checkout_lease.rs",
-     "purpose": "Checkout identifiers, lease requests, settlement receipts and teardown values",
+     "purpose": "Checkout identifiers, the lease act, lease requests, settlement receipts, teardown values and the repository…",
      "surface": {
       "const": 5,
       "enum": 8,
       "fn": 6,
       "re-export": 1,
-      "struct": 11,
-      "trait": 2,
+      "struct": 13,
+      "trait": 3,
       "type": 2
      }
     },

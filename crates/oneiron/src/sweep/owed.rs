@@ -32,7 +32,9 @@ pub(super) struct OwedCompaction {
     window: WindowKey,
 }
 
-pub(crate) use crate::deletion::owed_window_compaction::{owe_window_compaction_in_txn, owe_window_compaction_for_receipt_in_txn};
+pub(crate) use crate::deletion::owed_window_compaction::{
+    owe_window_compaction_for_receipt_in_txn, owe_window_compaction_in_txn,
+};
 
 /// The owed compactions, read before the pass compacts anything. A row whose
 /// label is no window key can never be compacted: it is kept and reported,

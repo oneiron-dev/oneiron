@@ -2,14 +2,16 @@
 
 use heed::RwTxn;
 
-use crate::edge::EdgeKind;
-use crate::ports::{EdgeStoreRead, EntityStoreRead};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::{EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::store::Store;
-use crate::write_envelope::task_body::{HabitStreak, TaskRole, streak_from_checkin_days, task_role_from_body_bytes};
+use crate::write_envelope::task_body::{
+    HabitStreak, TaskRole, streak_from_checkin_days, task_role_from_body_bytes,
+};
 
 /// UTC day-bucket width. `occurred_start / STREAK_DAY_SECS` is the whole
 /// normalization: integer division, no calendar, no local zone, no "today".
@@ -64,4 +66,3 @@ pub(crate) fn recompute_habit_streak_in_txn(
     )?;
     Ok(streak)
 }
-

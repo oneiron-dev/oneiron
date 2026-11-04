@@ -40,5 +40,4 @@ impl CompilationTarget {
             | Self::BriefUpdate(text) => Some(text),
         }
     }
-
 }
