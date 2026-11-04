@@ -23,13 +23,13 @@ use super::super::forks::ForkStatus;
 use super::{hex_id, message_receipts};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::store::checkpoint_payload::loro::{
     self as shared, LoroActorCodec, OpenedRow, SHALLOW, Split, SplitRow, SplitValue,
 };
 use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OwnerRef, RoundTripPolicy, TypedRow, Unresolved,
 };
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 
 /// The round trip a full-history fork snapshot takes (Engine R1): the same
 /// history, in a container Loro may encode anew. No row keeps a digest of a

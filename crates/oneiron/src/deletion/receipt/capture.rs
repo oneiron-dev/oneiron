@@ -77,7 +77,7 @@ pub(crate) fn encode_corrupt_claim_repair_event(
     request_id: String,
     recorded_at: u64,
     event_id: &EntityId,
-    identity: &crate::identity::DeviceIdentity,
+    identity: &crate::store::install_identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
     let mut event = CorruptClaimRepairEvent {
         event: CORRUPT_CLAIM_RECLASSIFIED,

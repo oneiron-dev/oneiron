@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 
 const BODY: &str = "body";
 const META: &str = "note";
+/// The part size a Dreamer-written text splits into (`note_parts`). No NOTE
+/// write is refused past it: a size never refuses the user's own NOTE (rule
+/// 5, FIX 10345).
 pub(crate) const MAX_NOTE_BYTES: usize = 1024 * 1024;
 
 /// Positions use Unicode scalar indices in the named base frontier. Batches
@@ -73,10 +76,10 @@ pub(super) fn invalid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidNoteBody(reason))
 }
 
+/// Decodes a NOTE frontier. No length refuses it (rule 5, FIX 10345): a NOTE
+/// many devices edited at once has a wide one, and its decode allocates no
+/// more than its bytes hold.
 pub(super) fn frontier(bytes: &[u8]) -> Result<Frontiers> {
-    if bytes.len() > 4096 {
-        return Err(invalid("NOTE frontier exceeds bound"));
-    }
     Frontiers::decode(bytes).map_err(|_| invalid("invalid NOTE frontier"))
 }
 
@@ -91,13 +94,10 @@ pub(super) fn document_sizes(doc: &LoroDoc) -> [usize; 3] {
 }
 
 impl NotePin {
+    /// Checks the citation's shape: its frontier, its two cursors and its
+    /// quote's hash. No quote length refuses it (rule 5, FIX 10345); a cursor
+    /// past its shape check is a body cursor, small by construction.
     pub fn validate(&self) -> Result<()> {
-        if self.quote_text.len() > MAX_NOTE_BYTES
-            || self.start_cursor.len() > 4096
-            || self.end_cursor.len() > 4096
-        {
-            return Err(invalid("NOTE citation exceeds bound"));
-        }
         frontier(&self.frontier)?;
         quoted_cursor(&self.start_cursor, Side::Left)?;
         quoted_cursor(&self.end_cursor, Side::Right)?;
@@ -322,12 +322,9 @@ impl NoteDocument {
     }
 
     /// Adds `pin`, its commit naming the writer's stamp token `stamp` (FIX
-    /// 10930).
+    /// 10930). No citation count refuses it (rule 5, FIX 10345).
     pub(super) fn add_pin(&self, pin: &NotePin, stamp: ActorStamp) -> Result<()> {
         pin.validate()?;
-        if self.pins()?.len() >= 256 {
-            return Err(invalid("NOTE citation cap reached"));
-        }
         let value = serde_json::to_string(pin).map_err(|_| invalid("NOTE pin encode"))?;
         let key = blake3::hash(value.as_bytes()).to_hex().to_string();
         self.doc
@@ -426,7 +423,9 @@ impl NoteDocument {
     /// Edit a fork of the client's actual base; merge its stamped operations
     /// into the live document, each commit naming the writer's stamp token
     /// `stamp` (FIX 10930). Concurrent batches therefore never overwrite a
-    /// whole markdown body or use offsets against the wrong frontier.
+    /// whole markdown body or use offsets against the wrong frontier. No
+    /// edit count, insert length or body length refuses a batch (rule 5, FIX
+    /// 10345).
     pub(super) fn edit(
         &self,
         base: &[u8],
@@ -434,9 +433,6 @@ impl NoteDocument {
         stamp: ActorStamp,
         cited_by: &[NotePin],
     ) -> Result<bool> {
-        if edits.len() > 256 {
-            return Err(invalid("NOTE operation cap exceeded"));
-        }
         let base_doc = self.fork_at(base)?;
         let pins = self.pins()?;
         let text = base_doc.doc.get_text(BODY);
@@ -445,7 +441,7 @@ impl NoteDocument {
                 .start
                 .checked_add(edit.delete)
                 .ok_or_else(|| invalid("NOTE range overflow"))?;
-            if end > text.len_unicode() || edit.insert.len() > MAX_NOTE_BYTES {
+            if end > text.len_unicode() {
                 return Err(invalid("NOTE operation out of bounds"));
             }
             for pin in pins.iter().chain(cited_by) {
@@ -469,9 +465,6 @@ impl NoteDocument {
                 .map_err(|_| invalid("NOTE delete operation"))?;
             text.insert(edit.start, &edit.insert)
                 .map_err(|_| invalid("NOTE insert operation"))?;
-            if text.len_utf8() > MAX_NOTE_BYTES {
-                return Err(invalid("NOTE body exceeds bound"));
-            }
             commit_stamped(&base_doc.doc, stamp);
         }
         commit_stamped(&base_doc.doc, stamp);
@@ -517,9 +510,10 @@ fn commit_naming(doc: &LoroDoc, named: &str) {
     doc.commit_with(CommitOptions::new().commit_msg(&format!("oneiron.note/v1 actor={named}")));
 }
 
-/// A title is human metadata, not a body hash. Keep the socket check bounded.
+/// A title is human metadata, not a body hash: one line, not blank. No
+/// length refuses it (rule 5, FIX 10345); its reservation keys by its hash.
 pub(super) fn validate_title(title: &str) -> Result<()> {
-    if title.len() > 256 || title.trim().is_empty() || title.chars().any(char::is_control) {
+    if title.trim().is_empty() || title.chars().any(char::is_control) {
         return Err(invalid("invalid NOTE title"));
     }
     Ok(())

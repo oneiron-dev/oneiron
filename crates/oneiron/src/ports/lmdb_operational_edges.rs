@@ -5,8 +5,8 @@ use crate::edge::{
     EdgeProvenanceFlags,
 };
 use crate::error::{ClaimError, Error, Result};
-use crate::provenance::EdgeRef;
 use crate::store::Store;
+use crate::write_envelope::provenance::EdgeRef;
 use heed::RwTxn;
 impl EdgeStoreMaintenance for Store {
     fn port_revision_link(
@@ -28,7 +28,7 @@ impl EdgeStoreMaintenance for Store {
             kind,
             kind.default_weight().unwrap_or(1.0),
             created_at,
-            crate::affect::Vad::NEUTRAL,
+            oneiron_contracts::affect::Vad::NEUTRAL,
             None,
         )?;
         crate::workspace_roster::validate_project_edge_put(
@@ -132,7 +132,7 @@ impl super::EdgeStoreReadiness for crate::Vault {
         txn: &mut RwTxn<'_>,
         from: crate::EntityId,
         to: crate::EntityId,
-        context: crate::code_memory::BlocksWriteContext<'_>,
+        context: crate::store::code_memory_values::BlocksWriteContext<'_>,
     ) -> Result<()> {
         crate::code_memory::validate_blocks_insert(self, txn, from, to, context)?;
         let kind = crate::EdgeKind::Blocks;
@@ -140,8 +140,13 @@ impl super::EdgeStoreReadiness for crate::Vault {
             .default_weight()
             .ok_or(Error::InvariantViolation("blocks weight"))?;
         let at = super::recorded_at_in_txn(&self.store, txn)?;
-        let value =
-            crate::edge::encode_edge_value(kind, weight, at, crate::affect::Vad::NEUTRAL, None)?;
+        let value = crate::edge::encode_edge_value(
+            kind,
+            weight,
+            at,
+            oneiron_contracts::affect::Vad::NEUTRAL,
+            None,
+        )?;
         self.store
             .edges_out
             .put(txn, &Store::encode_edge_key(&from, kind, &to), &value)?;
@@ -149,14 +154,14 @@ impl super::EdgeStoreReadiness for crate::Vault {
             .edges_in
             .put(txn, &Store::encode_edge_key(&to, kind, &from), &value)?;
         crate::ppr::invalidate_ppr_for_edge(&self.store, txn, &from, &to)?;
-        crate::ppr::increment_graph_version(&self.store, txn)
+        crate::store::graph_version::increment_graph_version(&self.store, txn)
     }
     fn port_blocks_remove(
         &self,
         txn: &mut RwTxn<'_>,
         from: crate::EntityId,
         to: crate::EntityId,
-        context: crate::code_memory::BlocksWriteContext<'_>,
+        context: crate::store::code_memory_values::BlocksWriteContext<'_>,
     ) -> Result<bool> {
         crate::code_memory::validate_blocks_retirement(self, txn, context)?;
         let kind = crate::EdgeKind::Blocks;
@@ -169,7 +174,7 @@ impl super::EdgeStoreReadiness for crate::Vault {
             .delete(txn, &Store::encode_edge_key(&to, kind, &from))?;
         if existed {
             crate::ppr::invalidate_ppr_for_edge(&self.store, txn, &from, &to)?;
-            crate::ppr::increment_graph_version(&self.store, txn)?;
+            crate::store::graph_version::increment_graph_version(&self.store, txn)?;
         }
         Ok(existed)
     }

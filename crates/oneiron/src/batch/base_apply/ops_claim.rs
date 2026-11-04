@@ -71,9 +71,9 @@ pub(super) fn apply_claim_candidate_arm(
             .pending_embedding_enqueue_priorities
             .entry(id)
             .and_modify(|priority| {
-                *priority = (*priority).min(crate::embed::EMBED_PRIORITY_DEVICE);
+                *priority = (*priority).min(crate::store::embedding::EMBED_PRIORITY_DEVICE);
             })
-            .or_insert(crate::embed::EMBED_PRIORITY_DEVICE);
+            .or_insert(crate::store::embedding::EMBED_PRIORITY_DEVICE);
     }
     if applied.cleared_pending_embedding {
         state.pending_embedding_tokens_written.remove(&id);

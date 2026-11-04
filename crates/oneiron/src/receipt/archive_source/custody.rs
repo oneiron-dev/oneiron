@@ -241,10 +241,10 @@ fn erase_source_payload(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId)
     let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, id)?;
     crate::ppr::invalidate_ppr_for_delete(store, txn, id, &neighbors)?;
     if graph {
-        crate::ppr::increment_graph_version(store, txn)?;
+        crate::store::graph_version::increment_graph_version(store, txn)?;
     }
     if vector {
-        crate::hnsw::increment_vector_version(store, txn)?;
+        crate::store::vector_index::increment_vector_version(store, txn)?;
     }
     Ok(())
 }

@@ -5,13 +5,14 @@
 //! run's node-local ledger with every record whose words could reach its
 //! span. In base, the fold also stands as one dependent of each of those
 //! records in the dependency index, under an id of its own that names no
-//! row: erasing one of them walks to that dependent, and
-//! [`scrub_withdrawn_fold_summary_in_txn`] takes the summary from the ledger
-//! in the erasing transaction. A room's ledger lives in its overlay, which
-//! base erasure cannot reach, and drops at close; until then, and for a
-//! source withdrawn only through its own source, every read withholds the
-//! words once any source is withdrawn ([`fence_withdrawn_folds_in`]). The
-//! fold keeps its span and its references either way.
+//! row: erasing one of them, or a source one of them was written from, walks
+//! to that dependent, and [`scrub_withdrawn_fold_summary_in_txn`] takes the
+//! summary from the ledger in the erasing transaction (FIX 1494). A room's
+//! ledger lives in its overlay, which base erasure cannot reach, and drops
+//! at close; until then, and for a fold the walk passed past its batch with
+//! the stale mark alone, every read withholds the words once any source is
+//! withdrawn ([`fence_withdrawn_folds_in`]). The fold keeps its span and its
+//! references either way.
 
 use super::{FoldLedger, FoldRecord};
 use crate::entity_id::EntityId;
@@ -197,9 +198,13 @@ pub(crate) fn land_folds_in_overlay(
     Ok(())
 }
 
-/// Takes withdrawn fold-words dependent `id`'s summary from its run's base
-/// ledger. The dependency walk calls this for every withdrawn dependent;
-/// any other id, or a fold already without words, is left as it is.
+/// Drops the words of withdrawn fold-words dependent `id` from its run's
+/// base ledger in the withdrawing transaction, through
+/// [`fence_withdrawn_folds_in`], the fence the run's next ledger write drops
+/// them through (FIX 1494): with them go those of every other fold of the
+/// run a withdrawn record reached. Every withdrawal of a row calls this, the
+/// rows of a source chain included; any other id, or a ledger with no words
+/// to drop, is left as it is.
 pub(crate) fn scrub_withdrawn_fold_summary_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -211,14 +216,7 @@ pub(crate) fn scrub_withdrawn_fold_summary_in_txn(
     let Some(mut ledger) = FOLD_LEDGERS.get(store, txn, &owner.run)? else {
         return Ok(());
     };
-    let Some(record) = ledger
-        .folds
-        .iter_mut()
-        .find(|record| record.fold == owner.fold)
-    else {
-        return Ok(());
-    };
-    if record.summary.take().is_none() {
+    if !fence_withdrawn_folds_in(store, txn, owner.run, &mut ledger)? {
         return Ok(());
     }
     FOLD_LEDGERS.put(store, txn, &owner.run, &ledger)

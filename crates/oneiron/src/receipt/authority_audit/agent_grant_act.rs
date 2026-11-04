@@ -5,7 +5,7 @@
 //! the signed row: no scope text is copied into a page.
 
 use super::{AuthorityAuditEventKind, OpFields};
-use crate::authority::{AgentGrantActRecord, AgentGrantChange};
+use oneiron_authority::authority::{AgentGrantActRecord, AgentGrantChange};
 
 /// The class, op name and fields of one agent Grant act.
 pub(super) fn classify(

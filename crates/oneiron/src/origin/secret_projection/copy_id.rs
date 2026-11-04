@@ -26,5 +26,8 @@ pub(crate) fn copy_id(source: &EntityId) -> Result<EntityId> {
     let mut material = Vec::with_capacity(2 + 16);
     material.extend_from_slice(&REPO_SYNC_PROJECTION_SCHEMA.to_be_bytes());
     material.extend_from_slice(source.as_bytes());
-    crate::codebase::snapshot_asset_entity_id(&blake3::derive_key(COPY_ID_CONTEXT, &material))
+    crate::store::code_snapshot::snapshot_asset_entity_id(&blake3::derive_key(
+        COPY_ID_CONTEXT,
+        &material,
+    ))
 }

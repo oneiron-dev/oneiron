@@ -11,11 +11,11 @@ use crate::config::VaultConfig;
 use crate::config::validate_ppr_vad_alpha;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
 use crate::retrieval_quality::PprCacheOutcome;
 use crate::store::ManifestDbs;
 #[cfg(test)]
 use crate::store::Store;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::VAD_PROPAGATION_EVIDENCE;
 #[cfg(test)]

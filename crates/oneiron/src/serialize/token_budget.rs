@@ -11,15 +11,15 @@ use std::collections::HashMap;
 use serde_json::{Map, Number, Value};
 
 use crate::context_pack::ContextPack;
-use crate::context_pack::PackFormat;
-use crate::context_pack::PackItemTokenStats;
-use crate::context_pack::PackSectionTokenStats;
 use crate::context_pack::PackStats;
-use crate::context_pack::PackTokenStats;
-use crate::context_pack::TokenAllocation;
 use crate::pipeline::Signal;
 use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
+use crate::serialize::pack_accounting::PackItemTokenStats;
+use crate::serialize::pack_accounting::PackSectionTokenStats;
+use crate::serialize::pack_accounting::PackTokenStats;
+use crate::serialize::pack_accounting::TokenAllocation;
+use crate::serialize::pack_format::PackFormat;
 use crate::tokenizer::PackTokenizer;
 
 use super::group_labels::known_group_labels;
@@ -237,7 +237,7 @@ fn enforce_serialized_token_budget(
             continue;
         }
         prepared.stats.items_dropped.reason =
-            crate::context_pack::PackItemAccountingReason::TokenBudget;
+            crate::serialize::pack_accounting::PackItemAccountingReason::TokenBudget;
         prepared.stats.items_dropped.count = prepared.stats.items_dropped.count.saturating_add(1);
     }
 }
@@ -553,7 +553,9 @@ pub(super) fn json_stats(pack_stats: &PackStats) -> Value {
     Value::Object(stats)
 }
 
-fn item_accounting_json(accounting: crate::context_pack::PackItemAccounting) -> Value {
+fn item_accounting_json(
+    accounting: crate::serialize::pack_accounting::PackItemAccounting,
+) -> Value {
     let mut out = Map::new();
     out.insert(
         "count".to_owned(),

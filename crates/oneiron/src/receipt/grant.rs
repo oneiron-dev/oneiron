@@ -450,7 +450,7 @@ pub(super) fn scan_entities_by_type(
     let mut count = crate::scan_check::ScanCount::start(
         &vault.store,
         txn,
-        crate::scan_check::EngineScan::TypeIndexRows,
+        crate::store::EngineScan::TypeIndexRows,
         &[entity_type],
     )?;
     for entry in vault

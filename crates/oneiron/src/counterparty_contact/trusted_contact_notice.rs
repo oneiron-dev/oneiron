@@ -20,21 +20,25 @@ use serde::{Deserialize, Serialize};
 
 use super::trusted_contact::{RELATIONS, TrustedContact, TrustedContactTier, invalid};
 use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
-    EnqueueAttempt, EnqueueOutcome, FailAttempt, RetryAttempt,
+    AttemptQueue, AttemptRecord, AttemptState, ClaimOutcome, CompleteAttempt, EnqueueOutcome,
+    FailAttempt, RetryAttempt,
 };
+use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 use crate::edge::EdgeActorClass;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::memory::Memory;
 use crate::outbound::{
-    OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
-    OutboundDispatchGate, OutboundDispatchOutcome, OutboundDispatchRequest, OutboundDispatchResult,
-    OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent,
-    OutboundIntentDraft, OutboundIntentTrigger,
+    OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchRequest,
+    OutboundDispatchResult, OutboundExecutionOutcome, OutboundExecutionRequest,
+    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
 };
 use crate::receipt::{DispatchObservationKey, append_dispatch_observation_in_txn};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::GateSystemNoticeRecord;
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::store::outbound_outcome::OutboundDispatchOutcome;
+use crate::store::outbound_trigger::OutboundIntentTrigger;
 use crate::{EntityId, Result, Vault};
 
 pub const TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND: &str = "trusted_contact.notice";

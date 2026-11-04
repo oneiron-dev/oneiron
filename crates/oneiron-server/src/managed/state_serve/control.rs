@@ -2,7 +2,9 @@
 
 use std::sync::atomic::Ordering;
 
-use oneiron_vault_contract::artifact_origin::ARTIFACT_INTERNAL_HOST_REVISION;
+use oneiron_vault_contract::artifact_origin::{
+    ARTIFACT_INTERNAL_HOST_REVISION, PREVIEW_ORIGIN_REVISION,
+};
 use oneiron_vault_contract::relay_delete::RELAY_DELETE_REVISION;
 use oneiron_vault_contract::settings_paths::SETTINGS_PATHS_REVISION;
 use oneiron_vault_contract::slim_control::SLIM_RECOVERY_REVISION;
@@ -64,6 +66,7 @@ impl ManagedState {
                 managed_backup: self.backup_facts.clone(),
                 settings_paths_revision: Some(SETTINGS_PATHS_REVISION),
                 artifact_internal_host_revision: Some(ARTIFACT_INTERNAL_HOST_REVISION),
+                preview_origin_revision: Some(PREVIEW_ORIGIN_REVISION),
                 slim_recovery_revision: Some(SLIM_RECOVERY_REVISION),
                 vm_outbox_revision: self.vm_outbox_revision(),
                 relay_delete_revision: Some(RELAY_DELETE_REVISION),

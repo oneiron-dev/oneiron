@@ -26,9 +26,9 @@ use crate::consent::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
-use crate::memory::MemoryResult;
 use crate::store::{GateDecisionRecord, Store};
 use crate::write_envelope::WriteActor;
+use oneiron_contracts::memory::MemoryResult;
 
 /// The verb an auto-weave Grant names.
 pub(crate) const AUTO_WEAVE_VERB: &str = "research.auto_weave";

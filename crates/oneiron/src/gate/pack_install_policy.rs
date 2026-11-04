@@ -6,7 +6,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
-use crate::{Vault, skill::SkillContentHash};
+use crate::{Vault, write_envelope::skill_record::SkillContentHash};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;

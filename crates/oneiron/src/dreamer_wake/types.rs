@@ -14,11 +14,11 @@ use crate::dreamer_runner::DreamerAttemptProgressProducer;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerConsolidationScope, DreamerParkCause};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::BudgetGuard;
 #[cfg(feature = "sync")]
 use crate::sync::EphemeralStore;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use crate::write_envelope::WriteEnvelope;
+use oneiron_model::llm::BudgetGuard;
 
 use super::deadline::{WakeCancellation, WakePassDeadline};
 
@@ -72,7 +72,7 @@ pub struct RunWakePass {
     pub now: u64,
     /// Exact caller attenuation for this wake. It is prepared once at the
     /// root, never inferred from a decorated executor's optional metadata.
-    pub host_scope: Option<crate::llm::Scope>,
+    pub host_scope: Option<oneiron_model::llm::Scope>,
 }
 
 /// Why the pass stopped.
@@ -96,15 +96,7 @@ pub enum WakePassStop {
     HookSkipped,
 }
 
-/// Why a pass authored its claims single-pass under a promoted
-/// claim-authoring default (FIX 897). Never a refusal: the pass ran.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClaimAuthoringFallback {
-    /// Several bound campaigns carry the default, in root order; none is
-    /// chosen for the host (Engine 10-18).
-    AmbiguousCampaigns { roots: Vec<AttemptId> },
-}
+pub use crate::memory::wake_observation::ClaimAuthoringFallback;
 
 /// Wake-pass tally.
 #[derive(Debug, Clone, PartialEq, Eq)]

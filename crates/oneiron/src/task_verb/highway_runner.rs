@@ -186,18 +186,10 @@ pub(crate) fn report_runner_task_in_txn(
 /// commit; a caller with no post-commit point leaves it to the wake pass,
 /// which replays it from the binding index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[allow(
-    dead_code,
-    reason = "held for the resident pump, which runs it after its commit"
-)]
 pub(crate) struct RunnerTaskEffects {
     settled: Option<EntityId>,
 }
 
-#[allow(
-    dead_code,
-    reason = "held for the resident pump, which runs it after its commit"
-)]
 impl RunnerTaskEffects {
     /// The effects one runner receipt owes.
     pub(crate) fn of(receipt: &TaskCallReceipt) -> Self {

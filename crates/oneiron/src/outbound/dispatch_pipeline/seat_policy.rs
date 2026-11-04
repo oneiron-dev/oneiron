@@ -1,12 +1,12 @@
 //! Connector-neutral seat wall and its host-supplied LinkedIn policy adapter.
 use std::collections::BTreeMap;
 
-use crate::linkedin_connector::{
+use crate::outbound::capability::OutboundVerbContract;
+use crate::outbound::dispatch_types::OutboundDispatchRequest;
+use crate::outbound::linkedin_policy::{
     LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_SEND_DM_VERB,
     LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy,
 };
-use crate::outbound::capability::OutboundVerbContract;
-use crate::outbound::dispatch_types::OutboundDispatchRequest;
 use crate::outbound_chokepoint::AdmissionCeiling;
 
 /// The window a seat's daily caps count over. Admission anchors it, and

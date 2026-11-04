@@ -3,31 +3,7 @@
 use super::{GraphAnswerer, GraphAskFailure, GraphAskResult, GraphDecision, read_question};
 use crate::llm::decision::DecisionAnswer;
 use crate::{EntityId, Error, Vault, WriteActor};
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-
-/// A skill pins the definition, including its outcome binding and decision dial.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GraphQuestionRef {
-    #[serde(with = "super::super::codec::entity")]
-    pub id: EntityId,
-    pub version: u32,
-}
-
-/// The unit and the exact sources selected by the resident's recipe. Sources
-/// are required: a missing contact, variant or signal means abstain, not no.
-/// The same unit may occur with different evidence (for example, variants).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GraphQuestionInput {
-    #[serde(with = "super::super::codec::entity")]
-    #[schemars(with = "String")]
-    pub unit: EntityId,
-    #[serde(with = "super::super::codec::entities")]
-    #[schemars(with = "Vec<String>")]
-    pub evidence: Vec<EntityId>,
-}
 
 /// Run saved graph questions using explicit joins instead of the default
 /// outgoing-neighbor recipe. Every answer stays a proposal and is registered
@@ -163,3 +139,5 @@ pub(crate) fn run_graph_question_with_proposals(
     }
     Ok(completed)
 }
+
+pub use crate::model_decision::questions::{GraphQuestionInput, GraphQuestionRef};

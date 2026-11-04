@@ -36,10 +36,11 @@ use crate::claim::{
     PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED, ScopedRead, claim_sensitivity_band,
     decode_claim_body, is_reserved_predicate,
 };
-use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
+use crate::settings::ReadDestination;
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::{Scope, ScopeResource};
 
 /// Names of up to four words ("Mary Ann van Dyke").
 const SPAN_WORDS: usize = 4;
@@ -296,12 +297,23 @@ pub(super) fn unpin_note_listing_in_txn(
 
 /// What one branch reads around its passage. `turns` holds each TURN's stored body and frozen
 /// text; `axes` the branch's world, facet, relationship and project, or `None` to list no
-/// claims; `bound` a supplied scope; `thing` the entity a nightly child is cut for (FIX 7497).
+/// claims; `bound` a supplied scope; `thing` the entity a nightly child is cut for (FIX 7497);
+/// `destination` where the listing's rows go (FIX 5588 S1).
 pub(super) struct Passage<'p> {
     pub(super) turns: &'p [(&'p [u8], Option<&'p str>)],
     pub(super) axes: Option<&'p Scope>,
     pub(super) bound: Option<&'p Scope>,
     pub(super) thing: Option<EntityId>,
+    pub(super) destination: ReadDestination,
+}
+
+/// The destination a neighbourhood listing is read for (FIX 5588 S1,
+/// Unknown-always): both plan points resolve through here, so the later
+/// FIX 12712 flip is one value. Today it is a destination nobody proved,
+/// which judges exactly as the bare off-device locality did (C2); it reads
+/// no role table, so the direct and driver paths cannot diverge (C8).
+pub(super) fn listing_destination() -> ReadDestination {
+    ReadDestination::toward(crate::machine_destination::PeerMachine::Unknown)
 }
 
 /// One branch's neighbourhood at the wake's snapshot, with the claim rows it
@@ -336,11 +348,7 @@ pub(super) fn discover_in(
         ));
     };
     #[cfg(feature = "sync")]
-    let device_only = crate::settings::device_local_worlds_at(
-        vault,
-        txn,
-        crate::claim::CallerLocality::OffDevice,
-    )?;
+    let device_only = crate::settings::device_local_worlds_for(vault, txn, &passage.destination)?;
     #[cfg(not(feature = "sync"))]
     let device_only = BTreeSet::new();
     let ids: Vec<_> = pins.iter().map(|(id, _)| *id).collect();
@@ -443,7 +451,15 @@ fn fresh_in(
             claims: Vec::new(),
         };
         let claims = match passage.axes {
-            Some(axes) => newest_claims(vault, txn, read, id, axes, passage.bound)?,
+            Some(axes) => newest_claims(
+                vault,
+                txn,
+                read,
+                id,
+                axes,
+                passage.bound,
+                &passage.destination,
+            )?,
             None => Vec::new(),
         };
         for (claim, row) in claims {
@@ -531,6 +547,7 @@ fn newest_claims(
     subject: EntityId,
     axes: &Scope,
     bound: Option<&Scope>,
+    destination: &ReadDestination,
 ) -> Result<Vec<(KnownClaim, (EntityId, Row))>> {
     // A subject of any fan-in lists its newest claims (Rule 5): the subject
     // read raises its own scan check past its row and reads on.
@@ -550,13 +567,12 @@ fn newest_claims(
     let ids: Vec<_> = ordered.into_iter().map(|(_, id)| id).collect();
     // The worlds this device keeps to itself; none without sync.
     #[cfg(feature = "sync")]
-    let device_only = crate::settings::device_local_worlds_at(
-        vault,
-        txn,
-        crate::claim::CallerLocality::OffDevice,
-    )?;
+    let device_only = crate::settings::device_local_worlds_for(vault, txn, destination)?;
     #[cfg(not(feature = "sync"))]
-    let device_only = BTreeSet::new();
+    let device_only = {
+        let _ = destination;
+        BTreeSet::new()
+    };
     let rows = read.get_entities_parts_in_txn(txn, &ids)?;
     let mut claims = Vec::new();
     for (id, row) in ids.into_iter().zip(rows) {
@@ -648,11 +664,18 @@ impl Vault {
         let actor = crate::claim::ScopedReadActorKey::new(principal.to_hex())
             .ok_or(crate::Error::InvariantViolation("reader fixture actor"))?;
         let read = self.scoped_read(actor);
-        Ok(
-            newest_claims(self, &txn, &read, subject, &Scope::default(), None)?
-                .into_iter()
-                .map(|(known, _)| known.id)
-                .collect(),
-        )
+        let destination = listing_destination();
+        Ok(newest_claims(
+            self,
+            &txn,
+            &read,
+            subject,
+            &Scope::default(),
+            None,
+            &destination,
+        )?
+        .into_iter()
+        .map(|(known, _)| known.id)
+        .collect())
     }
 }

@@ -7,10 +7,10 @@
 use super::super::door::DoorAdmissionStamp;
 use super::super::evidence::{receive_pack_field, receive_pack_provenance_refused};
 use super::ReceivePackIntent;
-use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::git_push::GitPushStamp;
+use crate::write_envelope::claim_body::ClaimBody;
 
 /// The push authority `stamp` was admitted under, once `admission` (its
 /// producer-bound evidence) records that same authority.

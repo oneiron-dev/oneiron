@@ -9,11 +9,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::code_run::{
-    CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, ResultFacet, ResultOccurrence,
-};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::memory::result_facet::ResultFacet;
+use crate::store::result_manifest::CodeRunOutputKind;
+use crate::store::result_manifest::CodeRunOutputPreview;
+use crate::store::result_manifest::CodeRunRawOutput;
+use crate::store::result_manifest::ResultOccurrence;
 
 /// The metadata key a MESSAGE's result attachment sits under. Only the
 /// executor door writes it.

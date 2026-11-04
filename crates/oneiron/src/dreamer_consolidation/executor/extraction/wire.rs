@@ -24,7 +24,7 @@ use crate::dreamer_consolidation::resources::{BranchPins, BranchResources};
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
-use crate::llm::{ContentPart, FinishReason, LlmResponse, Scope};
+use oneiron_model::llm::{ContentPart, FinishReason, LlmResponse, Scope};
 
 /// An extraction reply in its contract's shape: an object whose
 /// `candidates`, when present, are objects, and whose `persons`, when

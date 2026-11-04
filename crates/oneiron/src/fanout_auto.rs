@@ -55,7 +55,7 @@ use crate::error::{Error, Result};
 use crate::llm::decision::catalogue::FANOUT_ASK;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    DecisionRung, Reversibility,
+    DecisionReceipt, DecisionRung, Reversibility,
 };
 use crate::outbound_chokepoint::{
     FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate, FanoutPlan,
@@ -296,16 +296,37 @@ pub struct FanoutDecisions<'a> {
     pub deadline: &'a RetrievalDeadline,
 }
 
+/// One fan-out ask's verdict and, when the ladder decided it, the receipt
+/// the ladder returned with it (FIX 333), carried to the stored run. An
+/// abstention keeps its receipt: the ladder decided it. A standing-row
+/// short-circuit or a failed run has none, and none is made up.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FanoutAskDecision {
+    pub(crate) verdict: FanoutAskVerdict,
+    pub(crate) receipt: Option<DecisionReceipt>,
+}
+
+impl FanoutAskDecision {
+    /// Escalate, with no receipt: no ladder decided it.
+    const fn escalate() -> Self {
+        Self {
+            verdict: FanoutAskVerdict::EscalateToHuman,
+            receipt: None,
+        }
+    }
+}
+
 impl FanoutDecisions<'_> {
-    /// Rules on one ask: `None` when the ladder abstains or answers outside
-    /// the vocabulary. The question is keyed by the ask's trigger, so each
-    /// trigger learns its own bands.
+    /// Rules on one ask, with the receipt the ladder returned. An abstention
+    /// or an answer outside the vocabulary escalates, receipt kept: the
+    /// ladder still decided it. The question is keyed by the ask's trigger,
+    /// so each trigger learns its own bands.
     fn rule(
         &self,
         context: &FanoutAskContext,
         view: &FanoutClassifierView<'_>,
         history: &FanoutDecisionHistory,
-    ) -> Result<Option<FanoutAskVerdict>> {
+    ) -> Result<FanoutAskDecision> {
         let question = FANOUT_ASK.question(
             &[context.trigger.token().as_bytes()],
             self.wording.clone(),
@@ -328,12 +349,17 @@ impl FanoutDecisions<'_> {
             Reversibility::OutboundEffect,
             self.deadline,
         )?;
-        Ok(match &decision.answer {
+        let verdict = match &decision.answer {
             DecisionAnswer::Choice(answer) => VERDICTS
                 .iter()
                 .find(|(label, _)| *label == answer.as_str())
-                .map(|(_, verdict)| *verdict),
-            _ => None,
+                .map(|(_, verdict)| *verdict)
+                .unwrap_or(FanoutAskVerdict::EscalateToHuman),
+            _ => FanoutAskVerdict::EscalateToHuman,
+        };
+        Ok(FanoutAskDecision {
+            verdict,
+            receipt: Some(decision.receipt),
         })
     }
 }
@@ -363,7 +389,7 @@ fn ask_state(
 
 /// Rules on one fan-out ask.
 ///
-/// Returns a verdict rather than a `Result` on purpose: every uncertain branch
+/// Returns a decision rather than a `Result` on purpose: every uncertain branch
 /// already has a defined, user-visible outcome, and there is no failure here
 /// that should reach a caller as an error instead of as a human ask.
 ///
@@ -388,35 +414,36 @@ pub(crate) fn classify_fan_out_ask(
     plan: &FanoutPlan,
     estimate: &FanoutEstimate,
     inner: Option<&FanoutDecisions<'_>>,
-) -> FanoutAskVerdict {
+) -> FanoutAskDecision {
     // The defensive floor: a hand-built blank context never reaches storage.
     if is_blank(&context.scope) || is_blank(&context.question) {
-        return FanoutAskVerdict::EscalateToHuman;
+        return FanoutAskDecision::escalate();
     }
 
     let trigger = context.trigger.escalation_trigger();
     let Ok(standing) = standing_policy_for(vault, &context.scope, trigger) else {
         // A row that cannot be decoded is uncertainty about an authoritative
         // answer. No fallback scan looks for a second one.
-        return FanoutAskVerdict::EscalateToHuman;
+        return FanoutAskDecision::escalate();
     };
     if let Some(row) = standing {
-        return standing_verdict(&row, context.trigger.budget_magnitude());
+        return FanoutAskDecision {
+            verdict: standing_verdict(&row, context.trigger.budget_magnitude()),
+            receipt: None,
+        };
     }
 
     let Some(decisions) = inner else {
-        return FanoutAskVerdict::EscalateToHuman;
+        return FanoutAskDecision::escalate();
     };
     let Ok(stats) = escalation_stats(vault, &context.scope, trigger) else {
-        return FanoutAskVerdict::EscalateToHuman;
+        return FanoutAskDecision::escalate();
     };
 
     let view = FanoutClassifierView::new(plan, estimate);
     decisions
         .rule(context, &view, &decision_history(&stats))
-        .ok()
-        .flatten()
-        .unwrap_or(FanoutAskVerdict::EscalateToHuman)
+        .unwrap_or_else(|_| FanoutAskDecision::escalate())
 }
 
 /// What an existing standing row is worth to this ask.
@@ -534,6 +561,19 @@ impl<'a> LearningFanoutAutoDecider<'a> {
             decisions,
         })
     }
+
+    /// Rules on one frozen plan, with the ladder's receipt when the ladder
+    /// decided it (FIX 333): the disposition ONE-1719 admits under, and the
+    /// receipt the stored run keeps.
+    pub(crate) fn decide_with_receipt(
+        &self,
+        plan: &FanoutPlan,
+        estimate: &FanoutEstimate,
+    ) -> (FanoutAutoDisposition, Option<DecisionReceipt>) {
+        let decision =
+            classify_fan_out_ask(self.vault, &self.context, plan, estimate, self.decisions);
+        (disposition_of(decision.verdict), decision.receipt)
+    }
 }
 
 impl FanoutAutoDecider for LearningFanoutAutoDecider<'_> {
@@ -544,13 +584,7 @@ impl FanoutAutoDecider for LearningFanoutAutoDecider<'_> {
     ) -> Result<FanoutAutoDisposition> {
         // Delegated unconditionally: an accepted standing row has to survive
         // missing decisions, so their absence cannot be decided here.
-        Ok(disposition_of(classify_fan_out_ask(
-            self.vault,
-            &self.context,
-            plan,
-            estimate,
-            self.decisions,
-        )))
+        Ok(self.decide_with_receipt(plan, estimate).0)
     }
 }
 

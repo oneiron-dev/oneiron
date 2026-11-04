@@ -19,7 +19,8 @@ use crate::error::Result;
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 use crate::store::{GateDecisionId, GateDecisionRecord};
 
 /// Which part of a loop a stored decision is.

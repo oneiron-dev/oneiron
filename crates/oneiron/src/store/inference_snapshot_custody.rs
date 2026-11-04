@@ -15,12 +15,12 @@ use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result, StoreError};
-use crate::inference_snapshot::WrappedSnapshotKey;
 use crate::store::Store;
 use crate::store::key_custody::{
     CustodyBinding, CustodyKind, CustodySecret, CustodySubject, EntryState, RetireCause,
     RetirementIntent, retirement_in_txn, stage_retirement_in_txn,
 };
+use crate::store::snapshot_key::WrappedSnapshotKey;
 
 /// The width of every inference snapshot custody entry: the serialized
 /// wrapped snapshot key, version ‖ nonce ‖ sealed key and tag.

@@ -178,6 +178,7 @@ pub(crate) async fn run_context_pack(
         builder = builder
             .skill_executor(model)
             .map_err(|error| core_engine_error("invalid context-pack executor model", error))?;
+        builder = builder.model_window(model);
     }
     if let Some(query) = skill_reliability {
         builder = builder

@@ -20,27 +20,13 @@ use crate::{EdgeActorClass, EntityId, Vault, WriteEnvelope, WriteProvenance};
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
-/// The row an append's receipts name.
-pub(crate) const APPEND_ROW: &str = "conversation.append_record";
+pub(crate) use crate::store::conversation_record::APPEND_ROW;
 /// The row a thread reply's receipts name.
 pub(super) const REPLY_ROW: &str = "conversation.reply_in_thread";
 /// The longest field pointer a reference-refusal receipt holds.
 const MAX_POINTER_BYTES: usize = 256;
 
-/// Why a caller-bound append did not land.
-pub(crate) enum AppendFailure {
-    /// The engine refused or failed the append.
-    Engine(Error),
-    /// The ref at this pointer does not read for the writer; the append's
-    /// transaction aborted with nothing staged.
-    Unresolved(String),
-}
-
-impl From<Error> for AppendFailure {
-    fn from(error: Error) -> Self {
-        Self::Engine(error)
-    }
-}
+pub(crate) use crate::store::conversation_record::AppendFailure;
 
 /// What a public append does before its write transaction: `writer` must be
 /// this vault's surface for the byline `input` names, and the writer's read

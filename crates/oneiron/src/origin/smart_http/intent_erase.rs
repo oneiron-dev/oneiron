@@ -6,7 +6,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::actor_erase::{ORIGIN_ACTOR_ERASE_PENDING, OriginPendingErase};
 use crate::origin::residence::OriginAuthorityStamp;
-use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 
 impl ReceivePackIntent {
     /// Whether recovery may resume this intent. One whose pusher or admitting

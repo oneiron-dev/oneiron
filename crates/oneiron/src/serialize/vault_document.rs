@@ -74,7 +74,7 @@ pub(crate) struct DocumentWriter<'v> {
     /// Each agent's birth-source ASSET, kept as it passes.
     birth_sources: BTreeSet<EntityId>,
     agents: Vec<ExportEntity>,
-    skills: Vec<(EntityId, crate::skill::SkillRecord)>,
+    skills: Vec<(EntityId, crate::write_envelope::skill_record::SkillRecord)>,
     knowledge: Vec<ExportEntity>,
     birth_bodies: BTreeMap<EntityId, ExportBody>,
     /// Each result body's row by digest, nulled and with its file detached.
@@ -265,8 +265,8 @@ impl<'v> DocumentWriter<'v> {
                     blake3: withheld.is_none().then(|| hex(&output.raw_blake3)),
                     bytes: output.raw_len,
                     kind: match output.kind {
-                        crate::code_run::CodeRunOutputKind::Text => "text",
-                        crate::code_run::CodeRunOutputKind::Binary => "binary",
+                        crate::store::result_manifest::CodeRunOutputKind::Text => "text",
+                        crate::store::result_manifest::CodeRunOutputKind::Binary => "binary",
                     }
                     .to_owned(),
                     lines: output.lines,
@@ -558,9 +558,9 @@ impl<'v> DocumentWriter<'v> {
                 .body
                 .to_bytes()
                 .ok()
-                .and_then(|bytes| crate::claim::decode_claim_body(&bytes, false).ok())
+                .and_then(|bytes| crate::write_envelope::claim_body::decode_claim_body(&bytes, false).ok())
                 .is_some_and(|claim| {
-                    matches!(claim.subject, crate::claim::ClaimSubject::Entity(id)
+                    matches!(claim.subject, crate::write_envelope::claim_body::ClaimSubject::Entity(id)
                         if self.agent_ids.contains(&id))
                 })
     }

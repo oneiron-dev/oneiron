@@ -67,6 +67,11 @@ pub enum ArtifactError {
         /// Live-deck model node ids the refusal names (unbound nodes).
         nodes: Vec<u64>,
     },
+    /// A non-deck artifact operation could not reserve the host's machine
+    /// memory. This is the same resource refusal as a deck's memory floor,
+    /// named without pretending the operation targeted a live deck (FIX 12231).
+    #[error("memory floor refused: {detail}")]
+    MemoryFloorRefused { detail: String },
     /// An ARTL-4 settle (select or discard) targeted an `EditProposal` that was
     /// already settled — settlement is consume-once (OF-368 D5/D6): exactly one
     /// of select or discard consumes a retained output, and a second settle of
@@ -285,6 +290,7 @@ impl ArtifactError {
             Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,
             Self::EditRoundtripFailed(_) => ErrorKind::EditRoundtripFailed,
             Self::LiveDeckRefused { .. } => ErrorKind::LiveDeckRefused,
+            Self::MemoryFloorRefused { .. } => ErrorKind::MemoryFloorRefused,
             Self::EditProposalAlreadySettled { .. } => ErrorKind::EditProposalAlreadySettled,
             Self::EditProposalStale => ErrorKind::EditProposalStale,
             Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,

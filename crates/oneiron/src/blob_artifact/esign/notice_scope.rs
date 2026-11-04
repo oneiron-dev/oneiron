@@ -23,9 +23,10 @@ use super::lane_scope::{self, EsignScope};
 use super::notice_unattended::UnattendedNotices;
 use crate::attempt_queue::AttemptRecord;
 use crate::claim::ScopedRead;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::Memory;
 use crate::outbound::{OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult};
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::memory::MemoryResult;
 
 /// The record a narrowed credential's scope is judged on for a staged notice
 /// (CALLS `FIX 6220 scoped notice dispatch`, accepted by the Engine 10-20):

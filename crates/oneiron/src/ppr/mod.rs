@@ -2,6 +2,7 @@ mod cache_evict;
 mod cache_store;
 mod community;
 mod policy;
+pub(crate) mod project_weight;
 mod query;
 mod walk;
 

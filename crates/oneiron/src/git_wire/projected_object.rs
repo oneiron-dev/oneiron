@@ -36,9 +36,9 @@ use super::{
     GitOid, GitRefPublication, GitWire, GitWireCommitOutcome, GitWireOperation, GitWireRepo,
     GitWireResult,
 };
-use crate::codebase::RepoRef;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
+use crate::store::code_snapshot::RepoRef;
 
 /// The bare store's directory inside a copy's own directory.
 const PROJECTION_STORE_REPO: &str = "repo.git";

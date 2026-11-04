@@ -38,7 +38,7 @@ use super::{Effort, MemoryPack, RecallScope};
 use crate::batch::export::write_door_refuses_body;
 use crate::claim::{ClaimBody, ClaimReadStatus};
 use crate::entity_id::EntityId;
-use crate::llm::BudgetLease;
+use crate::memory::RecallRequest;
 use crate::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, MEMORY_CODE_NOT_FOUND, Memory,
     MemoryError, MemoryResult,
@@ -46,7 +46,8 @@ use crate::memory::{
 use crate::rerank::crossencoder::PreparedCrossEncoder;
 use crate::rerank::{RerankCandidate, Reranker};
 use crate::retrieval_depth::{RecallExecution, RecallMediaSeed, RetrievalDeadline};
-use crate::task_verb::sdk::{RecallDoor, RecallRequest};
+use crate::task_verb::recall_door::RecallDoor;
+use oneiron_model::llm::BudgetLease;
 
 mod lineage;
 
@@ -129,7 +130,7 @@ pub struct RerankDocument<'a> {
 /// leaves, and the recall ranks by fusion.
 pub struct RerankEgress<'a> {
     vault: &'a crate::Vault,
-    /// The routes the sent rows' worlds allow, in their owner's order.
+    /// The routes the sent rows' carried worlds allow, in their owner's order.
     model_routes: crate::authority::WorldModelRoutes,
     /// Each row sent with words, and the world its item names at the
     /// revision scored; `None` when the host's model runs on this device,
@@ -349,7 +350,7 @@ impl Memory<'_> {
         budget: Option<Duration>,
         embedding: Option<&[f32]>,
         media: &[RecallMediaSeed<'_>],
-        query_affect: Option<crate::affect::Vad>,
+        query_affect: Option<oneiron_contracts::affect::Vad>,
         door: &RecallDoor<'_>,
         fallback: Option<&MemoryPack>,
         host: &dyn RecallRerankHost,
@@ -613,8 +614,9 @@ impl Memory<'_> {
     /// a row a device-only world keeps (the vault's own flag, whoever reads),
     /// unless the host's model runs on this device (`on_device`). With the
     /// texts come the rows each is read from (FIX 7001), and the rows that
-    /// leave with words, to be judged again. It reads the worlds of the
-    /// recall's pinned selection (`pin`).
+    /// leave with words, to be judged again. It reads through the recall's
+    /// pinned selection (`pin`); the model routes meet the carried worlds
+    /// of the rows sent with words (FIX 12313).
     fn rerank_documents(
         &self,
         scope: &RecallScope,
@@ -629,6 +631,16 @@ impl Memory<'_> {
             None => lane,
         };
         let mut receipt = lane.read_receipt(None, 0)?;
+        // The texts below are read at each candidate's pinned revision,
+        // across several snapshots, while the carried worlds behind the
+        // route choice are read live after them under one read snapshot
+        // (`rtxn` below): the routes always meet the worlds the rows carry
+        // now, and meeting a wider world set only narrows the rungs. No
+        // text is compared live: the indexed revision the block holds
+        // legitimately lags the store until idle publication, so live
+        // inequality without any concurrent write is expected, not
+        // corruption (blind review 11-04). A deleted row reads as unknown
+        // worlds and fails closed under an ordered route.
         let mut texts = Vec::with_capacity(block.len());
         let mut sources = Vec::with_capacity(block.len());
         let mut pinned_worlds = Vec::with_capacity(block.len());
@@ -690,16 +702,41 @@ impl Memory<'_> {
                     .collect(),
             )
         };
-        // Only the worlds of texts the host actually reads decide its rungs:
-        // rows sent empty are no model input, and base reality inherits.
-        let model_routes = self.vault.world_model_routes(
-            block
-                .iter()
-                .zip(&pinned_worlds)
-                .zip(&texts)
-                .filter(|(_, text)| !text.is_empty())
-                .filter_map(|((_, world), _)| *world),
-        )?;
+        // Only the carried worlds of texts the host actually reads decide its rungs:
+        // rows sent empty are no model input, base reality inherits, and an
+        // unknown carried world fails closed under an ordered route.
+        let rtxn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
+        let mut carried = crate::settings::CarriedWorlds::default();
+        for ((candidate, text), pinned) in block.iter().zip(&texts).zip(&pinned_worlds) {
+            if text.is_empty() {
+                continue;
+            }
+            // The text was read at its pinned revision; fold its pinned
+            // world in as well, so the live closure below meets the words
+            // it routes.
+            if let Some(world) = pinned {
+                carried.worlds.insert(*world);
+            }
+            let worlds =
+                crate::settings::carried_worlds_in(&self.vault.store, &rtxn, &candidate.id)?;
+            carried.absorb(&worlds);
+        }
+        let mut model_routes = self
+            .vault
+            .world_model_routes_in_txn(&rtxn, carried.worlds.iter().copied())?;
+        if carried.unknown
+            && matches!(
+                &model_routes,
+                crate::authority::WorldModelRoutes::Ordered(_)
+            )
+        {
+            model_routes = crate::authority::WorldModelRoutes::Ordered(Vec::new());
+        }
         let egress = RerankEgress {
             vault: self.vault,
             model_routes,

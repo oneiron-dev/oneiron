@@ -5,9 +5,9 @@ use super::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, RegistryError, Result};
-use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{StructuralKindRegistration, TypeByteZone};
 use crate::temporal::TimeRange;
+use crate::write_envelope::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 
 /// A session-scoped actor binding created by [`Vault::as_actor`]
 /// (ONE-1113 ruling, session ergonomics): the handle carries
@@ -160,7 +160,7 @@ impl Vault {
     /// Bindings call THIS; they never call `put_entity`, `batch().put`, or any
     /// other storage mutation directly.
     #[doc(hidden)]
-    pub fn ensure_embedded_owner_actor(&self) -> crate::memory::MemoryResult<EntityId> {
+    pub fn ensure_embedded_owner_actor(&self) -> oneiron_contracts::memory::MemoryResult<EntityId> {
         let owner = embedded_owner_actor_id()?;
         // FIX 11664: an owner PERSON already there comes back with no writer
         // taken; the write below decides every other case, as before.
@@ -192,7 +192,10 @@ impl Vault {
     /// `PERSON` is a typed refusal, never a retype, and a hard-deleted
     /// principal is not brought back. A PERSON may act as class `agent`.
     #[doc(hidden)]
-    pub fn ensure_agent_principal(&self, name: &str) -> crate::memory::MemoryResult<EntityId> {
+    pub fn ensure_agent_principal(
+        &self,
+        name: &str,
+    ) -> oneiron_contracts::memory::MemoryResult<EntityId> {
         if name.trim().is_empty() {
             return Err(Error::InvalidClaimBody("agent principal name").into());
         }
@@ -350,8 +353,8 @@ impl Vault {
     /// `attach_to_path` twin — path resemblance can never move a note.
     pub fn attach_code_memory(
         &self,
-        input: crate::code_memory::AttachCodeMemory,
-    ) -> Result<crate::code_memory::SlotInsertOutcome> {
+        input: crate::store::code_memory_values::AttachCodeMemory,
+    ) -> Result<crate::store::code_memory_values::SlotInsertOutcome> {
         self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::attach_code_memory(&self.store, wtxn, input)
         })
@@ -366,8 +369,8 @@ impl Vault {
     /// path — and the whole operation is one transaction.
     pub fn transfer_code_memory_anchor(
         &self,
-        transfer: &crate::code_memory::AnchorTransfer,
-    ) -> Result<crate::code_memory::AnchorTransferReceipt> {
+        transfer: &crate::store::code_memory_values::AnchorTransfer,
+    ) -> Result<crate::store::code_memory_values::AnchorTransferReceipt> {
         self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::transfer_code_memory_anchor(&self.store, wtxn, transfer)
         })
@@ -378,7 +381,7 @@ impl Vault {
     pub fn code_memory_transfers(
         &self,
         of: EntityId,
-    ) -> Result<Vec<crate::code_memory::AnchorTransferRecord>> {
+    ) -> Result<Vec<crate::store::code_memory_values::AnchorTransferRecord>> {
         let rtxn = self.store.env.read_txn()?;
         crate::code_memory::read_transfer_records(&self.store, &rtxn, &of)
     }
@@ -391,7 +394,7 @@ impl Vault {
     pub fn code_memory_attachments(
         &self,
         symbol_id: EntityId,
-    ) -> Result<Vec<crate::code_memory::CodeMemoryAttachment>> {
+    ) -> Result<Vec<crate::store::code_memory_values::CodeMemoryAttachment>> {
         let rtxn = self.store.env.read_txn()?;
         crate::code_memory::read_attachments_for_symbol(&self.store, &rtxn, &symbol_id)
     }
@@ -401,7 +404,7 @@ impl Vault {
     pub fn code_memory_slots(
         &self,
         symbol_id: EntityId,
-    ) -> Result<Vec<crate::code_memory::CodeMemorySlot>> {
+    ) -> Result<Vec<crate::store::code_memory_values::CodeMemorySlot>> {
         let rtxn = self.store.env.read_txn()?;
         crate::code_memory::read_slots_for_symbol(&self.store, &rtxn, &symbol_id)
     }
@@ -410,7 +413,7 @@ impl Vault {
     pub fn code_memory_always_on_contracts(
         &self,
         symbol_id: EntityId,
-    ) -> Result<Vec<crate::code_memory::AlwaysOnCodeMemoryContract>> {
+    ) -> Result<Vec<crate::store::code_memory_values::AlwaysOnCodeMemoryContract>> {
         let rtxn = self.store.env.read_txn()?;
         crate::code_memory::read_always_on_for_symbol(&self.store, &rtxn, &symbol_id)
     }
@@ -418,7 +421,7 @@ impl Vault {
     /// Registers one bounded always-on interface/policy contract.
     pub fn register_always_on_contract(
         &self,
-        contract: crate::code_memory::AlwaysOnCodeMemoryContract,
+        contract: crate::store::code_memory_values::AlwaysOnCodeMemoryContract,
     ) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::register_always_on_contract(&self.store, wtxn, contract)
@@ -436,7 +439,7 @@ impl Vault {
         &self,
         from: EntityId,
         to: EntityId,
-        context: crate::code_memory::BlocksWriteContext<'_>,
+        context: crate::store::code_memory_values::BlocksWriteContext<'_>,
     ) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::insert_blocks_edge(self, wtxn, from, to, context)
@@ -451,7 +454,7 @@ impl Vault {
         &self,
         from: EntityId,
         to: EntityId,
-        context: crate::code_memory::BlocksWriteContext<'_>,
+        context: crate::store::code_memory_values::BlocksWriteContext<'_>,
     ) -> Result<bool> {
         self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::remove_blocks_edge(self, wtxn, from, to, context)
@@ -478,7 +481,7 @@ impl Vault {
     pub fn pull_code_memory(
         &self,
         actor_key: crate::claim::ScopedReadActorKey,
-        request: crate::code_memory::CodeMemoryPullRequest,
+        request: crate::store::code_memory_values::CodeMemoryPullRequest,
     ) -> Result<crate::code_memory::CodeMemoryPullResult> {
         let scoped_read = self.scoped_read(actor_key);
         crate::code_memory::pull_code_memory(self, &scoped_read, request)

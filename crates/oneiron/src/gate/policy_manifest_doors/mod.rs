@@ -28,10 +28,11 @@ pub use types::*;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::Memory;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 use super::decision::GateOutcome;
 use super::input::{GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles};
@@ -417,7 +418,7 @@ pub fn propose_policy_manifest(
         });
         if decision.outcome() == GateOutcome::Deny {
             return Err(MemoryError::new(
-                crate::memory::MEMORY_CODE_FORBIDDEN,
+                oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
                 "the caller's Gate refused this policy proposal",
                 &[],
             ));

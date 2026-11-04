@@ -3,10 +3,10 @@ use super::{
     ClaimInput, CommitOutcome, CommitReceipt, Memory, MemoryError, MemoryResult, RecordRefusal,
 };
 use crate::claim::ClaimApprovalStatus;
-use crate::federation::{Scope, ScopeAxis, ScopeId};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::{EntityId, Error};
+use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 use serde::{Deserialize, Serialize};
 
 /// The explicit relationship position: `all`, or a set of relationships.
@@ -295,12 +295,12 @@ impl Memory<'_> {
         position.audience = ScopeAxis::from_iter([ScopeId(project)]);
         position.bands = ScopeAxis::from_iter([crate::registry::ENTITY_TYPE_CLAIM]);
         position.verbs = ScopeAxis::from_iter([verb.to_owned()]);
-        position.sensitivity = crate::federation::SensitivityCeiling::AtMost(
+        position.sensitivity = oneiron_authority::federation::SensitivityCeiling::AtMost(
             match sensitivity.unwrap_or(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND) {
-                0 => crate::federation::Sensitivity::Public,
-                1 => crate::federation::Sensitivity::Private,
-                2 => crate::federation::Sensitivity::Sensitive,
-                _ => crate::federation::Sensitivity::Restricted,
+                0 => oneiron_authority::federation::Sensitivity::Public,
+                1 => oneiron_authority::federation::Sensitivity::Private,
+                2 => oneiron_authority::federation::Sensitivity::Sensitive,
+                _ => oneiron_authority::federation::Sensitivity::Restricted,
             },
         );
         if !position.is_narrowing_of(proof.scope()) {

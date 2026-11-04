@@ -7,10 +7,11 @@ use serde_json::{Value, json};
 use super::package_codec::invalid;
 use super::{HubPackage, SharedSkillDelta};
 use crate::claim::{ClaimBody, ClaimSubject};
-use crate::llm::decision::catalogue::CLAIM_REPLAY;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    DecisionQuestion, MAX_DECISION_STATE_BYTES, Reversibility, TypedDecision, cut_text, fit_state,
+use crate::llm::decision::{DecisionLadder, TypedDecision};
+use crate::model_decision::catalogue::CLAIM_REPLAY;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionQuestion,
+    MAX_DECISION_STATE_BYTES, Reversibility, cut_text, fit_state,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::skill::SkillRecord;

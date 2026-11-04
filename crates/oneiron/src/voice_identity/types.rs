@@ -61,34 +61,7 @@ impl VoicePrintPurpose {
     }
 }
 
-/// Whether a consent record grants or withdraws.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum VoiceConsentState {
-    Granted,
-    Withdrawn,
-}
-
-impl VoiceConsentState {
-    /// Returns the pinned on-disk string for this state.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Granted => "granted",
-            Self::Withdrawn => "withdrawn",
-        }
-    }
-
-    /// Parses a pinned on-disk state string.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "granted" => Some(Self::Granted),
-            "withdrawn" => Some(Self::Withdrawn),
-            _ => None,
-        }
-    }
-}
+pub use crate::verbs::voice_records::VoiceConsentState;
 
 /// Where one enrollment sample came from.
 ///
@@ -140,93 +113,9 @@ impl VoiceEmbeddingFamily {
     }
 }
 
-/// How well spread a stored centroid's enrollment material is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VoicePrintCalibration {
-    /// Fewer than two distinct language tags: usable, never called calibrated.
-    Collecting,
-    /// Mixed-language enrollment material.
-    Calibrated,
-}
+pub use crate::conversation::voice_roster::VoicePrintCalibration;
 
-impl VoicePrintCalibration {
-    /// Returns the pinned on-disk string for this calibration state.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Collecting => "collecting",
-            Self::Calibrated => "calibrated",
-        }
-    }
-
-    /// Parses a pinned on-disk calibration string.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "collecting" => Some(Self::Collecting),
-            "calibrated" => Some(Self::Calibrated),
-            _ => None,
-        }
-    }
-}
-
-/// How a consent decision was captured.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum VoiceConsentBasis {
-    ConversationalNotice {
-        notice: String,
-    },
-    /// A spoken grant inside a named recording at a named time span. A first
-    /// class basis, not a placeholder.
-    VerbalOnRecording {
-        recording_ref: String,
-        start_ms: u64,
-        end_ms: u64,
-        words: String,
-    },
-    SettingsToggle {
-        surface_ref: String,
-    },
-}
-
-impl VoiceConsentBasis {
-    /// Validates the shape-specific requirements of this basis.
-    pub fn validate(&self) -> Result<()> {
-        match self {
-            Self::ConversationalNotice { notice } => {
-                require_non_empty(notice, "voice consent notice")
-            }
-            Self::VerbalOnRecording {
-                recording_ref,
-                start_ms,
-                end_ms,
-                words,
-            } => {
-                require_non_empty(recording_ref, "voice consent recording ref")?;
-                require_non_empty(words, "voice consent words")?;
-                if start_ms >= end_ms {
-                    return Err(invalid_voice(
-                        "verbal-on-recording consent needs start_ms < end_ms",
-                    ));
-                }
-                Ok(())
-            }
-            Self::SettingsToggle { surface_ref } => {
-                require_non_empty(surface_ref, "voice consent surface ref")
-            }
-        }
-    }
-
-    /// Returns the recording this basis names, when it names one.
-    #[must_use]
-    pub fn recording_ref(&self) -> Option<&str> {
-        match self {
-            Self::VerbalOnRecording { recording_ref, .. } => Some(recording_ref.as_str()),
-            Self::ConversationalNotice { .. } | Self::SettingsToggle { .. } => None,
-        }
-    }
-}
+pub use crate::verbs::voice_records::VoiceConsentBasis;
 
 /// One logged consent or withdrawal decision.
 ///
@@ -562,76 +451,6 @@ impl VoiceMatchPolicy {
     }
 }
 
-/// Why one segment carries the speaker reference it carries.
-#[derive(Debug, Clone, PartialEq)]
-pub enum VoiceAttributionEvidence {
-    /// Biometric: a cosine score at or above the recorded known threshold.
-    EnrolledPrint {
-        subject_ref: EntityId,
-        score: f32,
-        calibration: VoicePrintCalibration,
-        /// The exact print generation that produced this score.
-        print_generation: EntityId,
-    },
-    /// Non-biometric: the unique remaining invite attendee.
-    InviteElimination { attendee_ref: EntityId },
-    /// Anonymous: a residual cluster with a stable local label.
-    ResidualCluster { cluster_ref: String },
-}
-
-/// One resolved segment of a voice session. Carries no embedding vector.
-#[derive(Debug, Clone, PartialEq)]
-pub struct VoiceResolvedSegment {
-    pub segment_id: String,
-    pub start_ms: u64,
-    pub end_ms: u64,
-    pub speaker_label: String,
-    /// The capture's session-local speaker key, kept from the input.
-    pub speaker_key: String,
-    pub subject_ref: Option<EntityId>,
-    pub contact_ref: Option<EntityId>,
-    pub evidence: VoiceAttributionEvidence,
-}
-
-/// The stored, vector-free result of one match run.
-#[derive(Debug, Clone, PartialEq)]
-pub struct VoiceSessionRosterV1 {
-    pub voice_session_ref: String,
-    pub recording_id: String,
-    pub embedding_space_id: String,
-    pub known_threshold: f32,
-    pub segments: Vec<VoiceResolvedSegment>,
-    pub created_at: u64,
-    /// Starts at 1 and moves only when a speaker joins or is placed
-    /// differently; more words, new spans or score jitter keep it. An
-    /// owner's answer about a speaker holds for one revision.
-    pub roster_revision: u64,
-}
-
-impl VoiceSessionRosterV1 {
-    /// The speakers the roster could not place, by speaker key in the order
-    /// first heard: every segment of each fell to residual clustering. These
-    /// are the speakers an owner may be asked about, at this revision.
-    #[must_use]
-    pub fn unplaced_speakers(&self) -> Vec<&str> {
-        let placed: Vec<&str> = self
-            .segments
-            .iter()
-            .filter(|segment| {
-                !matches!(
-                    segment.evidence,
-                    VoiceAttributionEvidence::ResidualCluster { .. }
-                )
-            })
-            .map(|segment| segment.speaker_key.as_str())
-            .collect();
-        let mut unplaced: Vec<&str> = Vec::new();
-        for segment in &self.segments {
-            let key = segment.speaker_key.as_str();
-            if !placed.contains(&key) && !unplaced.contains(&key) {
-                unplaced.push(key);
-            }
-        }
-        unplaced
-    }
-}
+pub use crate::conversation::voice_roster::{
+    VoiceAttributionEvidence, VoiceResolvedSegment, VoiceSessionRosterV1,
+};

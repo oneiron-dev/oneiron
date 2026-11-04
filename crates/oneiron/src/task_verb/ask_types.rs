@@ -190,26 +190,8 @@ pub enum TaskAskDecide {
     },
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskAskDefault {
-    Proceed,
-    Hold,
-    #[default]
-    AskMe,
-}
+pub use crate::disclosure::task_ask_default::TaskAskDefault;
+
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -333,14 +315,7 @@ pub struct TaskAskPreflight {
     pub recipients: Vec<TaskAskPreflightRecipient>,
 }
 
-/// The group is an engine-authored TASK fact, not a local queue id. A
-/// world-privacy request's id is its handle too, for its asker's wait (FIX
-/// 4706).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskHandle {
-    pub group_ref: EntityId,
-}
+pub use crate::authority::task_ask_handle::TaskAskHandle;
 
 /// A typed explanation emitted at admission, without waiting for TTL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

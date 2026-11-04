@@ -11,9 +11,10 @@
 use serde::{Deserialize, Serialize};
 
 use super::*;
-use crate::llm::decision::{
-    AnswerContract, AskTo, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
-    HumanAskReason, HumanDecisionRequest, ProviderPin,
+use crate::llm::decision::{AskTo, HumanDecisionRequest};
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason,
+    ProviderPin,
 };
 use crate::skill_hub::pack_catalog::PackSetupAnswer;
 

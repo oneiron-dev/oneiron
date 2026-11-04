@@ -6,14 +6,13 @@ use super::{
     ApplyOpsGateMode, BaseWriteOrigin, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
     reject_overlay_member_base_write,
 };
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, decode_claim_body, encode_claim_body,
-};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+use crate::write_envelope::claim_body::{ClaimBody, decode_claim_body, encode_claim_body};
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{EntityId, Vault};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 use rmpv::Value;
 
 /// Private local binding digest proving which writer authored/finalized a
@@ -45,10 +44,14 @@ impl ClaimMaterialization {
         let prior = write.prior();
         let (id, occurred, learned_at, data, envelope) = write.into_parts();
         let body = crate::claim::validate_claim_body_and_decode(&data, true)?;
-        let record = crate::provenance::decode_edge_provenance_body(&body.value)?;
+        let record =
+            crate::write_envelope::provenance::codec::decode_edge_provenance_body(&body.value)?;
         let class =
-            crate::provenance::resolve_persisted_actor_class(&record, body.evidence.as_ref())?;
-        if body.predicate != crate::provenance::PREDICATE_EDGE_PROVENANCE
+            crate::write_envelope::provenance::actor_substrate::resolve_persisted_actor_class(
+                &record,
+                body.evidence.as_ref(),
+            )?;
+        if body.predicate != crate::write_envelope::provenance::PREDICATE_EDGE_PROVENANCE
             || envelope.actor() != WriteActor::new(record.actor_entity_ref, class)
             || body.source != Some(envelope.source()) && body.source.is_some()
             || body.approval != envelope.approval()
@@ -215,7 +218,7 @@ impl ClaimMaterialization {
                 owner_authored: None,
             },
             &policy,
-            crate::gate::GateWriteMode {
+            crate::store::GateWriteMode {
                 record_decision: true,
                 persist_pending_consent: false,
                 resolve_pending: false,
@@ -421,7 +424,7 @@ impl ClaimMaterialization {
                 return Err(binding_error());
             }
         }
-        crate::gate::validate_write_envelope(&self.envelope)?;
+        crate::write_envelope::validate_write_envelope(&self.envelope)?;
         // A verified close answers for its closer: the checks above prove the
         // row and its birth binding, and the door that closed it checked the
         // closer (FIX 8655). The old author's standing today is not asked.
@@ -432,7 +435,10 @@ impl ClaimMaterialization {
         let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &actor.entity_ref())?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
-        crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())
+        crate::write_envelope::provenance::actor_substrate::validate_actor_class(
+            header.entity_type,
+            actor.actor_class(),
+        )
     }
 }
 

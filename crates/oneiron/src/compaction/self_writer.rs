@@ -33,9 +33,9 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::SelfCompactionSource;
-use crate::provenance::birth::RowBirth;
+use crate::store::row_birth::RowBirth;
 use crate::vault::Vault;
+use oneiron_model::llm::SelfCompactionSource;
 
 /// Why a flight could not be written as its agent. The flight keeps its raw
 /// window for the turn: it is never handed to the Dreamer or to the plain
@@ -135,7 +135,7 @@ const CACHE_WRITE_KEYS: [&str; 2] = ["cache_creation_input_tokens", "cache_write
 /// cached-read and cache-write counters only when its usage names them. A
 /// ladder's served receipt holds the provider's own usage under `usage`.
 #[must_use]
-pub fn compaction_usage_projection(usage: &crate::LlmUsage) -> CompactionUsage {
+pub fn compaction_usage_projection(usage: &oneiron_model::llm::LlmUsage) -> CompactionUsage {
     let raw = &usage.raw_provider;
     let provider = match raw.get("usage") {
         Some(inner) if raw.get("rung").is_some() => inner,

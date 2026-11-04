@@ -734,7 +734,8 @@ impl<'a> DreamerRunnerStore<'a> {
             // lease gets its successor in the commit that settles the run.
             self.redrive_coach_issues_in_txn(wtxn, record, input.now)?;
             if decode_dreamer_attempt_payload(&record.payload).is_ok_and(|payload| {
-                payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+                payload.attempt_type
+                    == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
             }) {
                 crate::agent_dispatch::AgentDispatcher::new(self.vault).settle_child_in_txn(
                     wtxn,
@@ -809,7 +810,9 @@ impl<'a> DreamerRunnerStore<'a> {
                 .get_in_write_txn(txn, input.id)?
                 .ok_or(invalid_dreamer_runner("agent retry source must exist"))?;
             let payload = decode_dreamer_attempt_payload(&source.payload)?;
-            if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+            if payload.attempt_type
+                != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
+            {
                 return Err(invalid_dreamer_runner(
                     "agent retry requires a dispatch attempt",
                 ));
@@ -853,7 +856,9 @@ impl<'a> DreamerRunnerStore<'a> {
                     invalid_dreamer_runner("dreamer terminal transition attempt must exist"),
                 )?;
                 let payload = decode_dreamer_attempt_payload(&record.payload)?;
-                if payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+                if payload.attempt_type
+                    == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
+                {
                     return Err(invalid_dreamer_runner(
                         "agent dispatch failures require typed detector evidence",
                     ));
@@ -1201,10 +1206,10 @@ impl<'a> DreamerRunnerStore<'a> {
     /// for any of those.
     pub fn propose_claim_cohorts(
         &self,
-        claims: &[crate::cluster::ClusterClaim],
-        options: crate::cluster::ClusterOptions,
-    ) -> Result<crate::cluster::ClusterAssignments> {
-        crate::cluster::cluster_claims(claims, options)
+        claims: &[crate::memory::claim_cluster::ClusterClaim],
+        options: crate::memory::claim_cluster::ClusterOptions,
+    ) -> Result<crate::memory::claim_cluster::ClusterAssignments> {
+        crate::memory::claim_cluster::cluster_claims(claims, options)
     }
 }
 
@@ -1235,7 +1240,7 @@ pub(super) fn decode_dreamer_attempt_status(record: AttemptRecord) -> Result<Dre
 }
 
 fn is_dreamer_queue_kind(kind: &str) -> bool {
-    kind == crate::llm::model_step::MODEL_STEP_ATTEMPT_KIND
+    kind == crate::model_step_record::MODEL_STEP_ATTEMPT_KIND
         || kind == super::connector_event::CONNECTOR_EVENT_QUEUE_KIND
         || kind == super::maintenance::MAINTENANCE_QUEUE_KIND
         || kind == DREAMER_RUNNER_ATTEMPT_KIND

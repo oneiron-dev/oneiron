@@ -5,9 +5,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::access_grant::{AccessGrantScope, AccessRequestResponder, AccessRequestStatus};
+use crate::access_grant::{AccessRequestResponder, AccessRequestStatus};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
+
+pub use crate::memory::GrantRequestedScope;
+pub(crate) use crate::memory::grant_requested_scope;
 
 /// An answer to an access request.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
@@ -23,25 +26,6 @@ pub enum GrantAnswer {
 pub struct GrantAnswerRequest {
     pub request: EntityId,
     pub answer: GrantAnswer,
-}
-
-/// What an answered request asked for.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum GrantRequestedScope {
-    Messages {
-        space_ref: EntityId,
-    },
-    Summaries {
-        space_ref: EntityId,
-    },
-    RelationshipClaims {
-        space_ref: EntityId,
-    },
-    CompanionProfile {
-        person_ref: EntityId,
-        facet_ref: Option<EntityId>,
-    },
 }
 
 /// `self.grants.answer`'s answer.
@@ -63,27 +47,6 @@ pub struct GrantAnswered {
     pub excess_request: Option<EntityId>,
     pub decided_by: Option<EntityId>,
     pub decided_at: Option<u64>,
-}
-
-/// What an access request's `scope` asks for, as its answer and the asked
-/// one's list (`self.grants.asked`) name it; `None` for a scope no access
-/// request carries.
-pub(crate) fn grant_requested_scope(scope: &AccessGrantScope) -> Option<GrantRequestedScope> {
-    Some(match *scope {
-        AccessGrantScope::Messages { space_ref } => GrantRequestedScope::Messages { space_ref },
-        AccessGrantScope::Summaries { space_ref } => GrantRequestedScope::Summaries { space_ref },
-        AccessGrantScope::RelationshipClaims { space_ref } => {
-            GrantRequestedScope::RelationshipClaims { space_ref }
-        }
-        AccessGrantScope::CompanionProfile {
-            person_ref,
-            facet_ref,
-        } => GrantRequestedScope::CompanionProfile {
-            person_ref,
-            facet_ref,
-        },
-        _ => return None,
-    })
 }
 
 /// Answers `input` as `responder`, revalidated in the answering write

@@ -563,7 +563,7 @@ fn last_contact(
                 continue;
             }
             let body = crate::claim::decode_claim_body(bytes, true)?;
-            if body.predicate != crate::comm::PREDICATE_COMM_LAST_TOUCH {
+            if body.predicate != crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH {
                 continue;
             }
             // A head that does not read as a contact record is none.

@@ -1,7 +1,7 @@
 //! Goal-axis replay scores. A host supplies the goal axes; scores are normalized
 //! to 0..=1 with larger always better (including cost axes).
 use super::*;
-use crate::learning::honesty::HONESTY_AXIS;
+use crate::skill::learning_judge::HONESTY_AXIS;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

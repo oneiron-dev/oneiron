@@ -64,7 +64,7 @@ fn brief_share_receipt(
     id: EntityId,
     share: &ShareView,
     admission: &ShareAdmission,
-    travel: &crate::share_travel::TravelChoice,
+    travel: &oneiron_authority::share_travel::TravelChoice,
     trace: &[String],
     occurred_at: u64,
     revoked: bool,

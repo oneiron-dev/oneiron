@@ -2,12 +2,11 @@
 
 use super::memories::MemoriesSection;
 use super::{BoardFrameError, BoardSection, SectionPolicy, ShedRank, one_line_token};
-use crate::{
-    EntityId,
-    claim::ScopedRead,
-    pipeline::{ResolvedWorldAuthority, WorldAuthoritySet},
-    registry::ENTITY_TYPE_WORLD,
-};
+use crate::EntityId;
+use crate::claim::ScopedRead;
+use crate::claim::world_access::ResolvedWorldAuthority;
+use crate::claim::world_access::WorldAuthoritySet;
+use crate::registry::ENTITY_TYPE_WORLD;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Display metadata from the world registry, not a source of authority.

@@ -488,7 +488,7 @@ impl ConnectorGrantSlate {
 fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
     if let Some(source) = &manifest.pack_source {
         EntityId::from_hex(&source.source_ref)?;
-        crate::skill::SkillContentHash::parse_hex(&source.content_hash)?;
+        crate::write_envelope::skill_record::SkillContentHash::parse_hex(&source.content_hash)?;
     }
     let declared = &manifest.tools;
     let row_count = declared.len() + usize::from(manifest.elicitation.is_some());

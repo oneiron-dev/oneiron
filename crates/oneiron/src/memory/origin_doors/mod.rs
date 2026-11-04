@@ -42,11 +42,11 @@ pub use workbench_types::*;
 
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::EntityId;
-use crate::checkout::lease::{CheckoutError, CheckoutLeaseAct};
 use crate::codebase::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::git_wire::GitWire;
 use crate::origin::smart_http::origin_repo_dir;
+use crate::{checkout::lease::CheckoutLeaseAct, store::checkout_lease::CheckoutError};
 
 impl Memory<'_> {
     /// The CALL behind every DOOR-139 door: origin and checkout doors are

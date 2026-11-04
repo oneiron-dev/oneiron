@@ -266,7 +266,7 @@ impl Vault {
     /// then the key goes. The lock always lands; the receipt says what was
     /// released. With no runtime attached, admission closes and the key goes
     /// at once.
-    pub async fn lock_vault_key(&self) -> crate::inference_snapshot::SnapshotLockReceipt {
+    pub async fn lock_vault_key(&self) -> crate::store::snapshot_lock_result::SnapshotLockReceipt {
         let receipt = self.release_inference_snapshots_for_lock().await;
         *self
             .world_keys

@@ -2,10 +2,31 @@
 use serde::{Deserialize, Serialize};
 
 use super::{ClaimScope, CommitReceipt, Memory, MemoryError, MemoryResult, ScopedClaimInput};
-use crate::affect::{VadAnnotation, VadAnnotationSource};
 use crate::consent::AuthenticatedOwner;
 use crate::registry::ENTITY_TYPE_TURN;
-use crate::task_verb::sdk::QueryAffect;
+use oneiron_contracts::affect::{VadAnnotation, VadAnnotationSource};
+/// A query's affect: valence in -1..=1, arousal and dominance in 0..=1.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QueryAffect {
+    pub valence: f32,
+    pub arousal: f32,
+    pub dominance: f32,
+}
+
+impl QueryAffect {
+    /// The affect as the engine takes it, refused out of range.
+    pub fn vad(self) -> MemoryResult<oneiron_contracts::affect::Vad> {
+        let vad = oneiron_contracts::affect::Vad {
+            valence: self.valence,
+            arousal: self.arousal,
+            dominance: self.dominance,
+        };
+        vad.validate()
+            .map_err(|error| MemoryError::bad_request(format!("query_affect: {error}")))?;
+        Ok(vad)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -44,7 +65,7 @@ pub struct AffectClaimConsolidation {
     pub superseded_state_refs: Vec<String>,
 }
 
-fn query_affect(vad: crate::affect::Vad) -> QueryAffect {
+fn query_affect(vad: oneiron_contracts::affect::Vad) -> QueryAffect {
     QueryAffect {
         valence: vad.valence,
         arousal: vad.arousal,
@@ -67,8 +88,12 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("annotation requires a TURN"));
         }
         let annotation = VadAnnotation::new(input.vad.vad()?, input.source, input.annotated_at)?;
-        let body = crate::affect::vad_annotation_claim_body(&turn, &annotation)?;
-        let id = crate::affect::vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+        let body =
+            crate::write_envelope::vad_annotation::vad_annotation_claim_body(&turn, &annotation)?;
+        let id = crate::write_envelope::vad_annotation::vad_annotation_claim_id(
+            ENTITY_TYPE_TURN,
+            &turn,
+        )?;
         self.claim_upsert_scoped(&ScopedClaimInput {
             id: Some(id.to_hex()),
             predicate: body.predicate,

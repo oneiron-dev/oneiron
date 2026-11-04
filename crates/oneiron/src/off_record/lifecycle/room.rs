@@ -23,7 +23,6 @@ use std::collections::BTreeMap;
 use crate::Vault;
 use crate::authority::VerifiedSlip;
 use crate::batch::BatchOp;
-use crate::code_run::ResultOccurrence;
 use crate::conversation::MembershipWindow;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -33,6 +32,7 @@ use crate::off_record::promote::PromoteOutcome;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::session_overlay::{JournalEntry, JournalRole};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::result_manifest::ResultOccurrence;
 
 use super::registry::{KeptMessage, OffRecordSessionEntryState, session_entry_state};
 use super::session::{OffRecordSession, OffRecordSessionVault};
@@ -42,6 +42,7 @@ use super::types::{
 };
 
 mod export_roots;
+mod message_result;
 
 /// The most notices a room's timeline holds, and the most save suggestions
 /// that wait in it; past it the oldest drop, so a member repeating an act

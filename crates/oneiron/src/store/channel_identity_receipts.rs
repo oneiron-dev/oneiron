@@ -182,3 +182,7 @@ fn vet_channel_identity_lifecycle_receipt_record(
     }
     Ok(())
 }
+
+pub(crate) fn lifecycle_receipt_ref(receipt_id: ChannelIdentityLifecycleReceiptId) -> String {
+    format!("identity_lifecycle:{}", receipt_id.to_hex())
+}

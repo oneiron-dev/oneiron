@@ -7,15 +7,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RoTxn;
 
+use crate::config::community_graph::{
+    CommunityCacheMeta, CommunityId, CommunityMembership, CommunityQueryView,
+    decode_community_members,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::ports::EntityStoreRead;
-use crate::ppr::read_graph_version;
-use crate::ppr_community::{
-    CommunityCacheMeta, CommunityId, CommunityMembership, CommunityQueryView,
-    decode_community_members,
-};
+use crate::store::graph_version::read_graph_version;
 
 use super::Store;
 use super::ppr_community::{CACHE, COMMUNITY_META_SUFFIX};

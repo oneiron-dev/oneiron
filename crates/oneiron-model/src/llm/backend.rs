@@ -3,6 +3,7 @@
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll};
 
@@ -16,6 +17,9 @@ use super::{
 };
 
 pub type LlmResult<T> = std::result::Result<T, LlmError>;
+
+/// A per-call admission check shared with every backend and transport attempt.
+pub type DispatchRelease<'a> = &'a (dyn Fn() -> LlmResult<()> + Sync);
 
 pub type LlmGenerateFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<LlmResponse>> + Send + 'a>>;
 
@@ -157,6 +161,8 @@ pub struct BudgetLease {
     /// id/guard equality, hash, Debug and serde. Set once after dispatch opens;
     /// the first writer wins. WorkContext itself is never serialized.
     work_context: Arc<Mutex<Option<WorkContext>>>,
+    /// Physical backend attempts begun for this call, not inferred from receipts.
+    physical_attempts: Arc<AtomicUsize>,
 }
 
 impl fmt::Debug for BudgetLease {
@@ -192,6 +198,7 @@ impl BudgetLease {
             guard_identity,
             observations: Arc::default(),
             work_context: Arc::default(),
+            physical_attempts: Arc::default(),
         }
     }
 
@@ -233,6 +240,18 @@ impl BudgetLease {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// Marks one physical backend attempt begun. Unlike inference observations,
+    /// this count is present even before any reply or usage exists.
+    pub fn begin_physical_attempt(&self) {
+        self.physical_attempts.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// How many physical backend attempts this call has begun.
+    #[must_use]
+    pub fn physical_attempts(&self) -> usize {
+        self.physical_attempts.load(Ordering::Relaxed)
     }
 
     /// Clone-then-set attachment: the clone shares identity, observations and

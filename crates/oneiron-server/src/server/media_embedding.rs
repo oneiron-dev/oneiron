@@ -517,7 +517,9 @@ impl RuntimeMediaEmbedder {
                 kind,
             });
         }
-        let (vector, _) = self.embed_one(media_part(kind, media_type, bytes)?).await?;
+        let (vector, _) = self
+            .embed_one(media_part(kind, media_type, bytes)?, None)
+            .await?;
         Ok(vector)
     }
 
@@ -529,6 +531,10 @@ impl RuntimeMediaEmbedder {
     async fn embed_one(
         &self,
         part: MediaPart,
+        release: Option<(
+            &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
+            &[oneiron::EntityId],
+        )>,
     ) -> Result<(Vec<f32>, EmbeddingProvenance), MediaEmbedRefusal> {
         let modality = part.modality();
         if !self.inputs.contains(&modality) {
@@ -538,10 +544,10 @@ impl RuntimeMediaEmbedder {
             });
         }
         let named = self.names_width.load(Ordering::Relaxed);
-        let (mut vector, mut mark) = self.embed_call(part.clone(), named).await?;
+        let (mut vector, mut mark) = self.embed_call(part.clone(), named, release).await?;
         if !named && vector.len() > self.space.dimensions {
             self.names_width.store(true, Ordering::Relaxed);
-            (vector, mark) = self.embed_call(part, true).await?;
+            (vector, mark) = self.embed_call(part, true, release).await?;
         }
         if vector.len() != self.space.dimensions {
             return Err(MediaEmbedRefusal::Width {
@@ -561,16 +567,30 @@ impl RuntimeMediaEmbedder {
         &self,
         part: MediaPart,
         name_width: bool,
+        release: Option<(
+            &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
+            &[oneiron::EntityId],
+        )>,
     ) -> Result<(Vec<f32>, EmbeddingProvenance), MediaEmbedRefusal> {
+        if let Some((release, row)) = release {
+            release(row)?;
+        }
         let request = self.admit(part, name_width)?;
-        let response = self
-            .ai
-            .model_runtime()
-            .media()
+        let media = self.ai.model_runtime().media();
+        let response = if let Some((release, row)) = release {
+            let dispatch_release = || -> oneiron::LlmResult<()> {
+                release(row).map_err(|error| {
+                    oneiron::RetryableLlmError::not_sent("media_release", error.to_string()).into()
+                })
+            };
             // The rows the part was read from are not known here whole.
-            .run(request, self.payer.clone(), None)
-            .await
-            .map_err(MediaEmbedRefusal::Call)?;
+            media
+                .run_released(request, self.payer.clone(), None, Some(&dispatch_release))
+                .await
+        } else {
+            media.run(request, self.payer.clone(), None).await
+        }
+        .map_err(MediaEmbedRefusal::Call)?;
         let mark = self.answer_mark(&response.usage.raw_provider);
         let mut vectors = response.parts.into_iter().filter_map(|part| match part {
             MediaPart::Embedding { vector } => Some(vector),
@@ -695,7 +715,7 @@ impl MediaEmbedder for RuntimeMediaEmbedder {
     fn embed_media(&self, inputs: &[MediaEmbeddingInput<'_>]) -> oneiron::Result<Vec<Vec<f32>>> {
         inputs
             .iter()
-            .map(|input| -> oneiron::Result<Vec<f32>> { Ok(self.embed_input(input)?.0) })
+            .map(|input| -> oneiron::Result<Vec<f32>> { Ok(self.embed_input(input, None)?.0) })
             .collect()
     }
 
@@ -704,22 +724,22 @@ impl MediaEmbedder for RuntimeMediaEmbedder {
     fn embed_each(&self, inputs: &[MediaEmbeddingInput<'_>]) -> oneiron::Result<Vec<MediaOutcome>> {
         inputs
             .iter()
-            .map(|input| self.embed_outcome(input))
+            .map(|input| self.embed_outcome(input, None))
             .collect()
     }
 
     /// [`Self::embed_each`], one call per input: each input's documents are
-    /// released right before its own call goes, never for a later one.
+    /// released right before every one of its calls goes, width correction included.
     fn embed_each_released(
         &self,
         inputs: &[MediaEmbeddingInput<'_>],
-        release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+        release: &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
     ) -> oneiron::Result<Vec<MediaOutcome>> {
         inputs
             .iter()
             .map(|input| {
-                release(&[input.entity_id])?;
-                self.embed_outcome(input)
+                release(input.source_rows())?;
+                self.embed_outcome(input, Some((release, input.source_rows())))
             })
             .collect()
     }
@@ -729,8 +749,15 @@ impl RuntimeMediaEmbedder {
     /// One stored input's outcome: its vector with its answer's mark, or a
     /// refusal of that one document by its content
     /// ([`MediaEmbedRefusal::is_document_refusal`]).
-    fn embed_outcome(&self, input: &MediaEmbeddingInput<'_>) -> oneiron::Result<MediaOutcome> {
-        match self.embed_input(input) {
+    fn embed_outcome(
+        &self,
+        input: &MediaEmbeddingInput<'_>,
+        release: Option<(
+            &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
+            &[oneiron::EntityId],
+        )>,
+    ) -> oneiron::Result<MediaOutcome> {
+        match self.embed_input(input, release) {
             Ok(answer) => Ok(Ok(answer)),
             Err(refusal) if refusal.is_document_refusal() => Ok(Err(refusal.to_string())),
             Err(refusal) => Err(refusal.into()),
@@ -742,6 +769,10 @@ impl RuntimeMediaEmbedder {
     fn embed_input(
         &self,
         input: &MediaEmbeddingInput<'_>,
+        release: Option<(
+            &(dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()> + Sync),
+            &[oneiron::EntityId],
+        )>,
     ) -> Result<(Vec<f32>, EmbeddingProvenance), MediaEmbedRefusal> {
         let runtime = self
             .runtime
@@ -750,7 +781,7 @@ impl RuntimeMediaEmbedder {
                 "a media embedder's synchronous door has no runtime to drive its calls on",
             ))?;
         let part = media_part(input.kind, input.media_type, input.bytes.to_vec())?;
-        runtime.block_on(self.embed_one(part))
+        runtime.block_on(self.embed_one(part, release))
     }
 }
 

@@ -167,7 +167,15 @@ pub(super) fn materialize_in_txn(
             }
         }
     }
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
     for (turn, change) in turns {
+        // An excluded conversation's turns are never captured: the
+        // cursor passes them as it passes unreadable ones, their words
+        // stay out of every frame, and un-excluding does not backfill
+        // them as context (a span is framed on demand if ever asked).
+        if excluded.contains_turn(vault, txn, &turn)? {
+            continue;
+        }
         let Some(captured) = capture_turn_in_txn(vault, txn, &turn)? else {
             continue;
         };

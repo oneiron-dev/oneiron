@@ -102,6 +102,9 @@
 
 /// Backend-neutral storage contracts and injectable time sources.
 /// Implementations compose in a caller-owned transaction; they never commit it.
+mod extraction_work;
+pub use extraction_work::ExtractionWork;
+
 pub mod ports {
     pub use crate::ports::{
         BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp, ClaimStore, Clock, DependencyIndex,
@@ -116,37 +119,115 @@ pub mod ports {
     };
 }
 
+pub mod agent_record;
+pub mod attempt_cleanup;
+pub mod attempt_inputs;
+pub mod attempt_lease;
+pub mod attempt_manifest;
+pub mod attempt_result;
+pub mod canonical_document;
+pub mod checkout_task;
+pub mod checkpoint_host_recipient;
+pub mod code_tree_blob;
+pub mod conversation_body;
+pub mod conversation_record;
+pub mod custody_retirement_status;
+#[cfg(feature = "sync")]
+pub mod document_frame_tags;
+pub mod housekeeping_report;
+pub mod housekeeping_schedule;
+#[cfg(feature = "sync")]
+pub(crate) mod loro_document;
+#[cfg(feature = "sync")]
+pub mod materialization_event;
+pub mod outbound_outcome;
+pub mod outbound_trigger;
+#[cfg(feature = "sync")]
+pub(crate) mod pad_object_membership;
+pub mod proposal_spool;
+pub mod recovery_write_budget;
+pub(crate) mod repo_environment;
+pub mod repo_fork;
+pub mod restore_admission;
+pub mod result_body_pins;
+pub mod result_memory;
+pub mod retained_memory;
+pub mod sandbox_import;
+pub mod verb_invocation;
+#[cfg(feature = "sync")]
+pub mod window_protocol;
+#[cfg(feature = "sync")]
+pub(crate) mod window_rows;
+
+pub mod consolidation_scope;
+pub(crate) mod conversation_span;
+pub mod dreamer_attempt_kind;
+pub mod setting_seed;
+pub mod snapshot_key;
+pub mod snapshot_lock_result;
+
 mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;
 #[cfg(unix)]
 mod asset_body;
 mod backup_change;
+pub mod blob_fingerprint;
 #[cfg(unix)]
 mod body_envelope;
 #[cfg(unix)]
 mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
+pub mod claim_descriptors;
 mod claim_vad_owed;
+pub mod code_artifact_body;
+pub mod code_document_values;
+pub mod code_memory_values;
+pub mod code_snapshot;
+pub(crate) mod query_memo_codec;
+pub mod query_memos;
 pub(crate) use claim_vad_owed::{
-    owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
+    claim_vad_owed_in_txn, owe_claim_vad_in_txn, owed_claim_vad_count_in_txn,
+    settle_claim_vad_in_txn,
 };
+pub mod body_descriptor;
 mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
+pub mod derivation;
+pub mod diagnostic_record;
 mod diagnostics;
+pub mod document_segments;
+pub mod embedding;
 mod gate_decision;
+pub(crate) mod graph_version;
+pub(crate) mod l2_evidence;
+pub mod receipt_identity;
+pub mod retrieval_deadline;
+pub mod row_birth;
+mod scan_checks;
+mod scan_kind;
+mod scan_kind_table;
+pub(crate) mod text_index;
+pub(crate) mod vector_index;
+
+pub use scan_checks::ScanCheck;
+pub(crate) use scan_checks::{CheckKey, PendingScanChecks};
+pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
+pub mod world_registration_keys;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
 // FIX 8875: the home handoff's custody contract, for L03's carrier.
 pub(crate) mod home_handoff_custody;
 mod idempotency_intent;
+pub mod identity_hints;
 mod inference_snapshot_custody;
+pub(crate) mod install_identity;
 mod invocation_claims;
 mod key_custody;
 mod key_encoding;
@@ -164,14 +245,23 @@ mod pending_embedding;
 mod pending_gate_consent;
 mod ppr_community;
 mod ppr_community_indexed;
+pub(crate) mod reader_fold_receipt;
+pub(crate) mod refinement_carrier;
+pub mod result_manifest;
+pub mod retrieval_policy;
 mod retrieval_telemetry;
+pub mod retrieval_values;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
 mod short_id_alias;
+pub(crate) mod skill_content_index;
+pub mod skill_package;
+pub(crate) mod skill_source_carrier;
 mod structural_kind_registry;
 mod sync_responses;
+pub(crate) mod task_body_checks;
 mod training_link;
 pub(crate) mod turn_missing;
 mod usage_sources;
@@ -195,7 +285,7 @@ pub(crate) use asset_body::{
     unused_imports,
     reason = "FIX 5489 PR2 and PR3 receive bodies through these"
 )]
-pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody};
+pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody, StagedHold};
 pub(crate) use served_vaults::served_vault_at;
 // FIX 6730: what a commit changes for the backup watermark.
 #[cfg(feature = "sync")]
@@ -245,7 +335,9 @@ pub use deadline_jobs::{DEADLINE_JOBS_CHECK_KIND, DeadlineJob};
 pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;
-pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
+pub(crate) use group_commit::{
+    AfterCommit, Callback, DetachedWrite, GroupCommit, GroupCommitCounters, Rows,
+};
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;
@@ -331,3 +423,41 @@ pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWri
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::outbound_send_receipt::send_receipt_summary_accepts_masked;
+
+pub mod dispatch_attempt_kind;
+
+pub mod checkout_lease;
+
+pub mod repo_mutation_record;
+
+pub mod code_commit_metadata;
+
+pub mod code_import_manifest;
+
+pub mod own_rate_record;
+
+pub mod repo_provenance_trailer;
+
+pub mod code_revision_identity;
+
+pub mod recovery_kit;
+
+pub mod code_promotion_gap;
+
+pub mod code_revision_record;
+
+pub mod sandbox_path;
+
+pub mod sandbox_credential;
+
+pub mod sandbox_contract;
+
+pub mod critic_lens;
+
+pub mod verb_domain;
+
+pub mod reaction_predicate;
+
+pub mod repo_proposal_record;
+
+pub mod repo_import_predicate;

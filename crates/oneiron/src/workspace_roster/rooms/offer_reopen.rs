@@ -16,12 +16,13 @@
 use serde::{Deserialize, Serialize};
 
 use super::offer_activity::{is_current_in_txn, room_offer_expired};
+use super::offer_history::live_offer;
 use super::offers::{OFFERS, OfferCard, OfferState, is_offer_id, join_refused};
 use crate::error::Error;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::workspace_roster::JoinDecision;
 use crate::workspace_roster::join_door::require_admission_party_in_txn;
-use crate::workspace_roster::join_receipt::JOINS;
+use crate::workspace_roster::join_history::live_join;
 
 /// The host's reopening of one aged-out room-wide card.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -50,8 +51,7 @@ impl Memory<'_> {
         let card = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             vault.verify_write_actor_in_txn(txn, &caller)?;
-            let mut stored = OFFERS
-                .get(&vault.store, txn, &request.offer_id)?
+            let mut stored = live_offer(&vault.store, txn, &request.offer_id)?
                 .ok_or_else(|| MemoryError::not_found("no offer card under this offer_id"))?;
             require_admission_party_in_txn(vault, txn, stored.card.room, caller)?;
             if stored.card.branch.is_some() || !is_current_in_txn(vault, txn, &stored.card)? {
@@ -86,8 +86,7 @@ impl Memory<'_> {
             }
             // The card is open on what its join still waits for, as last
             // decided.
-            let join = JOINS
-                .get(&vault.store, txn, &stored.card.join_ref)?
+            let join = live_join(&vault.store, txn, &stored.card.join_ref)?
                 .ok_or(Error::CorruptedIndex("offer join receipt"))?;
             let needs = match join.decision {
                 JoinDecision::Hold { needs } => needs,

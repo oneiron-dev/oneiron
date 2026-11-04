@@ -32,12 +32,12 @@ use crate::counterparty_contact::CounterpartyContactStatus;
 use crate::disclosure::{DisclosureScope, DisclosureScopeStatus, encode_disclosure_scope_body};
 use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, GateError};
-use crate::federation::Scope;
-use crate::federation::scope_codec::{decode_scope_value, encode_scope_value};
 use crate::ports::EntityStoreRead;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
+use oneiron_authority::federation::Scope;
+use oneiron_authority::federation::scope_codec::{decode_scope_value, encode_scope_value};
 
 mod engine_offer;
 mod standing;

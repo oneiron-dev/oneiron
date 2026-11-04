@@ -23,7 +23,10 @@ pub(crate) struct StoredReadProof {
         serialize_with = "super::serialize_pact",
         deserialize_with = "super::deserialize_pact"
     )]
-    pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    pact: Option<(
+        crate::EntityId,
+        oneiron_authority::federation::FederationDirectionScope,
+    )>,
     unattenuated: bool,
     transferred: bool,
 }

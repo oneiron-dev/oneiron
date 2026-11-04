@@ -16,7 +16,7 @@ use zeroize::Zeroizing;
 
 pub(crate) use self::container::{
     RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container, is_sealed,
-    masked_copy, root_rebuilt_copy, scan_text_content, served_masked_copy,
+    live_content_hit, masked_copy, scan_text_content, served_masked_copy, tree_rebuilt_copy,
 };
 pub use self::lift_history::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
@@ -182,9 +182,11 @@ pub(super) fn scan_batch_ops(
                 // A facet id is no secret material; any stamp scans alike.
                 let body = (**candidate).clone().into_claim_body(
                     envelope,
-                    crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
+                    crate::write_envelope::claim_body::substrate_facet_id(
+                        envelope.actor().entity_ref(),
+                    )?,
                 )?;
-                let data = crate::claim::encode_claim_body(&body)?;
+                let data = crate::write_envelope::claim_body::encode_claim_body(&body)?;
                 let _secrets_nulled = scan_payload(&data)?;
             }
             BatchOp::Text { fields, .. } => {
@@ -253,7 +255,7 @@ pub(crate) fn scan_undecoded_body(bytes: &[u8]) -> Option<&'static str> {
 /// whole-body decode reaches its fields, so every door decodes the wrapped
 /// body as a body too.
 fn framed_payload(data: &[u8]) -> Option<&[u8]> {
-    crate::skill_hub::refinement_carrier_payload(data)
+    crate::store::refinement_carrier::refinement_carrier_payload(data)
 }
 
 /// A structured body with every member it holds: JSON read into a MessagePack

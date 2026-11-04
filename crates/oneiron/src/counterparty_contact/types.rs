@@ -12,40 +12,11 @@ use rmpv::Value;
 /// Current CounterpartyContactRecord body schema version.
 pub const COUNTERPARTY_CONTACT_SCHEMA_VERSION: u64 = 1;
 
-/// Pinned on-disk MessagePack key set for CounterpartyContactRecord bodies.
-pub const COUNTERPARTY_CONTACT_BODY_KEYS: [&str; 11] = [
-    "schema_version",
-    "identity_ref",
-    "counterparty",
-    "first_touch",
-    "status",
-    "created_at",
-    "updated_at",
-    "revoked_at",
-    "opt_out",
-    "promo_consent",
-    "notes",
-];
-
-pub(crate) const COUNTERPARTY_CONTACT_FIELDS_MINIMAL: &[&str] = &[
-    "identity_ref",
-    "counterparty",
-    "first_touch",
-    "status",
-    "opt_out",
-];
-
-pub(crate) const COUNTERPARTY_CONTACT_FIELDS_STANDARD: &[&str] = &[
-    "identity_ref",
-    "counterparty",
-    "first_touch",
-    "status",
-    "updated_at",
-    "opt_out",
-    "promo_consent",
-];
-
-pub(crate) const COUNTERPARTY_CONTACT_FIELDS_FULL: &[&str] = &COUNTERPARTY_CONTACT_BODY_KEYS;
+pub use crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_BODY_KEYS;
+pub(crate) use crate::write_envelope::counterparty_fields::{
+    COUNTERPARTY_CONTACT_FIELDS_FULL, COUNTERPARTY_CONTACT_FIELDS_MINIMAL,
+    COUNTERPARTY_CONTACT_FIELDS_STANDARD,
+};
 
 pub(super) const KEY_SCHEMA_VERSION: &str = COUNTERPARTY_CONTACT_BODY_KEYS[0];
 

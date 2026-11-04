@@ -13,9 +13,9 @@ use std::collections::BTreeSet;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::habit::TaskRole;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::store::Store;
+use crate::write_envelope::task_body::TaskRole;
 
 use self::put_entity_update::{validate_local_skill_create, validate_skill_body_overwrite};
 use self::put_staging::{stage_claim_projection, stage_optional_side_row};
@@ -102,12 +102,12 @@ fn validate_note_birth_put(
 fn decode_previous_skill_record(
     old_type: u8,
     old_record: &[u8],
-) -> Result<Option<crate::skill::SkillRecord>> {
+) -> Result<Option<crate::write_envelope::skill_record::SkillRecord>> {
     if old_type != ENTITY_TYPE_SKILL {
         return Ok(None);
     }
     let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
-    match crate::skill::decode_skill_record(prior_body) {
+    match crate::write_envelope::skill_record::decode_skill_record(prior_body) {
         Ok(record) => Ok(Some(record)),
         Err(error) => Err(error),
     }

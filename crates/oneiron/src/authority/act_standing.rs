@@ -203,7 +203,8 @@ pub(crate) fn act_heads(fold: &AuthorityFold, machine: EntityId) -> BTreeSet<Aut
 /// parts, joined and checked before admission (FIX 8246, 8247).
 const ACKNOWLEDGMENT_FRAME_FLOOR: usize = 8 * 1024 * 1024;
 #[cfg(feature = "sync")]
-const _: () = assert!(ACKNOWLEDGMENT_FRAME_FLOOR == crate::sync::MAX_DECODED_PAYLOAD_BYTES);
+const _: () =
+    assert!(ACKNOWLEDGMENT_FRAME_FLOOR == crate::store::window_protocol::MAX_DECODED_PAYLOAD_BYTES);
 
 /// What the rest of that row, its entity header and its frame envelope may
 /// take beside the acknowledged list (CALLS `Phase2 acknowledgment frame

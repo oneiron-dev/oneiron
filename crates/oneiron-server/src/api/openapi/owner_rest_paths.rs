@@ -69,7 +69,7 @@ use crate::api::owner_routes::dreamer_maintenance_routes::{
 };
 use crate::api::owner_routes::dreamer_routes::{
     change_reverted_schema, dreamer_pause_body_schema, dreamer_paused_schema,
-    revert_change_body_schema,
+    excluded_conversations_body_schema, excluded_conversations_schema, revert_change_body_schema,
 };
 use crate::api::owner_routes::embedding_space_routes::{
     clear_refused_body_schema, embedding_spaces_view_schema,
@@ -461,6 +461,14 @@ pub(super) fn merge_owner_rest_shapes(spec: &mut Value) {
         "post",
         revert_maintenance_body_schema(),
         maintenance_revert_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/dreamer/excluded-conversations",
+        "post",
+        excluded_conversations_body_schema(),
+        excluded_conversations_schema(),
         &[],
     );
     bind(

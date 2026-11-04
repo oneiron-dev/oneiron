@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 
 use rmpv::Value;
 
+pub(super) use crate::write_envelope::identity_pair::{id_value, map_field};
+
 use crate::claim::ClaimApprovalStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
@@ -602,10 +604,6 @@ pub(crate) fn decode_replicated_identity_topology_event_body(
     Ok(record)
 }
 
-pub(super) fn id_value(id: &EntityId) -> Value {
-    Value::Binary(id.as_bytes().to_vec())
-}
-
 pub(super) fn ids_value(ids: &[EntityId]) -> Value {
     Value::Array(ids.iter().map(id_value).collect())
 }
@@ -620,12 +618,6 @@ pub(super) fn decode_evidence(value: &Value) -> Result<IdentityOpEvidence> {
     let refs = decode_ids_field(map, EVIDENCE_KEY_REFS, EVIDENCE_CONTEXT)?;
     let rationale = decode_str_field(map, EVIDENCE_KEY_RATIONALE, EVIDENCE_CONTEXT)?.to_owned();
     Ok(IdentityOpEvidence { refs, rationale })
-}
-
-pub(super) fn map_field<'a>(map: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
-    map.iter()
-        .find(|(entry_key, _)| entry_key.as_str() == Some(key))
-        .map(|(_, entry_value)| entry_value)
 }
 
 pub(super) fn decode_str_field<'a>(

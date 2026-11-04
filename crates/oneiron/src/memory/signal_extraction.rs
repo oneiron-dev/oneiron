@@ -6,9 +6,8 @@ use crate::dreamer_consolidation::{
     decode_partition_payload, decode_verified_citations, enqueue_partition_plans_in_txn,
     read_partition_turns_in_txn, read_watermark_in_txn,
 };
-use crate::dreamer_runner::{
-    DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
-};
+use crate::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerAttemptOutcome};
+use crate::store::consolidation_scope::DreamerConsolidationScope;
 use crate::{EdgeActorClass, EntityId, Error};
 use serde::{Deserialize, Serialize};
 

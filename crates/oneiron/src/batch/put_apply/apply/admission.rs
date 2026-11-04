@@ -45,12 +45,12 @@ pub(super) struct Owners {
 /// phases. Body buffers the arms produce travel in `DispatchCarry` instead.
 pub(super) struct Dispatch {
     pub(super) is_lexical_query_hint_claim: bool,
-    pub(super) new_skill_record: Option<crate::skill::SkillRecord>,
+    pub(super) new_skill_record: Option<crate::write_envelope::skill_record::SkillRecord>,
     pub(super) new_agent_definition: Option<crate::agent_def::AgentDefinition>,
     pub(super) new_workflow: Option<crate::agent_def::workflow::WorkflowDefinition>,
     pub(super) decoded_claim_body: Option<ClaimBody>,
-    pub(super) authority_entry_hash_pin: Option<crate::authority::AuthorityEntryHash>,
-    pub(super) authority_entry_observation: Option<crate::authority::AuthorityLogEntry>,
+    pub(super) authority_entry_hash_pin: Option<oneiron_contracts::authority::AuthorityEntryHash>,
+    pub(super) authority_entry_observation: Option<oneiron_authority::authority::AuthorityLogEntry>,
     pub(super) authority_dominates_key_squatter: bool,
 }
 
@@ -205,7 +205,7 @@ pub(super) fn admit_put<'a>(
     let new_agent_definition = None;
     let new_workflow = None;
     let decoded_claim_body = None;
-    let authority_entry_hash_pin: Option<crate::authority::AuthorityEntryHash> = None;
+    let authority_entry_hash_pin: Option<oneiron_contracts::authority::AuthorityEntryHash> = None;
     let authority_entry_observation = None;
     // ONE-1604-D1 dominance VERDICT, recorded by the AUTHORITY_LOG arm below
     // and acted on only at the pre-write site: see the eviction comment there

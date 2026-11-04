@@ -5,9 +5,10 @@ use rmpv::Value;
 use super::binding_error;
 use crate::EntityId;
 use crate::batch::BatchOp;
-use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSuccession};
 use crate::error::Result;
 use crate::store::Store;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSuccession};
+use oneiron_contracts::claim::ClaimLifecycleStatus;
 
 /// Rebuild the permitted body delta instead of trusting caller-supplied axes.
 pub(super) fn demotion_body(
@@ -18,8 +19,8 @@ pub(super) fn demotion_body(
     next: &ClaimBody,
     tail: &[BatchOp],
 ) -> Result<ClaimBody> {
-    use crate::claim::{ClaimDemotionRung, ClaimSubject, claim_demotion_rung};
     use crate::edge::{EdgeKind, validate_edge_weight};
+    use crate::write_envelope::claim_body::{ClaimDemotionRung, ClaimSubject, claim_demotion_rung};
 
     if prior.lifecycle != ClaimLifecycleStatus::Active {
         return Err(binding_error());
@@ -79,7 +80,7 @@ pub(super) fn demotion_body(
 /// `weakened`; a fork moves the facet stamp. Neither rewrites the predecessor
 /// (ARCH-0003 change policy; ARCH-0055 r9, "fork, never restamp").
 pub(super) fn successor_body(prior: &ClaimBody, succession: ClaimSuccession) -> Result<ClaimBody> {
-    use crate::claim::{ClaimDemotionRung, claim_demotion_rung};
+    use crate::write_envelope::claim_body::{ClaimDemotionRung, claim_demotion_rung};
 
     if prior.lifecycle != ClaimLifecycleStatus::Active {
         return Err(binding_error());
@@ -87,7 +88,7 @@ pub(super) fn successor_body(prior: &ClaimBody, succession: ClaimSuccession) -> 
     let mut next = prior.clone();
     // A successor is born at the ClaimOf weight its edge carries over, never
     // at an initial weight its predecessor was born with.
-    next.scope = crate::claim::without_initial_weight(next.scope.take());
+    next.scope = crate::write_envelope::claim_body::without_initial_weight(next.scope.take());
     match succession {
         ClaimSuccession::Weakening { confidence } => {
             if !matches!(
@@ -114,7 +115,7 @@ pub(super) fn successor_body(prior: &ClaimBody, succession: ClaimSuccession) -> 
 }
 
 fn stamp_rung(body: &mut ClaimBody, rung: &'static str) -> Result<()> {
-    use crate::claim::CLAIM_SCOPE_DEMOTION_RUNG_KEY;
+    use crate::write_envelope::claim_body::CLAIM_SCOPE_DEMOTION_RUNG_KEY;
 
     let mut scope = match body.scope.take() {
         None => Vec::new(),

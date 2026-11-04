@@ -7,7 +7,8 @@ use crate::dreamer_runner::maintenance::agent_health::AgentHealthCard;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
 use crate::{EdgeKind, EntityId, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 

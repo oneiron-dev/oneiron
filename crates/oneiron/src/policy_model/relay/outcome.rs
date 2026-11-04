@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::llm::{BudgetLease, LlmBackend};
+use oneiron_model::llm::{BudgetLease, LlmBackend};
 
 use super::super::binding::{PolicyContentBinding, relay_verify_content_hash};
 use super::super::pattern::{PatternEvaluation, PolicyPatternRole};

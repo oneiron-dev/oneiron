@@ -12,11 +12,16 @@
 //! of its binding, the owner's answer, the settlement and the run's
 //! consumption, withheld by name alone when it does not read.
 
-use crate::code_run::{
-    CodeConsentWaitState, CodeConsentWaitView, ProgramResumeCall, ProgramResumeHead, WaitKey,
-    WaitReply, program_resume_calls_in_txn, program_resume_head_in_txn, wait_reply_in_txn,
-};
+use crate::code_run::CodeConsentWaitView;
+use crate::code_run::ProgramResumeCall;
+use crate::code_run::ProgramResumeHead;
+use crate::code_run::WaitKey;
+use crate::code_run::WaitReply;
+use crate::code_run::program_resume_calls_in_txn;
+use crate::code_run::program_resume_head_in_txn;
+use crate::code_run::wait_reply_in_txn;
 use crate::consent::CodeWaitReceiptLinks;
+use crate::consent::code_wait_state::CodeConsentWaitState;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};

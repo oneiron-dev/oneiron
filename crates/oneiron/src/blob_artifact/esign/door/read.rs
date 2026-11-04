@@ -11,7 +11,8 @@ use super::{
     EsignGetRequest, EsignSealAttemptView, EsignSealGetRequest, EsignSealView, EsignSealedItemView,
     EsignSealedView, document_id,
 };
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::Memory;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 impl Memory<'_> {
     /// `vault.esign.get`: the document's folded state and its trail, with

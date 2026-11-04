@@ -5,7 +5,7 @@
 
 use crate::EntityId;
 use crate::error::Result;
-use crate::llm::decision::DecisionBand;
+use crate::model_decision::DecisionBand;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AskBandLabel {

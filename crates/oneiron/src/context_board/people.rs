@@ -602,19 +602,21 @@ fn person_row_without_definition(
 fn person_is_model(vault: &Vault, at: u64, person: EntityId) -> bool {
     matches!(
         vault.person_substrate(&person, at),
-        Ok(Some(crate::subject_model::PersonSubstrate::Model))
+        Ok(Some(
+            crate::write_envelope::subject_record::PersonSubstrate::Model
+        ))
     )
 }
 
 fn person_name(body: &[u8]) -> Option<String> {
-    let fields = crate::companion::persona_body_fields(body).ok()?;
+    let fields = crate::write_envelope::person_identity::body_fields(body).ok()?;
     let top = fields
         .iter()
         .find(|(key, _)| key.as_str() == Some("display_name"))
         .and_then(|(_, value)| value.as_str())
         .map(str::to_owned);
     top.or_else(|| {
-        crate::companion::validated_persona_baseline(body)
+        crate::serialize::person_identity::validated_persona_baseline(body)
             .ok()?
             .get("display_name")?
             .as_str()

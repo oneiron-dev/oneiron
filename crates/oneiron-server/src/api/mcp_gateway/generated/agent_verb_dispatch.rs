@@ -646,6 +646,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.legal_holds.list" => Ok(Value::Object(serde_json::Map::new())),
         "vault.legal_holds.log" => Ok(Value::Object(serde_json::Map::new())),
         "vault.legal_holds.lift_and_erase" => a.spec.clone().ok_or_else(invalid),
+        "vault.legal_holds.withdraw_erase" => a.spec.clone().ok_or_else(invalid),
         "vault.courtesy_delete.send" => a.spec.clone().ok_or_else(invalid),
         "vault.courtesy_delete.sent" => Ok(Value::Object(serde_json::Map::new())),
         "vault.courtesy_delete.incoming" => Ok(Value::Object(serde_json::Map::new())),
@@ -3041,6 +3042,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.legal_holds.list" => {}
         "vault.legal_holds.log" => {}
         "vault.legal_holds.lift_and_erase" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.legal_holds.withdraw_erase" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.courtesy_delete.send" => {
@@ -5990,9 +5994,12 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_inbox_concern_move(&memory, input)
                 .map_err(mcp_facade_error)?;
-            server
-                .ai
-                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            if matches!(&output, oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome::Applied { receipt, .. } if matches!(receipt.link, oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveLink::Note { .. }))
+            {
+                server
+                    .ai
+                    .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            }
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -14040,6 +14047,26 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_legal_holds_lift_and_erase(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.legal_holds.withdraw_erase" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.legal_holds.withdraw_erase", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LegalHoldWithdrawEraseRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_legal_holds_withdraw_erase(
                     server, auth, input,
                 ),
             )
@@ -22758,8 +22785,17 @@ async fn execute_agent_verb_row_on(
         "vault.esign.signing.act" => {
             let input: oneiron::blob_artifact::esign::EsignSigningRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::vault_esign_signing_act(&memory, input)
-                .map_err(mcp_facade_error)?;
+            let (output, listed) = Box::pin(mcp_off_runtime_row(
+                server,
+                tool,
+                actor,
+                surface,
+                move |memory| oneiron::task_verb::sdk::vault_esign_signing_act(memory, input),
+            ))
+            .await?;
+            // Derived from the rows its reads listed, on a refusal too.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

@@ -1,6 +1,6 @@
 //! Claim-body and immutable-ledger admission before any put side effect.
-use crate::claim::ClaimBody;
 use crate::store::Store;
+use crate::write_envelope::claim_body::ClaimBody;
 use crate::{EntityId, Result, TimeRange, WriteEnvelope};
 
 pub(super) struct ClaimPutAdmission<'a> {
@@ -58,7 +58,7 @@ pub(super) fn admit_claim_put(
         // The typed citations the evidence carries are read once here, in
         // their recognized slots: a malformed one is a malformed body.
         body.evidence_refs()?;
-        crate::comm::guard_send_override_put(
+        crate::write_envelope::communication::guard_send_override_put(
             body,
             input.allow_reserved_predicate,
             input.replicated,

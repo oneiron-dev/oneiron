@@ -61,7 +61,8 @@ mod sealed_swap;
 pub(crate) use self::creation::discard_creation_record;
 use self::creation::{begin_creation, finish_creation};
 pub use self::creation::{refuse_unfinished_sealed_creation, remove_unfinished_sealed_creation};
-use self::mirror_rewrite::write_mirror_if_changed;
+pub(crate) use self::mirror_rewrite::CapturedMirror;
+use self::mirror_rewrite::{captured_identity_current, write_mirror_if_changed};
 pub(crate) use self::read_only::{page_seal_open_error, read_sealed, seal_read_only};
 pub use self::sealed_swap::SealedSwap;
 
@@ -178,6 +179,17 @@ impl VaultPageSeal {
     #[must_use]
     pub fn vault_id(&self) -> [u8; 32] {
         self.vault_id
+    }
+
+    /// The incarnation this seal opened, as the mirror names it (FIX 2706):
+    /// a public fact beside the vault id, since the mirror carries it in
+    /// plain and the page key still takes the data key. It names WHICH of a
+    /// mirror's candidates this seal is, so a reader holding two
+    /// environments of one vault can tell the live one from its replacement
+    /// without opening either.
+    #[must_use]
+    pub fn incarnation(&self) -> [u8; 32] {
+        self.incarnation
     }
 
     /// The page key, for the environment builders.
@@ -506,7 +518,42 @@ pub fn page_seal_vault_id(vault_path: &Path) -> Result<[u8; 32]> {
     Ok(read_mirror(vault_path)?.vault_id)
 }
 
+/// The incarnations the mirror of the sealed vault at `vault_path` names,
+/// in the order it names them: public facts, read with no secret (FIX
+/// 2706). One for a settled vault; while a restore publishes a vault in
+/// another's place, the live one's and its replacement's, each mirror
+/// naming its own first. With [`VaultPageSeal::incarnation`] it tells two
+/// environments of one vault apart (which one a mirror's owner is, which
+/// the replacement) with no open and no write.
+pub fn page_seal_incarnations(vault_path: &Path) -> Result<Vec<[u8; 32]>> {
+    Ok(read_mirror(vault_path)?.incarnations)
+}
+
+/// The vault id and carried wraps the mirror of the sealed vault at
+/// `vault_path` names, for a pre-open kept-piece count
+/// ([`sealed_keeps_kit_piece`](super::sealed_keeps_kit_piece)): the carried
+/// value stays crate-private, so counting is the mirror's only other reader.
+pub(crate) fn read_mirror_carried(vault_path: &Path) -> Result<([u8; 32], CarriedVaultKey)> {
+    let mirror = read_mirror(vault_path)?;
+    Ok((mirror.vault_id, mirror.carried))
+}
+
 fn read_mirror(vault_path: &Path) -> Result<Mirror> {
+    parse_mirror(&read_mirror_bytes(vault_path)?)
+}
+
+/// [`read_mirror`] with the missing-file refusal the ready check reports: a
+/// mirror that was there at the caller's last look and is gone now.
+fn read_own_mirror(vault_path: &Path) -> Result<Mirror> {
+    match read_mirror(vault_path) {
+        Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(refused("the page-seal mirror is missing"))
+        }
+        read => read,
+    }
+}
+
+fn read_mirror_bytes(vault_path: &Path) -> Result<Vec<u8>> {
     let path = page_seal_custody_path(vault_path)?;
     let mut file = open_no_follow(&path, false)?;
     if !file.metadata()?.is_file() {
@@ -515,8 +562,12 @@ fn read_mirror(vault_path: &Path) -> Result<Mirror> {
     let mut raw = Vec::new();
     // FIX 2348: the mirror has no size cap.
     file.read_to_end(&mut raw)?;
+    Ok(raw)
+}
+
+fn parse_mirror(raw: &[u8]) -> Result<Mirror> {
     let mirror: Mirror =
-        serde_json::from_slice(&raw).map_err(|_| refused("the page-seal mirror is malformed"))?;
+        serde_json::from_slice(raw).map_err(|_| refused("the page-seal mirror is malformed"))?;
     if mirror.version != MIRROR_VERSION {
         return Err(refused("the page-seal mirror is of another version"));
     }
@@ -660,7 +711,17 @@ impl Vault {
             }
             None => return Ok(()),
         };
-        write_mirror_if_changed(self.store.env.path(), &Mirror::of(seal, carried))?;
+        // FIX 12272: both outcomes leave a fused read behind for the ready
+        // check: a skip carries the compared bytes with their identity, a
+        // write the fresh encoding with the new file's identity.
+        if let Some(captured) =
+            write_mirror_if_changed(self.store.env.path(), &Mirror::of(seal, carried))?
+        {
+            *self
+                .page_seal_mirror_carry
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(captured);
+        }
         finish_creation(self.store.env.path(), seal)
     }
 
@@ -674,6 +735,25 @@ impl Vault {
             seal,
             _mirroring: mirroring,
         })
+    }
+
+    /// Whether the settle's fused mirror read still names the mirror file:
+    /// this process holds the writer lease (no cooperating writer interleaved
+    /// since the capture, and no post-`fork` child reads a parent's carry),
+    /// and the file's identity still matches the capture. Every mirror
+    /// content change is a rename or a removal, so a match means the bytes
+    /// are unchanged (FIX 12272 §2d).
+    fn mirror_carry_current(&self, captured: &CapturedMirror) -> bool {
+        if !self
+            .writer_lease()
+            .is_some_and(|lease| lease.held_by_current_process())
+        {
+            return false;
+        }
+        let Ok(path) = page_seal_custody_path(self.store.env.path()) else {
+            return false;
+        };
+        captured_identity_current(&path, captured)
     }
 
     /// Checks that this vault opens again, as a host asks before it calls a
@@ -691,11 +771,24 @@ impl Vault {
         if !delivered && self.resting_vault_key()?.is_none() {
             return Err(refused("the vault key has no wrap yet"));
         }
-        let mirror = match read_mirror(self.store.env.path()) {
-            Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(refused("the page-seal mirror is missing"));
+        // FIX 12272: the settle's fused read answers here once the currency
+        // rule below holds (lease held by this process, identity unchanged);
+        // otherwise the mirror is read as before, byte for byte.
+        let carried = self
+            .page_seal_mirror_carry
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let mirror = match carried {
+            Some(captured) if self.mirror_carry_current(&captured) => {
+                match parse_mirror(captured.raw()) {
+                    Ok(mirror) => mirror,
+                    // Captured bytes encoded or compared here, so this is
+                    // unreachable; a re-read still answers all the same.
+                    Err(_) => read_own_mirror(self.store.env.path())?,
+                }
             }
-            read => read?,
+            _ => read_own_mirror(self.store.env.path())?,
         };
         if mirror.vault_id != seal.vault_id || !mirror.incarnations.contains(&seal.incarnation) {
             return Err(refused("the page-seal mirror is another vault's"));

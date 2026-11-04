@@ -3,12 +3,12 @@
 use super::types::{PackByteMapSnapshot, invalid};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
 

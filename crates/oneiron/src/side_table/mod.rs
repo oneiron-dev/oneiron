@@ -23,7 +23,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
-use crate::secret_custody::CustodyWrite;
+use crate::secret_record::CustodyWrite;
 use crate::store::ManifestDbs;
 
 pub(crate) use codec::{

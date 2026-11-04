@@ -359,5 +359,6 @@ pub use privacy_kit::{
     RestoredKitSecret, issue_recovery_root_kit, issue_vault_key_kit, restore_kit,
 };
 pub(crate) use privacy_kit::{
-    KitPiecePair, KitPieceStore, join_kept_piece, vault_key_piece_install,
+    KitPiecePair, KitPieceStore, join_kept_piece, recovery_root_pending_piece_install,
+    recovery_root_piece_install, vault_key_piece_install,
 };

@@ -266,6 +266,16 @@ pub struct ServeArgs {
     #[arg(long = "seal-tsa-url")]
     pub seal_tsa_url: Option<String>,
 
+    /// Managed mode: comma-separated origins whose certificate revocation
+    /// lists the seal may fetch (`ONEIRON_SEAL_CRL_ORIGINS`).
+    #[arg(long = "seal-crl-origins", value_delimiter = ',', num_args = 1..)]
+    pub seal_crl_origins: Option<Vec<String>>,
+
+    /// Managed mode: comma-separated origins whose OCSP responders the seal
+    /// may query (`ONEIRON_SEAL_OCSP_ORIGINS`).
+    #[arg(long = "seal-ocsp-origins", value_delimiter = ',', num_args = 1..)]
+    pub seal_ocsp_origins: Option<Vec<String>>,
+
     /// Managed mode: the signing page seal evidence names
     /// (`ONEIRON_SEAL_URL`); the sign page at the vault's public origin
     /// without it.

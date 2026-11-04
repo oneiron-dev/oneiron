@@ -20,6 +20,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
+use tokio::sync::Notify;
 
 /// The hello capability that advertises the scheduling wire.
 pub const SCHEDULING_CAPABILITY: &str = "scheduling";
@@ -290,10 +291,13 @@ fn deadline_value(deadline: Option<Instant>, now: Instant) -> JsonValue {
 pub type WorkId = u64;
 
 /// Cooperative cancellation shared by one work tree. Device tickets snapshot
-/// its flag when dependency links change, so cancelling a child never cancels
-/// its parent or siblings through a retained Arc.
+/// its flag and notification when dependency links change, so cancelling a
+/// child never cancels its parent or siblings through a retained Arc.
 #[derive(Debug, Clone, Default)]
-pub struct WorkCancel(Arc<AtomicBool>);
+pub struct WorkCancel {
+    flag: Arc<AtomicBool>,
+    changed: Arc<Notify>,
+}
 
 impl WorkCancel {
     #[must_use]
@@ -302,18 +306,25 @@ impl WorkCancel {
     }
 
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
+        self.flag.store(true, Ordering::Release);
+        self.changed.notify_waiters();
     }
 
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.flag.load(Ordering::Acquire)
     }
 
     /// The flag a host places on a device work request.
     #[must_use]
     pub fn shared(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.0)
+        Arc::clone(&self.flag)
+    }
+
+    /// The wake placed beside that flag. It carries no truth of its own.
+    #[must_use]
+    pub fn shared_notify(&self) -> Arc<Notify> {
+        Arc::clone(&self.changed)
     }
 }
 

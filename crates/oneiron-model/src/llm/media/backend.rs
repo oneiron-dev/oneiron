@@ -6,7 +6,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use super::{
-    AiOperation, Arc, BrokerIsolation, BudgetLease, FatalLlmError, ImageBackend,
+    AiOperation, Arc, BrokerIsolation, BudgetLease, DispatchRelease, FatalLlmError, ImageBackend,
     InterruptedMediaCall, LlmError, LlmResult, MediaFuture, MediaJobState, MediaRequest,
     MediaResponse, ModelId,
 };
@@ -68,6 +68,17 @@ pub trait MediaBackend: Send + Sync {
                 .await
                 .map_err(InterruptedMediaCall::nothing)
         })
+    }
+
+    /// [`Self::run_progress`] with a caller's final release check. Backends
+    /// without transport retries keep the old path.
+    fn run_progress_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+        _release: Option<DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a> {
+        self.run_progress(request, lease)
     }
 
     /// Starts one long call as a provider job; returns the provider's job id.

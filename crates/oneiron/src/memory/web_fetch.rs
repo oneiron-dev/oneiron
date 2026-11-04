@@ -1,23 +1,23 @@
 //! Actor-bound web acquisition and import. Network work never holds a writer.
-use crate::ingest::{
-    ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
-    admit_imported_evidence_in_content, docs_semantic_segments,
+use crate::memory::web_acquisition::{
+    CrawlResult, FetchResult, WebAcquisition, WebCrawlRequest, WebFetchError, WebFetchRequest,
 };
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM};
-use crate::web_fetch::{
-    CrawlResult, FetchResult, WebCrawlRequest, WebFetchError, WebFetchRequest, WebFetcher,
-};
 use crate::{EntityId, TimeRange, WriteActor};
+use crate::{
+    ingest::ImportedEvidenceAdmission, ingest::ImportedEvidenceEntityResolution,
+    ingest::admit_imported_evidence_in_content, store::document_segments::docs_semantic_segments,
+};
 
 impl Memory<'_> {
     /// Fetches one page through the host's ladder, then imports the witnessed
     /// bytes through the same actor-bound candidate door as other imports.
     pub fn fetch_web_through(
         &self,
-        fetcher: &WebFetcher,
+        fetcher: &dyn WebAcquisition,
         input: WebFetchRequest,
     ) -> MemoryResult<FetchResult> {
         let page = fetcher
@@ -31,7 +31,7 @@ impl Memory<'_> {
     /// crawl pages remain the crawler's own typed failures and completion.
     pub fn crawl_web_through(
         &self,
-        fetcher: &WebFetcher,
+        fetcher: &dyn WebAcquisition,
         input: WebCrawlRequest,
     ) -> MemoryResult<CrawlResult> {
         let request = input

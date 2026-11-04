@@ -25,9 +25,9 @@ impl Memory<'_> {
     /// `self.campaign.create` — mints a CAMPAIGN owned by the bound actor.
     pub fn campaign_create(
         &self,
-        request: &crate::campaign::surface::CreateCampaignRequest,
+        request: &crate::memory::campaign_records::CreateCampaignRequest,
         now: u64,
-    ) -> MemoryResult<crate::campaign::surface::CampaignRecord> {
+    ) -> MemoryResult<crate::memory::campaign_records::CampaignRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::campaign::surface::create_campaign(
             self.vault, self.actor, request, now,
@@ -38,7 +38,7 @@ impl Memory<'_> {
     pub fn campaign_read(
         &self,
         campaign_ref: EntityId,
-    ) -> MemoryResult<Option<crate::campaign::surface::CampaignRecord>> {
+    ) -> MemoryResult<Option<crate::memory::campaign_records::CampaignRecord>> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::campaign::surface::read_campaign(
             self.vault,
@@ -51,9 +51,9 @@ impl Memory<'_> {
     pub fn campaign_update(
         &self,
         campaign_ref: EntityId,
-        request: &crate::campaign::surface::UpdateCampaignRequest,
+        request: &crate::memory::campaign_records::UpdateCampaignRequest,
         now: u64,
-    ) -> MemoryResult<crate::campaign::surface::CampaignRecord> {
+    ) -> MemoryResult<crate::memory::campaign_records::CampaignRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::campaign::surface::update_campaign(
             self.vault,
@@ -71,7 +71,7 @@ impl Memory<'_> {
         campaign_ref: EntityId,
         expected_definition_version: u64,
         now: u64,
-    ) -> MemoryResult<crate::campaign::surface::CampaignRecord> {
+    ) -> MemoryResult<crate::memory::campaign_records::CampaignRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::campaign::surface::archive_campaign(
             self.vault,
@@ -91,13 +91,13 @@ impl Memory<'_> {
     /// cohort nor its existence.
     pub fn campaign_members(
         &self,
-        request: &crate::campaign::surface::MembershipReadRequest,
-    ) -> MemoryResult<crate::campaign::surface::MembershipPage> {
+        request: &crate::memory::campaign_records::MembershipReadRequest,
+    ) -> MemoryResult<crate::memory::campaign_records::MembershipPage> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         if crate::campaign::surface::read_campaign(self.vault, self.actor, request.owner_ref)?
             .is_none()
         {
-            return Ok(crate::campaign::surface::MembershipPage {
+            return Ok(crate::memory::campaign_records::MembershipPage {
                 rows: Vec::new(),
                 next_cursor: None,
             });
@@ -111,9 +111,9 @@ impl Memory<'_> {
     /// `self.saved_query.create` — CA-02's lifecycle door, owner-bound here.
     pub fn saved_query_create(
         &self,
-        request: &crate::saved_query::CreateSavedQueryRequest,
+        request: &crate::memory::query_records::CreateSavedQueryRequest,
         now: u64,
-    ) -> MemoryResult<crate::saved_query::SavedQueryRecord> {
+    ) -> MemoryResult<crate::memory::query_records::SavedQueryRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::saved_query::create_saved_query(
             self.vault,
@@ -128,7 +128,7 @@ impl Memory<'_> {
     pub fn saved_query_read(
         &self,
         query_ref: EntityId,
-    ) -> MemoryResult<Option<crate::saved_query::SavedQueryRecord>> {
+    ) -> MemoryResult<Option<crate::memory::query_records::SavedQueryRecord>> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::saved_query::read_saved_query(
             self.vault, self.actor, query_ref,
@@ -140,9 +140,9 @@ impl Memory<'_> {
     pub fn saved_query_update(
         &self,
         query_ref: EntityId,
-        request: &crate::saved_query::UpdateSavedQueryRequest,
+        request: &crate::memory::query_records::UpdateSavedQueryRequest,
         now: u64,
-    ) -> MemoryResult<crate::saved_query::SavedQueryRecord> {
+    ) -> MemoryResult<crate::memory::query_records::SavedQueryRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::saved_query::update_saved_query(
             self.vault, self.actor, query_ref, request, now,
@@ -155,7 +155,7 @@ impl Memory<'_> {
         query_ref: EntityId,
         expected_definition_version: u64,
         now: u64,
-    ) -> MemoryResult<crate::saved_query::SavedQueryRecord> {
+    ) -> MemoryResult<crate::memory::query_records::SavedQueryRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::saved_query::archive_saved_query(
             self.vault,
@@ -174,13 +174,13 @@ impl Memory<'_> {
     /// method's to make.
     pub fn saved_query_members(
         &self,
-        request: &crate::campaign::surface::MembershipReadRequest,
-    ) -> MemoryResult<crate::campaign::surface::MembershipPage> {
+        request: &crate::memory::campaign_records::MembershipReadRequest,
+    ) -> MemoryResult<crate::memory::campaign_records::MembershipPage> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         if crate::saved_query::read_saved_query(self.vault, self.actor, request.owner_ref)?
             .is_none()
         {
-            return Ok(crate::campaign::surface::MembershipPage {
+            return Ok(crate::memory::campaign_records::MembershipPage {
                 rows: Vec::new(),
                 next_cursor: None,
             });
@@ -202,67 +202,67 @@ impl Memory<'_> {
     /// `self.saved_query.create` — a SAVED_QUERY owned by the bound actor.
     pub fn create_saved_query(
         &self,
-        request: &crate::campaign::surface::SavedQueryCreateRequest,
-    ) -> MemoryResult<crate::campaign::surface::SavedQueryRecordView> {
+        request: &crate::memory::query_records::surface::SavedQueryCreateRequest,
+    ) -> MemoryResult<crate::memory::query_records::surface::SavedQueryRecordView> {
         let record = self.saved_query_create(
             &request.engine_request(),
             self.vault.store.clock.now_recorded_at(),
         )?;
-        Ok(crate::campaign::surface::saved_query_record_view(&record))
+        Ok(crate::memory::query_records::surface::saved_query_record_view(&record))
     }
 
     /// `self.saved_query.read` — a SAVED_QUERY the bound actor owns; any
     /// other reads as not found.
     pub fn read_saved_query(
         &self,
-        request: &crate::campaign::surface::SavedQueryReadRequest,
-    ) -> MemoryResult<crate::campaign::surface::SavedQueryReadResult> {
+        request: &crate::memory::query_records::surface::SavedQueryReadRequest,
+    ) -> MemoryResult<crate::memory::query_records::surface::SavedQueryReadResult> {
         let record = self.saved_query_read(request.query_ref)?;
-        Ok(crate::campaign::surface::SavedQueryReadResult {
-            found: record.is_some(),
-            record: record
-                .as_ref()
-                .map(crate::campaign::surface::saved_query_record_view),
-        })
+        Ok(
+            crate::memory::query_records::surface::SavedQueryReadResult {
+                found: record.is_some(),
+                record: record
+                    .as_ref()
+                    .map(crate::memory::query_records::surface::saved_query_record_view),
+            },
+        )
     }
 
     /// `self.saved_query.update` — replaces a query's definition whole
     /// under its version CAS.
     pub fn update_saved_query(
         &self,
-        request: &crate::campaign::surface::SavedQueryUpdateRequest,
-    ) -> MemoryResult<crate::campaign::surface::SavedQueryRecordView> {
+        request: &crate::memory::query_records::surface::SavedQueryUpdateRequest,
+    ) -> MemoryResult<crate::memory::query_records::surface::SavedQueryRecordView> {
         let record = self.saved_query_update(
             request.query_ref,
             &request.engine_request(),
             self.vault.store.clock.now_recorded_at(),
         )?;
-        Ok(crate::campaign::surface::saved_query_record_view(&record))
+        Ok(crate::memory::query_records::surface::saved_query_record_view(&record))
     }
 
     /// `self.saved_query.archive` — the lifecycle transition, never a delete.
     pub fn archive_saved_query(
         &self,
-        request: &crate::campaign::surface::SavedQueryArchiveRequest,
-    ) -> MemoryResult<crate::campaign::surface::SavedQueryRecordView> {
+        request: &crate::memory::query_records::surface::SavedQueryArchiveRequest,
+    ) -> MemoryResult<crate::memory::query_records::surface::SavedQueryRecordView> {
         let record = self.saved_query_archive(
             request.query_ref,
             request.expected_definition_version,
             self.vault.store.clock.now_recorded_at(),
         )?;
-        Ok(crate::campaign::surface::saved_query_record_view(&record))
+        Ok(crate::memory::query_records::surface::saved_query_record_view(&record))
     }
 
     /// `self.saved_query.members` — one page of the membership this query
     /// derived, causes preserved.
     pub fn saved_query_members_page(
         &self,
-        request: &crate::campaign::surface::SavedQueryMembersRequest,
-    ) -> MemoryResult<crate::campaign::surface::SavedQueryMembershipPageView> {
+        request: &crate::memory::query_records::surface::SavedQueryMembersRequest,
+    ) -> MemoryResult<crate::memory::query_records::surface::SavedQueryMembershipPageView> {
         let page = self.saved_query_members(&request.read_request())?;
-        Ok(crate::campaign::surface::saved_query_membership_page_view(
-            &page,
-        ))
+        Ok(crate::memory::query_records::surface::saved_query_membership_page_view(&page))
     }
 
     // ── campaign program `vault.campaign.program.*` verbs (decide-host 1193) ─
@@ -281,14 +281,14 @@ impl Memory<'_> {
     /// `create_campaign_program`, so the filer cannot run first (FIX 11513).
     pub fn campaign_program_create(
         &self,
-        request: &crate::campaign::surface::CreateCampaignProgramRequest,
-    ) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
+        request: &crate::memory::campaign_records::program::CreateCampaignProgramRequest,
+    ) -> MemoryResult<crate::memory::campaign_records::program::CampaignProgramRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         crate::gate::record_references::admit_row_references(
             self,
-            crate::campaign::surface::VAULT_CAMPAIGN_PROGRAM_CREATE,
+            crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_CREATE,
             request,
-            crate::campaign::surface::CAMPAIGN_PROGRAM_STEP_REFS,
+            crate::memory::campaign_records::program::CAMPAIGN_PROGRAM_STEP_REFS,
         )?;
         let draft = request.draft()?;
         let program = crate::campaign::enrollment::create_campaign_program(
@@ -317,15 +317,15 @@ impl Memory<'_> {
                 )?;
             }
         }
-        Ok(crate::campaign::surface::campaign_program_record(&program))
+        Ok(crate::memory::campaign_records::program::campaign_program_record(&program))
     }
 
     /// `vault.campaign.program.read` — a program under a campaign the bound
     /// actor owns; any other reads as not found.
     pub fn campaign_program_read(
         &self,
-        request: &crate::campaign::surface::CampaignProgramReadRequest,
-    ) -> MemoryResult<crate::campaign::surface::CampaignProgramReadResult> {
+        request: &crate::memory::campaign_records::program::CampaignProgramReadRequest,
+    ) -> MemoryResult<crate::memory::campaign_records::program::CampaignProgramReadResult> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         let program = crate::campaign::enrollment::read_campaign_program(
             self.vault,
@@ -333,12 +333,14 @@ impl Memory<'_> {
             request.campaign_ref,
             request.program_ref,
         )?;
-        Ok(crate::campaign::surface::CampaignProgramReadResult {
-            found: program.is_some(),
-            record: program
-                .as_ref()
-                .map(crate::campaign::surface::campaign_program_record),
-        })
+        Ok(
+            crate::memory::campaign_records::program::CampaignProgramReadResult {
+                found: program.is_some(),
+                record: program
+                    .as_ref()
+                    .map(crate::memory::campaign_records::program::campaign_program_record),
+            },
+        )
     }
 
     /// `vault.campaign.program.update` — replaces a program's definition,
@@ -348,14 +350,14 @@ impl Memory<'_> {
     /// (FIX 11513).
     pub fn campaign_program_update(
         &self,
-        request: &crate::campaign::surface::UpdateCampaignProgramRequest,
-    ) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
+        request: &crate::memory::campaign_records::program::UpdateCampaignProgramRequest,
+    ) -> MemoryResult<crate::memory::campaign_records::program::CampaignProgramRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         crate::gate::record_references::admit_row_references(
             self,
-            crate::campaign::surface::VAULT_CAMPAIGN_PROGRAM_UPDATE,
+            crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_UPDATE,
             request,
-            crate::campaign::surface::CAMPAIGN_PROGRAM_STEP_REFS,
+            crate::memory::campaign_records::program::CAMPAIGN_PROGRAM_STEP_REFS,
         )?;
         let draft = request.draft()?;
         let filer = self.write_actor();
@@ -381,15 +383,15 @@ impl Memory<'_> {
             &draft,
             self.vault.store.clock.now_recorded_at(),
         )?;
-        Ok(crate::campaign::surface::campaign_program_record(&program))
+        Ok(crate::memory::campaign_records::program::campaign_program_record(&program))
     }
 
     /// `vault.campaign.program.archive` — the lifecycle transition; there is
     /// no program delete verb, by design.
     pub fn campaign_program_archive(
         &self,
-        request: &crate::campaign::surface::ArchiveCampaignProgramRequest,
-    ) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
+        request: &crate::memory::campaign_records::program::ArchiveCampaignProgramRequest,
+    ) -> MemoryResult<crate::memory::campaign_records::program::CampaignProgramRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         let program = crate::campaign::enrollment::archive_campaign_program(
             self.vault,
@@ -399,6 +401,6 @@ impl Memory<'_> {
             request.expected_definition_version,
             self.vault.store.clock.now_recorded_at(),
         )?;
-        Ok(crate::campaign::surface::campaign_program_record(&program))
+        Ok(crate::memory::campaign_records::program::campaign_program_record(&program))
     }
 }

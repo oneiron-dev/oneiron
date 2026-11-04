@@ -13,7 +13,7 @@ use super::text_log::{TextLog, TextSpans};
 use super::{FileKey, Masker, REASON_KNOWN_VALUE, escaped_span, file_spans, merged, occurrences};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::secret_custody::MemberStep;
+use crate::file_secret_marks::MemberStep;
 
 impl Masker {
     /// The keys the door's text and field rules place in `leaf` (a file's

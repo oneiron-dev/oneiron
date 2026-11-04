@@ -36,6 +36,11 @@ const MAX_STATE_BYTES: usize = 65_536;
 const MAX_QUESTION_BYTES: usize = 4_096;
 /// A choice question's most options, as the decision contract bounds them.
 const MAX_OPTIONS: usize = 64;
+/// The most one probe read waits, including its worker-acquisition wait:
+/// the owner probe brings no deadline, so without this a worker stuck in
+/// qualification or crash backoff holds the read (with its turn and its
+/// permit) past every provider HTTP timeout (REVIEW-4458 P1).
+const PROBE_READ_CUTOFF: std::time::Duration = std::time::Duration::from_secs(300);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,7 +106,7 @@ impl ReadRequest {
         LabelReadRequest {
             state: &self.state,
             questions,
-            work_until: None,
+            work_until: Some(std::time::Instant::now() + PROBE_READ_CUTOFF),
         }
     }
 }

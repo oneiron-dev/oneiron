@@ -52,7 +52,10 @@ impl OutboundDispatchPipeline {
         let actor_type = vault
             .get_entity_type_in_txn(&wtxn, &request.actor.entity_ref())?
             .ok_or(Error::EntityNotFound)?;
-        crate::provenance::validate_actor_class(actor_type, request.actor.actor_class())?;
+        crate::write_envelope::provenance::actor_substrate::validate_actor_class(
+            actor_type,
+            request.actor.actor_class(),
+        )?;
         let effect = publish_effect(request);
         let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
         let (gate_id, decision, _) =
@@ -111,7 +114,7 @@ impl OutboundDispatchPipeline {
 pub(super) fn artifact_publish_approval_digest(
     vault: &Vault,
     request: &ArtifactPublishVerbRequest,
-) -> Result<crate::consent::EffectDigest> {
+) -> Result<crate::write_envelope::EffectDigest> {
     validate_artifact_id(&request.artifact)?;
     vault
         .resolve_export_owner(&request.artifact, request.export)?
@@ -119,7 +122,10 @@ pub(super) fn artifact_publish_approval_digest(
     let actor_type = vault
         .get_entity_type(&request.actor.entity_ref())?
         .ok_or(Error::EntityNotFound)?;
-    crate::provenance::validate_actor_class(actor_type, request.actor.actor_class())?;
+    crate::write_envelope::provenance::actor_substrate::validate_actor_class(
+        actor_type,
+        request.actor.actor_class(),
+    )?;
     gate::external_effect_approval_digest(&publish_effect(request))
         .ok_or(Error::InvariantViolation("artifact publish approval bound"))
 }

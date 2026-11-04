@@ -215,7 +215,8 @@ pub(crate) fn summary_read_in_txn(
             .map(EntityId::to_hex)
             .collect(),
         anchors,
-        birth: doc.birth().clone(),
+        // The birth's stamp token reads as its actor (FIX 11964).
+        birth: doc.birth().resolved_in(&vault.store, txn)?,
     })
 }
 
@@ -227,7 +228,7 @@ pub(crate) fn open_summary_proposal(
     keep: Option<&str>,
     read_refs: &[String],
     authorization: &DocAuthorization<'_>,
-) -> crate::memory::MemoryResult<super::ProposalBundle> {
+) -> oneiron_contracts::memory::MemoryResult<super::ProposalBundle> {
     use super::forks::{ENTITY_DOC_FORK, ENTITY_DOC_PROPOSAL_BUNDLE, ENTITY_DOC_RECEIPT};
     use super::side_keys::HexPair;
     use crate::side_table::HexId;
@@ -237,9 +238,9 @@ pub(crate) fn open_summary_proposal(
     let sources = read_refs
         .iter()
         .map(|reference| crate::memory::resolve_entity_ref(vault, reference))
-        .collect::<crate::memory::MemoryResult<Vec<_>>>()?;
+        .collect::<oneiron_contracts::memory::MemoryResult<Vec<_>>>()?;
     if sources.contains(&request.entity) {
-        return Err(crate::memory::MemoryError::bad_request(
+        return Err(oneiron_contracts::memory::MemoryError::bad_request(
             "a SUMMARY cannot be its own generation source",
         ));
     }
@@ -257,8 +258,8 @@ pub(crate) fn open_summary_proposal(
             .iter()
             .any(Option::is_none)
         {
-            return Err(crate::memory::MemoryError::new(
-                crate::memory::MEMORY_CODE_NOT_FOUND,
+            return Err(oneiron_contracts::memory::MemoryError::new(
+                oneiron_contracts::memory::MEMORY_CODE_NOT_FOUND,
                 "SUMMARY generation input is absent or not readable",
                 &[],
             ));
@@ -308,7 +309,7 @@ pub(crate) fn open_summary_proposal(
         for source in &sources {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, &request.entity, source)?;
         }
-        Ok::<_, crate::memory::MemoryError>((bundle, landed))
+        Ok::<_, oneiron_contracts::memory::MemoryError>((bundle, landed))
     })?;
     registry.clear();
     drop(registry);

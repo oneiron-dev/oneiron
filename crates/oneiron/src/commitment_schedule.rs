@@ -51,11 +51,10 @@ use crate::calendar::CalendarError;
 use crate::calendar::tz::{WallTime, utc_to_wall, wall_to_utc};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::commitment::CommitmentStatus;
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::entity_id::derived_domains::{COMMITMENT_INSTANCE, COMMITMENT_PROJECTION_ACTOR};
+use crate::entity_id::derived_domains::COMMITMENT_INSTANCE;
 use crate::temporal::TimeRange;
-use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 
 /// Default projection lead: one day before the due instant.
 pub const DEFAULT_LEAD: u64 = 86_400;
@@ -344,16 +343,7 @@ impl CommitmentInstanceOutcome {
     }
 }
 
-/// The pinned System actor for engine projection writes.
-///
-/// Derived, not minted (`EntityId::derive` over a fixed domain): the
-/// projector's identity must survive a reopen and be the same on every device.
-pub fn commitment_projection_actor() -> crate::Result<WriteActor> {
-    Ok(WriteActor::new(
-        EntityId::derive(COMMITMENT_PROJECTION_ACTOR, &[])?,
-        EdgeActorClass::System,
-    ))
-}
+pub use crate::write_envelope::commitment_actor::commitment_projection_actor;
 
 /// The pinned envelope every projected instance is written under: System actor,
 /// `Generated` source, a fixed provenance string, and `Auto` approval.

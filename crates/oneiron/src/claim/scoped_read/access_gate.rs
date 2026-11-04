@@ -4,15 +4,16 @@ use super::agent_grants::{AskedFilter, HeldGrants};
 use super::{ScopedRead, ScopedReadActorKey};
 use crate::EntityId;
 use crate::access_grant::AccessContext;
+use crate::claim::ClaimRecordScope;
 use crate::claim::{ClaimBody, RelationshipScope, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::error::Result;
-use crate::federation::Scope;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
     ENTITY_TYPE_TURN,
 };
 use crate::store::Store;
+use oneiron_authority::federation::Scope;
 use std::cell::RefCell;
 
 fn private_scope(scope: Option<&rmpv::Value>) -> bool {

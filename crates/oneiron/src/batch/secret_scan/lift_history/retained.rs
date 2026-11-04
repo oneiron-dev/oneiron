@@ -24,11 +24,12 @@ use heed::{RoTxn, RwTxn};
 use super::{Done, LiftCause};
 use crate::Vault;
 use crate::batch::secret_scan::CarrierText;
-use crate::code_document::{CodeDocumentRows, code_document_texts_in_txn};
+use crate::code_document::code_document_texts_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, Result};
 use crate::origin::lfs::LfsOid;
 use crate::side_table::{self as t, SideTableDecl};
+use crate::store::code_document_values::CodeDocumentRows;
 use crate::typed_body::{TypedBodyRows, lift_typed_body_in_txn, typed_body_lift_hit_in_txn};
 
 /// One carrier with a door here, by the row key after its prefix.

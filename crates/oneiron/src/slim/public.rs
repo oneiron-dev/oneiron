@@ -212,7 +212,7 @@ pub enum SavedResumeStep {
     Model {
         attempt_id: String,
         step_hash: String,
-        checkpoint: crate::llm::model_step::ModelStepCheckpoint,
+        checkpoint: crate::model_step_record::ModelStepCheckpoint,
     },
     OutboundIntent {
         step: SlimResumeStep,

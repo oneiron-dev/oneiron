@@ -22,12 +22,12 @@
 use super::OUTPUTS;
 use crate::Vault;
 use crate::authority::AuthorityEntryHash;
-#[cfg(feature = "sync")]
 use crate::authority::{
-    AuthorityFold, AuthorityKey, AuthorityOp, OwnerWorkBody, SealedWorkOutput,
-    authority_entry_hash, decode_authority_log_entry_body, encode_authority_log_entry_body,
-    owner_act_signer_admits, stored_authority_row,
+    AuthorityFold, AuthorityKey, AuthorityOp, SealedWorkOutput, authority_entry_hash,
+    decode_authority_log_entry_body, owner_act_signer_admits,
 };
+#[cfg(feature = "sync")]
+use crate::authority::{OwnerWorkBody, encode_authority_log_entry_body, stored_authority_row};
 #[cfg(feature = "sync")]
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -241,7 +241,6 @@ fn names_copy(output: &SealedWorkOutput, sealed: &[u8]) -> bool {
 /// `request`, the witness must name the copy that result names. `None` for
 /// a witness that names no copy so, or one past
 /// [`MAX_EXPORT_OUTPUT_WITNESS_BYTES`].
-#[cfg(feature = "sync")]
 pub(crate) fn witnessed_output(
     fold: &AuthorityFold,
     request: &AuthorityEntryHash,

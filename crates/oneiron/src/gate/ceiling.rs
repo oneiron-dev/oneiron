@@ -3,10 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use crate::agent_def::AgentCeiling;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::agent_record::AgentCeiling;
 use crate::write_envelope::SourceLineage;
 
 use super::constants::MAX_DELEGATION_DEPTH;

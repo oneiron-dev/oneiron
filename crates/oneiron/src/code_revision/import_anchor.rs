@@ -281,3 +281,5 @@ fn verify_complete_tree(vault: &Vault, repo: &GitWireRepo, revision: &CodeRevisi
     }
     Ok(())
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

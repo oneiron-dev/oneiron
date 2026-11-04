@@ -120,7 +120,7 @@ pub use records::{
 pub use resources::{
     DocumentMemory, document_resources, document_resources_until, register_document_memory,
 };
-pub(crate) use resources::{document_error, document_refused, docx_error};
+pub(crate) use resources::{document_error, document_refused, docx_error, machine_memory_refused};
 use support::{
     apply_all, apply_xlsx, bounded_ops, check_made_by, claim_source, fork_view, loro_kind,
     open_fork, recalc_label, recalc_xlsx, source, three_way, timestamp, validate, version_key,

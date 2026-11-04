@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
-use crate::pipeline::ScoredEntity;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 #[cfg(test)]
 use super::DIVERSITY_SELECTION_WORK;

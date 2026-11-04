@@ -11,7 +11,6 @@ use crate::codebase::RepoRef;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
 use crate::ppr::{
     SeedWeighting, flush_deferred_ppr_cache_writes, ppr_query_in_txn_with_vad_deferred_cache,
 };
@@ -19,6 +18,7 @@ use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 use crate::temporal::TimeRange;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::actor_erase::keep_erased_actors;
 use super::codec::encode_code_symbol_entity_body;

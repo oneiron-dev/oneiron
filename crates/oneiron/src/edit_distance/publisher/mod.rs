@@ -56,8 +56,8 @@
 //! Outbound consent rails already ride the comm send path (`disclosure.rs`),
 //! so this module adds no second consent check.
 
-use crate::comm::CommError;
 use crate::error::Error;
+use crate::write_envelope::communication::CommError;
 
 mod delivery_outcome;
 mod dial;

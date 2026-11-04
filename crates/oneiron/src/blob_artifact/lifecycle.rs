@@ -53,7 +53,7 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<BlobArtifactLifecycleCleanup> {
-    crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
+    crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, id)?;
     crate::artifact_hosting::remove_blob_pointers_in_txn(store, wtxn, id)?;
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
     let hashes = artifact_hashes(store, wtxn, id)?;
@@ -129,10 +129,10 @@ pub(super) fn release_bytes_of_deleted_artifact(
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
     release_unheld_bytes(store, wtxn, content_hash, artifact, &mut cleanup)?;
     if cleanup.had_graph_mutation {
-        ppr::increment_graph_version(store, wtxn)?;
+        crate::store::graph_version::increment_graph_version(store, wtxn)?;
     }
     if cleanup.had_vector {
-        crate::hnsw::increment_vector_version(store, wtxn)?;
+        crate::store::vector_index::increment_vector_version(store, wtxn)?;
     }
     Ok(())
 }
@@ -214,7 +214,7 @@ pub(crate) fn release_response_version_in_txn(
         .get(store, wtxn, artifact)?
         .is_some_and(|head| head.version == version)
     {
-        crate::ingest::invalidate_blob_fingerprint(store, wtxn, artifact)?;
+        crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, artifact)?;
         let survivor = VERSIONS
             .iter_rev_from(store, wtxn, artifact.as_bytes())?
             .next()
@@ -245,10 +245,10 @@ pub(crate) fn release_response_version_in_txn(
         tear_in_txn(store, wtxn, artifact, &mut cleanup)?;
     }
     if cleanup.had_graph_mutation {
-        ppr::increment_graph_version(store, wtxn)?;
+        crate::store::graph_version::increment_graph_version(store, wtxn)?;
     }
     if cleanup.had_vector {
-        crate::hnsw::increment_vector_version(store, wtxn)?;
+        crate::store::vector_index::increment_vector_version(store, wtxn)?;
     }
     Ok(())
 }
@@ -330,7 +330,7 @@ fn torn_row_window(header: &EntityMetadataHeader, raw: &[u8]) -> String {
     if header.entity_type == ENTITY_TYPE_CLAIM
         && let Some(world) = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
-            .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+            .and_then(|body| crate::write_envelope::claim_body::decode_claim_body(body, true).ok())
             .and_then(|body| body.world)
     {
         window.push('@');

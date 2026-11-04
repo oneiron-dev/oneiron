@@ -16,11 +16,11 @@ use super::types::{
 /// of range is refused.
 pub(super) fn query_affect(
     request: &CoreQueryRequest,
-) -> VaultReadResult<Option<crate::affect::Vad>> {
+) -> VaultReadResult<Option<oneiron_contracts::affect::Vad>> {
     let Some(affect) = request.query_affect else {
         return Ok(None);
     };
-    let vad = crate::affect::Vad {
+    let vad = oneiron_contracts::affect::Vad {
         valence: affect.valence,
         arousal: affect.arousal,
         dominance: affect.dominance,

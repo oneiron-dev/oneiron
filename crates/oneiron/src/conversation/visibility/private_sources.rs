@@ -58,7 +58,7 @@ pub(crate) fn private_threads_readable_with_read_in(
     viewers: &[EntityId],
     current: bool,
 ) -> Result<bool> {
-    let Some(ThreadWalk { placed, reached }) = thread_walk_in(vault, dbs, txn, id, raw)? else {
+    let Some(ThreadWalk { placed, reached }) = thread_walk_kept(vault, dbs, txn, id, raw)? else {
         return Ok(false);
     };
     for (root, turn) in placed {
@@ -103,9 +103,65 @@ pub(crate) fn private_thread_word_turns_in(
 
 /// What one walk of a record's ancestry found: each private thread turn
 /// read for its words, by its root, and each root reached as a place alone.
+#[derive(Clone)]
 struct ThreadWalk {
     placed: BTreeSet<(EntityId, EntityId)>,
     reached: BTreeSet<EntityId>,
+}
+
+thread_local! {
+    /// The walks one recall on this thread has made ([`thread_walk_kept`]).
+    static WALK_MEMO: std::cell::RefCell<WalkMemo> = std::cell::RefCell::new(WalkMemo::default());
+}
+
+/// Walks kept for one recall's committed snapshot ([`crate::ports::recall_memo_key`]),
+/// per record and BLAKE3 of the revision walked. A walk is topology alone,
+/// read from that snapshot through a base view, never a clock; each viewer
+/// is still judged against it afresh.
+#[derive(Default)]
+struct WalkMemo {
+    at: Option<(u64, usize, usize)>,
+    walks: std::collections::HashMap<(EntityId, [u8; 32]), Option<ThreadWalk>>,
+}
+
+/// [`thread_walk_in`], read back when this recall walked the same revision
+/// of `id` in the same committed snapshot (a later stage judging the row
+/// again). An error is never kept.
+fn thread_walk_kept(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<Option<ThreadWalk>> {
+    let Some(key) = crate::ports::recall_memo_key(dbs, txn) else {
+        return thread_walk_in(vault, dbs, txn, id, raw);
+    };
+    let row = (id, *blake3::hash(raw).as_bytes());
+    let kept = WALK_MEMO.with(|memo| {
+        let memo = memo.borrow();
+        (memo.at == Some(key))
+            .then(|| memo.walks.get(&row).cloned())
+            .flatten()
+    });
+    if let Some(walk) = kept {
+        return Ok(walk);
+    }
+    let walk = thread_walk_in(vault, dbs, txn, id, raw)?;
+    // A walk that denies every viewer may come from sources that did not
+    // read: only a found walk is kept (L09 11-04 14:02).
+    if walk.is_none() {
+        return Ok(walk);
+    }
+    WALK_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.at != Some(key) {
+            memo.at = Some(key);
+            memo.walks.clear();
+        }
+        memo.walks.insert(row, walk.clone());
+    });
+    Ok(walk)
 }
 
 /// The walk [`private_threads_readable_with_read_in`] judges, through

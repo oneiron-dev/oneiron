@@ -5,9 +5,9 @@ use crate::claim::{claim_consolidatable, claim_correctable_generated, decode_cla
 use crate::dreamer_consolidation::routing::{CandidateKeys, PredicateKeyRules, candidate_keys};
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::{ConflictSet, PriorHead, PromotionCandidate};
-use crate::llm::{Scope, ScopeResource};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::{EntityId, Result};
+use oneiron_model::llm::{Scope, ScopeResource};
 use std::collections::BTreeSet;
 
 impl BranchResources<'_> {

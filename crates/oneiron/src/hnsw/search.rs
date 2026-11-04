@@ -9,8 +9,8 @@ use crate::config::VaultConfig;
 use crate::distance::PreparedCosine;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
 use crate::store::ManifestDbs;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::keys::{
     ERR_ENTRY_POINT_MISSING, ERR_ENTRY_POINT_VECTOR_MISSING, ERR_VECTOR_ROW_MISSING_AT_RESCORE,

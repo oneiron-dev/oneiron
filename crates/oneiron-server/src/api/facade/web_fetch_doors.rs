@@ -18,7 +18,7 @@ pub(crate) async fn fetch(
 ) -> Listed<FetchResult> {
     credential_listing(server, auth, caller, "fetch", move |server, _, memory| {
         let fetcher = server.web_fetcher()?;
-        memory.fetch_web_through(&fetcher, input)
+        memory.fetch_web_through(fetcher.as_ref(), input)
     })
     .await
 }
@@ -32,7 +32,7 @@ pub(crate) async fn crawl(
 ) -> Listed<CrawlResult> {
     credential_listing(server, auth, caller, "crawl", move |server, _, memory| {
         let fetcher = server.web_fetcher()?;
-        memory.crawl_web_through(&fetcher, input)
+        memory.crawl_web_through(fetcher.as_ref(), input)
     })
     .await
 }

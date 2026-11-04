@@ -41,10 +41,8 @@ use crate::runtime_hooks::{
     InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume,
 };
 use crate::task_verb::revoke_lands;
-use crate::task_verb::sdk::{
-    AgentVerb, CUSTODY_VALUE_ROWS, NO_RECORD_ROWS, masked_reveal_reply, revealed_hook_view,
-    validate_input,
-};
+use crate::task_verb::sdk::{AgentVerb, NO_RECORD_ROWS, validate_input};
+use crate::verb_catalog::CUSTODY_VALUE_ROWS;
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Vault};
 
@@ -598,6 +596,65 @@ pub fn row(
     row_post(memory.vault(), pre, result)
 }
 
+/// [`row`] for a caller that must observe the committed engine result before
+/// post-hook redaction (P1 REVIEW-4395): `tap` sees `result` exactly as `run`
+/// committed it, after the call's records settle and BEFORE [`row_post`]
+/// applies post-hook redactions, so a valid Redact of `/receipt` (or a
+/// hook variant rewrite of the args) can neither suppress nor fabricate what
+/// the tap observed. The tap runs only when `run` returned `Ok`; an `Err`
+/// aborts exactly as in [`row`] and the tap never fires. No other behavior
+/// differs from [`row`]: same secret lift, resume, pre chain, restriction
+/// clock and abort path.
+pub fn row_tapped(
+    memory: &Memory<'_>,
+    verb: &str,
+    mut args: Value,
+    run: impl FnOnce(Value) -> MemoryResult<Value>,
+    tap: impl FnOnce(&Value),
+) -> MemoryResult<Value> {
+    let secret = CustodySecret::lift(verb, &mut args);
+    // Bound on every call: a retry of a call an ask parked meets its saved
+    // reference whether or not a hook takes the verb now. A credential
+    // caller's reference comes first; else a handle the drain can rebuild is
+    // its plain target; else only the caller's retry resumes it.
+    let credential = memory.verb_ask_credential();
+    let resume = memory
+        .plain_resume()
+        .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
+        .map(VerbResume::Row);
+    let pre_restriction = restriction_clock_for_call(memory, verb, &args);
+    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
+    let pre = match row_pre_resumable(
+        memory,
+        verb,
+        args,
+        resume,
+        credential,
+        validate_input,
+        session.as_ref(),
+    )? {
+        Ok(pre) => pre,
+        Err(stop) => return completed(verb, stop, session.as_ref()),
+    };
+    drop(pre_restriction);
+    // A restrictive call (an erase, a revoke) lands over a damaged clock floor (FIX 10106).
+    let restriction = pre
+        .landing
+        .is_some()
+        .then(crate::authority::restriction_only_clock);
+    let ran = run(CustodySecret::restored(secret.as_ref(), pre.args.clone()));
+    drop(restriction);
+    let result = match ran {
+        Ok(result) => result,
+        Err(error) => {
+            abort(memory.vault(), pre);
+            return Err(error);
+        }
+    };
+    tap(&result);
+    row_post(memory.vault(), pre, result)
+}
+
 /// [`row`] for a door that holds the row's typed input and returns its typed
 /// output. The args and the result cross the chain as JSON; one no hook
 /// changed keeps its own typed value.
@@ -792,5 +849,82 @@ fn completed<O: DeserializeOwned>(
             }
             Err(error)
         }
+    }
+}
+
+/// A reply to `verb` as a call receipt digests it and a verb hook reads it
+/// (OF-560): a `reveal.wait` reply, in whatever envelope its door wraps it,
+/// with each value replaced by its secret's handle, as a structured field
+/// keeps a masked secret. `None` for any other verb's reply, which is read as
+/// it is. A digest of the value itself would let a short secret be guessed
+/// offline.
+#[must_use]
+pub fn masked_reveal_reply(verb: &str, reply: &serde_json::Value) -> Option<serde_json::Value> {
+    if verb.rsplit('/').next() != Some(AgentVerb::RevealWait.as_str()) {
+        return None;
+    }
+    let mut masked = reply.clone();
+    mask_reveal_values(&mut masked);
+    Some(masked)
+}
+
+/// The caller's view of a `reveal.wait` reply once its hooks read the masked
+/// form: where the view still holds the handle the mask left, the value goes
+/// back; a field a hook changed or dropped stays as the hook left it.
+#[must_use]
+pub fn revealed_hook_view(
+    mut view: serde_json::Value,
+    masked: &serde_json::Value,
+    reply: &serde_json::Value,
+) -> serde_json::Value {
+    if let (Some(fields), Some(masked), Some(reply)) =
+        (view.as_object_mut(), masked.as_object(), reply.as_object())
+    {
+        for key in REVEALED_FIELDS {
+            if let (Some(slot), Some(stand_in), Some(value)) =
+                (fields.get_mut(key), masked.get(key), reply.get(key))
+                && slot == stand_in
+            {
+                *slot = value.clone();
+            }
+        }
+    }
+    view
+}
+
+/// The fields of a `reveal.wait` answer that carry the value.
+const REVEALED_FIELDS: [&str; 2] = ["value", "value_base64"];
+
+/// Each value field in `value`, at any depth, replaced by the handle its
+/// answer's receipt names, or by null when none does. A JSON text an
+/// envelope carries (an MCP text content) is read the same way.
+fn mask_reveal_values(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            let handle = fields
+                .get("receipt")
+                .and_then(|receipt| receipt.get("handle"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            for key in REVEALED_FIELDS {
+                if let Some(slot) = fields.get_mut(key) {
+                    *slot = handle
+                        .clone()
+                        .map_or(serde_json::Value::Null, serde_json::Value::String);
+                }
+            }
+            fields.values_mut().for_each(mask_reveal_values);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(mask_reveal_values),
+        serde_json::Value::String(text) if text.starts_with(['{', '[']) => {
+            if let Ok(mut inner) = serde_json::from_str::<serde_json::Value>(text) {
+                let before = inner.clone();
+                mask_reveal_values(&mut inner);
+                if inner != before {
+                    *text = inner.to_string();
+                }
+            }
+        }
+        _ => {}
     }
 }

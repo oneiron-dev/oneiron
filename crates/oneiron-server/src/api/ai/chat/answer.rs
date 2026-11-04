@@ -2,6 +2,8 @@
 //! Entry: begin_answer.
 //! Answer types and their fields stay in the parent; moved functions keep equal-scope old-path exports.
 
+use oneiron::llm::{WorkClass, WorkContext};
+
 use super::{
     AgentWakeSignals, AiHandle, Answer, AnswerOpen, AnswerOutcome, AnswerRefused, Answering, Arc,
     AssistantMessage, BTreeMap, BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose,
@@ -108,11 +110,17 @@ pub(in crate::api::ai::chat) fn begin_sourced_answer(
         )
         .map_err(|error| error.to_string())
         .and_then(|meter| {
-            let run = ai.model_runtime().funded_run(
-                format!("chat:{}", handle.message_id().to_hex()),
-                meter,
-                funding,
-            );
+            let run = ai
+                .model_runtime()
+                .funded_run(
+                    format!("chat:{}", handle.message_id().to_hex()),
+                    meter,
+                    funding,
+                )
+                .with_work_context(WorkContext {
+                    class: WorkClass::Foreground,
+                    ..Default::default()
+                });
             compaction::open_stream(&run.sourced(sources), admitted, today, pending.as_ref())
                 .map_err(|error| format!("chat budget: {error:?}"))
         });

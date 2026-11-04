@@ -27,7 +27,7 @@ use crate::gate::mail_policy::MailPolicy;
 use crate::gate::policy_values::{PolicyPrecedence, PolicyRowScope, PolicyValue, PolicyValueRow};
 use crate::gate::room_policy::RoomPolicyRow;
 use crate::gate::weave_policy;
-use crate::llm::BudgetPolicyTable;
+use oneiron_model::llm::BudgetPolicyTable;
 use std::collections::BTreeSet;
 
 /// `probe` takes `before`'s value where `narrower(before, after)` holds.

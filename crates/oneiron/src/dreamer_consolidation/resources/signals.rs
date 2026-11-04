@@ -11,11 +11,11 @@ use crate::dreamer_consolidation::support::{
 };
 use crate::dreamer_consolidation::watermark::entity_ref_from_value;
 use crate::edge::EdgeKind;
-use crate::llm::Scope;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
 use crate::{EntityId, Result};
+use oneiron_model::llm::Scope;
 use rmpv::Value;
 
 /// The door a consolidation's promotion stamps its claims' births with:

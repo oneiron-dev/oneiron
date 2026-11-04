@@ -18,7 +18,7 @@ use super::*;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
-use crate::run_tree::GateConsentBundleAction;
+use crate::consent::bundle_projection::GateConsentBundleAction;
 
 /// Key-derivation context of the review handle.
 const CLAIM_REVIEW_DOMAIN: &str = "oneiron.claim-settle.review.v1";

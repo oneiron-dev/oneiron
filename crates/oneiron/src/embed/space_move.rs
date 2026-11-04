@@ -36,7 +36,9 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::machine_destination::PeerMachine;
 use crate::pipeline::ScoredEntity;
+use crate::settings::ReadDestination;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_optimize::SufficiencyCard;
 
@@ -812,9 +814,12 @@ impl Vault {
             };
             // A document a third-party candidate is never sent is settled, not pending: the
             // move would otherwise read filling until its deadline (FIX 6741).
+            // No model reads here (FIX 6741): the gate judges a destination nobody
+            // proved, as the backfill's gate does for an unproved model.
+            let unknown = ReadDestination::toward(PeerMachine::Unknown);
             let gate = encoder
                 .candidate_egress()
-                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress, &unknown))
                 .transpose()?;
             let mut report = super::MediaEmbedReport::default();
             let pending = self.media_backlog_where_in_txn(
@@ -1060,8 +1065,11 @@ impl Vault {
                     "embedding space {candidate} is not declared"
                 )));
             };
+            // No model reads here either: the gate judges a destination nobody
+            // proved, as the move's check reads it.
+            let unknown = ReadDestination::toward(PeerMachine::Unknown);
             let gate = egress
-                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress, &unknown))
                 .transpose()?;
             let mut report = super::MediaEmbedReport::default();
             if !self

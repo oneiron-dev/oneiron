@@ -12,7 +12,6 @@ use super::landing_lfs::{
 };
 use super::paths::{ORIGIN_REF_UPDATE_BATCH, now_secs, serve_failed};
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{
@@ -24,6 +23,7 @@ use crate::origin::publication::{
     OriginPublicationStatus,
 };
 use crate::origin::residence::OriginAuthorityStamp;
+use crate::store::code_snapshot::RepoRef;
 use crate::temporal::TimeRange;
 
 /// Attribution from the durable receive-pack observer. The landing verifies

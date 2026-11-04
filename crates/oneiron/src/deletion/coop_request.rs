@@ -1,12 +1,12 @@
 //! One-way authenticated courtesy deletion requests. No remote result protocol.
 
-use crate::authority::{
-    AuthorityKey, AuthoritySignature, AuthoritySignatureSuite, FederationPactStatus,
-    verify_authority_signature,
-};
 use crate::entity_id::LocalWorldId;
 use crate::error::{Error, RecordError, Result};
 use crate::{EntityId, Vault};
+use oneiron_authority::authority::{
+    AuthorityKey, AuthoritySignature, AuthoritySignatureSuite, FederationPactStatus,
+    verify_authority_signature,
+};
 use rmpv::Value;
 
 /// Domain for an authenticated ask, not evidence of remote deletion.

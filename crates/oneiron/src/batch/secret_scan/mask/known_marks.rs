@@ -20,10 +20,12 @@ use super::super::container::{Stop, holds_spans, is_sealed, walk_members};
 use super::{REASON_KNOWN_VALUE, offset};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::secret_custody::{
-    KeptValues, KeyPlaces, KeySpan, KnownValues, MASKED_FILE_BAND, MaskedFile, MemberStep,
-    masked_file_in_txn, put_masked_file_in_txn,
-};
+use crate::file_secret_marks::KeyPlaces;
+use crate::file_secret_marks::KeySpan;
+use crate::file_secret_marks::MemberStep;
+use crate::secret_custody::KeptValues;
+use crate::secret_custody::{KnownValues, MASKED_FILE_BAND, MaskedFile};
+use crate::secret_custody::{masked_file_in_txn, put_masked_file_in_txn};
 use crate::store::Store;
 
 /// One known value a file's mark does not cover yet: the member that holds

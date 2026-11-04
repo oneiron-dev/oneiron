@@ -28,7 +28,7 @@ use crate::{EdgeActorClass, Vault, WriteActor};
 pub use super::media_step::media_step_key;
 pub use super::settled::{SettledStepRequest, SettledStepView, settled_step_as_owner};
 
-pub(crate) const MODEL_STEP_ATTEMPT_KIND: &str = "model-step";
+pub(crate) use crate::model_step_record::MODEL_STEP_ATTEMPT_KIND;
 const WORKER: &str = "model-step-door";
 
 /// Transport attempts per model request, including the first send. Retries
@@ -419,14 +419,7 @@ pub fn receipt_as_owner(
     view(vault, id, &row).map_err(MemoryError::from)
 }
 
-/// Payload-free projection of the existing live checkpoint or terminal step claim.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ModelStepCheckpoint {
-    pub progression: StepProgression,
-    /// The live row is retired at completion; its timestamp is then absent.
-    pub updated_ms: Option<u64>,
-    pub claim_ref: Option<String>,
-}
+pub use crate::model_step_record::ModelStepCheckpoint;
 
 pub(crate) fn resume_checkpoint(
     vault: &Vault,

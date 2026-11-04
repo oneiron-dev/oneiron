@@ -15,9 +15,9 @@ use serde_json::Value;
 use super::ArchiveRecordKind;
 use super::archive_index::{IndexedArchive, Tag};
 use crate::config::VectorEvidenceFloors;
-use crate::embed::{EmbeddingSpace, InputKind, KindSlotBindings};
 use crate::error::{Error, Result};
 use crate::side_table::SideTableDbs;
+use crate::store::embedding::{EmbeddingSpace, InputKind, KindSlotBindings};
 
 /// Which records an export holds, for [`carries_embedding_setup`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

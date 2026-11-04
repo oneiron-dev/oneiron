@@ -40,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use oneiron::llm::run_admission::WorkContext;
 use oneiron::llm::{
@@ -64,7 +64,7 @@ use serde_json::Value as JsonValue;
 pub(super) use session::open_turn;
 pub(crate) use session::{
     AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
-    reply_committed, turn_admitted,
+    reply_committed, rung_admitted, turn_admitted,
 };
 
 /// The process's one worker host, made when the first worker is configured
@@ -182,8 +182,39 @@ impl BoundWork {
                     if let Some(victim) = hosted_worker(&worker) {
                         victim_changes.push(victim.subscribe_changed());
                     }
-                    let _ = unload_idle_worker(&worker).await;
-                    tried.insert(worker);
+                    let unload = unload_idle_worker(&worker);
+                    tokio::pin!(unload);
+                    let stop = loop {
+                        let changed = ticket.pressure_change();
+                        tokio::pin!(changed);
+                        changed.as_mut().enable();
+                        let cancel_changed = ticket.cancel_change();
+                        tokio::pin!(cancel_changed);
+                        cancel_changed.as_mut().enable();
+                        if let Some(stop) = ticket.stop() {
+                            break Some(stop);
+                        }
+                        let deadline = ticket.deadline();
+                        tokio::select! {
+                            _ = unload.as_mut() => break None,
+                            () = changed.as_mut() => continue,
+                            () = cancel_changed.as_mut() => continue,
+                            () = async {
+                                if let Some(deadline) = deadline {
+                                    tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+                                } else {
+                                    std::future::pending::<()>().await;
+                                }
+                            } => {
+                                ticket.cancel();
+                                return Err(AdmissionStop::Deadline);
+                            }
+                        }
+                    };
+                    if let Some(stop) = stop {
+                        return Err(stop);
+                    }
+                    tried.insert(worker.clone());
                     continue;
                 }
                 PressureDecision::ApprovedSmallerProfile(_) | PressureDecision::Wait => {}
@@ -195,6 +226,9 @@ impl BoundWork {
             let changed = ticket.pressure_change();
             tokio::pin!(changed);
             changed.as_mut().enable();
+            let cancel_changed = ticket.cancel_change();
+            tokio::pin!(cancel_changed);
+            cancel_changed.as_mut().enable();
             match ticket.resolve_pressure_excluding(&tried) {
                 PressureDecision::Grant(grant) => {
                     self.armed = false;
@@ -220,6 +254,7 @@ impl BoundWork {
             let deadline = ticket.deadline();
             tokio::select! {
                 () = changed.as_mut() => {},
+                () = cancel_changed.as_mut() => {},
                 _ = victim_wake => {},
                 () = async {
                     if let Some(deadline) = deadline {
@@ -306,6 +341,31 @@ pub(super) fn snapshot_policy(policy: &crate::config::models::snapshots::Snapsho
     let _ = policy;
 }
 
+/// Stops and removes a replaced worker's old device queue only when no hosted
+/// row still binds that device. The shared ledger stays for cross-runtime use.
+fn stop_device_admission_if_unused(host: &WorkerHost, device: &str) {
+    let workers = host.lock();
+    let still_bound = workers.values().any(|hosted| {
+        hosted
+            .row
+            .launch
+            .as_ref()
+            .and_then(|launch| launch.device.as_deref())
+            == Some(device)
+    });
+    if still_bound {
+        return;
+    }
+    let admission = host
+        .admissions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(device);
+    if let Some(admission) = admission {
+        admission.stop();
+    }
+}
+
 /// The device ledger of the device managed worker `worker_id` launches on,
 /// when its launch names one: what a snapshot transfer may take there.
 #[cfg(unix)]
@@ -373,6 +433,7 @@ pub(super) fn admit_bound_work(
         request.deadline = context.deadline;
         request.parent = context.parent;
         request.cancel = context.cancel.shared();
+        request.cancel_changed = context.cancel.shared_notify();
         Some(admission.enqueue(request))
     });
     BoundWork {
@@ -506,7 +567,14 @@ pub(super) fn configure(
                         slot,
                     };
                     match workers.insert(row.id.clone(), hosted) {
-                        Some(old) => replaced.push((old.worker, worker.clone())),
+                        Some(old) => {
+                            let old_device = old
+                                .row
+                                .launch
+                                .as_ref()
+                                .and_then(|launch| launch.device.clone());
+                            replaced.push((old.worker, worker.clone(), old_device));
+                        }
                         None => started.push(worker.clone()),
                     }
                     worker
@@ -519,9 +587,12 @@ pub(super) fn configure(
         host.begin(&worker);
     }
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        for (old, new) in replaced {
+        for (old, new, old_device) in replaced {
             runtime.spawn(async move {
                 old.retire().await;
+                if let Some(device) = old_device {
+                    stop_device_admission_if_unused(host, &device);
+                }
                 host.begin(&new);
             });
         }

@@ -387,19 +387,3 @@ fn freeze_bodies(
 pub fn shadow_source_gone(vault: &Vault, actor: &EntityId) -> bool {
     crate::code_run::storage::actor_gone(vault, actor)
 }
-
-impl ShadowRequestDigest {
-    /// The digest of the copy of its request `capsule` keeps: the request as
-    /// sent, or its masked copy as stored; `None` for a request the wall
-    /// withheld (FIX 6254).
-    #[must_use]
-    pub fn of_capsule(capsule: &StepReplayCapsule) -> Option<Self> {
-        match &capsule.request {
-            CapsuleRequest::Kept { stored_hash, .. } if *stored_hash == capsule.request_hash => {
-                Some(Self::AsSent(capsule.request_hash))
-            }
-            CapsuleRequest::Kept { stored_hash, .. } => Some(Self::AsStored(*stored_hash)),
-            CapsuleRequest::Withheld { .. } => None,
-        }
-    }
-}

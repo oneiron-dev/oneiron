@@ -124,7 +124,7 @@ fn tag_of(hash: &blake3::Hash) -> [u8; TAG_BYTES] {
 pub(super) fn never_keyed(name: &str) -> bool {
     super::run_bound::is_run_bound_name(name)
         || super::is_cloud_registration_slot(name)
-        || crate::repo_mutation::is_unindexed_dotenv_name(name)
+        || crate::store::repo_environment::is_unindexed_dotenv_name(name)
 }
 
 /// Records `rec`'s value under `id`, in the custody write's transaction: its

@@ -5,7 +5,8 @@ use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::llm::manifest::{ModelManifest, ModelRole};
-use crate::training_pack::{SwapExpectation, TrainingRun, TrainingState};
+use crate::skill_optimize::training_choice::TrainingState;
+use crate::training_pack::{SwapExpectation, TrainingRun};
 
 /// The most held-out metrics a question names; it counts the rest.
 const QUESTION_METRICS: usize = 8;

@@ -27,44 +27,9 @@ use crate::{EntityId, Vault};
 
 pub(crate) mod tree;
 
-/// What one resolved candidate proposes: its deterministic identities,
-/// the queue's folder and the exact base commit, its pusher, fork and push
-/// provenance, and every file with its exact state change.
-pub(crate) struct ReceivedFilesProposalInput {
-    pub(crate) candidate: EntityId,
-    pub(crate) proposal: EntityId,
-    pub(crate) folder: String,
-    pub(crate) base_commit: GitOid,
-    pub(crate) pusher: EntityId,
-    pub(crate) session: EntityId,
-    pub(crate) provenance: EntityId,
-    pub(crate) message: String,
-    pub(crate) files: Vec<RepoProposedFile>,
-    pub(crate) created_at: u64,
-}
-
-/// The deterministic id of a received bundle's proposal.
-///
-/// # Errors
-/// An id derivation failure.
-pub(crate) fn received_proposal_id(candidate: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:push-candidate-proposal:v1",
-        &[candidate.as_bytes()],
-    )
-}
-
-/// The deterministic document operation one bundle file lowers to, distinct
-/// from the receive audit's own operation ids.
-///
-/// # Errors
-/// An id derivation failure.
-pub(crate) fn received_file_operation(proposal: EntityId, source: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:push-candidate-file-op:v1",
-        &[proposal.as_bytes(), source.as_bytes()],
-    )
-}
+pub(crate) use crate::store::repo_proposal_record::{
+    ReceivedFilesProposalInput, received_file_operation, received_proposal_id,
+};
 
 impl Vault {
     /// The bundle `input` names, prepared before its writer: the exact base

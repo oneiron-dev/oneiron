@@ -18,20 +18,23 @@ use crate::dreamer_wake::{
     WakeAttemptContext,
 };
 use crate::error::{Error, Result};
-use crate::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource, StepOutcome, TierPrecedence,
-    call_as_step_checked,
-};
+use crate::inference_context::HostInferenceContext;
+use crate::llm::call_as_step_checked;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 use crate::scope_summary::{
-    ComposedSummary, ScopeSummaryPlan, SummarySourceMessage, SummarySourceNote,
+    ComposedSummary, ScopeSummaryPlan, ScopeSummaryTarget, SummarySourceMessage, SummarySourceNote,
     SummarySourceVersion,
 };
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource,
+    TierPrecedence,
+};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -138,6 +141,30 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 completed_units: 0,
                 step_hashes: Vec::new(),
             });
+        }
+        // A queued summary for a conversation excluded after it was requested
+        // parks for retry before any source read (FIX 12551(b)): it runs if
+        // the conversation is later un-excluded. The weave planner already
+        // requests no fresh ones (#4382); this gates the queued remainder.
+        // Malformed input falls through to the planner's own error below.
+        if let Ok(target) = crate::scope_summary::decode_target(&attempt.status.payload.input) {
+            let excluded = ctx.vault.dreamer_excluded_conversations()?;
+            let gated = match &target {
+                ScopeSummaryTarget::Scope { scope, .. } | ScopeSummaryTarget::Arc { scope, .. } => {
+                    excluded.contains(&scope.conversation)
+                }
+                ScopeSummaryTarget::Sources { scope, .. } => scope
+                    .as_ref()
+                    .is_some_and(|scope| excluded.contains(&scope.conversation)),
+                ScopeSummaryTarget::Thread { trunk } => ctx.vault.dreamer_turn_excluded(trunk)?,
+                ScopeSummaryTarget::Session { .. } => false,
+            };
+            if gated {
+                return Ok(DreamerAttemptExecution::Park {
+                    reason: "conversation excluded from Dreamer passes".to_owned(),
+                    cause: DreamerParkCause::Retry,
+                });
+            }
         }
         // A source TURN partly away from this replica (OF-534) is owed: the
         // declaration waits, queued, for the promotion (FIX 3861).
@@ -423,9 +450,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 seat_effort: None,
                 // The call reads exactly the versions the Dreamer was admitted
                 // to read.
-                scope: crate::llm::Scope {
+                scope: oneiron_model::llm::Scope {
                     readable: evidence.readable.clone(),
-                    ..crate::llm::Scope::default()
+                    ..oneiron_model::llm::Scope::default()
                 },
                 // The scope's transcript leaves the vault exactly as an
                 // extraction's does, so it passes the same egress gate.

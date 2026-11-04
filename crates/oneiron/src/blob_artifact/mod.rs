@@ -29,6 +29,7 @@
 //! resolves storage for another tenant, even when byte-identical.
 
 mod body;
+pub mod body_tags;
 mod born_from;
 pub(crate) mod checkpoint;
 mod create;
@@ -91,7 +92,8 @@ pub use self::verbs::{
 pub(crate) use self::versions::archive_version_tables;
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
 pub use self::versions::{
-    BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion, BlobBytes, CalcEngineStamp,
+    BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactAppendOutcome, BlobArtifactVersion, BlobBytes,
+    CalcEngineStamp,
 };
 
 /// The closed deck transaction grammar a deck proposal carries.

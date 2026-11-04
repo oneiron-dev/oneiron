@@ -14,7 +14,7 @@ use super::*;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::federation::{Scope, ScopeAxis};
+use oneiron_authority::federation::{Scope, ScopeAxis};
 
 impl Vault {
     /// Mints, in the invitation's writer, the human slip of `invitee` for

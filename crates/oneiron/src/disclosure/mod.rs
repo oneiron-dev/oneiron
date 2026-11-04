@@ -18,6 +18,7 @@ mod import_audience;
 mod model_channel;
 mod room_party;
 mod scope_codec;
+pub mod task_ask_default;
 mod tier_classification;
 mod vault_agent;
 mod vault_context;

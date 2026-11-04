@@ -23,3 +23,16 @@ pub use oneiron_contracts::entity_id::{
     MIN_PRESENTATION_PREFIX_LEN, ParsedPresentationId, is_foreign_world_id_range,
     parse_presentation_id, parse_short_ref_syntax,
 };
+
+/// The sentinel-safe raw-prefix rule for an id taken from a raw digest
+/// prefix: a prefix landing on a reserved id (roughly a 2^-120 event) is
+/// perturbed (`raw[0] ^= 1`, `raw[15] ^= 1`), no RFC-4122 bit rewritten.
+pub(crate) fn entity_id_from_digest_prefix(mut raw: [u8; 16]) -> EntityId {
+    EntityId::from_bytes(raw).unwrap_or_else(|_| {
+        raw[0] ^= 0x01;
+        raw[15] ^= 0x01;
+        EntityId::from_bytes(raw).unwrap_or_else(|_| {
+            unreachable!("perturbed commitment wake proposal id is non-reserved")
+        })
+    })
+}

@@ -34,6 +34,17 @@ pub(crate) struct LiveLease<'a> {
     booked: Arc<Mutex<u64>>,
 }
 
+/// The vault-free state of one live lease, shared with a code-mode backend so
+/// its per-rung looks use the caller's ledger, never a second booking. Opaque
+/// outside the crate: providers can forward it, never construct or inspect it.
+#[derive(Clone)]
+pub struct LiveLeaseState {
+    scope: Option<SpendScopeId>,
+    meter: BudgetGuard,
+    budget_units: u64,
+    booked: Arc<Mutex<u64>>,
+}
+
 /// A lease without its vault, lent to the calls of one entry that run
 /// beside its backend on its meter (FIX 11747): the run's `ai.speech` and
 /// its planner's pattern capture. [`LeaseLine::on`] is the lease itself,
@@ -85,6 +96,27 @@ impl<'a> LiveLease<'a> {
             meter,
             budget_units,
             booked: Arc::new(Mutex::new(booked)),
+        }
+    }
+
+    /// What a scoped provider threads into its backend (FIX 11749).
+    pub(crate) fn state(&self) -> LiveLeaseState {
+        LiveLeaseState {
+            scope: self.scope.clone(),
+            meter: self.meter.clone(),
+            budget_units: self.budget_units,
+            booked: Arc::clone(&self.booked),
+        }
+    }
+
+    /// Rebinds that shared state to the backend's vault handle.
+    pub(crate) fn from_state(vault: &'a Vault, state: LiveLeaseState) -> Self {
+        Self {
+            vault,
+            scope: state.scope,
+            meter: state.meter,
+            budget_units: state.budget_units,
+            booked: state.booked,
         }
     }
 

@@ -404,6 +404,15 @@ impl InferenceWorker {
         }
     }
 
+    /// Whether this worker's own bound queue is stopped, even if the host
+    /// has since replaced its row or removed that queue from its map.
+    #[must_use]
+    pub fn admission_stopped(&self) -> bool {
+        self.inner
+            .admission()
+            .is_some_and(|admission| admission.is_stopped())
+    }
+
     /// An external worker's supervisor: it probes, and does nothing else.
     #[must_use]
     pub fn external(spec: WorkerSpec, probe: Arc<dyn WorkerProbe>) -> Self {

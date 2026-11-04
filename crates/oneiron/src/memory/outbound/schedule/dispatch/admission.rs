@@ -11,7 +11,7 @@ pub(super) fn admit_outbound_schedule(
 ) -> MemoryResult<()> {
     schedule_context.validate()?;
     if let Some(party) = counterparty_ref {
-        crate::comm::validate_comm_party_key(party).map_err(|_| {
+        crate::write_envelope::communication_record::validate_key_string(party).map_err(|_| {
             MemoryError::bad_request("counterparty_ref is not a valid comm party key")
         })?;
         // A capability lookup accepts aliases such as " email ", but a

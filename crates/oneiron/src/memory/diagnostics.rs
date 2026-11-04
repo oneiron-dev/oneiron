@@ -16,7 +16,7 @@ use super::*;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
 use crate::entity_id::EntityId;
 use crate::failure_ladder::{BlockedReportRef, ingest_report_blocked};
-use crate::self_heal::{DiagnosticEvent, DiagnosticEventClass};
+use crate::store::diagnostic_record::{DiagnosticEvent, DiagnosticEventClass};
 
 /// `vault.diagnostics.list` input: the caller's diagnostic band, newest
 /// stored order first as the lane serves it.

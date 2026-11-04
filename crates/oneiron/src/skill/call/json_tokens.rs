@@ -16,7 +16,8 @@ use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 
 use crate::limit_ask::LimitWatch;
-use crate::result_memory::{ResultHold, ResultShare};
+use crate::store::result_memory::ResultHold;
+use crate::store::result_memory::ResultShare;
 
 /// How many answer bytes one read takes from the spool, and the step the
 /// check's holds grow by. A processing chunk, never a maximum on the answer

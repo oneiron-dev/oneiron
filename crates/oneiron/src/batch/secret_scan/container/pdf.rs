@@ -25,7 +25,7 @@ use super::{
     Budget, MAX_EXPANDED_BYTES, Stop, Walked, encode_failed, hidden_member, over_budget, unreadable,
 };
 use crate::blob_artifact::esign::render::{PdfPreparationError, decode_stream};
-use crate::secret_custody::MemberStep;
+use crate::file_secret_marks::MemberStep;
 
 /// The type an object stream carries until this reader expands it: lopdf
 /// expands an `ObjStm` as it loads, with no bound over all of them.

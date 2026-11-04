@@ -13,7 +13,8 @@ use super::{
     GitWireReceipt, GitWireRecordState, GitWireRepo, GitWireResult, lock_repository,
 };
 use crate::error::Result;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
 
 impl GitWire<'_> {
     /// Write and pin objects without preparing any served-ref publication.

@@ -7,6 +7,7 @@ use super::proposal::{LiveProposal, read_proposal};
 use super::{CONTENT_PREFIX, RepresentationCitation, invalid};
 use crate::compaction::output::OutputRef;
 use crate::consent::AuthenticatedOwner;
+use crate::consent::bundle_projection::GateConsentBundleAction;
 use crate::memory::{
     Memory, MemoryError, MemoryResult, OutboundDraftInput, OutboundIntentReceipt,
     OutboundScheduleContext,
@@ -15,7 +16,6 @@ use crate::outbound::{
     OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
 };
 use crate::receipt::ERASED_CALL_IDENTITY;
-use crate::run_tree::GateConsentBundleAction;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::{ClaimApprovalStatus, EdgeActorClass, EntityId, Result, Vault, WriteActor};

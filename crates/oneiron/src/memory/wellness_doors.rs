@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use super::coping_doors::{collect_refs, require_readable};
 use super::{Memory, MemoryError, MemoryResult};
-use crate::affect::state_index::StateIndex;
 use crate::claim::ClaimReadStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::action_mode::{ActionModePolicy, ActionModeRule};
+use crate::memory::state_index::StateIndex;
 use crate::{EntityId, Error};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -134,10 +134,11 @@ impl Memory<'_> {
                 if self.vault.get_entity_type_in_txn(txn, &turn)?
                     == Some(crate::registry::ENTITY_TYPE_TURN)
                 {
-                    let annotation = crate::affect::vad_annotation_claim_id(
-                        crate::registry::ENTITY_TYPE_TURN,
-                        &turn,
-                    )?;
+                    let annotation =
+                        crate::write_envelope::vad_annotation::vad_annotation_claim_id(
+                            crate::registry::ENTITY_TYPE_TURN,
+                            &turn,
+                        )?;
                     if self
                         .vault
                         .get_entity_type_in_txn(txn, &annotation)?

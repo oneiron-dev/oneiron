@@ -14,7 +14,8 @@ use super::{
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::side_table::{self, Named, SideTable};
-use crate::training_pack::{TrainingAuthorizationSource, TrainingDeclarationPin, TrainingPlan};
+use crate::skill_optimize::training_choice::TrainingAuthorizationSource;
+use crate::training_pack::{TrainingDeclarationPin, TrainingPlan};
 use crate::{EntityId, Error, Result, Vault};
 
 /// The run an approved Train offer handed off, keyed by offer id.

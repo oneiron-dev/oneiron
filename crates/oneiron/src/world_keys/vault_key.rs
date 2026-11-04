@@ -346,6 +346,15 @@ impl CarriedVaultKey {
             VaultKeyUnlock::Kit { .. } => {
                 return kit::open_kit(vault_id, self, unlock).map(|key| (key, Vec::new()));
             }
+            VaultKeyUnlock::WorldKit { .. } => {
+                let hybrid = kit::open_world_kit(vault_id, self, unlock)?;
+                let secret = UnlockSecret::Hybrid(&hybrid);
+                for stored in named(VaultKeyWrapKind::Escrow {
+                    label: crate::world_keys::WORLD_KIT_ESCROW.to_owned(),
+                }) {
+                    attempt(stored, &secret);
+                }
+            }
         }
         match key {
             Some(key) => Ok((key, opened)),

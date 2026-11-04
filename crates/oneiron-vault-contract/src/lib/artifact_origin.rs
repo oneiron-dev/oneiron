@@ -45,6 +45,11 @@ pub const ARTIFACT_INTERNAL_DOMAIN: &str = "artifact.invalid";
 /// `Ping` (`artifact_internal_host_revision`).
 pub const ARTIFACT_INTERNAL_HOST_REVISION: u32 = 1;
 
+/// The revision of the lease-labelled live preview origin codec
+/// ([`PreviewOrigin`]), which a vault built with it reports on `Ping`
+/// (`preview_origin_revision`, FIX 1115).
+pub const PREVIEW_ORIGIN_REVISION: u32 = 1;
+
 /// One name under an artifact domain: a vault, and an app of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactHost {
@@ -187,6 +192,113 @@ impl ArtifactHost {
             };
         }
         ArtifactHostRead::Outside
+    }
+}
+
+/// The fixed prefix of a live preview lease's one public label.
+const PREVIEW_LABEL_PREFIX: &str = "p-";
+
+/// One live preview lease's public origin: `p-<lease>.<domain>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewOrigin {
+    pub lease: String,
+}
+
+/// Why a preview lease makes no public origin label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewLabelRefusal {
+    /// The lease is not one DNS label free of [`APP_SEPARATOR`].
+    InvalidLease,
+    /// The prefixed label passes [`MAX_ARTIFACT_LABEL`] bytes.
+    PreviewLabelTooLong,
+}
+
+impl PreviewLabelRefusal {
+    /// The wire spelling, for a log field.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidLease => "invalid_lease",
+            Self::PreviewLabelTooLong => "preview_label_too_long",
+        }
+    }
+}
+
+/// Where a host falls among the live preview origin domains.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreviewOriginRead {
+    /// Under no preview origin domain: not the preview origin's to answer.
+    Outside,
+    /// Under a domain, naming one live preview lease.
+    Named(PreviewOrigin),
+    /// Under a domain, naming no lease: the bare domain, a deeper name, a
+    /// label without the preview prefix, or a label that is not one.
+    Unnamed,
+}
+
+impl PreviewOrigin {
+    /// The one label this lease has under a preview origin domain:
+    /// `p-<lease>`. The whole prefixed label holds at most
+    /// [`MAX_ARTIFACT_LABEL`] bytes.
+    pub fn label(&self) -> Result<String, PreviewLabelRefusal> {
+        if !valid_app_label(&self.lease) {
+            return Err(PreviewLabelRefusal::InvalidLease);
+        }
+        let label = format!("{PREVIEW_LABEL_PREFIX}{}", self.lease);
+        if label.len() > MAX_ARTIFACT_LABEL {
+            return Err(PreviewLabelRefusal::PreviewLabelTooLong);
+        }
+        Ok(label)
+    }
+
+    /// The host name under `domain`. `None` when the domain is empty or
+    /// [`PreviewOrigin::label`] refuses.
+    #[must_use]
+    pub fn name(&self, domain: &str) -> Option<String> {
+        let domain = normalize_artifact_domain(domain);
+        if domain.is_empty() {
+            return None;
+        }
+        let label = self.label().ok()?;
+        Some(format!("{label}.{domain}"))
+    }
+
+    /// Reads `host` (a port and a trailing dot are dropped, case is ignored)
+    /// against `domains`: exactly one `p-<lease>` label under one of them.
+    #[must_use]
+    pub fn read(host: &str, domains: &[String]) -> PreviewOriginRead {
+        let host = normalize_host(host);
+        for domain in domains
+            .iter()
+            .map(|domain| normalize_artifact_domain(domain))
+        {
+            if domain.is_empty() {
+                continue;
+            }
+            if host == domain {
+                return PreviewOriginRead::Unnamed;
+            }
+            let Some(label) = host
+                .strip_suffix(domain.as_str())
+                .and_then(|rest| rest.strip_suffix('.'))
+            else {
+                continue;
+            };
+            if label.contains('.') || label.len() > MAX_ARTIFACT_LABEL {
+                return PreviewOriginRead::Unnamed;
+            }
+            return match label
+                .strip_prefix(PREVIEW_LABEL_PREFIX)
+                .filter(|lease| valid_app_label(lease))
+            {
+                Some(lease) => PreviewOriginRead::Named(Self {
+                    lease: lease.to_owned(),
+                }),
+                None => PreviewOriginRead::Unnamed,
+            };
+        }
+        PreviewOriginRead::Outside
     }
 }
 

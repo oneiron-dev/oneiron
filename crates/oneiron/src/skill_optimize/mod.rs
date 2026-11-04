@@ -153,6 +153,7 @@ mod response_pair;
 mod selection;
 mod tier;
 mod tradeoff_route;
+pub mod training_choice;
 
 pub use self::ask_band::{AskBandLabel, AskBandPolicy};
 #[cfg(test)]

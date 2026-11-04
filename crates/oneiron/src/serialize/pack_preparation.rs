@@ -5,14 +5,14 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::context_pack::ContextEntity;
 use crate::context_pack::ContextPack;
-use crate::context_pack::FieldProfile;
-use crate::context_pack::PackFormat;
 use crate::context_pack::PackStats;
-use crate::context_pack::TokenAllocation;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
+use crate::serialize::context_entity::ContextEntity;
+use crate::serialize::pack_accounting::TokenAllocation;
+use crate::serialize::pack_format::FieldProfile;
+use crate::serialize::pack_format::PackFormat;
 use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
 
 use super::field_profile_table::fields_for_profile;
@@ -54,9 +54,9 @@ fn prepare_pack_with_l2(
     let mut stats = pack.stats.clone();
     if pack.l2_base.is_some() && l2_base.is_none() {
         stats.items_dropped.reason = if omitted_by_token_budget {
-            crate::context_pack::PackItemAccountingReason::TokenBudget
+            crate::serialize::pack_accounting::PackItemAccountingReason::TokenBudget
         } else {
-            crate::context_pack::PackItemAccountingReason::ItemBudget
+            crate::serialize::pack_accounting::PackItemAccountingReason::ItemBudget
         };
         stats.items_dropped.count = stats.items_dropped.count.saturating_add(1);
     }
@@ -67,7 +67,7 @@ fn prepare_pack_with_l2(
 
     let skip_evidence = l2_base
         .as_ref()
-        .map(crate::context_pack::L2BaseSummary::evidence_ids);
+        .map(crate::store::l2_evidence::L2BaseSummary::evidence_ids);
     let had_l2 = l2_base.is_some();
     let mut prepared = if config.merge_neighbors {
         let mut merged = Vec::with_capacity(pack.results.len() + pack.neighbors.len());
@@ -372,7 +372,7 @@ fn format_short_id(entity: &ContextEntity) -> String {
     match entity.source_revision_ref {
         Some(revision) => format!(
             "{reference}@{}",
-            crate::memory::RevisionRef(revision).to_hex()
+            crate::vault::RevisionRef(revision).to_hex()
         ),
         None => reference,
     }

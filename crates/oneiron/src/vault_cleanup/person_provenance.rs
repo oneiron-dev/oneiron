@@ -8,13 +8,13 @@
 
 use super::claim_source_is_machine_minted;
 use crate::Vault;
-use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
+use oneiron_contracts::claim::ClaimSource;
 
 /// Mint-time extraction evidence: a 32-byte revision hash then the source tag
 /// bytes. Key: id16 (PERSON id).

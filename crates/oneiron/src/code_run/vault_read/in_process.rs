@@ -189,7 +189,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         vector: Option<&[f32]>,
         media: &[EmbeddedMediaSeed],
         limit: usize,
-        affect: Option<crate::affect::Vad>,
+        affect: Option<oneiron_contracts::affect::Vad>,
     ) -> VaultReadResult<crate::claim::ScopedReadResult<Vec<ScoredEntity>>> {
         let results = if media.is_empty() && affect.is_none() {
             match (query, vector) {
@@ -327,6 +327,12 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             builder = builder
                 .skill_executor(model)
                 .map_err(|error| engine_failure(METHOD, &error))?;
+            if let Ok(model_id) = model.parse::<crate::llm::ModelId>()
+                && let Ok(Some(row)) = self.scoped_read.vault().model_registry_row(&model_id)
+                && row.catalog.context_window_tokens > 0
+            {
+                builder = builder.model_window_tokens(row.catalog.context_window_tokens);
+            }
         }
         if let Some(query) = Self::context_pack_skill_query(self.scoped_read.vault(), request)? {
             builder = builder

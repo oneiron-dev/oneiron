@@ -21,8 +21,8 @@ use crate::registry::ENTITY_TYPE_TURN;
 
 /// The stored rows a query written from `document` is written from: the rows its words or
 /// bytes are read from, and every record those derive from, walked to the end through
-/// `DerivedFrom` edges, registered source versions, the inputs of row births and a TURN's
-/// messages, each row once.
+/// `DerivedFrom` edges, registered source versions, the inputs of row births and later text
+/// commits, and a TURN's messages, each row once.
 ///
 /// # Errors
 /// A store failure.
@@ -72,11 +72,29 @@ pub(super) fn probe_source_refs_in(
                     .map(|input| input.row),
             );
         }
+        frontier.extend(crate::entity_doc::commit_input_rows_in_txn(
+            vault, txn, &row,
+        )?);
     }
     Ok(sources)
 }
 
-/// Whether every row of `rows` is still a stored record as `txn` reads it: the author's writer
+/// Whether `row` is a live record as `txn` reads it (FIX 11173): absent rows, deleted
+/// shells and stale or erased rows all fail, so a hand-put probe citing an already-erased
+/// source is refused and the author's writer never stores an erased row's words again. The
+/// one shared writer-time source check, read under the caller's transaction.
+///
+/// # Errors
+/// A store failure.
+pub(super) fn source_row_is_live_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+) -> Result<bool> {
+    Ok(crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live())
+}
+
+/// Whether every row of `rows` is still a live record as `txn` reads it: the author's writer
 /// asks it of a query's sources, so a row erased while the model ran never has its words
 /// stored again.
 ///
@@ -88,7 +106,7 @@ pub(super) fn all_stored_in(
     rows: &BTreeSet<EntityId>,
 ) -> Result<bool> {
     for row in rows {
-        if vault.store.port_entity_record(txn, row)?.is_none() {
+        if !source_row_is_live_in(vault, txn, row)? {
             return Ok(false);
         }
     }

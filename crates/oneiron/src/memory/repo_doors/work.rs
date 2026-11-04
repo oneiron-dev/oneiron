@@ -15,7 +15,6 @@ use crate::code_view::{CodeViewSet, ViewReceipt, view_receipt_in_txn};
 use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal};
 use crate::git_wire::{
     GitOid, GitRefName, GitWire, GitWireRepo, lock_repository, run_bridged_git_argv,
 };
@@ -25,6 +24,7 @@ use crate::merge_queue::MergeQueue;
 use crate::origin::secret_projection::{RepoSecretAudience, materialize_masked_repo};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal};
 
 /// The queue a run's ref is attached to, read under the repo's coordinator.
 pub(crate) struct RepoQueueTarget {

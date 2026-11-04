@@ -141,72 +141,9 @@ fn enacted(check: Option<CustodyRegisterCheck>) -> OwnerWorkOutcome {
     }
 }
 
-/// Who the owner names for an active custody change.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct CustodyPlan {
-    /// The install that holds the value and does the change; `None` is this
-    /// install.
-    pub holder: Option<EntityId>,
-    /// The installs he permits to hold its bytes, each a live linked install
-    /// with an importable key, in any role. Empty: a register permits its
-    /// holder alone, a rotate keeps the permits of the secret's live change,
-    /// and a rewrap is refused. A machine he makes his is added by its
-    /// holders' own rewrap (CALLS CUSTODY_ROSTER_REWRAP); any other linked
-    /// machine only by his.
-    pub recipients: Vec<EntityId>,
-}
+pub use crate::secret_record::CustodyPlan;
 
-/// Why a change to a portable secret stays on this install, recorded for no
-/// other machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CustodyKeptHere {
-    /// The record may not leave its device: device bound, cross-vault or
-    /// "this device only".
-    DeviceLocal,
-    /// This install has no live machine profile to carry the owner's act,
-    /// so no other machine learns of the change from here.
-    NoCarrier,
-    /// A revoke this install cannot carry yet, with no live machine profile
-    /// or no install key loaded: it stands here, and its carry is pending
-    /// until this install can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY).
-    CarryPending,
-    /// This install, the holder, has no encryption key that imports, so no
-    /// request can name it (CALLS CUSTODY_EXECUTOR).
-    NoHolderKey,
-}
-
-impl CustodyKeptHere {
-    /// The wire tag.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::DeviceLocal => "device_local",
-            Self::NoCarrier => "no_carrier",
-            Self::CarryPending => "carry_pending",
-            Self::NoHolderKey => "no_holder_key",
-        }
-    }
-
-    /// The words a surface shows.
-    #[must_use]
-    pub fn text(self) -> &'static str {
-        match self {
-            Self::DeviceLocal => "kept on this device: this secret never leaves it",
-            Self::NoCarrier => {
-                "kept on this install only: it has no live machine profile to carry your act \
-                 to your other machines"
-            }
-            Self::NoHolderKey => {
-                "kept on this install only: it has no encryption key to hold the secret for \
-                 your other machines"
-            }
-            Self::CarryPending => {
-                "revoked here; your other machines learn of it once this install can sign your \
-                 act (it has no live machine profile yet, or its install key is not loaded)"
-            }
-        }
-    }
-}
+pub use crate::secret_record::CustodyKeptHere;
 
 /// Whether the owner's other machines hold a change yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

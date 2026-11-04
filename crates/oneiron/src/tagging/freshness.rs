@@ -32,8 +32,8 @@ pub struct TaggingFreshness {
 impl TaggingFreshness {
     /// The shared affect label for a view derived from the set.
     #[must_use]
-    pub fn derivation(self) -> crate::affect::DerivationFreshness {
-        crate::affect::DerivationFreshness {
+    pub fn derivation(self) -> oneiron_contracts::affect::DerivationFreshness {
+        oneiron_contracts::affect::DerivationFreshness {
             stale: self.stale,
             pending_retag: self.pending_retag,
         }

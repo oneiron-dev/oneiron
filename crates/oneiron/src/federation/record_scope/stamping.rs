@@ -195,7 +195,7 @@ pub(crate) fn settle_source_birth(
     kind: u8,
     facet: EntityId,
 ) -> Result<()> {
-    let named = !crate::ingest::identity_fields_for_kind(kind).is_empty();
+    let named = !crate::store::identity_hints::identity_fields_for_kind(kind).is_empty();
     let anchor = crate::claim::substrate_facet_id(id)?;
     let birth = default_stamp(kind, anchor);
     let prior = SCOPE_RECORD

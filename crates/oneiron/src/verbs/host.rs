@@ -15,7 +15,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::llm::media::{AiOperation, MediaJobState, MediaPart, MediaResponse, MediaUsage};
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
 use crate::skill_hub::HubFile;
-use crate::skill_hub::pack_catalog::{PackInstallDisposition, PackInstallReceipt};
+use crate::skill_hub::pack_catalog::PackInstallReceipt;
 
 mod ask_image;
 mod hooks_replay;
@@ -108,48 +108,7 @@ impl PackPutRequest {
     }
 }
 
-/// What one pack put did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PackPutOutcome {
-    Installed,
-    /// Its code waits for its sandbox to qualify it.
-    Candidate,
-    /// The vault's install rules refused it; `reason` says why.
-    Blocked,
-}
-
-/// `vault.packs.put`'s answer: the outcome, and the install receipt unless
-/// the put was blocked.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct PackPutReceipt {
-    pub outcome: PackPutOutcome,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub receipt: Option<Box<PackInstallReceipt>>,
-}
-
-impl From<PackInstallDisposition> for PackPutReceipt {
-    fn from(disposition: PackInstallDisposition) -> Self {
-        let (outcome, reason, receipt) = match disposition {
-            PackInstallDisposition::Installed(receipt) => {
-                (PackPutOutcome::Installed, None, Some(receipt))
-            }
-            PackInstallDisposition::Candidate(receipt) => {
-                (PackPutOutcome::Candidate, None, Some(receipt))
-            }
-            PackInstallDisposition::Blocked { reason } => {
-                (PackPutOutcome::Blocked, Some(reason), None)
-            }
-        };
-        Self {
-            outcome,
-            reason,
-            receipt,
-        }
-    }
-}
+pub use crate::memory::hook_regen_doors::{PackPutOutcome, PackPutReceipt};
 
 /// `vault.packs.put` under the owner's proof a host minted from the request.
 pub fn put_pack_as_owner(
@@ -608,8 +567,7 @@ impl From<AiVerdictReversibility> for crate::llm::decision::Reversibility {
     }
 }
 
-/// `ai.verdict`'s clock, in milliseconds, when the request names none.
-pub const AI_VERDICT_DEADLINE_MS: u64 = 10_000;
+pub use crate::receipt::AI_VERDICT_DEADLINE_MS;
 
 /// `ai.verdict`'s input: one typed question through the host's decision
 /// ladder (ARCH-0076), asked for the caller. The principal is the caller's

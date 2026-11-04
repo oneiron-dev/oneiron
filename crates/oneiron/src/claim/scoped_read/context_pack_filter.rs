@@ -1,7 +1,9 @@
 //! Final actor-bound context-pack filtering before rendering and telemetry.
 use super::access_gate::HeldAuthority;
 use super::*;
-use crate::context_pack::{ContextPack, EmptyContext, EmptyReason, PackCriticalAccounting};
+use crate::context_pack::ContextPack;
+use crate::serialize::empty_context::{EmptyContext, EmptyReason};
+use crate::serialize::pack_accounting::PackCriticalAccounting;
 
 impl ScopedRead<'_> {
     pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<ScopedReadReceipt> {
@@ -57,7 +59,7 @@ impl ScopedRead<'_> {
                 let mut admitted = true;
                 for id in summary.evidence_ids() {
                     let evidence = self.admit_in(&rtxn, id, || {
-                        crate::ppr::PprNodeVisibility::ppr_node_visible(&visibility, &rtxn, id)
+                        crate::ports::PprNodeVisibility::ppr_node_visible(&visibility, &rtxn, id)
                             .map(|visible| visible.then_some(()))
                     })?;
                     auxiliary_suppressed += evidence.suppression();

@@ -22,10 +22,8 @@
 use std::collections::BTreeSet;
 
 use super::*;
+use crate::federation::AgentGrantStanding;
 use crate::federation::repo_access::RepoMembership;
-use crate::federation::{
-    AgentGrantStanding, RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget,
-};
 use crate::git_wire::{GitOid, GitRefName, GitWireRepo};
 use crate::memory::repo_doors::refusal_error;
 use crate::origin::export_preview::{
@@ -38,6 +36,9 @@ use crate::origin::publication::OriginPublicationStatus;
 use crate::origin::secret_projection::repo_mark_preview_blockers_in_txn;
 use crate::origin::smart_http::push_queue_key;
 use crate::secret_custody::{SecretSight, sighted_bytes_in_txn};
+use oneiron_authority::federation::{
+    RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget,
+};
 
 /// The Scope verb a Grant lists for both preview rows.
 const PREVIEW_GRANT_VERB: &str = "vault.code.export.preview";

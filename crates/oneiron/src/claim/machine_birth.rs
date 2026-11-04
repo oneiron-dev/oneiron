@@ -159,7 +159,7 @@ impl SignedClaimBirth {
         let transcript =
             crate::authority::machine_claim_transcript(&self.vault_id, &self.target, &body)
                 .map_err(|_| invalid())?;
-        crate::authority::strong_ed25519_key(&self.machine_public_key)
+        oneiron_authority::authority::strong_ed25519_key(&self.machine_public_key)
             .map_err(|_| invalid())?
             .verify_strict(&transcript, &Signature::from_bytes(&self.machine_signature))
             .map_err(|_| invalid())?;

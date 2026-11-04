@@ -91,10 +91,7 @@ impl RawValue for RedirectRow {
     }
 }
 
-/// ARCH-0038 carrier-class handle for the redirect table (MS-07 / ONE-1749
-/// adds it to the erase machinery's carrier list). Named here so the erase
-/// ticket registers the class without re-plumbing the storage.
-pub const REDIRECT_CARRIER_CLASS: &str = "redirect_table";
+pub use crate::deletion::REDIRECT_CARRIER_CLASS;
 
 /// Maximum shell hops one resolution may walk. The path-cycle guard already
 /// makes a cycle a typed error; this bound additionally keeps a pathological

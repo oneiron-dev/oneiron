@@ -22,14 +22,7 @@ const MODE_EXECUTABLE: u32 = 0o100_755;
 
 static RECEIVED_BLOB_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-/// One entry of a received bundle's tree change: its path, its exact new
-/// bytes (`None` removes it) and its Git mode once present.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ReceivedTreeEdit {
-    pub(crate) path: String,
-    pub(crate) content: Option<Vec<u8>>,
-    pub(crate) mode: u32,
-}
+pub(crate) use crate::store::repo_proposal_record::ReceivedTreeEdit;
 
 /// The tree change a received bundle's files make: removals first, then
 /// additions, so a file/directory transition never finds its way blocked.

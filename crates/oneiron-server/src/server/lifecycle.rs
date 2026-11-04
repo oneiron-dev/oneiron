@@ -68,20 +68,27 @@ pub(super) enum LifecycleJobKind {
     MergeQueueChecks,
 }
 
-/// The lifecycle loop, and the housekeeping pass it last started. Dropping it
-/// stops the loop; [`Self::stop`] also waits out the pass.
+/// The lifecycle loop and the housekeeping pass it last started, beside the
+/// claim VAD payment worker's loop. Dropping it stops both loops;
+/// [`Self::stop`] also waits out the pass and the payment run in flight.
 pub(crate) struct LifecycleScheduler {
     tick: JoinHandle<()>,
+    /// The claim VAD payment worker (FIX 11702): while it runs, the vault's
+    /// write door answers before the consolidations its write owes.
+    claim_vad_payment: JoinHandle<()>,
     server: Arc<SyncServer>,
 }
 
 impl LifecycleScheduler {
-    /// Stops the loop, then asks every housekeeping pass in flight, the
+    /// Stops both loops, then asks every housekeeping pass in flight, the
     /// owner's included, to start no further sweep or page, and waits for
-    /// each, so nothing a pass writes lands after this returns.
+    /// each, so nothing a pass or a payment run writes lands after this
+    /// returns.
     pub(crate) async fn stop(mut self) {
         self.tick.abort();
+        self.claim_vad_payment.abort();
         let _ = (&mut self.tick).await;
+        let _ = (&mut self.claim_vad_payment).await;
         self.server.housekeeping_passes.stop().await;
     }
 }
@@ -89,6 +96,7 @@ impl LifecycleScheduler {
 impl Drop for LifecycleScheduler {
     fn drop(&mut self) {
         self.tick.abort();
+        self.claim_vad_payment.abort();
     }
 }
 
@@ -105,7 +113,8 @@ impl SyncServer {
     /// Starts the periodic lifecycle loop. Each tick, the first at once,
     /// expires sync leases, drains reassert markers, finishes the dependent
     /// walks left past their first batch and starts a housekeeping pass,
-    /// each through `admit`, the host's write gate.
+    /// each through `admit`, the host's write gate. Beside it starts the
+    /// claim VAD payment worker, whose runs pass the same gate (FIX 11702).
     pub(crate) fn spawn_lifecycle_scheduler(
         self: &Arc<Self>,
         admit: HousekeepingAdmission,
@@ -118,6 +127,7 @@ impl SyncServer {
         tick: Duration,
         admit: HousekeepingAdmission,
     ) -> LifecycleScheduler {
+        let claim_vad_payment = self.spawn_claim_vad_payment_worker(Arc::clone(&admit));
         let server = Arc::clone(self);
         let tick = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tick);
@@ -174,6 +184,7 @@ impl SyncServer {
         });
         LifecycleScheduler {
             tick,
+            claim_vad_payment,
             server: Arc::clone(self),
         }
     }

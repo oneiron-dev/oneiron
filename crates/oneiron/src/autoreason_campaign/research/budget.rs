@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{ResearchBinding, binding, invalid, nodes_in_txn};
-use crate::llm::{RsiBudgetError, RsiSettlement, RsiSpendPurpose};
+use crate::research_budget::{RsiBudgetError, RsiSettlement, RsiSpendPurpose};
 use crate::side_table::{self, Named, SideTable};
 use crate::{AttemptId, EntityId, Error, Result, Vault};
 

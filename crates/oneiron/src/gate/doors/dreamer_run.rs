@@ -3,7 +3,6 @@ use rmpv::Value;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, DreamerIsolationClass};
 use crate::compaction::turn_session_membership_in_txn;
 use crate::dreamer_consolidation::decode_consolidation_evidence;
-use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -17,6 +16,7 @@ use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
 use crate::store::Store;
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteEnvelope};
 

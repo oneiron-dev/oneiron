@@ -16,10 +16,10 @@ pub(super) fn finalize_batch_indexes(
     crate::hnsw::run_pending_legacy_rebuild(store, config, wtxn, pending_hnsw_rebuild)?;
 
     if had_graph_mutation {
-        ppr::increment_graph_version(store, wtxn)?;
+        crate::store::graph_version::increment_graph_version(store, wtxn)?;
     }
     if had_vector_mutation {
-        crate::hnsw::increment_vector_version(store, wtxn)?;
+        crate::store::vector_index::increment_vector_version(store, wtxn)?;
     }
 
     Ok(())
@@ -30,7 +30,7 @@ pub(super) fn apply_text_index_update(
     wtxn: &mut RwTxn<'_>,
     (analyzer, analyzed): (
         &crate::analyzer::MultilingualAnalyzer,
-        Option<&crate::bm25::AnalyzedText>,
+        Option<&crate::store::text_index::AnalyzedText>,
     ),
     id: &EntityId,
     fields: &[(String, String)],
@@ -48,7 +48,7 @@ pub(super) fn apply_text_index_update(
     }
     // Text staged for idle publication meets the same ceiling now, at its
     // write, rather than failing publication later.
-    crate::bm25::check_indexed_text_bytes(fields)?;
+    crate::store::text_index::check_indexed_text_bytes(fields)?;
     if !crate::vault::entity_revision::defer_index_inputs(
         store,
         wtxn,
@@ -60,8 +60,10 @@ pub(super) fn apply_text_index_update(
         // The analysis done before the transaction opened, when it was read
         // from these very fields; otherwise analyze here as before.
         match analyzed.filter(|analyzed| analyzed.reads(fields)) {
-            Some(analyzed) => crate::bm25::index_analyzed_text(store, wtxn, id, fields, analyzed)?,
-            None => crate::bm25::index_text(store, wtxn, analyzer, id, fields)?,
+            Some(analyzed) => {
+                crate::store::text_index::index_analyzed_text(store, wtxn, id, fields, analyzed)?
+            }
+            None => crate::store::text_index::index_text(store, wtxn, analyzer, id, fields)?,
         }
     }
     Ok(())

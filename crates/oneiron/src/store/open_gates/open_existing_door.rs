@@ -189,7 +189,7 @@ impl Store {
             machine_history_issuer: Mutex::new(None),
             machine_history_runtime: crate::claim::MachineHistoryRuntime::default(),
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
-            pending_scan_checks: crate::scan_check::PendingScanChecks::default(),
+            pending_scan_checks: crate::store::PendingScanChecks::default(),
             limit_watch: crate::limit_ask::LimitWatch::new(config.limits.clone()),
             deadline_jobs: crate::store::DeadlineJobs::default(),
             tombstone_scope_probes: crate::deletion::TombstoneScopeProbes::default(),
@@ -197,14 +197,14 @@ impl Store {
             body_seal: crate::store::BodySealSlot::default(),
             reader_job_runner: std::sync::RwLock::new(None),
             result_memory: std::sync::RwLock::new(std::sync::Arc::new(
-                crate::result_memory::ResultMemoryPool::new(
+                crate::store::result_memory::ResultMemoryPool::new(
                     config
                         .limits
                         .bound(crate::limit_ask::EngineLimit::CodeResultMemoryBytes),
                 ),
             )),
             inference_snapshots: crate::inference_snapshot::SnapshotLifecycle::default(),
-            l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
+            l2_base_cache: Mutex::new(crate::store::l2_evidence::L2BaseCache::default()),
             legal_hold_refusals: crate::store::legal_hold::LegalHoldRefusals::default(),
             backup_hold_rechecks: tokio::sync::watch::channel(0).0,
             clock,

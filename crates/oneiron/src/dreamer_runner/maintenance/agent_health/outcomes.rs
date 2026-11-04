@@ -33,9 +33,7 @@ use crate::{EntityId, Result, Vault};
 
 /// The reviewer cell's axis: a card outcome scores the evaluator's diagnosis.
 const HEALTH_REVIEW_AXIS: &str = "health_review";
-/// A reviewer receipt id's prefix: `health_review:` and 64 hex. The replay
-/// judge reads such a receipt through [`Vault::health_review_receipt`].
-pub const HEALTH_REVIEW_RECEIPT_PREFIX: &str = "health_review:";
+pub use crate::skill::health_review::HEALTH_REVIEW_RECEIPT_PREFIX;
 const REVIEW_STATE_DOMAIN: &[u8] = b"oneiron.coach.agent_health.review_state.v1";
 
 /// One outcome set on a card, with what it judged frozen as it stood then.

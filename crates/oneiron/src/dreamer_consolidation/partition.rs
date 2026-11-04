@@ -196,7 +196,8 @@ pub fn plan_partitions(
     watermark: &ConsolidationWatermark,
 ) -> Result<Vec<ConsolidationPartitionPlan>> {
     let _ = scope;
-    let screened = prefilter_partition_input(vault, dirty_turns)?;
+    let eligible = without_excluded(dirty_turns, &vault.dreamer_excluded_conversations()?);
+    let screened = prefilter_partition_input(vault, &eligible)?;
     let mut plans: BTreeMap<ConsolidationPartitionKey, Vec<WorkingSetTurn>> = BTreeMap::new();
     for turn in &screened.kept {
         let Some(conversation_ref) = turn.conversation else {
@@ -223,6 +224,32 @@ pub fn plan_partitions(
         .collect())
 }
 
+fn without_excluded(
+    turns: &[WorkingSetTurn],
+    excluded: &super::excluded_conversations::DreamerExcludedConversations,
+) -> Vec<WorkingSetTurn> {
+    if excluded.is_empty() {
+        return turns.to_vec();
+    }
+    turns
+        .iter()
+        .copied()
+        .filter(|turn| {
+            turn.conversation
+                .is_none_or(|conversation| !excluded.contains(&conversation))
+        })
+        .collect()
+}
+
+fn without_excluded_conversations(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turns: &[WorkingSetTurn],
+) -> Result<Vec<WorkingSetTurn>> {
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
+    Ok(without_excluded(turns, &excluded))
+}
+
 /// [`plan_partitions`] over a caller-owned write transaction — the ONE-1685
 /// session close plans its SessionEnd → Meso round from rows it has staged but
 /// not yet committed. Same grouping and the SAME `world_ref`/`facet_ref`
@@ -241,7 +268,8 @@ pub(crate) fn plan_partitions_in_txn(
     watermark: &ConsolidationWatermark,
 ) -> Result<Vec<ConsolidationPartitionPlan>> {
     let _ = scope;
-    let screened = prefilter_partition_input_in_txn(vault, txn, dirty_turns)?;
+    let eligible = without_excluded_conversations(vault, txn, dirty_turns)?;
+    let screened = prefilter_partition_input_in_txn(vault, txn, &eligible)?;
     partition_screened_turns_in_txn(vault, txn, &screened.kept, watermark)
 }
 
@@ -255,6 +283,29 @@ pub(crate) fn partition_turns_in_txn(
     watermark: &ConsolidationWatermark,
 ) -> Result<Vec<ConsolidationPartitionPlan>> {
     partition_screened_turns_in_txn(vault, txn, turns, watermark)
+}
+
+/// The partition hash `turn` plans under in `txn`: the same key
+/// [`partition_screened_turns_in_txn`] groups it by, for one turn. None
+/// when it has no conversation edge.
+pub(crate) fn turn_partition_hash_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    let Some(conversation_ref) = super::redirty::conversation_in_txn(vault, txn, turn)? else {
+        return Ok(None);
+    };
+    let turn_facts = read_turn_facts_in_txn(vault, txn, turn)?;
+    let conversation_facts = read_turn_facts_in_txn(vault, txn, &conversation_ref)?;
+    Ok(Some(
+        ConsolidationPartitionKey {
+            conversation_ref,
+            world_ref: turn_facts.world_ref.or(conversation_facts.world_ref),
+            facet_ref: turn_facts.facet_ref.or(conversation_facts.facet_ref),
+        }
+        .partition_hash(),
+    ))
 }
 
 fn partition_screened_turns_in_txn(
@@ -438,7 +489,8 @@ pub(crate) fn prepare_partition_plans_in_txn(
     if planned_turn_ids.is_empty() {
         return Ok(None);
     }
-    let mut turns = read_partition_turns_in_txn(vault, txn, scope, planned_turn_ids)?;
+    let turns = read_partition_turns_in_txn(vault, txn, scope, planned_turn_ids)?;
+    let mut turns = without_excluded_conversations(vault, txn, &turns)?;
     turns.retain(|turn| turn.conversation.is_some());
     let screen = prefilter_partition_input_in_txn(vault, txn, &turns)?;
     let plans = partition_screened_turns_in_txn(vault, txn, &screen.kept, watermark)?;

@@ -11,9 +11,11 @@
 
 use crate::Vault;
 use crate::error::Result;
-use crate::recovery::{
-    KitError, KitId, KitManifest, KitPassphrase, KitPiece, KitPiecePair, KitPieceStore,
-    KitSecretKind, PieceHome, RestoredKitSecret, join_kept_piece, restore_kit,
+use crate::{
+    recovery::KitPieceStore,
+    recovery::{join_kept_piece, restore_kit},
+    store::recovery_kit::{KitError, KitId, KitManifest, KitPassphrase, KitPiece, KitPiecePair},
+    store::recovery_kit::{KitSecretKind, PieceHome, RestoredKitSecret},
 };
 
 use super::keystore_error;
@@ -80,13 +82,17 @@ impl Vault {
         )
     }
 
-    /// Whether this machine keeps its current piece of the exact kit `kit` of
-    /// `kind`. Another kit's piece never counts toward this kit's passphrase choice.
+    /// Whether this machine keeps a piece of the exact kit `kit` of `kind`
+    /// that a restore here would join: its current piece, or for a
+    /// recovery-root kit, that kit's pending piece, as
+    /// [`Vault::restore_kit_here`] joins it (FIX 12399). Another kit's piece
+    /// never counts toward this kit's passphrase choice.
     pub fn keeps_kit_piece_for(&self, kind: KitSecretKind, kit: KitId) -> bool {
         matches!(
             self.kept_kit_piece(KitPiecePair::Current(kind)),
             Ok(Some(piece)) if piece.kit_id() == kit
-        )
+        ) || (kind == KitSecretKind::RecoveryRoot
+            && matches!(self.kept_kit_piece(KitPiecePair::Pending(kit)), Ok(Some(_))))
     }
 
     /// Rebuilds a kit's secret on this machine (FIX 2063): [`restore_kit`] over

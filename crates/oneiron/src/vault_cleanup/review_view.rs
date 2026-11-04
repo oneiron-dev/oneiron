@@ -33,10 +33,11 @@ use crate::attempt_queue::{AttemptId, decode_record};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::memory::{MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult};
+use crate::memory::Memory;
 use crate::note::NoteReadRequest;
 use crate::ports::{EdgeDirection, EntityStoreRead, JobQueueRead};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use oneiron_contracts::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 
 /// The BLAKE3 context of a review's revision.
 const REVIEW_CONTEXT: &str = "oneiron vault_cleanup review revision v1";

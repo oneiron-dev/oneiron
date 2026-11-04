@@ -22,11 +22,11 @@ use crate::code_view::CodeViewSet;
 use crate::codebase::{CodebaseSnapshotMount, snapshot_asset_entity_id};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal};
 use crate::memory::codebase_doors::CodeSnapshotDefinition;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::origin::secret_projection::RepoRevealRecipient;
 use crate::origin::secret_projection::reveal::RepoReadDoor;
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal};
 
 impl Memory<'_> {
     /// `self.code.snapshots.get` for a run: the manifest of the named

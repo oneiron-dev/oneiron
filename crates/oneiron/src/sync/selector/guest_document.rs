@@ -1,6 +1,7 @@
 //! The shared guest-document export door: owner sharing and recipient fetching.
 use std::sync::Arc;
 
+use crate::authority::{GuestDocumentContext, GuestDocumentEnvelope};
 use crate::authority::{HostSlipIssuer, VerifiedSlip};
 use crate::claim::CallerLocality;
 use crate::consent::AuthenticatedOwner;
@@ -8,11 +9,9 @@ use crate::entity_id::{EntityId, LocalWorldId, bytes_to_hex_lower};
 use crate::federation::{
     FederationGrant, FederationGrantScope, ScopeId, decode_federation_grant_body,
 };
+pub use crate::guest_document_share::GuestDocumentShareRequest;
 use crate::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_WORLD};
 use crate::sync::{SyncSelector, SyncSelectorWorld, WindowKey, WindowManager};
-use crate::task_verb::sdk::{
-    GuestDocumentContext, GuestDocumentEnvelope, GuestDocumentShareRequest,
-};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{Error, Result, Vault};
 

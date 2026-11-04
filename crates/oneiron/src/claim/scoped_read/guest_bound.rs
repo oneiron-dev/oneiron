@@ -36,7 +36,7 @@ impl ScopedReadActorKey {
         &self,
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
-        position: impl FnOnce() -> Result<Option<crate::federation::Scope>>,
+        position: impl FnOnce() -> Result<Option<oneiron_authority::federation::Scope>>,
     ) -> bool {
         let Some(proof) = self.proof.as_ref() else {
             return true;

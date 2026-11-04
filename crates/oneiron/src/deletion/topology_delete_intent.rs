@@ -6,10 +6,10 @@
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
-use crate::identity_topology::IdentityTopologyRejection;
 use crate::ports::WindowDeletionRows;
 use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
 use crate::store::Store;
+use oneiron_contracts::identity_topology::IdentityTopologyRejection;
 
 use super::tombstone::{
     DecodedTombstoneValue, HARD_DELETE_MARKER, TombstoneReason, TombstoneValueV2,
@@ -446,7 +446,8 @@ fn matching_recovery_tombstone_in_txn(
     #[cfg(feature = "sync")]
     {
         use crate::ports::WindowAddress;
-        use crate::sync::loro_support::{doc_from_snapshot, import_doc, tombstone_values_for_id};
+        use crate::store::loro_document::{doc_from_snapshot, import_doc};
+        use crate::sync::loro_support::tombstone_values_for_id;
         for row in store.port_window_doc_rows_raw(txn, |label, snapshot| {
             doc_from_snapshot(snapshot).map(|doc| (label.as_str().to_owned(), doc))
         })? {

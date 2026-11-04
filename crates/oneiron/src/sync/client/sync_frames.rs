@@ -199,7 +199,8 @@ impl SyncClient {
             }
             // This vault's embedding setup rows (OF-370) live in one fixed window, which a
             // fresh device has no row of its own to discover.
-            let setup = WindowKey::from_timestamp(crate::embed::EMBEDDING_SETUP_LEARNED_AT);
+            let setup =
+                WindowKey::from_timestamp(crate::store::embedding::EMBEDDING_SETUP_LEARNED_AT);
             if !keys.contains(&setup) {
                 keys.push(setup);
             }
@@ -219,7 +220,8 @@ impl SyncClient {
             }
             // This vault's embedding setup rows (OF-370) reach an opened-item device whatever
             // it opened: it asks the home to grant their window (`setup_catch_up`).
-            let setup = WindowKey::from_timestamp(crate::embed::EMBEDDING_SETUP_LEARNED_AT);
+            let setup =
+                WindowKey::from_timestamp(crate::store::embedding::EMBEDDING_SETUP_LEARNED_AT);
             if self.config.residence_selector.is_some()
                 && self.setup_catch_up(setup.as_str())
                 && !keys.contains(&setup)

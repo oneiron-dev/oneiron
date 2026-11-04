@@ -31,10 +31,10 @@ use heed::RoTxn;
 use super::types::REPO_OPAQUE_FILE_BYTES;
 use super::{RepoBodyProjection, project_repo_bytes_in_txn};
 use crate::Vault;
-use crate::codebase::snapshot_asset_entity_id;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
+use crate::store::code_snapshot::snapshot_asset_entity_id;
 
 mod derived;
 mod invalidate;
@@ -269,7 +269,7 @@ impl RepoIndexMarks {
         vault: &Vault,
         txn: &RoTxn<'_>,
         source: &[u8; 32],
-    ) -> Result<Option<crate::secret_custody::KeyPlaces>> {
+    ) -> Result<Option<crate::file_secret_marks::KeyPlaces>> {
         self.readable(source)?;
         let marks = self.facts.for_hash(source);
         if marks.is_empty() || marks.opaque() {

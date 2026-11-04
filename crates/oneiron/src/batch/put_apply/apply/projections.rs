@@ -15,7 +15,7 @@ pub(super) fn stage_put_projections(
     body_changed: bool,
     consolidation_dirty: bool,
     stored_before: bool,
-    previous_skill_record: &Option<crate::skill::SkillRecord>,
+    previous_skill_record: &Option<crate::write_envelope::skill_record::SkillRecord>,
     short_id_plan: Option<crate::batch::short_id::ShortIdPlan>,
     authority_first_seen_key: Option<String>,
     evicted_shell_sources: BTreeSet<EntityId>,

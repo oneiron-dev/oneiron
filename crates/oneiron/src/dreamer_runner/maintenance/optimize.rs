@@ -15,7 +15,8 @@ use crate::dreamer_runner::{
     DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
-use crate::llm::decision::{DecisionQuestion, TypedDecision};
+use crate::llm::decision::TypedDecision;
+use crate::model_decision::DecisionQuestion;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{
@@ -336,7 +337,7 @@ fn pending_proposal(
             // would retry it on every pass and never draft again.
             if record.lifecycle_status != SkillLifecycle::Candidate
                 || record.approval_status != ClaimApprovalStatus::Proposed
-                || record.skill_id == crate::agent_dispatch::TEAM_SHAPE_SKILL_NAME
+                || record.skill_id == crate::skill::team_shape_catalog::TEAM_SHAPE_SKILL_NAME
                 || crate::skill::resident_of(&record)? != resident
             {
                 continue;

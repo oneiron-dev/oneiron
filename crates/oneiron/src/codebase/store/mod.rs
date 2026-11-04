@@ -7,12 +7,12 @@ use super::ingest::{
 use super::repo_ref::RepoRef;
 use super::snapshot::{
     CODEBASE_CONTENT_HASH_LEN, CodebaseForkHash, CodebaseScopeKey, CodebaseSnapshot,
-    CodebaseSnapshotMount, validate_codebase_snapshot, write_hash_len,
+    CodebaseSnapshotMount, validate_codebase_snapshot,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::code_artifact::{CodeArtifactClass, decode_code_artifact_body};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, CodeError, Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
@@ -32,10 +32,6 @@ use self::index_rows::{
     codebase_ids_by_index, delete_exact_index_rows_for_snapshot, delete_index_rows_for_id,
     fork_has_other_snapshot, put_scope_index_rows_for_snapshot,
 };
-
-const CODEBASE_ASSET_ID_DOMAIN: &[u8] = b"oneiron:codebase-asset-entity:v1";
-
-const CODEBASE_SNAPSHOT_ID_DOMAIN: &[u8] = b"oneiron:codebase-snapshot-entity:v1";
 
 /// A codebase snapshot's file manifest, keyed by the CODE_ARTIFACT entity id it snapshots.
 const SNAPSHOTS: SideTable<EntityId, CodebaseSnapshot, Raw> =
@@ -497,39 +493,10 @@ pub(super) fn codebase_ids_by_fork_hash_in_txn(
     codebase_ids_by_index(FORK_INDEX, store, rtxn, &hash_index_scan_prefix(fork_hash))
 }
 
-pub(crate) fn codebase_asset_entity_id(
-    content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
-) -> Result<EntityId> {
-    entity_id_from_hash_material(CODEBASE_ASSET_ID_DOMAIN, &[content_hash])
-}
-
-pub(super) fn codebase_snapshot_entity_id(snapshot: &CodebaseSnapshot) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        CODEBASE_SNAPSHOT_ID_DOMAIN,
-        &[&snapshot.scope_key, &snapshot.fork_hash],
-    )
-}
-
-pub(crate) fn entity_id_from_hash_material(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
-    for salt in 0_u64..=u64::MAX {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(domain);
-        hasher.update(&salt.to_le_bytes());
-        for part in parts {
-            write_hash_len(&mut hasher, part.len())?;
-            hasher.update(part);
-        }
-        let hash = hasher.finalize();
-        let mut id = [0_u8; ENTITY_ID_LEN];
-        id.copy_from_slice(&hash.as_bytes()[..ENTITY_ID_LEN]);
-        if let Ok(id) = EntityId::from_bytes(id) {
-            return Ok(id);
-        }
-    }
-    Err(Error::InvariantViolation(
-        "codebase deterministic entity id exhausted salt space",
-    ))
-}
+pub(super) use crate::store::code_snapshot::codebase_snapshot_entity_id;
+pub(crate) use crate::store::code_snapshot::{
+    codebase_asset_entity_id, entity_id_from_hash_material,
+};
 
 /// The `sync_state`-free hex64 key `SnapshotCustodyReport` rows have always used: the lower-case
 /// hex spelling of the snapshot's fork hash.
@@ -572,9 +539,4 @@ pub(crate) fn archive_codebase_tables() -> [crate::batch::export::LentSideTable;
     ]
 }
 
-/// OF-222 (FIX 2768) archive seam: the ASSET a snapshot file's bytes are stored as.
-pub(crate) fn archive_codebase_asset_id(
-    content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
-) -> Result<EntityId> {
-    codebase_asset_entity_id(content_hash)
-}
+pub(crate) use crate::store::code_snapshot::archive_codebase_asset_id;

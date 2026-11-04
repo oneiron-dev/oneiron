@@ -105,7 +105,12 @@ impl Vault {
             .collect();
         let changed = match winner_index(&precedence) {
             Some(index) => {
-                restamp_edge_flags(&self.store, wtxn, subject, survivors[index].flags())?;
+                crate::ports::EdgeStoreMaintenance::port_edge_stamp_provenance(
+                    &self.store,
+                    wtxn,
+                    subject,
+                    survivors[index].flags(),
+                )?;
                 true
             }
             // No ACTIVE survivor. "The derived edge flag follows the Claim"
@@ -121,7 +126,7 @@ impl Vault {
             return Ok(Vec::new());
         }
         ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
-        ppr::increment_graph_version(&self.store, wtxn)?;
+        crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         Ok(vec![subject.source, subject.target])
     }
 
@@ -148,7 +153,7 @@ impl Vault {
             .collect();
         match winner_index(&precedence) {
             Some(index) => {
-                restamp_edge_flags(
+                crate::ports::EdgeStoreMaintenance::port_edge_stamp_provenance(
                     &self.store,
                     wtxn,
                     subject,
@@ -159,7 +164,11 @@ impl Vault {
                 )?;
                 Ok(true)
             }
-            None => downgrade_edge_to_bare(&self.store, wtxn, subject),
+            None => crate::ports::EdgeStoreMaintenance::port_edge_clear_provenance(
+                &self.store,
+                wtxn,
+                subject,
+            ),
         }
     }
 }
@@ -168,7 +177,7 @@ impl Vault {
 /// subject and sweep refs, `None` for any other predicate. Bytes alone, no
 /// read: every error is the body's own corruption.
 pub(super) fn decode_provenance_capture(body: &[u8]) -> Result<Option<CapturedProvenanceDelete>> {
-    let wrapper = crate::claim::decode_claim_body(body, true)?;
+    let wrapper = crate::write_envelope::claim_body::decode_claim_body(body, true)?;
     if wrapper.predicate != PREDICATE_EDGE_PROVENANCE {
         return Ok(None);
     }

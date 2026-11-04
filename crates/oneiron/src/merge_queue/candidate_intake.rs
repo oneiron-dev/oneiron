@@ -7,10 +7,10 @@
 //! queue's same checks once (FIX 8268, `received_enqueue`).
 use super::check_store::QueueCheckConfiguration;
 use super::{MergeQueue, QueueSealTarget};
-use crate::codebase::RepoRef;
 use crate::error::Result;
 use crate::git_wire::GitWire;
 use crate::origin::CandidateQueue;
+use crate::store::code_snapshot::RepoRef;
 
 impl MergeQueue<'_> {
     /// Matches every retained received ref of this queue's store that has

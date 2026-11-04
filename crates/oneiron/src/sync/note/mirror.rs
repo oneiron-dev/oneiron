@@ -126,18 +126,21 @@ pub(crate) fn refresh_for(
 /// [`copy_selected`] for a door with no snapshot of its own: the NOTEs in
 /// `out` are judged in a read transaction of their own. An admitted copy
 /// keeps a peer's attachments only as this vault's own judgement lets them
-/// ride; they stay advisory.
-pub(crate) fn copy_judged(vault: &Vault, source: &LoroDoc, out: &LoroDoc) -> Result<()> {
+/// ride; they stay advisory. `receiving` is the receiving placement (FIX 5588):
+/// this install's machine, or a destination nobody proved; never the sender's
+/// peer proof.
+pub(crate) fn copy_judged(
+    vault: &Vault,
+    source: &LoroDoc,
+    out: &LoroDoc,
+    receiving: crate::machine_destination::Destination,
+) -> Result<()> {
     let ids = rows(out, "entities")?
         .iter()
         .map(|(key, _)| id(key))
         .collect::<Result<BTreeSet<_>>>()?;
     let txn = vault.store.env.read_txn()?;
-    let flagged = crate::settings::device_local_worlds_at(
-        vault,
-        &txn,
-        crate::claim::CallerLocality::OffDevice,
-    )?;
+    let flagged = crate::settings::device_local_worlds_for_machine(vault, &txn, receiving)?;
     let selection = NoteSelection::judged_in(vault, &txn, &flagged, source, &ids, None)?;
     if !is_native(source) {
         return Ok(());

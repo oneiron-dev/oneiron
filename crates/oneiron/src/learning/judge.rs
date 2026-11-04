@@ -236,13 +236,7 @@ fn reproject_judged_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, now: u64) 
     Ok(())
 }
 
-/// One overlap case for a judge takeover: did the new judge diverge from the
-/// old one, and which source family did the case come from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DivergenceCase {
-    pub source_family: String,
-    pub diverged: bool,
-}
+pub use crate::skill::learning_judge::DivergenceCase;
 
 /// Whether a conversion map's chain from its old judge resolves or loops.
 /// Reporting only: recording still succeeds when cyclic, and the status is
@@ -257,18 +251,7 @@ pub enum ConversionChainStatus {
     Cyclic,
 }
 
-/// The takeover ladder's answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TakeoverVerdict {
-    /// Divergence sits within the old judge's own retest noise in every
-    /// source family: the new judge governs.
-    TakeOver,
-    /// Divergence exceeds the noise floor somewhere: the incumbent holds.
-    Hold,
-    /// Too few cases, or no measured noise: the incumbent holds with no
-    /// automatic takeover and no tie-breaker until more arrive.
-    Unknown,
-}
+pub use crate::skill::learning_judge::TakeoverVerdict;
 
 /// Whether a shadowing judge may take over (ARCH-0079 Fig. 6). It takes over
 /// only when the high end of its divergence interval, grouped by source

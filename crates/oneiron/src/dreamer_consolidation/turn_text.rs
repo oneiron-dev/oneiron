@@ -30,12 +30,12 @@ use crate::claim::{PointRead, ScopedRead, ScopedReadActorKey, ScopedReadResult};
 use crate::dreamer_runner::{DreamerTurnRole, dreamer_turn_role};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
-use crate::llm::{Scope, ScopeResource};
 use crate::memory::StreamFinality;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_model::llm::{Scope, ScopeResource};
 
 pub(super) mod compaction_span;
 pub(super) mod projection;

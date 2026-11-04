@@ -38,7 +38,7 @@ pub(crate) fn hnsw_is_dropped(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Resu
 pub(crate) fn drop_rebuildable_hnsw(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-) -> Result<crate::slim::HeapDropReport> {
+) -> Result<crate::heap_drop::HeapDropReport> {
     // Read the marker FIRST so a malformed one fails closed before any
     // mutation, exactly like every other decode on this module's write paths.
     let was_dropped = hnsw_is_dropped(store, &*wtxn)?;
@@ -70,9 +70,9 @@ pub(crate) fn drop_rebuildable_hnsw(
         estimated_reclaimed_bytes,
         "slim: dropped the rebuildable hnsw graph shape"
     );
-    Ok(crate::slim::HeapDropReport {
+    Ok(crate::heap_drop::HeapDropReport {
         hnsw_nodes,
         estimated_reclaimed_bytes,
-        ..crate::slim::HeapDropReport::default()
+        ..crate::heap_drop::HeapDropReport::default()
     })
 }

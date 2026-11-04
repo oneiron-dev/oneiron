@@ -10,6 +10,9 @@ impl WorkTicket {
             let changed = self.admission.changed();
             tokio::pin!(changed);
             changed.as_mut().enable();
+            let cancel_changed = self.cancel_change();
+            tokio::pin!(cancel_changed);
+            cancel_changed.as_mut().enable();
             if let Some(stop) = self.admission.ticket_stop(self.ticket) {
                 self.admission.cancel(self.ticket);
                 return Err(stop);
@@ -26,13 +29,17 @@ impl WorkTicket {
                 tokio::pin!(sleep);
                 tokio::select! {
                     () = changed.as_mut() => {},
+                    () = cancel_changed.as_mut() => {},
                     () = &mut sleep => {
                         self.admission.cancel(self.ticket);
                         return Err(AdmissionStop::Deadline);
                     }
                 }
             } else {
-                changed.await;
+                tokio::select! {
+                    () = changed.as_mut() => {},
+                    () = cancel_changed.as_mut() => {},
+                }
             }
         }
     }
@@ -49,6 +56,9 @@ impl WorkTicket {
             let changed = self.admission.changed();
             tokio::pin!(changed);
             changed.as_mut().enable();
+            let cancel_changed = self.cancel_change();
+            tokio::pin!(cancel_changed);
+            cancel_changed.as_mut().enable();
             match self.execution_grant() {
                 Ok(Some(grant)) => return Ok(grant),
                 Err(stop) => {
@@ -62,13 +72,17 @@ impl WorkTicket {
                 tokio::pin!(sleep);
                 tokio::select! {
                     () = changed.as_mut() => {},
+                    () = cancel_changed.as_mut() => {},
                     () = &mut sleep => {
                         self.admission.cancel(self.ticket);
                         return Err(AdmissionStop::Deadline);
                     }
                 }
             } else {
-                changed.await;
+                tokio::select! {
+                    () = changed.as_mut() => {},
+                    () = cancel_changed.as_mut() => {},
+                }
             }
         }
     }
@@ -88,14 +102,28 @@ impl WorkTicket {
         self.admission.changed()
     }
 
+    /// Direct WorkCancel wake; the existing flag remains the only stop truth.
+    pub fn cancel_change(&self) -> tokio::sync::futures::Notified<'_> {
+        self.request.cancel_changed.notified()
+    }
+
     /// This ticket's caller deadline, if it has one.
     pub fn deadline(&self) -> Option<Instant> {
         self.admission.ticket_deadline(self.ticket)
     }
 
+    /// Queue-owned stop truth for this ticket: device stop, removal, a
+    /// refreshed queue-side cancel, or a passed deadline. No grant is
+    /// reserved and no pressure state changes, so unload loops can probe
+    /// it every wake without side effects.
+    pub fn stop(&self) -> Option<AdmissionStop> {
+        self.admission.ticket_stop(self.ticket)
+    }
+
     /// Cancels this ticket and any children still inheriting from it.
     pub fn cancel(&self) {
         self.request.cancel.store(true, Ordering::Release);
+        self.request.cancel_changed.notify_waiters();
         self.admission.cancel(self.ticket);
     }
 }

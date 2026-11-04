@@ -14,6 +14,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use oneiron_docedit::xlsx_body::parse_cell;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -225,22 +226,15 @@ fn read_range_for(case: &CorpusCase, options: &MeasureOptions) -> Option<String>
     Some(range.to_owned())
 }
 
+/// Row-first (`(row, col)`, R7) unbounded reader over the shared core:
+/// no grid bound here (R4) -- the engine surfaces `XFE1` as engine-error.
 fn a1_coords(address: &str) -> Option<(u32, u32)> {
-    let split = address.find(|character: char| character.is_ascii_digit())?;
-    let (letters, digits) = address.split_at(split);
-    if letters.is_empty() || digits.is_empty() {
+    // The core trims and tolerates `$` anchors; this reader never did.
+    if address != address.trim() || address.contains('$') {
         return None;
     }
-    let mut col: u32 = 0;
-    for character in letters.chars() {
-        if !character.is_ascii_alphabetic() {
-            return None;
-        }
-        col = col
-            .checked_mul(26)?
-            .checked_add(u32::from(character.to_ascii_uppercase() as u8 - b'A') + 1)?;
-    }
-    Some((digits.parse().ok()?, col))
+    let cell = parse_cell(address)?;
+    Some((cell.row, cell.col))
 }
 
 fn staged_value(value: &serde_json::Value) -> std::result::Result<StagedValue, &'static str> {

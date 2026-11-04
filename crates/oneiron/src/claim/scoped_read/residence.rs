@@ -9,17 +9,16 @@ use std::collections::BTreeSet;
 
 use super::ScopedRead;
 use crate::Vault;
-use crate::authority::{
-    Destination, FederationGrantActivation, PeerMachine, VerifiedSlip, WorldPrivacyView,
-    federation_grant_activation,
-};
+use crate::authority::{VerifiedSlip, WorldPrivacyView, federation_grant_activation};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
 use crate::federation::{FederationGrantScope, decode_federation_grant_body};
 use crate::gate::PolicyManifestResolution;
+use crate::machine_destination::{Destination, PeerMachine};
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::sync::SyncSelector;
+use oneiron_authority::authority::FederationGrantActivation;
 
 fn denied() -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority {

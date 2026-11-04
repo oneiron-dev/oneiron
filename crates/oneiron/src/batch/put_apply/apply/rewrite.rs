@@ -96,7 +96,9 @@ pub(super) fn rewrite_put_body(
                 updated,
                 fixed.hub_admission,
             )? {
-                Some(crate::skill::encode_skill_record(updated)?)
+                Some(crate::write_envelope::skill_record::encode_skill_record(
+                    updated,
+                )?)
             } else {
                 None
             }

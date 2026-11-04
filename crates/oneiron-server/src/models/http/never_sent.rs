@@ -8,7 +8,7 @@
 use std::error::Error as _;
 use std::time::{Duration, Instant};
 
-use super::Sending;
+use super::{BudgetLease, DispatchRelease, HttpReleaseError, ReleaseSending, Sending};
 
 /// How soon after its send an exchange whose connection closed with no reply
 /// byte counts as one its upstream never read: far under any model's first
@@ -36,6 +36,42 @@ pub(super) fn send(fresh: &reqwest::Client, request: reqwest::RequestBuilder) ->
         );
         let (_, request) = again.build_split();
         fresh.execute(request?).await
+    })
+}
+
+/// [`send`] with `release` invoked before the first attempt and again after
+/// an awaited failure, before a fresh connection may resend the bytes.
+pub(super) fn send_released<'a>(
+    fresh: &reqwest::Client,
+    request: reqwest::RequestBuilder,
+    release: DispatchRelease<'a>,
+    lease: &'a BudgetLease,
+) -> ReleaseSending<'a> {
+    let fresh = fresh.clone();
+    let again = request.try_clone();
+    Box::pin(async move {
+        release().map_err(HttpReleaseError::Release)?;
+        let started = Instant::now();
+        lease.begin_physical_attempt();
+        let error = match request.send().await {
+            Ok(response) => return Ok(response),
+            Err(error) => error,
+        };
+        let Some(again) = again.filter(|_| never_reached(&error, started.elapsed())) else {
+            return Err(HttpReleaseError::Transport(error.into()));
+        };
+        tracing::debug!(
+            reason = "request_never_sent",
+            "a request that never reached its provider goes once more on a fresh connection"
+        );
+        release().map_err(HttpReleaseError::Release)?;
+        lease.begin_physical_attempt();
+        let (_, request) = again.build_split();
+        let request = request.map_err(|error| HttpReleaseError::Transport(error.into()))?;
+        fresh
+            .execute(request)
+            .await
+            .map_err(|error| HttpReleaseError::Transport(error.into()))
     })
 }
 

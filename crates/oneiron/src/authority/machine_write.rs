@@ -399,7 +399,7 @@ pub(crate) fn machine_claim_read_admitted(
                     == *body => {}
             // A superseded history's same-id successor is an ordinary claim.
             Ok(projection)
-                if projection.admits_successor_by(crate::memory::claim_author(body))
+                if projection.admits_successor_by(crate::claim::claim_author(body))
                     && !machine_claim_needs_history(store, txn, body)? => {}
             Ok(_)
             | Err(Error::Claim(ClaimError::MachineClaimHistoryIncomplete))

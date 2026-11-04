@@ -53,7 +53,9 @@ pub(crate) fn index_owner_fact(
     let Some(body) = body else {
         return Ok(());
     };
-    if crate::habit::task_role_from_body_bytes(body)? != crate::habit::TaskRole::AuthorityFact {
+    if crate::write_envelope::task_body::task_role_from_body_bytes(body)?
+        != crate::write_envelope::task_body::TaskRole::AuthorityFact
+    {
         return Ok(());
     }
     // AuthorityFact is a shared role byte: it also carries C02 ask group,

@@ -78,6 +78,9 @@ pub(crate) fn erase_call_request_in_txn(
         ));
     }
     put_erased_record(vault, wtxn, record)?;
+    crate::campaign::enrollment::drop_enrollment_asks_of_call_in_txn(
+        vault, wtxn, attempt_id, call_seq,
+    )?;
     forget_remote_task_in_txn(vault, wtxn, &id)?;
     if let Some(erased) = get_ledger_record(vault, &*wtxn, &id)? {
         settle_reservation_in_txn(vault, wtxn, &erased)?;

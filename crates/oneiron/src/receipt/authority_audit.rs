@@ -34,17 +34,21 @@ use serde::{Deserialize, Serialize};
 use super::kernel::hex_lower;
 use crate::Vault;
 use crate::authority::{
-    AUTHORITY_HASH_LEN, AuthorityCheckpointRow, AuthorityEntryHash, AuthorityFold, AuthorityKey,
-    AuthorityLogEntry, AuthorityOp, FederationLifecycleKind, OwnerWorkKind,
-    VerifiedAuthorityCheckpoint, adopted_authority_checkpoint_in_txn, authority_entry_hash,
-    authority_log_entity_id_from_hash, decode_authority_log_entry_body,
+    AuthorityCheckpointRow, AuthorityFold, VerifiedAuthorityCheckpoint,
+    adopted_authority_checkpoint_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::Memory;
 use crate::ports::{EntityRecord, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use oneiron_authority::authority::{
+    AuthorityKey, AuthorityLogEntry, AuthorityOp, FederationLifecycleKind, OwnerWorkKind,
+    authority_entry_hash, authority_log_entity_id_from_hash, decode_authority_log_entry_body,
+};
+use oneiron_contracts::authority::{AUTHORITY_HASH_LEN, AuthorityEntryHash};
+use oneiron_contracts::memory::MemoryResult;
 mod agent_grant_act;
 mod carried_act;
 mod issues;

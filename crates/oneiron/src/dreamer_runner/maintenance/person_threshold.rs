@@ -3,7 +3,7 @@
 //! owner's Approve accepts it, and the host installs the newest accepted
 //! revision on its bands.
 use super::coach::COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE;
-use crate::llm::decision::PersonThreshold;
+use crate::model_decision::PersonThreshold;
 use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
     Result, Vault,

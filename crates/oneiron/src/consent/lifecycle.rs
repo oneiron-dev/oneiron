@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::memory::{MemoryError, MemoryResult};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 use super::support::normalized_ref;
 use super::{

@@ -5,7 +5,7 @@
 
 use crate::dreamer_runner::DreamerParkCause;
 use crate::error::ErrorKind;
-use crate::llm::{FatalLlmError, LlmError, RetryableLlmError, SpentKind};
+use oneiron_model::llm::{FatalLlmError, LlmError, RetryableLlmError, SpentKind};
 
 /// Whether an executor error of `kind` waits on an owner act: an authority,
 /// grant, consent, approval or hold that nothing but the owner (or the
@@ -74,7 +74,8 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
             | RetryableLlmError::ServerError
             | RetryableLlmError::Timeout
             | RetryableLlmError::StreamCut
-            | RetryableLlmError::TransportFault(_) => false,
+            | RetryableLlmError::TransportFault(_)
+            | RetryableLlmError::DeviceAdmissionStopped => false,
         },
         LlmError::Fatal(fatal) => match fatal {
             FatalLlmError::Auth | FatalLlmError::Unsupported(_) | FatalLlmError::ResponseErased => {

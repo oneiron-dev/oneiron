@@ -216,6 +216,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.legal_holds.list"
         | "vault.legal_holds.log"
         | "vault.legal_holds.lift_and_erase"
+        | "vault.legal_holds.withdraw_erase"
         | "vault.agents.grants.mint"
         | "vault.agents.grants.revoke"
         | "vault.repo.git_push.mint"

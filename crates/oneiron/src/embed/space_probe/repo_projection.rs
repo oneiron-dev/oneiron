@@ -255,6 +255,7 @@ impl Vault {
         max_items: usize,
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<usize> {
+        let destination = author.endpoint();
         let mut work = Vec::new();
         {
             let rtxn = self.store.env.read_txn()?;
@@ -318,7 +319,7 @@ impl Vault {
             let input = document.input();
             if let Some(egress) = egress
                 && (egress.decide_media(&input) != EgressDecision::Allow
-                    || !self.media_rows_may_leave(None, &[document.id])?)
+                    || !self.media_rows_may_leave(None, input.source_rows(), &destination)?)
             {
                 continue;
             }

@@ -30,7 +30,8 @@ use serde::{Deserialize, Serialize};
 
 use super::FailureClassV1;
 use super::verbatim::verbatim_spans;
-use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
+use crate::agent_dispatch::decode_agent_dispatch_input;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::authority::{AuthorityFold, EffectiveRead};
 use crate::batch::secret_scan::scan_joined_text;

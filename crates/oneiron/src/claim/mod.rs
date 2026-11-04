@@ -46,8 +46,17 @@
 //!   supersession/retraction/demotion doors.
 //! * `expression_preference` — the typed expression-preference write surface.
 
+pub(crate) mod dispatch_input;
+pub mod dispatch_target;
+pub(crate) use dispatch_input as widen_record;
 mod aging_profiles;
+mod authorship;
+pub mod code_instruction;
+pub mod consult_payload_ref;
+pub mod retrieval_scope;
+pub(crate) use authorship::claim_author;
 mod core_types;
+pub mod corpus_scope;
 mod decay;
 mod deferred;
 mod demotion;
@@ -56,6 +65,11 @@ mod expression_archive;
 mod expression_preference;
 mod history_handoff;
 mod history_pin_exchange;
+pub mod learning_estimate;
+pub mod learning_evidence;
+pub mod learning_predicate;
+pub mod maintenance_kind;
+pub mod served_lifecycle;
 pub(crate) use history_pin_exchange::MachineHistoryRuntime;
 #[cfg(feature = "sync")]
 pub(crate) use history_pin_exchange::PinExchangeOutcome;
@@ -84,6 +98,7 @@ pub(crate) use projection_index::{
 };
 mod put;
 mod read;
+pub mod relationship_predicates;
 mod scope;
 mod scope_stamp;
 mod scoped_read;
@@ -91,6 +106,7 @@ mod source_trust;
 pub(crate) mod supersession_diff;
 mod supersession_provenance;
 pub(crate) mod transition;
+pub mod world_access;
 mod write_target;
 
 pub use aging_profiles::ClaimAgingProfiles;
@@ -112,7 +128,8 @@ pub use predicate_validators::*;
 pub(crate) use read::*;
 pub(crate) use scope::*;
 pub use scope_stamp::{
-    PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id, substrate_facet_id,
+    ClaimRecordScope, PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id,
+    substrate_facet_id,
 };
 pub(crate) use scope_stamp::{default_facet_in, record_scope_at, upgrade_pre_scope_body};
 pub use scoped_read::*;
@@ -123,3 +140,7 @@ pub(crate) use write_target::validate_claim_write_target_in_txn;
 
 #[cfg(test)]
 mod tests;
+
+pub mod reaction_record;
+#[cfg(feature = "sync")]
+pub mod selector_world;

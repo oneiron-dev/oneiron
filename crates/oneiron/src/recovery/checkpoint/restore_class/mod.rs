@@ -340,13 +340,13 @@ const RUNTIME_KINDS: &[(&str, &str, Class)] = &[
         LIVE,
     ),
     (
-        crate::campaign::CRM_PACK_ID,
-        crate::saved_query::SAVED_QUERY_SHORT_ID_PREFIX,
+        crate::registry::pack_namespaces::CRM_PACK_ID,
+        crate::registry::pack_namespaces::SAVED_QUERY_SHORT_ID_PREFIX,
         CONTENT,
     ),
     (
-        crate::campaign::CRM_PACK_ID,
-        crate::campaign::CAMPAIGN_SHORT_ID_PREFIX,
+        crate::registry::pack_namespaces::CRM_PACK_ID,
+        crate::registry::pack_namespaces::CAMPAIGN_SHORT_ID_PREFIX,
         CONTENT,
     ),
 ];

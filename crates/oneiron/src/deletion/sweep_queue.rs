@@ -9,6 +9,11 @@ use crate::{EntityId, Vault};
 
 use super::receipt::{CaptureFailure, RedactionScope};
 
+/// ARCH-0038 carrier-class handle for the redirect table (MS-07 / ONE-1749
+/// adds it to the erase machinery's carrier list). Named here so the erase
+/// ticket registers the class without re-plumbing the storage.
+pub const REDIRECT_CARRIER_CLASS: &str = "redirect_table";
+
 pub(crate) const HARD_ERASE_SWEEP_PREFIX: &[u8] = b"h:";
 pub(crate) const LAST_HARD_ERASE_SWEEP_SEQ_KEY: &[u8] = b"m:last_hard_erase_sweep_seq";
 pub(crate) const HARD_ERASE_SWEEP_SLA_SECS: u64 = 30 * 86_400;
@@ -35,7 +40,7 @@ const ARCH0038_CARRIER_CLASSES: &[&str] = &[
     "historical_loro_updates",
     "historical_loro_snapshots",
     "derived_carriers",
-    crate::identity_redirect::REDIRECT_CARRIER_CLASS,
+    REDIRECT_CARRIER_CLASS,
 ];
 
 /// The ARCH-0038 carrier classes a hard erasure must account for — the

@@ -19,9 +19,9 @@ mod types;
 pub use types::*;
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::ModelId;
 use crate::code_run::{ProgramStepFeedbackRelease, parse_check_ref, session_type_diagnostics_row};
 use crate::consent::AuthenticatedOwner;
+use oneiron_model::llm::ModelId;
 
 impl Memory<'_> {
     /// The CALL behind who reads the tally: the owner alone, by the

@@ -27,13 +27,13 @@ use super::slate_scope_signal::{
     signal_is_current_in_txn, signal_ramp_scope,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::consent::tool_scope::ToolGrantDataClass;
 use crate::consent_graduation::RampScope;
 use crate::edit_distance::graduation::{
     OfferAnswer, SnoozeState, answer_graduation_offer_as_owner, asks_are_suppressed_in_txn,
     snooze_state, unpin_scope_as_owner,
 };
 use crate::error::{Error, Result};
-use crate::outbound_consent::tool_call::ToolGrantDataClass;
 use crate::outbound_grant::standing_outbound_grant_in_txn;
 use crate::store::Store;
 use crate::{EntityId, Vault};

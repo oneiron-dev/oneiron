@@ -41,13 +41,18 @@ pub(super) fn is_replay(ticket: &str) -> bool {
 }
 
 /// Lets go of the replayed call's kept answer `ticket` once it expired.
+/// The expiry pre-read is only a fast path: the row is re-checked inside
+/// the delete's own write txn, so a refresh or erase landing between the
+/// two keeps its row (REVIEW-4458 P1).
 pub(super) fn reclaim_replay(store: &JobStore, ticket: &str) {
     let expired = match store.read(ticket, false) {
         Some(KeptJob::Row(row)) => row.replay_until_s.is_none_or(|until| until <= now_s()),
         Some(KeptJob::Erased) | None => false,
     };
-    if expired && let Err(error) = store.delete(ticket) {
-        tracing::warn!(%error, ticket, "an expired media answer was not let go");
+    if expired {
+        if let Err(error) = store.delete_if_expired(ticket) {
+            tracing::warn!(%error, ticket, "an expired media answer was not let go");
+        }
     }
 }
 
@@ -64,7 +69,7 @@ pub(super) fn fresh_ticket() -> String {
     format!("{JOB_TICKET}{}", &digest.finalize().to_hex()[..24])
 }
 
-fn now_s() -> u64 {
+pub(super) fn now_s() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
@@ -198,7 +203,16 @@ impl MediaRuntime {
                 replay_until_s: Some(until),
                 ..
             })) if until > now_s() => Some(Ok(response)),
-            _ => None,
+            kept => {
+                // A kept answer that no longer answers has expired: let it
+                // go as it is seen, not only at the next boot (FIX 11464).
+                // An erased row never lands here; it answered above, and
+                // its boot reclaim is unchanged.
+                if kept.is_some() {
+                    reclaim_replay(store, &id);
+                }
+                None
+            }
         }
     }
 

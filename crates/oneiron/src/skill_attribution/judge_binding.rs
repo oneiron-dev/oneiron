@@ -6,7 +6,7 @@
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::error::Result;
-use crate::llm::decision::ProviderPin;
+use crate::model_decision::ProviderPin;
 
 /// Records `judge` as the judge of the leased run `attempt` at lease
 /// generation `generation`, in the report writer `txn` that settles it,

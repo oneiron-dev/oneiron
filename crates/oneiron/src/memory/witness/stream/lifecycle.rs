@@ -1,9 +1,9 @@
 //! Terminal transitions and the host-driven quiet-stream pump.
 use super::*;
-use crate::FinishReason;
 use crate::error::Error;
 use crate::memory::{MemoryResult, WitnessAssertions};
 use crate::store::Callback;
+use oneiron_model::llm::FinishReason;
 
 mod terminal;
 

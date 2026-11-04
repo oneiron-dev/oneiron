@@ -156,7 +156,7 @@ fn reconcile_shell_edges_for_sources_in_txn(
                     kind,
                     weight,
                     *created_at,
-                    crate::affect::Vad::NEUTRAL,
+                    oneiron_contracts::affect::Vad::NEUTRAL,
                     None,
                 )?;
 
@@ -179,7 +179,7 @@ fn reconcile_shell_edges_for_sources_in_txn(
                     tgt: *target,
                     weight,
                     created_at: *created_at,
-                    vad: crate::affect::Vad::NEUTRAL,
+                    vad: oneiron_contracts::affect::Vad::NEUTRAL,
                     provenance: None,
                 });
             }

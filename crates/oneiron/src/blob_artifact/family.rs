@@ -11,8 +11,8 @@ use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::lens::RecordRef;
-use crate::provenance::made_by::MadeBy;
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT};
+use crate::write_envelope::provenance::made_by::MadeBy;
 
 use super::born_from::BornFromSource;
 use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
@@ -305,7 +305,7 @@ impl Vault {
             file.version,
             hash_hex(blake3::hash(&file.bytes).as_bytes()),
             by,
-            &crate::share_travel::BornWith::new(),
+            &oneiron_authority::share_travel::BornWith::new(),
         )
     }
 }

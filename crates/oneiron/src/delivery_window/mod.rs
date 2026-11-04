@@ -6,6 +6,8 @@
 mod claims;
 mod context;
 mod evaluate;
+mod schedule_context;
+pub use schedule_context::OutboundScheduleContext;
 mod types;
 mod validate;
 mod window;

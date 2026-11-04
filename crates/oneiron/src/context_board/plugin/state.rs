@@ -246,7 +246,9 @@ fn require_live_section(
     if header.entity_type != crate::registry::ENTITY_TYPE_SKILL {
         return Err(refused_block());
     }
-    let skill = crate::skill::decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    let skill = crate::write_envelope::skill_record::decode_skill_record(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+    )?;
     if !skill.lifecycle_status.loads_as_canon()
         || provenance_matches_record(manifest.provenance(), &skill).is_err()
     {

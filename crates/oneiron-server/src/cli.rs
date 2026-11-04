@@ -67,7 +67,8 @@ pub use recovery_kit_args::{
 };
 pub use seat_args::{SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs};
 pub use secret_control_args::{
-    SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs, SecretRefArgs, SecretUnbindArgs,
+    SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs, SecretRefArgs,
+    SecretShowSupplementArgs, SecretUnbindArgs,
 };
 pub use vault_unlock_args::{RestoreWrapArgs, RestoreWrapKind, VaultUnlockArgs};
 pub use wake_args::{WakeArgs, WakeCommand};

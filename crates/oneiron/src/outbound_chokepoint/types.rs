@@ -290,7 +290,10 @@ pub(crate) trait OutboundTransport {
 pub(crate) fn frozen_call_hygiene_headers(
     call: &FrozenOutboundCall,
 ) -> Result<std::collections::BTreeMap<String, String>, OutboundEffectError> {
-    crate::campaign::send_hygiene::frozen_payload_hygiene_headers(call.payload()).map_err(|_| {
-        IntentLedgerError::InvalidRecord("frozen outbound payload carries invalid hygiene headers")
-    })
+    crate::outbound_intent_ledger::email_headers::frozen_payload_hygiene_headers(call.payload())
+        .map_err(|_| {
+            IntentLedgerError::InvalidRecord(
+                "frozen outbound payload carries invalid hygiene headers",
+            )
+        })
 }

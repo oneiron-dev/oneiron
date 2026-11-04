@@ -51,14 +51,16 @@ use crate::engine_executor::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::llm::call_as_step;
 use crate::llm::seat::ModelSeat;
-use crate::llm::{
-    BudgetGuard, BudgetLease, DurableStepContext, DurableStepError, FatalLlmError, LlmBackend,
-    LlmCapability, LlmError, LlmGenerateFuture, LlmRequest, LlmResponse, LlmResult,
-    LlmStreamResult, ModelId, StepOutcome, call_as_step,
-};
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use crate::{Vault, WriteActor};
+use oneiron_model::llm::{
+    BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmError,
+    LlmGenerateFuture, LlmRequest, LlmResponse, LlmResult, LlmStreamResult, ModelId,
+};
 
 use super::deadline::WakePassDeadline;
 use super::types::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};

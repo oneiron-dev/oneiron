@@ -17,8 +17,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::identity_topology::TopologySeal;
 use crate::lens::GeneratedUiCard;
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::catalogue::IDENTITY_SETTLE;
-use crate::llm::decision::{AnswerContract, DecisionAnswer, Reversibility};
+use crate::model_decision::catalogue::IDENTITY_SETTLE;
+use crate::model_decision::{AnswerContract, DecisionAnswer, Reversibility};
 use crate::{Result, Vault};
 
 impl Vault {

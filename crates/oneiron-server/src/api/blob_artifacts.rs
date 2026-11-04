@@ -27,8 +27,8 @@ use base64::Engine as _;
 use oneiron::EntityId;
 use oneiron::anchored_annotation::Locator;
 use oneiron::blob_artifact::{
-    ArtifactCreateRequest, ArtifactVersionView, BlobArtifactVersion, BlobVersionProvenance,
-    BornFromSource, DeckProposeRejection, DeckTransaction,
+    ArtifactCreateRequest, ArtifactVersionView, BlobArtifactAppendOutcome, BlobArtifactVersion,
+    BlobVersionProvenance, BornFromSource, DeckProposeRejection, DeckTransaction,
 };
 use oneiron::edge::EdgeActorClass;
 use oneiron::edit_roundtrip::{DeckEditContext, DeckEditOutcome};
@@ -422,7 +422,7 @@ pub(super) async fn view(
     ),
     request_body(content = Object, content_type = "application/json"),
     responses(
-        (status = 200, description = "The new version.", body = Object, content_type = "application/json"),
+        (status = 200, description = "The new version, or a proposal awaiting Keep.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed body, content not base64, or an agent's version without run_ref.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write, or names no actor.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -441,36 +441,29 @@ pub(super) async fn append(
     let request = json_payload(payload)?;
     let bytes = decode_content(&request.content_base64)?;
     let provenance = provenance(actor, request.run_ref)?;
-    let version = blocking("artifact version append failed", move || {
+    let outcome = blocking_read(move || {
         let vault = server.vault();
         let (occurred, now) = moment(&server);
-        match (&request.made_by, request.fork_parent) {
-            (Some(made_by), fork_parent) => vault.append_blob_artifact_version_made_by(
+        let reader = made_by_reader(&vault, &auth, request.made_by.as_ref())?;
+        vault
+            .append_blob_artifact_version_checked(
                 &id,
-                fork_parent,
+                request.fork_parent,
                 &bytes,
                 &provenance,
-                made_by,
+                request.made_by.as_ref(),
+                reader,
                 actor,
                 occurred,
                 now,
-            ),
-            (None, Some(parent)) => vault.fork_blob_artifact_version(
-                &id,
-                parent,
-                &bytes,
-                &provenance,
-                actor,
-                occurred,
-                now,
-            ),
-            (None, None) => {
-                vault.append_blob_artifact_version(&id, &bytes, &provenance, actor, occurred, now)
-            }
-        }
+            )
+            .map_err(|error| core_engine_error("artifact version append failed", error))
     })
     .await?;
-    Ok(Json(version_json(&version)))
+    Ok(Json(match outcome {
+        BlobArtifactAppendOutcome::Landed(version) => version_json(&version),
+        BlobArtifactAppendOutcome::Proposed(proposal) => json!({ "proposal": proposal }),
+    }))
 }
 
 async fn export(

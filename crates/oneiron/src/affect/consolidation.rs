@@ -28,6 +28,7 @@ use crate::temporal::TimeRange;
 use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, SUPERSEDES_DEFAULT_WEIGHT};
 mod entity_vad;
 mod reappraisal;
+pub(crate) use reappraisal::copy_claim_axes;
 struct StoredClaimVadState {
     id: EntityId,
     header: EntityMetadataHeader,

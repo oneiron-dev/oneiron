@@ -22,8 +22,7 @@ use crate::error::ArtifactError;
 /// Wire version of every connector payload this module encodes.
 pub const BYOA_CONNECTOR_SCHEMA_VERSION: u8 = 1;
 
-/// Attempt `kind` every foreign-agent dispatch lands under.
-pub const BYOA_ATTEMPT_KIND: &str = "agent.dispatch.byoa";
+pub use crate::store::dispatch_attempt_kind::BYOA_ATTEMPT_KIND;
 
 /// Media type of the single canonical exhaust artifact.
 pub const BYOA_EXHAUST_MEDIA_TYPE: &str = "application/vnd.oneiron.byoa-exhaust+msgpack";

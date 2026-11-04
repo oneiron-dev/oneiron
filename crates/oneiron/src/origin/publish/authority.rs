@@ -22,12 +22,13 @@ use std::path::Path;
 use super::PublishScope;
 use super::types::{OriginPublishAuthority, OriginPublishForce, OriginPublishRequestView};
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{AgentGrantStanding, RepoAccessRefusal, RepoTarget, ScopeAxis};
+use crate::federation::AgentGrantStanding;
+use crate::store::code_snapshot::RepoRef;
+use oneiron_authority::federation::{RepoAccessRefusal, RepoTarget, ScopeAxis};
 
 /// The verb class a Grant's Scope lists to publish within its repo bounds.
 pub const ORIGIN_PUBLISH_GRANT_VERB: &str = "publish";

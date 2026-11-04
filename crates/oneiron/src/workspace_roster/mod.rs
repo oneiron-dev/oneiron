@@ -92,6 +92,7 @@ mod records;
 mod runner;
 mod scrub;
 mod sharing;
+pub mod spend_scope;
 mod steps;
 mod work_companion;
 

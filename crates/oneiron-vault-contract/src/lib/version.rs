@@ -500,6 +500,27 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// only from installed engines at or after the floor, and as unknown from
 /// one before it. A block that does not read is unknown too, never a failed
 /// `Ping`. This version stays 3.
+///
+/// Live preview lease origins (FIX 1115,
+/// [`PreviewOrigin`](crate::artifact_origin::PreviewOrigin)): the
+/// `p-<lease>.<domain>` label, naming and host-reading codec carries a build
+/// floor, at the engine revision it merged in, proven by
+/// `preview_origin_revision` on `Ping`. A vault built before it sends none,
+/// which reads as unknown, never as revision 1; a value that is not a u32
+/// reads as unknown too. A supervisor opens lease-scoped preview ingress only
+/// after that proof. The standalone loopback preview authority is unchanged,
+/// and this version stays 3.
+///
+/// Managed widen body transcripts (FIX 5767,
+/// [`ManagedWidenTranscript`](crate::ManagedWidenTranscript)): a body spooled
+/// and counted first is hashed in its exact pieces under the widen action's
+/// own v1 domain, with the vault, holder and counted body length in the whole
+/// body's existing length-prefix order. Signing and verification require the
+/// exact counted length, and the MAC is byte-identical to the whole-body MAC;
+/// the action, header and wire shapes do not change. It carries a build floor,
+/// at the engine revision it merged in, with no `Ping` field: a supervisor and
+/// vault use streamed transcripts only with installed engines at or after the
+/// floor. Whole-body signing and verification stay, and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

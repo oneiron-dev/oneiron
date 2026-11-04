@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{AttemptId, AttemptQueue, AttemptRecord, decode_record};
 use crate::Vault;
+use crate::attempt_queue::source_rows::union_source_rows;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::skill_optimize::union_source_rows;
 
 /// One host producer that reads some of an attempt's inputs and reports
 /// their rows (FIX 7073), kept on the record as its key. Each producer is

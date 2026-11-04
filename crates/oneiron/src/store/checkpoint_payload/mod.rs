@@ -30,13 +30,14 @@ use oneiron_crypto::Purpose;
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result, StoreError};
-use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason};
 use crate::side_table::SideKey;
 use crate::store::Store;
 use crate::store::key_custody::{
     CustodyBinding, CustodyKind, CustodyPlan, CustodySubject, LocalCustody, Requirement,
     retirement_in_txn,
 };
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason;
 
 use self::instance::{Lifecycle, PayloadInstance};
 

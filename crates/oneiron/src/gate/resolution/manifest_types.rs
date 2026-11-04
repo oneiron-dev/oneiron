@@ -1,10 +1,10 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
-use crate::autoreason_campaign::selection::SelectionPolicyRow;
+use crate::gate::experiment_selection_policy::SelectionPolicyRow;
 use crate::gate::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, PolicyPrecedence, WaveHandoffPolicy,
 };
-use crate::llm::{
+use oneiron_model::llm::{
     BudgetExhaustionPolicy, BudgetPolicyTable, DreamerFailureClass, DreamerFailureDecision,
     DreamerFailurePrecedence, DreamerFailureRule, decide_failure,
 };
@@ -85,114 +85,10 @@ impl CommOptOutPosture {
     }
 }
 
-/// Trusted append-time ancestry for a decision's retention evaluation.
-/// Missing levels cannot be asserted later by a caller-selected sweep scope.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct GateRetentionContext {
-    pub(crate) world: Option<crate::EntityId>,
-    pub(crate) project: Option<crate::EntityId>,
-    pub(crate) sub_project: Option<crate::EntityId>,
-    pub(crate) thread: Option<crate::EntityId>,
-}
-
-/// The manifest chooses how child scope rows compose with their ancestors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GateRetentionPrecedence {
-    NestedNarrowing,
-    MostSpecific,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GateRetentionScope {
-    Vault,
-    World(crate::EntityId),
-    Project(crate::EntityId),
-    SubProject(crate::EntityId),
-    Thread(crate::EntityId),
-}
-
-impl GateRetentionScope {
-    fn rank(self, context: GateRetentionContext) -> Option<u8> {
-        match self {
-            Self::Vault => Some(0),
-            Self::World(id) if context.world == Some(id) => Some(1),
-            Self::Project(id) if context.project == Some(id) => Some(2),
-            Self::SubProject(id)
-                if context.sub_project == Some(id) && context.project.is_some() =>
-            {
-                Some(3)
-            }
-            Self::Thread(id) if context.thread == Some(id) && context.project.is_some() => Some(4),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GateRetentionOverrideCeiling {
-    Vault,
-    Parent,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GateRetentionRow {
-    pub(crate) row_ref: String,
-    pub(crate) scope: GateRetentionScope,
-    pub(crate) horizon_secs: Option<u64>,
-    pub(crate) override_parent: bool,
-}
-
-/// Owner-authored age sweep settings. `None` never authorizes pruning.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GateDecisionRetentionPolicy {
-    pub(crate) horizon_secs: Option<u64>,
-    pub(crate) max_sweep_rows: usize,
-    pub(crate) precedence: GateRetentionPrecedence,
-    /// Only the vault is a legal ceiling for an authenticated holder override.
-    pub(crate) holder_override_ceiling: GateRetentionOverrideCeiling,
-    pub(crate) rows: Vec<GateRetentionRow>,
-}
-
-impl GateDecisionRetentionPolicy {
-    /// Evaluate the decision's append-time ancestry. `None` is unbounded
-    /// retention; a child cannot make an absent vault opt-in prune anything.
-    pub(crate) fn horizon_for(&self, context: GateRetentionContext) -> Option<u64> {
-        let vault = self.horizon_secs?;
-        let mut horizon = Some(vault);
-        let mut rows: Vec<(u8, &GateRetentionRow)> = self
-            .rows
-            .iter()
-            .filter_map(|row| {
-                row.scope
-                    .rank(context)
-                    .filter(|rank| *rank > 0)
-                    .map(|rank| (rank, row))
-            })
-            .collect();
-        rows.sort_by_key(|(rank, _)| *rank);
-        for (_, row) in rows {
-            horizon = match self.precedence {
-                GateRetentionPrecedence::NestedNarrowing
-                    if !row.override_parent
-                        || self.holder_override_ceiling == GateRetentionOverrideCeiling::Parent =>
-                {
-                    match (horizon, row.horizon_secs) {
-                        (Some(parent), Some(child)) => Some(parent.max(child)),
-                        _ => None, // unbounded parent or child cannot narrow
-                    }
-                }
-                // Holder may release the direct parent, but never undercut
-                // the authored vault floor. Most-specific is a separate
-                // manifest-selected rule: a deeper row replaces its parent.
-                GateRetentionPrecedence::NestedNarrowing
-                | GateRetentionPrecedence::MostSpecific => {
-                    row.horizon_secs.map(|child| vault.max(child))
-                }
-            };
-        }
-        horizon
-    }
-}
+pub(crate) use crate::store::{
+    GateDecisionRetentionPolicy, GateRetentionContext, GateRetentionOverrideCeiling,
+    GateRetentionPrecedence, GateRetentionRow, GateRetentionScope,
+};
 
 /// Policy-authored fold order for holder class-carry rows. Every holder is
 /// still capped by the trusted vault relation.
@@ -407,7 +303,7 @@ pub(crate) struct PolicyManifestResolution {
     /// The trusted rows behind `diagnostic_bounds` and the fields they state
     /// (FIX 10096): carried for the tripwire receipt, never consulted to admit.
     pub(crate) diagnostic_bounds_origin: Option<crate::self_heal::tripwires::TripwireBoundsOrigin>,
-    pub(crate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
+    pub(crate) failure_signal_policy: Vec<crate::gate::failure_signal_policy::Row>,
     pub(crate) residence_operation_budgets: ResidenceOperationBudgetLimits,
     /// The trusted residence rows met so far, whose resolution is
     /// `residence_operation_budgets` (FIX 8783).
@@ -417,9 +313,9 @@ pub(crate) struct PolicyManifestResolution {
     pub(in crate::gate) teacher_probe_vault_min: Option<u32>,
     pub(in crate::gate) teacher_probe_holders: BTreeMap<String, u32>,
     pub(crate) retrieval_retention: crate::gate::retrieval_retention::RetrievalRetentionPolicy,
-    pub(crate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
-    pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
-    pub(crate) voice_ref_limits: crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
+    pub(crate) goal_limits: Option<crate::policy_model::goal_limits::GoalLimits>,
+    pub(crate) voice_ref_defaults: Option<crate::gate::voice_ref_limits::VoiceRefLimitPolicy>,
+    pub(crate) voice_ref_limits: crate::gate::voice_ref_limits::VoiceRefLimitPolicy,
     pub(crate) sheet_answer_limits: Vec<SheetAnswerLimitRow>,
     pub(crate) untrusted_sheet_answer_limits: Vec<SheetAnswerLimitRow>,
     pub(crate) sheet_answer_default_max_count: Option<u64>,
@@ -440,7 +336,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) experiment_selection: Vec<SelectionPolicyRow>,
     pub(crate) carry_forward_confidence: crate::gate::carry_forward_policy::CarryForwardPolicy,
     pub(super) carry_forward_authored: bool,
-    pub(crate) judge_calibration: Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
+    pub(crate) judge_calibration: Option<crate::gate::judge_calibration::JudgeCalibrationPolicy>,
     pub(crate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(crate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
     pub(crate) sync_world_default: Option<bool>,
@@ -505,7 +401,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) hosted_tts: HostedTtsPolicy,
     pub(crate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
     pub(crate) connector_class_precedence: ConnectorClassPrecedence,
-    pub(super) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
+    pub(super) slide_review_policy: crate::model_decision::SlideReviewPolicy,
     pub(in crate::gate) docedit_resource_policy:
         Option<crate::gate::docedit_resource::DoceditResourcePolicy>,
 }

@@ -125,12 +125,11 @@ const HYBRID: &[WrapType] = &[WrapType::HybridCapsule];
 const CHUNK: usize = 8 * 1024 * 1024;
 /// The smallest padded section body.
 const SECTION_PAD_FLOOR: usize = 4096;
-const GENERATION_LEN: usize = 24;
+use crate::bundle_generations::GENERATION_LEN;
 const KEY_ID_LEN: usize = 40;
 const SLOT_PLAINTEXT_LEN: usize = SLOT_LABEL.len() + GENERATION_LEN + 32;
 /// label ‖ digest (32) ‖ index (4) ‖ count (4).
 const PART_HEADER_LEN: usize = PART_LABEL.len() + 32 + 4 + 4;
-const KEEP_SLOTS: u64 = SEALED_BUNDLE_KEEP as u64;
 
 /// A key erase opens a kept pad object with.
 #[cfg(feature = "sync")]

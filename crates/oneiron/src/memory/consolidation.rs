@@ -15,10 +15,11 @@ use crate::dreamer_promotion::{
     DreamerRunContext, EvidenceRef, PromotionEvidenceReason, evidence_ref_refusal_in_txn,
     promote_consolidated_claims_with_checker, public_evidence_refs, public_evidence_value,
 };
-use crate::dreamer_runner::{DreamerConsolidationScope, DreamerRunnerStore};
+use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::ForeignWorldId;
 use crate::llm::BoundedAutoChecker;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
+use crate::store::consolidation_scope::DreamerConsolidationScope;
 use crate::write_envelope::ClaimCandidate;
 use crate::{EdgeActorClass, EntityId, Error, TimeRange};
 use serde::{Deserialize, Serialize};

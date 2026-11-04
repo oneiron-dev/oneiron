@@ -2,9 +2,7 @@
 //! folds for a party, the do-not-contact rulings and owner overrides its
 //! person reaches.
 use super::{Decision, field};
-use crate::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT;
 use crate::channel_identity_provider::native_mail;
-use crate::comm::{PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch};
 use crate::counterparty_contact::{
     counterparty_contacts_in_claims_in_txn, normalize_channel_class,
 };
@@ -13,6 +11,8 @@ use crate::gate::{
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
+use crate::write_envelope::cohort_claims::PREDICATE_COMM_DO_NOT_CONTACT;
+use crate::write_envelope::communication::{PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch};
 use crate::{EntityId, Result, Vault};
 use std::collections::BTreeSet;
 

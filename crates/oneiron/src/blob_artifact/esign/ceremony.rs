@@ -88,7 +88,7 @@ pub(super) fn enqueue_seal(
     crate::ports::JobQueue::port_job_enqueue(
         vault,
         txn,
-        crate::attempt_queue::EnqueueAttempt {
+        crate::store::attempt_inputs::EnqueueAttempt {
             kind: ESIGN_SEAL_ATTEMPT_KIND.into(),
             payload: document.as_bytes().to_vec(),
             dedupe_key: Some(format!("{}:{generation}", document.to_hex())),

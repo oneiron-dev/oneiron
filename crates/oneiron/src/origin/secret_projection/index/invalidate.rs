@@ -22,9 +22,9 @@ use heed::RwTxn;
 
 use super::RepoIndexMarks;
 use crate::Vault;
-use crate::codebase::snapshot_asset_entity_id;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
+use crate::store::code_snapshot::snapshot_asset_entity_id;
 
 /// Replaces or requeues every index copy derived from a blob whose whole
 /// BLAKE3 is in `sources` and that a mark covers, in `wtxn`, the writer

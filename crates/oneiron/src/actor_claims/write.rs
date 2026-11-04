@@ -85,7 +85,9 @@ pub(crate) fn ground_actor_claim(
         let record = vault
             .get_skill_record(skill)?
             .ok_or(Error::EntityNotFound)?;
-        if crate::skill::resident_of(&record)?.is_some_and(|resident| resident != row.actor()) {
+        if crate::write_envelope::skill_record::resident_of(&record)?
+            .is_some_and(|resident| resident != row.actor())
+        {
             return Err(invalid("actor.skill_fit names another resident's fork"));
         }
     }

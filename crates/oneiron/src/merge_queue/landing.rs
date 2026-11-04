@@ -8,7 +8,7 @@ use crate::{
     contract_oracle::{ContractOracle, invalid},
     error::{Error, Result},
     git_wire::{GitWire, lock_repository},
-    repo_mutation::{RepoMutationOplogEntry, RepoMutationStatus},
+    store::repo_mutation_record::{RepoMutationOplogEntry, RepoMutationStatus},
 };
 
 impl MergeQueue<'_> {

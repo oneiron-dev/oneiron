@@ -247,9 +247,14 @@ async fn begin(
     } else {
         None
     };
-    work.wait_runnable()
-        .await
-        .map_err(|_| OpenAiCompatTransportError::Connection)?;
+    work.wait_runnable().await.map_err(|stop| match stop {
+        oneiron_driver::AdmissionStop::DeviceStopped => {
+            OpenAiCompatTransportError::DeviceAdmissionStopped
+        }
+        oneiron_driver::AdmissionStop::Deadline | oneiron_driver::AdmissionStop::Cancelled => {
+            OpenAiCompatTransportError::Connection
+        }
+    })?;
     let lease = route
         .worker
         .acquire()
@@ -268,10 +273,14 @@ async fn begin(
     }
     // Readiness is now proved, so take the execution grant before any
     // session op or generate. It and the worker lease share release custody.
-    let grant = work
-        .execution_grant()
-        .await
-        .map_err(|_| OpenAiCompatTransportError::Connection)?;
+    let grant = work.execution_grant().await.map_err(|stop| match stop {
+        oneiron_driver::AdmissionStop::DeviceStopped => {
+            OpenAiCompatTransportError::DeviceAdmissionStopped
+        }
+        oneiron_driver::AdmissionStop::Deadline | oneiron_driver::AdmissionStop::Cancelled => {
+            OpenAiCompatTransportError::Connection
+        }
+    })?;
     let schedule = work.schedule(grant.as_ref());
     let (conversation, params) = wire::split_request(body);
     let session = match segments {
@@ -510,9 +519,14 @@ fn record_receipt(route: &NativeRoute, sent: &Sent, last: &JsonValue) {
         .and_then(|usage| usage.get(INFERENCE_CALLS_KEY))
         .and_then(JsonValue::as_array)
         .and_then(|calls| {
-            calls
-                .iter()
-                .find_map(|call| serde_json::from_value::<InferenceCallReceipt>(call.clone()).ok())
+            calls.iter().find_map(|call| {
+                let mut call = call.clone();
+                // Physical is host-owned: never deserialize a worker-spelled value.
+                if let Some(object) = call.as_object_mut() {
+                    let _ = object.remove("physical");
+                }
+                serde_json::from_value::<InferenceCallReceipt>(call).ok()
+            })
         });
     if let Some(mut receipt) = receipt {
         receipt.scheduling = scheduling;

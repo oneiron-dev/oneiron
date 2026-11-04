@@ -316,6 +316,24 @@ impl SegmentManifest {
         }
     }
 
+    /// The manifest of `segments` over `messages`, keeping the digest this
+    /// manifest was admitted under: a restamp of the same admitted turn
+    /// for the call a rung reshapes (FIX 10366), so the turn's pending,
+    /// its commit claim and its restore-authority lookup still name it.
+    /// `describes` still checks the reshaped segments and messages; the
+    /// digest is the admitted turn's identity, and the worker never sees
+    /// it.
+    #[must_use]
+    pub fn restamped(&self, segments: Vec<Segment>, messages: &[LlmMessage]) -> Self {
+        let messages: Vec<MessageStamp> = messages.iter().map(message_stamp).collect();
+        Self {
+            segments,
+            anchor: self.anchor.clone(),
+            messages,
+            digest: self.digest,
+        }
+    }
+
     #[must_use]
     pub fn segments(&self) -> &[Segment] {
         &self.segments

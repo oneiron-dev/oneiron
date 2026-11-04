@@ -26,6 +26,7 @@ use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance};
 use crate::side_table::{self, Raw, SideTable};
 use crate::wave_orchestration::*;
 use crate::{EntityId, Vault};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Bounded scan of durable, still-live TASKs minted by a wave plan.
@@ -205,6 +206,67 @@ fn fingerprint(plan: &ValidatedWavePlan) -> Vec<u8> {
         .to_string()
         .into_bytes()
 }
+
+/// Seal fingerprint rows, as `fingerprint` writes them: field order matches
+/// the writer so a patched seal still compares byte-equal on re-apply.
+#[derive(Serialize, Deserialize)]
+struct WaveFingerprintTask {
+    key: String,
+    label: String,
+    spec: serde_json::Value,
+    assignee: Option<String>,
+    blocked_by: Vec<String>,
+}
+
+/// See `WaveFingerprintTask`.
+#[derive(Serialize, Deserialize)]
+struct WaveFingerprint {
+    epic: String,
+    tasks: Vec<WaveFingerprintTask>,
+}
+
+/// Scrubs an erased recipient from the wave-plan index copies (FIX 4699):
+/// frozen statement rows (`per_peer` naming the actor) and seal fingerprint
+/// rows (`assignee` hex to null). Per-task id rows never decode as JSON and
+/// stay untouched. One scan, rewritten in the erase's own transaction.
+pub(super) fn scrub_wave_index_copies_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::Result<()> {
+    let hex = actor.to_hex();
+    let mut rewrites = Vec::new();
+    for (key, raw) in WAVE_PLAN_INDEX.scan(&vault.store, wtxn)? {
+        if let Ok(mut statement) = serde_json::from_slice::<FanoutStatement>(&raw) {
+            if super::fanout_launch::scrub_statement_for(&mut statement, actor) {
+                let encoded = serde_json::to_vec(&statement)
+                    .map_err(|_| Error::InvariantViolation("wave statement encoding"))?;
+                rewrites.push((key, encoded));
+            }
+            continue;
+        }
+        if let Ok(mut sealed) = serde_json::from_slice::<WaveFingerprint>(&raw) {
+            let mut touched = false;
+            for task in &mut sealed.tasks {
+                if task.assignee.as_ref() == Some(&hex) {
+                    task.assignee = None;
+                    touched = true;
+                }
+            }
+            if touched {
+                let encoded = serde_json::to_vec(&sealed)
+                    .map_err(|_| Error::InvariantViolation("wave fingerprint encoding"))?;
+                rewrites.push((key, encoded));
+            }
+        }
+        // Else: not a statement or a fingerprint (a per-task id); untouched.
+    }
+    for (key, encoded) in rewrites {
+        WAVE_PLAN_INDEX.put(&vault.store, wtxn, &key, &encoded)?;
+    }
+    Ok(())
+}
+
 impl VaultWaveTaskPort<'_> {
     /// A production-side check before vault writes. The carrier is sealed
     /// outside wave_orchestration, but this port also rejects any future

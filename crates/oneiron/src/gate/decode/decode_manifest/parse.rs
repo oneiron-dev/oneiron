@@ -83,7 +83,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "project_depth_default"
                 | "project_depth_max"
                 | "policy_values"
-                | crate::failure_signals::policy::POLICY_KEY
+                | crate::gate::failure_signal_policy::POLICY_KEY
                 | "livequery_tracker_limits"
                 | crate::gate::policy_manifest_doors::CLAIM_AGING_PROFILES_KEY
                 | crate::gate::policy_manifest_doors::RETRIEVAL_WEIGHTS_KEY
@@ -108,7 +108,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_TEACHER_PROBE_KEY
                 | "experiment_selection"
                 | crate::gate::carry_forward_policy::KEY
-                | crate::skill_optimize::policy::MANIFEST_KEY
+                | crate::gate::judge_calibration::MANIFEST_KEY
                 | POLICY_SYNC_WORLD_CEILING_KEY
                 | POLICY_SYNC_WORLD_DEFAULT_KEY
                 | POLICY_PERSONA_CORE_PREFIXES_KEY
@@ -442,9 +442,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         )?),
     };
     let slide_review_policy = match single_map_value(&entries, POLICY_SLIDE_REVIEW_KEY) {
-        MapValue::Missing => crate::llm::decision::SlideReviewPolicy::default(),
+        MapValue::Missing => crate::model_decision::SlideReviewPolicy::default(),
         MapValue::Duplicate => return None,
-        MapValue::Present(value) => crate::llm::decision::SlideReviewPolicy::decode(value)?,
+        MapValue::Present(value) => crate::model_decision::SlideReviewPolicy::decode(value)?,
     };
     let docedit_resource_policy = match single_map_value(&entries, POLICY_DOCEDIT_RESOURCE_KEY) {
         MapValue::Missing => None,
@@ -470,10 +470,10 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     };
 
     let failure_signal_policy =
-        match single_map_value(&entries, crate::failure_signals::policy::POLICY_KEY) {
+        match single_map_value(&entries, crate::gate::failure_signal_policy::POLICY_KEY) {
             MapValue::Missing => Vec::new(),
             MapValue::Duplicate => return None,
-            MapValue::Present(value) => crate::failure_signals::policy::decode(value)?,
+            MapValue::Present(value) => crate::gate::failure_signal_policy::decode(value)?,
         };
 
     let policy_values = match single_map_value(&entries, "policy_values") {
@@ -514,7 +514,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     let goal_limits = match single_map_value(&entries, "goal_limits") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
-        MapValue::Present(value) => Some(crate::workspace_roster::GoalLimits::decode(value)?),
+        MapValue::Present(value) => {
+            Some(crate::policy_model::goal_limits::GoalLimits::decode(value)?)
+        }
     };
     let voice_ref_limits = match single_map_value(&entries, "voice_ref_limits") {
         MapValue::Missing => None,
@@ -622,11 +624,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             }
         };
     let judge_calibration =
-        match single_map_value(&entries, crate::skill_optimize::policy::MANIFEST_KEY) {
+        match single_map_value(&entries, crate::gate::judge_calibration::MANIFEST_KEY) {
             MapValue::Missing => None,
             MapValue::Duplicate => return None,
             MapValue::Present(value) => {
-                Some(crate::skill_optimize::policy::JudgeCalibrationPolicy::decode(value)?)
+                Some(crate::gate::judge_calibration::JudgeCalibrationPolicy::decode(value)?)
             }
         };
 

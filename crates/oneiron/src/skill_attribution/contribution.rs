@@ -28,8 +28,11 @@ use super::contribution_admission::{ContributionAdmission, ContributionRecord, a
 use super::contribution_targets::{CheckedEdge, ContributionTarget, Experiment, unchecked_edges};
 use super::late_credit::CREDIT_RECEIPT;
 use super::{AttemptOutcome, FollowedState, LateCreditReceipt, OutcomeEvidence};
+use crate::claim::learning_evidence::Anchor;
+use crate::claim::learning_evidence::EvidenceSource;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::entity_id::EntityId;
-use crate::learning::{Anchor, EvidenceSource, LearningPredicate, TypeRef};
+use crate::receipt::task_type_ref::TypeRef;
 use crate::receipt::{
     ContributionCheck, PackAttributionFields, SkillContribution, attempt_pack_receipt,
 };
@@ -249,7 +252,7 @@ pub fn contribution_check_candidates_after(
 ) -> Result<Vec<(String, ContributionTarget, ContributionCandidate)>> {
     let rate = crate::learning_setting::setting_value(
         vault,
-        &crate::learning_setting::CONTRIBUTION_CHECK_RATE,
+        &crate::store::setting_seed::CONTRIBUTION_CHECK_RATE,
     )?;
     if rate <= 0.0 || limit == 0 {
         return Ok(Vec::new());

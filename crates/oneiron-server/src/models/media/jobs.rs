@@ -295,6 +295,50 @@ impl JobStore {
             })
             .map_err(|error| error.to_string())
     }
+
+    /// Drops job `ticket`'s row and its clips in one write, but only when
+    /// the row still reads expired and unerased inside that same write txn
+    /// (REVIEW-4458 P1): a refresh or erase landing between the caller's
+    /// read and this write keeps its row. `false` when nothing was dropped.
+    pub(super) fn delete_if_expired(&self, ticket: &str) -> Result<bool, String> {
+        let row = row_key(ticket);
+        let clips = format!("{row}:");
+        self.vault
+            .try_with_write_txn_grouped(|txn| {
+                let expired = match self.vault.sync_state_get_in_write_txn(txn, &row)? {
+                    None => false,
+                    Some(bytes) => {
+                        let Ok(bytes) = oneiron::store::media_response_read(row.as_bytes(), &bytes)
+                        else {
+                            return Ok::<_, oneiron::Error>(false);
+                        };
+                        match rmp_serde::from_slice::<JobRow>(&bytes) {
+                            Ok(kept) => {
+                                !kept.erased
+                                    && kept
+                                        .replay_until_s
+                                        .is_none_or(|until| until <= super::replay::now_s())
+                            }
+                            Err(_) => false,
+                        }
+                    }
+                };
+                if expired {
+                    let mut keys = Vec::new();
+                    self.vault
+                        .sync_state_visit_prefix_in_write_txn(txn, &clips, |key, _| {
+                            keys.push(key.to_owned());
+                            Ok::<_, oneiron::Error>(())
+                        })?;
+                    keys.push(row.clone());
+                    for key in &keys {
+                        self.vault.sync_state_delete_in_write_txn(txn, key)?;
+                    }
+                }
+                Ok::<_, oneiron::Error>(expired)
+            })
+            .map_err(|error| error.to_string())
+    }
 }
 
 /// `row` as job `ticket`'s kept bytes, and its end's clips, each under its

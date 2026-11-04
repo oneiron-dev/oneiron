@@ -5,7 +5,7 @@ use std::sync::Arc;
 use oneiron::llm::model_step::{
     self, ModelStepReceipt, ModelStepReceiptRequest, ModelStepResult, ModelStepSubmit,
 };
-use oneiron::llm::run_admission::RunAdmission;
+use oneiron::llm::run_admission::{RunAdmission, WorkPhysical};
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError,
     MemoryResult,
@@ -72,6 +72,15 @@ async fn submit(
     // whether its ladder may only serve free keyless own-server work.
     // Unstamped stays paid.
     input.request.envelope.host_keyless = ladder.all_keyless_own_server();
+    let run = run.with_work_context({
+        let mut context = run.work_context();
+        context.physical = if ladder.all_keyless_own_server() {
+            WorkPhysical::KeylessOwnServer
+        } else {
+            WorkPhysical::Paid
+        };
+        context
+    });
     let meter = server
         .llm
         .as_ref()

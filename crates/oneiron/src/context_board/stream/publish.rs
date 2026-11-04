@@ -93,8 +93,8 @@ pub(crate) fn task_for_announcement(carrier: &[u8], fallback: EntityId) -> Entit
     let body = carrier
         .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
         .unwrap_or_default();
-    if crate::habit::task_role_from_body_bytes(body).ok()
-        != Some(crate::habit::TaskRole::AuthorityFact)
+    if crate::write_envelope::task_body::task_role_from_body_bytes(body).ok()
+        != Some(crate::write_envelope::task_body::TaskRole::AuthorityFact)
     {
         return fallback;
     }

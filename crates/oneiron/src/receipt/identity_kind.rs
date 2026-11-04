@@ -9,8 +9,9 @@ use super::kernel::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::store::ChannelIdentityLifecycleReceiptRecord;
+use crate::store::EngineScan;
 
 /// Projects ARCH-0055 identity-topology ledger events (merge / split / undo
 /// counter-events, effective AND parked) into `IdentityLifecycle` receipts.
@@ -90,7 +91,7 @@ pub(super) fn identity_topology_receipts(
             let fold = crate::identity_topology::fold_identity_topology_log(&effective);
             if fold.rejections.iter().any(|(rejected, reason)| {
                 *rejected == event_id && matches!(reason,
-                    crate::identity_topology::IdentityTopologyRejection::ProposalAlreadyResolved { .. })
+                    oneiron_contracts::identity_topology::IdentityTopologyRejection::ProposalAlreadyResolved { .. })
             }) {
                 continue;
             }
@@ -375,7 +376,7 @@ fn channel_identity_lifecycle_receipt(
     }
 
     ReceiptRecord {
-        receipt_id: crate::channel_identity_lifecycle::lifecycle_receipt_ref(record.receipt_id),
+        receipt_id: crate::store::lifecycle_receipt_ref(record.receipt_id),
         receipt_kind: ReceiptKind::IdentityLifecycle,
         occurred_at: record.created_at,
         actor: record

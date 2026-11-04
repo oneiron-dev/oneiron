@@ -3,10 +3,12 @@
 use std::sync::Arc;
 
 use crate::Vault;
-use crate::agent_dispatch::{AgentDispatcher, DispatchHealer, HealerSlotOutcome};
+use crate::agent_dispatch::AgentDispatcher;
+use crate::agent_dispatch::HealerSlotOutcome;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::failure_ladder::healer_dispatch::DispatchHealer;
 use crate::work_line::TaskWorkTurn;
 
 use super::blocked_reports::BlockedReportRef;

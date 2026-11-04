@@ -38,20 +38,7 @@ use crate::saved_query::{
 // The attempt payload
 // ---------------------------------------------------------------------------
 
-/// The whole queue payload: three refs.
-///
-/// Resolving them is a CROSS-BINDING, not a lookup — the program must belong to
-/// the event's campaign and the step must belong to that program, or execution
-/// fails closed. Refs a caller can shuffle are refs a caller can misuse.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CampaignEnrollmentAttemptPayload {
-    /// The persisted [`CampaignEnrollmentEvent`].
-    pub membership_event_ref: EntityId,
-    /// The persisted [`CampaignProgram`](crate::campaign::enrollment::CampaignProgram).
-    pub campaign_program_ref: EntityId,
-    /// The persisted [`CampaignProgramStep`].
-    pub program_step_ref: EntityId,
-}
+pub use crate::memory::campaign_records::stage_results::CampaignEnrollmentAttemptPayload;
 
 /// Encodes the refs-only payload.
 ///

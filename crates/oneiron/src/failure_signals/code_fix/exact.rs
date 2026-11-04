@@ -17,12 +17,14 @@ use serde::{Deserialize, Serialize};
 
 use super::{CodeFixSource, failed_case_in};
 use crate::attempt_queue::AttemptId;
-use crate::code_run::{
-    CapsuleRequest, CapsuleRungBinding, StepReplayCapsule, capsule_request, step_replay_capsules,
-};
+use crate::code_run::{capsule_request, step_replay_capsules};
 use crate::dreamer_runner::maintenance::code_fix::CoachReplayAdmission;
+use crate::dreamer_runner::step_replay::CapsuleRequest;
+use crate::dreamer_runner::step_replay::CapsuleRungBinding;
+use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::self_heal::blocked_reports::{SentRequest, blocked_source_in, step_sources_in};
-use crate::{EntityId, LlmRequest, Result, Vault};
+use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::LlmRequest;
 
 /// The request a failing call sent, as the vault kept it, for a replay that
 /// sends it again inside the vault.

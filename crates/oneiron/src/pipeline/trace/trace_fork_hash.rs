@@ -743,7 +743,7 @@ fn fork_hash_raw_bytes(hasher: &mut Sha256, bytes: &[u8]) {
 fn fork_hash_affect_policy(
     hasher: &mut Sha256,
     policy: &crate::pipeline::AffectRetrievalPolicy,
-    query: Option<crate::affect::Vad>,
+    query: Option<oneiron_contracts::affect::Vad>,
 ) {
     fork_hash_f32(hasher, policy.arousal_stretch + 0.0);
     fork_hash_bool(hasher, policy.availability_floor.is_some());

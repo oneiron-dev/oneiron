@@ -11,8 +11,8 @@ use super::door_types::{
     DOOR_VERB_RECEIVE_PACK, DoorDenyReason, DoorResult, DoorScanVerdict, PushedBlob, UNUSABLE_PATH,
     custody, repo_record,
 };
-use crate::codebase::RepoRef;
 use crate::secret_lease::VaultInstant;
+use crate::store::code_snapshot::RepoRef;
 use crate::vault::Vault;
 
 #[cfg(test)]
@@ -211,19 +211,19 @@ fn scan_one_blob(blob: &PushedBlob) -> DoorResult<Option<ReceiveScanHit>> {
 /// a hit under the dotenv reason, which the one disposition admits and
 /// marks. A blob whose every value is blank, or no dotenv file's, is none.
 fn dotenv_hit(blob: &PushedBlob) -> Option<ReceiveScanHit> {
-    crate::repo_mutation::repo_env_file(&blob.path)?;
-    let lifts = crate::repo_mutation::repo_env_entries(&blob.content)
+    crate::store::repo_environment::repo_env_file(&blob.path)?;
+    let lifts = crate::store::repo_environment::repo_env_entries(&blob.content)
         .iter()
         .any(|entry| {
             blob.content
                 .get(entry.value.clone())
-                .is_some_and(crate::repo_mutation::dotenv_value_lifts)
+                .is_some_and(crate::store::repo_environment::dotenv_value_lifts)
         });
     let text = !blob.content.contains(&0) && std::str::from_utf8(&blob.content).is_ok();
     lifts.then(|| ReceiveScanHit {
         path: blob.path.clone(),
         oid: blob.oid.clone(),
-        reason: crate::repo_mutation::REPO_ENV_VALUE_REASON,
+        reason: crate::store::repo_environment::REPO_ENV_VALUE_REASON,
         content_kind: if text {
             ReceiveBlobKind::Text
         } else {

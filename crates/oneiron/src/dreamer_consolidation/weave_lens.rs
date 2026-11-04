@@ -22,14 +22,17 @@ use crate::dreamer_runner::{
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::{Error, Result};
-use crate::llm::manifest::ModelRole;
-use crate::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelLocality, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence,
-    call_as_step,
-};
+use crate::inference_context::HostInferenceContext;
+use crate::llm::call_as_step;
+use crate::model_binding::ModelRole;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::{Vault, WriteActor};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    TierPrecedence,
+};
 use std::collections::BTreeMap;
 
 /// Why a weave lens render parks on a host that lends no Dreamer model.
@@ -161,7 +164,7 @@ fn lens_request(
         model,
         envelope: CallEnvelope {
             seat_effort: None,
-            scope: crate::llm::Scope::default(),
+            scope: oneiron_model::llm::Scope::default(),
             // The items leave the vault as an extraction's records do, so
             // they pass the same egress gate.
             purpose: CallPurpose::Extraction,

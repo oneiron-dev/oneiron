@@ -11,9 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{ConnectorEvent, ConnectorWakeDecision, subscriptions};
 use crate::attempt_queue::{
-    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
-    EnqueueOutcome,
+    AttemptQueue, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome,
 };
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::{EntityId, Error, Result, Vault};
 
 /// The attempt-queue kind of a paced connector wake's admission item.

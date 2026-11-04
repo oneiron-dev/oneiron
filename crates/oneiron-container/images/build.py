@@ -79,6 +79,8 @@ def main() -> int:
     fetch.add_argument("--variant", action="append", default=None, choices=model_mod.BUILDABLE[1:])
     fetch.add_argument("--learn", action="store_true",
                        help="first run only: record unpinned hashes and write packages.lock.toml")
+    fetch.add_argument("--only-requested", action="store_true",
+                       help="verify only the tools and --variant scopes, using the lock's per-scope file lists")
     build.add_argument("--variant", required=True, choices=model_mod.BUILDABLE)
     rec = sub.add_parser("receipt")
     rec.add_argument("--work", required=True)
@@ -131,7 +133,7 @@ def main() -> int:
             _enter_userns(network=True)
             repo, mirror, work = _paths(args)
             pipeline.fetch(model, repo=repo, mirror=mirror, work=work, variants=args.variant or ["base"],
-                           learn=args.learn)
+                           learn=args.learn, only_requested=args.only_requested)
             return 0
         _enter_userns(network=False)
         repo, mirror, work = _paths(args)

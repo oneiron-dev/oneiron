@@ -14,11 +14,11 @@ use crate::dreamer_wake::sieve::follower::{
 };
 use crate::dreamer_wake::{SieveSpan, SpanKind};
 use crate::error::{Error, Result};
-use crate::llm::{CacheCallUsage, Scope, ScopeResource};
 use crate::ports::ChangeLogStoreRead;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
+use oneiron_model::llm::{CacheCallUsage, Scope, ScopeResource};
 
 use super::log::{Log, quote_in};
 

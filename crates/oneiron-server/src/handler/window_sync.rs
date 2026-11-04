@@ -14,6 +14,7 @@ use oneiron::sync::{
 
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
+pub(crate) use super::selector_scope::selector_grant_scope;
 use crate::auth::CoreAuth;
 use crate::protocol::{self, ProtocolError, window_sub_tags};
 use crate::server::SyncServer;
@@ -751,11 +752,4 @@ pub(super) fn map_selector_filter_err(e: oneiron::Error) -> ProtocolError {
     } else {
         ProtocolError::Persistence(format!("selector filter failed: {e}"))
     }
-}
-
-/// The grant scope this single-vault selector server path checks: the one an
-/// owner's own-device grant is minted under (FIX 3134). Distinct from the
-/// lease ABI's internal vault id.
-pub(crate) fn selector_grant_scope() -> oneiron::FederationGrantScope {
-    oneiron::federation::own_device_residence_scope()
 }

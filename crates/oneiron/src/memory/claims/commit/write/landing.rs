@@ -164,10 +164,7 @@ impl Memory<'_> {
             envelope.approval(),
             ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
         );
-        let text = write
-            .value
-            .as_str()
-            .map_or_else(|| write.value.to_string(), str::to_owned);
+        let text = crate::claim::claim_value_index_text(&write.value);
         let mut ops = vec![BatchOp::ClaimCandidate {
             id,
             candidate: Box::new(candidate),

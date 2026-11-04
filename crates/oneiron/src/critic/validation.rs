@@ -1,40 +1,7 @@
 //! Bounds and shape checks for critic lenses, artifacts and learned reliability.
 use super::*;
 
-pub(super) fn validate_catalog(catalog: &LensCatalog) -> Result<()> {
-    if catalog.schema_version != CRITIC_LENS_CATALOG_SCHEMA_VERSION {
-        return Err(invalid_critic_config(
-            "unsupported critic lens catalog schema_version",
-        ));
-    }
-    if catalog.lenses.is_empty() || catalog.lenses.len() > MAX_CATALOG_LENSES {
-        return Err(invalid_critic_config(
-            "critic lens catalog must contain 1..=64 lenses",
-        ));
-    }
-    let mut seen = BTreeSet::new();
-    for lens in &catalog.lenses {
-        validate_lens(lens)?;
-        if !seen.insert((lens.domain.as_str(), lens.id.as_str())) {
-            return Err(invalid_critic_config(
-                "critic lens catalog contains duplicate domain/id",
-            ));
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn validate_lens(lens: &CriticLens) -> Result<()> {
-    validate_identifier(&lens.id, MAX_ID_BYTES, "lens id")?;
-    validate_identifier(&lens.domain, MAX_DOMAIN_BYTES, "domain")?;
-    validate_text(&lens.prompt_contract, MAX_CONTRACT_BYTES, "prompt_contract")?;
-    validate_text(
-        &lens.output_schema,
-        MAX_OUTPUT_SCHEMA_BYTES,
-        "output_schema",
-    )?;
-    Ok(())
-}
+pub(super) use crate::store::critic_lens::{validate_catalog, validate_lens};
 
 pub(super) fn validate_critique_artifact(artifact: &CritiqueArtifact) -> Result<()> {
     if artifact.schema_version != CRITIQUE_ARTIFACT_SCHEMA_VERSION {
@@ -126,37 +93,5 @@ pub(super) fn validate_reliability(reliability: &CriticReliability) -> Result<()
     Ok(())
 }
 
-pub(super) fn validate_identifier(text: &str, max_bytes: usize, field: &'static str) -> Result<()> {
-    validate_text(text, max_bytes, field)?;
-    let mut bytes = text.bytes();
-    let Some(first) = bytes.next() else {
-        return Err(invalid_critic_config(format!("{field} must not be empty")));
-    };
-    if !first.is_ascii_lowercase() {
-        return Err(invalid_critic_config(format!(
-            "{field} must start with an ASCII lowercase letter"
-        )));
-    }
-    if !bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_') {
-        return Err(invalid_critic_config(format!(
-            "{field} must contain only ASCII lowercase letters, digits, or underscores"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_text(text: &str, max_bytes: usize, field: &'static str) -> Result<()> {
-    if text.is_empty() {
-        return Err(invalid_critic_config(format!("{field} must not be empty")));
-    }
-    if text.len() > max_bytes {
-        return Err(invalid_critic_config(format!(
-            "{field} exceeds {max_bytes} bytes"
-        )));
-    }
-    Ok(())
-}
-
-pub(super) fn invalid_critic_config(message: impl Into<String>) -> Error {
-    Error::InvalidConfig(message.into())
-}
+use crate::store::critic_lens::validate_text;
+pub(super) use crate::store::critic_lens::{invalid_critic_config, validate_identifier};

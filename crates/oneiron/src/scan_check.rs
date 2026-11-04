@@ -13,10 +13,12 @@
 //! its caller holds, on any thread, and no check rides in a host's write.
 
 use std::collections::BTreeMap;
+#[cfg(test)]
 use std::sync::Mutex;
 
 use heed::RoTxn;
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use serde::Serialize;
 
 use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
@@ -27,11 +29,9 @@ use crate::store::{Callback, ManifestDbs, Rows, active_write_txn_depth};
 mod engine_scan;
 mod engine_scan_table;
 pub use engine_scan::EngineScan;
+use engine_scan_table::EngineScanThreshold;
 
-/// Rows one engine scan reads past which it asks whether everything is
-/// okay: ten times the count each of the origin scans once refused at. A
-/// scan with a default of its own asks at the count it once cut short at.
-pub const DEFAULT_SCAN_CHECK_THRESHOLD: u64 = 1_000_000;
+pub use crate::store::DEFAULT_SCAN_CHECK_THRESHOLD;
 
 /// Device-local threshold row of one scan. Key: the scan's tag.
 const POLICY: SideTable<[u8; 1], u64, Raw> = SideTable::new(&side_table::ORIGIN_SCAN_POLICY);
@@ -40,32 +40,9 @@ const POLICY: SideTable<[u8; 1], u64, Raw> = SideTable::new(&side_table::ORIGIN_
 const CHECK: SideTable<([u8; 1], Vec<u8>), ScanCheck, Named> =
     SideTable::new(&side_table::ORIGIN_SCAN_CHECK);
 
-type CheckKey = ([u8; 1], Vec<u8>);
-
-/// OF-520 question one engine scan raised for one scope, the first time it
-/// read more rows than its threshold. Evidence for the host, never a
-/// refusal: the scan read on and served.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ScanCheck {
-    /// The scan ([`EngineScan::code`]).
-    pub scan: String,
-    /// The scope the scan read, in hex: a repository's or a record's id, a
-    /// type byte, a window. `None` for a vault-wide scan.
-    #[serde(alias = "repo_id")]
-    pub scope: Option<String>,
-    /// The threshold in force at the crossing.
-    pub threshold: u64,
-    /// Rows the scan read when it crossed it.
-    pub rows: u64,
-    /// Unix seconds of the crossing.
-    pub raised_at: u64,
-}
-
-impl ScanCheck {
-    /// Machine-readable check discriminator; presentation text belongs to hosts.
-    pub const KIND: &'static str = "scan_size";
-}
+use crate::store::CheckKey;
+pub(crate) use crate::store::PendingScanChecks;
+pub use crate::store::ScanCheck;
 
 fn threshold_in_txn(store: &impl ManifestDbs, txn: &RoTxn<'_>, scan: EngineScan) -> Result<u64> {
     Ok(POLICY
@@ -166,47 +143,6 @@ fn warn(check: &ScanCheck) {
         rows = check.rows,
         "a scan read past its threshold row and served; is everything okay?"
     );
-}
-
-/// Crossings a store holds until a point no write is held keeps them: one
-/// per scan and scope, the first.
-#[derive(Default)]
-pub(crate) struct PendingScanChecks(Mutex<BTreeMap<CheckKey, ScanCheck>>);
-
-impl PendingScanChecks {
-    fn park(&self, key: CheckKey, check: ScanCheck) {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .entry(key)
-            .or_insert(check);
-    }
-
-    /// Whether a crossing waits to be kept (FIX 11664).
-    pub(crate) fn any_waiting(&self) -> bool {
-        !self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_empty()
-    }
-
-    fn waiting(&self) -> BTreeMap<CheckKey, ScanCheck> {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-
-    fn clear(&self, keys: &[CheckKey]) {
-        let mut waiting = self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for key in keys {
-            waiting.remove(key);
-        }
-    }
 }
 
 impl Vault {

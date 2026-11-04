@@ -2,8 +2,8 @@
 //! FIX 1202).
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::llm::decision::{AnswerContract, DecisionQuestion};
-use crate::llm::{
+use crate::model_decision::{AnswerContract, DecisionQuestion};
+use oneiron_model::llm::{
     BudgetLease, ContentPart, FinishReason, LlmBackend, LlmCapability, LlmGenerateFuture,
     LlmRequest, LlmResponse, LlmStreamResult, ModelId,
 };

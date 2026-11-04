@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::llm::SafeguardModelBinding;
 use crate::store::GateSystemNoticeAction;
+use oneiron_model::llm::SafeguardModelBinding;
 
 use super::planes::PolicyPlane;
 
@@ -286,7 +286,7 @@ pub struct PolicyModelConfig {
     /// The host ladder's paired question, lent to the safeguard's generated
     /// read (FIX 2436): each read asks it beside its own questions, and the
     /// receipts keep its reading. `None` asks none.
-    pub safeguard_paired: Option<crate::llm::decision::DecisionQuestion>,
+    pub safeguard_paired: Option<crate::model_decision::DecisionQuestion>,
 }
 
 impl PolicyModelConfig {

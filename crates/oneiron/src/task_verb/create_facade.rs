@@ -12,7 +12,6 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::federation::record_scope::{BirthPosition, stamp_task_birth};
 use crate::gate::PolicyApprovalCeiling;
-use crate::habit::TaskRole;
 use crate::human_task::{register_human_followup_in_txn, resolve_native_human_route};
 use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance, verify_actor_binding};
 use crate::registry::ENTITY_TYPE_TASK;
@@ -20,6 +19,7 @@ use crate::task_authority::{
     TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
 };
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::TaskRole;
 
 use super::consts::{
     TASK_CREATE_PROPOSAL_PREDICATE, TASK_REALIZE_ATTEMPT_KIND, TASK_VERB_BODY_SCHEMA_VERSION,

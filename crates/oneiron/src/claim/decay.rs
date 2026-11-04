@@ -202,7 +202,7 @@ pub fn claim_access_factor_with_policy(
 /// only weakly stand alone: a reaction is still findable by a direct query,
 /// but never outranks an ordinary memory of equal relevance.
 fn standalone_weight(predicate: &str) -> f32 {
-    if crate::reaction::is_reaction_claim_predicate(predicate) {
+    if crate::claim::reaction_record::is_reaction_claim_predicate(predicate) {
         crate::reaction::REACTION_STANDALONE_WEIGHT
     } else {
         1.0

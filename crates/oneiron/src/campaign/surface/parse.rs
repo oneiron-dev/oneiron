@@ -10,7 +10,6 @@ use super::{
 };
 use crate::EntityId;
 use crate::campaign::presets::SnoozePolicyData;
-use crate::error::Error;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::saved_query::{CreateSavedQueryRequest, UpdateSavedQueryRequest};
 
@@ -129,6 +128,4 @@ fn field_error(field: &str, requirement: &str) -> MemoryError {
     MemoryError::bad_request(format!("campaign surface field {field} {requirement}"))
 }
 
-pub(super) fn invalid(message: &str) -> Error {
-    Error::InvalidConfig(message.to_owned())
-}
+pub(super) use crate::memory::campaign_records::program::invalid;

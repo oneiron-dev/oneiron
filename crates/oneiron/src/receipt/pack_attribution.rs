@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::learning::TypeRef;
+use crate::receipt::task_type_ref::TypeRef;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 

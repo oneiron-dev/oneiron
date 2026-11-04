@@ -122,17 +122,7 @@ pub struct LocalMachine {
     pub mine: bool,
 }
 
-/// The machine at the other end of a connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PeerMachine {
-    /// A machine that proved, on this connection, the key it stands on here
-    /// ([`AuthorityFold::machine_proof_key`]). The key stays with the proof:
-    /// a later trusted identity under other keys is not this connection's.
-    Proven { machine: EntityId, key: [u8; 32] },
-    /// No proof, a proof that did not verify, or a machine not live here. It
-    /// is never read as this machine or as one of the owner's.
-    Unknown,
-}
+pub use crate::machine_destination::PeerMachine;
 
 /// The vault id this install's resident signed Genesis roots (its hash, as
 /// the fold derives it), read without folding the log (OF-469). Only a

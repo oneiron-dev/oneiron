@@ -254,8 +254,18 @@ impl RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
+        self.admit_result_read(storage)?;
+        let own = if callable {
+            self.result_rows()
+        } else {
+            self.verb_rows()
+        };
         let Some(found) = self.resolve_for_read(storage, &target.reference)? else {
-            return Ok(Err(self.unknown_handle()));
+            return Ok(Err(match self.withholds_rows(own)? {
+                Ok(false) => self.unknown_handle(),
+                Ok(true) => result_refusal("result_withheld"),
+                Err(code) => result_refusal(code),
+            }));
         };
         if let (Some((start, end)), Some((from, to))) = (found.within, target.range)
             && (from < start || to > end)
@@ -265,12 +275,6 @@ impl RecordingJsHost<'_, '_> {
         if found.child_source && !self.gated_write.reader_job_live()? {
             return Ok(Err(result_refusal("reader_task_settled")));
         }
-        self.admit_result_read(storage)?;
-        let own = if callable {
-            self.result_rows()
-        } else {
-            self.verb_rows()
-        };
         let rows = match found.rows.clone() {
             None => own,
             Some(extra) => own.zip(extra).map(|(run, extra)| [run, extra].concat()),
@@ -453,8 +457,9 @@ impl RecordingJsHost<'_, '_> {
     /// One facet of one of the run's results, checked as `describe` is. A
     /// query whose selection is past one reply is stored as a new result of
     /// the run, as `store` stores a value, and answered by its card. It is
-    /// read only from a clean body, and its own bytes are scanned for
-    /// secrets as they are stored.
+    /// read only from a clean body, inherits that body's custody marks
+    /// (FIX 1184), and its own bytes are scanned for secrets as they are
+    /// stored.
     pub(super) fn read_result(
         &mut self,
         target: &JsResultTarget,
@@ -468,6 +473,7 @@ impl RecordingJsHost<'_, '_> {
             Ok(read) => read,
             Err(refused) => return Ok(refused),
         };
+        let parent = (read.owner(), read.output().clone());
         let mut sink = match facet {
             ResultFacet::Query => Some(storage.code_run_output_sink()?),
             _ => None,
@@ -479,7 +485,7 @@ impl RecordingJsHost<'_, '_> {
                 let sink = sink.ok_or(Error::InvariantViolation(
                     "a result read spilled with no sink",
                 ))?;
-                let card = self.bind_stored(storage, sink, None)?;
+                let card = self.bind_stored_with(storage, sink, None, &[parent])?.1;
                 let mut output = json!({"derived": card, "count": count, "done": next.is_none()});
                 if let Some(next) = next {
                     output["next"] = next;

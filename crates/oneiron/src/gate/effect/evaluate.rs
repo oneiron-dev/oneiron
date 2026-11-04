@@ -333,7 +333,7 @@ pub(crate) fn evaluate_external_effect_policy(
     // the governing row forbids. It is enforcement, not a new approval step;
     // effects outside a campaign never reach the evaluator at all.
     if decision.outcome() != GateOutcome::Deny
-        && let Some(crate::campaign::compliance::ComplianceVerdict::Block { reason, .. }) =
+        && let Some(crate::gate::dispatch_compliance::ComplianceVerdict::Block { reason, .. }) =
             crate::campaign::compliance::campaign_compliance_gate(
                 store,
                 &*wtxn,

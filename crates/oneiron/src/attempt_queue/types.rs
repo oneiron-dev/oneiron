@@ -8,15 +8,12 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::vault::RevisionRef;
 
 use super::cancel::{
     AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelState, AttemptCancellation,
     AttemptLanding, AttemptLandingReserve, AttemptResumePoint,
 };
-use super::validate::validate_result_ref;
 use crate::error::ArtifactError;
 
 mod cleanup;
@@ -34,7 +31,7 @@ pub(crate) use hold::AttemptPause;
 pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 2;
 const ERR_ATTEMPT_ID_LEN: &str = "attempt id must be 16 bytes";
 pub(super) const MAX_ATTEMPT_EVENTS_PER_RECORD: usize = 256;
-pub(super) const ATTEMPT_QUEUE_RETRY_REASON_COUNT: usize = 3;
+pub(super) use crate::store::attempt_cleanup::ATTEMPT_QUEUE_RETRY_REASON_COUNT;
 
 /// Stable identifier for a queued attempt.
 #[derive(
@@ -91,40 +88,7 @@ impl crate::side_table::RawValue for AttemptId {
     }
 }
 
-/// Durable reference to the artifact version an attempt's result lives in.
-///
-/// The value is a REFERENCE, never a payload: an executor's actual output is
-/// an appended artifact version, and this row carries only the string that
-/// names it. It is validated at construction so a row can never point at an
-/// empty or unprintable reference that no reader could resolve.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AttemptResultRef(String);
-
-impl AttemptResultRef {
-    /// Builds a validated result reference.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ArtifactError::InvalidAttemptQueueRecord`](crate::error::ArtifactError::InvalidAttemptQueueRecord) when the reference is
-    /// empty, over-long, or carries a control character.
-    pub fn new(value: impl Into<String>) -> Result<Self> {
-        let value = value.into();
-        validate_result_ref(&value)?;
-        Ok(Self(value))
-    }
-
-    /// The validated reference string.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// Consumes the reference, yielding its validated string.
-    #[must_use]
-    pub fn into_string(self) -> String {
-        self.0
-    }
-}
+pub use crate::store::attempt_result::AttemptResultRef;
 
 /// Durable lifecycle state persisted on each attempt row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -213,134 +177,9 @@ impl AttemptState {
     }
 }
 
-/// Durable intervention kind recorded on an attempt row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AttemptInterventionKind {
-    Interrupt,
-    Pause,
-    Resume,
-    Cancel,
-    Redirect,
-}
+pub use crate::store::attempt_inputs::{AttemptEvent, AttemptInterventionKind};
 
-impl AttemptInterventionKind {
-    pub(super) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Interrupt => "interrupt",
-            Self::Pause => "pause",
-            Self::Resume => "resume",
-            Self::Cancel => "cancel",
-            Self::Redirect => "redirect",
-        }
-    }
-}
-
-/// Durable intervention event appended to an attempt row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AttemptEvent {
-    pub sequence: u64,
-    pub at: u64,
-    pub actor: String,
-    pub kind: AttemptInterventionKind,
-    #[serde(default)]
-    pub note: Option<String>,
-}
-
-/// What one [`ManifestEntry`] names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum ManifestKind {
-    /// The tier-1 skill dependency index included in the dispatched composition.
-    SkillIndex,
-    /// A SKILL pulled into the attempt's pack (`skill_id` + version).
-    Skill,
-    /// An `actor.*` claim row loaded into the attempt's pack.
-    ActorClaim,
-}
-
-impl ManifestKind {
-    /// Returns the stable wire string for this manifest kind.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::SkillIndex => "skill_index",
-            Self::Skill => "skill",
-            Self::ActorClaim => "actor_claim",
-        }
-    }
-}
-
-/// One append-only row of an attempt's PACK MANIFEST (ARCH-0053 §2/§3).
-///
-/// The pack is alive: the tier-1 index is stamped at `t0` and every mid-run
-/// tier-2 body pull appends its own row WHEN it happens, so the terminal
-/// receipt carries the full accumulated manifest and attribution can name
-/// what was actually loaded.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ManifestEntry {
-    pub kind: ManifestKind,
-    /// The loaded thing's stable identity (`skill_id`, claim id hex, …).
-    pub reference: String,
-    /// The loaded revision (`SkillRecord::version`, a claim revision, …).
-    pub version: String,
-    /// Unix seconds at which the pack loaded it.
-    pub at: u64,
-    /// For a skill load, the entity whose body loaded and its exact retained
-    /// revision, so attribution reads what loaded after an in-place update
-    /// (FIX 10110); `None` for every other row.
-    pub revision: Option<(EntityId, RevisionRef)>,
-}
-
-impl ManifestEntry {
-    /// Builds one manifest row.
-    #[must_use]
-    pub fn new(
-        kind: ManifestKind,
-        reference: impl Into<String>,
-        version: impl Into<String>,
-        at: u64,
-    ) -> Self {
-        Self {
-            kind,
-            reference: reference.into(),
-            version: version.into(),
-            at,
-            revision: None,
-        }
-    }
-
-    /// This row bound to the exact revision of `entity` the load read.
-    #[must_use]
-    pub fn with_revision(mut self, entity: EntityId, revision: RevisionRef) -> Self {
-        self.revision = Some((entity, revision));
-        self
-    }
-
-    /// The `reference@version` wire form the terminal receipt projects.
-    #[must_use]
-    pub fn wire_form(&self) -> String {
-        format!("{}@{}", self.reference, self.version)
-    }
-
-    /// Splits a [`Self::wire_form`] string back into `(reference, version)`.
-    ///
-    /// The delimiter is the FIRST `@` (owner ruling R-20260807-04). The
-    /// grammar is asymmetric on purpose: a reference may not contain `@` —
-    /// `validate::validate_manifest_entry` refuses one at the door — while a
-    /// VERSION may, so `s@1@beta` is the skill `s` at revision
-    /// `1@beta`. Splitting from the right instead read that row as skill `s@1`
-    /// at revision `beta`, attributing an outcome to a skill that never
-    /// existed.
-    ///
-    /// Returns `None` for a string carrying no `@` at all, which is not a
-    /// wire form.
-    #[must_use]
-    pub fn parse_wire_form(wire_form: &str) -> Option<(&str, &str)> {
-        wire_form.split_once('@')
-    }
-}
+pub use crate::store::attempt_manifest::{ManifestEntry, ManifestKind};
 
 /// Durable attempt row stored in LMDB.
 ///
@@ -414,7 +253,7 @@ pub struct AttemptRecord {
     /// `executor_model` and `executor_seat` under the same lease. `None` for
     /// work no role ran.
     #[serde(default)]
-    pub executor_role: Option<crate::llm::manifest::ModelRole>,
+    pub executor_role: Option<crate::model_binding::ModelRole>,
     /// FIX 7720: a seatless planned child's first pick, route and exactness,
     /// written once with `executor_model` under its lease before its pack
     /// loads. `None` for any other run; a fresh retry decides its own.
@@ -440,10 +279,10 @@ pub struct AttemptRecord {
     pub result_ref: Option<AttemptResultRef>,
     /// Branch-addressed control inbox and settled replay receipts.
     #[serde(default)]
-    pub signals: Vec<crate::run_tree::RunBranchSignal>,
+    pub signals: Vec<crate::attempt_queue::run_signal::RunBranchSignal>,
     /// Durable ask handles, including partial replies, for this branch only.
     #[serde(default)]
-    pub asks: Vec<crate::run_tree::RunAsk>,
+    pub asks: Vec<crate::attempt_queue::run_signal::RunAsk>,
     /// Operator-selected placement, separate from the immutable executor payload.
     #[serde(default)]
     pub placement: Option<AttemptPlacement>,
@@ -461,7 +300,7 @@ pub struct AttemptRecord {
     /// FIX 10066: the keyed fingerprint of each signal the side-row wall
     /// masked, by its key, so an identical retry still matches.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) signal_intents: Vec<crate::run_tree::SignalIntent>,
+    pub(crate) signal_intents: Vec<crate::attempt_queue::run_signal::SignalIntent>,
 }
 
 impl AttemptRecord {
@@ -536,15 +375,7 @@ impl AttemptRecord {
     }
 }
 
-/// Input for enqueueing an attempt.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnqueueAttempt {
-    pub kind: String,
-    pub payload: Vec<u8>,
-    pub dedupe_key: Option<String>,
-    pub run_id: Option<String>,
-    pub now: u64,
-}
+pub use crate::store::attempt_inputs::EnqueueAttempt;
 
 /// Typed enqueue outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -554,14 +385,7 @@ pub enum EnqueueOutcome {
     Existing(AttemptRecord),
 }
 
-/// Input for atomically claiming the next queued attempt.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClaimAttempt {
-    pub lease_owner: String,
-    /// Readiness horizon, capped by the injected clock. Lease timestamps are
-    /// recorded from that clock, never from this caller-provided bound.
-    pub now: u64,
-}
+pub use crate::store::attempt_inputs::ClaimAttempt;
 
 /// Typed claim outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -692,8 +516,8 @@ pub struct AttemptPlacement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlannedBinding {
-    pub pick: crate::ModelId,
-    pub locality: crate::ModelLocality,
+    pub pick: oneiron_model::llm::ModelId,
+    pub locality: oneiron_model::llm::ModelLocality,
     pub exactness: PlannedExactness,
     /// The try whose run a continuation forks (FIX 3694), when it is one.
     pub source: Option<AttemptId>,
@@ -712,36 +536,7 @@ pub enum PlannedExactness {
     Inherited,
 }
 
-/// Observable effect of an intervention.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AttemptInterventionEffect {
-    Interrupted,
-    Paused,
-    AlreadyPaused,
-    Resumed,
-    AlreadyResumed,
-    Cancelled,
-    AlreadyCancelled,
-    Redirected,
-    AlreadyRedirected,
-}
-
-impl AttemptInterventionEffect {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Interrupted => "interrupted",
-            Self::Paused => "paused",
-            Self::AlreadyPaused => "already_paused",
-            Self::Resumed => "resumed",
-            Self::AlreadyResumed => "already_resumed",
-            Self::Cancelled => "cancelled",
-            Self::AlreadyCancelled => "already_cancelled",
-            Self::Redirected => "redirected",
-            Self::AlreadyRedirected => "already_redirected",
-        }
-    }
-}
+pub use crate::store::attempt_inputs::AttemptInterventionEffect;
 
 /// Typed intervention outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]

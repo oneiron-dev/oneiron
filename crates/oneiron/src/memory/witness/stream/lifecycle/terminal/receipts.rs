@@ -38,6 +38,6 @@ pub(super) fn opening_receipt(
             seed.message_id.to_hex(),
             seed.generation.to_hex()
         ),
-        reply_assertions: crate::llm::ReplyAssertions::default(),
+        reply_assertions: oneiron_model::llm::ReplyAssertions::default(),
     }
 }

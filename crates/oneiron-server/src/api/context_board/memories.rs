@@ -208,6 +208,9 @@ pub(crate) struct ContextBoardMemoryRow {
     claim_source: Option<String>,
     /// World partition; foreign ids render outside the first-party wrapper.
     world: Option<String>,
+    /// True when the row's world cannot be proven; it renders under `MEMORIES world=unknown`.
+    #[schema(example = false)]
+    world_unproven: bool,
     /// pinned, snippet, or index_only.
     tier: String,
     /// Escaped only at rendering, absent for foreign index-only rows.

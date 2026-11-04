@@ -1,6 +1,6 @@
 //! Registered verb classes for the credential door. A slip stores class names,
 //! not a snapshot of the verbs in each class.
-use crate::federation::{Scope, ScopeAxis};
+use oneiron_authority::federation::{Scope, ScopeAxis};
 
 // The registry is resolved at evaluation, not expanded when a slip is minted.
 // Only the checkout path mints door.push in production. The other classes

@@ -185,6 +185,23 @@ impl BudgetGuard {
         state.leases.get(lease.id()).map(|record| record.dispatched)
     }
 
+    /// Clears a premature dispatch mark when the caller proves no physical
+    /// attempt was sent. Subsequent unsent settlement releases the reservation
+    /// and records no dispatched receipt.
+    pub fn mark_unsent(&self, lease: &BudgetLease) -> Result<(), BudgetDenied> {
+        let mut state = self.lock_state();
+        state.check_lease_provenance(lease)?;
+        let record = state
+            .leases
+            .get_mut(lease.id())
+            .ok_or(BudgetDenied::LeaseInvalid)?;
+        if record.state != LeaseState::Open {
+            return Err(BudgetDenied::LeaseInvalid);
+        }
+        record.dispatched = false;
+        Ok(())
+    }
+
     /// Whether this lease is still open, neither settled nor aborted; `None`
     /// for a lease another meter issued or this one never did.
     #[must_use]

@@ -1,6 +1,6 @@
 //! Scoped exports carry the caller's verified ceiling, never a caller-authored grant.
 use super::{Memory, MemoryError, MemoryResult};
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 use serde::{Deserialize, Serialize};
 
 /// A position may select rows but cannot be supplied as a permission ceiling.
@@ -102,10 +102,10 @@ pub struct ChannelCeiling {
 }
 
 impl<T: Ord + Clone> ScopeAxisInput<T> {
-    fn axis(&self) -> crate::federation::ScopeAxis<T> {
+    fn axis(&self) -> oneiron_authority::federation::ScopeAxis<T> {
         match self {
-            Self::Bottom => crate::federation::ScopeAxis::Bottom,
-            Self::All => crate::federation::ScopeAxis::All,
+            Self::Bottom => oneiron_authority::federation::ScopeAxis::Bottom,
+            Self::All => oneiron_authority::federation::ScopeAxis::All,
             Self::Some(values) => values.iter().cloned().collect(),
         }
     }
@@ -176,7 +176,7 @@ impl Memory<'_> {
     }
 
     fn export_selector(&self, input: &RecordSelector) -> MemoryResult<Scope> {
-        use crate::federation::{ScopeAxis, ScopeId};
+        use oneiron_authority::federation::{ScopeAxis, ScopeId};
         let mut scope = Scope::top();
         let worlds = self.selected_worlds(&super::RecallScope {
             worlds: Some(input.worlds.clone().unwrap_or(super::RecallWorlds::All)),
@@ -211,7 +211,7 @@ impl Memory<'_> {
     }
 
     fn export_channel_scope(&self, input: &ChannelCeiling) -> MemoryResult<Scope> {
-        use crate::federation::{ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+        use oneiron_authority::federation::{ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
         let ids = |axis: &ScopeAxisInput<String>| -> MemoryResult<ScopeAxis<ScopeId>> {
             match axis {
                 ScopeAxisInput::Bottom => Ok(ScopeAxis::Bottom),

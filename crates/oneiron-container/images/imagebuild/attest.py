@@ -93,6 +93,7 @@ DEBIAN_TO_SPDX = {
     "gpl-3+": "GPL-3.0-or-later",
     "gpl-3.0-only": "GPL-3.0-only",
     "gpl-3.0-or-later": "GPL-3.0-or-later",
+    "gpl3+": "GPL-3.0-or-later",
     "isc": "ISC",
     "lgpl-2": "LGPL-2.0-only",
     "lgpl-2+": "LGPL-2.0-or-later",
@@ -212,28 +213,160 @@ def _licence_ref(name: str, body: str, extracted: dict[str, dict]) -> str:
     return licence_id
 
 
+# DEP-5 exception shorthands that have one exact SPDX exception id. Ambiguous
+# or unknown exception names stay NOASSERTION rather than guessing a version.
+DEBIAN_EXCEPTION_TO_SPDX = {
+    "autoconf generic exception": "Autoconf-exception-generic",
+    "bison-exception-1.24": "Bison-exception-1.24",
+    "bison-exception-2.2": "Bison-exception-2.2",
+    "classpath exception": "Classpath-exception-2.0",
+    "classpath-exception-2.0": "Classpath-exception-2.0",
+    "font exception": "Font-exception-2.0",
+    "font-exception-2.0": "Font-exception-2.0",
+    "libtool exception": "Libtool-exception",
+    "linux-syscall-note exception": "Linux-syscall-note",
+    "llvm exception": "LLVM-exception",
+    "texinfo exception": "Texinfo-exception",
+}
+
+
+def _exception_id(name: str, base: str) -> str | None:
+    if name in DEBIAN_EXCEPTION_TO_SPDX:
+        return DEBIAN_EXCEPTION_TO_SPDX[name]
+    if name in ("autoconf exception", "autoconf-data exception"):
+        base_lower = base.lower()
+        if base_lower.startswith("gpl-2"):
+            return "Autoconf-exception-2.0"
+        if base_lower.startswith(("gpl-3", "gpl3")):
+            return "Autoconf-exception-3.0"
+    return None
+
+
 def _expression(field: str, standalone: dict[str, str], extracted: dict[str, dict],
                 rootfs: Path | None = None) -> tuple[str | None, str]:
     """One Files paragraph's License field as an SPDX expression, or (None, why).
-    Only a plain list joined by one operator (all `or` or all `and`) is read:
-    commas, `with ... exception` and mixed operators are not written out."""
+    Comma-lowered `, and` and `, or` are read; a bare comma is invalid.
+    Parentheses and `with ... exception` are read, with explicit grouping on output."""
     first, text = _field(field)
-    tokens = first.split()
-    names, ops = tokens[0::2], [op.lower() for op in tokens[1::2]]
-    if not tokens or len(tokens) % 2 == 0 or any(c in first for c in ",()"):
-        return None, f"License {first!r} is not a plain list of short names"
-    if any(op not in ("and", "or") for op in ops) or len(set(ops)) > 1:
-        return None, f"License {first!r} uses an exception or mixes and/or"
-    ids = []
-    for name in names:
-        spdx = DEBIAN_TO_SPDX.get(name.lower())
-        if spdx is None:
-            body = text if len(names) == 1 and text else standalone.get(name.lower(), "")
-            if not body.strip():
-                return None, f"{name} has no SPDX id and no licence text"
-            spdx = _licence_ref(name, _with_common_texts(body, rootfs), extracted)
-        ids.append(spdx)
-    return (" OR " if ops and ops[0] == "or" else " AND ").join(ids), ""
+    tokens = re.findall(r"\(|\)|,|[^\s(),]+", first)
+    pos = 0
+
+    def word(value: str) -> bool:
+        nonlocal pos
+        if pos < len(tokens) and tokens[pos].lower() == value:
+            pos += 1
+            return True
+        return False
+
+    def comma_word(value: str) -> bool:
+        nonlocal pos
+        if pos + 1 < len(tokens) and tokens[pos] == "," and tokens[pos + 1].lower() == value:
+            pos += 2
+            return True
+        return False
+
+    def primary() -> tuple:
+        nonlocal pos
+        if pos >= len(tokens):
+            raise ValueError("ends before a licence name")
+        if tokens[pos] == "(":
+            pos += 1
+            node = low_or_expression()
+            if pos >= len(tokens) or tokens[pos] != ")":
+                raise ValueError("has an unclosed parenthesis")
+            pos += 1
+            return node
+        name = tokens[pos]
+        if name in (")", ",") or name.lower() in ("and", "or", "with"):
+            raise ValueError(f"has {name!r} where a licence name belongs")
+        pos += 1
+        return "name", name
+
+    def with_expression() -> tuple:
+        nonlocal pos
+        node = primary()
+        if word("with"):
+            if node[0] != "name":
+                raise ValueError("applies an exception to a compound licence")
+            start = pos
+            while (pos < len(tokens) and tokens[pos] not in ("(", ")", ",")
+                   and tokens[pos].lower() not in ("and", "or")):
+                pos += 1
+            exception_name = " ".join(tokens[start:pos]).lower()
+            if not exception_name:
+                raise ValueError("has `with` without an exception")
+            exception = _exception_id(exception_name, node[1])
+            if exception is None:
+                raise ValueError(f"exception {exception_name!r} has no exact SPDX id")
+            node = "with", node, exception
+        return node
+
+    def and_expression() -> tuple:
+        nodes = [with_expression()]
+        while word("and"):
+            nodes.append(with_expression())
+        return nodes[0] if len(nodes) == 1 else ("and", nodes)
+
+    def or_expression() -> tuple:
+        nodes = [and_expression()]
+        while word("or"):
+            nodes.append(and_expression())
+        return nodes[0] if len(nodes) == 1 else ("or", nodes)
+
+    def low_and_expression() -> tuple:
+        nodes = [or_expression()]
+        while comma_word("and"):
+            nodes.append(or_expression())
+        return nodes[0] if len(nodes) == 1 else ("low-and", nodes)
+
+    def low_or_expression() -> tuple:
+        nodes = [low_and_expression()]
+        while comma_word("or"):
+            nodes.append(low_and_expression())
+        return nodes[0] if len(nodes) == 1 else ("low-or", nodes)
+
+    try:
+        parsed = low_or_expression()
+        if pos != len(tokens):
+            raise ValueError(f"has unexpected token {tokens[pos]!r}")
+    except ValueError as error:
+        return None, f"License {first!r} {error}"
+
+    def count_names(node: tuple) -> int:
+        if node[0] == "name":
+            return 1
+        if node[0] == "with":
+            return count_names(node[1])
+        return sum(count_names(child) for child in node[1])
+
+    name_count = count_names(parsed)
+
+    def emit(node: tuple) -> str:
+        kind = node[0]
+        if kind == "name":
+            name = node[1]
+            spdx = DEBIAN_TO_SPDX.get(name.lower())
+            if spdx is None:
+                body = text if name_count == 1 and text else standalone.get(name.lower(), "")
+                if not body.strip():
+                    raise ValueError(f"{name} has no SPDX id and no licence text")
+                spdx = _licence_ref(name, _with_common_texts(body, rootfs), extracted)
+            return spdx
+        if kind == "with":
+            return f"{emit(node[1])} WITH {node[2]}"
+        operator = " AND " if kind in ("and", "low-and") else " OR "
+        parts = []
+        for child in node[1]:
+            body = emit(child)
+            if child[0] in ("and", "or", "low-and", "low-or"):
+                body = f"({body})"
+            parts.append(body)
+        return operator.join(parts)
+
+    try:
+        return emit(parsed), ""
+    except ValueError as error:
+        return None, str(error)
 
 
 def debian_licence(rootfs: Path, package: str, extracted: dict[str, dict]) -> tuple[str, str]:

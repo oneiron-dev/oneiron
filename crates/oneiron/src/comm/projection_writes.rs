@@ -12,7 +12,6 @@ use super::parties::resolve_party;
 use super::records::encode_value;
 use super::thread_membership::{active_thread_refs_in_txn, matching_thread_memberships_in_txn};
 use crate::Vault;
-use crate::affect::Vad;
 use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
 use crate::claim::encode_claim_body;
 use crate::counterparty_contact::normalize_channel_class;
@@ -23,6 +22,7 @@ use crate::error::Error;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
+use oneiron_contracts::affect::Vad;
 
 /// Canonical conflict key for one projected `comm.*` value: the tuple that
 /// makes two claims the SAME standing-state slot. Length-prefixed so

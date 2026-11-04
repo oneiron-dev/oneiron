@@ -28,10 +28,14 @@ use crate::attempt_queue::{AttemptId, AttemptResultRef, AttemptState};
 use crate::dreamer_runner::{DreamerAttemptStatus, DreamerParkedAttemptRecord, DreamerRunnerStore};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, ErrorKind, Result};
-use crate::llm::{CallerSettledStep, settled_step_for_caller};
+use crate::llm::settled_step_for_caller;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
+use crate::model_step_record::CallerSettledStep;
 use crate::{EdgeActorClass, Vault};
+use crate::{
+    attempt_queue::run_tree_view::{RunTreeNode, RunTreeStatus},
+    run_tree::RunTreeAdapter,
+};
 
 use super::run::{
     RunState, StepIssue, StepState, TurnProgramRun, TurnProgramStep, actor_gone_in_txn,
@@ -123,6 +127,7 @@ pub fn turn_program_admission(
             .chain((!owed.is_empty()).then_some(turn)),
     )?;
     let turn_reads = readable.contains(&turn);
+    let now = memory.vault().now_recorded_at();
     Ok(Some(TurnProgramAdmissionView {
         turn_ref: turn.to_hex(),
         admissions: records
@@ -131,7 +136,7 @@ pub fn turn_program_admission(
             .collect(),
         owed: owed
             .into_iter()
-            .map(|wake| owed_wake_item(wake, turn_reads))
+            .map(|wake| owed_wake_item(wake, turn_reads, now))
             .collect(),
         next_cursor: next.map(|key| bytes_to_hex_lower(&key)),
         undecodable_admission_rows_examined: undecodable,

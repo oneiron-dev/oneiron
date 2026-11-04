@@ -88,7 +88,7 @@ impl DesktopSession {
         let listed = self.listed()?;
         if let Some(opened) = front(&listed, |window| !windows.contains(&window.key)) {
             self.switch(read.key, opened, &listed, WindowSwitchCause::Opened);
-            let before = self.fingerprint()?;
+            let before = self.fingerprint(None)?;
             self.settle(before, Instant::now())?;
         }
         self.observation(base)

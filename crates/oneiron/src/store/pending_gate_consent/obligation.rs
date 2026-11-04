@@ -90,7 +90,7 @@ impl Store {
                 item: owner_answer_item_hash(diff_handle),
             },
         )?;
-        crate::ppr::increment_graph_version(self, wtxn)
+        crate::store::graph_version::increment_graph_version(self, wtxn)
     }
 
     pub(crate) fn put_owner_answer_obligation_in_txn(
@@ -127,7 +127,7 @@ impl Store {
         claim_id: &EntityId,
     ) -> Result<()> {
         if OBLIGATION.delete(self, wtxn, claim_id)? {
-            crate::ppr::increment_graph_version(self, wtxn)?;
+            crate::store::graph_version::increment_graph_version(self, wtxn)?;
         }
         Ok(())
     }

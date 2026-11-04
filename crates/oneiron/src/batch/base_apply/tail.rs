@@ -107,7 +107,7 @@ pub(super) fn apply_tail(
                 .pending_embedding_enqueue_priorities
                 .get(id)
                 .copied()
-                .unwrap_or(crate::embed::EMBED_PRIORITY_DEVICE);
+                .unwrap_or(crate::store::embedding::EMBED_PRIORITY_DEVICE);
             crate::sync::queue::push_embed_job_in_txn(store, wtxn, id, priority)?;
         }
     }

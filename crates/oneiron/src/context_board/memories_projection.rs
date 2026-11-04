@@ -8,7 +8,7 @@ use crate::context_pack::{ContextEntity, ContextPack};
 use crate::disclosure::DisclosureAssembly;
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
 
 /// Builds the MEMORIES section from an already assembled pack.
@@ -173,7 +173,7 @@ fn memory_row(entity: &ContextEntity, source: MemorySource) -> MemoryRow {
 const CONSTRAINT_PREDICATE_NAMESPACES: [&str; 1] = ["boundary"];
 
 /// Whether `predicate` names a claim in a constraint namespace.
-pub(super) fn constraint_predicate(predicate: &str) -> bool {
+pub(crate) fn constraint_predicate(predicate: &str) -> bool {
     predicate
         .split_once('.')
         .is_some_and(|(namespace, _)| CONSTRAINT_PREDICATE_NAMESPACES.contains(&namespace))
@@ -241,6 +241,29 @@ impl crate::Vault {
         ] {
             for entity in entities {
                 let mut row = memory_row(entity, source);
+                // FIX 10563: a retrieved SUMMARY or TASK takes its world from
+                // its birth stamp, read in this projection's own snapshot as
+                // a pin does. A CLAIM keeps its own above; any other kind
+                // keeps the pack's `InWorld` label. Label only. A row whose
+                // record is gone or deleted since admission stays unknown:
+                // the pack's guess is never kept for a SUMMARY or TASK.
+                if matches!(entity.entity_type, ENTITY_TYPE_SUMMARY | ENTITY_TYPE_TASK) {
+                    row.world = None;
+                    row.world_unproven = true;
+                    if let crate::vault::LiveEntityRow::Live { entity_type, body } =
+                        crate::vault::live_entity_row_in_txn(&self.store, &rtxn, &entity.id)?
+                        && let Some(world) = crate::federation::record_scope::record_world_in(
+                            &self.store,
+                            &rtxn,
+                            entity.id,
+                            entity_type,
+                            &body,
+                        )?
+                    {
+                        row.world = world.map(|world| world.to_hex());
+                        row.world_unproven = false;
+                    }
+                }
                 if entity.entity_type == ENTITY_TYPE_CLAIM {
                     row.question = self
                         .get_claim_in_txn(&rtxn, &entity.id)

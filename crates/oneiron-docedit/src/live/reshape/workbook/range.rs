@@ -4,7 +4,7 @@
 
 use super::Key;
 use crate::live::conversion::RebuildReason;
-use crate::xlsx_body::{a1, parse_a1};
+use crate::xlsx_body::parse_a1;
 
 const MAX_COLUMN: u32 = 16_384;
 const MAX_ROW: u32 = 1_048_576;
@@ -167,13 +167,7 @@ impl Line {
 
     /// The reference as a chart writes it: `'Sheet1'!$B$2:$B$5`.
     pub(super) fn formula(&self) -> String {
-        let anchored = |(col, row): (u32, u32)| {
-            let cell = a1(col, row);
-            let split = cell
-                .find(|c: char| c.is_ascii_digit())
-                .unwrap_or(cell.len());
-            format!("${}${}", &cell[..split], &cell[split..])
-        };
+        let anchored = |(col, row): (u32, u32)| crate::a1::cell_text_fixed(col, row, true, true);
         let sheet = format!("'{}'", self.sheet.replace('\'', "''"));
         if self.first == self.last {
             format!("{sheet}!{}", anchored(self.first))

@@ -4,32 +4,35 @@ use super::codec::{
     ScopeSummaryBody, SummarySourceMessage, SummarySourceNote, decode_scope_summary_body,
     encode_scope_summary_body, invalid, scope_value,
 };
-use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimReadStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey,
-};
+use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
 use crate::conversation_dag::{
-    APPEND_ROW, AppendFailure, AppendRecord, ScopePath, ScopeSelector, actor_in_txn,
-    admit_append_prose, append_in_txn, append_references, conversation_of, edge_ids,
+    actor_in_txn, admit_append_prose, append_in_txn, append_references, conversation_of, edge_ids,
     is_sub_session_record, prove_branch_anchor, prove_branch_span, receipt_append_refusal,
     require_append_references_in_txn, require_type, resolve_in_txn,
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::memory::{Memory, MemoryError};
-use crate::provenance::birth::RowBirth;
-use crate::provenance::made_by::MadeByClass;
+use crate::memory::Memory;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
     ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
+use crate::store::conversation_record::APPEND_ROW;
+use crate::store::conversation_record::AppendFailure;
+use crate::store::conversation_record::{AppendRecord, ScopePath, ScopeSelector};
+use crate::store::row_birth::RowBirth;
+use crate::write_envelope::claim_body::ClaimSubject;
+use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::{
     ClaimCandidate, EntityId, TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::affect::Vad;
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
+use oneiron_contracts::memory::MemoryError;
 use rmpv::Value;
 
 mod note_versions;
@@ -253,7 +256,9 @@ pub(crate) fn validate_summary_put(
     Ok(())
 }
 
-pub(crate) fn merge_summary_ref(body: &crate::ClaimBody) -> Result<Option<(EntityId, EntityId)>> {
+pub(crate) fn merge_summary_ref(
+    body: &crate::write_envelope::claim_body::ClaimBody,
+) -> Result<Option<(EntityId, EntityId)>> {
     if body.predicate != "merge.summary" {
         return Ok(None);
     }
@@ -546,7 +551,7 @@ pub(super) fn header_landed_in_txn(
         let Some(body) = vault.get_claim_in_txn(txn, &claim)? else {
             continue;
         };
-        if body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+        if body.lifecycle == oneiron_contracts::claim::ClaimLifecycleStatus::Active
             && merge_summary_ref(&body)? == Some((*turn, *summary))
         {
             return Ok(true);
@@ -689,7 +694,7 @@ pub(super) fn land_in_txn(
             parent: head,
             reply_to: Some(*turn),
             quote: None,
-            address: crate::conversation_dag::AddressMode::Broadcast,
+            address: crate::store::conversation_record::AddressMode::Broadcast,
             recipients: vec![],
             advance: true,
             kind: ENTITY_TYPE_TURN,
@@ -756,7 +761,7 @@ pub(crate) fn body_covers_in_txn(
 fn merge_summary_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    body: &crate::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
 ) -> Result<Option<ScopeSummaryBody>> {
     let Some((turn, summary)) = merge_summary_ref(body)? else {
         return Ok(None);
@@ -773,7 +778,7 @@ fn merge_summary_in_txn(
 pub(crate) fn merge_covers_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    body: &crate::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
 ) -> Result<Option<Vec<EntityId>>> {
     Ok(merge_summary_in_txn(vault, txn, body)?.map(|summary| summary.covers))
 }
@@ -783,7 +788,7 @@ pub(crate) fn merge_covers_in_txn(
 pub(crate) fn merge_word_sources_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    body: &crate::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
 ) -> Result<Option<Vec<EntityId>>> {
     Ok(merge_summary_in_txn(vault, txn, body)?
         .map(|summary| word_sources(&summary).copied().collect()))

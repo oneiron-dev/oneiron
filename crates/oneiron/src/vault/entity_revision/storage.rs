@@ -633,10 +633,10 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
     let header =
         EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity metadata header"))?;
     if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-        return Err(crate::secret_custody::reject_secret_custody_byte());
+        return Err(crate::secret_record::reject_secret_custody_byte());
     }
     if header.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
-        return Err(crate::world_keys::refused(
+        return Err(crate::key_material::refused(
             "a world key's pad has no revisions",
         ));
     }

@@ -1,6 +1,8 @@
 //! ARCH-0038 deletion/redaction contract types.
 
 mod actor_fields;
+mod safe_delete_reason;
+pub use safe_delete_reason::SafeDeleteReason;
 mod checkpoint_payload;
 mod coop_delivery;
 mod coop_reply;
@@ -67,19 +69,19 @@ pub use delete::{
 // A maintenance pass's audited corrupt-CLAIM classification (FIX 7800).
 pub use erase::CorruptClaimRepair;
 pub use legal_hold::{
-    ERASE_COMPLETION_PENDING, ErasePendingReason, HostOrderHold, LEGAL_HOLD_DEFERRAL,
-    LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL, LEGAL_HOLD_SELF_HOSTED_NOTE,
-    LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LegalHold, LegalHoldActorKind, LegalHoldEvent,
-    LegalHoldEventKind, LegalHoldKind, LegalHoldMaintenance, LegalHoldReason, LegalHoldTarget,
-    LegalHoldUseLimit, LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
-    ShownCustomerHold,
+    ERASE_COMPLETION_PENDING, ErasePendingReason, EraseWithdrawal, HostOrderHold,
+    LEGAL_HOLD_DEFERRAL, LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL,
+    LEGAL_HOLD_SELF_HOSTED_NOTE, LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LegalHold,
+    LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldMaintenance,
+    LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit, LiftAndEraseOutcome,
+    LiftAndEraseShownState, LiftAndEraseStatus, ShownCustomerHold,
 };
 // A source's dependents go in bounded batches (`Vault::finish_dependent_walks`).
 pub use crate::ports::{
     DEFAULT_DEPENDENT_WALK_BATCH, DEFAULT_DEPENDENT_WALK_CHECK_THRESHOLD, DependentWalkCheck,
     DependentWalkPolicy, DependentWalkProgress,
 };
-pub use sweep_queue::arch0038_carrier_classes;
+pub use sweep_queue::{REDIRECT_CARRIER_CLASS, arch0038_carrier_classes};
 pub use timeline::{
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
     MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,

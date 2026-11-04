@@ -101,7 +101,7 @@ pub(crate) struct SessionOverlay {
 
 /// The host's charge beside the bytes its stretch holds before any row.
 struct OverlayCharge {
-    charge: Box<dyn crate::off_record::RetainedCharge>,
+    charge: Box<dyn crate::store::retained_memory::RetainedCharge>,
     entered: usize,
 }
 
@@ -137,7 +137,7 @@ impl SessionOverlay {
     /// (FIX 5991). A second charge is dropped unbound.
     pub(crate) fn bind_charge(
         &self,
-        charge: Box<dyn crate::off_record::RetainedCharge>,
+        charge: Box<dyn crate::store::retained_memory::RetainedCharge>,
         entered: usize,
     ) {
         let bound = match self.charge.lock() {

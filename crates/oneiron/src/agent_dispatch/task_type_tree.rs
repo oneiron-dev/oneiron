@@ -34,8 +34,7 @@ use super::widen_record::invalid;
 
 mod validation;
 
-/// The tree file inside the team-shape skill's package.
-pub const TASK_TYPE_TREE_FILE: &str = "task-type-tree.json";
+pub use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
 
 /// The tree in force for `project` (`None` is the vault tree).
 ///

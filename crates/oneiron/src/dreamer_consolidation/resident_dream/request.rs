@@ -9,7 +9,7 @@ use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::WakeAttemptContext;
 use crate::error::Result;
-use crate::llm::{
+use oneiron_model::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
     ModelTierRef, ResponseFormat, TierPrecedence,
 };
@@ -83,7 +83,7 @@ pub(super) fn dream_request(
         model: model.model.clone(),
         envelope: CallEnvelope {
             seat_effort: None,
-            scope: crate::llm::Scope::default(),
+            scope: oneiron_model::llm::Scope::default(),
             // Its dreaming is its own time (FIX 4453). Its own records leave
             // the vault as an extraction's do, so the call is admitted, gated
             // and routed as extraction: the tier below reads that row too.

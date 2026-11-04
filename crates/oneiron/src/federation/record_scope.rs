@@ -6,6 +6,7 @@
 //! alone is read from its live `InWorld` edges at every read (`note_world`).
 use super::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::ClaimRecordScope;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{
@@ -293,7 +294,7 @@ fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
         }
         // A confirmed name keeps the facet `settle_source_birth` gave it:
         // every kind with a declared identity key (FIX 11382).
-        kind if !crate::ingest::identity_fields_for_kind(kind).is_empty() => {
+        kind if !crate::store::identity_hints::identity_fields_for_kind(kind).is_empty() => {
             Scope {
                 facets: proposed.facets.clone(),
                 ..prior.clone()

@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::authority::{AuthorityFold, AuthorityKey, ROLE_OWNER};
+use crate::authority::AuthorityFold;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::transition::{
     ClaimTransitionProjection, SignedClaimTransitionEvent, TransitionFoldError,
@@ -15,10 +15,12 @@ use crate::claim::transition::{
     machine_claim_transition_event_hash, machine_claim_transition_event_id,
 };
 use crate::error::{ClaimError, Error, Result};
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{Raw, SideTable};
+use crate::store::EngineScan;
 use crate::store::Store;
 use crate::{EntityId, Vault};
+use oneiron_authority::authority::{AuthorityKey, ROLE_OWNER};
 use rand_core::RngCore;
 use rmpv::Value;
 

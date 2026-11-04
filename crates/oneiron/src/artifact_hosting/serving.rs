@@ -9,7 +9,7 @@ use super::{
     EntityStoreRead, Error, Result, Vault, artifact_family_kind_of, decode_code_artifact_body,
     snapshot_file_entry, validate_artifact_id, validate_artifact_path,
 };
-use crate::secret_custody::SecretSight;
+use crate::file_secret_marks::SecretSight;
 
 impl Vault {
     pub fn artifact_pointer(

@@ -34,6 +34,12 @@ pub struct ModelsStatus {
     /// process serves, in the live status only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshots: Option<SnapshotStatus>,
+    /// The host tagger's row (FIX 6914), filled by the status route from
+    /// the server's tagger slot; none when no `[oneironer]` tagger is
+    /// configured. Stands whether or not a `[models.providers]` row names
+    /// the tagger: a host encoder serves without a manifest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tagger: Option<TaggerStatus>,
 }
 
 /// One device queue and its memory ledger, copied without a probe.
@@ -282,6 +288,35 @@ impl ModelsStatus {
     }
 }
 
+/// The host tagger the server's tagger slot serves (FIX 6914). The slot is
+/// the server's, not the models runtime's, so the status route fills this
+/// row from the slot as it stands; a `ModelsStatus` as built carries none.
+#[derive(Clone, Debug, Serialize)]
+pub struct TaggerStatus {
+    /// Which tagger the `[oneironer]` section names: `local`, `endpoint`
+    /// or `none`.
+    pub provider: &'static str,
+    /// `served` once a local engine serves or an endpoint's card was
+    /// accepted at least once; `never_ready` while a slot stands with
+    /// neither yet. No current-health claim: down and recovering need the
+    /// slot's retained probe and worker state (FIX 7384).
+    pub state: &'static str,
+    /// The checkpoint the section names, when it names one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint_sha16: Option<String>,
+    /// The checkpoint the last accepted probe card names; none until a
+    /// probe has been accepted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub card_checkpoint_sha16: Option<String>,
+    /// The engine a local tagger serves on, `runtime/device`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    /// How that engine was picked: `named`, `measured`, `built-in` or
+    /// `calibrating`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pick: Option<&'static str>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct ProviderStatus {
     pub name: String,
@@ -395,6 +430,9 @@ pub struct SeatStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seat_model: Option<String>,
     pub state: SeatState,
+    /// Why the seat stands in its state, when one cause stands out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub rungs: Vec<RungStatus>,
 }
 
@@ -409,6 +447,7 @@ impl SeatStatus {
             role: role_key(role),
             seat_model: seat_model.map(ToString::to_string),
             state,
+            reason: None,
             rungs,
         }
     }

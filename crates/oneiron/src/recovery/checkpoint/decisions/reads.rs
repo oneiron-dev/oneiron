@@ -16,10 +16,11 @@ use crate::federation::record_scope::{disclosure_scope_for_stored_row, scope_for
 use crate::note::NoteKind;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
-    ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_NOTE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::secret_lease::VaultInstant;
+use crate::store::Store;
 use crate::{EntityId, Result, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -106,7 +107,16 @@ impl Decision for RelationshipReads {
                     .entry(*principal)
                     .or_insert_with(|| AccessContext::load(vault, &txn, *principal).ok())
                     .as_ref()
-                    .map(|context| read.allowed_by(context)),
+                    .map(|context| {
+                        read.allowed_by(context)
+                            || conversation_message_granted_in(
+                                &vault.store,
+                                &txn,
+                                record,
+                                read,
+                                context,
+                            )
+                    }),
             });
         }
         Ok(answers)
@@ -119,6 +129,72 @@ impl Decision for RelationshipReads {
     fn refusal() -> Option<bool> {
         Some(false)
     }
+}
+
+/// Whether `context` holds a live read grant over the conversation the
+/// MESSAGE `id` is part of (FIX 10965): the same conjunct the admitted read
+/// carries, so a restore that replays it judges the vault pair alike. A
+/// MESSAGE that names no relationship and no private scope reads on a
+/// `ConversationMessages` grant over its conversation, found as the
+/// transcript finds it (the MESSAGE PartOf a TURN, the TURN ChildOf the
+/// conversation). Edges or rows that do not read admit nothing.
+fn conversation_message_granted_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    read: &RelationshipRead,
+    context: &AccessContext<'_>,
+) -> bool {
+    let RelationshipRead::Gated {
+        kind: ENTITY_TYPE_MESSAGE,
+        space: None,
+        private: false,
+        record,
+    } = read
+    else {
+        return false;
+    };
+    if !context.holds_conversation_grants() {
+        return false;
+    }
+    conversation_members(store, txn, id, EdgeKind::PartOf, ENTITY_TYPE_TURN)
+        .iter()
+        .flat_map(|turn| {
+            conversation_members(
+                store,
+                txn,
+                turn,
+                EdgeKind::ChildOf,
+                ENTITY_TYPE_CONVERSATION,
+            )
+        })
+        .any(|conversation| context.allows_conversation_message_at_snapshot(conversation, record))
+}
+
+/// The targets of `id`'s outgoing `kind` edges whose rows are of
+/// `entity_type`; none when the edges do not read.
+fn conversation_members(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    kind: EdgeKind,
+    entity_type: u8,
+) -> Vec<EntityId> {
+    let Ok(edges) = store.port_edges(txn, id, EdgeDirection::Out, Some(kind), None) else {
+        return Vec::new();
+    };
+    edges
+        .filter_map(|edge| edge.ok().map(|edge| edge.target))
+        .filter(|target| {
+            store
+                .port_entity_raw(txn, target)
+                .ok()
+                .flatten()
+                .as_deref()
+                .and_then(EntityMetadataHeader::parse)
+                .is_some_and(|header| header.entity_type == entity_type)
+        })
+        .collect()
 }
 
 /// Whether a reader's key may read a claim, as far as who reads it goes: the

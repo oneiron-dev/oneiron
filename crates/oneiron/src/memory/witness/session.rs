@@ -461,7 +461,7 @@ impl Memory<'_> {
             kind,
             tgt: *tgt,
             weight: 1.0,
-            vad: crate::affect::Vad::NEUTRAL,
+            vad: oneiron_contracts::affect::Vad::NEUTRAL,
         };
         let text = |id: EntityId, content: &str| BatchOp::Text {
             id,

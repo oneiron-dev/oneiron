@@ -8,10 +8,10 @@ use super::frame::MAX_BOARD_ROW_BYTES;
 use super::one_line_token;
 use super::people::PeopleView;
 use super::tasks::{TaskIntentPresence, label_preview};
-use crate::agent_run_status::{AgentRunStatus, project_agent_run_status_with_park};
 use crate::attempt_queue::AttemptRecord;
+use crate::attempt_queue::run_tree_view::RunTreeNode;
+use crate::context_board::agent_run_status::{AgentRunStatus, project_agent_run_status_with_park};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::run_tree::RunTreeNode;
 
 /// Role token for a child that has agent-dispatch children of its own.
 const AGENT_ROLE_LEAD: &str = "lead";
@@ -134,7 +134,7 @@ fn child_state(
     node: &RunTreeNode,
     by_attempt: &BTreeMap<String, (Option<EntityId>, Option<String>)>,
 ) -> Option<ChildState> {
-    if node.worker_kind != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+    if node.worker_kind != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
         return None;
     }
     let status = project_agent_run_status_with_park(node.status, false);
@@ -155,11 +155,9 @@ fn child_state(
             .filter(|label| !label.is_empty())
             .map(str::to_owned),
         status,
-        role: if node
-            .children
-            .iter()
-            .any(|child| child.worker_kind == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE)
-        {
+        role: if node.children.iter().any(|child| {
+            child.worker_kind == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
+        }) {
             AGENT_ROLE_LEAD
         } else {
             AGENT_ROLE_WORKER
@@ -304,11 +302,11 @@ pub fn render_you_line(forks: &[ForkState], intents: &[TaskIntentPresence]) -> O
 /// The AGENT_DEF actor an agent-dispatch attempt runs as; `None` for any
 /// other attempt, or one whose payload does not decode.
 pub(crate) fn dispatched_actor(record: &AttemptRecord) -> Option<EntityId> {
-    if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+    if record.kind != crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND {
         return None;
     }
     let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).ok()?;
-    if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+    if payload.attempt_type != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
         return None;
     }
     let input = crate::agent_dispatch::decode_agent_dispatch_input(&payload.input).ok()?;

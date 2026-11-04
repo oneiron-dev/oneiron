@@ -240,9 +240,7 @@ fn entity_from_value(value: &Value, context: &'static str) -> Result<EntityId> {
     EntityId::from_bytes(arr).map_err(|_| invalid_companion(context))
 }
 
-pub(super) fn invalid_companion(reason: &'static str) -> Error {
-    Error::InvalidClaimBody(reason)
-}
+pub(super) use crate::write_envelope::person_identity::invalid_companion;
 
 pub(super) fn invalid_companion_task(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason))

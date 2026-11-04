@@ -7,7 +7,7 @@
 //! a byte of the copy: the record keeps only their digests.
 
 use super::{AuthorityAuditEventKind, OpFields};
-use crate::authority::{ActBy, ExportActRecord, PolicySettingSet};
+use oneiron_authority::authority::{ActBy, ExportActRecord, PolicySettingSet};
 
 /// The class, op name and fields of one setting act.
 pub(super) fn classify_policy_setting(

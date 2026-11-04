@@ -7,7 +7,7 @@
 use super::super::step_charge::StepChargeTally;
 use crate::dreamer_runner::DreamerParkCause;
 use crate::dreamer_wake::DreamerAttemptExecution;
-use crate::llm::DurableStepError;
+use crate::model_step_error::DurableStepError;
 
 /// The park a partition attempt's step `error` ends it in, carrying
 /// `charges` with any paid usage `error` holds added first. A deadline or

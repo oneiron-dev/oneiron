@@ -256,7 +256,7 @@ pub(super) fn validate_actor(vault: &Vault, txn: &RoTxn<'_>, actor: WriteActor) 
     crate::memory::verify_actor_binding_in_txn(vault, txn, actor.entity_ref(), actor.actor_class())
         .map_err(|_| invalid("document actor class does not match store truth"))?;
     if vault.entity_lifecycle_state_in_txn(txn, &actor.entity_ref())?
-        != crate::identity_topology::EntityLifecycleState::Active
+        != oneiron_contracts::identity_topology::EntityLifecycleState::Active
     {
         return Err(invalid("document actor is not active"));
     }
@@ -592,6 +592,8 @@ pub(super) fn retain_fork(
         &id.to_hex(),
         &doc.shallow_snapshot(&req.base)?,
     )?;
+    // The tokens its own commits name, under its entity (FIX 11965).
+    super::token_uses::record_fork_uses_in_txn(&vault.store, txn, &req.entity, doc, &req.base)?;
     bundle.forks.push(record);
     super::proposal_lineage::freeze(&mut bundle, opener_lineage);
     ENTITY_DOC_PROPOSAL_BUNDLE.put(&vault.store, txn, &key, &bundle)?;

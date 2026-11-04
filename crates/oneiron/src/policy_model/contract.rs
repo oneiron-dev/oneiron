@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
 use crate::error::{Error, Result};
-use crate::llm::ResponseFormat;
+use oneiron_model::llm::ResponseFormat;
 
 /// The answer shapes the engine can read.
 ///

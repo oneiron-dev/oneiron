@@ -8,11 +8,11 @@ use crate::commitment::{
     CommitmentRecord, CommitmentStatus, CommitmentStrength, decode_commitment_claim,
 };
 use crate::dreamer_runner::{
-    DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome,
+    DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::dreamer_wake::{WakeTrigger, request_wake_in_txn};
 use crate::error::{Error, Result};
+use crate::store::consolidation_scope::DreamerConsolidationScope;
 
 use super::wake_event::{CommitmentWakeDue, encode_commitment_wake_event};
 

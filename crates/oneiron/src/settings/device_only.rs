@@ -290,7 +290,8 @@ fn claim_world(
     if let Some(raw) = raw {
         let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
         if !body.is_empty() {
-            let body = crate::claim::decode_claim_body(body, true).map_err(|_| unknown())?;
+            let body = crate::write_envelope::claim_body::decode_claim_body(body, true)
+                .map_err(|_| unknown())?;
             return Ok(body.world);
         }
         if !crate::deletion::row_deletion_marked(store, txn, id, Some(raw))? {

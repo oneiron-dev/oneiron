@@ -22,7 +22,6 @@ use super::super::{
     MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult, ScopedClaimInput,
     SessionReadContext,
 };
-use crate::affect::Vad;
 use crate::batch::BatchOp;
 use crate::claim::{ClaimApprovalStatus, ClaimSubject};
 use crate::edge::EdgeKind;
@@ -34,6 +33,7 @@ use crate::provenance::birth::room::SuppliedEvidence;
 use crate::session_overlay::{JournalEntry, SessionWriteRoute};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
+use oneiron_contracts::affect::Vad;
 
 /// A room write's receipt, which names the room's short id for its row once
 /// the row is staged.

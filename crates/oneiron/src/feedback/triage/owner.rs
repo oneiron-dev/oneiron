@@ -244,14 +244,15 @@ impl Vault {
 
     /// Binds the SKILL the feedback triage runs, or unbinds it, at the
     /// revision the owner read. Naming the skill bound already changes
-    /// nothing and keeps the revision. The skill must be a live SKILL; the
-    /// triage job's load checks that it is active and approved.
+    /// nothing and keeps the revision. The skill must be a live, active,
+    /// approved shared SKILL; the triage job's load rechecks it.
     ///
     /// # Errors
     ///
     /// A proof that no longer holds; [`Error::ConcurrentWrite`] when `seen`
     /// is not the current revision; a skill that is not a live SKILL;
-    /// storage errors.
+    /// [`Error::InvalidClaimBody`] for an inactive, unapproved or resident-
+    /// fork SKILL; storage errors.
     pub fn set_feedback_triage_binding(
         &self,
         owner: &AuthenticatedOwner,
@@ -271,7 +272,17 @@ impl Vault {
                 if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
                     return Err(Error::EntityNotFound);
                 }
-                self.read_skill_record_in_txn(txn, skill)?;
+                let record = self.read_skill_record_in_txn(txn, skill)?;
+                if crate::skill::resident_of(&record)?.is_some() {
+                    return Err(Error::InvalidClaimBody(
+                        "skill belongs to a different resident",
+                    ));
+                }
+                if !crate::skill::skill_loadable(&record) {
+                    return Err(Error::InvalidClaimBody(
+                        "pack load requires an active approved skill",
+                    ));
+                }
             }
             let next = FeedbackTriageBinding {
                 skill: input.skill,

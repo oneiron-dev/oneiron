@@ -27,13 +27,12 @@ use crate::attempt_queue::AttemptId;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, verify_actor_binding,
-};
-use crate::secret_custody::CustodyTier;
+use crate::memory::{Memory, verify_actor_binding};
+use crate::secret_record::CustodyTier;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::vault::Vault;
+use oneiron_contracts::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 
 /// The lifetime a grant takes when its caller names none, in seconds. One
 /// constant, so a ruling changes one line (CALLS: FIX 4313 grant TTL).

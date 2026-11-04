@@ -446,7 +446,7 @@ impl<'v> ScopedRead<'v> {
             return Ok(false);
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         // Grant bodies contain both private diary ids. They are authority,
         // never a readable graph/search result of their own.
@@ -582,7 +582,7 @@ impl<'v> ScopedRead<'v> {
         let Ok(notice) = crate::inbox::decode_notification_body(body) else {
             return Ok(true);
         };
-        if notice.source.producer != crate::workspace_roster::THREAD_NOTICE_PRODUCER {
+        if notice.source.producer != crate::store::conversation_body::THREAD_NOTICE_PRODUCER {
             return Ok(true);
         }
         let id = |text: Option<&str>| text.and_then(|text| EntityId::from_hex(text).ok());
@@ -688,7 +688,7 @@ impl ScopedRead<'_> {
 /// [`ScopedRead::filter_scored_entities`] and
 /// [`ScopedRead::filter_context_pack`]. That is why this is not
 /// `get_entity_parts_with_receipt`, which opens a transaction of its own.
-impl crate::ppr::PprNodeVisibility for ScopedRead<'_> {
+impl crate::ports::PprNodeVisibility for ScopedRead<'_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let policy = self.policy_manifest_in(txn)?;
         let filter = self.actor_retrieval_floor(&policy)?;

@@ -17,10 +17,11 @@ use std::collections::BTreeMap;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::learning::LearningRead;
 use crate::learning::coordination::coordination_cost_in_txn;
 use crate::learning::ranking::rank_by_estimate;
 use crate::learning::read::read_learning_in_txn;
-use crate::learning::{LearningRead, TypeRef};
+use crate::receipt::task_type_ref::TypeRef;
 
 use super::pattern::{PatternSkill, TeamPattern, model_mix, pattern_cell, pattern_skill_in_txn};
 use super::receipt::{ReceiptScan, TeamReceipt, team_receipts_in_txn};

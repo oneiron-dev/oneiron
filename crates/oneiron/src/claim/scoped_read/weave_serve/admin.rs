@@ -27,7 +27,8 @@ use crate::authority::AuthenticatedWeaveAdmin;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::lens::HostedLensRender;
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::Memory;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// The lane an Admin's lens composes under: its person's key that reads no
 /// row, with no proof, grant or owner binding. Its frame mints no backing
@@ -51,7 +52,7 @@ impl Memory<'_> {
     fn weave_admin_frame(&self, admin: &AuthenticatedWeaveAdmin) -> MemoryResult<WeaveAdminFrame> {
         if self.actor() != admin.actor() || self.actor_class() != EdgeActorClass::Human {
             return Err(MemoryError::new(
-                crate::memory::MEMORY_CODE_FORBIDDEN,
+                oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
                 "a weave admin reads on its own person's handle",
                 &["Bind the handle to the person the Admin proof stands for."],
             ));
@@ -143,7 +144,7 @@ impl Memory<'_> {
         let plan = super::super::weave_lens::weave_lens_answer_plan(answer, &report).map_err(
             |reason| {
                 MemoryError::new(
-                    crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+                    oneiron_contracts::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
                     format!("the model's weave lens plan was refused: {reason}"),
                     &["Ask for the lens again."],
                 )

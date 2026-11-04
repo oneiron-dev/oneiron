@@ -82,11 +82,11 @@ impl AgentDispatcher<'_> {
         now: u64,
     ) -> Result<ProjectDetectionRun> {
         let (Some(source), Some(house)) = (claimed.source, project_house_agent(self.vault)?) else {
-            settle_project_detection(self.vault, claimed, lease_owner, None)?;
+            settle_project_detection(self.vault, claimed, lease_owner, None, None)?;
             return Ok(ProjectDetectionRun::Unread);
         };
         let Some(text) = self.source_text(house, &source)? else {
-            settle_project_detection(self.vault, claimed, lease_owner, None)?;
+            settle_project_detection(self.vault, claimed, lease_owner, None, Some(house))?;
             return Ok(ProjectDetectionRun::Unread);
         };
         let decision = ask(detection, &source, &text)?;
@@ -94,11 +94,12 @@ impl AgentDispatcher<'_> {
             (DecisionAnswer::Noul(true), _) => ProjectDetectionAnswer::Yes,
             (DecisionAnswer::Abstain, true) => ProjectDetectionAnswer::AskedPerson,
             _ => {
-                settle_project_detection(self.vault, claimed, lease_owner, None)?;
+                settle_project_detection(self.vault, claimed, lease_owner, None, Some(house))?;
                 return Ok(ProjectDetectionRun::NotAProject);
             }
         };
-        // Only a house agent that can run drafts; the yes is kept either way.
+        // Only a house agent that can run drafts; the yes is kept either way
+        // unless the house was erased while the question ran (FIX 4977).
         let drafter = (answer == ProjectDetectionAnswer::Yes
             && self
                 .dispatchable_definition(&AgentDispatchTarget::Custom(house))
@@ -112,7 +113,13 @@ impl AgentDispatcher<'_> {
         };
         // A source whose person was erased while the question ran keeps no
         // answer, and no drafter is sent for it (FIX 3520).
-        if !settle_project_detection(self.vault, claimed, lease_owner, Some(&verdict))? {
+        if !settle_project_detection(
+            self.vault,
+            claimed,
+            lease_owner,
+            Some(&verdict),
+            Some(house),
+        )? {
             return Ok(ProjectDetectionRun::Unread);
         }
         match (answer, drafter) {

@@ -24,7 +24,7 @@ impl Memory<'_> {
     /// reads. It names nothing else.
     pub fn describe_vault(
         &self,
-        input: &crate::task_verb::sdk::DescribeRequest,
+        input: &DescribeRequest,
     ) -> MemoryResult<crate::task_verb::TaskDescription> {
         if input.self_target
             || input.task_ref.is_some()
@@ -120,5 +120,90 @@ impl Memory<'_> {
         let visible = &mut |id: &EntityId| read.is_entity_readable(id);
         let (receipt, rows) = self.vault.apply_shape_listing(applier, input, now, visible);
         (receipt.map_err(MemoryError::from), rows)
+    }
+}
+
+use serde::{Deserialize, Serialize};
+
+/// `describe`'s one input: the task to describe, a board card's key, the
+/// vault for its shape card, or none for the whole TASKS section.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DescribeRequest {
+    #[serde(default)]
+    pub task_ref: Option<String>,
+    #[serde(default, rename = "self")]
+    pub self_target: bool,
+    /// `describe(vault)`: the vault's shape card (ARCH-0070), what its
+    /// arrangement amounts to and what its actors can send. Names nothing
+    /// else.
+    #[serde(default)]
+    pub vault: bool,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// A board card's key: describe expands that card, under the board's
+    /// scope and frame-epoch checks.
+    #[serde(default)]
+    pub key: Option<String>,
+    /// The board frame the card key was read from; a stale one is refused.
+    #[serde(default)]
+    pub frame_epoch: Option<u64>,
+    /// A fold of the run's own log (`f1`): its span, its stub and the ids it
+    /// holds. Only the run that folded it answers this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fold: Option<String>,
+    /// A task highway handle (OF-220): describe answers its status, the
+    /// highway's own `TaskCallReceipt`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<crate::task_verb::TaskHandle>,
+    /// The digest of the last status observed for `handle`: describe then
+    /// polls, and an unchanged answer is `unchanged`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::task_verb::hex32::option"
+    )]
+    #[schemars(with = "Option<String>")]
+    pub after: Option<[u8; 32]>,
+}
+
+/// The refusal of an `after` that names no handle to poll.
+pub(crate) const AFTER_NEEDS_HANDLE: &str =
+    "describe(after) polls a handle: name the handle it observed";
+
+impl DescribeRequest {
+    /// The one describe selector check (FIX 3256), which every door runs
+    /// before any lookup and again on the args a pre hook left: naming none
+    /// of `self`, `vault`, `task_ref`, `key`, `fold` and `handle` describes
+    /// the TASKS section, and naming more than one is refused, never answered
+    /// first-wins. `after` polls a handle, so it needs one; `session_id` and
+    /// `frame_epoch` are context for the target, not targets of their own.
+    pub fn validate(&self) -> MemoryResult<()> {
+        let targets = self.targets();
+        if targets.len() > 1 {
+            return Err(MemoryError::bad_request(format!(
+                "describe names one target, not {}",
+                targets.join(" and ")
+            )));
+        }
+        if self.after.is_some() && self.handle.is_none() {
+            return Err(MemoryError::bad_request(AFTER_NEEDS_HANDLE));
+        }
+        Ok(())
+    }
+
+    /// The targets this request names, in the row's field order.
+    fn targets(&self) -> Vec<&'static str> {
+        [
+            ("self", self.self_target),
+            ("vault", self.vault),
+            ("task_ref", self.task_ref.is_some()),
+            ("key", self.key.is_some()),
+            ("fold", self.fold.is_some()),
+            ("handle", self.handle.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(target, named)| named.then_some(target))
+        .collect()
     }
 }

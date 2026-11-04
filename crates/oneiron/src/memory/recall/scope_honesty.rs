@@ -19,7 +19,7 @@ impl Memory<'_> {
         &self,
         lane: &ScopedRead<'_>,
         receipt: &mut ScopedReadReceipt,
-        read: &crate::pipeline::WorldAuthoritySet,
+        read: &crate::claim::world_access::WorldAuthoritySet,
         deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
     ) -> MemoryResult<ScopeHonesty> {
         let mut worlds = BTreeSet::new();

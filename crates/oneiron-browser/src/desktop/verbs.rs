@@ -81,7 +81,7 @@ impl BrowserDriver for DesktopSession {
             std::thread::sleep(POLL);
         };
         self.window = Some(key);
-        let before = self.fingerprint()?;
+        let before = self.fingerprint(None)?;
         self.settle(before, Instant::now())?;
         let mut observation = self.observation(&Base::Whole)?;
         self.receipt(

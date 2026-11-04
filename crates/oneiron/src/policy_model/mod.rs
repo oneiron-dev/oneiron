@@ -161,3 +161,5 @@ pub use verdict::{
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) mod goal_limits;

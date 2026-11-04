@@ -23,7 +23,7 @@ use crate::blob_artifact::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::secret_custody::SecretSight;
+use crate::file_secret_marks::SecretSight;
 use crate::side_table::{self, Named, SideTable};
 
 /// A replica's descriptor of one published blob version. Key: id16

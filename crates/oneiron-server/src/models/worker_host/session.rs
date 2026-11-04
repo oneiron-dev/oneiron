@@ -141,6 +141,15 @@ pub(crate) struct ReplyCommit {
     pub(crate) text: String,
 }
 
+/// A rung admitted for this manifest supersedes earlier attempts at the
+/// same admitted turn. Called after its permit succeeds and before it sends.
+pub(crate) fn rung_admitted(manifest: &SegmentManifest) {
+    #[cfg(unix)]
+    commit::rung_admitted(manifest.digest());
+    #[cfg(not(unix))]
+    let _ = manifest;
+}
+
 /// Stages and publishes the successor of the turn `manifest` described,
 /// once its reply is committed, if that turn ran on a session. Returns at
 /// once; nothing waits for it, and a turn that ran on none leaves nothing

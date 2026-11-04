@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use super::call_evidence::CallStream;
 use super::{AgentHealthCounter, Attempts, DialBook, Dispatches, Finding, same_inputs};
 use crate::receipt::CallOutcome;
-use crate::self_heal::AgentHealthSignal;
+use crate::store::diagnostic_record::AgentHealthSignal;
 
 /// `loop`: one stream's identical `(verb, request_digest)` calls in a row,
 /// with no other call of that stream between them and no new input: two

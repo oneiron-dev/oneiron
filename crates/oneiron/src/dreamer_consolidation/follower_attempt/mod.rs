@@ -21,11 +21,11 @@ use crate::dreamer_wake::follower::{
     Receipt, Sizing, Writer,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext, WakeRecipePolicy};
-use crate::llm::{
-    DurableStepContext, DurableStepError, LlmRequest, LlmResponse, ModelLocality, StepOutcome,
-    call_as_step_checked,
-};
+use crate::llm::call_as_step_checked;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::{EntityId, Error, Result};
+use oneiron_model::llm::{LlmRequest, LlmResponse, ModelLocality};
 
 /// Why a follower call parks on a deterministic fallback.
 const FOLLOWER_FALLBACK: &str = "follower call requires a model reading";

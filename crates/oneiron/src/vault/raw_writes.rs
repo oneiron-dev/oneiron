@@ -43,12 +43,20 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryResult, SafeDeleteReason};
-use crate::task_verb::sdk::{SafeDeleteRequest, vault_delete};
+use crate::task_verb::sdk::vault_delete;
 use crate::temporal::TimeRange;
+use serde::{Deserialize, Serialize};
 
 mod session;
 
 use self::session::RawOp;
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SafeDeleteRequest {
+    pub entity_ref: String,
+    pub reason: SafeDeleteReason,
+}
 
 /// One entity blob a bound raw write puts ([`Memory::raw_put_entities`]).
 #[derive(Debug, Clone, Copy)]

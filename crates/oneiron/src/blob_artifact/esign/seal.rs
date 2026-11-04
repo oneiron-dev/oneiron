@@ -355,7 +355,7 @@ impl Vault {
                     id: attempt.id,
                     lease_owner: owner.clone(),
                     attempt_count: attempt.attempt_count,
-                    result_ref: crate::attempt_queue::AttemptResultRef::new(format!(
+                    result_ref: crate::store::attempt_result::AttemptResultRef::new(format!(
                         "esign.sealed:{}",
                         document.to_hex()
                     ))?,

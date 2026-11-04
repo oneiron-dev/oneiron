@@ -37,53 +37,9 @@ fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidCodeArtifactBody(reason))
 }
 
-/// The aggregation SESSION one queue's tested chain shares.
-///
-/// # Errors
-/// An id derivation failure.
-pub(crate) fn queue_aggregation_session(store: &str, init_work: &str) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:queue-aggregation-session:v1",
-        &[store.as_bytes(), init_work.as_bytes()],
-    )
-}
-
-/// The deterministic id of one tested revision: the queue's store and
-/// checked init, the target, the exact checked commit and tree and the plan.
-///
-/// # Errors
-/// An id derivation failure.
-pub(crate) fn queue_revision_id(
-    store: &str,
-    init_work: &str,
-    target: &str,
-    commit: &str,
-    tree: &str,
-    plan_digest: &str,
-) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:queue-tested-revision:v1",
-        &[
-            store.as_bytes(),
-            init_work.as_bytes(),
-            target.as_bytes(),
-            commit.as_bytes(),
-            tree.as_bytes(),
-            plan_digest.as_bytes(),
-        ],
-    )
-}
-
-/// The aggregate provenance claim's id for `revision`.
-///
-/// # Errors
-/// An id derivation failure.
-pub(crate) fn queue_provenance_id(revision: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:queue-revision-provenance:v1",
-        &[revision.as_bytes()],
-    )
-}
+pub(crate) use crate::store::code_revision_identity::{
+    queue_aggregation_session, queue_provenance_id, queue_revision_id,
+};
 
 /// The aggregation SESSION's body: derived queue bookkeeping, named as such.
 fn session_body(tested: &QueueTestedRevision) -> Result<Vec<u8>> {

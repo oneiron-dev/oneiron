@@ -104,6 +104,9 @@ pub(crate) fn read_result_in(
     let run_id = record.run_id;
     let live: Vec<&CodeRunResultBinding> = record.bindings.iter().collect();
     let target = JsResultTarget::parse(reference);
+    if withholds(record.agent_verb_rows().as_deref())? {
+        return Ok(refusal("result_withheld"));
+    }
     let outputs = record
         .outputs
         .iter()
@@ -132,8 +135,5 @@ pub(crate) fn read_result_in(
     let Some((output, name)) = selected else {
         return Ok(unknown_handle(&live));
     };
-    if withholds(record.agent_verb_rows().as_deref())? {
-        return Ok(refusal("result_withheld"));
-    }
     ResultRead::outside_run(storage, run_id, output, name, target.range, facet, input)
 }

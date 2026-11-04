@@ -16,6 +16,7 @@ mod ports;
 mod profile;
 
 use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant};
 
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
@@ -26,6 +27,7 @@ use oneiron::dreamer_consolidation::{
     THING_CHILD_LOAN_REFUSED, THING_CHILD_RUNTIME_UNBOUND, THING_CHILD_SPAWN_REFUSED,
     ThingChildHost, ThingChildLaunch, ThingChildStart,
 };
+use oneiron::llm::{WorkClass, WorkContext};
 use oneiron::{ModelId, ModelLocality, Vault};
 
 use self::generation::GenerationCount;
@@ -173,7 +175,19 @@ impl ThingChildHost for ServedThingChildHost {
             leased.id,
             parent_run,
         ));
-        let run = self.runtime.undeclared_run(THING_CHILD_RUN, guard.clone());
+        let left_ms = seat
+            .deadline
+            .child_cutoff()
+            .saturating_sub(unix_millis_now());
+        let deadline = Instant::now().checked_add(Duration::from_millis(left_ms));
+        let run = self
+            .runtime
+            .undeclared_run(THING_CHILD_RUN, guard.clone())
+            .with_work_context(WorkContext {
+                class: WorkClass::Background,
+                deadline,
+                ..Default::default()
+            });
         let backend = CountedBackend::new(
             RunBackend::new(Arc::clone(&self.route.ladder), run),
             Arc::clone(&count),

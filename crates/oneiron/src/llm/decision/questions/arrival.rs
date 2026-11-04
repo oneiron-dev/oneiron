@@ -473,7 +473,7 @@ pub(super) fn evaluate_fact(
     }
     let value = match &binding.source {
         OutcomeSource::Stage { campaign } => {
-            let stage = crate::campaign::claims::decode_crm_stage_value(&body.value)?;
+            let stage = crate::write_envelope::cohort_claims::decode_crm_stage_value(&body.value)?;
             if stage.campaign_ref.to_hex() != *campaign {
                 return Ok(None);
             }

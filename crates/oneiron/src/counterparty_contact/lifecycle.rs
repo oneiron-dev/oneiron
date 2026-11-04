@@ -92,7 +92,7 @@ pub(crate) fn supersede_family_owned_claim_in_txn(
                 tgt: *old_id,
                 weight: crate::vault::SUPERSEDES_DEFAULT_WEIGHT,
                 created_at: now,
-                vad: crate::affect::Vad::NEUTRAL,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
                 provenance: None,
             },
         ],
@@ -612,9 +612,9 @@ fn fold_party_opt_out_heads_in_txn(
 /// Lowers a comm-family read failure into the contact error type. An engine
 /// error travels unchanged; a comm-shaped one becomes the contact family's own
 /// fail-closed class.
-pub(super) fn comm_fold_error(error: crate::comm::CommError) -> Error {
+pub(super) fn comm_fold_error(error: crate::write_envelope::communication::CommError) -> Error {
     match error {
-        crate::comm::CommError::Engine(error) => error,
+        crate::write_envelope::communication::CommError::Engine(error) => error,
         _ => Error::Record(RecordError::InvalidCounterpartyContactBody(
             "comm opt-out head failed to decode",
         )),

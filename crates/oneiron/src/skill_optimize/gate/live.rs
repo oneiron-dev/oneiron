@@ -14,7 +14,7 @@
 //! scored basis, or the judge and rubric scoring now, is no report at all.
 use super::*;
 use crate::error::ArtifactError;
-use crate::learning::honesty::HONESTY_AXIS;
+use crate::skill::learning_judge::HONESTY_AXIS;
 use crate::skill_optimize::{
     AxisScores, GoalAxisBandit, GoalAxisPlan, GoalAxisReport, OnlineAxisOutcome, measure_goal_axes,
 };

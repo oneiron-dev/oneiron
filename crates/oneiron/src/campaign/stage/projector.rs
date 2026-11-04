@@ -31,40 +31,8 @@ pub struct StageProjectorInput {
     pub value: CrmStageValue,
 }
 
-/// What one ladder call did.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StageProjectResult {
-    /// The stage head moved.
-    Advanced {
-        /// The new live `crm.stage` head.
-        new_claim_ref: EntityId,
-    },
-    /// A proposed head landed for the existing approval machinery to rule on.
-    Proposed {
-        /// The proposed `crm.stage` claim.
-        proposed_claim_ref: EntityId,
-    },
-    /// Something happened that is not a stage move.
-    Routed(StageRoute),
-    /// Nothing to do. Silence, an unrouted code, and an unconfigured transition
-    /// all land here — none of them is an error.
-    NoChange,
-}
-
-/// A non-promoting route the ladder took.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StageRoute {
-    /// The membership is paused with a wake condition.
-    Snoozed(ReentryPlan),
-    /// A no-show earned a recovery plan.
-    Reengage(NoShowRecoveryPlan),
-    /// Referral routing owns the next step.
-    Referral,
-    /// The membership left the cohort.
-    Exited,
-    /// The membership is held out of the cohort.
-    Suppressed,
-}
+pub use crate::memory::campaign_records::stage_results::StageProjectResult;
+pub use crate::memory::campaign_records::stage_results::StageRoute;
 
 // ---------------------------------------------------------------------------
 // The projector - the ONE `crm.stage` writer
@@ -264,9 +232,7 @@ pub(super) fn elapsed(now: u64, then: u64) -> u64 {
     now.saturating_sub(then)
 }
 
-pub(super) fn invalid(reason: &'static str) -> Error {
-    Error::InvalidClaimBody(reason)
-}
+pub(super) use crate::write_envelope::cohort_claims::ladder::invalid;
 
 #[cfg(test)]
 mod tests {

@@ -20,17 +20,17 @@ use crate::store::Store;
 pub(super) fn validate_skill_body_overwrite(
     id: &EntityId,
     prior_body: &[u8],
-    updated: &crate::skill::SkillRecord,
+    updated: &crate::write_envelope::skill_record::SkillRecord,
     hub_sync_imported: bool,
     replicated: bool,
     proof: Option<&crate::skill_hub::HubAdmissionProof>,
 ) -> Result<()> {
-    match crate::skill::decode_skill_record(prior_body) {
+    match crate::write_envelope::skill_record::decode_skill_record(prior_body) {
         Ok(prior) if hub_sync_imported => {
-            crate::skill::validate_hub_sync_skill_update(&prior, updated)
+            crate::write_envelope::skill_record::validate_hub_sync_skill_update(&prior, updated)
         }
         Ok(prior) => {
-            crate::skill::validate_skill_update(&prior, updated)?;
+            crate::write_envelope::skill_record::validate_skill_update(&prior, updated)?;
             // ONE-1449's admission gate, placed HERE for the reason ONE-1892's
             // scan consult is: this is the arm every SKILL body update
             // converges on, so `put_entity`, a raw `batch().put`, the typed
@@ -70,9 +70,9 @@ pub(super) fn validate_local_skill_create(
     store: &Store,
     wtxn: &RwTxn<'_>,
     id: &EntityId,
-    created: &crate::skill::SkillRecord,
+    created: &crate::write_envelope::skill_record::SkillRecord,
 ) -> Result<()> {
-    if created.lifecycle_status != crate::skill::SkillLifecycle::Candidate {
+    if created.lifecycle_status != crate::write_envelope::skill_record::SkillLifecycle::Candidate {
         return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "new skills are born candidate; the admission gate activates them",
         )));

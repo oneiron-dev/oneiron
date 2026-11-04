@@ -2,10 +2,7 @@
 
 use std::collections::HashMap;
 
-use heed::RoTxn;
-
 use crate::entity_id::EntityId;
-use crate::error::Result;
 
 #[derive(Debug)]
 pub(crate) struct RebuiltHnswGraph {
@@ -80,9 +77,7 @@ pub(super) fn neighbor_list_hash(neighbors: &[EntityId]) -> u64 {
     hasher.finish()
 }
 
-/// Whether a read admits one node a walk scored as a match, judged in the
-/// walk's own transaction. A node it refuses still connects the walk.
-pub(crate) type Admission<'a> = dyn Fn(&RoTxn<'_>, &EntityId) -> Result<bool> + 'a;
+pub(crate) use crate::store::vector_index::Admission;
 
 /// Beam-search knobs, bundled so probed call sites stay within argument
 /// limits.

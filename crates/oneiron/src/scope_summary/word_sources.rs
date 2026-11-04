@@ -107,7 +107,7 @@ pub(crate) fn word_sources_through_in(
             })
         }
         ENTITY_TYPE_CLAIM if names(b"merge.summary") || names(b"conversation.summary") => {
-            let claim = crate::claim::decode_claim_body(body, true)?;
+            let claim = crate::write_envelope::claim_body::decode_claim_body(body, true)?;
             match super::merge_word_sources_in_txn(vault, txn, &claim) {
                 Ok(None) => crate::conversation::conversation_summary_covers(&claim),
                 merged => merged,

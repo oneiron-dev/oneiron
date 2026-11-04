@@ -116,7 +116,7 @@ impl Vault {
             if row.state == SecretRevealState::Delivered {
                 return Ok(true);
             }
-            ask = crate::codebase::entity_id_from_hash_material(
+            ask = crate::store::code_snapshot::entity_id_from_hash_material(
                 FILE_REASK_DOMAIN,
                 &[ask.as_bytes().as_slice()],
             )?;

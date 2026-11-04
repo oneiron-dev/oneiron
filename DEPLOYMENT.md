@@ -198,10 +198,12 @@ authenticated work for count. A wait ends at `queue_wait_timeout_ms`, a
 request timeout, with a 503 and `retry-after` and nothing started.
 
 The descriptor floor has a live check of its own. `GET /v1/owner/wire-health`
-answers `connection_pool_pressure` beside its `checks`: `{"state": "clear"}`
-while no socket waits for the pool, else `{"state": "active", "check": ...}`, a
+answers `connection_pool_pressure` beside its `checks`: `{"state": "clear", ...}`
+while no socket waits for the pool, carrying the pool's live connection counts
+and its reserve bound with `parking_bound` 0 for no active episode (FIX 9134),
+else `{"state": "active", "check": ...}`, a
 check of kind `inspect_connection_pool_pressure` that names the episode, the
-`limits.max_connections` row and its bound, the credentials holding the most
+`limits.max_connections` row and the episode's current bound, the credentials holding the most
 open request bodies, the pool's connections and the remedy. The check observes
 only: it pauses, revokes and refuses nothing, and it does not promise that a
 revocation releases a body already open.

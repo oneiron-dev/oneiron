@@ -24,9 +24,13 @@ use super::{
     PointRead, ScopedRead, StoredWeaveDigest, WeaveDigestReader, WeaveItem, WeaveReader,
     WeaveReport, WeaveSectionView,
 };
+use crate::claim::learning_evidence::Anchor;
+use crate::claim::learning_evidence::LearningEvidence;
+use crate::claim::learning_evidence::Observation;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::learning::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
+use crate::learning::LearningCell;
 use crate::lens::{
     ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
     GeneratedUiActionTier, GeneratedUiStateSnapshot, HostedLensRender, LedgerCell, LedgerRowAtom,
@@ -353,8 +357,8 @@ fn weave_report_instruction(vault: &Vault) -> Result<Option<(EntityId, String, S
                 Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return Ok(None),
                 Err(error) => return Err(error),
             };
-            if crate::skill::resident_of(&record)?.is_some()
-                || !crate::skill::skill_loadable(&record)
+            if crate::write_envelope::skill_record::resident_of(&record)?.is_some()
+                || !crate::write_envelope::skill_record::skill_loadable(&record)
             {
                 return Ok(None);
             }

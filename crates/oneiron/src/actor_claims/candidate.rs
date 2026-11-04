@@ -27,9 +27,6 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::agent_inbox_lens::{
-    AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
-};
 use crate::attempt_queue::AttemptId;
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{
@@ -44,6 +41,11 @@ use crate::store::{
     GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
 };
 use crate::temporal::TimeRange;
+use crate::{
+    agent_inbox_lens::AgentInboxLensItem,
+    inbox::view_values::AgentInboxItemKind,
+    inbox::view_values::{AgentInboxParticipant, InboxImpact},
+};
 
 use super::evidence::KEY_AT;
 use super::invalid;

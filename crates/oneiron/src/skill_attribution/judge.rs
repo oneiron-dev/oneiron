@@ -8,15 +8,16 @@ use serde_json::{Value, json};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::CallPurpose;
-use crate::llm::decision::catalogue::ATTRIBUTION_HUNK;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial,
-    DecisionLadder, DecisionProvider, DecisionQuestion, DecisionRung, MAX_DECISION_STATE_BYTES,
-    ProviderDecision, ProviderPin, Reversibility, TypedDecision,
+use crate::llm::decision::{DecisionCall, DecisionLadder, DecisionProvider, TypedDecision};
+use crate::model_decision::catalogue::ATTRIBUTION_HUNK;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
+    DecisionQuestion, DecisionRung, MAX_DECISION_STATE_BYTES, ProviderDecision, ProviderPin,
+    Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::skill_optimize::union_source_rows;
+use oneiron_model::llm::CallPurpose;
 
 use super::calibration::{AuditAnswerSource, RawAnswer};
 use super::types::{

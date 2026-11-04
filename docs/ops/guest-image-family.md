@@ -32,7 +32,9 @@ they are.
 - `packages.toml` holds requests only: the tools tree, `[base]` and one
   overlay per variant.
 - `packages.lock.toml` is the resolved closure: every `.deb` by name,
-  version, arch, size and sha256.
+  version, arch, size and sha256, plus each scope's exact list of `.deb`
+  filenames. A scope's list includes shared dependencies, not only files
+  first downloaded while that scope ran.
 
 `python3 build.py validate` checks that the three agree. It needs no Linux
 host. It refuses a moving `latest`, a malformed hash or commit, a missing
@@ -107,9 +109,15 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
 
    The first run on a fresh mirror passes `--learn` and writes
    `packages.lock.toml`: a replacement lock, covering only the scopes that
-   run named, so name every variant. Commit that lock. A later fetch without `--learn`
+   run named, so name every variant. Each scope learns in a fresh isolated
+   package cache, whose packages then merge into the retained mirror. Its
+   file list is therefore its complete closure, including packages shared
+   with earlier scopes. Commit that lock. A later fetch without `--learn`
    refuses any `.deb` whose bytes differ from the lock, and any newly
-   downloaded `.deb` the lock does not name.
+   downloaded `.deb` the lock does not name. By default it verifies the
+   whole lock; `--only-requested` selects just tools and the `--variant`
+   scopes, using their learned file lists. `build --variant V` likewise
+   requires only tools and V from the mirror.
 2. **Build (offline).** `build.py build --variant base` re-enters a namespace
    with no network at all and works from the mirror alone:
    1. It unpacks the base layer as a bootstrap tree.
@@ -204,12 +212,18 @@ digest. Signing them is the release signature's seam (`manifest.md`).
   in the built image; symlinked doc directories resolve inside the image.
   The rules:
   - Only a DEP-5 file (`Format:` copyright-format 1.0) is read.
-  - Each Files paragraph's `License:` must be a plain list of short names
-    joined by one operator, all `or` or all `and`. A comma, a
-    `with … exception` or mixed operators leave the package `NOASSERTION`.
+  - Each Files paragraph's `License:` is read as an expression. `, and` and
+    `, or` are DEP-5's comma-lowered operators; a bare comma is invalid and
+    stays `NOASSERTION`. Parentheses group, and nested expressions are
+    parenthesized explicitly in the SPDX output. `with … exception` uses an
+    exact id in `attest.DEBIAN_EXCEPTION_TO_SPDX` (including Bison, LLVM,
+    Linux-syscall-note, libtool, Texinfo and Autoconf generic); Autoconf and
+    Autoconf-data select 2.0 or 3.0 from the GPL base. An unknown or
+    version-ambiguous exception stays `NOASSERTION` rather than guessing.
   - A short name maps to an SPDX id only through `attest.DEBIAN_TO_SPDX`.
     That one table holds the names Debian's own list defines unambiguously:
-    GPL/LGPL/AGPL by version and `+`, Expat as MIT, BSD-2/3/4-clause,
+    GPL/LGPL/AGPL by version and `+` (plus the unambiguous `GPL3+` alias),
+    Expat as MIT, BSD-2/3/4-clause,
     Apache-2.0, Artistic-2.0, CC0-1.0, ISC, MPL, OFL-1.1, Python-2.0, Zlib,
     and SPDX's own `-only`/`-or-later` forms.
   - Any other name with its text in the file becomes
@@ -283,9 +297,9 @@ the raw value bytes. A value that is not UTF-8 goes out under
 **Checker store.** The checker ships the offline Cargo store at
 `/opt/queue-check/cargo-home`. A check never runs against it in place: the
 helper copies it into the plan's writable scratch `CARGO_HOME`
-(`.oneiron/checks.json`). `mkosi.finalize` normalizes the copy in the
-image, never the mirror, so that two fetches of one lock give the same
-bytes (FIX 9353):
+(`.oneiron/checks.json`). Normalization happens in the assembled image,
+never the mirror, so two fetches of one lock give the same bytes (FIX 9353).
+`mkosi.finalize` handles the git side:
 - it removes `.global-cache` (with `-wal` and `-shm`), cargo's SQLite record
   of last-use times; the scratch copy recreates it;
 - it first removes each checkout's `.git/index` (stat data) and `.git/logs`
@@ -303,7 +317,15 @@ bytes (FIX 9353):
 - it links a checkout pack byte-identical to its db's pack back to that
   pack (same name, `cmp`), as the fetch left them.
 
-Each checkout keeps its sources, `.cargo-ok`, HEAD, refs and objects.
+Each checkout keeps its sources, `.cargo-ok`, HEAD, refs and objects. After
+mkosi returns, the builder also normalizes the sparse registry index in the
+assembled tree (FIX 10649). Each binary cache entry is NUL-separated version
+and JSON metadata. The builder keeps only versions named by the pinned
+`Cargo.lock`, drops cache files for crates outside it, and refuses if a
+locked version is missing. The cache's five binary format bytes stay; its
+HTTP ETag becomes empty because that is online-revalidation state, not
+resolution data. The offline cache therefore depends on the lock rather
+than on what crates.io happened to publish before the fetch.
 
 ## Rebuild from the mirror, and retention
 
@@ -500,9 +522,13 @@ operator's part.
    The shared bound-release observer also emits one `tracing::info!` with
    the selected image digest, manifest state, fact codes and admitted bit;
    this is observation only, not a launch-policy change. A Hypnos import is
-   meant to run it as well (LC builds that call). Today no host-owned binding
-   from an image to its manifest exists, so every launch records
-   `image_release_manifest_absent` and `image_signature_unavailable`. A
+   meant to run it as well (LC builds that call). The binding is host-owned:
+   `ONEIRON_IMAGE_RELEASE_BINDINGS` names a JSON map from the selected image
+   identity to its `image-release.json` (and envelope), read at every launch
+   and never cached (`images/manifest.md` Launch). A launch with no map entry
+   for its image records `image_release_manifest_absent` and
+   `image_signature_unavailable`. Live hosts still need LC's provisioning map
+   (FIX 9427); until it lands, their launches record absent. A
    signed manifest with no verifier configured records
    `image_signature_unverifiable`.
 5. **Policy.** `IMAGE_SIGNATURE_POLICY` is `ObserveOnly`, so these facts
@@ -521,13 +547,13 @@ host's Firecracker rootfs pin must equal). Compare the OCI digests with
 `crates/oneiron-container/guest/browser/build.sh` and
 `crates/oneiron-container/guest/checker/build.sh` each take three routes,
 chosen by flag, with no fallback between them:
-- **the image-family route (default):** `build.py fetch` (never `--learn`)
-  over every scope the lock covers, then `build`, `receipt` and `manifest`
-  for that variant, against the mirror and work dir in
-  `ONEIRON_BROWSER_IMAGES_MIRROR`/`_WORK` (`ONEIRON_CHECKER_IMAGES_…` for
-  the checker); then `docker load` of the archive. Since the lock covers
-  desktop-cua and generic-agent, that fetch also takes the CUA source
-  archive, its Rust and its store, Bun and the npm tarballs;
+- **the image-family route (default):** `build.py fetch --variant V
+  --only-requested` (never `--learn`) over tools and that variant's learned
+  scope, then `build`, `receipt` and `manifest` for V, against the mirror
+  and work dir in `ONEIRON_BROWSER_IMAGES_MIRROR`/`_WORK`
+  (`ONEIRON_CHECKER_IMAGES_…` for the checker); then `docker load` of the
+  archive. A browser-only or checker-only rebuild does not fetch the CUA
+  source archive, its Rust and its store, Bun or the npm tarballs;
 - **`--archive FILE`:** `docker load` of a built archive whose sha256 is the
   variant's `oci_archive_sha256` in `release.toml`. No rebuild;
 - **`--dockerfile`:** the Dockerfile recipe as it was (host Cargo, the

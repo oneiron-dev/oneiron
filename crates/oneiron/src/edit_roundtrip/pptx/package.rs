@@ -11,18 +11,22 @@ use serde::{Deserialize, Serialize};
 pub(super) type PatchResult<T> = std::result::Result<T, PptxError>;
 
 /// One narrow operation. `thread_id` is also the exported root comment GUID.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PptxCommentPatch {
     /// Engine identities retained independently of the displayed Office author.
     #[serde(with = "entity_ref")]
+    #[schemars(with = "String")]
     pub asked_by: EntityId,
     #[serde(with = "entity_ref")]
+    #[schemars(with = "String")]
     pub answered_by: EntityId,
     pub author: PptxAuthor,
     #[serde(with = "entity_ref")]
+    #[schemars(with = "String")]
     pub thread_id: EntityId,
     /// Unique reply GUID; for Add this must equal `thread_id`.
     #[serde(with = "entity_ref")]
+    #[schemars(with = "String")]
     pub comment_id: EntityId,
     /// UTC Unix milliseconds; serialized as an OOXML dateTime.
     pub at: u64,

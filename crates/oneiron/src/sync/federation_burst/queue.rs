@@ -2,11 +2,11 @@
 
 use super::schedule::{self, RetainedWorkQueue, Waiting};
 use super::{FederationBurstWorkState, FederationPeer, corrupt, erase, observations};
-use crate::llm::NormalizedBurstInputs;
 use crate::store::Store;
 use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
 use crate::sync::{WindowKey, encode_sync_selector};
 use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::NormalizedBurstInputs;
 use serde::{Deserialize, Serialize};
 
 const DEFERRED_PREFIX: &[u8] = b"m:federation-deferred:v1:";

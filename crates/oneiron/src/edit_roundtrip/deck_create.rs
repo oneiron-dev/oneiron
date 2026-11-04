@@ -351,11 +351,24 @@ impl crate::Vault {
         let Some(kept) = OUTLINE_KEEPS.get(&self.store, txn, &note)? else {
             return Ok(OutlineFreshness::NotKept);
         };
-        if crate::note::deck_outline_document_in_txn(self, txn, note)?.frontier != kept.frontier {
-            return Ok(OutlineFreshness::Edited);
-        }
+        let document = crate::note::deck_outline_document_in_txn(self, txn, note)?;
         let held: Value =
             serde_json::from_slice(&kept.bytes).map_err(|_| invalid("kept outline encoding"))?;
+        if document.frontier != kept.frontier {
+            // The frontier moved: a title edit or surrounding-markdown whitespace
+            // leaves the outline JSON itself unchanged. Re-parse the current outline
+            // exactly as the keep does and compare the parsed JSON against the held
+            // outline; only an outline difference is an edit (FIX 355). Drift is the
+            // evidence check below's verdict, not this comparison's.
+            let current: Value = match serde_json::from_str(outline_text(&document.markdown)) {
+                Ok(current) => current,
+                Err(_) => return Ok(OutlineFreshness::Edited),
+            };
+            if !outline_content_equal(&held, &current) {
+                return Ok(OutlineFreshness::Edited);
+            }
+            // Equal: fall through to the evidence-drift check below.
+        }
         // Only a cited CLAIM's span gates the keep, as it always has; any
         // other change is reported beside it (`deck_outline_evidence_in_txn`).
         let mut remapped = held.clone();
@@ -749,4 +762,26 @@ fn outline_text(markdown: &str) -> &str {
         .split_once("```json")
         .and_then(|(_, rest)| rest.split_once("```"))
         .map_or(markdown.trim(), |(block, _)| block.trim())
+}
+
+/// Whether two parsed outlines hold the same content: the engine's `drift`
+/// flags are the evidence check's live verdict, not outline content (FIX 355).
+fn outline_content_equal(held: &Value, current: &Value) -> bool {
+    fn without_drift(value: &Value) -> Value {
+        let mut stripped = value.clone();
+        pins_mut(&mut stripped, &mut |pin| {
+            // Only the engine's verdict is ignored: a cited CLAIM's pin
+            // always, and a claimless note span, exactly the set
+            // map_evidence_in_txn writes. A caller-owned drift flag on an
+            // external or opaque pin stays content, so changing it reads as
+            // an outline edit (blind review of #4387).
+            let engine_mapped = note_pin(pin).is_some()
+                || engine_span(pin).is_some_and(|span| span.claim.is_none());
+            if engine_mapped && let Some(object) = pin.as_object_mut() {
+                object.remove("drift");
+            }
+        });
+        stripped
+    }
+    without_drift(held) == without_drift(current)
 }

@@ -143,6 +143,8 @@ pub enum ErrorKind {
     EditRoundtripFailed,
     /// The live deck body refused; the error carries the docedit refusal.
     LiveDeckRefused,
+    /// A non-deck artifact operation could not reserve the host's machine memory.
+    MemoryFloorRefused,
     EditProposalAlreadySettled,
     EditProposalStale,
     SettleNotAuthorized,

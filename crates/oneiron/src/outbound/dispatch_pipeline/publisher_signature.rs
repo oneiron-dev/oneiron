@@ -9,7 +9,7 @@
 //! owner press and never widens the bundle send's one-time approval.
 
 use crate::Vault;
-use crate::feedback::REPORT_SIGNATURE_VERB;
+use crate::outbound::report_signature::REPORT_SIGNATURE_VERB;
 use crate::outbound_chokepoint::PreparedEffect;
 use crate::outbound_intent_ledger::IntentLedgerError;
 

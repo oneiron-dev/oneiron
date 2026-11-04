@@ -357,7 +357,7 @@ pub struct WholeVaultImportReceipt {
     pub skipped_unproven_regenerates_edges: usize,
     /// Custody records the archive carried as handles only: secrets to
     /// re-enter through the owner's registration door.
-    pub missing_secrets: Vec<crate::secret_custody::SecretCustodyMetadata>,
+    pub missing_secrets: Vec<crate::secret_record::SecretCustodyMetadata>,
     /// FIX 12066: the fold-only custody secrets the archive's manifest names
     /// that have no record here after the import: each is owed through its
     /// export secret supplement.

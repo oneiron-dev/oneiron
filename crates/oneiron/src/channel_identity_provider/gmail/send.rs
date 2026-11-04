@@ -48,7 +48,7 @@ use crate::outbound::{
     OutboundExecutionSink,
 };
 use crate::secret_lease::DoorInjectionReceipt;
-use crate::thread_passport::{
+use crate::write_envelope::thread_claim::{
     CanonicalMessageId, ThreadPassportInput, canonical_message_id, canonical_message_id_list,
 };
 

@@ -100,7 +100,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     fn backfill_published_delete_fences_in_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
         use crate::ports::{WindowAddress, WindowDeletionRows};
-        use crate::sync::loro_support::{doc_from_snapshot, import_doc};
+        use crate::store::loro_document::{doc_from_snapshot, import_doc};
 
         let windows = self
             .store
@@ -140,7 +140,7 @@ impl Vault {
         doc: &loro::LoroDoc,
     ) -> Result<()> {
         let mut tombstones = Vec::new();
-        crate::sync::loro_support::map_for_each_tombstone_value(
+        crate::store::loro_document::map_for_each_tombstone_value(
             &doc.get_map("tombstones"),
             |key, value| {
                 if let Ok(id) = EntityId::from_hex(key) {

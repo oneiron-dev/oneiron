@@ -84,6 +84,8 @@ pub enum OpenAiCompatTransportError {
     /// The far end ended the call with this error where no error reply fits.
     #[error("OpenAI-compatible transport call ended with an error: {0}")]
     EndedWithError(String),
+    #[error("OpenAI-compatible transport device admission stopped")]
+    DeviceAdmissionStopped,
 }
 
 impl From<OpenAiCompatTransportError> for LlmError {
@@ -109,6 +111,9 @@ impl From<OpenAiCompatTransportError> for LlmError {
             }
             OpenAiCompatTransportError::EndedWithError(detail) => {
                 RetryableLlmError::ended_with_error(detail).into()
+            }
+            OpenAiCompatTransportError::DeviceAdmissionStopped => {
+                RetryableLlmError::DeviceAdmissionStopped.into()
             }
             OpenAiCompatTransportError::Server => RetryableLlmError::ServerError.into(),
         }

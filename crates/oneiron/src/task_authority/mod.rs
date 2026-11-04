@@ -30,12 +30,13 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::habit::{TaskRole, task_role_from_body_bytes};
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{self, SideTable};
+use crate::store::EngineScan;
 #[cfg(test)]
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::{TaskRole, task_role_from_body_bytes};
 
 mod binding_generation;
 mod consult_executor;

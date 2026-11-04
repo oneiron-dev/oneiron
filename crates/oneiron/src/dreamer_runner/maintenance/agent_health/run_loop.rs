@@ -11,7 +11,7 @@ use super::{
 };
 use crate::attempt_queue::AttemptState;
 use crate::code_run::SelfEffect;
-use crate::self_heal::AgentHealthSignal;
+use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::{Result, Vault};
 
 /// `loop`: identical `(effect, request)` bridge calls in a row in one

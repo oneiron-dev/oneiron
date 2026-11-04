@@ -154,11 +154,7 @@ impl std::fmt::Debug for CustodyTransition {
     }
 }
 
-/// Whether `record` may leave this device: custody-portable with its "this
-/// device only" dial off.
-pub(crate) fn custody_portable(record: &SecretCustodyRecord) -> bool {
-    record.class == CustodyClass::CustodyPortable && !record.device_only
-}
+pub(crate) use crate::secret_record::custody_portable;
 
 /// What a transition enacts: the request's entry hash (zero for a kit push),
 /// the digest of its input, and each permit with the key it seals to.

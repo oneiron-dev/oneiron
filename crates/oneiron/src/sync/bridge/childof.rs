@@ -608,7 +608,9 @@ fn retry_child_of_row(
         tgt,
         weight: decoded.weight,
         created_at: decoded.created_at,
-        vad: decoded.vad.unwrap_or(crate::affect::Vad::NEUTRAL),
+        vad: decoded
+            .vad
+            .unwrap_or(oneiron_contracts::affect::Vad::NEUTRAL),
         provenance: decoded.provenance,
     };
     // In a savepoint (FIX 8856): a refused retry drops the stored parent's

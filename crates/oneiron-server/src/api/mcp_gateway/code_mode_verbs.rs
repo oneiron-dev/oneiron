@@ -131,6 +131,11 @@ pub(crate) struct McpCodeModeVerbs {
     /// The rows this run's verb calls listed as served during this call
     /// (DEC-0005); each answer carries its own into the run's record too.
     served: std::sync::Mutex<Vec<oneiron::EntityId>>,
+    /// What the newest successful non-browser call's answer holds, kept
+    /// until the run records its replay row or dispatches its next call
+    /// (FIX 10633): one slot, since the dispatcher runs one call at a
+    /// time; released by [`AgentVerbDoor::answer_recorded`].
+    answer_kept: std::sync::Mutex<Option<crate::api::answer_hold::Kept>>,
     /// The durable run this door serves, as `mcp_code_run_id` derived it:
     /// each verb call is made in it, and it creates the live lens cards they
     /// render (OF-181, FIX 2612 (a)).

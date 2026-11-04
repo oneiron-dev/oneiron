@@ -24,12 +24,12 @@ use std::path::PathBuf;
 use super::{VerifiedSlip, authority_refusal_as, authority_refused};
 use crate::error::Result;
 use crate::federation::{
-    FederationGrantRole, FederationGrantScope, MembershipStanding, Scope,
-    decode_federation_grant_body,
+    FederationGrantRole, FederationGrantScope, MembershipStanding, decode_federation_grant_body,
 };
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::Scope;
 
 /// The typed reason an Admin weave request names when its proof is not
 /// current (CALLS `OF-499 A3 not current`): a missing, revoked, demoted,

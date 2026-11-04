@@ -45,10 +45,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use oneiron::attempt_queue::{AttemptId, AttemptQueue};
-use oneiron::checkout::{
-    CheckoutError, CheckoutFactMutation, CheckoutFactSink, CheckoutId, CheckoutLeaseAct,
-    CheckoutLeaseService, CheckoutLiveness, CheckoutLivenessPulse, CheckoutRepoOps, CheckoutResult,
-};
+use oneiron::checkout::{CheckoutLeaseAct, CheckoutRepoOps};
 use oneiron::code_sandbox::SandboxBoundaryContract;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
 use oneiron::dispatch_byoa::{
@@ -164,9 +161,7 @@ impl SyncServer {
             destinations: child.destinations(),
             stop: child.stop_flag(),
         };
-        let checkouts = CheckoutLeaseService::new(vault, ReadOnly, ReadOnly);
-        let ran =
-            dispatcher.execute_cli(&fence, SEAT_RUN_BUDGET, &checkouts, &mut executor, now_ts());
+        let ran = dispatcher.execute_cli(&fence, SEAT_RUN_BUDGET, &mut executor, now_ts());
         // The run's processes are done: what was delivered for them goes,
         // and its claim is no longer watched.
         if child.end() {
@@ -298,30 +293,6 @@ impl ByoaEgressPort for NoEgress {
             profile_ref: profile_ref.to_owned(),
             reason: "the seat host leases no egress".to_owned(),
         })
-    }
-}
-
-/// The checkout service's sides for the run's one read of an unbound
-/// checkout's lease: the host writes no checkout fact and no liveness.
-struct ReadOnly;
-
-impl CheckoutFactSink for ReadOnly {
-    fn apply_checkout_fact(&mut self, _mutation: CheckoutFactMutation) -> CheckoutResult<()> {
-        Err(CheckoutError::Invalid("the seat host only reads checkouts"))
-    }
-}
-
-impl CheckoutLiveness for ReadOnly {
-    fn publish(&mut self, _pulse: CheckoutLivenessPulse) -> CheckoutResult<()> {
-        Err(CheckoutError::Invalid("the seat host only reads checkouts"))
-    }
-
-    fn current(&self, _id: CheckoutId) -> CheckoutResult<Option<CheckoutLivenessPulse>> {
-        Ok(None)
-    }
-
-    fn clear(&mut self, _id: CheckoutId, _epoch: u64) -> CheckoutResult<()> {
-        Ok(())
     }
 }
 

@@ -4,8 +4,7 @@ use super::eligibility::is_embeddable_in_txn;
 use crate::ports::{EntityStoreRead, IndexMetaKey, RetrievalIndexInventory};
 use crate::{Error, Result};
 
-/// Marker set atomically with the first model identity, consumed by cold attach.
-pub(crate) const COLD_ATTACH_PENDING_KEY: &[u8] = b"cold_attach_pending";
+pub(crate) use crate::store::embedding::COLD_ATTACH_PENDING_KEY;
 
 impl crate::Vault {
     /// Requeues pre-embedder records at priority 3 after the first model is

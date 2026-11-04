@@ -10,17 +10,18 @@ use std::collections::HashSet;
 
 use super::*;
 use crate::Vault;
-use crate::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, ClaimError, Error, RegistryError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, ShortIdStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
 use crate::store::GateDecisionRecord;
 use crate::temporal::TimeRange;
 use crate::vault::SUPERSEDES_DEFAULT_WEIGHT;
+use oneiron_contracts::affect::Vad;
 
 mod materialization;
 
@@ -365,12 +366,16 @@ impl Vault {
         if !claim_generated_origin(new_body) || !old_is_protected_user_truth {
             return Ok(());
         }
-        if new_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
+        if new_body.predicate
+            == crate::store::code_revision_record::codec::CODE_REVISION_CLAIM_PREDICATE
+        {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "generated code revision claim cannot supersede user-stated truth",
             )));
         }
-        if old_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
+        if old_body.predicate
+            == crate::store::code_revision_record::codec::CODE_REVISION_CLAIM_PREDICATE
+        {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "generated claim cannot supersede user-stated code revision truth",
             )));
@@ -794,7 +799,7 @@ impl Vault {
                     owner_authored: None,
                 },
                 &policy,
-                crate::gate::GateWriteMode {
+                crate::store::GateWriteMode {
                     record_decision: true,
                     persist_pending_consent: false,
                     resolve_pending: true,

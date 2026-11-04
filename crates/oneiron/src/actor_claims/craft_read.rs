@@ -17,9 +17,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind, ReadSetProducer,
-};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSubject, ScopedRead, claim_surfaceable, decode_claim_body,
@@ -29,6 +27,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::store::attempt_manifest::ManifestEntry;
+use crate::store::attempt_manifest::ManifestKind;
 
 use super::candidate::is_approved_craft_verdict;
 use super::rows::{PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON};
