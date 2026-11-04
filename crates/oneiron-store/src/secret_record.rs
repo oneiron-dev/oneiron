@@ -193,5 +193,3 @@ impl SecretCustodyFloor {
         store.resolve_secret_custody_floor(txn)
     }
 }
-
-
