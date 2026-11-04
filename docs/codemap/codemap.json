@@ -42901,7 +42901,6 @@
      "path": "src/llm/budget/mod.rs",
      "purpose": "Vault-local durable RSI budget ledger and resident share ledger (FIX 7767)",
      "surface": {
-      "crate-vis": 1,
       "mod": 1,
       "re-export": 2
      }
@@ -42916,7 +42915,6 @@
      "path": "src/llm/budget/resident.rs",
      "purpose": "The vault's durable resident ledger (FIX 7767): each resident's share of the host-paid allocation, as the…",
      "surface": {
-      "crate-vis": 1,
       "fn": 3,
       "struct": 2
      }
@@ -44072,7 +44070,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 14,
       "mod": 11,
       "re-export": 27
      }
@@ -44181,7 +44179,6 @@
      "notable": [
       "CatalogSeed",
       "ModelRegistryRow",
-      "ModelWireFormat",
       "ScoreObservation",
       "ScoreSnapshot",
       "SkippedRegistryRow"
@@ -44190,9 +44187,8 @@
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
       "crate-vis": 7,
-      "enum": 1,
       "fn": 16,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 5
      }
     },
@@ -44292,13 +44288,10 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "DescriptionPolicy",
       "DescriptionReask",
-      "ModelDescription",
-      "OwnerModelLine",
       "ReaskTrigger",
       "RoutedSeat",
       "RoutedVerdict",
@@ -44310,11 +44303,11 @@
      "path": "src/llm/routing.rs",
      "purpose": "Vault-owned description routing above the raw LLM call seam",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 13,
       "re-export": 3,
-      "struct": 9
+      "struct": 6
      }
     },
     {
@@ -44450,7 +44443,6 @@
       "AccountStatus",
       "Allocation",
       "AllocationGrantError",
-      "AllocationRef",
       "AllocationRefusal",
       "HostAccount",
       "KeyCustody",
@@ -44469,7 +44461,8 @@
       "crate-vis": 8,
       "enum": 6,
       "fn": 12,
-      "struct": 9
+      "re-export": 1,
+      "struct": 8
      }
     },
     {
@@ -44577,14 +44570,14 @@
      "kind": "src",
      "notable": [
       "ResidentLedger",
-      "ResidentShare",
       "ResidentStanding"
      ],
      "path": "src/llm/run_admission/resident.rs",
      "purpose": "Each resident's share of the vault's host-paid allocation (ARCH-0011 `#budget-lease`, FIX 7767)",
      "surface": {
       "crate-vis": 6,
-      "struct": 2,
+      "re-export": 1,
+      "struct": 1,
       "trait": 1
      }
     },
@@ -67198,19 +67191,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HookOutcomeKind",
-      "HookPhase",
-      "HookRenderClass",
-      "HookSelector",
       "PackHook"
      ],
      "path": "src/skill_hub/pack_catalog/hooks.rs",
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
-      "crate-vis": 8,
-      "enum": 3,
-      "re-export": 4,
-      "struct": 2
+      "crate-vis": 7,
+      "re-export": 5,
+      "struct": 1
      }
     },
     {
@@ -67252,20 +67240,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "HookWidening",
-      "PackHookProposal",
-      "PackHookProposalStatus"
-     ],
+     "notable": [],
      "path": "src/skill_hub/pack_catalog/hooks/proposal.rs",
      "purpose": "An agent's hook that asks wider than its own ceiling (ARCH-0080 §10): Skip, Ask or Rewrite on another…",
      "surface": {
-      "crate-vis": 7,
-      "enum": 2,
+      "crate-vis": 5,
       "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -71986,7 +71969,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 90,
-      "mod": 86,
+      "mod": 88,
       "re-export": 31
      }
     },
@@ -71994,13 +71977,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "MeasuredDescription"
+      "DescriptionPolicy",
+      "MeasuredDescription",
+      "ModelDescription",
+      "ModelWireFormat",
+      "OwnerModelLine"
      ],
      "path": "src/store/model_description_rows.rs",
-     "purpose": "The vault-measured description rows model routing keeps (`LLM_DESCRIPTION_MEASUREMENTS`)",
+     "purpose": "The description rows model routing keeps: the owner's description policy (`LLM_DESCRIPTION_POLICY`) with its…",
      "surface": {
-      "crate-vis": 1,
-      "struct": 1
+      "crate-vis": 2,
+      "enum": 1,
+      "struct": 4
      }
     },
     {
@@ -72269,6 +72257,26 @@
      "purpose": "The actor classes a pack hook's selector may name",
      "surface": {
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HookOutcomeKind",
+      "HookPhase",
+      "HookRenderClass",
+      "HookSelector",
+      "HookWidening",
+      "PackHookProposal",
+      "PackHookProposalStatus"
+     ],
+     "path": "src/store/pack_hook_proposal.rs",
+     "purpose": "The pack hook selector types and the agent hook proposal rows (ARCH-0080 §3, §10): when a hook fires, how it…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 5,
+      "struct": 2
      }
     },
     {
@@ -72729,6 +72737,20 @@
       "const": 1,
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AllocationRef",
+      "ResidentShare"
+     ],
+     "path": "src/store/resident_budget_rows.rs",
+     "purpose": "The vault's durable resident budget rows (FIX 7767): each resident's share of the host-paid allocation and…",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 2
      }
     },
     {
@@ -90082,7 +90104,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 369,
+     "files": 371,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90320,9 +90342,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 141,
+   "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6265,
+   "source_files": 6267,
    "test_files": 898
   },
   "oneiron-android": {
