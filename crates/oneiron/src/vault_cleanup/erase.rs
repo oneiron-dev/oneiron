@@ -33,7 +33,7 @@ use super::{
     CleanupKind, KEY_ARCHIVED, KEY_CANDIDATES, KEY_ENTITY, KEY_KIND, KEY_REJECTED, KEY_SKIPPED,
     encode_row, field,
 };
-use crate::attempt_queue::AttemptId;
+use crate::store::attempt_id::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{Raw, SideKey, SideTable};

@@ -10,7 +10,7 @@ side_tables! {
     /// answer it gives that question about that evidence, and whether it was revoked. Key:
     /// id16 (rule) + u64be(revision).
     DECISION_HOST_RULE: VaultMeta b"decision:host_rule:v1:" Named
-        => crate::llm::decision::erase_rule_actor_in_txn;
+        => crate::store::decision_rule_rows::erase_rule_actor_in_txn;
     /// The creation record of one deck made from a kept outline: born-from, template, slides,
     /// write set and fit. Key: id16 (artifact).
     DECK_CREATION: VaultMeta b"deck:creation:v1:" Named;

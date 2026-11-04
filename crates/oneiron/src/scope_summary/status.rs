@@ -2,7 +2,7 @@
 
 use super::doors::LandedHeader;
 use super::request::decode_request;
-use crate::attempt_queue::AttemptId;
+use crate::store::attempt_id::AttemptId;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
