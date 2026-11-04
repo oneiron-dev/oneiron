@@ -1,13 +1,16 @@
 //! Inference snapshot lifecycle vault doors.
 
-use std::sync::{Arc, PoisonError};
-use std::time::Instant;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use oneiron_model::llm::VaultRef;
+use std::sync::{Arc, PoisonError};
+use std::time::Instant;
 
-pub use crate::store::snapshot_lifecycle::{LOCK_RELEASE_MARGIN, SnapshotFuture, SnapshotRuntime, SnapshotLockReceipt, SnapshotRelease, SnapshotWorkerAbort, SnapshotAdmission};
 pub(crate) use crate::store::snapshot_lifecycle::SnapshotLifecycle;
+pub use crate::store::snapshot_lifecycle::{
+    LOCK_RELEASE_MARGIN, SnapshotAdmission, SnapshotFuture, SnapshotLockReceipt, SnapshotRelease,
+    SnapshotRuntime, SnapshotWorkerAbort,
+};
 
 fn elapsed_ms(since: Instant) -> u64 {
     u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)

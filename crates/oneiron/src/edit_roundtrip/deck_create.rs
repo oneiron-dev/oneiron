@@ -82,7 +82,10 @@ pub(crate) fn erase_in_txn(
 }
 
 pub use crate::blob_artifact::deck_creation::record::{
-    ArtifactVersionRef, KeptOutline, OutlineFreshness, CitedClaimLifecycle, EvidenceObservation, EvidenceChange, DesignDirection, DirectionOutcome, DirectionSlide, DesignSpec, DeckCreationRecord, CreatedSlide, CreatedEstimate, DeckCreateRequest, DeckCreateOutcome, DeckCreateError,
+    ArtifactVersionRef, CitedClaimLifecycle, CreatedEstimate, CreatedSlide, DeckCreateError,
+    DeckCreateOutcome, DeckCreateRequest, DeckCreationRecord, DesignDirection, DesignSpec,
+    DirectionOutcome, DirectionSlide, EvidenceChange, EvidenceObservation, KeptOutline,
+    OutlineFreshness,
 };
 
 fn invalid(message: &'static str) -> DeckCreateError {

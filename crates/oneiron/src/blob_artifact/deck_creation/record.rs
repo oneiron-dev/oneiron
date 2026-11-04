@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::write_envelope::provenance::made_by::MadeByTrigger;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::provenance::made_by::MadeByTrigger;
 
 /// One blob artifact version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

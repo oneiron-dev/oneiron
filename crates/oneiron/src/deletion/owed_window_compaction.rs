@@ -1,10 +1,10 @@
 //! Window-compaction obligations written by an erase.
 
-use std::collections::BTreeSet;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::window_key::WindowKey;
+use std::collections::BTreeSet;
 
 /// Sweep-queue prefix of an owed window compaction, `hc:{window}`. Its value
 /// is a fresh id per raise, so a pass settles only the raise it read, then
@@ -83,4 +83,3 @@ pub(crate) fn waiting_receipts(value: &[u8]) -> BTreeSet<EntityId> {
         .filter_map(|bytes| EntityId::from_bytes(bytes.try_into().ok()?).ok())
         .collect()
 }
-

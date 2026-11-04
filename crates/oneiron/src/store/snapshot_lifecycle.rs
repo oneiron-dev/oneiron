@@ -24,8 +24,8 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, TryLockError};
 use std::time::Duration;
 
-use crate::store::snapshot_ledger::Ledger;
 use crate::entity_id::EntityId;
+use crate::store::snapshot_ledger::Ledger;
 use oneiron_model::llm::VaultRef;
 
 pub use crate::store::snapshot_lock_result::LOCK_RELEASE_MARGIN;
@@ -181,4 +181,3 @@ impl SnapshotLifecycle {
         gate.erase_generation = gate.erase_generation.wrapping_add(1);
     }
 }
-

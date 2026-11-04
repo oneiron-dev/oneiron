@@ -115,4 +115,3 @@ pub(crate) fn erase_check_actor_in_txn(
     CHECKS.delete_from(&vault.store, wtxn, actor.as_bytes())?;
     Ok(())
 }
-
