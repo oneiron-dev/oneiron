@@ -167,6 +167,12 @@ pub struct SharedLeaveReceipt {
     /// The entities the purge kept: authority log and machine rows, rows a
     /// legal hold names, and the pinned pack map.
     pub kept_entities: u64,
+    /// Whether the purge ran to its final pass. Every pass persists its own
+    /// state, so a crash between passes leaves this false and the next
+    /// confirmation resumes; receipts written before this field existed
+    /// read false and finish one idempotent pass.
+    #[serde(default)]
+    pub purge_complete: bool,
 }
 
 /// How `notice` ends `member`'s membership in shared vault `vault_id`, when
@@ -219,6 +225,21 @@ pub fn has_left(vault: &Vault) -> Result<bool> {
         .iter_from(&vault.store, &txn, &[])?
         .next()
         .is_some())
+}
+
+/// Whether the env's recorded leave already purged to its final pass: a
+/// restart derives this instead of reconfirming, so a completed purge never
+/// re-owes its orphan-body collection. No receipt reads false.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn leave_purge_complete(vault: &Vault) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(LEAVE_RECEIPTS
+        .iter_from(&vault.store, &txn, &[])?
+        .next()
+        .is_some_and(|(_, receipt)| receipt.purge_complete))
 }
 
 /// Confirms, in `vault` (the env that holds the shared vault), the leave or
@@ -274,6 +295,7 @@ fn confirm_leave(
         .fold(0_u64, |total, rows| total.saturating_add(count(rows)));
         receipt.purged_rows = receipt.purged_rows.saturating_add(rows);
         receipt.kept_entities = count(pass.kept_total);
+        receipt.purge_complete = pass.complete;
         LEAVE_RECEIPTS.put(&vault.store, wtxn, &notice.receipt_id, receipt)?;
         if pass.complete {
             // The final pass owes the env its orphan body collection.
@@ -308,6 +330,7 @@ fn confirm_leave(
                 .saturating_add(discarded_note_commands),
             purged_rows: 0,
             kept_entities: 0,
+            purge_complete: false,
         };
         let complete = purge(wtxn, &mut receipt)?;
         Ok((receipt, complete))
