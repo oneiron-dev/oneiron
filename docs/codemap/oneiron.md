@@ -3818,7 +3818,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/recall/hyde_host.rs` | src | s | 1 fn | — | Stable authority key for a host expansion's pending work, without storing credentials |
 | `src/memory/recall/items.rs` | src | m | 1 crate-vis | — | Builds typed recall items from actor-admitted rows at the selected revision |
 | `src/memory/recall/mod.rs` | src | L | 8 struct · 1 enum · 11 fn · 2 const · 5 re-export · 7 crate-vis | CitedMessage, Effort, MemoryItem, MemoryPack, MemoryProvenance, RecallRequest, RecallScope, RetrievalMeta +1 | Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing |
-| `src/memory/recall/paid.rs` | src | m | 3 struct · 3 enum · 1 trait · 3 fn · 2 crate-vis | RecallRerank, RecallRerankHost, RerankDocument, RerankEgress, RerankReport, RerankScores, RerankSkip | Recall at high, xhigh and max through a host's reranker (ARCH-0004 #rerank: a cross-encoder refines the… |
+| `src/memory/recall/paid.rs` | src | L | 3 struct · 3 enum · 1 trait · 3 fn · 2 crate-vis | RecallRerank, RecallRerankHost, RerankDocument, RerankEgress, RerankReport, RerankScores, RerankSkip | Recall at high, xhigh and max through a host's reranker (ARCH-0004 #rerank: a cross-encoder refines the… |
 | `src/memory/recall/paid/lineage.rs` | src | s | 2 crate-vis | — | The rows each rerank document is read from (FIX 7001), kept beside its text so the host's call is sourced… |
 | `src/memory/recall/presentation.rs` | src | s | 5 crate-vis | — | — |
 | `src/memory/recall/render_budget.rs` | src | s | 3 crate-vis | — | The token budget a rendered pack is cut to (FIX 9962): one resolver for every door that renders a recall or… |
