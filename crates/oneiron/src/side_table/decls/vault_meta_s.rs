@@ -460,7 +460,7 @@ side_tables! {
     /// charges an erased skill stays with its subject nil, the edit proposals naming it go, and a
     /// lapse charging an erased actor stays with its subject nil. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw
-        => crate::skill_attribution::erase_attribution_judgment_skill_in_txn;
+        => crate::store::skill_attribution_judgments::erase_attribution_judgment_skill_in_txn;
     /// Frozen anchored pack outcome, eligible used lineage chains and shares; an erased entity's
     /// id is redacted where it is named. Key: credit receipt id.
     SKILL_ATTRIBUTION_LATE_CREDIT: VaultMeta b"skill_attribution:late_credit:v1:" Named
