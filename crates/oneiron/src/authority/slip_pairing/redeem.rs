@@ -180,12 +180,21 @@ impl Vault {
         let slip_lifetime_secs = pending.slip_lifetime_secs.min(ceiling.initial_owner_secs);
         // A live owner's own device gets their residence grant, named in the
         // slip so the device's selector can name it (FIX 3134).
-        let grant_ref = self.own_device_grant_for_holder_in_txn(
-            &mut txn,
-            holder_ref,
-            pending.principal.actor_class.as_deref(),
-            now,
-        )?;
+        if let Some(share) = pending.share_ref {
+            let holder = canonical_id(holder_ref)?;
+            crate::share::live_share_for_holder_in_txn(self, &txn, &share, &holder, now)?
+                .ok_or_else(invalid_authority)?;
+        }
+        let grant_ref = if pending.share_ref.is_some() {
+            None
+        } else {
+            self.own_device_grant_for_holder_in_txn(
+                &mut txn,
+                holder_ref,
+                pending.principal.actor_class.as_deref(),
+                now,
+            )?
+        };
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let claims = SlipClaims {
@@ -205,6 +214,7 @@ impl Vault {
             org_ref: pending.principal.org_ref,
             grant_ref: grant_ref.map(|id| id.to_hex()),
             invitation_ref: None,
+            share_ref: pending.share_ref.map(|id| id.to_hex()),
             delegation: None,
             comm: pending.principal.comm,
         };

@@ -610,6 +610,7 @@ pub enum AgentVerb {
     SelfSecretsTeardown,
     SelfSecretsUse,
     VaultSharesCreate,
+    VaultSharesIssueViewLink,
     VaultSharesRevoke,
     VaultSharesView,
     HostCompact,
@@ -1860,6 +1861,7 @@ impl AgentVerb {
         Self::SelfSecretsTeardown,
         Self::SelfSecretsUse,
         Self::VaultSharesCreate,
+        Self::VaultSharesIssueViewLink,
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
         Self::HostCompact,
@@ -3133,6 +3135,7 @@ impl AgentVerb {
             Self::SelfSecretsTeardown => "self.secrets.teardown",
             Self::SelfSecretsUse => "self.secrets.use",
             Self::VaultSharesCreate => "vault.shares.create",
+            Self::VaultSharesIssueViewLink => "vault.shares.issue_view_link",
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
             Self::HostCompact => "host.compact",
@@ -4399,6 +4402,7 @@ impl AgentVerb {
                 | Self::SelfSecretsTeardown
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
+                | Self::VaultSharesIssueViewLink
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
                 | Self::HostCompact
@@ -5678,6 +5682,7 @@ impl AgentVerb {
                 | Self::SelfSecretsTeardown
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
+                | Self::VaultSharesIssueViewLink
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
                 | Self::HostCompact
@@ -7100,6 +7105,7 @@ impl AgentVerb {
                 | Self::SelfSecretsTeardown
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
+                | Self::VaultSharesIssueViewLink
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
                 | Self::HostCompact
@@ -8039,6 +8045,7 @@ impl AgentVerb {
                 | Self::SelfSecretsTeardown
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
+                | Self::VaultSharesIssueViewLink
                 | Self::VaultSharesRevoke
                 | Self::HostCompact
                 | Self::HostWake
@@ -9058,6 +9065,7 @@ impl AgentVerb {
             Self::SelfSecretsTeardown => &["spec"],
             Self::SelfSecretsUse => &["spec"],
             Self::VaultSharesCreate => &["spec"],
+            Self::VaultSharesIssueViewLink => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
             Self::HostCompact => &["spec"],
@@ -10309,6 +10317,7 @@ impl AgentVerb {
             Self::SelfSecretsTeardown => &["spec"],
             Self::SelfSecretsUse => &["spec"],
             Self::VaultSharesCreate => &["spec"],
+            Self::VaultSharesIssueViewLink => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
             Self::HostCompact => &["spec"],
@@ -12746,6 +12755,9 @@ impl AgentVerb {
             }
             Self::VaultSharesCreate => {
                 "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."
+            }
+            Self::VaultSharesIssueViewLink => {
+                "Issues a holder-bound view-only pairing link for one admitted share's recipient."
             }
             Self::VaultSharesRevoke => "",
             Self::VaultSharesView => "",

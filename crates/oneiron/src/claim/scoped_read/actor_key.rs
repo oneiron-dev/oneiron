@@ -684,6 +684,43 @@ impl ScopedReadActorKey {
         Some(key)
     }
 
+    /// The read key of a rendered brief only. The presented credential has
+    /// no read verb, so no generic read constructor accepts it. Callers keep
+    /// this key inside the shared view and never return it to the holder.
+    pub(crate) fn from_share_view_slip(
+        proof: &crate::authority::VerifiedSlip,
+        verb: &str,
+    ) -> Option<Self> {
+        if proof.claims().share_ref.is_none()
+            || !matches!(verb, "vault.shares.view" | "vault.notes.follow_citation")
+            || !proof.allows_verb(verb)
+            || proof.allows_verb("read")
+            || proof.allows_verb("core:read")
+        {
+            return None;
+        }
+        let mut key = Self::from_parts(
+            proof.claims().holder_ref.clone(),
+            proof.claims().actor_class.clone(),
+        )?;
+        let holder = EntityId::from_hex(&proof.claims().holder_ref).ok()?;
+        let mut authority = proof.scope().clone();
+        authority.verbs = ["read".to_owned()].into_iter().collect();
+        key.authority = Some(authority);
+        key.proof = Some(proof.clone());
+        Some(key.require_relationship_grants(Some(holder)))
+    }
+
+    /// A renderer-confined credential's share, never a resident key's.
+    pub(crate) fn share_view_ref(&self) -> Option<EntityId> {
+        self.proof
+            .as_ref()?
+            .claims()
+            .share_ref
+            .as_deref()
+            .and_then(|value| EntityId::from_hex(value).ok())
+    }
+
     /// [`Self::from_verified_slip`] for a credential that names a row it
     /// writes about rather than reads (FIX 8155): the same holder, class,
     /// proof and record, world, facet and channel bounds, its verb axis

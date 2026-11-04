@@ -269,6 +269,15 @@ impl<'a> ScopedRead<'a> {
         if now < claims.issued_at || now >= claims.expires_at {
             return Ok(false);
         }
+        if let Some(share) = &claims.share_ref {
+            let share = EntityId::from_hex(share)?;
+            let holder = EntityId::from_hex(&claims.holder_ref)?;
+            if crate::share::live_share_for_holder_in_txn(self.vault, txn, &share, &holder, now)?
+                .is_none()
+            {
+                return Ok(false);
+            }
+        }
         // The shared view of this snapshot's fold: a copy of the fold costs
         // as much as the vault has agents, and this runs once per candidate.
         let fold = self.vault.authority_view_readonly_in_txn(txn)?;

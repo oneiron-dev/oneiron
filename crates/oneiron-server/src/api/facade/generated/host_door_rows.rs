@@ -54,6 +54,7 @@
 //! - `self.secrets.renew`
 //! - `self.secrets.teardown`
 //! - `self.secrets.use`
+//! - `vault.shares.issue_view_link`
 //! - `vault.shares.revoke`
 //! - `vault.shares.view`
 //! - `vault.artifacts.live_preview.read`

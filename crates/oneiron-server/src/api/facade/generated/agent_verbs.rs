@@ -683,6 +683,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.secrets.teardown", post(facade_route))
         .route("/self.secrets.use", post(facade_route))
         .route("/vault.shares.create", post(facade_route))
+        .route("/vault.shares.issue_view_link", post(facade_route))
         .route("/vault.shares.revoke", post(facade_route))
         .route("/vault.shares.view", post(facade_route))
         .route("/host.compact", post(facade_route))

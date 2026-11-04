@@ -245,11 +245,12 @@ fn shared_sources_readable(
         }
     }
     if !claims.is_empty() {
-        let Some(resolved) = vault.resolve_share_for_view(
+        let Some(resolved) = vault.resolve_share_for_read(
             reader.share_id,
             reader.viewer,
             reader.narrowing,
             &claims,
+            Some(reader.read),
         )?
         else {
             return Ok(None);

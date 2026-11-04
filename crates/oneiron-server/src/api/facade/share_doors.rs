@@ -93,3 +93,28 @@ fn principal(
         )
     })
 }
+
+/// Issues a recipient-bound, view-only link under the serving host's key.
+/// The engine checks the actual caller is this share's issuer or owner.
+pub(crate) async fn vault_shares_issue_view_link(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::ShareViewLinkRequest,
+) -> Listed<oneiron::authority::PairingLink> {
+    const VERB: &str = "vault.shares.issue_view_link";
+    let caller = match principal(server, auth, VERB) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+        let issuer = server.host_issuer().ok_or_else(|| {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "share link requires the serving host issuer",
+                &[],
+            )
+        })?;
+        oneiron::task_verb::sdk::issue_share_view_link_with_issuer(&memory, issuer, input)
+    })
+    .await
+}
