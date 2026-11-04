@@ -66460,7 +66460,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 24,
       "re-export": 21
      }
     },
@@ -66481,17 +66481,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "PositiveFinding",
-      "PositiveSkillProposal"
-     ],
+     "notable": [],
      "path": "src/skill_attribution/positive.rs",
      "purpose": "The positive lane (OF-379): a win that taught the skill something",
      "surface": {
-      "crate-vis": 1,
-      "enum": 1,
       "fn": 4,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -71974,7 +71969,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 89,
-      "mod": 82,
+      "mod": 83,
       "re-export": 31
      }
     },
@@ -72396,6 +72391,21 @@
      "purpose": "The billing account a PERSON filed (`PERSON_BILLING_ACCOUNT` rows) and the erase that takes it with the PERSON",
      "surface": {
       "crate-vis": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PositiveFinding",
+      "PositiveSkillProposal"
+     ],
+     "path": "src/store/positive_skill_proposals.rs",
+     "purpose": "The pending positive skill proposals (`SKILL_ATTRIBUTION_POSITIVE_PROPOSAL` rows): what a succeeded attempt…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
       "struct": 1
      }
     },
@@ -90031,7 +90041,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 364,
+     "files": 365,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90271,7 +90281,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6260,
+   "source_files": 6261,
    "test_files": 898
   },
   "oneiron-android": {
