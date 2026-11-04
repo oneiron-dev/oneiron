@@ -2414,10 +2414,10 @@
      "path": "src/attempt_queue/cancel/types.rs",
      "purpose": "Durable wire types of the ONE-1896 two-rung graceful-cancel protocol",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 3,
       "fn": 20,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 1
      }
     },
@@ -2500,13 +2500,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/encoding.rs",
      "purpose": "Storage key derivation and LMDB row encode/decode for the attempt queue",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 16
      }
     },
     {
@@ -2569,7 +2569,7 @@
      "path": "src/attempt_queue/engine/mod.rs",
      "purpose": "The [`AttemptQueue`] handle and its lease state machine",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 4,
       "re-export": 1,
       "struct": 1
      }
@@ -2622,7 +2622,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 32,
       "fn": 6
      }
     },
@@ -2755,7 +2755,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 14,
       "mod": 9,
       "re-export": 10
      }
@@ -2838,7 +2838,7 @@
      "path": "src/attempt_queue/payload_erase/response.rs",
      "purpose": "An agent dispatch's payload text in checkpoint images (FIX 7115, KEY STORE = A): its attempt row is a…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -2892,7 +2892,7 @@
      "path": "src/attempt_queue/run_signal.rs",
      "purpose": "Durable branch signal and ask vocabulary with persisted-row validation",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 2,
       "enum": 1,
       "re-export": 1,
       "struct": 1
@@ -2954,8 +2954,8 @@
      "path": "src/attempt_queue/skill_edit_cycle.rs",
      "purpose": "Skill edit cycle labels that bound their originating run identifiers",
      "surface": {
-      "const": 1,
-      "crate-vis": 1
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -3141,7 +3141,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/validate/cancel_receipt_landing.rs",
@@ -3151,13 +3151,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/validate/field_validators.rs",
      "purpose": "Length caps, error literals, and per-field validators plus lease/manifest mutators",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 15
      }
     },
     {
@@ -28039,8 +28039,8 @@
      "path": "src/dreamer_runner/codec.rs",
      "purpose": "MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows",
      "surface": {
-      "crate-vis": 25,
-      "fn": 2
+      "crate-vis": 12,
+      "re-export": 1
      }
     },
     {
@@ -28081,7 +28081,7 @@
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
       "const": 1,
-      "crate-vis": 35,
+      "crate-vis": 32,
       "re-export": 25
      }
     },
@@ -30369,7 +30369,6 @@
       "CompleteDreamerAttemptOutcome",
       "DreamerAdmissionOutcome",
       "DreamerAdmittedAttempt",
-      "DreamerAttemptPayload",
       "DreamerAttemptProgressState",
       "DreamerAttemptStatus",
       "DreamerBudgetRecord",
@@ -30406,8 +30405,8 @@
       "crate-vis": 4,
       "enum": 12,
       "fn": 17,
-      "re-export": 2,
-      "struct": 25
+      "re-export": 3,
+      "struct": 24
      }
     },
     {
@@ -69216,6 +69215,7 @@
      "path": "src/store/attempt_cancel.rs",
      "purpose": "The graceful-cancel vocabulary an attempt row carries (ONE-1896): the landing and its trigger, the resume…",
      "surface": {
+      "const": 1,
       "enum": 5,
       "struct": 7
      }
@@ -69332,6 +69332,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/attempt_payload_retire.rs",
+     "purpose": "Retiring an attempt row's payload text in place: the row takes its text-free form when the body instance it…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/attempt_payload_route.rs",
      "purpose": "The routing probe that tells an agent dispatch's attempt row apart without the strict reader: its record…",
      "surface": {
@@ -69367,9 +69377,60 @@
      "path": "src/store/attempt_record.rs",
      "purpose": "The durable attempt row (`AttemptRecord`) and the field types it alone holds: its operator placement, a…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_record_codec/cancel_validators.rs",
+     "purpose": "The cancel-receipt shape table and the landing and cancel-state validators the strict reader runs on a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_record_codec/field_validators.rs",
+     "purpose": "The attempt record's field validators and their length caps and error literals: every check the strict…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 65
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_record_codec/mod.rs",
+     "purpose": "The attempt record's strict codec (`job_records` rows): the version byte and named MessagePack body, the…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_record_codec/signal_validators.rs",
+     "purpose": "The persisted-row validation of an attempt row's branch signals and asks: each field's shape, signal-key and…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_record_read.rs",
+     "purpose": "Point reads of one attempt row inside the caller's transaction: the decoded row, and whether a worker still…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -69394,6 +69455,16 @@
      "purpose": "Owner-retained queue kind and identifier range classification",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_run_root.rs",
+     "purpose": "The Dreamer run-root lookup: the OF-193 root attempt of one stamped run, read through the durable run index…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -69568,7 +69639,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/body_envelope/response.rs",
@@ -70741,6 +70812,20 @@
      "purpose": "Queue discriminators and wire constants used by stored Dreamer attempts",
      "surface": {
       "const": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerAttemptPayload"
+     ],
+     "path": "src/store/dreamer_attempt_payload.rs",
+     "purpose": "Dreamer attempt payload envelope and its MessagePack codec",
+     "surface": {
+      "crate-vis": 18,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -72124,7 +72209,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 113,
+      "crate-vis": 118,
       "mod": 108,
       "re-export": 31
      }
@@ -90471,7 +90556,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 421,
+     "files": 429,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90709,9 +90794,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 142,
+   "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6303,
+   "source_files": 6311,
    "test_files": 895
   },
   "oneiron-android": {
