@@ -37,7 +37,7 @@
 //! it, replays it or truncates it (a lease-less spend's guard replays it
 //! first, [`spend_guard`]).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -48,7 +48,10 @@ use std::time::Instant;
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
-use super::{NonceKey, REPLAY_NONCE, WINDOW_SECS, admission_now_in_txn, put_nonce_row_in_txn};
+use super::{
+    NonceKey, PROOF_NOT_BEFORE, REPLAY_NONCE, WINDOW_SECS, admission_now_in_txn,
+    put_nonce_row_in_txn,
+};
 use crate::authority::{AUTHORITY_FIRST_SEEN, FoldedSlip, authority_first_seen_sidecar_key};
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
@@ -71,6 +74,31 @@ const NONCE_SPEND_DETECTOR: &str = "authority.nonce_spend.v1";
 const NONCE_SPEND_WRITE: &str = "nonce spend";
 /// The detached door's name for a spend's healer item.
 const NONCE_SPEND_HEALER_ITEM_WRITE: &str = "nonce spend healer item";
+/// The detector token of a journal replay that could not prove every
+/// journaled spend landed (FIX 12023 W0 review P1-2).
+const NONCE_JOURNAL_DETECTOR: &str = "authority.nonce_journal_recovery.v1";
+
+/// Why a journal replay could not prove every journaled spend landed.
+#[derive(Clone, Copy, Debug)]
+enum JournalRecoveryFailure {
+    /// The journal exists and did not read.
+    Read,
+    /// Complete records that do not read: each may be an answered spend.
+    Unreadable(usize),
+    /// The readable records' rows did not commit.
+    Land,
+}
+
+impl JournalRecoveryFailure {
+    /// The records the failure leaves unproven, as its healer item counts
+    /// them: unknown (one) for a read or a landing that failed.
+    fn unproven(self) -> u64 {
+        match self {
+            Self::Unreadable(n) => n as u64,
+            Self::Read | Self::Land => 1,
+        }
+    }
+}
 /// The journal a spend is appended to and fdatasynced on before its reply
 /// (FIX 12023 W0, P1-a=B), beside the environment in its root.
 const SPEND_JOURNAL_FILE: &str = "slip-spend.journal";
@@ -164,6 +192,10 @@ struct Nonces {
     admitted: HashMap<SpentKey, u64>,
     /// `admitted` in the order its entries leave.
     leaving: BTreeSet<(u64, SpentKey)>,
+    /// Admitted entries whose replay window ended before their rows landed:
+    /// their journal records are still owed a replay, so the journal keeps
+    /// them and a restore's fence still counts them, until the rows land.
+    expired_unlanded: HashSet<SpentKey>,
     /// Spent in a writer whose transaction is not known to be decided, each
     /// with the id that transaction commits as.
     staged: HashMap<SpentKey, usize>,
@@ -188,6 +220,8 @@ impl Nonces {
         while self.leaving.first().is_some_and(|(until, _)| *until < now) {
             if let Some((_, key)) = self.leaving.pop_first() {
                 self.admitted.remove(&key);
+                // Its rows have not landed: its journal record stays owed.
+                self.expired_unlanded.insert(key);
             }
         }
     }
@@ -197,6 +231,13 @@ impl Nonces {
         if let Some(until) = self.admitted.remove(key) {
             self.leaving.remove(&(until, *key));
         }
+        self.expired_unlanded.remove(key);
+    }
+
+    /// Whether every spend journaled here has landed its rows: no admitted
+    /// entry, no expired one still unlanded, none queuing.
+    fn drained(&self) -> bool {
+        self.admitted.is_empty() && self.expired_unlanded.is_empty() && self.queuing == 0
     }
 
     /// Opens the journal in the environment at `root` on first use: a torn
@@ -310,7 +351,7 @@ impl Nonces {
     /// journaled spend's rows are committed, so no record is owed a replay.
     /// A failed truncate leaves the records for a replay the rows absorb.
     fn truncate_journal_if_drained(&mut self) {
-        if !self.admitted.is_empty() || self.queuing != 0 || self.journal_len == 0 {
+        if !self.drained() || self.journal_len == 0 {
             return;
         }
         if let Some(file) = self.journal.as_mut() {
@@ -459,8 +500,12 @@ pub(in crate::authority) fn spend_guard(vault: &Vault) -> Result<SpendGuard> {
     let lease = writer_spend_lease(vault)?;
     if lease.is_some() {
         let journal = vault.store.canonical_root().join(SPEND_JOURNAL_FILE);
-        if std::fs::metadata(&journal).is_ok_and(|meta| meta.len() > 0) {
-            vault.spent_nonces.replay_journal(vault);
+        let owed = match std::fs::metadata(&journal) {
+            Ok(meta) => meta.len() > 0,
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        };
+        if owed {
+            vault.spent_nonces.replay_journal(vault)?;
         }
     }
     Ok(SpendGuard {
@@ -682,13 +727,15 @@ impl SpentNonces {
     /// so a spent slip replayed after a crash meets its row on the writer's
     /// path. Only an open that took the writer lease replays it; a
     /// lease-less open leaves it for the next lease holder (or for a spend's
-    /// guard, [`spend_guard`]). A failure is warned and the open goes on:
-    /// the journal stands for the next open, never a reason to refuse this
-    /// one.
-    pub(crate) fn replay_journal_at_open(&self, vault: &Vault) {
+    /// guard, [`spend_guard`]). A replay that cannot prove every journaled
+    /// spend landed raises the proof floor past them first
+    /// ([`Self::refuse_journaled_proofs`]); only a floor that does not
+    /// commit fails the open.
+    pub(crate) fn replay_journal_at_open(&self, vault: &Vault) -> Result<()> {
         if vault.store.opened_with_writer_lease() {
-            self.replay_journal(vault);
+            self.replay_journal(vault)?;
         }
+        Ok(())
     }
 
     /// Lands every unexpired spend the journal holds, in one writer, then
@@ -703,21 +750,21 @@ impl SpentNonces {
     /// lowered is never raised again; a record whose `proof_now` stands far
     /// ahead of the authority second now only warns, the wall having stepped
     /// back across the crash.
-    fn replay_journal(&self, vault: &Vault) {
+    fn replay_journal(&self, vault: &Vault) -> Result<()> {
         let path = vault.store.canonical_root().join(SPEND_JOURNAL_FILE);
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => {
-                tracing::warn!(
+                tracing::error!(
                     error = %error,
-                    "the slip-spend journal did not read; it stands for the next lease-holder open"
+                    "the slip-spend journal did not read; every proof it may hold is refused"
                 );
-                return;
+                return self.refuse_journaled_proofs(vault, JournalRecoveryFailure::Read);
             }
         };
         if bytes.is_empty() {
-            return;
+            return Ok(());
         }
         let mut records = Vec::new();
         let mut unreadable = 0_usize;
@@ -763,12 +810,18 @@ impl SpentNonces {
                 Ok(())
             })();
             if let Err(error) = landed {
-                tracing::warn!(
+                tracing::error!(
                     kind = ?error.kind(),
-                    "the slip-spend journal replay did not land; it stands for the next lease-holder open"
+                    "the slip-spend journal replay did not land; every proof it may hold is refused"
                 );
-                return;
+                return self.refuse_journaled_proofs(vault, JournalRecoveryFailure::Land);
             }
+        }
+        // A complete record that does not read may be a spend already
+        // answered: no row says it landed, so its proof is refused too.
+        if unreadable > 0 {
+            return self
+                .refuse_journaled_proofs(vault, JournalRecoveryFailure::Unreadable(unreadable));
         }
         // After the commit, never before: a crash between the two replays
         // the same records at the next open, which the rows absorb. Only a
@@ -778,8 +831,7 @@ impl SpentNonces {
         let mut nonces = self.lock();
         if nonces.open_journal_if_needed(vault.store.canonical_root())
             && nonces.journal_len == read_len
-            && nonces.admitted.is_empty()
-            && nonces.queuing == 0
+            && nonces.drained()
         {
             let truncated = match nonces.journal.as_mut() {
                 Some(file) => file.set_len(0),
@@ -796,6 +848,58 @@ impl SpentNonces {
                 ),
             }
         }
+        Ok(())
+    }
+
+    /// A journal whose spends a replay cannot prove landed (FIX 12023 W0
+    /// review P1-2; Engine 11-04 10:3x, P1-2 = A): raises the proof floor
+    /// (`not_before`) past every proof it can hold, in one writer that also
+    /// files the failure as a Critical healer item the owner sees, then
+    /// truncates the journal that floor covers. Each journaled proof was
+    /// admitted within [`WINDOW_SECS`] of a proof clock that never runs back,
+    /// so a floor [`WINDOW_SECS`] + 1 past the clock now refuses every one;
+    /// a fresh proof is refused only until the clock passes the floor, and no
+    /// slip is touched. A floor that does not commit fails the caller.
+    fn refuse_journaled_proofs(
+        &self,
+        vault: &Vault,
+        failure: JournalRecoveryFailure,
+    ) -> Result<()> {
+        let _active_write_txn = active_write_txn_guard();
+        let mut txn = vault.store.env.write_txn()?;
+        let clock = admission_now_in_txn(vault, &mut txn)?;
+        let floor = clock.now.saturating_add(WINDOW_SECS + 1);
+        if PROOF_NOT_BEFORE
+            .get(&vault.store, &txn, &())?
+            .is_none_or(|kept| kept < floor)
+        {
+            PROOF_NOT_BEFORE.put(&vault.store, &mut txn, &(), &floor)?;
+        }
+        file_journal_recovery_item_in_txn(vault, &mut txn, failure, clock.now, floor)?;
+        txn.commit()?;
+        tracing::error!(
+            ?failure,
+            not_before = floor,
+            "the slip-spend journal did not replay; proofs signed before not_before are refused, and a healer item is filed"
+        );
+        // Every record it holds is now refused by the floor; one appended
+        // here since is an unlanded entry, which `drained` waits for.
+        let mut nonces = self.lock();
+        if nonces.open_journal_if_needed(vault.store.canonical_root()) && nonces.drained() {
+            if let Some(file) = nonces.journal.as_mut() {
+                match file.set_len(0) {
+                    Ok(()) => {
+                        nonces.journal_len = 0;
+                        nonces.cap_warned = false;
+                    }
+                    Err(error) => tracing::warn!(
+                        error = %error,
+                        "the refused slip-spend journal did not truncate; its records stay refused by the floor"
+                    ),
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Closes this set for a restore's swap, first in it (FIX 12023 W0, L02
@@ -832,7 +936,7 @@ impl SpentNonces {
         rows_match: impl FnOnce() -> Result<bool>,
     ) -> Result<bool> {
         let mut nonces = self.lock();
-        for key in nonces.admitted.keys() {
+        for key in nonces.admitted.keys().chain(nonces.expired_unlanded.iter()) {
             if !REPLAY_NONCE.contains(&vault.store, txn, &key.row())? {
                 return Ok(false);
             }
@@ -1065,4 +1169,45 @@ impl NonceSpend {
         }
         vault.emit_diagnostic_event_in_txn(txn, &id, &event)
     }
+}
+
+/// Stores the healer item of a journal replay that could not prove every
+/// journaled spend landed: a system self-report, Critical, addressed by the
+/// floor it raised and valid from the proof clock's second. A replay that
+/// failed the same way at the same floor stores nothing new.
+fn file_journal_recovery_item_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    failure: JournalRecoveryFailure,
+    now: u64,
+    floor: u64,
+) -> Result<()> {
+    let unproven = failure.unproven();
+    let event = DiagnosticEvent {
+        detector_id: NONCE_JOURNAL_DETECTOR.to_owned(),
+        event_class: DiagnosticEventClass::ChainVerifyFailure,
+        signal: None,
+        actor_class: "system".to_owned(),
+        actor_ref: None,
+        source: DiagnosticSourceKind::SelfReport,
+        criticality: DiagnosticCriticality::Critical,
+        // Every journaled spend should replay; this many could not be proven.
+        expected: Value::from(0_u64),
+        actual: Value::from(unproven),
+        delta: Value::from(unproven),
+        replay: DiagnosticReplayCoordinate {
+            content_hash: *blake3::hash(&floor.to_le_bytes()).as_bytes(),
+            run_ref: None,
+            checkpoint_ref: None,
+        },
+        evidence_refs: Vec::new(),
+        valid_from: now,
+        valid_to: None,
+    };
+    let body = encode_diagnostic_event_body(&event)?;
+    let id = diagnostic_event_id(NONCE_JOURNAL_DETECTOR, &body);
+    if vault.store.port_entity_raw(&*txn, &id)?.is_some() {
+        return Ok(());
+    }
+    vault.emit_diagnostic_event_in_txn(txn, &id, &event)
 }
