@@ -371,7 +371,11 @@ impl Vault {
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
         let had_merge_receipt =
             crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
-        crate::skill_hub::remove_refinement_carrier_in_txn(&self.store, wtxn, id)?;
+        crate::store::skill_refinement_custody::remove_refinement_carrier_in_txn(
+            &self.store,
+            wtxn,
+            id,
+        )?;
         crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
         crate::comm::clear_pending_stop_for_delete(&self.store, wtxn, id)?;
