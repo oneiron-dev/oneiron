@@ -42,9 +42,8 @@ pub use credential::{
 };
 pub(crate) use plain_resume::PlainRowResume;
 pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
-pub(crate) use resume::{
-    VerbResume, error_failed_storage, run_failed_transient, verb_ask_settled_in_txn,
-};
+pub use resume::run_failed_transient; // the server's chat hooks read it (oneiron-server api/ai/chat/hooks.rs)
+pub(crate) use resume::{VerbResume, error_failed_storage, verb_ask_settled_in_txn};
 pub use snapshot::VerbHookPreSnapshot;
 pub(crate) use state::{HookDepth, VerbHookState};
 pub use state::{
@@ -354,7 +353,10 @@ impl Vault {
             return false;
         };
         if let Some(key) = pre.session() {
-            return self.verb_hook_state.session.unuse_ask(key, token.key(), token.ask());
+            return self
+                .verb_hook_state
+                .session
+                .unuse_ask(key, token.key(), token.ask());
         }
         self.with_write_txn_grouped(|txn| ask::reopen_in_txn(self, txn, token))
             .inspect_err(|error| {
