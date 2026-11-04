@@ -141,9 +141,15 @@ pub fn route_projector_only_comm_put_in_txn(
 /// of its ops for the projector: the source events they record, in op order.
 pub(crate) struct RoutedBatchPuts {
     events: Vec<CommSourceEvent>,
+    inputs: Vec<ClaimBody>,
 }
 
 impl RoutedBatchPuts {
+    /// Original validated CLAIM bodies, including source-only routed acts.
+    pub(crate) fn inputs(&self) -> &[ClaimBody] {
+        &self.inputs
+    }
+
     /// Records each routed put's source event in `wtxn` and projects it
     /// there, in op order against one pass index; an event the projector's
     /// pass would leave waiting stays pending for that pass. Returns the ids
@@ -245,6 +251,7 @@ pub(crate) fn take_projector_only_batch_puts_in_txn(
         note_named_ids(op, |id| *mentions.entry(id).or_default() += 1);
     }
     let mut events = Vec::new();
+    let mut inputs = Vec::new();
     let mut routed = BTreeSet::new();
     for (index, predicate) in candidates {
         let BatchOp::Put { id, data, .. } = &ops[index] else {
@@ -256,6 +263,12 @@ pub(crate) fn take_projector_only_batch_puts_in_txn(
         if let CommPutRoute::Projector(event) =
             comm_put_route_in_txn(vault, txn, id, &predicate, data)?
         {
+            inputs.push(crate::claim::validate_claim_body_and_decode_in_txn(
+                &vault.store,
+                txn,
+                data,
+                false,
+            )?);
             events.extend(event);
             routed.insert(*id);
         }
@@ -264,7 +277,7 @@ pub(crate) fn take_projector_only_batch_puts_in_txn(
         return Ok(None);
     }
     ops.retain(|op| !leaves_with_routed_put(op, &routed));
-    Ok(Some(RoutedBatchPuts { events }))
+    Ok(Some(RoutedBatchPuts { events, inputs }))
 }
 
 /// Where one generic put of `data`, a body of the routed class `predicate`,

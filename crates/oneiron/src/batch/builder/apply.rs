@@ -132,13 +132,18 @@ impl BatchBuilder<'_> {
         let vault = self.vault;
         // Preserve original-position admission before routing removes a Put.
         // Actual head changes and the remaining ops get their own final checks.
-        if let Some(actor) = actor {
-            super::super::actor_content::ContentWriteSet::before(vault, wtxn, actor, &self.ops)?;
-        }
+        let original = actor
+            .map(|actor| {
+                super::super::actor_content::ContentWriteSet::before(vault, wtxn, actor, &self.ops)
+            })
+            .transpose()?
+            .flatten();
+        let mut original_bodies = Vec::new();
         let routed =
             match crate::comm::take_projector_only_batch_puts_in_txn(vault, wtxn, &mut self.ops)? {
                 Some(routed) => match actor {
                     Some(actor) => {
+                        original_bodies.extend_from_slice(routed.inputs());
                         let mut admission = super::comm_projection::CommHeadWrites::actor(actor);
                         routed.record_with_admission_in_txn(vault, wtxn, Some(&mut admission))?
                     }
@@ -202,6 +207,9 @@ impl BatchBuilder<'_> {
                 authority_beside,
                 own_device,
             )?;
+        }
+        if let (Some(actor), Some(original)) = (actor, original) {
+            original.admit_routed_inputs(vault, wtxn, actor, &original_bodies)?;
         }
         crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
         // Queue only after admitted apply. The owner checks the final body and

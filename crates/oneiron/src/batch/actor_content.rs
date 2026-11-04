@@ -122,6 +122,27 @@ impl ContentWriteSet {
         )
     }
 
+    /// A routed input still meets the original local CLAIM's create-position
+    /// check. For these validated comm claims, the normal blob scope resolver
+    /// uses this same ClaimBody scope; no temporary raw CLAIM is stored.
+    pub(super) fn admit_routed_inputs(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        actor: &WriteActor,
+        bodies: &[crate::claim::ClaimBody],
+    ) -> Result<()> {
+        for body in bodies {
+            vault.authorize_shared_vault_write_in_txn(
+                txn,
+                self.vault_id,
+                actor,
+                &SharedVaultWrite::Content(body.record_scope("read")),
+            )?;
+        }
+        Ok(())
+    }
+
     /// Exact head effects, captured before the projector changes any of them.
     pub(super) fn before_heads(
         vault: &Vault,
