@@ -77,6 +77,7 @@ struct CheckpointPinBinding {
     install: String,
     slhdsa: String,
     epoch: u64,
+    assurance: String,
     signature: CheckpointPinSignature,
 }
 
@@ -156,6 +157,7 @@ impl CheckpointPinBinding {
             install: hex(&binding.install),
             slhdsa: hex(&binding.slhdsa),
             epoch: binding.epoch,
+            assurance: binding.assurance.clone(),
             signature: CheckpointPinSignature::from_engine(&binding.signature),
         }
     }

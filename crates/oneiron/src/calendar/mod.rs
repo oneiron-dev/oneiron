@@ -73,7 +73,7 @@ pub mod outcome;
 pub mod passport;
 pub mod prep;
 pub mod query;
-pub mod safeguard;
+pub use oneiron_base::calendar_body_screen as safeguard;
 pub mod series;
 pub mod transcript;
 pub mod tz;

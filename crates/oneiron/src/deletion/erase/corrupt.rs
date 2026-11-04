@@ -399,13 +399,16 @@ impl Vault {
         }
         #[cfg(feature = "sync")]
         {
-            let queued = crate::sync::queue::queued_window_labels_in_txn(self, wtxn)?;
+            let queued = self
+                .store
+                .sync_hooks
+                .queued_window_labels_in_txn(self, wtxn)?;
             windows.extend(
                 queued
                     .into_iter()
                     .filter(|label| label.starts_with(&prefix)),
             );
-            windows.extend(crate::sync::residence::indexed_windows_in_txn(
+            windows.extend(self.store.sync_hooks.indexed_windows_in_txn(
                 &self.store,
                 wtxn,
                 &prefix,

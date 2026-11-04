@@ -886,7 +886,11 @@ fn map_project_root<R: Read + Seek>(
     let Ok(kind) = vault.project_type_byte() else {
         return Ok(None);
     };
-    let Some(target) = crate::workspace_roster::root_project_in(&vault.store, txn)? else {
+    let Some(target) = vault
+        .store
+        .project_writes
+        .root_project_in(&vault.store, txn)?
+    else {
         return Ok(None);
     };
     let mut source = None;
@@ -1192,7 +1196,7 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             .collect(),
         ENTITY_TYPE_CONVERSATION => super::project_room_dependency(bytes).into_iter().collect(),
         ENTITY_TYPE_WORKFLOW => {
-            let definition = crate::agent_def::workflow::decode_workflow(bytes)?;
+            let definition = crate::store::workflow_definition::decode_workflow(bytes)?;
             definition
                 .steps
                 .into_iter()

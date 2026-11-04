@@ -14,12 +14,17 @@
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
+#[cfg(feature = "sync")]
 use crate::Vault;
 use crate::authority::{ResidenceAct, ResidenceResult, ResidenceResultStatus};
+#[cfg(feature = "sync")]
 use crate::consent::AuthenticatedOwner;
+#[cfg(feature = "sync")]
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
+#[cfg(feature = "sync")]
 use crate::sync::residence::ResidenceDirectiveState;
+#[cfg(feature = "sync")]
 use crate::sync::{OpenedItem, ResidenceIndexWindow, ResidenceModeChange, SyncResidenceMode};
 
 /// `opened` (items fetched on demand) or `all` (full window replication).
@@ -30,6 +35,7 @@ pub enum ResidenceModeName {
     All,
 }
 
+#[cfg(feature = "sync")]
 impl From<ResidenceModeName> for SyncResidenceMode {
     fn from(mode: ResidenceModeName) -> Self {
         match mode {
@@ -39,6 +45,7 @@ impl From<ResidenceModeName> for SyncResidenceMode {
     }
 }
 
+#[cfg(feature = "sync")]
 impl From<SyncResidenceMode> for ResidenceModeName {
     fn from(mode: SyncResidenceMode) -> Self {
         match mode {
@@ -161,6 +168,7 @@ pub struct ResidenceModeChanged {
     pub pruned_items: usize,
 }
 
+#[cfg(feature = "sync")]
 impl From<ResidenceModeChange> for ResidenceModeChanged {
     fn from(change: ResidenceModeChange) -> Self {
         let keys = |keys: Vec<crate::sync::WindowKey>| {
@@ -191,6 +199,7 @@ pub struct ResidenceOpened {
 }
 
 impl ResidenceOpened {
+    #[cfg(feature = "sync")]
     pub fn from_opened(
         opened: OpenedItem,
         source: crate::note::NoteReadSource,
@@ -243,6 +252,7 @@ pub struct ResidenceIndex {
     pub windows: Vec<ResidenceIndexWindowView>,
 }
 
+#[cfg(feature = "sync")]
 impl From<Vec<ResidenceIndexWindow>> for ResidenceIndex {
     fn from(windows: Vec<ResidenceIndexWindow>) -> Self {
         Self {
@@ -405,6 +415,7 @@ pub struct ResidenceDirectiveView {
     pub result: Option<ResidenceResultView>,
 }
 
+#[cfg(feature = "sync")]
 impl From<&ResidenceDirectiveState> for ResidenceDirectiveView {
     fn from(state: &ResidenceDirectiveState) -> Self {
         Self {
@@ -429,6 +440,7 @@ impl From<&ResidenceDirectiveState> for ResidenceDirectiveView {
 ///
 /// Neither or both of `machine` and `directive`; an owner who no longer
 /// stands; storage errors.
+#[cfg(feature = "sync")]
 pub fn residence_directives_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -452,6 +464,7 @@ pub fn residence_directives_as_owner(
 /// # Errors
 ///
 /// A caller who is not the vault's owner; as [`residence_directives_as_owner`].
+#[cfg(feature = "sync")]
 pub fn residence_directives(
     memory: &Memory<'_>,
     input: &ResidenceDirectivesRequest,

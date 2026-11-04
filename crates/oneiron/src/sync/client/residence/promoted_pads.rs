@@ -185,6 +185,16 @@ impl SyncClient {
         if !self.vault.world_pads_missing(world).map_err(storage)? {
             return Ok(());
         }
+        // A timed-out capsule reply must not be read as the promotion reply.
+        drop(rpc);
+        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
+            return Err(TransportError::Storage("home node offline".into()));
+        };
+        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+            return Err(TransportError::Storage(
+                "home may not read this world".into(),
+            ));
+        }
         let reply: PromotionReply = serde_json::from_value(
             rpc.request(
                 "residence.promote",

@@ -7,75 +7,10 @@
 //! scan and row codecs stay in `hooks`, the agent's bind in `install`.
 
 use super::*;
-use crate::side_table::{self, Named, SideTable};
-
-/// Each agent hook's ask, by the binding claim it widens.
-const PROPOSALS: SideTable<EntityId, PackHookProposal, Named> =
-    SideTable::new(&side_table::SKILL_HUB_PACK_HOOK_PROPOSAL);
-
-/// What an agent's hook asks beyond its own ceiling.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum HookWidening {
-    /// Fail safe before the verb runs; only the owner marks a hook blocking.
-    Blocking,
-    /// A pre-hook's Skip of the verbs it selects.
-    Skip,
-    /// A pre-hook's Ask before the verbs it selects.
-    Ask,
-    /// A pre-hook's Rewrite of the verbs it selects.
-    Rewrite,
-}
-
-/// Where a proposal stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PackHookProposalStatus {
-    /// Waiting for the owner; the binding runs at the agent's ceiling.
-    Proposed,
-    /// The owner bound the hook as asked.
-    Approved,
-    /// The owner declined; the binding stays at the agent's ceiling.
-    Discarded,
-    /// The agent's later put no longer asks it, or stopped the hook.
-    Withdrawn,
-}
-
-/// One agent hook's ask for the binding its HOOK.md declares, where the
-/// agent's put bound it narrower.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PackHookProposal {
-    /// The binding claim the agent's put wrote at its ceiling.
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub binding: EntityId,
-    /// The agent that wrote the hook and asks.
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub agent: EntityId,
-    pub pack: String,
-    pub hook: String,
-    /// The pack source the agent's latest put bound.
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub source: EntityId,
-    /// BLAKE3 of `body.js`, lowercase hex.
-    pub body_hash: String,
-    /// The selector as the hook declares it; an approval binds this.
-    pub asked: HookSelector,
-    /// What `asked` holds beyond the agent's ceiling.
-    pub widening: Vec<HookWidening>,
-    pub status: PackHookProposalStatus,
-    pub proposed_at: u64,
-    pub settled_at: Option<u64>,
-    /// The owner who approved or discarded it.
-    #[serde(with = "crate::serialize::entity_ref::optional")]
-    #[schemars(with = "Option<String>")]
-    pub settled_by: Option<EntityId>,
-}
+use crate::store::pack_hook_proposal::PROPOSALS;
+pub use crate::store::pack_hook_proposal::{
+    HookWidening, PackHookProposal, PackHookProposalStatus,
+};
 
 /// What `selector` asks beyond an agent's own ceiling (ARCH-0080 §10). A
 /// selector names actor classes, never one actor, so a pre-hook's Skip, Ask
@@ -318,34 +253,4 @@ fn open_proposal_in_txn(
         return Err(invalid("the hook proposal is already settled"));
     }
     Ok(proposal)
-}
-
-/// Drops the proposal keyed by the binding claim `binding`: a deleted or
-/// erased binding takes its proposal with it.
-pub(crate) fn erase_hook_proposal_in_txn(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    binding: &EntityId,
-) -> Result<()> {
-    PROPOSALS.delete(store, txn, binding)?;
-    Ok(())
-}
-
-/// An erased actor leaves no id in the proposals: an ask it made as the
-/// agent goes with it, and where it settled one as the owner the settlement
-/// stays and its `settled_by` is blanked.
-pub(crate) fn scrub_hook_proposal_actor_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    for (binding, mut proposal) in PROPOSALS.scan(&vault.store, txn)? {
-        if proposal.agent == *actor {
-            PROPOSALS.delete(&vault.store, txn, &binding)?;
-        } else if proposal.settled_by == Some(*actor) {
-            proposal.settled_by = None;
-            PROPOSALS.put(&vault.store, txn, &binding, &proposal)?;
-        }
-    }
-    Ok(())
 }

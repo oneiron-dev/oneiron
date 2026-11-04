@@ -46,8 +46,10 @@ pub(crate) struct ExportSnapshotRun {
 /// not exported.
 pub(crate) struct ExportSnapshotBody<'t> {
     pub(crate) bytes: u64,
-    pub(crate) body:
-        std::result::Result<crate::code_run::CodeRunResultBodyReader<'t>, &'static str>,
+    pub(crate) body: std::result::Result<
+        crate::store::result_body_reader::CodeRunResultBodyReader<'t>,
+        &'static str,
+    >,
 }
 
 /// One live row as the snapshot reads it, with what it carries beside it.

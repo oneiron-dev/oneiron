@@ -1,7 +1,10 @@
 //! Dispatch and execution door validators and the execution transcript encoders.
 
+use std::sync::Arc;
+
 use serde::Serialize;
 
+use crate::code_sandbox::ProposalSpoolFloor;
 use crate::code_sandbox::microvm::ExecutionBudget;
 
 use super::connector::{
@@ -118,7 +121,10 @@ pub(super) fn validate_execution_budget(budget: ExecutionBudget) -> ByoaResult<(
 
 /// Encodes `value` as JSON into an exhaust stream, held in memory up to the
 /// inline budget and spooled past it; never refused for its size.
-pub(super) fn encode_execution_transcript(value: &impl Serialize) -> ByoaResult<ByoaStream> {
+pub(super) fn encode_execution_transcript(
+    value: &impl Serialize,
+    floor: Option<Arc<dyn ProposalSpoolFloor>>,
+) -> ByoaResult<ByoaStream> {
     /// The stream the encoder writes into, keeping the spool's own refusal.
     struct Spooling {
         stream: ByoaStreamWriter,
@@ -137,7 +143,7 @@ pub(super) fn encode_execution_transcript(value: &impl Serialize) -> ByoaResult<
         }
     }
     let mut sink = Spooling {
-        stream: ByoaStream::writer(None, None),
+        stream: ByoaStream::writer(floor, None),
         refused: None,
     };
     if serde_json::to_writer(&mut sink, value).is_err() {

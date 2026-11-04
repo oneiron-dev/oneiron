@@ -74,7 +74,7 @@ pub(crate) use step::{
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
     erase_step_state_owner_in_txn, owner_gone_in_txn, retire_step_claim_in_rows,
-    retire_step_claim_in_txn, step_claim_carriage, step_state_carriage, step_state_owners,
+    retire_step_claim_in_txn, step_state_carriage, step_state_owners,
 };
 // FIX 9929: a public model-step submission's kept copies.
 pub(crate) use step::{
@@ -195,7 +195,6 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
-pub(crate) use budget::erase_resident_share_actor_in_txn;
 pub use budget::rsi_doors;
 pub use budget::{
     ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,
@@ -208,10 +207,4 @@ pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
-pub(crate) use self::model_stream::model_stream_accepts_masked;
-pub(crate) use self::registry::llm_score_diffs_accepts_masked;
-pub(crate) use self::routing::llm_description_measurements_accepts_masked;
-pub(crate) use self::routing::llm_description_policy_accepts_masked;
 pub(crate) use self::routing::llm_routed_seat_accepts_masked;
-pub(crate) use self::seat::llm_model_description_accepts_masked;
-pub(crate) use self::step::model_step_submission_accepts_masked;
