@@ -225,6 +225,41 @@ pub(super) fn resolved_successor(
             };
             crate::origin::secret_marks::put_repo_secret_mark_in_txn(vault, &mut txn, &mark)?;
         }
+        // Round-5 (review P1 sol-1): document views (blame/diff) mask lifted
+        // keys only through the content-hash mask row, which never reads
+        // repo.secret_mark: project the same resolved spans there, so a
+        // non-owner never reads the substituted values in clear.
+        let mut masked = crate::secret_custody::masked_file_in_txn(
+            &vault.store,
+            &txn,
+            &raw_blake3,
+        )?
+        .unwrap_or(crate::secret_custody::MaskedFile {
+            band: crate::secret_custody::MASKED_FILE_BAND,
+            keys: Vec::new(),
+            masked_at: marked_at,
+            members: Vec::new(),
+        });
+        for ((_, _, custody, _), (start, end)) in spans.iter().zip(resolved_ranges.iter()) {
+            masked.unite(
+                &[],
+                crate::file_secret_marks::KeySpan {
+                    start: *start,
+                    end: *end,
+                    custody: *custody,
+                    reason: RESOLVED_HANDLE_DETECTOR.to_owned(),
+                },
+            );
+        }
+        crate::secret_custody::put_masked_file_in_txn(&vault.store, &mut txn, &raw_blake3, &masked)?;
+        // Round-5 (review P1 sol-2): index copies already derived from these
+        // bytes refresh under the new marks here, as the receive path does;
+        // new bytes have no copies and the call no-ops.
+        crate::origin::secret_projection::index::refresh_repo_index_projection_in_txn(
+            vault,
+            &mut txn,
+            &[raw_blake3],
+        )?;
     }
     original.status = RepoProposalStatus::Superseded;
     store(vault, &mut txn, &original)?;
