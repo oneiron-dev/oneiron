@@ -23861,6 +23861,7 @@ async fn vault_connectors_read_grants_grant(
         let (output, listed) = super::host_doors::vault_connectors_read_grants_grant(
             server,
             auth,
+            call.surface(),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -23896,6 +23897,7 @@ async fn vault_connectors_read_grants_revoke(
         let (output, listed) = super::host_doors::vault_connectors_read_grants_revoke(
             server,
             auth,
+            call.surface(),
             facade_door_input(&mut hooks)?,
         )
         .await;
