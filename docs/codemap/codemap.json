@@ -1859,7 +1859,7 @@
      "path": "src/anchored_annotation/anchor_text.rs",
      "purpose": "What an anchor says: the text under a locator in one version's bytes, the exact places those words occur in…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 11
      }
     },
     {
@@ -1969,9 +1969,9 @@
      "purpose": "Domain types: A1 ranges, format-typed locators, anchors, thread/comment/brief structs, and the re-anchor op…",
      "surface": {
       "const": 6,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 4,
-      "fn": 9,
+      "fn": 10,
       "struct": 8
      }
     },
@@ -2024,7 +2024,7 @@
      "path": "src/anchored_annotation/recovery.rs",
      "purpose": "Lost-anchor recovery (OF-368, owner ruling 2026-10-17)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 11,
       "fn": 4,
       "struct": 2
      }
@@ -2077,7 +2077,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AnnotationAnchorView",
