@@ -107827,11 +107827,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "LiveLeaseState"
+     ],
      "path": "src/ai_host/live_lease.rs",
      "purpose": "A metered try's spend lease, read live (FIX 1819): a workflow step's try, a reader child's run, or an…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9,
+      "struct": 1
      }
     },
     {
@@ -107854,8 +107857,8 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 24,
-      "mod": 3,
+      "crate-vis": 23,
+      "mod": 4,
       "re-export": 1,
       "struct": 2
      }
@@ -120913,7 +120916,7 @@
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
       "crate-vis": 28,
-      "fn": 12,
+      "fn": 13,
       "re-export": 1,
       "struct": 1
      }
