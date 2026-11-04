@@ -280,7 +280,6 @@ impl ModelCallRecord {
 impl ErasedForm for ModelCallRecord {
     fn into_erased(mut self) -> Result<Self> {
         self.erased = true;
-        self.route = None;
         self.issuing_login = None;
         self.organization = None;
         self.project = None;
@@ -288,18 +287,16 @@ impl ErasedForm for ModelCallRecord {
         self.response_id = None;
         self.thread_id = None;
         self.previous_response_id = None;
-        self.store = None;
-        self.receipt_ref = None;
+        self.rung.prompt = None;
         self.actor = None;
         self.produced_pending = false;
-        self.replay_of = None;
-        self.source_rows.clear();
-        self.produced_rows.clear();
-        self.input_parts.clear();
-        self.reasoning.clear();
-        self.read_world_epoch = None;
-        self.read_worlds = None;
-        self.read_world_unknown = vec![ReadWorldUnknown::Uncaptured];
+        self.input_parts
+            .retain(|part| !matches!(part, ModelCallInputPart::NewBytes { .. }));
+        for part in &mut self.reasoning {
+            part.text = None;
+            part.bytes = None;
+            part.signature = None;
+        }
         Ok(self)
     }
 }
@@ -312,6 +309,9 @@ pub(crate) fn erase_model_call_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
+    if crate::deletion::actor_fields::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
     for row in MODEL_CALLS.iter_raw_from(&vault.store, wtxn, &[])? {
         let (key, bytes) = row?;
         let Some(key) = <(EntityId, u64, u64) as SideKey>::decode_key(&key) else {
