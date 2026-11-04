@@ -142,7 +142,11 @@ impl Vault {
             let had_refinement =
                 crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, wtxn, id)?;
             let had_merge_receipt =
-                crate::skill_hub::refinement_custody_exists_in_txn(&self.store, wtxn, id)?;
+                crate::store::skill_refinement_custody::refinement_custody_exists_in_txn(
+                    &self.store,
+                    wtxn,
+                    id,
+                )?;
             let had_sources =
                 crate::skill_hub::source_custody_exists_in_txn(&self.store, wtxn, id)?;
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;

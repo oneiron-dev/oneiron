@@ -188,7 +188,11 @@ impl Vault {
         if crate::note::citation_delete_scope_exists(&self.store, txn, id)?
             || crate::skill_hub::source_custody_exists_in_txn(&self.store, txn, id)?
             || crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, txn, id)?
-            || crate::skill_hub::refinement_custody_exists_in_txn(&self.store, txn, id)?
+            || crate::store::skill_refinement_custody::refinement_custody_exists_in_txn(
+                &self.store,
+                txn,
+                id,
+            )?
             || crate::store::agent_birth_custody::birth_custody_exists_in_txn(&self.store, txn, id)?
             || crate::receipt::receipt_archive_custody_exists(&self.store, txn, id)?
             || crate::blob_artifact::claimed_hash_rows_exist(&self.store, txn, id)?

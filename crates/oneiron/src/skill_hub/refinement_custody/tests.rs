@@ -1,5 +1,6 @@
 //! The same source custody laws for claim and skill refinement receipts.
 use super::*;
+use crate::store::skill_refinement_custody::refinement_custody_exists_in_txn;
 use crate::{
     llm::decision::{
         AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionQuestion,
