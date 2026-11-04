@@ -599,7 +599,11 @@ impl NativeArms {
                         );
                     }
                 };
-                let state = json!({"task": prompt, "skill": arm.skill});
+                // The Choice options are positional IDs: expose the
+                // ID-to-exact-anchor mapping so the model chooses by
+                // anchor meaning, not by blind ID. Scoring still maps
+                // the answered ID back to exact bytes below.
+                let state = json!({"task": prompt, "skill": arm.skill, "options": values.clone()});
                 let decisions = judge.decisions();
                 let ladder = match server.decision_ladder_for_model(&arm.model) {
                     Ok(ladder) => ladder,
