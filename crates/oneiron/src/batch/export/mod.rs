@@ -67,6 +67,8 @@ pub use embedding_setup::*;
 mod expression_import;
 #[cfg(test)]
 mod expression_import_tests;
+mod home_room_project;
+pub(crate) use home_room_project::project_room_dependency;
 mod provenance_import;
 mod result_reserve;
 mod secret_supplement;
