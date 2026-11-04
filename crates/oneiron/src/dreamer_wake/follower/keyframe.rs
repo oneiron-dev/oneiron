@@ -195,7 +195,8 @@ pub(crate) struct KeyframeCommit<'a> {
 
 /// Stands a fold as the session's keyframe in one transaction: its result
 /// row, the coverage it folds and a new epoch. False, with nothing written,
-/// when this writer no longer holds the session or another fold stood.
+/// when this writer no longer holds the session, another fold stood, or a
+/// folded turn now belongs to an excluded conversation.
 pub(crate) fn commit_keyframe_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -209,6 +210,12 @@ pub(crate) fn commit_keyframe_in_txn(
     if session.state.keyframe != work.prior || session.state.covered_through >= work.covers_through
     {
         return Ok(false);
+    }
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
+    for turn in &work.turns {
+        if excluded.contains_turn(vault, txn, turn)? {
+            return Ok(false);
+        }
     }
     let key = (commit.writer.attempt, work.seq);
     let epoch = session.state.epoch.saturating_add(1);
