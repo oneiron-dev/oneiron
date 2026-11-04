@@ -46,21 +46,21 @@ export type CommitmentWakeProposal = { proposal_ref: string; instance_ref: strin
 export type CommitmentFulfillRequest = { commitment_ref: string; source: CommitmentFulfillmentSource; evidence_turn_refs: string[] }
 /** `oneiron::memory::commitment_doors::types::CommitmentCloseRequest` */
 export type CommitmentCloseRequest = { commitment_ref: string; evidence_turn_refs: string[] }
-/** `oneiron::memory::web_acquisition::door::WebFetchRequest` */
+/** `oneiron_web_fetch::web_acquisition::door::WebFetchRequest` */
 export type WebFetchRequest = { url: string }
-/** `oneiron::memory::web_acquisition::RendererKind` */
+/** `oneiron_web_fetch::web_acquisition::RendererKind` */
 export type RendererKind = "readability" | "headless" | "firecrawl"
-/** `oneiron::memory::web_acquisition::FetchResult` */
+/** `oneiron_web_fetch::web_acquisition::FetchResult` */
 export type FetchResult = { markdown: string; title: string; canonical_url: string; fetched_at: number; content_hash: string; renderer: RendererKind }
-/** `oneiron::memory::web_acquisition::CrawlScope` */
+/** `oneiron_web_fetch::web_acquisition::CrawlScope` */
 export type CrawlScope = "same_site" | "cross_site"
-/** `oneiron::memory::web_acquisition::door::WebCrawlRequest` */
+/** `oneiron_web_fetch::web_acquisition::door::WebCrawlRequest` */
 export type WebCrawlRequest = { seed_url: string; page_budget: number; scope?: CrawlScope }
-/** `oneiron::memory::web_acquisition::CrawlPageFailure` */
+/** `oneiron_web_fetch::web_acquisition::CrawlPageFailure` */
 export type CrawlPageFailure = { url: string; reason: string }
-/** `oneiron::memory::web_acquisition::CrawlCompletion` */
+/** `oneiron_web_fetch::web_acquisition::CrawlCompletion` */
 export type CrawlCompletion = { status: "complete" } | { status: "budget_exhausted"; unvisited_urls: string[] }
-/** `oneiron::memory::web_acquisition::CrawlResult` */
+/** `oneiron_web_fetch::web_acquisition::CrawlResult` */
 export type CrawlResult = { pages: FetchResult[]; failed: CrawlPageFailure[]; completion: CrawlCompletion }
 /** `oneiron::edit_distance::publisher::vocab::IssueCategory` */
 export type IssueCategory = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"

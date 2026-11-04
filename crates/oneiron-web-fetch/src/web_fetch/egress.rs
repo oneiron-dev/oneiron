@@ -42,9 +42,9 @@ use super::{
     WebFetchResult, WebFetcher,
 };
 
-pub use crate::memory::web_acquisition::HOSTED_INFRASTRUCTURE_REASON;
+pub use crate::web_acquisition::HOSTED_INFRASTRUCTURE_REASON;
 
-pub use crate::memory::web_acquisition::HOSTED_PRIVATE_NETWORK_REASON;
+pub use crate::web_acquisition::HOSTED_PRIVATE_NETWORK_REASON;
 
 /// Cloud metadata endpoints outside link-local: Alibaba Cloud's, Oracle
 /// Cloud's legacy one and Azure's platform (WireServer) address. The
@@ -397,7 +397,7 @@ impl FromStr for HostedPrivateOrigin {
     }
 }
 
-pub use crate::memory::web_acquisition::HostedEgressRefusal;
+pub use crate::web_acquisition::HostedEgressRefusal;
 
 impl WebFetcher {
     /// Makes this a managed (hosted) node's fetcher (SCAN C447): every page
