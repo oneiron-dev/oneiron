@@ -35,6 +35,7 @@ pub(crate) mod checkpoint;
 mod create;
 pub mod deck_creation;
 mod deck_doors;
+pub(crate) mod erase;
 mod family;
 mod holders;
 mod lifecycle;
@@ -54,13 +55,16 @@ pub use self::body::{
     BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody, decode_blob_artifact_body,
     encode_blob_artifact_body,
 };
-pub(crate) use self::born_from::archive_born_from_table;
 pub use self::born_from::{BornFromArtifact, BornFromSource};
+pub(crate) use self::born_from::{
+    agent_run_artifacts_with_prefix_in_txn, archive_born_from_table, artifacts_born_from_in_txn,
+};
 pub use self::create::ArtifactCreateRequest;
 pub use self::deck_doors::{
     DeckCommentInspection, DeckInspectRequest, DeckInspectionView, DeckProposeRejection,
     DeckRejectionCheck, DeckRejectionReport,
 };
+pub(crate) use self::erase::project_version_erased_in_txn;
 pub(crate) use self::family::hash_hex;
 pub use self::family::{
     ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView, VersionReconciliation,

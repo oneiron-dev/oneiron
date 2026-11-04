@@ -134,12 +134,20 @@ pub mod code_tree_blob;
 pub mod conversation_body;
 pub use oneiron_store::conversation_record;
 pub mod custody_retirement_status;
+mod delete_guards;
+pub use delete_guards::StoreDeleteGuards;
+mod hooks;
+pub use hooks::StoreHooks;
+mod scope_stamps;
+pub use scope_stamps::StoreScopeStamps;
 #[cfg(feature = "sync")]
 pub mod document_frame_tags;
 pub mod housekeeping_report;
 pub mod housekeeping_schedule;
 #[cfg(feature = "sync")]
 pub(crate) mod loro_document;
+#[cfg(feature = "sync")]
+pub(crate) mod loro_tombstones;
 #[cfg(feature = "sync")]
 pub mod materialization_event;
 pub mod model_description_rows;
@@ -152,6 +160,7 @@ pub mod pack_hook_actor_class;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
 pub mod person_billing_account;
+pub(crate) mod project_kind;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
 pub(crate) mod repo_environment;
@@ -261,6 +270,8 @@ mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
 pub(crate) mod local_replica;
+#[cfg(feature = "sync")]
+pub(crate) mod replica_edge_key;
 mod notification_updates;
 mod open_gates;
 mod outbound_send_receipt;

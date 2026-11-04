@@ -21,6 +21,7 @@ use std::collections::BTreeSet;
 use loro::json::{JsonOpContent, JsonSchema, ListOp, MapOp, MovableListOp, TextOp};
 use loro::{ContainerID, ContainerType, ID, LoroDoc, LoroValue, PeerID};
 
+use super::super::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
 use super::rows::{HeldEdit, Landing};
 use super::{CopyRow, InboundRow, SyncSecretProjection};
 use crate::entity_id::EntityId;
@@ -29,6 +30,35 @@ use crate::store::Store;
 
 /// The root map an entity row is a register of.
 const ENTITIES_MAP: &str = "entities";
+
+/// Other carriers and header-only shells can depend on a held entity.
+pub(super) fn needs_whole_hold(json: &JsonSchema) -> bool {
+    json.changes
+        .iter()
+        .flat_map(|change| &change.ops)
+        .any(|op| match (&op.container, &op.content) {
+            (
+                ContainerID::Root {
+                    name,
+                    container_type: ContainerType::Map,
+                },
+                JsonOpContent::Map(MapOp::Delete { .. }),
+            ) => name.as_str() != ENTITIES_MAP && name.as_str() != HELD_EDIT_CAUSALITY_MAP,
+            (
+                ContainerID::Root {
+                    name,
+                    container_type: ContainerType::Map,
+                },
+                JsonOpContent::Map(MapOp::Insert {
+                    value: LoroValue::Binary(row),
+                    ..
+                }),
+            ) if name.as_str() == ENTITIES_MAP => {
+                row.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+            }
+            _ => true,
+        })
+}
 
 /// A window history after [`SyncSecretProjection::project_history`].
 #[derive(Debug, Default)]
@@ -50,9 +80,9 @@ pub(crate) struct ProjectedHistory {
 pub(crate) struct TranslatedHistory {
     /// The canonical sources the translated operations now target.
     pub(crate) sources: BTreeSet<EntityId>,
-    /// Edits of a copy the visible diff holds on a ruled cause. Their
-    /// operations are left untranslated: the caller imports and applies
-    /// nothing of the update, and keeps only its held record (FIX 10598).
+    /// Edits of a copy the visible diff holds on a ruled cause. Their map
+    /// writes become deletes in an empty, non-materialized map: the causal
+    /// units remain, but no held row or source key reaches live state.
     pub(crate) held: Vec<HeldEdit>,
     /// The new bytes the translated operations land, for their writer to
     /// mark (FIX 10732).
@@ -147,6 +177,7 @@ impl SyncSecretProjection {
                     continue;
                 };
                 let entities = map == ENTITIES_MAP;
+                let mut neutralize = false;
                 match &mut op.content {
                     JsonOpContent::Map(MapOp::Insert { key, value }) => {
                         let row = entities
@@ -174,7 +205,10 @@ impl SyncSecretProjection {
                                 *key = id.to_hex();
                                 *value = LoroValue::from(row);
                             }
-                            InboundRow::Held(edit) => out.held.push(edit),
+                            InboundRow::Held(edit) => {
+                                out.held.push(edit);
+                                neutralize = true;
+                            }
                             InboundRow::Ordinary => self.unalias_key(key, &mut out.sources),
                         }
                     }
@@ -182,6 +216,15 @@ impl SyncSecretProjection {
                         self.unalias_key(key, &mut out.sources);
                     }
                     _ => {}
+                }
+                if neutralize {
+                    op.container = ContainerID::Root {
+                        name: HELD_EDIT_CAUSALITY_MAP.into(),
+                        container_type: ContainerType::Map,
+                    };
+                    op.content = JsonOpContent::Map(MapOp::Delete {
+                        key: HELD_EDIT_CAUSALITY_KEY.into(),
+                    });
                 }
             }
         }

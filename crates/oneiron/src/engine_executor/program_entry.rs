@@ -608,7 +608,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 )?
             }
             result => result?,
-        }
+        };
         if let Some(wait) = &wait {
             // Registered as parked, so the reply that settles the wait finds
             // the run; its resume is the program's resumer's.

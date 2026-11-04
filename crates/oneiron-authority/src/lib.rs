@@ -8,6 +8,8 @@ pub mod authority;
 pub mod channel_address;
 pub mod channel_selection_vocabulary;
 pub mod claim_history_handoff;
+pub mod channel_identity_manifest;
+pub mod channel_identity_shape;
 pub mod credential_door;
 pub mod federation;
 pub mod share_travel;

@@ -132,9 +132,12 @@ fn validate_terminal(
         && (message.content.is_empty()
             || message.content.iter().all(|p| match p {
                 oneiron::ContentPart::Text { text } => text.trim().is_empty(),
-                oneiron::ContentPart::Reasoning { text, data, .. } => {
-                    text.trim().is_empty() && data.is_none()
-                }
+                oneiron::ContentPart::Reasoning {
+                    text,
+                    signature,
+                    data,
+                    ..
+                } => text.trim().is_empty() && signature.is_none() && data.is_none(),
                 _ => false,
             }))
     {

@@ -131,7 +131,9 @@ pub(crate) fn remark_known_file_in_txn(
         return Ok(false);
     };
     put_masked_file_in_txn(store, wtxn, &hash, &mark)?;
-    crate::federation::record_scope::restrict_stamp_in_txn(store, wtxn, *record, MASKED_FILE_BAND)?;
+    store
+        .scope_stamps
+        .restrict_stamp_in_txn(store, wtxn, *record, MASKED_FILE_BAND)?;
     Ok(true)
 }
 
