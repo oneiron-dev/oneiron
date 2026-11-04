@@ -47,6 +47,7 @@ use crate::write_envelope::WriteActor;
 
 mod live_edit;
 pub(crate) use live_edit::LiveEditAdmission;
+pub(super) use live_edit::revoke_office_edit_grants_naming_in_txn;
 pub(super) use live_edit::{
     admit_live_edit_in_txn, covering_live_grant, identical_live_edit_grant_active_in_txn,
     live_edit_admission_in_txn, live_edit_effect, mint_live_edit_grant_in_txn, office_bound,

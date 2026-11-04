@@ -39,6 +39,7 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
             LIVE_EDIT_GROUPS.delete(store, txn, &group)?;
         }
     }
+    consent::revoke_office_edit_grants_naming_in_txn(store, txn, entity)?;
     SOURCES.delete(store, txn, entity)?;
     Ok(())
 }
