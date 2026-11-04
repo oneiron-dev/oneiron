@@ -700,6 +700,7 @@ impl Vault {
             state: thread.state,
             locator,
             drift: None,
+            body: None,
         };
         let new_head_id = self.write_thread_head_in_txn(
             wtxn,
