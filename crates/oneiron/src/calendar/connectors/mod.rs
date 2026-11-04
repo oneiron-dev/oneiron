@@ -61,6 +61,7 @@
 
 pub mod door;
 mod inbound;
+mod literal;
 mod outbound;
 mod remote;
 mod resource;
@@ -76,7 +77,7 @@ use super::google_internal;
 pub use self::inbound::run_calendar_connector_sync;
 pub use self::outbound::{
     CalendarRemoteObjectRow, CalendarWriteAction, CalendarWriteOutboxRow, CalendarWriteOutboxState,
-    calendar_remote_uid_for_href, write_calendar_event,
+    calendar_remote_uid_for_href, calendar_remote_uid_for_href_for_operation, write_calendar_event,
 };
 pub use self::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
