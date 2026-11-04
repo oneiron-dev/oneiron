@@ -660,7 +660,12 @@ pub(super) fn collect_index_candidates(
     )?;
     let mut backward_rows = collect_temporal_index_rows(&mut backward, cap)?;
     let backward_full = backward_rows.len() >= cap;
-    normalize_backward_boundary_bucket(store, axis, rtxn, &mut backward_rows)?;
+    // A backward scan that ran out holds every row of its boundary
+    // timestamp already, and the sort below orders them: only a full one
+    // may have cut that bucket short (L15 recall speed).
+    if backward_full {
+        normalize_backward_boundary_bucket(store, axis, rtxn, &mut backward_rows)?;
+    }
     rows.extend(backward_rows);
 
     rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
@@ -744,8 +749,10 @@ fn normalize_backward_boundary_bucket(
         };
         boundary_rows.push(row);
     }
+    let mut seen: std::collections::HashSet<EntityId> =
+        boundary_rows.iter().map(|row| row.id).collect();
     for row in original_boundary_rows {
-        if !boundary_rows.iter().any(|candidate| candidate.id == row.id) {
+        if seen.insert(row.id) {
             boundary_rows.push(row);
         }
     }

@@ -24,17 +24,23 @@ pub(super) fn read_entity_metadata(
         return Ok(None);
     }
 
-    let Some(raw) = store.port_entity_record(rtxn, id)? else {
+    // The header alone: these four fields are all the metadata keeps, so
+    // the row's body is never copied (L15 recall speed). A header that does
+    // not parse refuses as the record's decode does.
+    let Some(header) = store.port_entity_with_raw(rtxn, id, |raw| {
+        crate::batch::EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))
+    })?
+    else {
         return Ok(None);
     };
 
-    let (occurred_start, occurred_end) = normalize_range(raw.occurred.start, raw.occurred.end);
+    let (occurred_start, occurred_end) = normalize_range(header.occurred_start, header.occurred_end);
 
     Ok(Some(EntityMetadata {
-        entity_type: raw.entity_type,
+        entity_type: header.entity_type,
         occurred_start,
         occurred_end,
-        learned_at: raw.learned_at,
+        learned_at: header.learned_at,
     }))
 }
 
