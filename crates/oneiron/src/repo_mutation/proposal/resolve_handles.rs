@@ -195,6 +195,34 @@ pub(super) fn resolved_successor(
             "proposal critiques changed while resolving handles; submit a fresh proposal",
         ));
     }
+    // Round-7 (review P1 sol-1): `spans_values` read under a read txn that
+    // is gone by now, so an owner revoke or repo:landing unbind committing
+    // in between would mint the cached plaintext and Supersede the
+    // original. Re-read every handle's live grant and unchanged value and
+    // custody in this mint writer before persisting: the original stays
+    // Approved on every refusal.
+    {
+        let mut seen: Vec<&str> = Vec::new();
+        for (_, _, text) in spans.iter() {
+            if seen.iter().any(|held| *held == text.as_str()) {
+                continue;
+            }
+            seen.push(text.as_str());
+            let (_, id) = crate::secret_custody::handle_record_in_txn(&vault.store, &txn, text)?;
+            let live = vault
+                .get_secret_value_in_txn(&txn, &id, REPO_LANDING_EFFECTOR)?
+                .ok_or(Error::EntityNotFound)?;
+            let known = values
+                .iter()
+                .find(|known| &known.0 == text)
+                .expect("every span resolved above");
+            if id != known.2 || live != known.1 {
+                return Err(invalid(
+                    "a handle's binding changed while resolving handles; submit a fresh proposal",
+                ));
+            }
+        }
+    }
     if PROPOSAL.get(&vault.store, &txn, &successor.id)?.is_none() {
         super::persist::PreparedRepoProposal::new(successor.clone(), encoded)?
             .persist_in_txn(vault, &mut txn)?;
@@ -251,15 +279,43 @@ pub(super) fn resolved_successor(
                 .iter()
                 .find(|known| &known.0 == text)
                 .expect("every span resolved above");
-            masked.unite(
-                &[],
-                crate::file_secret_marks::KeySpan {
-                    start: *start,
-                    end: *end,
-                    custody: *custody,
-                    reason: RESOLVED_HANDLE_DETECTOR.to_owned(),
-                },
-            );
+            // Round-7 (review P1 sol-2): `unite` keeps the marks already
+            // held and drops a new span on any overlap (FIX 2781), so a
+            // pre-existing mark covering only an interior part of a
+            // substituted value would silently drop the whole span and
+            // blame/diff reads would expose the outer bytes. Project only
+            // the fragments outside held spans; each carries this
+            // substitution's custody while held spans stay as they are.
+            let held: Vec<(u64, u64)> =
+                masked.keys.iter().map(|key| (key.start, key.end)).collect();
+            let mut fragments: Vec<(u64, u64)> = vec![(*start, *end)];
+            for span in &held {
+                let mut kept = Vec::new();
+                for (from, to) in fragments {
+                    if to <= span.0 || span.1 <= from {
+                        kept.push((from, to));
+                    } else {
+                        if from < span.0 {
+                            kept.push((from, span.0));
+                        }
+                        if span.1 < to {
+                            kept.push((span.1, to));
+                        }
+                    }
+                }
+                fragments = kept;
+            }
+            for (from, to) in fragments {
+                masked.unite(
+                    &[],
+                    crate::file_secret_marks::KeySpan {
+                        start: from,
+                        end: to,
+                        custody: *custody,
+                        reason: RESOLVED_HANDLE_DETECTOR.to_owned(),
+                    },
+                );
+            }
         }
         crate::secret_custody::put_masked_file_in_txn(&vault.store, &mut txn, &raw_blake3, &masked)?;
         // Round-5 (review P1 sol-2): index copies already derived from these
