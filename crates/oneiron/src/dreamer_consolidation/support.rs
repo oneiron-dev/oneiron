@@ -18,8 +18,7 @@ pub const DREAMER_BUCKET_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v2";
 pub const DREAMER_PARTITION_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v1";
 /// Domain for reflection gap hashes (pinned, design D6).
 pub const DREAMER_GAP_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-gap:v1";
-/// Domain for swarm evidence content hashes (pinned, design D10).
-pub const DREAMER_EVIDENCE_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-evidence:v1";
+pub use crate::store::consolidation_evidence::DREAMER_EVIDENCE_HASH_DOMAIN;
 /// A gap not re-observed within this window decays and is never re-surfaced
 /// (escalate-or-let-go, never re-nag nightly).
 pub const DREAMER_GAP_DECAY_MS: u64 = 14 * 24 * 60 * 60 * 1000;

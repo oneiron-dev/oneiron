@@ -498,7 +498,9 @@ fn insert_ready_row<R: Read + Seek>(
                 &claim.predicate,
             ) {
                 vault.restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-            } else if claim.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
+            } else if claim.predicate
+                == crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY
+            {
                 vault.restore_reliability_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else {
                 vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
@@ -1210,14 +1212,14 @@ fn imported_body(
             crate::write_envelope::skill_record::encode_skill_record(&body)
         }
         ENTITY_TYPE_AGENT_DEF => {
-            let mut body = crate::agent_def::decode_agent_definition(&bytes)?;
+            let mut body = crate::store::agent_definition_codec::decode_agent_definition(&bytes)?;
             body.source = ClaimSource::Imported;
             body.generated = false;
             body.human_authored = true;
             body.approval_status = ClaimApprovalStatus::Proposed;
             body.enabled = false;
             body.ceiling = crate::store::agent_record::AgentCeiling::Proposed;
-            crate::agent_def::encode_agent_definition(&body)
+            crate::store::agent_definition_codec::encode_agent_definition(&body)
         }
         _ => Ok(bytes),
     }
@@ -1249,10 +1251,12 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             .forked_from
             .into_iter()
             .collect(),
-        ENTITY_TYPE_AGENT_DEF => crate::agent_def::decode_agent_definition(bytes)?
-            .forked_from
-            .into_iter()
-            .collect(),
+        ENTITY_TYPE_AGENT_DEF => {
+            crate::store::agent_definition_codec::decode_agent_definition(bytes)?
+                .forked_from
+                .into_iter()
+                .collect()
+        }
         ENTITY_TYPE_CONVERSATION => super::project_room_dependency(bytes).into_iter().collect(),
         ENTITY_TYPE_WORKFLOW => {
             let definition = crate::store::workflow_definition::decode_workflow(bytes)?;
@@ -1372,7 +1376,9 @@ fn decode_import_claim(bytes: &[u8]) -> Result<crate::write_envelope::claim_body
         crate::write_envelope::subject_record::imported_subject_body(&body)
     } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
         crate::actor_claims::imported_actor_body(&body)
-    } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
+    } else if body.predicate
+        == crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY
+    {
         crate::skill_reliability::imported_reliability_body(&body)
     } else if crate::write_envelope::learning_predicate::is_learning_predicate(&body.predicate) {
         // No archive format (FIX 11626 option B): a learning cell is a
