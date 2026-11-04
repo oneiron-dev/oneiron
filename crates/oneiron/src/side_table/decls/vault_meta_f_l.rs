@@ -446,7 +446,7 @@ side_tables! {
     /// 33-byte event key.
     LINEAR_MIRROR_EVENT_BY_TASK: VaultMeta b"linear.mirror_event_by_task.v1/" Raw;
     /// Tracker pull-page cursor. Key: ().
-    LINEAR_PULL_CURSOR: VaultMeta b"linear.pull_cursor.v1" Raw Authored [accepts: crate::task_verb::linear_pull_cursor_accepts_masked];
+    LINEAR_PULL_CURSOR: VaultMeta b"linear.pull_cursor.v1" Raw Authored [accepts: crate::store::linear_pull_cursor::linear_pull_cursor_accepts_masked];
     /// Tracker-mirror outbox marker. Key: id16.
     LINEAR_TASK_DIRTY: VaultMeta b"linear.task_dirty.v1/" Raw Engine;
     /// Tracker-mirror revision counter of a task. Key: id16.
@@ -464,9 +464,10 @@ side_tables! {
     /// press's 32-byte approve-once digest.
     LINEAR_EFFECT_APPROVAL: VaultMeta b"linear:effect_approval:v1/" Raw
         => crate::linear_sync::erase_effect_approval_actor_in_txn;
-    /// Digest of the Linear effect request an operation id was first authorized for. Key: 32-byte
-    /// operation id.
-    LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw;
+    /// Frozen Linear effect binding digest, verified writer, scheduler and TASK, so hard erase
+    /// can retire the authorization (FIX 12508). Key: 32-byte operation id.
+    LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw
+        => crate::linear_sync::erase_effect_authorized_actor_in_txn;
     /// Task to tracker issue link state. Key: id16.
     LINEAR_SYNC_LINK: VaultMeta b"linear_sync:link:v4:" LegacyJson Authored [accepts: crate::linear_sync::linear_sync_link_accepts_masked];
     /// The vault's pinned model-role manifest (role bindings, tier/route defaults). Key: ().
@@ -478,9 +479,9 @@ side_tables! {
     LLM_CATALOG_REVISION: VaultMeta b"llm:catalog_revision:v1:" Named
         => crate::llm::catalog_doors::erase_catalog_source_rows_in_txn;
     /// Measured description scores keyed inside one singleton map. Key: ().
-    LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored [accepts: crate::llm::llm_description_measurements_accepts_masked];
+    LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_measurements_accepts_masked];
     /// Vault-owned description policy. Key: ().
-    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson Authored [accepts: crate::llm::llm_description_policy_accepts_masked];
+    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_policy_accepts_masked];
     /// Durable re-ask keyed by 64-character hex identity.
     LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson;
     /// Training provenance and checkpoint pin for the installed distilled encoder. Key: ().
@@ -490,7 +491,7 @@ side_tables! {
     LLM_MANIFEST: VaultMeta b"llm:manifest:v2" LegacyJson;
     /// Revision-pinned description of one registered model, read by seat routing. Key:
     /// string(model id).
-    LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored [accepts: crate::llm::llm_model_description_accepts_masked];
+    LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored [accepts: crate::store::seat_model_description::llm_model_description_accepts_masked];
     /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
     LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
     /// The loaded native Oneironer bundle's receipt at its bind: stack and
@@ -517,7 +518,7 @@ side_tables! {
     LLM_RUN_SEAT: VaultMeta b"llm:run_seat:v1:" LegacyJson;
     /// Rolling window (max 64) of recent benchmark score-change diffs for one model. Key:
     /// string(model id) "\x00".
-    LLM_SCORE_DIFFS: VaultMeta b"llm:scores:v1:" LegacyJson Authored [accepts: crate::llm::llm_score_diffs_accepts_masked];
+    LLM_SCORE_DIFFS: VaultMeta b"llm:scores:v1:" LegacyJson Authored [accepts: crate::store::model_score_diff::llm_score_diffs_accepts_masked];
     /// The catalog revision pinned when a held-out trial was nominated. Key: id16.
     LLM_TRIAL_CATALOG: VaultMeta b"llm:trial_catalog:v1:" Named;
 }

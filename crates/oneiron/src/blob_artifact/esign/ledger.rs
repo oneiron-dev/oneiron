@@ -128,7 +128,7 @@ pub(crate) fn esign_document_page_in_txn(
     after: Option<EntityId>,
     limit: usize,
 ) -> Result<(Vec<EntityId>, Option<EntityId>)> {
-    let claims = crate::claim::claim_ids_for_predicate_page_in_txn(
+    let claims = crate::store::claim_projection::claim_ids_for_predicate_page_in_txn(
         &vault.store,
         txn,
         DRAFT_PREDICATE,
@@ -368,7 +368,10 @@ pub(super) fn create_document_in(
         now,
     )?;
     if let Some(project) = body.project {
-        crate::federation::record_scope::stamp_blob_project(&vault.store, txn, document, project)?;
+        vault
+            .store
+            .scope_stamps
+            .stamp_blob_project(&vault.store, txn, document, project)?;
     }
     Ok(())
 }
