@@ -350,6 +350,7 @@ impl StepRunner {
             },
             payer_required,
             true,
+            step.input.room.map(|room| room.room),
         )?;
         // The step's inputs as one read set (FIX 6934): the caller's part
         // above with its planner craft, or unknown when it ran tool rounds,
@@ -380,7 +381,7 @@ impl StepRunner {
         vault: &Vault,
         input: ModelStep<'_>,
     ) -> Result<GeneratedStep, StepFault> {
-        self.generate_in(runtime, vault, input, false, false)
+        self.generate_in(runtime, vault, input, false, false, None)
     }
 
     /// [`Self::generate`] for a step that knows whether it must read its
@@ -395,7 +396,12 @@ impl StepRunner {
         input: ModelStep<'_>,
         payer_required: bool,
         offers_use: bool,
+        room: Option<oneiron::EntityId>,
     ) -> Result<GeneratedStep, StepFault> {
+        // FIX 12516: a step in a room with a live off-record stretch keeps
+        // no model-call evidence. Arrival is checked here, Done rechecks
+        // before the write: a stretch may open mid-call.
+        let no_record_at_arrival = room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         let ModelStep {
             definition,
             attempt,
@@ -665,7 +671,7 @@ impl StepRunner {
         // What this try spent and no call's look booked goes on the lease
         // whatever the call answered; the replayed tries recorded their own.
         live.book_rest()?;
-        let (response, tool_rounds) = match generated {
+        let (response, served, tool_rounds) = match generated {
             // The rung that answered, fallback included, is the step's
             // executor: its leaf is attributed to it (OF-540). A refused
             // stamp leaves the leaf unattributed, not failed.
@@ -680,7 +686,7 @@ impl StepRunner {
                 {
                     tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
                 }
-                (response, rounds)
+                (response, served, rounds)
             }
             Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied)),
             Err(error) => {
@@ -746,7 +752,12 @@ fn record_workflow_response(
     attempt: &AttemptRecord,
     actor: WriteActor,
     tool_rounds: bool,
+    no_record: bool,
 ) {
+    if no_record {
+        tracing::debug!("workflow model-call record skipped: off-record room");
+        return;
+    }
     let digests = match model_call_digests(request) {
         Ok(digests) => digests,
         Err(error) => {
@@ -754,8 +765,20 @@ fn record_workflow_response(
             return;
         }
     };
+    let Ok(attempt_entity) = oneiron::EntityId::from_bytes(*attempt.id.as_bytes()) else {
+        tracing::warn!("workflow model-call record skipped: attempt id is not an entity");
+        return;
+    };
     let (mut rung, route) = ladder.model_call_binding();
+    // The record stamps the rung that answered, not the one requested.
     rung.model = served;
+    // The parent try's own fence, read from its row and never guessed: a
+    // retry's attempt_count does not count logical retries.
+    let replay_of = attempt.retry_of.and_then(|parent| {
+        let parent_row = AttemptQueue::new(vault).get(parent).ok()??;
+        let parent_entity = oneiron::EntityId::from_bytes(*parent.as_bytes()).ok()?;
+        Some((parent_entity, u64::from(parent_row.attempt_count)))
+    });
     let source_rows = run.source_rows();
     let input_parts = if source_rows.is_none() {
         vec![ModelCallInputPart::Unknown {
@@ -766,8 +789,10 @@ fn record_workflow_response(
     };
     let record = ModelCallRecord {
         schema: 1,
-        attempt: attempt.id,
-        lease_generation: attempt.attempt_count,
+        attempt: attempt_entity,
+        lease_generation: u64::from(attempt.attempt_count),
+        // Index 1 is the try's first call; a tool-rounds step's final answer
+        // follows its truncated rounds and takes index 2.
         call_index: u64::from(tool_rounds) + 1,
         digests,
         route,
@@ -788,9 +813,7 @@ fn record_workflow_response(
         produced_pending: response.reply_assertions.created.is_empty(),
         tool_rounds,
         rounds_truncated: tool_rounds,
-        replay_of: attempt
-            .retry_of
-            .map(|parent| (parent, attempt.attempt_count.saturating_sub(1))),
+        replay_of,
         source_rows: source_rows.unwrap_or_default(),
         produced_rows: response
             .reply_assertions

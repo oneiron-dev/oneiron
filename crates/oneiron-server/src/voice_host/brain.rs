@@ -707,7 +707,7 @@ impl Turn {
                         || self.capture.room.is_some_and(|room| {
                             self.capture.vault.room_has_unrecorded_stretch(room)
                         });
-                    crate::api::llm::record_raw_response(
+                    crate::api::record_raw_response(
                         self.capture.vault.as_ref(),
                         &self.capture.ladder,
                         &self.capture.run,
