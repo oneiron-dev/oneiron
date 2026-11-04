@@ -160,7 +160,7 @@ getters! {
     /// Outbound calls' frozen input.
     OutboundCall = 15 => crate::outbound_intent_ledger::checkpoint;
     /// Media vectors and device provenance, by source document.
-    EmbedMedia = 16 => crate::embed::checkpoint;
+    EmbedMedia = 17 => crate::embed::checkpoint;
 }
 
 /// The mixed sync carriers KS7-3's port splits, with the tag a bundle's
