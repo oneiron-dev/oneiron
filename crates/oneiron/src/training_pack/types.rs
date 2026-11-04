@@ -157,7 +157,7 @@ pub struct DetectorProvenance {
     pub consent_receipt: String,
 }
 
-pub use crate::skill_optimize::training_choice::{ComputeChoice};
+pub use crate::skill_optimize::training_choice::ComputeChoice;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComputePin {
@@ -173,7 +173,7 @@ pub struct ComputePin {
     pub cost_unit: LeaseUnit,
 }
 
-pub use crate::skill_optimize::training_choice::{TrainingState};
+pub use crate::skill_optimize::training_choice::TrainingState;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrainingDispatch {
@@ -199,7 +199,7 @@ pub struct TrainingDeclarationPin {
     pub budget: BudgetLine,
 }
 
-pub use crate::skill_optimize::training_choice::{TrainingAuthorizationSource};
+pub use crate::skill_optimize::training_choice::TrainingAuthorizationSource;
 
 /// The owner a run, an authorization or a swap receipt names: an actor, or
 /// no one once that actor was erased (FIX 3520). It reads and writes as the
@@ -412,7 +412,7 @@ pub struct TrainingPackDraft {
     pub consented_sources: Vec<EntityId>,
 }
 
-pub use crate::skill_optimize::training_choice::{SwapChoice};
+pub use crate::skill_optimize::training_choice::SwapChoice;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RoleSwapReceipt {

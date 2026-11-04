@@ -7,9 +7,9 @@
 
 use super::CompactionDriver;
 use crate::WriteActor;
-use crate::store::agent_record::CompactionOwnership;
 use crate::code_run::{AdmittedLiveFork, LiveCompactionFork};
 use crate::compaction::SelfCompactionUnavailable;
+use crate::store::agent_record::CompactionOwnership;
 use oneiron_model::llm::SelfCompactionSource;
 
 impl CompactionDriver {

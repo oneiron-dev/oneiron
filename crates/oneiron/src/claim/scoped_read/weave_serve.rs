@@ -15,8 +15,8 @@ use crate::lens::{
     GeneratedUiSurfaceCapabilities, HostedLensRender, LensFrameCard, LensRenderFrame,
 };
 use crate::memory::{ClaimView, Memory};
-use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::provenance::EdgeRef;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
 
 // The weave Admin's reads and labels under its proof (OF-499 A3).

@@ -1,6 +1,5 @@
 //! Static entity-type x [`FieldProfile`] to allowed-field-slice table.
 
-use crate::serialize::pack_format::FieldProfile;
 use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM,
@@ -9,6 +8,7 @@ use crate::registry::{
     ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL,
     ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
 };
+use crate::serialize::pack_format::FieldProfile;
 
 pub(super) fn fields_for_profile(
     entity_type: u8,
@@ -50,14 +50,18 @@ pub(super) fn fields_for_profile(
 
         (ENTITY_TYPE_SKILL, FieldProfile::Minimal) => &["skillId"],
         (ENTITY_TYPE_SKILL, FieldProfile::Standard) => &["skillId", "desc", "approvalStatus"],
-        (ENTITY_TYPE_SKILL, FieldProfile::Full) => &crate::write_envelope::skill_record::SKILL_RECORD_BODY_KEYS,
+        (ENTITY_TYPE_SKILL, FieldProfile::Full) => {
+            &crate::write_envelope::skill_record::SKILL_RECORD_BODY_KEYS
+        }
 
         // AGENT_DEF mirrors SKILL: identity-only Minimal, identity + summary in
         // Standard, and the full pinned body only at Full — the 16 KiB
         // `instructions` prompt must never surface in Minimal/Standard packs.
         (ENTITY_TYPE_AGENT_DEF, FieldProfile::Minimal) => &["agentId"],
         (ENTITY_TYPE_AGENT_DEF, FieldProfile::Standard) => &["agentId", "desc", "approvalStatus"],
-        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Full) => &crate::store::agent_record::AGENT_DEF_BODY_KEYS,
+        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Full) => {
+            &crate::store::agent_record::AGENT_DEF_BODY_KEYS
+        }
 
         // TaskList (project container)
         (ENTITY_TYPE_TASK_LIST, FieldProfile::Minimal) => &["name"],
