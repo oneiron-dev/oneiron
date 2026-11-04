@@ -189,8 +189,7 @@ impl Memory<'_> {
         let origin = self.annotation_origin(&thread)?;
         let resolution = if thread.drift.is_some() {
             AnnotationResolution::Drifted
-        } else if thread.anchor.version == origin.version
-            && thread.anchor.locator == origin.locator
+        } else if thread.anchor.version == origin.version && thread.anchor.locator == origin.locator
         {
             AnnotationResolution::Pinned
         } else {
