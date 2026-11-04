@@ -7,4 +7,6 @@ pub mod key_material;
 pub mod model_decision;
 pub mod model_step_record;
 pub mod receive_scan;
+pub mod secret_manifest;
+pub mod secret_record;
 pub mod window_key;
