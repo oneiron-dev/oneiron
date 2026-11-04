@@ -143,6 +143,7 @@ pub(crate) mod loro_document;
 #[cfg(feature = "sync")]
 pub mod materialization_event;
 pub mod model_description_rows;
+pub mod model_score_diff;
 pub(crate) mod model_stream_row;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
