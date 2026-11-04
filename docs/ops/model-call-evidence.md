@@ -59,6 +59,28 @@ are required current-format tags, not inferred identities or replay permission;
 erasure keeps the nonpersonal source tag. No generative request, finish reason,
 route, issuer or read-world identity is invented.
 
+## Native System One calls
+
+A System One call with an actual caller-supplied run records a `seat_decision`
+row after its original settlement attempt. A settlement error still propagates
+as before; recording the provider outcome does not claim settlement succeeded.
+The no-run branch is unchanged and is not captured.
+
+The adapter builds, sends and parses once through the same implementation used
+by its ordinary call. Its separate recorded result carries a canonical JSON-tree
+fingerprint of the actual built request body, not a hash of wire bytes or of the
+logical pre-transform request. No body, image pixels, headers or credentials are
+stored. Other remote seats default to returning no fingerprint, not an invented
+one. A missing fingerprint or unmapped error skips evidence only.
+
+The same bound principal/session and arrival-or-terminal NoRecord check apply.
+Completed calls retain actual usage; failures retain only a typed class with
+unknown usage. Answer probabilities and error text are not stored. The shared
+native initializer writes the actual model, revision and connector locality,
+with required `caller` run provenance. It invents no generative finish reason,
+route, issuer, reasoning part or read-world identity. The run's shared evidence
+sequence is allocated only after privacy, fingerprint and model checks.
+
 ## Recording and privacy
 
 For a bound session, the existing NoRecord/off-record check runs both before the
@@ -72,7 +94,7 @@ or typed decision. A failed evidence write is logged and never fails the answer.
 An unbound call records as usual; a call outside every capture scope is not
 assigned a guessed actor.
 
-Each raw/Big/generative-eval/observed-house evidence row takes a distinct record
+Each raw/Big/generative-eval/observed-house/caller-System-One evidence row takes a distinct record
 stamp from its shared run. This is an evidence-key sequence, not an admission or receipt
 number. Cloned handles share it and declaration revisions do not reset it.
 A failed or suppressed write does not require a dense sequence.

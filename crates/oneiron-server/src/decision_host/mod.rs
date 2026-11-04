@@ -403,6 +403,7 @@ impl DecisionHost {
         default_units: u64,
         posture: HostingPrivacyPosture,
         runtime: tokio::runtime::Handle,
+        vault: &Arc<Vault>,
     ) -> Self {
         self.ladder.system_one = None;
         self.remote_opt_in = settings.is_some_and(|settings| settings.remote_opt_in);
@@ -415,6 +416,7 @@ impl DecisionHost {
             posture,
             runtime,
             self.broker.as_ref(),
+            vault,
         ) {
             Ok(rung) => self.ladder.system_one = Some(Arc::new(rung)),
             Err(error) => tracing::warn!(%error, "the System One seat cannot fill its rung"),
@@ -692,6 +694,7 @@ impl HouseRead {
 /// `key_secret` seat reads its key at the vault's custody door for each
 /// call, through the credential broker.
 struct SystemOneRung {
+    vault: Arc<Vault>,
     seat: Arc<oneiron_llm_systemone::SystemOneSeat>,
     guard: BudgetGuard,
     /// A call that carries its caller's run admits its measurement on that run as this
@@ -710,6 +713,7 @@ impl SystemOneRung {
         posture: HostingPrivacyPosture,
         runtime: tokio::runtime::Handle,
         broker: Option<&crate::models::BrokerContext>,
+        vault: &Arc<Vault>,
     ) -> anyhow::Result<Self> {
         let endpoint = settings.endpoint.clone();
         let (model, version) = (settings.model.clone(), settings.version.clone());
@@ -754,6 +758,7 @@ impl SystemOneRung {
             rates: Vec::new(),
         };
         Ok(Self {
+            vault: Arc::clone(vault),
             seat: Arc::new(seat),
             guard: BudgetGuard::new(
                 "system-one",

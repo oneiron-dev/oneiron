@@ -1,4 +1,4 @@
-//! Native decision-read evidence shared by the probe and the house rung.
+//! Native model-call evidence shared by the probe and decision rungs.
 use oneiron::code_run::model_call::{
     MODEL_CALL_SCHEMA, ModelCallInputPart, ModelCallKind, ModelCallRecord, NativeReadDigests,
     NativeReadFailure, NativeReadOutcome, NativeReadRunSource, native_read_digests,
@@ -17,7 +17,13 @@ pub(crate) struct NativeReadCapture<'a> {
     session: Option<String>,
     no_record_at_arrival: bool,
     digests: NativeReadDigests,
-    run_source: NativeReadRunSource,
+    input: NativeCallInput,
+}
+
+#[derive(Clone, Copy)]
+enum NativeCallInput {
+    LabelRead(NativeReadRunSource),
+    SeatDecision,
 }
 
 impl<'a> NativeReadCapture<'a> {
@@ -46,7 +52,28 @@ impl<'a> NativeReadCapture<'a> {
             session,
             no_record_at_arrival,
             digests,
-            run_source,
+            input: NativeCallInput::LabelRead(run_source),
+        })
+    }
+
+    pub(crate) fn from_seat(
+        vault: &'a Vault,
+        digests: Option<NativeReadDigests>,
+        actor: EntityId,
+        session: Option<String>,
+        no_record_at_arrival: bool,
+    ) -> Option<Self> {
+        let Some(digests) = digests else {
+            tracing::warn!("native-seat evidence skipped: request fingerprint is unavailable");
+            return None;
+        };
+        Some(Self {
+            vault,
+            actor,
+            session,
+            no_record_at_arrival,
+            digests,
+            input: NativeCallInput::SeatDecision,
         })
     }
 
@@ -81,11 +108,19 @@ impl<'a> NativeReadCapture<'a> {
             attempt: evidence.instance(),
             lease_generation: u64::from(evidence.revision()),
             call_index: call_index(),
-            kind: ModelCallKind::LabelRead {
-                run_source: self.run_source,
-                digests: self.digests.clone(),
-                revision: revision.to_owned(),
-                outcome,
+            kind: match self.input {
+                NativeCallInput::LabelRead(run_source) => ModelCallKind::LabelRead {
+                    run_source,
+                    digests: self.digests.clone(),
+                    revision: revision.to_owned(),
+                    outcome,
+                },
+                NativeCallInput::SeatDecision => ModelCallKind::SeatDecision {
+                    run_source: NativeReadRunSource::Caller,
+                    digests: self.digests.clone(),
+                    revision: revision.to_owned(),
+                    outcome,
+                },
             },
             route: None,
             rung: CapsuleRungBinding {
