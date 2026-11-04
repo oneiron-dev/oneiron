@@ -9,7 +9,7 @@
 use super::codec::{invalid, reply_summary};
 use super::doors::ScopeSources;
 use super::request::REQUEST_VERSION;
-use crate::attempt_queue::AttemptId;
+use crate::store::attempt_id::AttemptId;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };

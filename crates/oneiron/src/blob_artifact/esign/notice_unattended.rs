@@ -37,7 +37,8 @@ use super::notice_dispatch::{
 use super::notice_door::EsignNoticesDispatchView;
 use super::notice_scope::NoticeScope;
 use super::notice_send_act::{RecordedSendAct, send_act_in};
-use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
+use crate::attempt_queue::{AttemptQueue, AttemptRecord};
+use crate::store::attempt_state::AttemptState;
 use crate::authority::{
     NoStanding, PACT_STANDING_LAPSED, PrincipalStanding, principal_standing_in_txn,
     principal_standing_or_lapse_in_txn,
