@@ -238,6 +238,9 @@ impl Vault {
                 && read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
                     .is_some_and(|head| head.content_hash == *content_hash.as_bytes());
             if later && !dedupe && matches!(provenance, BlobVersionProvenance::AgentRun { .. }) {
+                if let Some(named) = made_by {
+                    validate_version_made_by_in_txn(self, wtxn, named)?;
+                }
                 let fork_base = match fork_parent {
                     Some(parent) => {
                         let record =
