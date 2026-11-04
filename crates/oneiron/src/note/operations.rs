@@ -185,7 +185,9 @@ pub(super) fn resolved_authorship_in_txn(
             }
             NoteActor::Actor(token) => {
                 crate::provenance::resolve_actor_stamp_in_txn(vault, txn, &token)?
-                    .map_or(NoteActor::Erased, |actor| NoteActor::Actor(actor.entity_ref()))
+                    .map_or(NoteActor::Erased, |actor| {
+                        NoteActor::Actor(actor.entity_ref())
+                    })
             }
             NoteActor::Erased => NoteActor::Erased,
         };

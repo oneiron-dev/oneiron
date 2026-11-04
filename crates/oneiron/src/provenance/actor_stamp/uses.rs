@@ -66,7 +66,10 @@ pub(crate) fn tokens_named_since(
         None => doc.shallow_since_frontiers(),
     };
     let mut tokens = BTreeSet::new();
-    for (peer, span) in &doc.find_id_spans_between(&from, &doc.oplog_frontiers()).forward {
+    for (peer, span) in &doc
+        .find_id_spans_between(&from, &doc.oplog_frontiers())
+        .forward
+    {
         let mut counter = span.start.max(floor.get(peer).copied().unwrap_or(0));
         while counter < span.end {
             let Some(change) = doc.get_change(ID::new(*peer, counter)) else {
