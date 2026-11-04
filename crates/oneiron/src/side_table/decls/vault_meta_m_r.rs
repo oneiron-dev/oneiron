@@ -637,6 +637,15 @@ side_tables! {
     /// bytes, not its id, bound to that blob's whole BLAKE3, so it stays marked once erased as a
     /// snapshot record does (FIX 10887). A hash, no value. Key: id16 (the source).
     REPO_DERIVED_SOURCE_BLOB: VaultMeta b"repo_index:derived_source_blob:v1:" Named;
+    /// FIX 6870: the portable repo id that stands for one CODE entity (value = 32 bytes). Key:
+    /// id16 (CODE entity).
+    REPO_MANIFEST_BY_CODE: VaultMeta b"repo_manifest:by_code:v1:" Raw;
+    /// FIX 6870: a portable repo id this machine minted, the refs writer while no origin
+    /// authority is held; empty value. Key: 32 bytes (portable id).
+    REPO_MANIFEST_MINTED: VaultMeta b"repo_manifest:minted:v1:" Raw;
+    /// FIX 6870: one repo's portable manifest: its CODE entity, visible refs, LFS pointers and
+    /// origin epoch. Key: 32 bytes (portable id).
+    REPO_MANIFEST: VaultMeta b"repo_manifest:v1:" Named;
     /// Durable per-operation oplog entry (prepared/committed/failed mutation record), keyed by (repo
     /// key hash, seq as 16 lowercase hex chars). Key: hex64 ":" hex16.
     REPO_MUTATION_OPLOG: VaultMeta b"repo_mutation:oplog:v1:" Named
