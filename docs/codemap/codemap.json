@@ -26433,6 +26433,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/neighbourhood/memberships.rs",
+     "purpose": "Relationship units named by a listed PERSON's admitted membership claims",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/neighbourhood/pages.rs",
      "purpose": "A child's listing in stable pages (Rule 5, FIX 7580)",
      "surface": {
@@ -90480,7 +90490,7 @@
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…"
     },
     "dreamer_consolidation": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91560,7 +91570,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6382,
+   "source_files": 6383,
    "test_files": 895
   },
   "oneiron-android": {
