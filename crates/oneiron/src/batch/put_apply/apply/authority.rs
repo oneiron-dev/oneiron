@@ -19,7 +19,7 @@ pub(super) fn observe_authority_put(
         crate::authority::AUTHORITY_FIRST_SEEN.put(store, wtxn, &sidecar_key, &observed_secs)?;
     }
     // H213: the transaction's owner sweeps stale stamps after it commits.
-    crate::federation::note_authority_row();
+    store.record_hooks.note_authority_row();
     if let (Some(entry), Some(hash)) = (entry, hash) {
         let first_observation = crate::authority::record_authority_sequence_observation_in_txn(
             store, wtxn, entry, hash,

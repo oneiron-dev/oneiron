@@ -37,7 +37,7 @@ use crate::workspace_roster::{
 pub(crate) const ROOM_TURNS_MAP: &str = "room_turns";
 
 /// The largest turn row a window carries.
-const MAX_ROW_BYTES: usize = 1 << 20;
+use super::room_parts::ROOM_TURN_MAX_ROW_BYTES as MAX_ROW_BYTES;
 
 fn refused(reason: &'static str) -> Error {
     Error::InvalidConfig(format!("room turn row refused: {reason}"))
