@@ -92974,7 +92974,7 @@
      "purpose": "Request boundary limits and pure validators",
      "surface": {
       "const": 14,
-      "fn": 14
+      "fn": 13
      }
     },
     {
@@ -98028,7 +98028,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "EngineLimit",
@@ -98493,7 +98493,7 @@
     "limit_ask": {
      "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520)"
     },
@@ -98589,7 +98589,7 @@
      "purpose": "The write actor every write path stamps"
     }
    },
-   "over_bar": 1,
+   "over_bar": 2,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
    "source_files": 64,
    "test_files": 1
@@ -101926,7 +101926,7 @@
      "surface": {
       "const": 5,
       "enum": 1,
-      "fn": 23,
+      "fn": 25,
       "struct": 7,
       "trait": 2,
       "type": 1
@@ -105958,7 +105958,7 @@
      "path": "src/lib/boundary.rs",
      "purpose": "Shared caps, parse/validate helpers and napi error mapping for the legacy surface",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 31
      }
     },
     {
@@ -111128,7 +111128,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 24
      }
     },
     {
@@ -123712,7 +123712,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 29
      }
     },
     {
