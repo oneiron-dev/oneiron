@@ -64,9 +64,16 @@ fn proof_floor_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<u64> {
 /// recording clock, so an owner can recover it from a host clock that ran
 /// ahead ([`Vault::recover_proof_clock`]) while every recorded stamp keeps
 /// its order.
+///
+/// The clock also stands at or above the highest proof clock an in-memory
+/// spend here judged on, until that spend's landing raises the floor to it
+/// (review #4484 Astra round 2 P1, 11-04 16:4x): a wall stepped back between
+/// a reply and its landing never judges a later proof below it.
 pub(super) fn request_now_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProofClock> {
     Ok(ProofClock {
-        now: proof_floor_in_txn(vault, txn)?.max(vault.store.clock.wall_now()),
+        now: proof_floor_in_txn(vault, txn)?
+            .max(vault.store.clock.wall_now())
+            .max(vault.spent_nonces.proof_high()),
         not_before: PROOF_NOT_BEFORE.get(&vault.store, txn, &())?.unwrap_or(0),
     })
 }
@@ -184,6 +191,9 @@ impl Vault {
         PROOF_CLOCK_FLOOR.put(&self.store, &mut txn, &(), &wall)?;
         PROOF_NOT_BEFORE.put(&self.store, &mut txn, &(), &not_before)?;
         txn.commit()?;
+        // The recovered clock is the wall: the spends judged on the clock
+        // that ran ahead no longer hold it there.
+        self.spent_nonces.forget_proof_high();
         Ok(ProofClockRecovery::Recovered {
             old_floor: floor,
             new_floor: wall,
