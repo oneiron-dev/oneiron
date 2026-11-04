@@ -168,14 +168,17 @@ impl ShareSelection {
     /// `future_critical` name each candidate's section so the drain that
     /// prefers later sections is priced exactly. Only future critical bases
     /// with remaining section room cover the need; the shortfall drains
-    /// eagerly from ordinary support.
+    /// eagerly from ordinary support, each section capped by the room left
+    /// after reserving the waiting row's own slot and every fit future
+    /// base's slot (round-2 blind P1s). Returns the need, the fit cover,
+    /// and the per-section drain plan the caller executes exactly.
     fn support_needed(
         &self,
         available: usize,
         needing_section: usize,
         support_counts: &[usize],
         future_critical: &VecDeque<usize>,
-    ) -> Option<(usize, usize)> {
+    ) -> Option<(usize, usize, Vec<usize>)> {
         let need = (0..=available).find(|&count| self.non_base_fits(self.base + count))?;
         let claims = need + 1;
         if self.total + claims > self.limit {
@@ -207,26 +210,37 @@ impl ShareSelection {
         }
         let fit_future = fit.len();
         let needing_sec0 = usize::from(needing_section == 0);
-        let claims_sec0 = if fit_future >= need {
+        let (claims_sec0, takes) = if fit_future >= need {
             let mut count = needing_sec0;
             for &index in fit.iter().take(need) {
                 count += usize::from(self.sections[index] == 0);
             }
-            count
+            (count, vec![0_usize; support_counts.len()])
         } else {
+            // Filling a section must never cut the row its room was reserved
+            // for: the drain takes only from room left after the waiting
+            // row's own slot and every fit future base's slot.
+            let mut room_after: Vec<usize> = self
+                .section_limits
+                .iter()
+                .zip(self.section_used.iter())
+                .map(|(&limit, &used)| limit.saturating_sub(used))
+                .collect();
+            if let Some(left) = room_after.get_mut(needing_section) {
+                *left = left.saturating_sub(1);
+            }
+            for &index in fit.iter() {
+                let section = self.sections[index];
+                room_after[section] = room_after[section].saturating_sub(1);
+            }
             let mut drain = need - fit_future;
-            let mut drained_sec0 = 0_usize;
+            let mut takes = vec![0_usize; support_counts.len()];
             for (section, &support) in support_counts.iter().enumerate().rev() {
                 if drain == 0 {
                     break;
                 }
-                if self.section_used[section] >= self.section_limits[section] {
-                    continue;
-                }
-                let take = drain.min(support);
-                if section == 0 {
-                    drained_sec0 += take;
-                }
+                let take = drain.min(support).min(room_after[section]);
+                takes[section] = take;
                 drain -= take;
             }
             if drain > 0 {
@@ -236,13 +250,14 @@ impl ShareSelection {
             for &index in fit.iter() {
                 future_sec0 += usize::from(self.sections[index] == 0);
             }
-            needing_sec0 + drained_sec0 + future_sec0
+            let drained_sec0 = takes.first().copied().unwrap_or(0);
+            (needing_sec0 + drained_sec0 + future_sec0, takes)
         };
         let claim_room = self.caps.is_none_or(|caps| {
             self.used.get(ContextPackBudgetKind::Claim) + claims_sec0
                 <= caps.get(ContextPackBudgetKind::Claim)
         });
-        claim_room.then_some((need, fit_future))
+        claim_room.then_some((need, fit_future, takes))
     }
 
     /// Offers `rows`, every critical row first in their order, then the rest
@@ -285,27 +300,21 @@ impl ShareSelection {
                 if self.section_used[needing_section] < self.section_limits[needing_section] {
                     let support_total: usize = support.iter().map(VecDeque::len).sum();
                     let support_counts: Vec<usize> = support.iter().map(VecDeque::len).collect();
-                    if let Some((need, fit_future)) = self.support_needed(
+                    if let Some((.., takes)) = self.support_needed(
                         support_total + future_critical.len(),
                         needing_section,
                         &support_counts,
                         &future_critical,
                     ) {
-                        let mut remaining = need.saturating_sub(fit_future);
-                        for section in (0..support.len()).rev() {
-                            if remaining == 0 {
-                                break;
-                            }
-                            while remaining > 0 {
-                                if self.section_used[section] >= self.section_limits[section] {
-                                    break;
-                                }
+                        // Execute the priced per-section plan exactly: reserved
+                        // slots are never taken here either.
+                        for (section, &take) in takes.iter().enumerate().rev() {
+                            for _ in 0..take {
                                 let Some(base) = support[section].pop_front() else {
                                     break;
                                 };
                                 let (_, base_kind, base_role) = rows[base];
                                 self.offer(base, base_kind, base_role);
-                                remaining -= 1;
                             }
                         }
                     }
