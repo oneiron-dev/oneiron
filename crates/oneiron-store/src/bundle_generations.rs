@@ -2,8 +2,8 @@
 //! The entry point is `retired_bundle_generations`.
 //! `fresh` mints a generation; `world_keys` forwards these public definitions.
 
-use oneiron_contracts::error::Result;
 use crate::key_material::{os_fill, refused};
+use oneiron_contracts::error::Result;
 
 pub const GENERATION_LEN: usize = 24;
 

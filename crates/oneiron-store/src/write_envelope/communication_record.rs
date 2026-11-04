@@ -341,10 +341,7 @@ fn elided_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&
     Ok(Some(value))
 }
 
-pub fn elided_string<'a>(
-    entries: &'a [(Value, Value)],
-    key: &str,
-) -> Result<Option<&'a str>> {
+pub fn elided_string<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a str>> {
     elided_value(entries, key)?
         .map(|value| {
             value

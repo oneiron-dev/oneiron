@@ -28,7 +28,7 @@ pub(crate) use hold::AttemptPause;
 
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`crate::store::STORAGE_ABI_VERSION`] bump.
-pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 2;
+pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 3;
 const ERR_ATTEMPT_ID_LEN: &str = "attempt id must be 16 bytes";
 pub(super) const MAX_ATTEMPT_EVENTS_PER_RECORD: usize = 256;
 pub(super) use crate::store::attempt_cleanup::ATTEMPT_QUEUE_RETRY_REASON_COUNT;
@@ -233,6 +233,9 @@ pub struct AttemptRecord {
     pub dedupe_actor_ref: Option<String>,
     pub created_at: u64,
     pub updated_at: u64,
+    /// The terminal transition's instant, pinned so a later write cannot move it.
+    /// `None` while the attempt is unsettled.
+    pub settled_at: Option<u64>,
     #[serde(default)]
     pub events: Vec<AttemptEvent>,
     /// ARCH-0053 §2/§3 PACK MANIFEST: append-only, parallel to `events` and

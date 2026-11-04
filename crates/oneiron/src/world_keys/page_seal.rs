@@ -53,8 +53,8 @@ use super::vault_key::{CarriedVaultKey, VaultDataKey, VaultKeyUnlock};
 use super::{os_fill, refused};
 use crate::Vault;
 use crate::error::{Error, Result, SecretError};
-use oneiron_store::vault_page_seal::{PAGE_KEY_CONTEXT, SealOrigin};
 pub use oneiron_store::vault_page_seal::VaultPageSeal;
+use oneiron_store::vault_page_seal::{PAGE_KEY_CONTEXT, SealOrigin};
 
 mod creation;
 mod mirror_rewrite;
@@ -682,8 +682,7 @@ impl Vault {
             }
             _ => read_own_mirror(self.store.env.path())?,
         };
-        if mirror.vault_id != seal.vault_id()
-            || !mirror.incarnations.contains(&seal.incarnation())
+        if mirror.vault_id != seal.vault_id() || !mirror.incarnations.contains(&seal.incarnation())
         {
             return Err(refused("the page-seal mirror is another vault's"));
         }

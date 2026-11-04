@@ -38,6 +38,7 @@ impl AttemptQueue<'_> {
                 record.backoff_until = None;
                 record.last_error = None;
                 record.updated_at = input.now;
+                record.settled_at = Some(input.now);
                 self.delete_dedupe_entry_for_record(wtxn, &record)?;
                 let encoded = self.encode_in_txn(wtxn, &mut record)?;
                 self.store

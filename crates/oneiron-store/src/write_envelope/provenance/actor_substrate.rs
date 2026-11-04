@@ -2,8 +2,8 @@
 
 use super::EdgeProvenanceClaimBody;
 use oneiron_base::edge::EdgeActorClass;
-use oneiron_contracts::error::{ClaimError, Error, Result};
 use oneiron_base::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use oneiron_contracts::error::{ClaimError, Error, Result};
 use rmpv::Value;
 
 /// Validates a CALLER-SUPPLIED `actor_class` against the actor entity's

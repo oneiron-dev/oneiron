@@ -85,6 +85,20 @@ pub(in crate::models) fn next_request_id() -> u64 {
 pub(super) struct Channel {
     reader: BufReader<OwnedReadHalf>,
     writer: Arc<AsyncMutex<OwnedWriteHalf>>,
+    /// The frame a cancelled [`Self::next`] left half-read (FIX 11961): the
+    /// next `next` resumes it instead of rereading its header, so dropping
+    /// a read future never misaligns the stream.
+    pending: Option<PartialFrame>,
+}
+
+/// A frame partly read when its read future was dropped: the header bytes
+/// so far, and the payload bytes so far once the header is whole.
+#[derive(Default)]
+struct PartialFrame {
+    header: [u8; wire::HEADER_BYTES],
+    header_read: usize,
+    length: Option<u64>,
+    payload: Vec<u8>,
 }
 
 impl Channel {
@@ -103,6 +117,7 @@ impl Channel {
         Ok(Self {
             reader: BufReader::new(reader),
             writer: Arc::new(AsyncMutex::new(writer)),
+            pending: None,
         })
     }
 
@@ -168,30 +183,104 @@ impl Channel {
     }
 
     /// The next frame, or `None` once the worker has closed the connection.
+    /// Cancellation-safe (FIX 11961): every chunk lands in the pending
+    /// frame in `self` before the next await, so a dropped read resumes
+    /// instead of rereading a half-consumed header as a new length.
     pub(super) async fn next(&mut self) -> io::Result<Option<Incoming>> {
-        let mut header = [0_u8; wire::HEADER_BYTES];
-        if let Err(error) = self.reader.read_exact(&mut header).await {
-            return if error.kind() == io::ErrorKind::UnexpectedEof {
-                Ok(None)
-            } else {
-                Err(error)
+        if self.pending.is_none() {
+            self.pending = Some(PartialFrame::default());
+        }
+        loop {
+            enum Need {
+                Header(usize),
+                Payload(usize),
+                Done,
+            }
+            // What the frame still needs; the borrow ends before any await.
+            let need = {
+                let partial = self
+                    .pending
+                    .as_mut()
+                    .expect("channel keeps its pending frame");
+                if partial.header_read < wire::HEADER_BYTES {
+                    Need::Header(partial.header_read)
+                } else {
+                    let length = *partial
+                        .length
+                        .get_or_insert_with(|| u64::from_be_bytes(partial.header));
+                    if u64::try_from(partial.payload.len()).ok() == Some(length) {
+                        Need::Done
+                    } else {
+                        let rest = length.saturating_sub(partial.payload.len() as u64);
+                        Need::Payload(
+                            usize::try_from(rest).map_or(FRAME_CHUNK, |rest| rest.min(FRAME_CHUNK)),
+                        )
+                    }
+                }
             };
+            match need {
+                Need::Done => {
+                    let partial = self
+                        .pending
+                        .take()
+                        .expect("channel keeps its pending frame");
+                    let frame = wire::decode(&partial.payload).map(Some).ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "the worker sent a frame this side cannot read",
+                        )
+                    })?;
+                    return Ok(frame);
+                }
+                Need::Header(at) => {
+                    let read = {
+                        let partial = self
+                            .pending
+                            .as_mut()
+                            .expect("channel keeps its pending frame");
+                        self.reader.read(&mut partial.header[at..]).await
+                    };
+                    match read {
+                        Err(error) => return Err(error),
+                        Ok(0) => {
+                            self.pending = None;
+                            return Ok(None);
+                        }
+                        Ok(n) => {
+                            self.pending
+                                .as_mut()
+                                .expect("channel keeps its pending frame")
+                                .header_read += n;
+                        }
+                    }
+                }
+                Need::Payload(want) => {
+                    let read = {
+                        let partial = self
+                            .pending
+                            .as_mut()
+                            .expect("channel keeps its pending frame");
+                        let start = partial.payload.len();
+                        partial.payload.resize(start + want, 0);
+                        self.reader.read(&mut partial.payload[start..]).await
+                    };
+                    match read {
+                        Err(error) => return Err(error),
+                        Ok(0) => {
+                            self.pending = None;
+                            return Err(io::ErrorKind::UnexpectedEof.into());
+                        }
+                        Ok(n) => {
+                            let partial = self
+                                .pending
+                                .as_mut()
+                                .expect("channel keeps its pending frame");
+                            partial.payload.truncate(partial.payload.len() - want + n);
+                        }
+                    }
+                }
+            }
         }
-        let length = u64::from_be_bytes(header);
-        let mut payload = Vec::new();
-        let read = (&mut self.reader)
-            .take(length)
-            .read_to_end(&mut payload)
-            .await?;
-        if u64::try_from(read).ok() != Some(length) {
-            return Err(io::ErrorKind::UnexpectedEof.into());
-        }
-        wire::decode(&payload).map(Some).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "the worker sent a frame this side cannot read",
-            )
-        })
     }
 
     /// Sends `op` and returns the body of the worker's frame of the same op
@@ -443,22 +532,22 @@ fn keep_until_revoked(lease: Option<WorkerLease>, grant: Option<DeviceGrant>) {
     } else {
         // A failed spawn drops the closure, and the lease and grant with it.
         let _ = std::thread::Builder::new()
-        .name("exl3-keep-lease".to_owned())
-        .spawn(move || {
-            let wait = async move {
-                if let Some(lease) = &lease {
-                    lease.revocation().await;
+            .name("exl3-keep-lease".to_owned())
+            .spawn(move || {
+                let wait = async move {
+                    if let Some(lease) = &lease {
+                        lease.revocation().await;
+                    }
+                    drop((lease, grant));
+                };
+                match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime.block_on(wait),
+                    Err(_) => drop(wait),
                 }
-                drop((lease, grant));
-            };
-            match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime.block_on(wait),
-                Err(_) => drop(wait),
-            }
-        });
+            });
     }
 }
 

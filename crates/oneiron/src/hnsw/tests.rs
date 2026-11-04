@@ -44,7 +44,11 @@ fn put_vector_raw(
 #[test]
 fn hnsw_deindex_scrubs_backlinks() -> Result<()> {
     let temp_dir = tempdir()?;
-    let store = Store::open(temp_dir.path(), &test_config())?;
+    let store = Store::open(
+        temp_dir.path(),
+        &test_config(),
+        crate::engine_store_hooks::ENGINE_STORE_HOOKS,
+    )?;
     let mut wtxn = store.env.write_txn()?;
     let a = EntityId::now();
     let b = EntityId::now();
@@ -223,7 +227,11 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
 
     fn insert_corrupted_count_bytes() -> Result<Error> {
         let temp_dir = tempdir()?;
-        let store = Store::open(temp_dir.path(), &test_config())?;
+        let store = Store::open(
+            temp_dir.path(),
+            &test_config(),
+            crate::engine_store_hooks::ENGINE_STORE_HOOKS,
+        )?;
         let mut wtxn = store.env.write_txn()?;
         let existing = EntityId::now();
         let new_id = EntityId::now();
@@ -249,7 +257,11 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
 
     fn insert_non_empty_graph_when_count_is_zero() -> Result<Error> {
         let temp_dir = tempdir()?;
-        let store = Store::open(temp_dir.path(), &test_config())?;
+        let store = Store::open(
+            temp_dir.path(),
+            &test_config(),
+            crate::engine_store_hooks::ENGINE_STORE_HOOKS,
+        )?;
         let mut wtxn = store.env.write_txn()?;
         let existing = EntityId::now();
         let new_id = EntityId::now();
@@ -273,7 +285,11 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
 
     fn insert_missing_entry_point_vector() -> Result<Error> {
         let temp_dir = tempdir()?;
-        let store = Store::open(temp_dir.path(), &test_config())?;
+        let store = Store::open(
+            temp_dir.path(),
+            &test_config(),
+            crate::engine_store_hooks::ENGINE_STORE_HOOKS,
+        )?;
         let mut wtxn = store.env.write_txn()?;
         let existing = EntityId::now();
         let new_id = EntityId::now();
@@ -300,7 +316,11 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
 
     fn read_vector_version_corrupted_bytes() -> Result<Error> {
         let temp_dir = tempdir()?;
-        let store = Store::open(temp_dir.path(), &test_config())?;
+        let store = Store::open(
+            temp_dir.path(),
+            &test_config(),
+            crate::engine_store_hooks::ENGINE_STORE_HOOKS,
+        )?;
         let mut wtxn = store.env.write_txn()?;
         store
             .hnsw_meta
@@ -312,7 +332,11 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
 
     fn read_embedding_model_epoch_corrupted_bytes() -> Result<Error> {
         let temp_dir = tempdir()?;
-        let store = Store::open(temp_dir.path(), &test_config())?;
+        let store = Store::open(
+            temp_dir.path(),
+            &test_config(),
+            crate::engine_store_hooks::ENGINE_STORE_HOOKS,
+        )?;
         let mut wtxn = store.env.write_txn()?;
         store
             .hnsw_meta

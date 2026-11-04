@@ -1,8 +1,8 @@
 //! Predicate grammar and the engine-owned predicate vocabulary used by stored claims.
 use super::claim_body::PREDICATE_VAULT_DEFAULT_FACET;
+use oneiron_contracts::claim::ClaimApprovalStatus;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{ClaimError, Error, Result};
-use oneiron_contracts::claim::ClaimApprovalStatus;
 
 /// Maximum predicate length in bytes (D17).
 pub const MAX_PREDICATE_BYTES: usize = 128;

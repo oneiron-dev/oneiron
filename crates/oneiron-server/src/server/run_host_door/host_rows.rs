@@ -69,6 +69,7 @@ pub(super) fn host_row(
                 // It bills the payer the run's line binds (FIX 3574).
                 line.and_then(RunAdmission::payer),
                 evidence.get_or_insert_with(Vec::new),
+                None,
             )?)
         }
         AgentVerb::VaultGraphAsk => {
@@ -88,7 +89,7 @@ pub(super) fn host_row(
                 server.vault(),
                 request.unit_deadline_ms,
             )?;
-            let mut answerer = LadderGraphAnswerer::new(server, actor, dial, budget)?
+            let mut answerer = LadderGraphAnswerer::new(server, actor, dial, budget, None)?
                 .with_posture(request.posture)
                 .with_criteria(request.criteria.unwrap_or_default());
             // Its model rungs bill the payer the run's line binds (FIX 3574).
@@ -182,7 +183,7 @@ pub(super) fn host_row(
             let renderer = AdmittedRenderer::at_render(server, Some(principal), Arc::default());
             encode(memory.artifacts_review_slides_through(
                 &request,
-                &HostUnitDecider::new(server, class, "vault.artifacts.review_slides"),
+                &HostUnitDecider::new(server, class, "vault.artifacts.review_slides", None),
                 host.dial(DecisionRung::Big),
                 &host.bands(),
                 renderer.as_ref().map(AdmittedRenderer::slides),

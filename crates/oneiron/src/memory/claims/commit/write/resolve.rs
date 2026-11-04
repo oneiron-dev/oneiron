@@ -20,6 +20,9 @@ pub(super) struct ClaimWrite<'a> {
     pub(super) key: MemoryKey<'a>,
     pub(super) beside_stated: bool,
     pub(super) prior: Option<EntityId>,
+    /// The original row of an exact signed replay routed to a fresh proposal.
+    /// Its identity survives advisory resolution for the in-writer checks.
+    pub(super) signed_replay_origin: Option<EntityId>,
     pub(super) in_writer: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
     pub(super) birth: Option<&'a crate::provenance::birth::RowBirth>,
     /// Preserves the owner's typed refusal across the engine transaction
@@ -212,17 +215,23 @@ impl Memory<'_> {
             key,
             beside_stated,
             prior,
+            signed_replay_origin: None,
             in_writer,
             birth,
             publication_refusal: std::cell::RefCell::new(None),
         };
         // A deterministic id replays only the same belief. A changed belief
         // gets a fresh id and the existing gated supersession path (FIX 8793).
-        if let Some(existing) = self.vault.get_claim(&id)?
-            && !claim_replay_content_matches(&existing, &write)
-        {
-            write.id = EntityId::now();
-            write.prior = Some(id);
+        if let Some(existing) = self.vault.get_claim(&id)? {
+            if !claim_replay_content_matches(&existing, &write) {
+                write.id = EntityId::now();
+                write.prior = Some(id);
+            } else if write.prior.is_some() && self.vault.machine_history_pinned(&id)? {
+                // A projected signed row cannot be put in place again. Keep
+                // its identity for admission, but propose a fresh replacement.
+                write.id = EntityId::now();
+                write.signed_replay_origin = Some(id);
+            }
         }
         Ok(write)
     }

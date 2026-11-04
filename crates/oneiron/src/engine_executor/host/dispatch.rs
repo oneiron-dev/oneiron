@@ -232,9 +232,7 @@ impl RecordingJsHost<'_, '_> {
         // The post chain reads the answer as the guest gets it: a large one
         // by its handle.
         let outcome = self.store_large_answer(seq, outcome)?;
-        let rewritten = hooked
-            .as_ref()
-            .and_then(|hooked| hooked.1.clone());
+        let rewritten = hooked.as_ref().and_then(|hooked| hooked.1.clone());
         match hooked {
             Some(hooked) => Ok((
                 self.gated_write.leave_verb_hooks(hooked, outcome)?,

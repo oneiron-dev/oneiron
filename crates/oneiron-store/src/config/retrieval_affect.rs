@@ -1,7 +1,7 @@
 //! Per-vault read-side affect retrieval policy.
 
-use oneiron_contracts::error::{Error, Result};
 use oneiron_contracts::affect::Vad;
+use oneiron_contracts::error::{Error, Result};
 
 /// Highest arousal stretch: a claim at arousal 1 ages over at most
 /// `1 + 4 = 5` half-lives' worth of its class half-life.
