@@ -94,7 +94,11 @@ impl Vault {
             // An erased custody record's known-value history goes, its
             // entries' retirement staged; another record's stays (KS-3).
             self.store.stage_known_history_erase_in_txn(wtxn, id)?;
-            crate::secret_custody::erase_secret_handle_label_in_txn(&self.store, wtxn, id)?;
+            crate::store::secret_handle_labels::erase_secret_handle_label_in_txn(
+                &self.store,
+                wtxn,
+                id,
+            )?;
             // An erased pad row takes its key's pad out of custody, never
             // another of its world's (KS-5, FIX 7192): every caller wrote
             // the row's hard marker in this transaction, which the
@@ -447,7 +451,9 @@ impl Vault {
         let scrubbed = crate::compaction::erased_form(&entity_record);
         self.store
             .port_entity_scrub(wtxn, id, scrubbed, mutation_recorded_at)?;
-        crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
+        self.store
+            .scope_stamps
+            .retire_stamp(&self.store, wtxn, *id)?;
         IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         crate::embed::erase_turn_vectors_in_txn(
