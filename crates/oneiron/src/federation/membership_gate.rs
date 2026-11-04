@@ -1,7 +1,7 @@
 //! Transaction-bound shared-vault membership write authorization.
 
 use super::{
-    FederationGrant, FederationGrantRole, FederationGrantScope, OrgAdminPower, Scope, ScopeAxis,
+    FederationGrant, FederationGrantRole, FederationGrantScope, Scope, ScopeAxis,
     decode_federation_grant_body,
 };
 use crate::Vault;
@@ -14,24 +14,7 @@ use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::write_envelope::WriteActor;
 use std::collections::BTreeSet;
 
-/// A requested shared-vault mutation. Personal roots never inherit shared authority.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SharedVaultWrite {
-    /// Content with its resolved six-axis record scope; a missing axis is bottom.
-    Content(Scope),
-    /// One named organization-administration power.
-    Admin(OrgAdminPower),
-    /// A conflict review ruling in this shared vault.
-    RuleConflict,
-    /// Change a shared workspace setting; enrollment authority alone does not confer it.
-    WorkspaceSettings,
-    /// Mutate the organization root.
-    OrgRoot,
-    /// Mutate a member's separate personal root.
-    PersonalVault,
-    /// Object during a catastrophic-act veto window.
-    Veto,
-}
+pub use crate::batch::shared_vault_write::SharedVaultWrite;
 
 fn denied() -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority {
