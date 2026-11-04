@@ -59,6 +59,11 @@ pub(super) struct PendingRow {
     made_by: Option<MadeBy>,
     base_version: Option<u64>,
     base_content_hash: Option<[u8; 32]>,
+    /// An explicit version fork waits here: its Keep lands a fork version
+    /// even against the current head (blind review of #4387). Old rows read
+    /// back as false and keep today's behavior.
+    #[serde(default)]
+    explicit_fork: bool,
     new_bytes: Vec<u8>,
     body: PendingBody,
     /// A deck export's projection, which its Keep rebinds the deck to.
@@ -373,7 +378,38 @@ impl Vault {
         actor: WriteActor,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
-        self.propose_output(artifact_id, output, reader, (actor, retained_at), None)
+        self.propose_output(
+            artifact_id,
+            output,
+            reader,
+            (actor, retained_at),
+            None,
+            None,
+            false,
+        )
+    }
+
+    /// [`Self::propose_native_output`] for a direct AgentRun append that did
+    /// not settle: the proposal and the caller's live content-write authority
+    /// commit under one check (FIX 8208).
+    pub(crate) fn propose_native_output_with_write_grant(
+        &self,
+        artifact_id: &EntityId,
+        output: &NativeOutput,
+        reader: Option<MadeByReader<'_>>,
+        actor: WriteActor,
+        retained_at: u64,
+        fork_base: Option<(u64, [u8; 32])>,
+    ) -> Result<PendingProposalView> {
+        self.propose_output(
+            artifact_id,
+            output,
+            reader,
+            (actor, retained_at),
+            None,
+            fork_base,
+            true,
+        )
     }
 
     /// Offers a deck export as a waiting proposal pinned to `base`, the
@@ -394,6 +430,8 @@ impl Vault {
             reader,
             (actor, retained_at),
             Some((base, hold)),
+            None,
+            false,
         )
     }
 
@@ -404,6 +442,8 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         (actor, retained_at): (WriteActor, u64),
         deck: Option<((u64, [u8; 32]), DeckExportHold)>,
+        base_override: Option<(u64, [u8; 32])>,
+        authorize_content_write: bool,
     ) -> Result<PendingProposalView> {
         let body = self
             .get_blob_artifact(artifact_id)?
@@ -413,7 +453,7 @@ impl Vault {
                 "a native output must export the artifact's own media type",
             )));
         }
-        if output.bytes.is_empty() || output.name.trim().is_empty() {
+        if (!authorize_content_write && output.bytes.is_empty()) || output.name.trim().is_empty() {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "a native output needs a file name and non-empty bytes",
             )));
@@ -429,14 +469,17 @@ impl Vault {
             )));
         }
         crate::batch::secret_scan::scan_metadata_field(&output.name)?;
-        if OfficeFormat::from_media_type(&output.media_type).is_ok() {
-            // An office export must at least open as a package before it waits.
+        if !authorize_content_write && OfficeFormat::from_media_type(&output.media_type).is_ok() {
+            // An organ's office export must at least open as a package before
+            // it waits. A direct append keeps the append door's byte acceptance
+            // (FIX 8208): its authorized Keep reaches the same core append.
             crate::edit_roundtrip::read_office_package(&output.bytes)?;
         }
         let head = self.blob_artifact_head(artifact_id)?;
-        let base = match &deck {
-            Some((base, _)) => Some(*base),
-            None => head.as_ref().map(|head| (head.version, head.content_hash)),
+        let base = match (base_override, &deck) {
+            (Some(base), _) => Some(base),
+            (None, Some((base, _))) => Some(*base),
+            (None, None) => head.as_ref().map(|head| (head.version, head.content_hash)),
         };
         let row = PendingRow {
             proposal_ref: output.run_ref.clone(),
@@ -445,6 +488,7 @@ impl Vault {
             made_by: output.made_by.clone(),
             base_version: base.map(|(version, _)| version),
             base_content_hash: base.map(|(_, hash)| hash),
+            explicit_fork: base_override.is_some(),
             new_bytes: output.bytes.clone(),
             deck: deck.map(|(_, hold)| hold),
             body: PendingBody::Output {
@@ -453,7 +497,11 @@ impl Vault {
                 report,
             },
         };
-        self.put_pending(artifact_id, &row, reader)
+        if authorize_content_write {
+            self.put_pending_with_content_write_grant(artifact_id, &row, reader, actor)
+        } else {
+            self.put_pending(artifact_id, &row, reader)
+        }
     }
 
     /// The proposals waiting beside one artifact, oldest ref hash first.
@@ -623,10 +671,12 @@ impl Vault {
             // head keeps both, as a person may keep a machine version beside
             // their own. Made against nothing, it lands on whatever head is.
             // A deck export was made against the version its deck projected
-            // over, whatever head it found then (FIX 2700).
-            let fork_parent = row
-                .base_version
-                .filter(|base| head.as_ref().is_some_and(|head| head.version != *base));
+            // over, whatever head it found then (FIX 2700). An explicit fork
+            // lands a fork version even against the current head; anything
+            // else forks only from an older head (blind review of #4387).
+            let fork_parent = row.base_version.filter(|base| {
+                row.explicit_fork || head.as_ref().is_some_and(|head| head.version != *base)
+            });
             let version = match &row.made_by {
                 Some(made_by) => self.append_blob_artifact_version_made_by_in_txn(
                     wtxn,
@@ -703,6 +753,27 @@ impl Vault {
         Ok(row.view(*artifact_id))
     }
 
+    /// [`Self::put_pending`] with the direct append door's shared content-write
+    /// check in the same transaction as the retained proposal (FIX 8208).
+    fn put_pending_with_content_write_grant(
+        &self,
+        artifact_id: &EntityId,
+        row: &PendingRow,
+        reader: Option<MadeByReader<'_>>,
+        actor: WriteActor,
+    ) -> Result<PendingProposalView> {
+        let lane =
+            admission::retention_lane(artifact_id, row.made_by.as_ref(), row.retained_by, reader)?;
+        self.with_write_txn_grouped(|wtxn| {
+            self.authorize_shared_content_write_in_txn(wtxn, *artifact_id, &actor)?;
+            if let (Some(lane), Some(made_by)) = (&lane, &row.made_by) {
+                admission::admit_made_by_in_txn(self, wtxn, lane, made_by, row.retained_by)?;
+            }
+            self.put_pending_in_txn(wtxn, artifact_id, row)
+        })?;
+        Ok(row.view(*artifact_id))
+    }
+
     /// Holds `row` beside its artifact in `wtxn`: a settled ref, or one already
     /// waiting, is refused.
     fn put_pending_in_txn(
@@ -769,6 +840,7 @@ fn edit_pending_row(
         made_by: made_by.cloned(),
         base_version: proposal.base_version,
         base_content_hash: Some(proposal.base_content_hash),
+        explicit_fork: false,
         new_bytes: proposal.new_bytes.clone(),
         deck: None,
         body: PendingBody::Edit {

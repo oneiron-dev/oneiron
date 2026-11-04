@@ -238,6 +238,7 @@ impl Memory<'_> {
             denied: false,
             choice_receipt_ref: None,
             shipped_policy_rows: governed.shipped_rows.clone(),
+            recipient_scrub: None,
             decision_receipt: None,
         };
         let scope = run.scope();
