@@ -508,10 +508,11 @@ fn plot_moved(
             // destination — unless this destination still holds its base
             // plot's strongest claim (review-4320 P1): the mates'
             // departures do not move an occupant the destination retained.
-            // The claim counts the plot's surviving natives, with the
-            // ordinal for a tie; one beside its mates, or with none
-            // surviving elsewhere, still anchors it.
-            let plot_claim = |place: u32| -> (usize, bool) {
+            // An occupied unchanged ordinal keeps the plot's claim even
+            // when more natives moved elsewhere. Among changed ordinals,
+            // the surviving native count decides. A foreign-only plot at
+            // the old ordinal carries no claim.
+            let plot_claim = |place: u32| -> (bool, usize) {
                 let count = side_series
                     .iter()
                     .filter(|line| {
@@ -519,7 +520,7 @@ fn plot_moved(
                             && plot_key(side_family, line) == (family, place)
                     })
                     .count();
-                (count, place == nth)
+                (count != 0 && place == nth, count)
             };
             let here = plot_claim(at);
             let moved = side_series.iter().any(|line| {
