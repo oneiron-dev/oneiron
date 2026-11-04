@@ -26166,13 +26166,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/partition_run.rs",
      "purpose": "The prepared partition run `execute` ends in: the branch's resources at the wake's pin, the partition's…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -26464,13 +26464,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/parallel.rs",
      "purpose": "Read-only neighbourhood fan-out, followed by one parent-owned merge",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 6
      }
     },
     {
@@ -26749,7 +26749,7 @@
      "path": "src/dreamer_consolidation/resources/prior.rs",
      "purpose": "Exact stored-head admission and question routing",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -27193,7 +27193,7 @@
      "path": "src/dreamer_consolidation/sieve_ports.rs",
      "purpose": "The sieve's and a child extraction's injected ports (OF-498a)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 20,
       "struct": 7,
@@ -30649,7 +30649,7 @@
      "path": "src/dreamer_wake/driver/park_cause.rs",
      "purpose": "What a non-deadline executor error parks as (FIX 7272)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -30680,6 +30680,16 @@
      "purpose": "Where a wake pass stops between attempts: at the attempt boundary (a cancellation, the hard deadline, or the…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/driver/window.rs",
+     "purpose": "One wake pass's partition window (FIX 12487): plain Micro partitions admitted back to back, up to the…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -30757,7 +30767,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 1,
       "re-export": 15
      }
@@ -31337,7 +31347,7 @@
      "path": "src/dreamer_wake/types.rs",
      "purpose": "Wake request and outcome vocabulary plus the executor contract",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 6,
       "re-export": 1,
@@ -90259,7 +90269,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91330,9 +91340,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 127,
+   "over_bar": 129,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6288,
+   "source_files": 6289,
    "test_files": 900
   },
   "oneiron-android": {

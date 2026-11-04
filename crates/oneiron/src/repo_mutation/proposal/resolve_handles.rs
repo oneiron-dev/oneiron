@@ -133,11 +133,14 @@ pub(super) fn resolved_successor(
             .ok_or(invalid(
                 "proposal requires bounded content and review lenses",
             ))?;
-        if resolved_len > 32 * 1024 * 1024 {
-            return Err(invalid(
-                "proposal requires bounded content and review lenses",
-            ));
-        }
+    }
+    // FIX 12563: the cap binds the final resolved length, not each prefix of it:
+    // an at-limit file whose first replacement grows and whose later replacement
+    // shrinks more still fits, and the checked arithmetic above already holds.
+    if resolved_len > 32 * 1024 * 1024 {
+        return Err(invalid(
+            "proposal requires bounded content and review lenses",
+        ));
     }
     let resolved = substitute(content, &spans, &values);
     // Round-4 P1: the resolved bytes are new content under a new hash, so
