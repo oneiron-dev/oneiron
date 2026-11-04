@@ -602,8 +602,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 });
                 continue;
             };
-            // The batch receipt covers every item in the same authority txn,
-            // and each text an item's asset is served.
+            // The batch receipt intersects every read frame's authority,
+            // then includes each text an item's asset is served.
             let result = self
                 .project_hydrate(
                     METHOD,
