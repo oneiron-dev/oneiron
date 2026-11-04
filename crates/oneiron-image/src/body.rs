@@ -16,15 +16,6 @@ pub const SCHEMA: u32 = 1;
 
 /// The longest side a source or any step's canvas may have.
 pub const MAX_SIDE: u32 = 65_535;
-/// The most steps one body may carry.
-pub const MAX_STEPS: usize = 256;
-/// The most overlays one body may carry.
-pub const MAX_OVERLAYS: usize = 1024;
-/// The most points one freehand overlay may carry.
-pub const MAX_POINTS: usize = 16_384;
-/// The most freehand points one body may carry under the image body's
-/// render-work policy.
-pub const MAX_TOTAL_POINTS: usize = 131_072;
 /// The widest stroke, in canvas pixels.
 pub const MAX_STROKE_WIDTH: f32 = 1024.0;
 /// How far an overlay coordinate may sit from the canvas.
@@ -191,12 +182,16 @@ impl ImageBody {
         }
     }
 
-    /// Reads and checks a body.
+    /// Reads and checks a body. `check` runs between steps and
+    /// overlays, and returns an error once the call is cancelled.
     ///
     /// # Errors
     /// `schema_mismatch` for another kind or schema; `bad_request` for a body
-    /// that does not parse or does not add up.
-    pub fn from_typed(body: Option<&TypedBody>) -> Result<Self, OrganError> {
+    /// that does not parse or does not add up; whatever `check` returns.
+    pub fn from_typed(
+        body: Option<&TypedBody>,
+        check: &dyn Fn() -> Result<(), OrganError>,
+    ) -> Result<Self, OrganError> {
         let body = body.ok_or_else(|| bad("this verb needs an image body"))?;
         if body.kind != KIND || body.schema != SCHEMA {
             return Err(OrganError::new(
@@ -208,7 +203,7 @@ impl ImageBody {
             ));
         }
         let parsed: Self = from_value(&body.value, "image body")?;
-        parsed.check()?;
+        parsed.check(check)?;
         Ok(parsed)
     }
 
@@ -224,16 +219,14 @@ impl ImageBody {
 
     /// Replays the steps from the source size and checks every bound, so a
     /// body that reaches export always renders. Every edit checks the body
-    /// it returns too.
-    pub(crate) fn check(&self) -> Result<(), OrganError> {
+    /// it returns too. `check` runs between steps and overlays, and returns
+    /// an error once the call is cancelled.
+    pub(crate) fn check(
+        &self,
+        check: &dyn Fn() -> Result<(), OrganError>,
+    ) -> Result<(), OrganError> {
         if !(1..=8).contains(&self.source.orientation) {
             return Err(bad("orientation must be 1 to 8"));
-        }
-        if self.steps.len() > MAX_STEPS {
-            return Err(bad(format!("more than {MAX_STEPS} steps")));
-        }
-        if self.overlays.len() > MAX_OVERLAYS {
-            return Err(bad(format!("more than {MAX_OVERLAYS} overlays")));
         }
         let mut canvas = Size {
             w: self.source.width,
@@ -248,21 +241,20 @@ impl ImageBody {
             )));
         }
         for step in &self.steps {
+            check()?;
             canvas = step.apply_to(canvas)?;
         }
         if canvas != self.canvas {
             return Err(bad("the canvas does not match the steps"));
         }
-        if self.total_points() > MAX_TOTAL_POINTS {
-            return Err(bad(format!("more than {MAX_TOTAL_POINTS} points in all")));
-        }
         let mut ids = std::collections::BTreeSet::new();
         for overlay in &self.overlays {
-            check_overlay(&overlay.shape, &overlay.stroke)?;
+            check()?;
+            check_overlay(&overlay.shape, &overlay.stroke, check)?;
             if overlay.id >= self.next_overlay || !ids.insert(overlay.id) {
                 return Err(bad(format!("overlay id {} is reused", overlay.id)));
             }
-            if overlay.clipped != overlay.clipped_by(self.canvas) {
+            if overlay.clipped != overlay.clipped_by(self.canvas, check)? {
                 return Err(bad(format!(
                     "overlay {} says clipped is {}, but its bounds say otherwise",
                     overlay.id, overlay.clipped
@@ -325,15 +317,19 @@ impl Step {
 
 /// # Errors
 /// `bad_request` for a non-finite or far-off coordinate, a stroke out of
-/// range, or a freehand line with no points or too many.
-pub(crate) fn check_overlay(shape: &Shape, stroke: &Stroke) -> Result<(), OrganError> {
+/// range, or a freehand line with no points; whatever `check` returns.
+pub(crate) fn check_overlay(
+    shape: &Shape,
+    stroke: &Stroke,
+    check: &dyn Fn() -> Result<(), OrganError>,
+) -> Result<(), OrganError> {
     if !(stroke.width.is_finite() && (1.0..=MAX_STROKE_WIDTH).contains(&stroke.width)) {
         return Err(bad(format!("stroke width must be 1 to {MAX_STROKE_WIDTH}")));
     }
     if let Shape::Freehand { points } = shape
-        && (points.is_empty() || points.len() > MAX_POINTS)
+        && points.is_empty()
     {
-        return Err(bad(format!("a freehand line has 1 to {MAX_POINTS} points")));
+        return Err(bad("a freehand line needs a point"));
     }
     if let Shape::Rect { w, h, .. } = shape
         && !(*w >= 0.0 && *h >= 0.0)
@@ -344,7 +340,17 @@ pub(crate) fn check_overlay(shape: &Shape, stroke: &Stroke) -> Result<(), OrganE
     let ok = match shape {
         Shape::Rect { x, y, w, h } => [*x, *y, *w, *h].into_iter().all(near),
         Shape::Arrow { from, to } => [from.x, from.y, to.x, to.y].into_iter().all(near),
-        Shape::Freehand { points } => points.iter().all(|p| near(p.x) && near(p.y)),
+        Shape::Freehand { points } => {
+            let mut ok = true;
+            for p in points {
+                check()?;
+                if !(near(p.x) && near(p.y)) {
+                    ok = false;
+                    break;
+                }
+            }
+            ok
+        }
     };
     if ok {
         Ok(())
@@ -354,25 +360,42 @@ pub(crate) fn check_overlay(shape: &Shape, stroke: &Stroke) -> Result<(), OrganE
 }
 
 impl Shape {
-    /// Moves every point by `(dx, dy)`.
-    pub(crate) fn translate(&mut self, dx: f32, dy: f32) {
-        self.map_points(|p| Point {
+    /// Moves every point by `(dx, dy)`. `check` runs per freehand
+    /// point, and returns an error once the call is cancelled.
+    pub(crate) fn translate(
+        &mut self,
+        dx: f32,
+        dy: f32,
+        check: &dyn Fn() -> Result<(), OrganError>,
+    ) -> Result<(), OrganError> {
+        self.map_points(check, |p| Point {
             x: p.x + dx,
             y: p.y + dy,
-        });
+        })
     }
 
-    /// Scales every point per axis about the origin.
-    pub(crate) fn scale(&mut self, sx: f32, sy: f32) {
-        self.map_points(|p| Point {
+    /// Scales every point per axis about the origin. `check` runs per
+    /// freehand point, and returns an error once the call is cancelled.
+    pub(crate) fn scale(
+        &mut self,
+        sx: f32,
+        sy: f32,
+        check: &dyn Fn() -> Result<(), OrganError>,
+    ) -> Result<(), OrganError> {
+        self.map_points(check, |p| Point {
             x: p.x * sx,
             y: p.y * sy,
-        });
+        })
     }
 
-    fn map_points(&mut self, f: impl Fn(Point) -> Point) {
+    fn map_points(
+        &mut self,
+        check: &dyn Fn() -> Result<(), OrganError>,
+        f: impl Fn(Point) -> Point,
+    ) -> Result<(), OrganError> {
         match self {
             Self::Rect { x, y, w, h } => {
+                check()?;
                 let from = f(Point { x: *x, y: *y });
                 let to = f(Point {
                     x: *x + *w,
@@ -382,23 +405,33 @@ impl Shape {
                 *y = from.y;
                 *w = to.x - from.x;
                 *h = to.y - from.y;
+                Ok(())
             }
             Self::Arrow { from, to } => {
+                check()?;
                 *from = f(*from);
                 *to = f(*to);
+                Ok(())
             }
             Self::Freehand { points } => {
                 for point in points.iter_mut() {
+                    check()?;
                     *point = f(*point);
                 }
+                Ok(())
             }
         }
     }
 
     /// The segments a stroke follows. A rect is its four edges, an arrow is
     /// its shaft and two head barbs, a freehand line joins its points (one
-    /// point is a dot).
-    pub(crate) fn segments(&self, width: f32) -> Vec<(Point, Point)> {
+    /// point is a dot). `check` runs between freehand segments, and returns
+    /// an error once the call is cancelled.
+    pub(crate) fn segments(
+        &self,
+        width: f32,
+        check: &dyn Fn() -> Result<(), OrganError>,
+    ) -> Result<Vec<(Point, Point)>, OrganError> {
         match self {
             Self::Rect { x, y, w, h } => {
                 let a = Point { x: *x, y: *y };
@@ -408,7 +441,7 @@ impl Shape {
                     y: *y + *h,
                 };
                 let d = Point { x: *x, y: *y + *h };
-                vec![(a, b), (b, c), (c, d), (d, a)]
+                Ok(vec![(a, b), (b, c), (c, d), (d, a)])
             }
             Self::Arrow { from, to } => {
                 let mut segments = vec![(*from, *to)];
@@ -429,19 +462,31 @@ impl Shape {
                         segments.push((*to, tip));
                     }
                 }
-                segments
+                Ok(segments)
             }
             Self::Freehand { points } => match points.as_slice() {
-                [only] => vec![(*only, *only)],
-                many => many.windows(2).map(|pair| (pair[0], pair[1])).collect(),
+                [only] => Ok(vec![(*only, *only)]),
+                many => {
+                    let mut segments = Vec::with_capacity(many.len().saturating_sub(1));
+                    for pair in many.windows(2) {
+                        check()?;
+                        segments.push((pair[0], pair[1]));
+                    }
+                    Ok(segments)
+                }
             },
         }
     }
 }
 
 impl Overlay {
-    /// Everything the stroke paints, before the canvas cuts it.
-    pub(crate) fn bounds(&self) -> Bounds {
+    /// Everything the stroke paints, before the canvas cuts it. `check`
+    /// runs between segments, and returns an error once the call is
+    /// cancelled.
+    pub(crate) fn bounds(
+        &self,
+        check: &dyn Fn() -> Result<(), OrganError>,
+    ) -> Result<Bounds, OrganError> {
         let reach = self.stroke.width / 2.0;
         let mut bounds = Bounds {
             x0: f32::INFINITY,
@@ -449,7 +494,8 @@ impl Overlay {
             x1: f32::NEG_INFINITY,
             y1: f32::NEG_INFINITY,
         };
-        for (a, b) in self.shape.segments(self.stroke.width) {
+        for (a, b) in self.shape.segments(self.stroke.width, check)? {
+            check()?;
             for p in [a, b] {
                 bounds.x0 = bounds.x0.min(p.x - reach);
                 bounds.y0 = bounds.y0.min(p.y - reach);
@@ -457,12 +503,16 @@ impl Overlay {
                 bounds.y1 = bounds.y1.max(p.y + reach);
             }
         }
-        bounds
+        Ok(bounds)
     }
 
     /// Whether export cuts part of this overlay at `canvas`.
-    pub(crate) fn clipped_by(&self, canvas: Size) -> bool {
-        let b = self.bounds();
-        b.x0 < 0.0 || b.y0 < 0.0 || b.x1 > canvas.w as f32 || b.y1 > canvas.h as f32
+    pub(crate) fn clipped_by(
+        &self,
+        canvas: Size,
+        check: &dyn Fn() -> Result<(), OrganError>,
+    ) -> Result<bool, OrganError> {
+        let b = self.bounds(check)?;
+        Ok(b.x0 < 0.0 || b.y0 < 0.0 || b.x1 > canvas.w as f32 || b.y1 > canvas.h as f32)
     }
 }

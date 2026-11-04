@@ -133,11 +133,14 @@ pub(super) fn resolved_successor(
             .ok_or(invalid(
                 "proposal requires bounded content and review lenses",
             ))?;
-        if resolved_len > 32 * 1024 * 1024 {
-            return Err(invalid(
-                "proposal requires bounded content and review lenses",
-            ));
-        }
+    }
+    // FIX 12563: the cap binds the final resolved length, not each prefix of it:
+    // an at-limit file whose first replacement grows and whose later replacement
+    // shrinks more still fits, and the checked arithmetic above already holds.
+    if resolved_len > 32 * 1024 * 1024 {
+        return Err(invalid(
+            "proposal requires bounded content and review lenses",
+        ));
     }
     let resolved = substitute(content, &spans, &values);
     // Round-4 P1: the resolved bytes are new content under a new hash, so
@@ -263,17 +266,15 @@ pub(super) fn resolved_successor(
         // keys only through the content-hash mask row, which never reads
         // repo.secret_mark: project the same resolved spans there, so a
         // non-owner never reads the substituted values in clear.
-        let mut masked = crate::secret_custody::masked_file_in_txn(
-            &vault.store,
-            &txn,
-            &raw_blake3,
-        )?
-        .unwrap_or(crate::secret_custody::MaskedFile {
-            band: crate::secret_custody::MASKED_FILE_BAND,
-            keys: Vec::new(),
-            masked_at: marked_at,
-            members: Vec::new(),
-        });
+        let mut masked =
+            crate::secret_custody::masked_file_in_txn(&vault.store, &txn, &raw_blake3)?.unwrap_or(
+                crate::secret_custody::MaskedFile {
+                    band: crate::secret_custody::MASKED_FILE_BAND,
+                    keys: Vec::new(),
+                    masked_at: marked_at,
+                    members: Vec::new(),
+                },
+            );
         for ((_, _, text), (start, end)) in spans.iter().zip(resolved_ranges.iter()) {
             let (_, _, custody, _) = values
                 .iter()
@@ -317,7 +318,12 @@ pub(super) fn resolved_successor(
                 );
             }
         }
-        crate::secret_custody::put_masked_file_in_txn(&vault.store, &mut txn, &raw_blake3, &masked)?;
+        crate::secret_custody::put_masked_file_in_txn(
+            &vault.store,
+            &mut txn,
+            &raw_blake3,
+            &masked,
+        )?;
         // Round-5 (review P1 sol-2): index copies already derived from these
         // bytes refresh under the new marks here, as the receive path does;
         // new bytes have no copies and the call no-ops.
@@ -346,8 +352,7 @@ fn spans_values(
         if values.iter().any(|(known, _, _, _)| known == text) {
             continue;
         }
-        let (handle, id) =
-            crate::secret_custody::handle_record_in_txn(&vault.store, &txn, text)?;
+        let (handle, id) = crate::secret_custody::handle_record_in_txn(&vault.store, &txn, text)?;
         let value = vault
             .get_secret_value_in_txn(&txn, &id, REPO_LANDING_EFFECTOR)?
             .ok_or(Error::EntityNotFound)?;
@@ -382,8 +387,7 @@ pub(crate) fn revalidate_resolved_successor_in_txn(
         if seen.iter().any(|held| held == &text) {
             continue;
         }
-        let (_, id) =
-            crate::secret_custody::handle_record_in_txn(&vault.store, txn, &text)?;
+        let (_, id) = crate::secret_custody::handle_record_in_txn(&vault.store, txn, &text)?;
         vault
             .get_secret_value_in_txn(txn, &id, REPO_LANDING_EFFECTOR)?
             .ok_or(Error::EntityNotFound)?;
@@ -489,10 +493,7 @@ fn push_bounded(out: &mut Vec<u8>, chunk: &[u8]) -> Result<()> {
 /// The inverse substitution, for the review-carry proof: each bound value
 /// back to its span. An empty value proves nothing and is left, which the
 /// caller's byte equality then refuses.
-fn reredact(
-    resolved: &[u8],
-    values: &[(String, Vec<u8>, EntityId, String)],
-) -> Result<Vec<u8>> {
+fn reredact(resolved: &[u8], values: &[(String, Vec<u8>, EntityId, String)]) -> Result<Vec<u8>> {
     let mut out = resolved.to_vec();
     for (text, value, _, _) in values {
         if value.is_empty() {

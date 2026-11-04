@@ -109,7 +109,10 @@ impl LeaseJournal {
         };
         state.dir_synced = true;
         let bound = now.saturating_add(AUTHORIZATION_LEASE_SECS);
-        match file.write_all(&record(bound)).and_then(|()| file.sync_data()) {
+        match file
+            .write_all(&record(bound))
+            .and_then(|()| file.sync_data())
+        {
             Ok(()) => {
                 state.covered = bound;
                 state.owed = true;

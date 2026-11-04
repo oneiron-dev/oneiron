@@ -3447,7 +3447,7 @@ class Oneiron:
             """Pauses one queued or scheduled branch of a run by its attempt id: the vault owner pauses any branch, any other caller only a branch of a TASK it owns. A repeat answers already_paused; a running branch is not paused."""
         def resume(self, spec: Facade.RunControlRequest) -> Facade.RunControlReceipt:
             """Resumes one paused branch of a run by its attempt id: the vault owner resumes any branch, any other caller only a branch of a TASK it owns. A repeat answers already_resumed."""
-        def step(self, spec: Any) -> Any | None:
+        def step(self, spec: Facade.SettledStepRequest) -> Facade.SettledStepView | None:
             """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
         def checkpoint(self, spec: Facade.CheckpointReadRequest) -> Facade.CheckpointView | None:
             """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
