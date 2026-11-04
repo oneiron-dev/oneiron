@@ -57,13 +57,13 @@ use crate::server::SyncServer;
 pub(crate) mod hook;
 mod model_calls;
 
-/// This thread's caller for the model-call capture in `BigModel::decide`
-/// (FIX 12516/12742), bound while a verdict, graph or artifact decision
-/// answers. Outside a capture scope it is `None`, never guessed.
-pub(crate) use model_calls::caller as model_call_context;
 /// Binds the capture caller [`model_call_context`] reads back (FIX
 /// 12516/12742), on the decision's blocking thread.
 pub(crate) use model_calls::scoped as with_model_call_context;
+/// This thread's caller for the model-call capture in `BigModel::decide`
+/// (FIX 12516/12742), bound while a verdict, graph or artifact decision
+/// answers. Outside a capture scope it is `None`, never guessed.
+pub(crate) use model_calls::{ModelCallCaller, caller as model_call_context};
 
 /// The state field, and the question's name, for a call's image.
 const IMAGE: &str = "image";

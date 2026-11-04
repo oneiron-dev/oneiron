@@ -32,6 +32,27 @@ thread. It restores the entire previous context on return or panic. It is not
 authority, a payer, or an async context propagated to another thread. Generative
 eval arms pass their recording principal directly.
 
+## Native house reads
+
+A house escalation read with a caller-supplied run uses the same caller context
+on the blocking decision thread. Only a bound context can write evidence; a
+missing context skips evidence, not the read. The run-less house gate, System
+One, Local-vision, embedder and tagger paths are not covered by this hook.
+
+The engine lends the exact admitted native request and its terminal result to
+an optional observer after the gate has attempted settlement. The observer
+never reads or settles again. It records a completed read only after the
+existing distribution validation succeeds. A malformed reply keeps its actual
+usage; a raw reader error keeps only its typed failure class and unknown usage.
+Readout probabilities and raw reader errors are not copied to the record. An
+unmapped failure skips evidence without changing the original error.
+
+The owner probe and this hook share one native record initializer and request
+canonicalizer. They record the actual reader model, opaque revision and
+connector locality. The probe retains its existing per-attempt retry indices;
+house reads use the caller run's shared evidence sequence. No generative request,
+finish reason, route, issuer or read-world identity is invented.
+
 ## Recording and privacy
 
 For a bound session, the existing NoRecord/off-record check runs both before the
@@ -45,8 +66,8 @@ or typed decision. A failed evidence write is logged and never fails the answer.
 An unbound call records as usual; a call outside every capture scope is not
 assigned a guessed actor.
 
-Each raw/Big/generative-eval evidence row takes a distinct record stamp from
-its shared run. This is an evidence-key sequence, not an admission or receipt
+Each raw/Big/generative-eval/observed-house evidence row takes a distinct record
+stamp from its shared run. This is an evidence-key sequence, not an admission or receipt
 number. Cloned handles share it and declaration revisions do not reset it.
 A failed or suppressed write does not require a dense sequence.
 

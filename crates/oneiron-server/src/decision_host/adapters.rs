@@ -9,6 +9,8 @@ use oneiron::llm::routing::DescriptionNotes;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::skill_hub::claim_replay_filled_state;
 
+use super::native_capture::HouseReadObserver;
+
 use super::{
     Arc, AutoCheckCandidate, AutoCheckNotes, BudgetLease, CallOutcome, DecisionAnswer,
     DecisionCall, DecisionPack, DecisionProvider, DecisionReadGate, GatedRead, HOUSE_READ_RUN,
@@ -143,6 +145,7 @@ impl DecisionProvider for HouseRead {
                 gate: &self.gate,
                 run: run.sourced(Some(call.evidence.to_vec())),
             };
+            let observer = HouseReadObserver::new(self, &gate.run);
             return DecisionReadProvider::new(
                 self.pin.clone(),
                 self.reader.as_ref(),
@@ -150,6 +153,7 @@ impl DecisionProvider for HouseRead {
                 &self.paired,
                 self.person.as_ref(),
             )?
+            .observed_by(&observer)
             .decide(call);
         }
         self.provider()?.decide(call)
@@ -162,6 +166,7 @@ impl DecisionProvider for HouseRead {
                 gate: &self.gate,
                 run: run.sourced(Some(pack.evidence.to_vec())),
             };
+            let observer = HouseReadObserver::new(self, &gate.run);
             return DecisionReadProvider::new(
                 self.pin.clone(),
                 self.reader.as_ref(),
@@ -169,6 +174,7 @@ impl DecisionProvider for HouseRead {
                 &self.paired,
                 self.person.as_ref(),
             )?
+            .observed_by(&observer)
             .decide_pack(pack);
         }
         self.provider()?.decide_pack(pack)

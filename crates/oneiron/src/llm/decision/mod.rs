@@ -30,7 +30,9 @@ pub use local::{
 };
 pub mod questions;
 mod read;
-pub use read::{DecisionReadGate, DecisionReadProvider, GatedRead};
+pub use read::{
+    DecisionReadGate, DecisionReadObserver, DecisionReadOutcome, DecisionReadProvider, GatedRead,
+};
 mod routine;
 pub use routine::*;
 mod rules;

@@ -70,6 +70,7 @@ mod adapters;
 mod attach;
 mod claim_merge;
 mod doors;
+mod native_capture;
 mod notes;
 mod refresh;
 
@@ -260,6 +261,7 @@ impl DecisionHost {
         mut self,
         read: Option<&(DecisionReadDoor, BudgetGuard)>,
         admission: ReadAdmission,
+        vault: &Arc<Vault>,
     ) -> Self {
         self.ladder.escalation = None;
         self.ladder.paired = None;
@@ -344,6 +346,7 @@ impl DecisionHost {
             paired,
             self.ladder.person.clone(),
             door.connector().locality == ModelLocality::ThirdParty,
+            vault,
         ) {
             Ok(read) => self.ladder.escalation = Some(Arc::new(read)),
             Err(error) => {
@@ -637,6 +640,7 @@ struct HouseGate {
 /// engine's [`DecisionReadProvider`], which admits and settles each read
 /// through its [`HouseGate`]. The reader blocks on the server's runtime.
 struct HouseRead {
+    vault: Arc<Vault>,
     pin: ProviderPin,
     reader: Arc<dyn LabelReadModel>,
     gate: HouseGate,
@@ -653,8 +657,10 @@ impl HouseRead {
         paired: DecisionQuestion,
         person: Option<DecisionQuestion>,
         leaves: bool,
+        vault: &Arc<Vault>,
     ) -> oneiron::Result<Self> {
         let read = Self {
+            vault: Arc::clone(vault),
             pin: pin(DecisionRung::Escalation, reader.model(), reader.revision()),
             paired,
             person,

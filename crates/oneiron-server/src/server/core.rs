@@ -469,10 +469,11 @@ impl SyncServer {
         meter: oneiron::BudgetGuard,
     ) -> Self {
         self.decision_read = Some((door, meter));
-        self.decisions = self
-            .decisions
-            .clone()
-            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
+        self.decisions = self.decisions.clone().with_house_read(
+            self.decision_read.as_ref(),
+            self.house_read_admission(),
+            &self.vault,
+        );
         self
     }
 
@@ -525,10 +526,11 @@ impl SyncServer {
             self.decision_read = Some((door, raw.meter().clone()));
         }
         // The house read fills the ladder's escalation rung.
-        self.decisions = self
-            .decisions
-            .clone()
-            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
+        self.decisions = self.decisions.clone().with_house_read(
+            self.decision_read.as_ref(),
+            self.house_read_admission(),
+            &self.vault,
+        );
         // A planned team's pattern skill runs on its generative seat.
         self.pattern_launch_runner = pattern_workflow::bind(Arc::clone(&self.vault), ai.clone());
         self.ai = ai;
