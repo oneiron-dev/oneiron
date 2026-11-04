@@ -411,7 +411,7 @@ impl MediaRuntime {
             "a media job's submit went out unanswered, and its job cannot be found again"
         );
         let state = MediaJobState::Failed {
-            error: LlmError::Fatal(FatalLlmError::EmptyResponse),
+            error: LlmError::Fatal(FatalLlmError::JobLost),
         };
         row.ended = Some(state.clone());
         if let Some(store) = &self.store
