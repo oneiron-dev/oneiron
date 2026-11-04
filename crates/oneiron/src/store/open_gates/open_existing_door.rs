@@ -200,6 +200,7 @@ impl Store {
             attempt_operations: hooks.attempt_operations,
             #[cfg(unix)]
             voice_bank_response: hooks.voice_bank_response,
+            core_write_operations: hooks.core_write_operations,
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
             policy_fold_cache: Default::default(),
             machine_history_issuer: Mutex::new(None),
@@ -219,7 +220,7 @@ impl Store {
                         .bound(crate::limit_ask::EngineLimit::CodeResultMemoryBytes),
                 ),
             )),
-            inference_snapshots: crate::inference_snapshot::SnapshotLifecycle::default(),
+            inference_snapshots: crate::store::snapshot_lifecycle::SnapshotLifecycle::default(),
             l2_base_cache: Mutex::new(crate::store::l2_evidence::L2BaseCache::default()),
             ppr_cache_invalidation: &crate::ppr::PprCacheInvalidator,
             legal_hold_refusals: crate::store::legal_hold::LegalHoldRefusals::default(),

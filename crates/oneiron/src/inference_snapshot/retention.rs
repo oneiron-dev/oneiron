@@ -18,8 +18,7 @@
 //! at least [`SNAPSHOT_HEADROOM_BYTES`] left free: this ledger is the disk
 //! line alone.
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::collections::BTreeSet;
 
 use super::catalog::{self, SnapshotClass, SnapshotId};
 use crate::Vault;
@@ -126,40 +125,7 @@ pub struct SnapshotUsage {
     pub skipped: u64,
 }
 
-/// The in-flight half of each vault's disk line, in memory beside its
-/// catalog: reservations and staged bodies, and the eviction counters.
-#[derive(Debug, Default)]
-pub(crate) struct Ledger(Mutex<LedgerState>);
-
-#[derive(Debug, Default)]
-struct LedgerState {
-    next: u64,
-    /// Each reservation's bytes, and whether a body's length charged it.
-    held: BTreeMap<u64, (u64, bool)>,
-    /// The rows a live lease holds, each with its count of holders.
-    pins: BTreeMap<SnapshotId, u64>,
-    evicted: u64,
-    skipped: u64,
-}
-
-impl LedgerState {
-    fn in_flight(&self) -> u64 {
-        self.held
-            .values()
-            .fold(0_u64, |total, (bytes, _)| total.saturating_add(*bytes))
-    }
-}
-
-impl Ledger {
-    fn lock(&self) -> MutexGuard<'_, LedgerState> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Drops every reservation: a lock ends every park in flight.
-    pub(super) fn clear(&self) {
-        self.lock().held.clear();
-    }
-}
+pub(crate) use crate::store::snapshot_ledger::Ledger;
 
 /// One vault's sealed-snapshot disk line ([`Vault::snapshot_ledger`]).
 pub struct SnapshotLedger<'a> {
