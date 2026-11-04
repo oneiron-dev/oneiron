@@ -9,6 +9,8 @@ use crate::secret_rotation::{
 };
 use crate::session_overlay::RouteTarget;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+pub(super) use crate::store::result_body_rows::RAW_OUTPUTS;
+pub(crate) use crate::store::result_body_rows::StoredBody;
 use crate::store::result_body_rows::{STORED_FILE, STORED_HELD, STORED_INLINE, split_row};
 use crate::store::{
     BodyDir, BodyFile, BodyKeyRow, BodySink, ResponseFamily, ResponseRead, StagedBodyKey, SunkBody,
@@ -29,9 +31,8 @@ mod bodies;
 
 pub(crate) use self::admitted::ReplyBody;
 pub(crate) use self::bodies::{
-    CodeRunResultBodyReader, FinishedOutput, StagedSinks, code_run_body_file_of_row,
-    code_run_body_held_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
-    lift_code_run_file_hold_in_txn,
+    FinishedOutput, StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
+    code_run_body_row_key, code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
 };
 pub(super) use self::bodies::{
     body_drifted, finish_output, finish_output_sourced, load_whole_body, open_body_file,
@@ -41,27 +42,6 @@ pub(super) use self::bodies::{
 /// The replay record of one run, keyed by run id.
 pub(super) const REPLAY_RECORDS: SideTable<EntityId, CodeRunReplayRecord, Raw> =
     SideTable::new(&side_table::CODE_RUN_REPLAY);
-
-/// One result body, keyed by its deterministic content handle: inline, or the
-/// file beside `data.mdb` that holds it (OF-597).
-pub(super) const RAW_OUTPUTS: SideTable<String, StoredBody, Raw> =
-    SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT);
-
-/// Where one body's bytes are: in its row, within `[limits]
-/// code_result_inline_bytes`, or in the body file named by its digest, of
-/// `len` bytes. The row is written only once the file is whole on disk, so a
-/// row naming a file never names a partial one.
-///
-/// `held`: the row holds its body on its own, as a raw output no descriptor
-/// holds (FIX 5399b). A put that publishes no descriptor sets it and every
-/// later put of the same bytes keeps it, so no other holder's release
-/// queues or collects the body; only an erase lifts it. It owns nothing
-/// and grants nothing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum StoredBody {
-    Inline { bytes: Vec<u8>, held: bool },
-    File { len: u64, held: bool },
-}
 
 impl StoredBody {
     /// This body as a row that holds it on its own when `held`.
@@ -600,11 +580,7 @@ impl Vault {
     /// the occurrence the scan marked only.
     pub fn code_run_secret_lift_proposals(&self) -> Result<Vec<CodeRunSecretLiftProposal>> {
         let rtxn = self.store.env.read_txn()?;
-        RAW_OUTPUT_SECRETS
-            .scan(&self.store, &rtxn)?
-            .into_iter()
-            .map(|(key, detector_reason)| lift_proposal(&key, detector_reason))
-            .collect()
+        self.code_run_secret_lift_proposals_in_txn(&rtxn)
     }
 
     /// Marks `at`, the occurrence `output` is, with the secret scan's
@@ -666,7 +642,10 @@ impl Vault {
 }
 
 /// The lift proposal of the secret mark at `key`.
-fn lift_proposal(key: &str, detector_reason: String) -> Result<CodeRunSecretLiftProposal> {
+pub(super) fn lift_proposal(
+    key: &str,
+    detector_reason: String,
+) -> Result<CodeRunSecretLiftProposal> {
     let (handle, occurrence) = ResultOccurrence::parse_mark_key(key)?;
     Ok(CodeRunSecretLiftProposal {
         suggested_secret_name: format!(

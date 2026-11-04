@@ -132,12 +132,16 @@ pub(super) fn apply_old_record(
             // brand-new kind with no pre-existing bodies, so a prior body that
             // fails to decode is corruption — fail closed.
             let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
-            let prior = crate::agent_def::decode_agent_definition(prior_body)?;
-            crate::agent_def::validate_agent_definition_update(&prior, updated)?;
+            let prior = crate::store::agent_definition_codec::decode_agent_definition(prior_body)?;
+            crate::store::agent_definition_codec::validate_agent_definition_update(
+                &prior, updated,
+            )?;
         }
         if old_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT
             && body_changed
-            && crate::code_revision::has_finalized_code_revision_in_txn(store, wtxn, &fixed.id)?
+            && crate::store::code_revision_record::tables::has_finalized_code_revision_in_txn(
+                store, wtxn, &fixed.id,
+            )?
         {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "finalized code revision artifacts are immutable",

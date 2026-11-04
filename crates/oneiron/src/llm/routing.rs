@@ -29,7 +29,9 @@ use crate::{
 };
 
 mod decisions;
-pub use crate::store::model_description_rows::MeasuredDescription;
+pub use crate::store::model_description_rows::{
+    DescriptionPolicy, MeasuredDescription, ModelDescription, OwnerModelLine,
+};
 pub use decisions::{DescriptionDecisions, DescriptionNotes};
 // FIX 9922: every candidate's complete grade rides with each routed outcome.
 mod readings;
@@ -38,11 +40,6 @@ pub use readings::{DescriptionFitnessReadings, DescriptionGrading};
 
 const POLICY: SideTable<(), DescriptionPolicy, LegacyJson> =
     SideTable::new(&side_table::LLM_DESCRIPTION_POLICY);
-/// Whether a masked copy of a `LLM_DESCRIPTION_POLICY` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn llm_description_policy_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<DescriptionPolicy, LegacyJson>(bytes)
-}
 
 const MEASUREMENTS: SideTable<(), BTreeMap<ModelId, MeasuredDescription>, LegacyJson> =
     SideTable::new(&side_table::LLM_DESCRIPTION_MEASUREMENTS);
@@ -59,30 +56,6 @@ pub(crate) fn llm_routed_seat_accepts_masked(bytes: &[u8]) -> bool {
 
 fn invalid(reason: impl Into<String>) -> Error {
     Error::InvalidConfig(reason.into())
-}
-
-/// The owner line stays attached to its exact model revision. A newer revision
-/// may use lower-ranked evidence temporarily, but does not inherit this line.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OwnerModelLine {
-    pub model: ModelId,
-    pub text: String,
-    /// Owner's quality estimate on the same millionths scale as measurements.
-    pub expected_quality: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ModelDescription {
-    pub model: ModelId,
-    pub wire: ModelWireFormat,
-    pub locality: ModelLocality,
-    pub owner: Option<OwnerModelLine>,
-    pub public_benchmark: Option<String>,
-    pub vendor: Option<String>,
-    /// Cheapest supported effort first. The owner can override this per seat.
-    pub effort_ladder: Vec<ReasoningEffort>,
 }
 
 impl ModelDescription {
@@ -103,18 +76,6 @@ impl ModelDescription {
             DescriptionSource::Vendor => self.vendor.as_deref(),
         })
     }
-}
-
-/// Hidden-by-default vault configuration; no UI or model names are shipped.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DescriptionPolicy {
-    pub models: Vec<ModelDescription>,
-    /// Configured by the owner, not fixed by the routing implementation.
-    pub contradiction_margin_millionths: u32,
-    pub vault_effort: Option<ReasoningEffort>,
-    pub purpose_effort: BTreeMap<String, ReasoningEffort>,
-    pub global_effort: Option<ReasoningEffort>,
 }
 
 impl DescriptionPolicy {

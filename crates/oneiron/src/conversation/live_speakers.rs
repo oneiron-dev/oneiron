@@ -16,8 +16,7 @@
 //! hosts register again. An entry ref restricts a read as an audience term;
 //! it is never a PERSON, a membership or a grant.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::Arc;
 
 use super::*;
 use crate::conversation::voice_roster::{VoiceAttributionEvidence, VoiceSessionRosterV1};
@@ -30,55 +29,7 @@ use crate::interlocutor::{Interlocutor, InterlocutorSet};
 /// live source (CALLS "FIX 1388/1389 C2", amended 10-18).
 const MISSING_ROSTER_HOLDS: bool = false;
 
-/// The vault's live room-bound voice calls, by room.
-#[derive(Debug, Default)]
-pub(crate) struct LiveSpeakers {
-    rooms: Mutex<BTreeMap<EntityId, LiveRoom>>,
-}
-
-#[derive(Debug, Default)]
-struct LiveRoom {
-    /// Moves on each register and end. A room keeps it after its last call
-    /// ends, so a later call never reads as an earlier one did.
-    revision: u64,
-    /// Each live call's token and the roster ref its host heard it under.
-    calls: BTreeMap<EntityId, Option<String>>,
-}
-
-impl LiveSpeakers {
-    fn lock(&self) -> MutexGuard<'_, BTreeMap<EntityId, LiveRoom>> {
-        self.rooms.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn register(&self, room: EntityId, call: EntityId, roster_ref: Option<String>) {
-        let mut rooms = self.lock();
-        let live = rooms.entry(room).or_default();
-        live.revision = live.revision.saturating_add(1);
-        live.calls.insert(call, roster_ref);
-    }
-
-    /// Token-exact and idempotent: an ended call never removes another.
-    fn remove(&self, room: EntityId, call: EntityId) {
-        let mut rooms = self.lock();
-        if let Some(live) = rooms.get_mut(&room)
-            && live.calls.remove(&call).is_some()
-        {
-            live.revision = live.revision.saturating_add(1);
-        }
-    }
-
-    fn snapshot(&self, room: EntityId) -> (u64, Vec<(EntityId, Option<String>)>) {
-        self.lock().get(&room).map_or((0, Vec::new()), |live| {
-            (
-                live.revision,
-                live.calls
-                    .iter()
-                    .map(|(call, roster)| (*call, roster.clone()))
-                    .collect(),
-            )
-        })
-    }
-}
+pub(crate) use crate::store::live_speaker_calls::LiveSpeakers;
 
 /// One voice call live in a room, registered by its host after the room
 /// proof. Hold it for the call's life: dropping it ends the registration,

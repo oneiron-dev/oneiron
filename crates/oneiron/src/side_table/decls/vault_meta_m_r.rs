@@ -50,7 +50,7 @@ side_tables! {
     /// Latest terminal stream receipt of a message. Key: id16.
     MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named;
     /// Owner-submitted model requests and their terminal receipts. Key: id16(step attempt).
-    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::llm::model_step_submission_accepts_masked];
+    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::store::model_step_submission::model_step_submission_accepts_masked];
     /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
     /// Key: id16(stream).
     MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::store::model_stream_row::model_stream_accepts_masked];
@@ -388,7 +388,7 @@ side_tables! {
     /// An agent hook's ask for a binding wider than its ceiling, and the owner's settlement
     /// (ARCH-0080 §10). Key: id16(binding claim).
     SKILL_HUB_PACK_HOOK_PROPOSAL: VaultMeta b"pack.hook-proposal.v1/" Named
-        => crate::skill_hub::pack_catalog::scrub_hook_proposal_actor_in_txn;
+        => crate::store::pack_hook_proposal::scrub_hook_proposal_actor_in_txn;
     /// Installed knowledge-pack receipt, keyed by pack name. Key: string.
     SKILL_HUB_PACK_INSTALL: VaultMeta b"pack.install.v1/" LegacyJson;
     /// Index from a claim predicate name to the pack name that owns it (exclusivity check). Key:
@@ -418,7 +418,7 @@ side_tables! {
     /// The billing account a PERSON filed as their own, which their room-paid calls bill (FIX
     /// 3332). Key: id16 (PERSON).
     PERSON_BILLING_ACCOUNT: VaultMeta b"person_billing_account:v1:" Named
-        => crate::llm::run_admission::erase_billing_account_actor_in_txn;
+        => crate::store::person_billing_account::erase_billing_account_actor_in_txn;
     /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
     PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored [accepts: crate::persona_snapshot::persona_snapshot_copy_accepts_masked];
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
@@ -502,14 +502,14 @@ side_tables! {
     /// A host-held project card (OF-501): the card, its conversation, the agent that drafted it
     /// and its state. Key: blake3 hash32 of the card id.
     PROJECT_PROPOSAL_CARD: VaultMeta b"project.proposal.card.v1/" Named
-        => crate::workspace_roster::erase_card_actor_in_txn;
+        => crate::store::actor_scrubs::erase_card_actor_in_txn;
     /// The source message of each card shown in one conversation. Key: id16 (conversation) +
     /// blake3 hash32 of the card id.
     PROJECT_PROPOSAL_CONVERSATION: VaultMeta b"project.proposal.conversation.v1/" Raw;
     /// A conversation's latest person turn awaiting the project question. Key: id16
     /// (conversation).
     PROJECT_PROPOSAL_PENDING: VaultMeta b"project.proposal.pending.v1/" Named
-        => crate::workspace_roster::erase_pending_actor_in_txn;
+        => crate::store::actor_scrubs::erase_pending_actor_in_txn;
     /// The project question's yes, or its ask of a person, on one source message, with its
     /// decision receipt. Key: id16 (source message).
     PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named
@@ -536,13 +536,13 @@ side_tables! {
     PROJECT_WIDEN_ASK: VaultMeta b"project.widen_ask.v1/" Raw;
     /// Number and first threshold-crossing for one actor. Key: id16.
     PROPOSAL_ACTOR_COUNT: VaultMeta b"proposal:actor_count:v1:" Named
-        => crate::gate::proposal_observation::erase_count_actor_in_txn;
+        => crate::store::gate_hooks::erase_count_actor_in_txn;
     /// Immutable receipt for one actor and monotonically increasing submission count. Key: id16 ":" u64be.
     PROPOSAL_RECEIPT_HISTORY: VaultMeta b"proposal:receipt:v1:" Named
-        => crate::gate::proposal_observation::erase_history_actor_in_txn;
+        => crate::store::gate_hooks::erase_history_actor_in_txn;
     /// Latest receipt keyed by actor id16 ":" proposal identity string.
     PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named
-        => crate::gate::proposal_observation::erase_submission_actor_in_txn;
+        => crate::store::gate_hooks::erase_submission_actor_in_txn;
     /// This device's cache of an actor's opaque stamp token (FIX 10930): the id of its
     /// `actor.stamp_token` claim, which a commit message names in place of the actor; an erase
     /// of the actor drops it. Key: id16 (actor); value: id16 (token).
@@ -750,19 +750,19 @@ side_tables! {
     /// handoff, by the host it replaced. Latest write wins; it grants no scope, role or admission.
     /// Key: id16 (room).
     ROOMS_HOST_PIN: VaultMeta b"rooms.host_pin.v1/" Named
-        => crate::workspace_roster::erase_host_pin_actor_in_txn;
+        => crate::store::actor_scrubs::erase_host_pin_actor_in_txn;
     /// One room-join intent's receipt (OF-531): the request, each party's recorded answer, the three
     /// consents as last decided, and the participation a Ready decision committed. Key: string (hex64
     /// join ref).
     ROOMS_JOIN: VaultMeta b"rooms.join.v1/" LegacyJson
-        => crate::workspace_roster::erase_join_actor_in_txn;
+        => crate::store::actor_scrubs::erase_join_actor_in_txn;
     /// The latest Ready join receipt for one subject in one room or thread. Key: string (room hex "/"
     /// subject hex "/" branch hex or "-").
     ROOMS_JOIN_READY: VaultMeta b"rooms.join_ready.v1/" LegacyJson;
     /// One offer card (OF-530): who asks, what, the cost, the join it files and its state, with the
     /// host's answer that settled it. Key: string (hex64 offer id).
     ROOMS_OFFER: VaultMeta b"rooms.offer.v1/" LegacyJson
-        => crate::workspace_roster::erase_offer_actor_in_txn;
+        => crate::store::actor_scrubs::erase_offer_actor_in_txn;
     /// The offer card current for one agent in one room or thread. Key: string (room hex "/" branch
     /// hex or "-" "/" agent hex).
     ROOMS_OFFER_CURRENT: VaultMeta b"rooms.offer_current.v1/" LegacyJson;
@@ -787,7 +787,7 @@ side_tables! {
     /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
     /// (turn id).
     ROOMS_TURN: VaultMeta b"rooms.turn.v1/" LegacyJson
-        => crate::workspace_roster::erase_turn_actor_in_txn;
+        => crate::store::actor_scrubs::erase_turn_actor_in_txn;
     /// Durable wait binding for a run-branch ask. Key: attempt id16 + handle hash32 + step hash32.
     RUN_TREE_ASK_WAIT: VaultMeta b"run.ask.wait.v1/" Named;
     /// One explicitly reviewed run's settlement and compensating-operation handles. Key: job id.

@@ -41,7 +41,6 @@ use loro::{LoroDoc, LoroMap};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::dreamer_runner::authority::is_base_agent_actor;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -52,6 +51,7 @@ use crate::ports::{
 use crate::registry;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+use crate::store::base_agent::is_base_agent_actor;
 use crate::store::loro_document::{doc_from_snapshot, import_doc, map_contains_binary};
 use crate::store::loro_tombstones::TombstoneIndex;
 use crate::store::replica_edge_key::format_edge_key;
@@ -206,7 +206,9 @@ pub(crate) fn remove_local_replica_window_in_txn(
     keep: KeepControls,
 ) -> Result<RemovedReplica> {
     let queued_writes =
-        crate::sync::queue::queued_window_update_count_in_txn(store, txn, window.as_str())?;
+        store
+            .sync_hooks
+            .queued_window_update_count_in_txn(store, txn, window.as_str())?;
     let mut report = RemovedReplica {
         queued_writes,
         ..RemovedReplica::default()
@@ -512,7 +514,7 @@ pub(crate) fn owe_promoted_turn_in_txn(
 /// refusal keeps the row, and so does a guard that cannot read it: keeping is
 /// always safe.
 fn guarded(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> bool {
-    crate::task_authority::reject_fact_delete(store, txn, id).is_err()
+    crate::store::task_authority_guard::reject_fact_delete(store, txn, id).is_err()
         || store
             .delete_guards
             .refuse_revision_delete(store, txn, id)
@@ -594,7 +596,7 @@ fn remove_member(
     crate::store::identity_hints::reindex_identity_hints(store, txn, id, None)?;
     crate::ports::reindex_named_entities(store, txn, id, None)?;
     crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, txn, id)?;
-    crate::claim::remove_claim_projection_index(store, txn, *id)?;
+    crate::store::claim_projection::remove_claim_projection_index(store, txn, *id)?;
     // A demoted epoch summary keeps its place in its session's count, so a
     // local mint never numbers under it (OF-013).
     crate::compaction::raise_epoch_floor_in_txn(store, txn, &raw)?;
@@ -604,7 +606,7 @@ fn remove_member(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .erase(id, store.env.info().last_txn_id);
-    crate::ppr::invalidate_ppr_for_delete(store, txn, id, &neighbors)?;
+    crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(store, txn, id, &neighbors)?;
     report.removed.push(*id);
     Ok(())
 }
@@ -617,7 +619,7 @@ fn remove_vectors(
 ) -> Result<()> {
     store.clear_pending_embedding(txn, id)?;
     // The member's queued embed job goes with its marker, in the same txn.
-    crate::sync::queue::delete_embed_job_in_txn(store, txn, id)?;
+    store.sync_hooks.delete_embed_job_in_txn(store, txn, id)?;
     if store.vectors.delete(txn, id.as_bytes())? {
         report.vectors += 1;
     }

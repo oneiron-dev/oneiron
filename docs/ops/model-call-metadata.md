@@ -44,3 +44,28 @@ Request bytes, store controls, output, admission, budgets, counters, chain resum
 fallback, cancellation, receipts and replay behavior are unchanged. This slice
 does not wire MESSAGE/chat conversation capture, add a Dreamer reader, export
 reasoning, or settle the opaque-reasoning custody question.
+
+## MCP execute_code capture
+
+The served code-mode backend can copy its existing configuration with one
+MCP execution's authenticated actor and the gateway's owned off-record session
+name. The session is the gateway context's value, not the credential's STREAM
+connection, run id, source session or a sitting key. Missing authenticated caller
+proof leaves the ordinary backend unchanged and records no guessed identity.
+
+Only that unscoped, unplanned MCP entry selects the caller-bound backend. Reader
+children, scoped and pattern runs, planned child factories and injected providers
+keep their existing behavior and do not gain capture through this hook. The copy
+shares the original vault, model runtime, browser state and budget guard. It does
+not create a run, admit work, read a new budget or change the executor lease.
+
+Each successful provider terminal records the admitted request, full response and
+actual answering-rung binding with the existing raw model-call writer. The same
+actor and session name are checked for NoRecord at arrival and again at the
+terminal; either check suppresses the evidence. A clone of the completed run gets
+the evidence actor, never the live admission. Errors record nothing and add no
+retry. The existing exact no-fallback walk, fallback-enabled walk, host wait,
+per-rung lease looks, planned-model stamp and browser handoff stay unchanged.
+
+This is evidence coverage, not MESSAGE/chat capture, issuer identity, replay,
+training, export or opaque-reasoning custody. Those remain separate work.

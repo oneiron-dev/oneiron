@@ -80,31 +80,17 @@ pub use types::{
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
 pub(crate) use kind_payload_erase::erase_kind_payloads_in_txn;
 pub(crate) use payload_erase::{
-    attempt_payload_family, attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
-    erase_attempt_payload_actor_in_txn, erase_attempt_payload_actors_in_txn,
-    erase_model_step_failure_reasons_in_txn, retire_attempt_payload_in_txn,
+    attempt_row_opaque, dispatch_payload_actor, erase_attempt_payload_actor_in_txn,
+    erase_attempt_payload_actors_in_txn, erase_dispatch_payload_text_target,
+    erase_model_step_failure_reasons_in_txn, scrub_hard_erased_payload_in_txn,
 };
 #[cfg(test)]
 pub(crate) fn encode_signal_record(record: &AttemptRecord) -> crate::Result<Vec<u8>> {
     encoding::encode_record(record)
 }
-/// A signal row's bytes, read once by the side-row wall in the writer's
-/// transaction ([`encoding::encode_admitted_record`]). An erased dispatch
-/// target's text leaves the row first, as on every queue write (FIX 7076).
-pub(crate) fn encode_admitted_signal_record(
-    vault: &crate::Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    record: &mut AttemptRecord,
-) -> crate::Result<Vec<u8>> {
-    payload_erase::scrub_hard_erased_payload_in_txn(&vault.store, wtxn, record);
-    encoding::encode_admitted_record(vault, wtxn, record)
-}
-pub(crate) fn validate_signal_cancel(actor: &str, reason: Option<&str>) -> crate::Result<()> {
-    validate::validate_cancel_actor(actor)?;
-    validate::validate_optional_failure_reason(reason)
-}
+pub(crate) use crate::store::attempt_record_codec::encode_admitted_signal_record;
 
-pub(crate) use engine::dreamer_run_root_id_in_txn;
+pub(crate) use crate::store::attempt_record_codec::signal_validators::validate_signal_cancel;
 /// Storage-ABI pin re-exported for `crate::store`; its only consumer outside
 /// this module is `store`'s row-header test.
 #[cfg_attr(not(test), allow(unused_imports))]
@@ -121,29 +107,9 @@ pub(crate) fn admission_order(record: &AttemptRecord) -> Option<(u64, [u8; 16])>
         .then(|| (encoding::ready_at(record), *record.id.as_bytes()))
 }
 
-/// Whether rows of `kind` are job state whose owner settles, prunes and
-/// bounds them itself (the tagging marker: its settled tries leave the ledger
-/// for a bounded trace history). No content-side cleanup proposes such a row,
-/// and no scan of another kind reads one.
-pub(crate) fn owner_retained_kind(kind: &str) -> bool {
-    kind == crate::config::tagging::TAGGING_MARKER_KIND
-}
-
-/// The first byte of every owner-retained row's id: those rows sit at the
-/// top of the ledger's key order, apart from every other kind's. A minted id
-/// starts with the top byte of its 48-bit millisecond clock, below this until
-/// the year 10889, and only an owner-retained kind derives its ids itself; a
-/// new row in the wrong range is refused. A scan of another kind stops before
-/// the range, so owner-retained rows cost it nothing.
-pub(crate) const OWNER_RETAINED_ID_PREFIX: u8 = 0xFF;
-
-/// Whether `id` lies in the owner-retained range.
-pub(crate) fn owner_retained_id(id: &AttemptId) -> bool {
-    id.as_bytes()[0] == OWNER_RETAINED_ID_PREFIX
-}
-
-/// The first key of the owner-retained range, as a ledger scan bound.
-pub(crate) const OWNER_RETAINED_RANGE_START: [u8; 1] = [OWNER_RETAINED_ID_PREFIX];
+pub(crate) use crate::store::attempt_retention::{
+    OWNER_RETAINED_ID_PREFIX, OWNER_RETAINED_RANGE_START, owner_retained_id, owner_retained_kind,
+};
 
 /// Whether a stored job row of another kind lies in the owner-retained
 /// range, where that kind's scans never read it: what a restore refuses. An

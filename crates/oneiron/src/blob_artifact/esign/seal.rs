@@ -10,11 +10,12 @@ use super::{
         SealProfile, SealVerdict,
     },
 };
-use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, AttemptState, CompleteAttempt, SetAttemptResult,
-};
+use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::store::attempt_inputs::CompleteAttempt;
+use crate::store::attempt_inputs::SetAttemptResult;
+use crate::store::attempt_state::AttemptState;
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

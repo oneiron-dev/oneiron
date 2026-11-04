@@ -7,7 +7,7 @@
 use std::io::{Read, Write};
 
 use super::*;
-use crate::result_body::ResultBodyPin;
+use crate::store::result_body_reader::{CodeRunResultBodyReader, Source};
 use crate::store::result_body_rows::code_run_row_inline;
 
 impl Vault {
@@ -53,22 +53,6 @@ impl Vault {
             _pin: pin,
         }))
     }
-}
-
-/// One result body as it streams ([`Vault::code_run_result_body_reader_in_txn`]):
-/// read once, through [`Self::copy_checked`].
-pub(crate) struct CodeRunResultBodyReader<'t> {
-    source: Source<'t>,
-    len: u64,
-    digest: [u8; 32],
-    _pin: ResultBodyPin,
-}
-
-/// Where a streamed body's bytes are: its row, lent by the read
-/// transaction (its tag first), or its file.
-enum Source<'t> {
-    Inline(std::borrow::Cow<'t, [u8]>),
-    File(BodyFile),
 }
 
 impl CodeRunResultBodyReader<'_> {

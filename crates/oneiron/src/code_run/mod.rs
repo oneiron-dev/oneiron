@@ -143,9 +143,13 @@ pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
     bind_wait_trap, park_and_bind_wait_trap,
 };
+pub use self::storage::{
+    CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
+    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
+};
 pub(crate) use self::storage::{
-    CodeRunResultBodyReader, OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding,
-    ReceiptPartial, ReceiptSource, ReceiptTree,
+    OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
+    ReceiptSource, ReceiptTree,
 };
 pub(crate) use self::storage::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
@@ -173,6 +177,9 @@ pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
+pub(crate) use self::storage::{
+    drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
+};
 // FIX 9180 (coord-b slice d): a replay row's and a step start's parts in
 // checkpoint images, as row-held responses.
 pub(crate) use self::replay_parts::{
@@ -186,10 +193,7 @@ pub(crate) use self::storage::{
     settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
 // FIX 6588: a wait's replies in checkpoint images, as row-held responses.
-pub(crate) use self::storage::{
-    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_erased,
-    wait_reply_scan, wait_settled_owners,
-};
+pub(crate) use self::storage::wait_delivery_owners;
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
 pub use self::type_diagnostics::{
@@ -293,7 +297,6 @@ pub(crate) use self::storage::code_run_reader_job_accepts_masked;
 pub(crate) use self::storage::code_run_reader_wait_accepts_masked;
 pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
 pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
-pub(crate) use self::storage::code_run_wait_delivery_accepts_masked;
 
 pub use self::dispatcher::{
     ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorQuestionAnswer,

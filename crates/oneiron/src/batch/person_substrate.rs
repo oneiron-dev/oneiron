@@ -69,7 +69,7 @@ pub(crate) fn ensure_person_substrate(
         let plan =
             super::plan_short_id_update(store, txn, &facet, ENTITY_TYPE_FACET, &prefix, &bytes)?;
         super::apply_short_id_plan(store, txn, &facet, plan)?;
-        crate::federation::record_scope::stamp_put(
+        store.scope_stamps.stamp_put(
             store,
             txn,
             facet,
@@ -136,20 +136,21 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
         };
         if !policy_done
             && header.entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST
-            && let Some(bytes) =
-                crate::gate::normalize_policy_manifest_scope(&raw[ENTITY_METADATA_HEADER_LEN..])
+            && let Some(bytes) = store
+                .gate_hooks
+                .normalize_policy_manifest_scope(&raw[ENTITY_METADATA_HEADER_LEN..])
         {
             // A locally authored manifest keeps its origin across the upgrade;
             // replayed bytes gain no trust stamp from it.
-            if crate::gate::manifest_authenticity::manifest_is_trusted(
+            if store.gate_hooks.manifest_is_trusted(
                 store,
                 &txn,
                 &id,
                 &raw[ENTITY_METADATA_HEADER_LEN..],
             )? {
-                crate::gate::manifest_authenticity::stamp_manifest_origin(
-                    store, &mut txn, &id, &bytes, false,
-                )?;
+                store
+                    .gate_hooks
+                    .stamp_manifest_origin(store, &mut txn, &id, &bytes, false)?;
             }
             super::put_apply::stage_entity_body_row(
                 store,
@@ -172,7 +173,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 )?;
                 super::apply_short_id_plan(store, &mut txn, &id, plan)?;
             }
-            crate::federation::record_scope::stamp_put(
+            store.scope_stamps.stamp_put(
                 store,
                 &mut txn,
                 id,
@@ -255,7 +256,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 &bytes,
             )?;
             super::apply_short_id_plan(store, &mut txn, &id, plan)?;
-            crate::federation::record_scope::stamp_put(
+            store.scope_stamps.stamp_put(
                 store,
                 &mut txn,
                 id,

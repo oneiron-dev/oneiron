@@ -630,7 +630,10 @@ where
             )
         })?;
         Ok(ByoaExhaust {
-            transcript: Some(encode_execution_transcript(&response)?),
+            transcript: Some(encode_execution_transcript(
+                &response,
+                self.vault.proposal_spool(),
+            )?),
             ..ByoaExhaust::default()
         })
     }

@@ -3,9 +3,9 @@
 use super::MergeQueue;
 use super::check_inputs::{QueueCheckFile, QueueCheckTreeSource};
 use crate::code_revision::{CodeTreeInventory, CodeTreeInventoryRuntime};
-use crate::contract_oracle::invalid;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
+use crate::store::contract_oracle::invalid;
 
 /// Git's mode of a tree entry that is itself a tree.
 const MODE_TREE: u32 = 0o040_000;

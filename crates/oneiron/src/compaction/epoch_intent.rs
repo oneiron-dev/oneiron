@@ -133,7 +133,10 @@ pub(super) fn run_trigger_in(
         return Ok(None);
     };
     let trigger = MadeByTrigger::Run(run);
-    Ok(crate::provenance::birth::trigger_is_live_in_txn(store, txn, &trigger)?.then_some(trigger))
+    Ok(
+        crate::store::birth_record::trigger_is_live_in_txn(store, txn, &trigger)?
+            .then_some(trigger),
+    )
 }
 
 /// Those of `sources` that still stand as `store` reads them: their row

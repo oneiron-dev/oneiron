@@ -11,9 +11,10 @@ use super::shape::{
 };
 use super::{ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt};
 use crate::authority::VerifiedSlip;
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::edge::EdgeActorClass;
 use crate::memory::Memory;
+use crate::ports::ClaimReadStatus;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::store::conversation_body::ConversationBody;
 use crate::{EntityId, Vault, WriteActor};

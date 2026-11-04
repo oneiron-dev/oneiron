@@ -53,10 +53,12 @@ pub use self::doors::{
 };
 pub use self::errors::{PluginResult, PluginSectionError};
 pub(crate) use self::fit_install::erase_section_fit_receipts_in_txn;
-pub(crate) use self::fit_install::scrub_section_fit_receipt_actors_in_txn;
 pub use self::fit_install::{
     PREDICATE_SKILL_SECTION_FIT, PluginSectionFitEvidence, PluginSectionFitOutcome,
     PluginSectionInstalled, install_plugin_section_after_fit, plugin_section_fit_evidence,
+};
+pub(crate) use self::fit_install::{
+    scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
 };
 pub use self::install::{PluginInstallOrigin, PluginInstallTarget, ValidatedSectionManifest};
 pub use self::manifest::{

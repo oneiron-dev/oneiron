@@ -5,18 +5,16 @@ use std::collections::{BTreeSet, HashSet, VecDeque};
 use crate::attempt_queue::encoding::{
     DedupeIndexKeys, decode_record, ready_at, ready_key, validate_dedupe_record,
 };
-use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState, attempt_record_order};
+use crate::attempt_queue::types::{AttemptId, AttemptRecord, attempt_record_order};
 use crate::attempt_queue::validate::validate_optional_run_id;
-use crate::dreamer_runner::{DreamerAttemptPayload, decode_dreamer_attempt_payload};
 use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};
-use crate::store::Store;
-use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
+use crate::store::attempt_record_read;
+use crate::store::attempt_run_root::dreamer_run_root_id_in_txn;
 
 use super::AttemptQueue;
 use super::ERR_DEDUPE_ACTOR_MISMATCH;
 use crate::error::ArtifactError;
-const DREAMER_RUN_ROOT_CLIMB_LIMIT: usize = 64;
 /// Point reads one [`AttemptQueue::retry_chain_depth`] walk may spend. A
 /// lineage this long is already past every backoff ceiling that reads it, so
 /// the depth saturates here instead of letting a walk grow with the row set.
@@ -41,10 +39,7 @@ impl AttemptQueue<'_> {
         txn: &heed::RoTxn<'_>,
         id: AttemptId,
     ) -> Result<Option<AttemptRecord>> {
-        let Some(raw) = self.store.attempt_records.get(txn, id.as_bytes())? else {
-            return Ok(None);
-        };
-        decode_record(&raw, id).map(Some)
+        attempt_record_read::get_in_txn(self.store, txn, id)
     }
 
     /// Whether `lease_owner` still holds `id`'s lease at `attempt_count`: the
@@ -58,11 +53,7 @@ impl AttemptQueue<'_> {
         lease_owner: &str,
         attempt_count: u32,
     ) -> Result<bool> {
-        Ok(self.get_in_txn(txn, id)?.is_some_and(|record| {
-            record.state == AttemptState::Leased
-                && record.lease_owner.as_deref() == Some(lease_owner)
-                && record.attempt_count == attempt_count
-        }))
+        attempt_record_read::holds_lease_in_txn(self.store, txn, id, lease_owner, attempt_count)
     }
 
     /// Point-reads the pending realizing attempt for a typed TASK route.
@@ -674,68 +665,6 @@ fn retries_the_same_payload(child: &AttemptRecord, parent: &AttemptRecord) -> bo
     child.payload == parent.payload
         || (child.kind == crate::config::tagging::TAGGING_MARKER_KIND
             && crate::tagging::same_marker_identity(&child.payload, &parent.payload))
-}
-/// Resolves the OF-193 Dreamer root for one stamped run id using the durable
-/// run index.  A branch-only run climbs parent links with the same bounded,
-/// fail-safe behavior used by the inbox projection.
-pub(crate) fn dreamer_run_root_id_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    run_id: &str,
-) -> Result<Option<AttemptId>> {
-    let mut records = Vec::new();
-    // The sidecar is ordered by attempt id; preserve the prior `list_run`
-    // behavior by selecting a root/branch in deterministic creation order.
-    let mut first_branch: Option<(AttemptId, DreamerAttemptPayload)> = None;
-    for id_bytes in store.attempt_ids_for_run_in_txn(txn, run_id)? {
-        let id = AttemptId::from_bytes(&id_bytes)?;
-        let Some(raw) = store.attempt_records.get(txn, id.as_bytes())? else {
-            return Err(Error::CorruptedIndex("attempt run index"));
-        };
-        let record = decode_record(&raw, id)?;
-        if record.run_id.as_deref() != Some(run_id) {
-            return Err(Error::CorruptedIndex("attempt run index"));
-        }
-        records.push(record);
-    }
-    records.sort_by(attempt_record_order);
-    for record in records {
-        if record.kind != DREAMER_RUNNER_ATTEMPT_KIND {
-            continue;
-        }
-        let Ok(payload) = decode_dreamer_attempt_payload(&record.payload) else {
-            continue;
-        };
-        if payload.parent_attempt.is_none() {
-            return Ok(Some(record.id));
-        }
-        if first_branch.is_none() {
-            first_branch = Some((record.id, payload));
-        }
-    }
-
-    let Some((mut attempt_id, mut payload)) = first_branch else {
-        return Ok(None);
-    };
-    let mut visited = HashSet::from([attempt_id]);
-    while let Some(parent_id) = payload.parent_attempt {
-        if visited.len() >= DREAMER_RUN_ROOT_CLIMB_LIMIT || !visited.insert(parent_id) {
-            break;
-        }
-        let Some(raw) = store.attempt_records.get(txn, parent_id.as_bytes())? else {
-            break;
-        };
-        let parent = decode_record(&raw, parent_id)?;
-        if parent.kind != DREAMER_RUNNER_ATTEMPT_KIND {
-            break;
-        }
-        let Ok(parent_payload) = decode_dreamer_attempt_payload(&parent.payload) else {
-            break;
-        };
-        attempt_id = parent_id;
-        payload = parent_payload;
-    }
-    Ok(Some(attempt_id))
 }
 
 /// FIX 10708: whether `error`, from decoding one scanned row, is the erased

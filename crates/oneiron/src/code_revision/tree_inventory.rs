@@ -376,6 +376,7 @@ impl CodeTreeInventory {
                 }
             }
             for (name, prior) in before {
+                count.row();
                 let path = joined(&prefix, name)?;
                 if prior.mode == MODE_TREE {
                     pending.push((path, None, Some(prior.oid)));

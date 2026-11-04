@@ -39,10 +39,7 @@ pub use crate::store::dreamer_attempt_kind::DREAMER_TURN_PROGRAM_ATTEMPT_KIND;
 pub use crate::store::dreamer_attempt_kind::DREAMER_WEAVE_LENS_ATTEMPT_KIND;
 
 // Storage/wire keys keep the legacy "job" spelling; ONE-1714 renamed code only.
-pub(super) const KEY_SCHEMA_VERSION: &str = "schema_version";
-pub(super) const KEY_ATTEMPT_TYPE: &str = "job_type";
-pub(super) const KEY_INPUT: &str = "input";
-pub(super) const KEY_PARENT_ATTEMPT: &str = "parent_job";
+pub(super) use crate::store::dreamer_attempt_payload::{KEY_PARENT_ATTEMPT, KEY_SCHEMA_VERSION};
 pub(super) const KEY_ATTEMPT_ID: &str = "job_id";
 pub(super) const KEY_MILESTONE: &str = "milestone";
 pub(super) const KEY_AT: &str = "at";

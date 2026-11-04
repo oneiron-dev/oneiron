@@ -337,6 +337,8 @@ class CheckpointPinBinding(TypedDict):
     # The SLH-DSA-SHA2-256s public key.
     slhdsa: str
     epoch: int
+    # What keeps the install's checkpoint signing seed at rest, as the owner is told it.
+    assurance: Literal["hardware", "platform", "software", "process"]
     signature: CheckpointPinSignature
 
 class CheckpointPin(TypedDict):
@@ -2295,6 +2297,8 @@ class Oneiron:
         def replace(self, spec: Facade.WebConnectorSetting) -> Facade.WebConnectorSetting:
             """Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."""
     class _VaultSecretsVerbs:
+        def code_run_lifts(self, spec: Facade.CodeRunSecretLiftRequest) -> Facade.CodeRunSecretLiftStatus:
+            """The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged."""
         def lift_history(self, spec: Facade.SecretLiftRequest) -> Facade.SecretLiftStatus:
             """The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."""
         def register(self, spec: Facade.SecretRegisterRequest) -> Facade.SecretRegisterReply:

@@ -3,6 +3,12 @@
 //! verdict, never by a scan of every work row and its exhaust. The rows are
 //! written in the writer that saves the work row; a reader reads each named
 //! work row whole and judges its receipts.
+//!
+//! These writers add index rows and retain them with checker work;
+//! receipt writers extend that work rather than removing its receipts.
+//! Readers re-judge the stored receipts and skip a missing work row. A
+//! writer that later removes work or receipts must remove their index rows
+//! in that same transaction.
 use std::collections::BTreeSet;
 
 use super::check_inputs::QueueCheckReceipt;

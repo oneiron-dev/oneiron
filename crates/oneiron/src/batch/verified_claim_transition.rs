@@ -9,8 +9,18 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::claim_body::{ClaimBody, encode_claim_body};
 
+#[derive(Debug, Clone, Copy)]
+enum TransitionKind {
+    Ordinary,
+    StoredSectionFitActorErasure {
+        actor: EntityId,
+        claim_of: Option<EntityId>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct VerifiedClaimTransition {
+    kind: TransitionKind,
     id: EntityId,
     prior_hash: [u8; 32],
     next_body: Vec<u8>,
@@ -29,6 +39,85 @@ pub(crate) struct VerifiedClaimTransition {
 }
 
 impl VerifiedClaimTransition {
+    /// Derives the complete projection and normal subject edge inside the
+    /// accepted erase's borrowed writer. Neither body nor extra operations
+    /// can be supplied by the receipt scanner.
+    pub(in crate::batch) fn stored_section_fit_actor_erasure(
+        erase: &mut crate::deletion::ActorErasureWriter<'_, '_>,
+        id: &EntityId,
+    ) -> Result<Option<(Vec<BatchOp>, Self)>> {
+        let (vault, txn, actor) = erase.parts();
+        let store = &vault.store;
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+            return Ok(None);
+        };
+        let Some(header) = EntityMetadataHeader::parse(&raw)
+            .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+        else {
+            return Ok(None);
+        };
+        let Ok(prior) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        else {
+            return Ok(None);
+        };
+        let Some(next) =
+            crate::context_board::stored_section_fit_actor_erasure_body(&prior, &actor)
+        else {
+            return Ok(None);
+        };
+        let data = encode_claim_body(&next)?;
+        crate::claim::validate_claim_body_and_decode_in_txn(store, txn, &data, true)?;
+        let claim_of = match next.subject {
+            crate::claim::ClaimSubject::Entity(subject) => {
+                if crate::ports::EntityStoreRead::port_entity_record(store, txn, &subject)?
+                    .is_none()
+                {
+                    return Err(Error::EntityNotFound);
+                }
+                Some(subject)
+            }
+            crate::claim::ClaimSubject::Edge { .. } => None,
+        };
+        let occurred = TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        };
+        let mut ops = vec![BatchOp::Put {
+            id: *id,
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at: header.learned_at,
+            data: data.clone(),
+            allow_maintenance: false,
+            allow_reserved_predicate: true,
+            hub_sync_imported: false,
+        }];
+        if let Some(subject) = claim_of {
+            ops.push(BatchOp::Edge {
+                src: *id,
+                kind: crate::edge::EdgeKind::ClaimOf,
+                tgt: subject,
+                weight: crate::vault::CLAIM_OF_DEFAULT_WEIGHT,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
+            });
+        }
+        Ok(Some((
+            ops,
+            Self {
+                kind: TransitionKind::StoredSectionFitActorErasure { actor, claim_of },
+                id: *id,
+                prior_hash: *blake3::hash(&raw).as_bytes(),
+                next_body: data,
+                occurred,
+                learned_at: header.learned_at,
+                edge_delta: None,
+                successor_of: None,
+                closer: None,
+                closed_at: None,
+            },
+        )))
+    }
+
     /// Only `batch`'s canonical validation doors may mint this after they
     /// verify the entire operation (including the edge delta for decay).
     pub(in crate::batch) fn after_validation(
@@ -61,6 +150,7 @@ impl VerifiedClaimTransition {
             ));
         }
         Ok(Self {
+            kind: TransitionKind::Ordinary,
             id: *id,
             prior_hash: *blake3::hash(&raw).as_bytes(),
             next_body: data.clone(),
@@ -104,6 +194,7 @@ impl VerifiedClaimTransition {
             return Err(Error::InvalidClaimBody("claim successor already exists"));
         }
         Ok(Self {
+            kind: TransitionKind::Ordinary,
             id: *id,
             prior_hash: *blake3::hash(&raw).as_bytes(),
             next_body: data.clone(),
@@ -143,6 +234,16 @@ impl VerifiedClaimTransition {
     }
 
     fn matches_following_edge(&self, remaining: &[BatchOp]) -> bool {
+        if let TransitionKind::StoredSectionFitActorErasure { claim_of, .. } = self.kind {
+            return match claim_of {
+                Some(subject) => matches!(remaining,
+                    [BatchOp::Edge { src, kind: crate::edge::EdgeKind::ClaimOf, tgt, weight, vad }]
+                    if *src == self.id && *tgt == subject
+                        && weight.to_bits() == crate::vault::CLAIM_OF_DEFAULT_WEIGHT.to_bits()
+                        && *vad == oneiron_contracts::affect::Vad::NEUTRAL),
+                None => remaining.is_empty(),
+            };
+        }
         match self.edge_delta {
             None => true,
             Some((src, kind, tgt, weight)) => matches!(remaining,
@@ -430,10 +531,51 @@ impl VerifiedClaimTransition {
             }
             None => *id,
         };
-        Ok(
-            crate::ports::EntityStoreRead::port_entity_raw(store, txn, &pinned)?
-                .is_some_and(|raw| blake3::hash(&raw).as_bytes() == &self.prior_hash),
-        )
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &pinned)? else {
+            return Ok(false);
+        };
+        if blake3::hash(&raw).as_bytes() != &self.prior_hash {
+            return Ok(false);
+        }
+        if let TransitionKind::StoredSectionFitActorErasure { actor, .. } = self.kind {
+            let Ok(prior) =
+                crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+            else {
+                return Ok(false);
+            };
+            let Some(expected) =
+                crate::context_board::stored_section_fit_actor_erasure_body(&prior, &actor)
+            else {
+                return Ok(false);
+            };
+            return Ok(encode_claim_body(&expected)? == self.next_body);
+        }
+        Ok(true)
+    }
+
+    /// Only this exact stored erasure may omit fresh Auto source-trust.
+    /// Masking and other normal transforms must still match the sealed body.
+    pub(crate) fn matches_stored_section_fit_actor_erasure(
+        &self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<bool> {
+        if !matches!(
+            self.kind,
+            TransitionKind::StoredSectionFitActorErasure { .. }
+        ) {
+            return Ok(false);
+        }
+        if !self.matches_put(store, txn, id, body, occurred, learned_at)? {
+            return Err(Error::InvalidClaimBody(
+                "stored actor erasure proof mismatch",
+            ));
+        }
+        Ok(true)
     }
 
     /// This proof stamped with its lifecycle door's close: `closer` the actor
@@ -462,11 +604,16 @@ impl VerifiedClaimTransition {
     }
 
     pub(crate) fn matches_op(&self, op: &BatchOp) -> bool {
+        let reserved = matches!(
+            self.kind,
+            TransitionKind::StoredSectionFitActorErasure { .. }
+        );
         matches!(op, BatchOp::Put { id, entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred, learned_at, data, allow_maintenance: false,
-            allow_reserved_predicate: false, hub_sync_imported: false }
+            allow_reserved_predicate, hub_sync_imported: false }
             if *id == self.id && *occurred == self.occurred
-                && *learned_at == self.learned_at && *data == self.next_body)
+                && *learned_at == self.learned_at && *data == self.next_body
+                && *allow_reserved_predicate == reserved)
     }
 }
 

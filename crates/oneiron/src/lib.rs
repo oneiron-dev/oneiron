@@ -37,6 +37,7 @@ pub mod edge {
 mod edge_regeneration;
 pub mod entity_id;
 pub use oneiron_base::error;
+pub mod host_memory;
 pub mod housekeeping;
 pub(crate) mod identity;
 pub mod limit_ask;
@@ -45,7 +46,7 @@ pub(crate) use oneiron_base::limits;
 pub mod maintain;
 pub(crate) use oneiron_base::msgpack_shape;
 pub mod off_record;
-pub(crate) mod overlay_db;
+pub(crate) use oneiron_store::overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
 pub(crate) mod room_codec;
@@ -64,7 +65,14 @@ pub use oneiron_base::request_limits;
 pub mod heap_drop;
 pub mod result_body;
 pub mod result_memory;
-pub(crate) mod session_overlay;
+pub(crate) use oneiron_store::session_overlay;
+/// Core's own test binary registers the session overlay's allocation
+/// observer, as it did when the overlay lived in this crate; no other build
+/// installs it.
+#[cfg(test)]
+#[global_allocator]
+static SESSION_OVERLAY_TEST_ALLOCATOR: session_overlay::hygiene_tests::ObservedAllocator =
+    session_overlay::hygiene_tests::ObservedAllocator;
 pub(crate) mod side_table;
 pub mod slim;
 pub mod store;

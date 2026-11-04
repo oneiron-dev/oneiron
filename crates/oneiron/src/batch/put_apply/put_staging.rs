@@ -273,20 +273,22 @@ pub(super) fn stage_project_put(
     posture: crate::HostingPrivacyPosture,
 ) -> Result<Option<Vec<u8>>> {
     let project = if crate::store::project_kind::is_project_type(store, entity_type) {
-        Some(crate::workspace_roster::normalize_project_body(
-            store, txn, id, data, posture,
-        )?)
+        Some(
+            store
+                .project_writes
+                .normalize_project_body(store, txn, id, data, posture)?,
+        )
     } else {
         None
     };
     let data = project.as_deref().unwrap_or(data);
     if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST
-        && (crate::gate::project_depth::is_project_depth_id(&id)
-            || crate::gate::project_depth::is_project_depth_contribution(data))
+        && (oneiron_store::project_depth_record::is_project_depth_id(&id)
+            || oneiron_store::project_depth_record::is_project_depth_contribution(data))
     {
-        crate::gate::project_depth::validate_contribution_put(
-            store, txn, id, data, replicated, posture,
-        )?;
+        store
+            .gate_hooks
+            .validate_contribution_put(store, txn, id, data, replicated, posture)?;
     }
     Ok(project)
 }
@@ -436,7 +438,7 @@ pub(super) fn stage_claim_projection(
         if !replicated {
             crate::entity_doc::retain_fresh_claim_citations_in_txn(store, wtxn, &id, body)?;
         }
-        crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
+        crate::store::claim_projection::maintain_claim_projection_index(store, wtxn, id, body)?;
         crate::claim::history_store::maintain_machine_history_index(store, wtxn, id, body)?;
     }
     Ok(())
@@ -490,14 +492,14 @@ pub(super) fn validate_scope_carriers(
         super::super::facet_identity::validate_facet_overwrite(store, wtxn, id, data)?;
     }
     if crate::store::project_kind::is_project_type(store, entity_type) {
-        for referenced in crate::workspace_roster::validate_project_body(id, data)? {
+        for referenced in store.project_writes.validate_project_body(id, data)? {
             super::reject_overlay_member_base_write(store, &referenced, context.origin)?;
         }
         // Live writes prove the signed leader or board authority at the door.
         // Replay stops at structure (ARCH-0040 ONE-AUTHLOG-F2): its authority
         // is judged by the project read fold, which quarantines, never refuses.
         if !context.replicated {
-            crate::workspace_roster::validate_project_transition(
+            store.project_writes.validate_project_transition(
                 store,
                 wtxn,
                 id,
@@ -506,10 +508,14 @@ pub(super) fn validate_scope_carriers(
                 context.posture,
             )?;
         }
-        crate::workspace_roster::note_project_proof(store, wtxn, id, entity_type, data)?;
+        store
+            .project_writes
+            .note_project_proof(store, wtxn, id, entity_type, data)?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
-        crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;
+        store
+            .project_writes
+            .validate_room_body(store, wtxn, id, data)?;
     }
     Ok(())
 }
@@ -557,7 +563,7 @@ pub(super) fn stage_local_proposal_observation(
             None => crate::gate::resolve_policy_manifest(store, &*wtxn)?
                 .proposal_check_threshold_source(&scope),
         };
-        crate::gate::proposal_observation::observe_submission_in_txn(
+        store.gate_hooks.observe_submission_in_txn(
             store,
             wtxn,
             envelope.actor().entity_ref(),
@@ -581,7 +587,7 @@ pub(super) fn stage_task_and_turn(
     if entity_type == crate::registry::ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
         if body_changed {
-            crate::task_verb::note_task_write(store, wtxn, id, data)?;
+            crate::store::linear_task_revision::note_task_write(store, wtxn, id, data)?;
         }
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
@@ -591,9 +597,13 @@ pub(super) fn stage_task_and_turn(
     Ok(())
 }
 
-pub(super) fn normalized_policy_scope(entity_type: u8, data: &[u8]) -> Option<Vec<u8>> {
+pub(super) fn normalized_policy_scope(
+    store: &Store,
+    entity_type: u8,
+    data: &[u8],
+) -> Option<Vec<u8>> {
     if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
-        crate::gate::normalize_policy_manifest_scope(data)
+        store.gate_hooks.normalize_policy_manifest_scope(data)
     } else {
         None
     }

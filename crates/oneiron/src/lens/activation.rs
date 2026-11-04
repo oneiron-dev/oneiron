@@ -16,7 +16,7 @@ use super::proposal::{
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::receipt::{LensActivationReceipt, LensSlotDecision};
-use crate::store::GateDecisionId;
+use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EntityId, Error, Result, Vault};
 
 /// `vault.lenses.activate`'s input: the proposal to select, the revision the
@@ -94,23 +94,26 @@ impl Vault {
                     "List the slot again and confirm against what it holds now.",
                 ));
             }
+            let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
             let record = LensSlotRecord {
                 lens_ref: lens_ref.to_hex(),
                 compiled_hash: proposal.compiled_hash,
                 pack_content_hash: proposal.pack_content_hash,
                 decided_by: decided_by.to_hex(),
-                decision_ref: GateDecisionId::now().to_hex(),
+                decision_ref: decision_id.to_hex(),
                 authenticated_under: owner.decision_id().to_hex(),
                 decided_at: crate::unix_seconds_now(),
             };
             SLOTS.put(&self.store, txn, &key, &record)?;
-            Ok(slot_receipt(
+            let receipt = slot_receipt(
                 LensSlotDecision::Activated,
                 &proposal.pack_name,
                 &skill_id,
                 record,
                 previous,
-            ))
+            );
+            self.append_lens_slot_decision_in_txn(txn, owner, decision_id, &receipt)?;
+            Ok(receipt)
         })
     }
 
@@ -137,21 +140,63 @@ impl Vault {
                 ));
             }
             SLOTS.delete(&self.store, txn, &key)?;
+            let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
             let record = LensSlotRecord {
                 decided_by: decided_by.to_hex(),
-                decision_ref: GateDecisionId::now().to_hex(),
+                decision_ref: decision_id.to_hex(),
                 authenticated_under: owner.decision_id().to_hex(),
                 decided_at: crate::unix_seconds_now(),
                 ..current
             };
-            Ok(slot_receipt(
+            let receipt = slot_receipt(
                 LensSlotDecision::Deactivated,
                 &input.slot.pack_name,
                 &skill_id,
                 record,
                 None,
-            ))
+            );
+            self.append_lens_slot_decision_in_txn(txn, owner, decision_id, &receipt)?;
+            Ok(receipt)
         })
+    }
+
+    fn append_lens_slot_decision_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        decision_id: GateDecisionId,
+        receipt: &LensActivationReceipt,
+    ) -> Result<()> {
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        let reason = match receipt.decision {
+            LensSlotDecision::Activated => "gate.consent.lens_activated",
+            LensSlotDecision::Deactivated => "gate.consent.lens_deactivated",
+        };
+        let mut digest = blake3::Hasher::new();
+        digest.update(b"oneiron.lens-slot-decision.v1\0");
+        let bytes = serde_json::to_vec(receipt)
+            .map_err(|_| Error::InvariantViolation("lens slot receipt encoding failed"))?;
+        digest.update(&bytes);
+        let record = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id,
+            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
+            outcome: "allow".to_owned(),
+            reason_codes: vec![reason.to_owned()],
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: "human".to_owned(),
+            actor_ref: Some(actor.to_hex()),
+            content_kind: "lens_slot".to_owned(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            claim_id: None,
+            grant_ref: None,
+            diff_handle: digest.finalize().as_bytes().to_vec(),
+            read_frontier_hash: [0_u8; 32],
+            context: Default::default(),
+            redacted_at: None,
+        };
+        self.store.append_gate_decision_in_txn(txn, &record)
     }
 
     /// The generated lens the owner selected for a pack/skill slot, rechecked

@@ -155,7 +155,7 @@ impl ContentWriteSet {
                 } else {
                     crate::batch::row_put::RowPut::Birth
                 };
-                crate::federation::record_scope::stamp_put(
+                vault.store.scope_stamps.stamp_put(
                     &vault.store,
                     txn,
                     id,

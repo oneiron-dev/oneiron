@@ -125,7 +125,7 @@ pub(super) fn decide_cleanup_proposal_in_txn(
     };
     PROPOSAL.delete(&vault.store, wtxn, &row.id)?;
     // The owner's verdict is the proposal's review, and it reached a person.
-    crate::failure_ladder::oversight::reviewed_in_txn(
+    crate::store::healer_oversight::reviewed_in_txn(
         vault,
         wtxn,
         &row.id.to_hex(),

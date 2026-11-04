@@ -247,6 +247,7 @@ impl ContainerRuntime {
             image_release::SelectedImage::Oci(&spec.image),
             &image_release::ObservedArtifacts::from_image_ref(&spec.image),
             &image_release::NoVerifierConfigured,
+            crate::image_release::LaunchBackend::Container,
         );
         let mut child = oneiron_spawn::command(&self.program)
             .args(&args)
@@ -347,6 +348,7 @@ impl ContainerRuntime {
                 image_release::SelectedImage::Oci(&spec.image),
                 &image_release::ObservedArtifacts::from_image_ref(&spec.image),
                 &image_release::NoVerifierConfigured,
+                crate::image_release::LaunchBackend::Container,
             );
             let mut child = oneiron_spawn::command(&self.program)
                 .args(&args)

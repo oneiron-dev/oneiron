@@ -5,6 +5,8 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Deserializer, Serialize, de};
 
+pub use crate::store::output_decay::OutputDecayPolicy;
+
 /// The occurrence path a context output's manifest names. Its body is one of
 /// the code-run raw-output family, keyed by its content: inline in its row
 /// up to the inline bound, past it a file beside data.mdb.
@@ -41,12 +43,6 @@ pub struct OutputContextEntry {
     pub source: OutputRef,
     pub created_turn: u64,
     pub overview: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OutputDecayPolicy {
-    pub overview_after_turns: u64,
-    pub stub_after_turns: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -381,13 +377,15 @@ pub fn restore_output_window(vault: &Vault, source: OutputRef, cap: usize) -> Re
         return restore_output(vault, source);
     }
     if !output_clean(vault, source)? {
-        return Ok(crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
-            .as_bytes()
-            .to_vec());
+        return Ok(
+            crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+                .as_bytes()
+                .to_vec(),
+        );
     }
     // A ranged read checks the manifest it is given: this one names the
     // path every context output's does.
-    let mut output = crate::code_run::CodeRunRawOutput::of_ref(source);
+    let mut output = crate::store::result_manifest::CodeRunRawOutput::of_ref(source);
     output.path = CONTEXT_OUTPUT_PATH.to_owned();
     let mut head = vault
         .read_code_run_raw_output_range(&output, 0, cap)?
