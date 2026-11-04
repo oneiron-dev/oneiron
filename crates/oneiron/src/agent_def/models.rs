@@ -7,7 +7,6 @@
 //! to the agent, never to a model, so it carries across them.
 
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 use super::decode::{text_value, validate_text_field};
 use super::types::{
@@ -21,6 +20,8 @@ use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::llm::ModelId;
 use crate::side_table::{self, Named, SideTable};
 use crate::{Vault, WriteActor};
+
+pub use crate::store::agent_model::AgentModel;
 
 /// The model an agent's last wake ran on. Key: id16(agent).
 const WAKE_MODEL: SideTable<EntityId, ModelId, Named> =
@@ -54,17 +55,6 @@ pub const UNBOUND_LIST_KEEPS_ROUTE: bool = false;
 const MODEL_REF_TEXT: &str = "model entry model_ref must be a provider/name@revision model id";
 const WHEN_TEXT: &str = "model entry when must be a non-empty UTF-8 string";
 const COMPACTION_MODEL_TEXT: &str = "compaction_model must be a provider/name@revision model id";
-
-/// One model on an agent's list: a revision-pinned model and the owner's
-/// description of when the agent should run on it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentModel {
-    pub model_ref: ModelId,
-    /// When the agent takes this model, in the owner's words. A wake's seat
-    /// pick reads it first among the model's description lines.
-    pub when: String,
-}
 
 fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidAgentDefBody(reason))

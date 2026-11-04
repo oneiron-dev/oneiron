@@ -153,8 +153,8 @@ pub(super) fn validate_witness_message_body(
         // The REPLICATED road has no actor to run the ceiling against and,
         // without a lane, no verified sender: a federated, recovered or
         // unknown replay fails closed for every author bucket (see
-        // `gate::validate_replicated_witness_message_body`).
-        crate::gate::validate_replicated_witness_message_body(data)?;
+        // `store::witness_message_body::validate_replicated_witness_message_body`).
+        crate::store::witness_message_body::validate_replicated_witness_message_body(data)?;
     } else {
         crate::store::witness_message_body::validate_canonical_witness_message_body(data)?;
     }
