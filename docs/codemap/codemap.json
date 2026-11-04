@@ -117673,7 +117673,7 @@
      "path": "src/decision_verdict.rs",
      "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -117691,9 +117691,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/decision_verdict/model_calls.rs",
-     "purpose": "The verdict caller a model-call capture attributes (FIX 12742)",
+     "purpose": "The capture caller a model-call capture attributes (FIX 12516/12742)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
