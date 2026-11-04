@@ -46,6 +46,7 @@ use std::time::Duration;
 
 use oneiron::attempt_queue::{AttemptId, AttemptQueue};
 use oneiron::checkout::{CheckoutLeaseAct, CheckoutRepoOps};
+use oneiron::code_sandbox::ProposalSpoolFloor;
 use oneiron::code_sandbox::SandboxBoundaryContract;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
 use oneiron::dispatch_byoa::{
@@ -54,7 +55,6 @@ use oneiron::dispatch_byoa::{
     CODEX_PROGRAM, CliSandboxSpec, OPENCODE_PROGRAM,
 };
 use oneiron::git_wire::GitWire;
-use oneiron::origin::smart_http::SpillFloor;
 use oneiron::{HostingPrivacyPosture, LlmBackend, Vault};
 use oneiron_vault_contract::now_ts;
 use tokio::sync::broadcast;
@@ -223,7 +223,7 @@ fn runs_here(spec: &CliSandboxSpec) -> bool {
 /// bound to, over the host's disk floor and the run's destinations.
 struct CheckoutSeat<'a> {
     vault: &'a Vault,
-    floor: Arc<dyn SpillFloor>,
+    floor: Arc<dyn ProposalSpoolFloor>,
     destinations: Option<RunSecretDestinations>,
     /// Raised when the run's claim is lost: its process stops.
     stop: Option<Arc<AtomicBool>>,
