@@ -338,10 +338,10 @@ side_tables! {
     OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE: VaultMeta b"outbound_grant:channel_identity_usage:v1:" Raw;
     /// An own actor's latest advisory rate crossing per kind. Key: id16 + kind token.
     OWN_RATE_CHECK: VaultMeta b"own_rate.check.v1\0" Named
-        => crate::own_rate::erase_check_actor_in_txn;
+        => crate::store::own_rate_rows::erase_check_actor_in_txn;
     /// An own actor's act count in its current window per kind. Key: id16 + kind token.
     OWN_RATE_WINDOW: VaultMeta b"own_rate.window.v1\0" Named
-        => crate::own_rate::erase_window_actor_in_txn;
+        => crate::store::own_rate_rows::erase_window_actor_in_txn;
     /// Owner policy-row change event. Key: event id.
     OWNER_POLICY_CHANGE_EVENT: VaultMeta b"owner_policy:change:event:v1:" Raw;
     /// Pending owner policy-row change proposal. Key: proposal id.
@@ -536,13 +536,13 @@ side_tables! {
     PROJECT_WIDEN_ASK: VaultMeta b"project.widen_ask.v1/" Raw;
     /// Number and first threshold-crossing for one actor. Key: id16.
     PROPOSAL_ACTOR_COUNT: VaultMeta b"proposal:actor_count:v1:" Named
-        => crate::gate::proposal_observation::erase_count_actor_in_txn;
+        => crate::store::gate_hooks::erase_count_actor_in_txn;
     /// Immutable receipt for one actor and monotonically increasing submission count. Key: id16 ":" u64be.
     PROPOSAL_RECEIPT_HISTORY: VaultMeta b"proposal:receipt:v1:" Named
-        => crate::gate::proposal_observation::erase_history_actor_in_txn;
+        => crate::store::gate_hooks::erase_history_actor_in_txn;
     /// Latest receipt keyed by actor id16 ":" proposal identity string.
     PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named
-        => crate::gate::proposal_observation::erase_submission_actor_in_txn;
+        => crate::store::gate_hooks::erase_submission_actor_in_txn;
     /// This device's cache of an actor's opaque stamp token (FIX 10930): the id of its
     /// `actor.stamp_token` claim, which a commit message names in place of the actor; an erase
     /// of the actor drops it. Key: id16 (actor); value: id16 (token).
