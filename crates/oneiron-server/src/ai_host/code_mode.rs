@@ -13,6 +13,7 @@
 //! model and effort; a pinned planned child keeps every step on its pick.
 use std::sync::Arc;
 
+use oneiron::agent_def::{AgentModel, ensure_inherited_model_list};
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::code_run::{CODE_RUN_RNG_SEED_LEN, CodeRunDeterminism, CompactionHostBinding};
 use oneiron::compaction::EpochEmbedder;
@@ -116,6 +117,7 @@ pub(super) async fn bind(
         lease: None,
         browser: Arc::clone(&browser),
         caller: None,
+        listed: Vec::new(),
     });
     let model_call_backend: ModelCallBackend = {
         let backend = Arc::clone(&backend);
@@ -143,7 +145,10 @@ pub(super) async fn bind(
         let models = Arc::clone(runtime);
         let browser = Arc::clone(&browser);
         Arc::new(
-            move |guard: BudgetGuard, payer: Option<PayerPerson>, lease: Option<LiveLeaseState>| {
+            move |guard: BudgetGuard,
+                  payer: Option<PayerPerson>,
+                  lease: Option<LiveLeaseState>,
+                  listed: Vec<AgentModel>| {
                 Arc::new(CodeModeBackend {
                     vault: Arc::clone(&vault),
                     models: Arc::clone(&models),
@@ -153,6 +158,7 @@ pub(super) async fn bind(
                     lease,
                     browser: Arc::clone(&browser),
                     caller: None,
+                    listed,
                 }) as Arc<dyn LlmBackend>
             },
         )
@@ -183,6 +189,7 @@ pub(super) async fn bind(
                     lease,
                     browser: Arc::clone(&browser),
                     caller: None,
+                    listed: Vec::new(),
                 }) as Arc<dyn LlmBackend>
             },
         )
@@ -404,6 +411,9 @@ struct CodeModeBackend {
     /// The runs' browser planner states each call is routed by (CUA E5).
     browser: Arc<BrowserPlannerRuns>,
     caller: Option<CodeModeCaller>,
+    /// A reader child's actual frozen list. Other backend paths retain
+    /// their existing unconstrained routing until they carry one too.
+    listed: Vec<AgentModel>,
 }
 
 #[derive(Clone)]
@@ -499,12 +509,23 @@ impl CodeModeBackend {
             // the evidence it holds, handed on once this call answers.
             let (role, request, handoff) = self.browser.route(request, pinned);
             let (call, seat_bound) =
-                admit_code_mode_call(&self.models, &self.vault, request, pinned, role).map_err(
-                    |refusal| {
+                admit_code_mode_call(&self.models, &self.vault, request, pinned, role)
+                    .and_then(|(mut call, seat_bound)| {
+                        if !self.listed.is_empty() {
+                            ensure_inherited_model_list(&self.listed, &call.request.model)
+                                .map_err(|error| RoleRefusal::Refused(Box::new(error)))?;
+                            let ladder = call
+                                .ladder
+                                .for_model_list(&self.listed)
+                                .map_err(|error| RoleRefusal::Refused(Box::new(error)))?;
+                            call.ladder = Arc::new(ladder);
+                        }
+                        Ok((call, seat_bound))
+                    })
+                    .map_err(|refusal| {
                         tracing::warn!(%refusal, "a code-mode model call was refused");
                         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied)
-                    },
-                )?;
+                    })?;
             let no_record_at_arrival = self.caller.as_ref().is_some_and(|caller| {
                 self.vault.model_call_keeps_no_record_for(
                     caller.session.as_deref(),

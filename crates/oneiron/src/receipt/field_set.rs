@@ -507,6 +507,25 @@ impl ReceiptRecord {
             .transpose()
     }
 
+    /// Keeps the manifest and wire forms, removing only an erased entity's
+    /// retained-revision witness. Missing or malformed manifests stay unchanged.
+    pub(crate) fn erase_manifest_revision_pins(&mut self, erased: EntityId) -> bool {
+        let Some(mut manifest) = self.pack_manifest_entries() else {
+            return false;
+        };
+        if !crate::store::attempt_manifest::erase_manifest_revision_pins(&mut manifest, |entity| {
+            *entity == erased
+        }) {
+            return false;
+        }
+        let Ok(encoded) = serde_json::to_string(&manifest) else {
+            return false;
+        };
+        self.fields
+            .insert(FIELD_MANIFEST_ENTRIES.to_owned(), encoded);
+        true
+    }
+
     /// The complete index/pull/claim sequence frozen by the terminal transaction.
     #[must_use]
     pub fn pack_manifest_entries(&self) -> Option<Vec<ManifestEntry>> {
