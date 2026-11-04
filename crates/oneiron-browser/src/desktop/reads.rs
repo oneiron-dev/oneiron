@@ -94,7 +94,8 @@ impl DesktopSession {
     /// least [`WALK_MS_MOST`] and at most [`WALK_ON_MS_MOST`], with a node
     /// budget past every node it saw, and no longer one after it. With
     /// `until`, a walk asks for no more time than is left before it (at
-    /// least the driver's own second), and none follows once it passed.
+    /// least the driver's own second); no new walk starts once less than
+    /// that second is left, and none follows once it passed.
     pub(super) fn walk(
         &self,
         key: WindowKey,
@@ -125,8 +126,13 @@ impl DesktopSession {
             if !shot {
                 arguments["include_screenshot"] = Value::Bool(false);
             }
-            // The call's bound leaves the walk its whole time.
-            let bound = CALL + Duration::from_millis(asked.unwrap_or(0));
+            // The call's bound leaves the walk its whole time, never past
+            // `until`: a hung walk fails at the deadline instead of
+            // stretching a settle past its cap (FIX 3782).
+            let mut bound = CALL + Duration::from_millis(asked.unwrap_or(0));
+            if let Some(until) = until {
+                bound = bound.min(until.saturating_duration_since(Instant::now()));
+            }
             let reply = self
                 .mcp
                 .tool("get_window_state", arguments, Instant::now() + bound)
@@ -139,11 +145,14 @@ impl DesktopSession {
             let seen = count("nodes_visited").saturating_add(count("nodes_pending"));
             let spent = count("timeout_ms").max(asked.unwrap_or(1000));
             let late = until.is_some_and(|until| Instant::now() >= until);
+            // Below the driver's own second no new walk starts: it could
+            // only end past the deadline (FIX 3782).
+            let short = until.is_some_and(|until| ms_left(until) < 1000);
             match cut {
-                Some("node_budget") if !late => {
+                Some("node_budget") if !late && !short => {
                     budget = budget.saturating_mul(2).max(seen.saturating_add(1));
                 }
-                Some("timeout") if spent < most && !late => {
+                Some("timeout") if spent < most && !late && !short => {
                     walk_ms = Some(spent.saturating_mul(4).min(most));
                 }
                 _ => break (reply, asked),
@@ -230,7 +239,18 @@ impl DesktopSession {
         loop {
             std::thread::sleep(POLL);
             let now = Instant::now();
+            if now >= cap {
+                return Ok(());
+            }
+            if ms_left(cap) < 1000 {
+                // Less than a driver's walk left: sleep the cap out
+                // instead of starting a walk that ends past it (FIX 3782).
+                std::thread::sleep(cap.saturating_duration_since(now));
+                return Ok(());
+            }
             let print = self.fingerprint(Some(cap))?;
+            // Fresh clock: the fingerprint above takes whole walks.
+            let now = Instant::now();
             if print != last {
                 last = print;
                 changed_at = Some(now);
