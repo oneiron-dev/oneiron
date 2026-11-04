@@ -5,7 +5,9 @@
 //! admits it only at that invitation's list, accept and decline doors, and
 //! every slip door reads the invitation beside the fold's revocation check,
 //! so the slip stands only while the invitation is pending and unexpired.
-//! Once they have joined, the member pairs an ordinary credential.
+//! The invitee may explicitly accept with a regular member credential minted
+//! in the same writer, bound to the same device key. Plain acceptance stays
+//! issuer-free; a member who takes that path pairs an ordinary credential.
 
 use std::collections::BTreeSet;
 

@@ -372,6 +372,7 @@ vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
 vaultMembersInvitations(input: unknown): unknown
 vaultMembersAccept(input: unknown): unknown
+vaultMembersAcceptWithCredential(input: unknown): unknown
 vaultMembersDecline(input: unknown): unknown
 vaultMembersWithdrawInvitation(input: unknown): unknown
 vaultSharedObject(input: unknown): unknown

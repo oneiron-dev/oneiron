@@ -342,6 +342,7 @@ pub enum AgentVerb {
     VaultMembersLeave,
     VaultMembersInvitations,
     VaultMembersAccept,
+    VaultMembersAcceptWithCredential,
     VaultMembersDecline,
     VaultMembersWithdrawInvitation,
     VaultSharedObject,
@@ -1592,6 +1593,7 @@ impl AgentVerb {
         Self::VaultMembersLeave,
         Self::VaultMembersInvitations,
         Self::VaultMembersAccept,
+        Self::VaultMembersAcceptWithCredential,
         Self::VaultMembersDecline,
         Self::VaultMembersWithdrawInvitation,
         Self::VaultSharedObject,
@@ -2847,6 +2849,7 @@ impl AgentVerb {
             Self::VaultMembersLeave => "vault.members.leave",
             Self::VaultMembersInvitations => "vault.members.invitations",
             Self::VaultMembersAccept => "vault.members.accept",
+            Self::VaultMembersAcceptWithCredential => "vault.members.accept_with_credential",
             Self::VaultMembersDecline => "vault.members.decline",
             Self::VaultMembersWithdrawInvitation => "vault.members.withdraw_invitation",
             Self::VaultSharedObject => "vault.shared.object",
@@ -4131,6 +4134,7 @@ impl AgentVerb {
                 | Self::VaultMembersLeave
                 | Self::VaultMembersInvitations
                 | Self::VaultMembersAccept
+                | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultSharedObject
@@ -5410,6 +5414,7 @@ impl AgentVerb {
                 | Self::VaultMembersLeave
                 | Self::VaultMembersInvitations
                 | Self::VaultMembersAccept
+                | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultSharedObject
@@ -6833,6 +6838,7 @@ impl AgentVerb {
                 | Self::VaultMembersLeave
                 | Self::VaultMembersInvitations
                 | Self::VaultMembersAccept
+                | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultSharedObject
@@ -7865,6 +7871,7 @@ impl AgentVerb {
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultMembersAccept
+                | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultSharedObject
@@ -8790,6 +8797,7 @@ impl AgentVerb {
             Self::VaultMembersLeave => &["spec"],
             Self::VaultMembersInvitations => &["spec"],
             Self::VaultMembersAccept => &["spec"],
+            Self::VaultMembersAcceptWithCredential => &["spec"],
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultSharedObject => &["spec"],
@@ -10041,6 +10049,7 @@ impl AgentVerb {
             Self::VaultMembersLeave => &["spec"],
             Self::VaultMembersInvitations => &["spec"],
             Self::VaultMembersAccept => &["spec"],
+            Self::VaultMembersAcceptWithCredential => &["spec"],
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultSharedObject => &["spec"],
@@ -11954,6 +11963,9 @@ impl AgentVerb {
             }
             Self::VaultMembersAccept => {
                 "The invitee accepts their own invitation and joins the shared vault at its role."
+            }
+            Self::VaultMembersAcceptWithCredential => {
+                "The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged."
             }
             Self::VaultMembersDecline => {
                 "The invitee declines their own invitation; nothing is granted."

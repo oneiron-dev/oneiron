@@ -4,10 +4,12 @@ use oneiron::authority::{CapabilitySlip, VerifiedSlip};
 use serde::Deserialize;
 
 /// The facade doors an invitee's own slip (FIX 1925) reaches: its
-/// invitation's list, accept and decline. Anywhere else it holds no scope.
-pub(crate) const INVITEE_DOORS: [&str; 3] = [
+/// invitation's list, acceptance (plain or with a member credential) and decline.
+/// Anywhere else it holds no scope.
+pub(crate) const INVITEE_DOORS: [&str; 4] = [
     "vault.members.invitations",
     "vault.members.accept",
+    "vault.members.accept_with_credential",
     "vault.members.decline",
 ];
 
