@@ -267,7 +267,7 @@ impl BatchBuilder<'_> {
             // The caller's writer-hold site, when it named one: started
             // here so the span is this closure's hold only (FIX 12511).
             let _hold =
-                writer_hold_site.map(crate::dreamer_consolidation::stage_log::WriterHold::start);
+                writer_hold_site.map(crate::store::writer_hold::WriterHold::start);
             if let Err(err) = target_guard(wtxn) {
                 return Rows::Discard(Err(err.into()));
             }

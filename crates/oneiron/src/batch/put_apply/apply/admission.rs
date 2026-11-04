@@ -118,7 +118,7 @@ pub(super) fn admit_put<'a>(
     if let Some(refusal) = store.use_restricted_in_txn(wtxn, &id)? {
         return Err(refusal);
     }
-    crate::dreamer_runner::authority::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
+    crate::store::base_agent::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
     super::super::super::person_substrate::validate_scope_identity(id)?;
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact
