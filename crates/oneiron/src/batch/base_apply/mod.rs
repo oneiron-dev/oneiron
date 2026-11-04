@@ -77,13 +77,13 @@ fn require_consumed_claim_bindings(
 /// inputs, means none. Callers without batch state pass `None` (unknown,
 /// so incomplete anchors). Pure and infallible.
 pub(super) fn pending_prompt_for(
-    births: &[(EntityId, crate::provenance::birth::RowBirth)],
+    births: &[(EntityId, crate::store::row_birth::RowBirth)],
     id: &EntityId,
 ) -> Option<Vec<EntityId>> {
     let prompts = births
         .iter()
         .find(|(row, _)| row == id)
-        .map(|(_, birth)| crate::provenance::birth::prompted::prompt_sources_of_birth(birth))
+        .map(|(_, birth)| crate::store::birth_record::prompted::prompt_sources_of_birth(birth))
         .unwrap_or_default();
     Some(prompts)
 }
@@ -168,7 +168,7 @@ struct BatchApplyState {
     claim_transitions: VecDeque<super::VerifiedClaimTransition>,
     preflight_gate_decision_ids: HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
     pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::store::text_index::AnalyzedText>>>,
-    nsw_plans: HashMap<EntityId, VecDeque<crate::hnsw::InsertPlan>>,
+    nsw_plans: HashMap<EntityId, VecDeque<crate::store::vector_insert_plan::InsertPlan>>,
     masked_files: super::secret_scan::MaskedFiles,
     masked_claims: HashMap<EntityId, VecDeque<ClaimCandidate>>,
     habit_streak_candidates: BTreeSet<EntityId>,
@@ -247,7 +247,7 @@ pub(super) fn apply_ops_with_authority_beside(
     text_index_trusted: bool,
     mut gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
-    authority_beside: Option<crate::authority::RowsBeside<'_>>,
+    authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
 ) -> Result<()> {
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));

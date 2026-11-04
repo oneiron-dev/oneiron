@@ -14,7 +14,7 @@ pub(super) fn apply_tail(
     require_consumed_claim_bindings(&state.claim_materializations, &state.claim_transitions)?;
     // Rule A: each born row's made_by lands in the transaction that births it.
     for (row, birth) in &state.births {
-        crate::provenance::birth::stamp_row_birth_in_txn(store, wtxn, row, birth)?;
+        crate::store::birth_record::stamp_row_birth_in_txn(store, wtxn, row, birth)?;
     }
     if state
         .preflight_gate_decision_ids
@@ -106,7 +106,9 @@ pub(super) fn apply_tail(
                 .get(id)
                 .copied()
                 .unwrap_or(crate::store::embedding::EMBED_PRIORITY_DEVICE);
-            crate::sync::queue::push_embed_job_in_txn(store, wtxn, id, priority)?;
+            store
+                .sync_hooks
+                .push_embed_job_in_txn(store, wtxn, id, priority)?;
         }
     }
 

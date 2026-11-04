@@ -3,7 +3,11 @@
 //! Port contracts do not name heed, LMDB, or OverlayDb. Backend transaction
 //! types are associated types; the LMDB implementation keeps the original
 //! transaction and the in-memory implementation owns an isolated snapshot.
+mod claim_read_status;
 mod contracts;
+pub(crate) use claim_read_status::ClaimReadStatus;
+mod point_read;
+pub use point_read::{PointRead, ReadRow, ReadTarget};
 mod read_result;
 pub use read_result::ScopedReadResult;
 mod lmdb_retrieval;
@@ -48,7 +52,7 @@ mod lmdb_claim;
 #[cfg(test)]
 pub(crate) use lmdb_claim::MAX_PREDICATE_LIST_ROWS;
 mod lmdb_entity;
-pub(crate) use lmdb_entity::{indexes_named_entity, reindex_named_entities};
+pub(crate) use lmdb_entity::{BodyReadError, indexes_named_entity, reindex_named_entities};
 mod lmdb_index;
 mod lmdb_short_id_maintenance;
 mod mutation;

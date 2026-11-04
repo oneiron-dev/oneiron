@@ -61,7 +61,8 @@ pub(in crate::api::facade) fn door_admits(
                     crate::api::facade::FacadeApiError::from(error).into_memory_error()
                 })
         }
-        Row::VaultModelsManifestRead
+        Row::VaultSecretsCodeRunLifts
+        | Row::VaultModelsManifestRead
         | Row::VaultModelsManifestReplace
         | Row::VaultModelsOneironerBind
         | Row::VaultModelsRoutesRead
@@ -173,6 +174,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultSkillsRestore
         | Row::VaultSkillsRulesSet
         | Row::VaultSkillsCodeAutoInstallSet
+        | Row::VaultSkillsFitSet
         | Row::VaultSkillsPermissionsApprove
         | Row::VaultSkillsOptimizeStart
         | Row::VaultSkillsOptimizeResult
@@ -451,6 +453,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultFederationBurstBaseline
         | Row::VaultFederationBurstPolicy
         | Row::VaultFederationBurstPolicySet
+        | Row::VaultSyncRetainedWorkWaitSet
         | Row::VaultFederationBurstReview
         | Row::VaultFederationBurstReviewRelease
         | Row::VaultFederationBurstReviewReject
@@ -643,7 +646,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCustodyMembersDrainCommit
         | Row::VaultCustodyMembersDrainFolder
         | Row::VaultCustodyMembersReenrol
-        | Row::VaultMessageStreamsRefused => owner_proof(auth, server, verb).map(drop),
+        | Row::VaultMessageStreamsRefused
+        | Row::VaultOutboundCallsRequestErase => owner_proof(auth, server, verb).map(drop),
         Row::VaultSharedProposeDelete
         | Row::VaultSharedProposeTransfer
         | Row::VaultSharedProposeRemoveOwner

@@ -296,7 +296,10 @@ impl<'a> EngineNativeExecutor<'a> {
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<(CodeRunReplayRecord, Option<CodeRunReplayGeneration>)> {
         if let Some(record) = self.storage.get_code_run_replay_record(&config.run_id)? {
-            if record.determinism != config.determinism {
+            let determinism = record.determinism.ok_or_else(|| {
+                Error::InvalidConfig("a turn program's code run has unknown determinism".to_owned())
+            })?;
+            if determinism != config.determinism {
                 return Err(Error::InvalidConfig(
                     "a turn program's code run holds another determinism".to_owned(),
                 )
@@ -588,7 +591,7 @@ impl<'a> EngineNativeExecutor<'a> {
         // A flaky commit converts to success on one identical retry (FIX
         // 1443); a first commit that actually landed fails the retry closed
         // on its generation mismatch instead.
-        match self.storage.put_program_entry_replay_record(
+        let _ = match self.storage.put_program_entry_replay_record(
             &record,
             expected,
             &host.receipts,
