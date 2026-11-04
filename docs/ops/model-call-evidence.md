@@ -108,6 +108,19 @@ This is a storage path, not reasoning delivery. No production caller currently
 supplies parts to the model-stream finalize door. Scan-off preserves the
 MESSAGE writer's existing inline behavior; it does not implement the generic
 batch door's known-only placement policy. Inline parts must not be assumed
-public or secret-free. Chat wiring, scan-off whole-part marks, authorized part
-serving, actual issuing-login replay and whole MESSAGE privacy remain separate
-work. A custody handle is not a reveal grant or provider replay permission.
+public or secret-free. Chat wiring, scan-off whole-part marks, actual
+issuing-login replay and whole MESSAGE privacy remain separate work. A custody
+handle is not a reveal grant or provider replay permission.
+
+Generic MESSAGE reads use the caller's ordinary scoped read and its existing
+secret redaction. If that projection changes an inline Reasoning part, the
+read withholds that whole part as JSON `null` at its original array position,
+rather than returning edited text, data or a signature. It does not restore a
+parts field already withheld by the existing projection, or change other
+parts or the ordinary message text. Stored bytes stay unchanged.
+
+A stored custody part remains an opaque handle in that view. Its whole value
+leaves only through the existing secret reveal and wait doors, under their
+current grant and T1 lease, or through the owner's authenticated reveal door.
+Those doors return the canonical typed part bytes sealed by the writer. This
+is not automatic upstream replay or proof of an issuing login.

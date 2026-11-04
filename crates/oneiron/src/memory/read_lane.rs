@@ -567,8 +567,8 @@ impl Memory<'_> {
             }
         });
         // A repo file's bytes read masked but at the owner's own door (FIX 7608).
-        let body = self.repo_lane_body_in_txn(txn, &row.id, row.entity_type, body)?;
-        let mut body = decode_body_json(&body);
+        let stored_body = self.repo_lane_body_in_txn(txn, &row.id, row.entity_type, body)?;
+        let mut body = decode_body_json(&stored_body);
         // A key the lift sweep marked in a record's text reads as its handle
         // to all but the owner (OF-067).
         if let Some(value) = &mut body
@@ -580,6 +580,11 @@ impl Memory<'_> {
                 value,
             )?;
             keys.mask_json(value);
+        }
+        if row.entity_type == crate::registry::ENTITY_TYPE_MESSAGE
+            && let Some(value) = &mut body
+        {
+            super::message_parts::withhold_modified_reasoning_parts(&stored_body, value);
         }
         Ok(Some(EntityView {
             id_hex: row.id.to_hex(),
