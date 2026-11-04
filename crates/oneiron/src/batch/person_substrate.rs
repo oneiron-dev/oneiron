@@ -69,7 +69,7 @@ pub(crate) fn ensure_person_substrate(
         let plan =
             super::plan_short_id_update(store, txn, &facet, ENTITY_TYPE_FACET, &prefix, &bytes)?;
         super::apply_short_id_plan(store, txn, &facet, plan)?;
-        crate::federation::record_scope::stamp_put(
+        store.scope_stamps.stamp_put(
             store,
             txn,
             facet,
@@ -172,7 +172,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 )?;
                 super::apply_short_id_plan(store, &mut txn, &id, plan)?;
             }
-            crate::federation::record_scope::stamp_put(
+            store.scope_stamps.stamp_put(
                 store,
                 &mut txn,
                 id,
@@ -182,7 +182,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             )?;
         }
         if !tasks_done && header.entity_type == crate::registry::ENTITY_TYPE_TASK {
-            crate::federation::record_scope::backfill_task_base(
+            store.scope_stamps.backfill_task_base(
                 store,
                 &mut txn,
                 id,
@@ -206,9 +206,8 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             let old = &raw[ENTITY_METADATA_HEADER_LEN..];
             let bytes = match header.entity_type {
                 crate::registry::ENTITY_TYPE_ACCESS_GRANT => {
-                    crate::access_grant::encode_access_grant_body(
-                        &crate::access_grant::decode_access_grant_body(old)?,
-                    )?
+                    crate::access_grant::decode_access_grant_body(old)?;
+                    old.to_vec()
                 }
                 crate::registry::ENTITY_TYPE_OUTBOUND_GRANT => {
                     crate::outbound_grant::encode_standing_outbound_grant_body(
@@ -256,7 +255,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 &bytes,
             )?;
             super::apply_short_id_plan(store, &mut txn, &id, plan)?;
-            crate::federation::record_scope::stamp_put(
+            store.scope_stamps.stamp_put(
                 store,
                 &mut txn,
                 id,

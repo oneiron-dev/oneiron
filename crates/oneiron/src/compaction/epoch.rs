@@ -301,7 +301,9 @@ impl EpochPlacement {
             Some(facet) => facet,
             None => crate::claim::default_facet_in(store, txn)?,
         };
-        crate::federation::record_scope::settle_epoch_birth(store, txn, summary, world, facet)
+        store
+            .scope_stamps
+            .settle_epoch_birth(store, txn, summary, world, facet)
     }
 }
 
@@ -960,7 +962,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
             super::epoch_intent::epoch_birth(request, byline, at, intent_id, trigger)
         {
             let birth = super::self_writer::link_writer(birth, writer)?;
-            crate::provenance::birth::stamp_row_birth_in_txn(&view, wtxn, &summary_id, &birth)?;
+            crate::store::birth_record::stamp_row_birth_in_txn(&view, wtxn, &summary_id, &birth)?;
         }
         extra(
             &view,
