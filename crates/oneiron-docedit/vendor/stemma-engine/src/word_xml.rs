@@ -628,11 +628,23 @@ fn element_from_start(
         }
         let (akey_prefix, akey_local) = split_qname(key);
         if akey_prefix.as_deref() == Some("xmlns") {
-            // `xmlns:foo` -> declares prefix `foo`.
-            ns_decls.push((
-                akey_local,
-                canonicalize_ooxml_namespace(&value).into_owned(),
-            ));
+            // `xmlns:foo` -> declares prefix `foo`. Reserved prefixes are
+            // validated like xmltree/xml-rs: `xmlns` is never declarable,
+            // and `xml` must keep its fixed URI.
+            if akey_local == "xmlns" {
+                return Err(WordXmlError::QuickXml {
+                    position: reader.buffer_position(),
+                    reason: "reserved namespace prefix 'xmlns' must not be declared".to_string(),
+                });
+            }
+            let uri = canonicalize_ooxml_namespace(&value).into_owned();
+            if akey_local == "xml" && uri != "http://www.w3.org/XML/1998/namespace" {
+                return Err(WordXmlError::QuickXml {
+                    position: reader.buffer_position(),
+                    reason: format!("reserved prefix 'xml' bound to wrong URI: {uri}"),
+                });
+            }
+            ns_decls.push((akey_local, uri));
             continue;
         }
 
@@ -786,6 +798,9 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
     let mut root: Option<Element> = None;
 
     let mut buf = Vec::new();
+    // An XML declaration is only legal once, before the document element.
+    // Anything else (a second declaration, or one mid-document) is malformed.
+    let mut decl_seen = false;
     loop {
         let event = reader
             .read_event_into(&mut buf)
@@ -877,6 +892,16 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
             }
             Event::Decl(_) => {
                 // XML declaration (<?xml ...?>): no tree node, like xml-rs.
+                // Only a single declaration before the document element is
+                // legal; a mid-body declaration means malformed XML that must
+                // not pass (FIX 6131 review).
+                if decl_seen || !stack.is_empty() || root.is_some() {
+                    return Err(WordXmlError::QuickXml {
+                        position: reader.buffer_position(),
+                        reason: "misplaced XML declaration".to_string(),
+                    });
+                }
+                decl_seen = true;
             }
             Event::Eof => break,
         }
@@ -1203,7 +1228,14 @@ fn build_subtree_from_open(
                 }
             }
             Event::DocType(_) => return Err(WordXmlError::DoctypeRejected),
-            Event::Decl(_) => {}
+            // A declaration inside a body-child subtree is mid-document by
+            // construction: always malformed, never ignored (FIX 6131 review).
+            Event::Decl(_) => {
+                return Err(WordXmlError::QuickXml {
+                    position: reader.buffer_position(),
+                    reason: "misplaced XML declaration".to_string(),
+                });
+            }
             Event::Eof => {
                 return Err(WordXmlError::QuickXml {
                     position: reader.buffer_position(),
