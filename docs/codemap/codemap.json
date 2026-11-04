@@ -34144,13 +34144,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_store_hooks.rs",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -71891,7 +71891,7 @@
      "surface": {
       "crate-vis": 78,
       "mod": 78,
-      "re-export": 29
+      "re-export": 31
      }
     },
     {
@@ -72326,6 +72326,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "StoreProjectWrites"
+     ],
+     "path": "src/store/project_writes.rs",
+     "purpose": "The project write hooks the store layer's batch put and import paths run, supplied by the engine when a…",
+     "surface": {
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ProposalSpoolClaim",
       "ProposalSpoolFloor",
       "SpoolAtFloor",
@@ -72398,6 +72410,18 @@
      "surface": {
       "const": 1,
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StoreRecordHooks"
+     ],
+     "path": "src/store/record_hooks.rs",
+     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation and room…",
+     "surface": {
+      "trait": 1
      }
     },
     {
@@ -89027,7 +89051,7 @@
     "engine_store_hooks": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
@@ -89788,7 +89812,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 348,
+     "files": 350,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90028,7 +90052,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6237,
+   "source_files": 6239,
    "test_files": 898
   },
   "oneiron-android": {
