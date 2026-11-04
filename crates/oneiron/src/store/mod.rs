@@ -142,6 +142,7 @@ pub mod housekeeping_schedule;
 pub(crate) mod loro_document;
 #[cfg(feature = "sync")]
 pub mod materialization_event;
+pub mod model_description_rows;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
 pub mod pack_hook_actor_class;
