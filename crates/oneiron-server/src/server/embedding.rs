@@ -269,7 +269,7 @@ impl SyncServer {
                     let _admission = admission;
                     let report = pass.reconcile_once()?;
                     server.record_embedding_meters(&report);
-                    Ok(report)
+                    Ok::<_, oneiron::Error>(report)
                 })
                 .await
             };
