@@ -66856,8 +66856,9 @@
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
-      "fn": 13,
+      "crate-vis": 2,
+      "fn": 12,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -70462,6 +70463,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/default_skill_hub.rs",
+     "purpose": "The first-party library skill hub every vault opens with: its stable id and the offline seed of its pinned…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "StoreDeleteGuards"
      ],
@@ -71961,8 +71973,8 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 88,
-      "mod": 81,
+      "crate-vis": 89,
+      "mod": 82,
       "re-export": 31
      }
     },
@@ -73209,6 +73221,16 @@
      "surface": {
       "crate-vis": 14,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/side_table_erase_scan.rs",
+     "purpose": "The scan an erase's scrub makes of one side table: every row whose key and value decode, with any row whose…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -90009,7 +90031,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 362,
+     "files": 364,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90249,7 +90271,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6258,
+   "source_files": 6260,
    "test_files": 898
   },
   "oneiron-android": {
