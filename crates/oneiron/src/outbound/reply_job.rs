@@ -509,14 +509,16 @@ pub(crate) fn erase_connector_reply_results_in_txn(
 ) -> Result<()> {
     for attempt in attempts {
         let artifact = connector_reply_result_id(*attempt)?;
-        erase_connector_reply_result_artifact_in_txn(store, txn, &artifact)?;
+        erase_connector_reply_result_artifact_in_txn(store, txn, &artifact, true)?;
     }
     Ok(())
 }
 
 /// Erases one kept reply result, whole: its artifact with its version chain,
 /// head and indexes, and the kept reply body its head version names, when
-/// the head still decodes to a result naming one (FIX 10902). The body goes
+/// the head still decodes to a result naming one (FIX 10902) and
+/// follow_body_ref holds (true only for an actual job result; the body's own
+/// erase passes false, REVIEW-4385 P1). The body goes
 /// through this same erasure, so its own hold keeps it, logged, like the
 /// result's. A version the body read cannot parse names no body. A hold on
 /// any version's ASSET keeps the whole artifact instead (FIX 12532), and a
@@ -527,6 +529,7 @@ fn erase_connector_reply_result_artifact_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     artifact: &EntityId,
+    follow_body_ref: bool,
 ) -> Result<bool> {
     let raw = EntityStoreRead::port_entity_raw(store, txn, artifact)?;
     if raw
@@ -556,7 +559,13 @@ fn erase_connector_reply_result_artifact_in_txn(
         }
     }
     let mut body_artifact = None;
-    if let Some(head) = crate::blob_artifact::read_blob_artifact_head_in_txn(store, txn, artifact)?
+    // REVIEW-4385 P1: the body_ref is followed only on the actual job
+    // result. The body's own bytes are erased whole, never parsed for a
+    // further body_ref, so a crafted body cannot tombstone an unrelated
+    // artifact transitively.
+    if follow_body_ref
+        && let Some(head) =
+            crate::blob_artifact::read_blob_artifact_head_in_txn(store, txn, artifact)?
     {
         let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&head.content_hash)?;
         if let Some(row) = EntityStoreRead::port_entity_record(store, txn, &asset)? {
@@ -611,7 +620,7 @@ fn erase_connector_reply_result_artifact_in_txn(
         // A hold keeps the body: its marker and tombstone stage only on
         // the outcome that actually tore it (REVIEW-4385 P1), never on the
         // hold that promised the bytes stay.
-        let erased = erase_connector_reply_result_artifact_in_txn(store, txn, &body)?;
+        let erased = erase_connector_reply_result_artifact_in_txn(store, txn, &body, false)?;
         if erased && let Some(learned_at) = body_learned_at {
             let value = crate::deletion::TombstoneValueV2 {
                 reason: crate::deletion::TombstoneReason::UserHardDelete,
