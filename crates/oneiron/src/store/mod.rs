@@ -311,6 +311,7 @@ pub mod site_skill_exposure;
 pub mod skill_attribution_evidence;
 pub(crate) mod text_index;
 pub(crate) mod vector_index;
+mod vector_index_dbs;
 pub mod workflow_definition;
 
 pub use scan_checks::ScanCheck;
@@ -591,6 +592,7 @@ pub(crate) mod authority_rows;
 pub mod channel_class;
 pub mod claim_source_ranking;
 pub mod code_document_receipt;
+pub(crate) use oneiron_store::vector_insert_plan;
 pub(crate) mod consent_bound;
 pub(crate) mod conversation_summary;
 pub(crate) mod gate_metrics;
@@ -604,7 +606,6 @@ pub(crate) mod record_links;
 pub(crate) mod record_references;
 pub(crate) mod scan_count;
 pub(crate) mod skill_resident;
-pub(crate) mod vector_insert_plan;
 
 pub(crate) mod host_issuer_seed;
 pub(crate) mod principal_record;
