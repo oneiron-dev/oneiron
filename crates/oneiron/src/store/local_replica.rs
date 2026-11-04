@@ -58,7 +58,7 @@ use crate::store::window_rows::{
     WINDOW_UPDATE, WindowEntityKey,
 };
 use crate::sync::bridge::format_edge_key;
-use crate::sync::loro_support::TombstoneIndex;
+use crate::store::loro_tombstones::TombstoneIndex;
 use crate::sync::residence::residence_window_for_blob;
 use crate::temporal::TimeRange;
 use crate::window_key::WindowKey;
