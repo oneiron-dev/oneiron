@@ -259,8 +259,8 @@ impl Vault {
         use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
-        let id = crate::gate::default_policy_manifest_id()?;
-        let default = crate::gate::default_policy_manifest()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
+        let default = self.store.gate_hooks.default_policy_manifest()?;
         let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
         let Value::Map(entries) = &mut manifest else {
@@ -373,8 +373,8 @@ impl Vault {
         use oneiron_contracts::claim::ClaimSource;
         use rmpv::Value;
 
-        let id = crate::gate::default_policy_manifest_id()?;
-        let default = crate::gate::default_policy_manifest()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
+        let default = self.store.gate_hooks.default_policy_manifest()?;
         let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
         let Value::Map(entries) = &mut manifest else {

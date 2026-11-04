@@ -7,9 +7,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use crate::ports::EntityStoreRead;
-use crate::scan_check::ScanCount;
 use crate::store::EngineScan;
 use crate::store::retrieval_values::RetrievalWithTelemetry;
+use crate::store::scan_count::ScanCount;
 use crate::store::{RetrievalSignal, ShortIdAliasTarget};
 use crate::temporal::TimeRange;
 use oneiron_retrieval::pipeline::ScoredEntity;
@@ -487,7 +487,7 @@ impl Vault {
     /// Returns all entity IDs of a given type via prefix scan on type_index.
     ///
     /// Every row is read: past the type's threshold row the scan raises one
-    /// [`crate::scan_check::ScanCheck`] and reads on (rule 5).
+    /// [`crate::store::ScanCheck`] and reads on (rule 5).
     pub fn entities_by_type(&self, entity_type: u8) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
         let mut count = ScanCount::start(

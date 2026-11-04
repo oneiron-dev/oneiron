@@ -1,6 +1,6 @@
 //! The record hooks the store layer's write, erase and read paths run:
-//! identity-topology, federation and room checks, supplied by the engine
-//! when a store opens.
+//! identity-topology, federation, room and secret-custody checks, supplied
+//! by the engine when a store opens.
 
 use std::collections::BTreeSet;
 
@@ -9,6 +9,7 @@ use heed::{RoTxn, RwTxn};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::secret_record::SecretCustodyRecord;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -119,4 +120,12 @@ pub trait StoreRecordHooks: Send + Sync {
         wtxn: &mut RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()>;
+
+    /// The engine's `secret_custody::read_secret_custody_meta_in_txn`.
+    fn read_secret_custody_meta_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<SecretCustodyRecord>>;
 }
