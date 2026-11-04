@@ -206,7 +206,9 @@ pub(crate) fn remove_local_replica_window_in_txn(
     keep: KeepControls,
 ) -> Result<RemovedReplica> {
     let queued_writes =
-        crate::sync::queue::queued_window_update_count_in_txn(store, txn, window.as_str())?;
+        store
+            .sync_hooks
+            .queued_window_update_count_in_txn(store, txn, window.as_str())?;
     let mut report = RemovedReplica {
         queued_writes,
         ..RemovedReplica::default()
@@ -617,7 +619,7 @@ fn remove_vectors(
 ) -> Result<()> {
     store.clear_pending_embedding(txn, id)?;
     // The member's queued embed job goes with its marker, in the same txn.
-    crate::sync::queue::delete_embed_job_in_txn(store, txn, id)?;
+    store.sync_hooks.delete_embed_job_in_txn(store, txn, id)?;
     if store.vectors.delete(txn, id.as_bytes())? {
         report.vectors += 1;
     }
