@@ -288,6 +288,22 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         managed.hypnos_socket.clone(),
         &credentials,
     )?;
+    // The native preview socket has only exact held-lease origins. No flag
+    // means no registration caller or listener, preserving standalone hosts.
+    let previews = managed
+        .preview_socket
+        .as_deref()
+        .map(crate::managed::preview::PreviewRouteListener::bind)
+        .transpose()?;
+    let preview_routes = if previews.is_some() {
+        let routes = Arc::new(crate::managed::preview::PreviewRoutes::new(
+            ledger.preview_route_client(),
+        ));
+        sync_server.configure_artifact_preview_routes(Arc::clone(&routes))?;
+        Some(routes)
+    } else {
+        None
+    };
     // The frame is spent. `Credentials` zeroizes on drop, so releasing it here
     // rather than at end of scope is what keeps the DEK out of memory for the
     // rest of the process lifetime.
@@ -634,6 +650,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             let stop = shutdown.triggered();
             tokio::spawn(async move { listener.serve_until(app, stop).await })
         });
+        let preview_task = previews.zip(preview_routes).map(|(listener, routes)| {
+            let stop = shutdown.clone();
+            tokio::spawn(async move { listener.serve(routes, stop).await })
+        });
         // Graceful shutdown couples "stop accepting" and "drain in-flight": the
         // listener closes the moment SIGTERM lands, and this resolves once the
         // requests already in the runtime have finished.
@@ -655,6 +675,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         host.on_stop()?;
         let _ = ctl_task.await;
         if let Some(task) = artifact_task {
+            let _ = task.await;
+        }
+        if let Some(task) = preview_task {
             let _ = task.await;
         }
         // A call in flight ends through its usual teardown before the freeze.
