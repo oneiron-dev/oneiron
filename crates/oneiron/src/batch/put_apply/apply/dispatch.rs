@@ -202,7 +202,7 @@ pub(super) fn dispatch_put_type(
         }
         dispatch.authority_entry_hash_pin = Some(entry_hash);
         dispatch.authority_entry_observation = Some(entry);
-    } else if crate::workspace_roster::is_project_revision_type(store, fixed.entity_type) {
+    } else if crate::store::project_kind::is_project_revision_type(store, fixed.entity_type) {
         let put = crate::workspace_roster::check_revision_put(
             store,
             wtxn,
