@@ -1011,7 +1011,7 @@ pub struct DiaryEntryRequest {
     pub kind: Option<String>,
 }
 
-/// `oneiron::lens::record_ref::RecordRef`.
+/// `oneiron::store::record_ref::RecordRef`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RecordRef {
     #[serde(rename = "kind")]
@@ -12193,7 +12193,7 @@ pub struct VectorSearchHit {
     pub embedding_matches: Vec<EmbeddingMatchEvidence>,
 }
 
-/// `oneiron::pipeline::vector_refinement::VectorRefinement`.
+/// `oneiron_store::vector_refinement::VectorRefinement`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct VectorRefinement {
     #[serde(rename = "stored_dimensions")]
@@ -20661,7 +20661,7 @@ pub struct SlimDropRequest {
     pub waited_secs: u64,
 }
 
-/// `oneiron::heap_drop::HeapDropReport`.
+/// `oneiron_store::heap_drop::HeapDropReport`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HeapDropReport {
     #[serde(rename = "sync_windows")]
@@ -38195,7 +38195,7 @@ pub struct CodeSymbolsReleased {
     pub released: bool,
 }
 
-/// `oneiron::code_document::types::CodeOpProvenance`.
+/// `oneiron::store::code_document_receipt::CodeOpProvenance`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CodeOpProvenance {

@@ -136,7 +136,7 @@ export type ScratchpadWriteReply = { pad?: EntityId | null; sealed: boolean; sea
 export type ScratchpadSealRequest = { session_id: string }
 /** `oneiron::verbs::self_verbs::DiaryEntryRequest` */
 export type DiaryEntryRequest = { content: string; kind?: string | null }
-/** `oneiron::lens::record_ref::RecordRef` */
+/** `oneiron::store::record_ref::RecordRef` */
 export type RecordRef = { kind: string; id: string; short_id?: string | null; label: string }
 /** `oneiron::verbs::self_verbs::DiaryEntryReceipt` */
 export type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string; record?: RecordRef | null }
@@ -1510,7 +1510,7 @@ export type VectorSearchLane = "ordinary" | "voice_hot"
 export type VectorSearchRequest = { space?: string | null; query_kind?: InputKind | null; query: number[]; kinds?: InputKind[]; limit: number; lane?: VectorSearchLane }
 /** `oneiron::memory::search_vector::VectorSearchHit` */
 export type VectorSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; embedding_matches: EmbeddingMatchEvidence[] }
-/** `oneiron::pipeline::vector_refinement::VectorRefinement` */
+/** `oneiron_store::vector_refinement::VectorRefinement` */
 export type VectorRefinement = { stored_dimensions: number; candidate_dimensions: number; query_dimensions: number; score_dimensions: number; full_dimension_rescore: boolean }
 /** `oneiron::memory::search_vector::VectorSearchResult` */
 export type VectorSearchResult = { hits: VectorSearchHit[]; lane: VectorSearchLane; effective_limit: number; limit_clamped: boolean; refinement?: VectorRefinement | null }
@@ -2604,7 +2604,7 @@ export type SavedResumeStep = { kind: "model"; attempt_id: string; step_hash: st
 export type ShedCause = "long_outbound_wait" | "memory_pressure"
 /** `oneiron::slim::public::SlimDropRequest` */
 export type SlimDropRequest = { cause: ShedCause; waited_secs: number }
-/** `oneiron::heap_drop::HeapDropReport` */
+/** `oneiron_store::heap_drop::HeapDropReport` */
 export type HeapDropReport = { sync_windows: number; ppr_cache_rows: number; ppr_dependency_rows: number; hnsw_nodes: number; estimated_reclaimed_bytes: number }
 /** `oneiron::slim::ShedBlocker` */
 export type ShedBlocker = { kind: "no_pending_outbound_step" } | { kind: "multiple_pending_outbound_steps"; count: number } | { kind: "sync_window_busy"; window_key: string; outstanding_handles: number } | { kind: "already_slim_for_different_step" }
@@ -4878,7 +4878,7 @@ export type CodeSymbolsDeclared = { declaration: CodeSymbolLeaseView; blockers: 
 export type CodeSymbolsTaskRequest = { task: EntityId }
 /** `oneiron::memory::code_doors::types::CodeSymbolsReleased` */
 export type CodeSymbolsReleased = { task: EntityId; released: boolean }
-/** `oneiron::code_document::types::CodeOpProvenance` */
+/** `oneiron::store::code_document_receipt::CodeOpProvenance` */
 export type CodeOpProvenance = { turn?: EntityId | null; activity?: EntityId | null; intent?: EntityId | null; substrate_ref?: EntityId | null; reasoning_effort?: string | null }
 /** `oneiron::store::critic_lens::CriticLens` */
 export type CriticLens = { id: string; prompt_contract: string; output_schema: string; hard_check: boolean; domain: string }
