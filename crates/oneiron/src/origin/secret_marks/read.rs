@@ -26,14 +26,14 @@ use rmpv::Value;
 
 use super::{REPO_SECRET_MARK_PREDICATE, RepoSecretMark, RepoSecretPlacement, RepoSecretSource};
 use crate::Vault;
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
-use crate::receive_scan::ReceiveBlobKind;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::GitOid;
 use crate::file_secret_marks::{KeyPlaces, MemberStep};
+use crate::git_wire::GitOid;
+use crate::receive_scan::ReceiveBlobKind;
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 
 /// How a reader finds marks. The one way is every readable claim of the
 /// mark predicate's posting list (FIX 8236): O(marks) once per request.

@@ -86,14 +86,14 @@ use crate::error::{Error, SideTableRowProblem, StoreError};
 #[cfg(feature = "sync")]
 use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 
+#[cfg(feature = "sync")]
+pub use crate::store::embedding::{
+    DEFAULT_PENDING_EMBEDDING_LEASE_MS, DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS, RemoteRung,
+};
 pub use crate::store::embedding::{
     EMBED_PRIORITY_BACKFILL, EMBED_PRIORITY_DEVICE, EMBED_PRIORITY_SERVER,
     EMBED_PRIORITY_SURFACED_HOT, EgressDecision, EgressPredicate, Embedder, EmbedderLocality,
     PendingEmbeddingInput, PendingEmbeddingPayload,
-};
-#[cfg(feature = "sync")]
-pub use crate::store::embedding::{
-    DEFAULT_PENDING_EMBEDDING_LEASE_MS, DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS, RemoteRung,
 };
 
 /// Canonical rung-2 INT8-transport receipt: `codes[i] as f32 * scale`.
@@ -367,8 +367,9 @@ impl PendingEmbeddingReconciler {
             // an error is: the rows fall back to the local embedder, whose
             // fills clear their leases, and the pass goes on.
             let dimensions = self.vault.config.dimensions;
+            let rung_endpoint = rung.endpoint();
             let answer = self
-                .embed_on(rung.embedder.as_ref(), &inputs)
+                .embed_on(rung.embedder.as_ref(), &inputs, &rung_endpoint)
                 .and_then(|vectors| {
                     if vectors.len() == remote_work.len()
                         && vectors.iter().all(|(vector, _)| vector.len() == dimensions)
@@ -431,7 +432,8 @@ impl PendingEmbeddingReconciler {
         }
         let inputs: Vec<PendingEmbeddingInput> =
             work.iter().map(|item| item.input.clone()).collect();
-        let vectors = self.embed_on(self.embedder.as_ref(), &inputs)?;
+        let endpoint = self.embedder.endpoint();
+        let vectors = self.embed_on(self.embedder.as_ref(), &inputs, &endpoint)?;
         if vectors.len() != work.len() {
             return Err(Error::InvariantViolation(
                 "embedder returned mismatched vector count",
@@ -443,19 +445,20 @@ impl PendingEmbeddingReconciler {
 
     /// `embedder`'s vectors for `inputs`, each marked with the device and
     /// runtime that computed it. One off this device sends each request only
-    /// once the vault releases its rows: none of them is one a device-local
-    /// world keeps (DEC-0005), whatever the host's egress list says. A
-    /// refusal fails the embed and sends nothing.
+    /// once the vault releases its rows toward `destination`: none of them is
+    /// one a device-local world keeps from it (DEC-0005), whatever the host's
+    /// egress list says. A refusal fails the embed and sends nothing.
     fn embed_on(
         &self,
         embedder: &dyn Embedder,
         inputs: &[PendingEmbeddingInput],
+        destination: &crate::settings::ReadDestination,
     ) -> Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
         if embedder.locality() == EmbedderLocality::OnDevice {
             return embedder.embed_marked(inputs);
         }
         embedder.embed_released(inputs, &|rows| {
-            if self.vault.rows_may_leave_device(rows)? {
+            if self.vault.rows_may_leave_for(rows, destination)? {
                 Ok(())
             } else {
                 Err(Error::UpstreamToolFailure {
@@ -527,13 +530,20 @@ impl PendingEmbeddingReconciler {
         // embedder on this device, or stay pending, unleased and unsent, while
         // the primary is off it too. Read in the writer, so every flag
         // committed before this pass is one it reads; the release reads again.
+        // Each rung judges its own destination (FIX 5588): Local and Remote
+        // are alternative recipients, never a meet.
         let primary_on_device = self.embedder.locality() == EmbedderLocality::OnDevice;
+        let primary_endpoint = self.embedder.endpoint();
+        let rung_endpoint = self.remote_rung.as_ref().map(RemoteRung::endpoint);
         self.vault.with_write_txn_grouped(|wtxn| {
-            let flagged = crate::settings::device_local_worlds_at(
-                &self.vault,
-                wtxn,
-                crate::claim::CallerLocality::OffDevice,
-            )?;
+            let flagged_primary =
+                crate::settings::device_local_worlds_for(&self.vault, wtxn, &primary_endpoint)?;
+            let flagged_remote = rung_endpoint
+                .as_ref()
+                .map(|endpoint| {
+                    crate::settings::device_local_worlds_for(&self.vault, wtxn, endpoint)
+                })
+                .transpose()?;
             for job in jobs {
                 if crate::vault::entity_revision::entity_has_pending_revision(
                     &self.vault.store,
@@ -569,16 +579,32 @@ impl PendingEmbeddingReconciler {
                     continue;
                 }
 
-                let device_local = crate::settings::device_only_withholds(
+                let kept_primary = crate::settings::device_only_withholds(
                     &self.vault.store,
                     wtxn,
-                    &flagged,
+                    &flagged_primary,
                     &job.entity_id,
                 )
                 .or_else(|error| match error {
                     Error::CorruptedIndex(_) => Ok(true),
                     error => Err(error),
                 })?;
+                let kept_remote = match flagged_remote.as_ref() {
+                    None => false,
+                    Some(flagged) => crate::settings::device_only_withholds(
+                        &self.vault.store,
+                        wtxn,
+                        flagged,
+                        &job.entity_id,
+                    )
+                    .or_else(|error| match error {
+                        Error::CorruptedIndex(_) => Ok(true),
+                        error => Err(error),
+                    })?,
+                };
+                // A row kept for the rung but not the primary still takes the
+                // primary; one kept for neither is routable.
+                let device_local = kept_primary || kept_remote;
                 if device_local {
                     batch.device_local += 1;
                     if !primary_on_device {

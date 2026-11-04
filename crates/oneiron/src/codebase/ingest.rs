@@ -1,8 +1,6 @@
 //! Local-git ingest helpers: blob walk, hosted-media gate, custody scan, and validators.
 
-use super::snapshot::{
-    CODEBASE_CONTENT_HASH_LEN, CodebaseSnapshot,
-};
+use super::snapshot::{CODEBASE_CONTENT_HASH_LEN, CodebaseSnapshot};
 use super::store::codebase_asset_entity_id;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan};
@@ -430,5 +428,5 @@ pub(super) fn scan_codebase_snapshot_metadata(snapshot: &CodebaseSnapshot) -> Re
     Ok(())
 }
 
-pub(crate) use crate::store::code_snapshot::validation::validate_project_id;
 pub(super) use crate::store::code_snapshot::validation::validate_manifest_path;
+pub(crate) use crate::store::code_snapshot::validation::validate_project_id;

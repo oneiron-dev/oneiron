@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -12,6 +11,7 @@ use crate::session_overlay::{
 };
 use crate::side_table::{SideCodec, SideKey, SideTable};
 use crate::vault::VaultId;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::on_record::OnRecordSaver;
 use super::participant::RunParticipant;
@@ -968,7 +968,10 @@ impl OffRecordSession<'_> {
     }
 
     /// Pins the result body `digest` in this session's vault (OF-597).
-    pub(crate) fn pin_result_body(&self, digest: [u8; 32]) -> crate::store::result_body_pins::ResultBodyPin {
+    pub(crate) fn pin_result_body(
+        &self,
+        digest: [u8; 32],
+    ) -> crate::store::result_body_pins::ResultBodyPin {
         self.vault.pin_result_body(digest)
     }
 

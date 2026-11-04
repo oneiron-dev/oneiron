@@ -725,7 +725,8 @@ impl<'a> DreamerRunnerStore<'a> {
             // lease gets its successor in the commit that settles the run.
             self.redrive_coach_issues_in_txn(wtxn, record, input.now)?;
             if decode_dreamer_attempt_payload(&record.payload).is_ok_and(|payload| {
-                payload.attempt_type == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
+                payload.attempt_type
+                    == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
             }) {
                 crate::agent_dispatch::AgentDispatcher::new(self.vault).settle_child_in_txn(
                     wtxn,
@@ -800,7 +801,9 @@ impl<'a> DreamerRunnerStore<'a> {
                 .get_in_write_txn(txn, input.id)?
                 .ok_or(invalid_dreamer_runner("agent retry source must exist"))?;
             let payload = decode_dreamer_attempt_payload(&source.payload)?;
-            if payload.attempt_type != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
+            if payload.attempt_type
+                != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
+            {
                 return Err(invalid_dreamer_runner(
                     "agent retry requires a dispatch attempt",
                 ));
@@ -844,7 +847,9 @@ impl<'a> DreamerRunnerStore<'a> {
                     invalid_dreamer_runner("dreamer terminal transition attempt must exist"),
                 )?;
                 let payload = decode_dreamer_attempt_payload(&record.payload)?;
-                if payload.attempt_type == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
+                if payload.attempt_type
+                    == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
+                {
                     return Err(invalid_dreamer_runner(
                         "agent dispatch failures require typed detector evidence",
                     ));

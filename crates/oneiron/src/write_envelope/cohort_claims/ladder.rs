@@ -2,10 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::Error;
+use super::{EvidenceBasis, StageEvidenceClass, StageKey};
 use crate::EntityId;
 use crate::Result;
-use super::{EvidenceBasis, StageEvidenceClass, StageKey};
+use crate::error::Error;
 
 /// The ratified D+3 bump delay for no-show recovery, offered as preset data.
 ///
