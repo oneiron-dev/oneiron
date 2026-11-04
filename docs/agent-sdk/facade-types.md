@@ -4814,7 +4814,7 @@ export type CodeBlameView = { at: CodeStateView; units: CodeUnitBlameView[] }
 /** `oneiron::code_document::review_views::CodeProposalViewRequest` */
 export type CodeProposalViewRequest = { proposal_ref: string }
 /** `oneiron::store::repo_proposal_record::RepoProposalStatus` */
-export type RepoProposalStatus = "Proposed" | "Approved" | "Applied" | "Failed" | "Rejected"
+export type RepoProposalStatus = "Proposed" | "Approved" | "Applied" | "Failed" | "Rejected" | "Superseded"
 /** `oneiron::code_document::review_views::CodeProposedStamp` */
 export type CodeProposedStamp = { actor_ref?: string | null; session_ref?: string | null; provenance_claim_ref?: string | null; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null }
 /** `oneiron::store::code_document_values::CodeFilePresence` */
