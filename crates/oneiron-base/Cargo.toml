@@ -26,6 +26,7 @@ rand = "0.8"
 rand_distr = "0.4"
 schemars = "=0.8.22"
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tiktoken-rs = "0.12.0"
 tokio = { version = "1", features = ["net", "sync", "time"] }

@@ -264,6 +264,12 @@ pub(super) fn link_imports(
                     Ok((cx.data_mut().output(StreamTarget::File(path), frame)?,))
                 },
             ),
+            "oneiron.store.bytes" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, State>, (start, frame): (bool, Vec<u8>)| {
+                    Ok((cx.data_mut().output(StreamTarget::Store { start }, frame)?,))
+                },
+            ),
             "oneiron.random.bytes" => root.func_wrap(
                 wit,
                 |mut cx: StoreContextMut<'_, State>, (length,): (u32,)| {
