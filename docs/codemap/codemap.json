@@ -58848,7 +58848,7 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 23,
       "struct": 1
      }
@@ -69445,6 +69445,7 @@
      "path": "src/store/attempt_manifest.rs",
      "purpose": "Retained pack-manifest entries for queued work",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5,
       "struct": 1

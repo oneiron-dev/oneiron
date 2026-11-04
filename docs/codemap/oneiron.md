@@ -4763,7 +4763,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/dispatch_identity.rs` | src | s | 2 crate-vis | — | Frozen dispatch receipt identity and approval field vocabulary |
 | `src/receipt/dispatch_observation.rs` | src | s | 10 crate-vis | — | Passive OF-327 per-try audit observations; never resend authority |
 | `src/receipt/family.rs` | src | m | 2 struct · 13 fn · 7 crate-vis | PendingTrayAsk, PendingTrayQuery | — |
-| `src/receipt/field_set.rs` | src | m | 1 struct · 23 fn · 6 const · 5 crate-vis | ContextReceiptFields | — |
+| `src/receipt/field_set.rs` | src | m | 1 struct · 23 fn · 6 const · 6 crate-vis | ContextReceiptFields | — |
 | `src/receipt/grant.rs` | src | m | 4 struct · 1 fn · 7 crate-vis | StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery | — |
 | `src/receipt/guest_revoke.rs` | src | s | 6 struct · 3 enum · 2 fn | GuestCopyState, GuestDeletionRequestStatus, GuestPactStanding, GuestRevokeCourtesyTarget, GuestRevokeCourtesyTargetView, GuestRevokeDisclosure, GuestRevokeOutcome, GuestRevokeResponse +1 | OF-232: the guest-revoke response and its copied-bytes disclosure |
 | `src/receipt/identity_kind.rs` | src | m | 2 fn · 2 crate-vis | — | — |
@@ -5614,7 +5614,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/attempt_id.rs` | src | s | 1 re-export | — | Stable queued-attempt identifiers: defined in `oneiron-store`, with the side-table raw codec the engine… |
 | `src/store/attempt_inputs.rs` | src | s | 7 struct · 2 enum · 1 fn · 1 crate-vis | AttemptEvent, AttemptInterventionEffect, AttemptInterventionKind, ClaimAttempt, CompleteAttempt, EnqueueAttempt, FailAttempt, RetryAttempt +1 | Queue admission inputs and durable intervention vocabulary |
 | `src/store/attempt_lease.rs` | src | s | 1 crate-vis | — | Lease-owner validation for queued-work storage ports |
-| `src/store/attempt_manifest.rs` | src | s | 1 struct · 1 enum · 5 fn | ManifestEntry, ManifestKind | Retained pack-manifest entries for queued work |
+| `src/store/attempt_manifest.rs` | src | s | 1 struct · 1 enum · 5 fn · 2 crate-vis | ManifestEntry, ManifestKind | Retained pack-manifest entries for queued work |
 | `src/store/attempt_operations.rs` | src | s | 2 crate-vis | — | The attempt queue operations the store layer runs but the engine owns: the trait the engine implements, and… |
 | `src/store/attempt_outcomes.rs` | src | s | 3 struct · 6 enum | AbandonAttempt, AbandonOutcome, ClaimOutcome, CompleteOutcome, EnqueueOutcome, FailOutcome, InterveneAttempt, InterveneOutcome +1 | What the attempt queue's doors return and the two door inputs that are only data: the typed enqueue, claim… |
 | `src/store/attempt_payload_response.rs` | src | s | 3 crate-vis | — | An agent dispatch's attempt row as a row-held response of a checkpoint image (FIX 7115, KS-2B1): whether the… |
