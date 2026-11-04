@@ -354,6 +354,7 @@ impl Vault {
         let mut ops = Vec::new();
         // Each new chunk is born under its page's facet (facet rule C).
         let mut text_births = HashMap::new();
+        let mut changed_sources = BTreeSet::new();
         // Rule A: the owner states each page and its verbatim chunks; a model
         // summary is concluded from its chunk. Stamped once the ops land.
         let writer = WriteActor::new(actor, EdgeActorClass::Human);
@@ -434,6 +435,9 @@ impl Vault {
                 },
                 now,
             )?;
+            if !source_bytes_unchanged {
+                changed_sources.insert(asset);
+            }
             births.extend(
                 RowBirth::written(writer, MadeByClass::Stated, "docs.import", &[], &[], now)
                     .map(|birth| (asset, birth)),
@@ -564,6 +568,7 @@ impl Vault {
         self.apply_ops_with_derived_copies(
             &mut txn,
             ops,
+            &changed_sources,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             ApplyOpsGateMode::new(false, true).with_text_births(text_births),
