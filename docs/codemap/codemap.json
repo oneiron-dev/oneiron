@@ -2499,7 +2499,8 @@
      "path": "src/attempt_queue/dispatch_payload.rs",
      "purpose": "Dispatch payload kind carried by the background attempt queue",
      "surface": {
-      "const": 2
+      "const": 1,
+      "re-export": 1
      }
     },
     {
@@ -2841,7 +2842,7 @@
      "path": "src/attempt_queue/payload_erase/response.rs",
      "purpose": "An agent dispatch's payload text in checkpoint images (FIX 7115, KEY STORE = A): its attempt row is a…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -3104,25 +3105,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AbandonAttempt",
-      "AbandonOutcome",
-      "ClaimOutcome",
-      "CompleteOutcome",
-      "EnqueueOutcome",
-      "FailOutcome",
-      "InterveneAttempt",
-      "InterveneOutcome",
-      "RetryOutcome"
-     ],
+     "notable": [],
      "path": "src/attempt_queue/types.rs",
      "purpose": "Durable wire, verb-input, and outcome types for the attempt queue",
      "surface": {
       "crate-vis": 6,
-      "enum": 6,
       "fn": 10,
-      "re-export": 15,
-      "struct": 3
+      "re-export": 16
      }
     },
     {
@@ -7391,7 +7380,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 40,
+      "crate-vis": 41,
       "mod": 1,
       "re-export": 3
      }
@@ -8233,6 +8222,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/stored_actor_erasure.rs",
+     "purpose": "Immediate materialization of an already-authorized actor erasure",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -8385,7 +8384,7 @@
      "path": "src/batch/verified_claim_transition.rs",
      "purpose": "Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 20
      }
     },
     {
@@ -15480,21 +15479,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ActiveWorldSelection",
-      "ResolvedWorldAuthority",
-      "WorldAuthoritySet"
-     ],
+     "notable": [],
      "path": "src/claim/world_access.rs",
      "purpose": "World-access authority values and their strict claim-value codecs",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
-      "fn": 10,
-      "re-export": 1,
-      "struct": 3
+      "fn": 2,
+      "re-export": 2
      }
     },
     {
@@ -20762,7 +20755,7 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 3,
       "re-export": 17
      }
@@ -20992,7 +20985,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "ConnectorGrantSlate",
@@ -21013,7 +21006,7 @@
      "purpose": "ARCH-0072 typed per-capability grant slates",
      "surface": {
       "const": 2,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 3,
       "fn": 37,
       "struct": 10
@@ -21047,7 +21040,7 @@
      "path": "src/connector_key/slate_holder.rs",
      "purpose": "ARCH-0072 self-update on a per-grant key (FIX 987): \"Any holder may narrow its own Grant, and the owner…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -22346,7 +22339,7 @@
      "path": "src/context_board/plugin/fit_install/receipt_erase.rs",
      "purpose": "The erase of a fitted install's `skill.section_fit` receipt (FIX 9752)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -24493,7 +24486,7 @@
      "purpose": "An erased actor's name, out of the rows that record it outside its own record (FIX 3520)",
      "surface": {
       "const": 2,
-      "crate-vis": 7,
+      "crate-vis": 10,
       "enum": 2
      }
     },
@@ -26165,13 +26158,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/partition_run.rs",
      "purpose": "The prepared partition run `execute` ends in: the branch's resources at the wake's pin, the partition's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/partition_window.rs",
+     "purpose": "One window of plain Micro partitions (FIX 12487): slots pinned and opened in admission order, extraction…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -26463,13 +26466,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/parallel.rs",
      "purpose": "Read-only neighbourhood fan-out, followed by one parent-owned merge",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -27218,7 +27221,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
      }
     },
     {
@@ -27768,7 +27771,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 4,
       "re-export": 5,
       "struct": 3
@@ -30882,28 +30885,21 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "AgentWakePolicy",
-      "AgentWakeRole",
-      "AgentWakeSignals",
-      "AgentWakeTriggers",
-      "CadencePrecedence",
-      "DreamerWakePolicy",
       "WakeIdleState",
       "WakePolicyDecision",
       "WakePolicyOutcome",
       "WakePolicyTimerLease",
       "WakePolicyTrigger",
-      "WakeRecipe",
-      "WeaveRecipePriority"
+      "WakeRecipe"
      ],
      "path": "src/dreamer_wake/policy.rs",
      "purpose": "Row-backed wake admission",
      "surface": {
       "crate-vis": 7,
-      "enum": 5,
+      "enum": 2,
       "fn": 8,
-      "re-export": 1,
-      "struct": 8
+      "re-export": 2,
+      "struct": 4
      }
     },
     {
@@ -31366,7 +31362,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "FinalizedProposalText",
@@ -31497,7 +31493,7 @@
      "path": "src/edit_distance/attribution/stored.rs",
      "purpose": "Stored rows: key shapes, row shapes, and the row codec",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -31509,6 +31505,7 @@
       "AmendmentJudgment",
       "AmendmentShare",
       "HunkLabel",
+      "HunkRange",
       "PreferenceProposal"
      ],
      "path": "src/edit_distance/attribution/taxonomy.rs",
@@ -31516,8 +31513,8 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 16,
-      "struct": 5,
+      "fn": 17,
+      "struct": 6,
       "type": 1
      }
     },
@@ -31659,7 +31656,7 @@
      "path": "src/edit_distance/delta/store.rs",
      "purpose": "Delta side-ledger writes, receipt attachment, and the identity-topology projection pass",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 15,
       "fn": 2
      }
     },
@@ -31910,7 +31907,7 @@
      "path": "src/edit_distance/miner/feedback.rs",
      "purpose": "Immutable, owner-bound decisions used by the preference miner",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -32095,7 +32092,7 @@
      "path": "src/edit_distance/proposal_text/receipts.rs",
      "purpose": "Commit-envelope writer and read-time provenance fold for authored text",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -39770,6 +39767,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/host_memory.rs",
+     "purpose": "The process-wide physical-memory admission line",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ClaimVadPaymentWorker"
      ],
@@ -41640,13 +41647,13 @@
      "path": "src/learning/project.rs",
      "purpose": "The one projector: anchored evidence, a prior and a window in, one superseding `learning.*` head per cell out",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 11,
       "fn": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "LearningRead"
@@ -41701,7 +41708,7 @@
      "path": "src/learning_setting.rs",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
-      "const": 1,
+      "const": 3,
       "crate-vis": 13,
       "enum": 2,
       "fn": 9,
@@ -42321,7 +42328,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 202,
+      "mod": 203,
       "re-export": 102
      }
     },
@@ -55530,54 +55537,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/overlay_db/accessors.rs",
-     "purpose": "ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors",
-     "surface": {
-      "crate-vis": 34
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/overlay_db/iters.rs",
-     "purpose": "Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str)",
-     "surface": {
-      "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/overlay_db/merge.rs",
-     "purpose": "Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and…",
-     "surface": {
-      "crate-vis": 15
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/overlay_db/mod.rs",
-     "purpose": "Per-database accessor seam for the session write-overlay (ARCH-0052, D2)",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/overlay_db/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -57228,7 +57187,7 @@
      "purpose": "A source's dependents are withdrawn in bounded batches, never refused for how many records were derived from…",
      "surface": {
       "const": 3,
-      "crate-vis": 11,
+      "crate-vis": 14,
       "fn": 5,
       "struct": 3
      }
@@ -59881,7 +59840,7 @@
      "path": "src/recovery/checkpoint/landing.rs",
      "purpose": "Landing one checkpoint image in its destination: the restore pipeline behind every restore, wake and migrate…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -59907,7 +59866,7 @@
      "path": "src/recovery/checkpoint/mod.rs",
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 19,
       "re-export": 14,
@@ -61255,7 +61214,7 @@
      "path": "src/result_body/collect.rs",
      "purpose": "The result body collector: released bodies first, then orphan files",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1
      }
@@ -61267,7 +61226,7 @@
      "path": "src/result_body/files.rs",
      "purpose": "Body directory work for the collector, done through the directory's descriptor: nothing here follows a link",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -65111,164 +65070,6 @@
      "surface": {}
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/session_overlay/hygiene_tests.rs",
-     "purpose": "Allocation-boundary teardown observer for session-owned buffers",
-     "surface": {
-      "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/journal.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 18
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/keyspace.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 14
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/mod.rs",
-     "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/held.rs",
-     "purpose": "What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)…",
-     "surface": {
-      "crate-vis": 7
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/lifecycle.rs",
-     "purpose": "Overlay lifecycle state machine, leases, seal/rearm/close",
-     "surface": {
-      "crate-vis": 17
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/mod.rs",
-     "purpose": "Ephemeral in-memory write overlay for one live session (ARCH-0052, D1)",
-     "surface": {
-      "crate-vis": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/repo_projection.rs",
-     "purpose": "Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a…",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/retained.rs",
-     "purpose": "The memory a room's overlay actually retains, the bytes its host's retained-memory line is charged (FIX…",
-     "surface": {
-      "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/retire.rs",
-     "purpose": "Promoted-closure retirement reusing the store's index-key builders",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/rows.rs",
-     "purpose": "Row staging, preflight, budget checks, read probes",
-     "surface": {
-      "crate-vis": 13
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/segment.rs",
-     "purpose": "Txn segment install, leases, commit/apply guards",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/route.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/short_id.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/snapshot.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 18
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/session_overlay/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -66226,7 +66027,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CreditAdjustmentReceipt"
@@ -66234,7 +66035,7 @@
      "path": "src/skill_attribution/credit_join.rs",
      "purpose": "The one reconciler of an anchored outcome's late credit (FIX 3241, FIX 10108, OF-540)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 1,
       "struct": 1
      }
@@ -66355,12 +66156,12 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "re-export": 21
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AnchoredPackOutcome"
@@ -66398,15 +66199,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "RunWriteToken"
-     ],
+     "notable": [],
      "path": "src/skill_attribution/run_writes.rs",
      "purpose": "OF-540/OF-397: the write envelope of a leased agent run",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 11,
       "fn": 2,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -68133,7 +67932,7 @@
      "purpose": "The measurement doors: ask, read, claim, record a case and fail",
      "surface": {
       "crate-vis": 7,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -68637,7 +68436,7 @@
      "path": "src/skill_optimize/labels/rubric.rs",
      "purpose": "Judge rubric pins, label rechecks and human regrades",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2,
       "struct": 3,
@@ -68890,7 +68689,7 @@
      "path": "src/skill_reliability/anchored_amendment.rs",
      "purpose": "The join between a judged amendment's defect share and the native anchored pack outcome it revises (FIX 10148)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -68995,7 +68794,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/skill_reliability/projector.rs",
@@ -69028,7 +68827,7 @@
      "purpose": "Skill reliability reads use learning cells, never SkillRecord confidence",
      "surface": {
       "crate-vis": 12,
-      "fn": 9,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -69352,6 +69151,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_archive_mark.rs",
+     "purpose": "An attempt's cleanup mark (`VAULT_CLEANUP_ATTEMPT_ARCHIVE`), keyed by id16: a cleanup run's archive mark on…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AttemptCancelPressure",
       "AttemptCancelReceipt",
@@ -69405,14 +69214,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AttemptId"
-     ],
+     "notable": [],
      "path": "src/store/attempt_id.rs",
-     "purpose": "Stable queued-attempt identifiers and their raw storage representation",
+     "purpose": "Stable queued-attempt identifiers: defined in `oneiron-store`, with the side-table raw codec the engine…",
      "surface": {
-      "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -69467,6 +69273,37 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AbandonAttempt",
+      "AbandonOutcome",
+      "ClaimOutcome",
+      "CompleteOutcome",
+      "EnqueueOutcome",
+      "FailOutcome",
+      "InterveneAttempt",
+      "InterveneOutcome",
+      "RetryOutcome"
+     ],
+     "path": "src/store/attempt_outcomes.rs",
+     "purpose": "What the attempt queue's doors return and the two door inputs that are only data: the typed enqueue, claim…",
+     "surface": {
+      "enum": 6,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_payload_route.rs",
+     "purpose": "The routing probe that tells an agent dispatch's attempt row apart without the strict reader: its record…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ReadSetProducer"
      ],
      "path": "src/store/attempt_read_producer.rs",
@@ -69492,7 +69329,7 @@
      "path": "src/store/attempt_record.rs",
      "purpose": "The durable attempt row (`AttemptRecord`) and the field types it alone holds: its operator placement, a…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "struct": 6
      }
@@ -70818,7 +70655,7 @@
      "path": "src/store/dispatch_attempt_kind.rs",
      "purpose": "Durable queue kind discriminators for foreign-agent and surface-event dispatch",
      "surface": {
-      "const": 2
+      "const": 3
      }
     },
     {
@@ -70854,6 +70691,25 @@
      "purpose": "Queue discriminators and wire constants used by stored Dreamer attempts",
      "surface": {
       "const": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentWakePolicy",
+      "AgentWakeRole",
+      "AgentWakeSignals",
+      "AgentWakeTriggers",
+      "CadencePrecedence",
+      "DreamerWakePolicy",
+      "WeaveRecipePriority"
+     ],
+     "path": "src/store/dreamer_wake_policy.rs",
+     "purpose": "The owner-editable dreamer wake-policy row (`DREAMER_WAKE_POLICY`) and its parts: the recipe dials, the…",
+     "surface": {
+      "enum": 3,
+      "struct": 4
      }
     },
     {
@@ -72208,8 +72064,8 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 105,
-      "mod": 105,
+      "crate-vis": 107,
+      "mod": 108,
       "re-export": 31
      }
     },
@@ -74166,6 +74022,22 @@
       "crate-vis": 4,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActiveWorldSelection",
+      "ResolvedWorldAuthority",
+      "WorldAuthoritySet"
+     ],
+     "path": "src/store/world_authority.rs",
+     "purpose": "The world-access authority values (ONE-1420): one authority set of base reality plus sorted, unique world…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 8,
+      "struct": 3
      }
     },
     {
@@ -76911,7 +76783,7 @@
      "purpose": "Signed maintenance operations kept for their turn instead of refused (FIX 8565, 8858)",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -82327,7 +82199,7 @@
      "path": "src/vault_cleanup/marks.rs",
      "purpose": "Cleanup marks keyed by id16: a run's archive mark on a completed attempt, and the owner's kept mark on an…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 7
      }
     },
     {
@@ -89281,7 +89153,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 185,
+     "files": 186,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89549,7 +89421,7 @@
     "connector_key": {
      "files": 57,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
@@ -89680,7 +89552,7 @@
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…"
     },
     "dreamer_consolidation": {
-     "files": 156,
+     "files": 157,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89738,7 +89610,7 @@
     "edit_distance": {
      "files": 86,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
@@ -89888,6 +89760,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "HNSW graph index over the persisted neighbor graph"
+    },
+    "host_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The process-wide physical-memory admission line"
     },
     "housekeeping": {
      "files": 8,
@@ -90162,13 +90041,6 @@
      "layout": "dir",
      "purpose": "Device-local durable intent ledger for effectful outbound calls"
     },
-    "overlay_db": {
-     "files": 5,
-     "impl_vault": false,
-     "largest_src_bucket": "m",
-     "layout": "dir",
-     "purpose": "Per-database accessor seam for the session write-overlay (ARCH-0052, D2)"
-    },
     "own_rate": {
      "files": 1,
      "impl_vault": true,
@@ -90435,13 +90307,6 @@
      "layout": "file+dir",
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
-    "session_overlay": {
-     "files": 16,
-     "impl_vault": false,
-     "largest_src_bucket": "m",
-     "layout": "dir",
-     "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)"
-    },
     "settings": {
      "files": 11,
      "impl_vault": true,
@@ -90480,7 +90345,7 @@
     "skill_attribution": {
      "files": 31,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop"
     },
@@ -90508,7 +90373,7 @@
     "skill_reliability": {
      "files": 19,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection"
     },
@@ -90534,7 +90399,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 411,
+     "files": 416,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90772,10 +90637,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 140,
+   "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6307,
-   "test_files": 898
+   "source_files": 6297,
+   "test_files": 895
   },
   "oneiron-android": {
    "files": [
@@ -97228,6 +97093,22 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MachineMemory",
+      "MemoryLease",
+      "MemoryRefusal"
+     ],
+     "path": "src/host_memory.rs",
+     "purpose": "The process's physical-memory admission line for host and native work",
+     "surface": {
+      "enum": 1,
+      "fn": 14,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -97248,7 +97129,7 @@
      "path": "src/lib.rs",
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
-      "mod": 23,
+      "mod": 24,
       "re-export": 2
      }
     },
@@ -97697,6 +97578,13 @@
      "layout": "file",
      "purpose": "The caller-supplied retrieval filter"
     },
+    "host_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The process's physical-memory admission line for host and native work"
+    },
     "identity_topology": {
      "files": 1,
      "impl_vault": false,
@@ -97805,7 +97693,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 63,
+   "source_files": 64,
    "test_files": 1
   },
   "oneiron-crypto": {
@@ -101747,7 +101635,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/runtime.rs",
-     "purpose": "Canonical typed Component Model execution with six non-write imports and the three that stream a proposed…",
+     "purpose": "Canonical typed Component Model execution with seven non-write imports and the three that stream a proposed…",
      "surface": {
       "crate-vis": 1
      }
@@ -101817,7 +101705,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "Canonical typed Component Model execution with six non-write imports and the three that stream a proposed…"
+     "purpose": "Canonical typed Component Model execution with seven non-write imports and the three that stream a proposed…"
     },
     "tests": {
      "files": 1,
@@ -106173,7 +106061,18 @@
      "surface": {
       "const": 1,
       "enum": 1,
+      "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/borrowed.rs",
+     "purpose": "Borrowed decoding for the two fixed-size memory control types",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -106378,10 +106277,10 @@
      "purpose": "Framing (protocol 2.0): a message is one or more frames back to back, each `len: u32 LE | more: u8 | len…"
     },
     "memory": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The `memory.grow` ask (FIX 7654): an organ reserves the memory its own buffers are about to take, before it…"
     },
     "region": {
@@ -106429,7 +106328,7 @@
    },
    "over_bar": 0,
    "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 18,
+   "source_files": 19,
    "test_files": 2
   },
   "oneiron-policy-vocabulary": {
@@ -109469,7 +109368,7 @@
      "path": "src/api/ai/chat/recall.rs",
      "purpose": "The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -120346,7 +120245,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 16
      }
     },
     {
@@ -122294,7 +122193,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "MediaRow",
@@ -126635,7 +126534,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 42,
+   "over_bar": 43,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1518,
    "test_files": 182
@@ -126758,6 +126657,19 @@
   },
   "oneiron-store": {
    "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttemptId"
+     ],
+     "path": "src/attempt_id.rs",
+     "purpose": "Stable queued-attempt identifiers and their raw storage representation",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
     {
      "bucket": "s",
      "kind": "src",
@@ -127147,7 +127059,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 25
+      "mod": 29
      }
     },
     {
@@ -127407,6 +127319,75 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OverlayDb",
+      "OverlayStrDb"
+     ],
+     "path": "src/overlay_db/accessors.rs",
+     "purpose": "ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 30,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OverlayDupValues",
+      "OverlayIter",
+      "OverlayPrefix",
+      "OverlayRange",
+      "OverlayRevRange",
+      "OverlayStrIter",
+      "OverlayStrPrefix"
+     ],
+     "path": "src/overlay_db/iters.rs",
+     "purpose": "Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str)",
+     "surface": {
+      "enum": 7,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MergedPrefixRows",
+      "MergedRows",
+      "PrefetchedMergedRows",
+      "StrMergedRows"
+     ],
+     "path": "src/overlay_db/merge.rs",
+     "purpose": "Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and…",
+     "surface": {
+      "crate-vis": 11,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/overlay_db/mod.rs",
+     "purpose": "Per-database accessor seam for the session write-overlay (ARCH-0052, D2)",
+     "surface": {
+      "mod": 3,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/overlay_db/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -127433,6 +127414,19 @@
      "purpose": "Host-owned retained-memory accounting for in-memory storage",
      "surface": {
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunWriteToken"
+     ],
+     "path": "src/run_write_token.rs",
+     "purpose": "A leased agent run's write identity, as the engine's run-write envelope carries it with each write",
+     "surface": {
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -127468,6 +127462,210 @@
       "struct": 3,
       "trait": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [
+      "ObservedAllocator",
+      "ShortIdScratch"
+     ],
+     "path": "src/session_overlay/hygiene_tests.rs",
+     "purpose": "Allocation-boundary teardown observer for session-owned buffers",
+     "surface": {
+      "enum": 1,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "JournalEntry",
+      "JournalRole",
+      "JournalScope",
+      "PromotePlan",
+      "PublishedEntry"
+     ],
+     "path": "src/session_overlay/journal.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 9,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OverlayKeyspace"
+     ],
+     "path": "src/session_overlay/keyspace.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/mod.rs",
+     "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)",
+     "surface": {
+      "mod": 7,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/held.rs",
+     "purpose": "What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SessionOverlay"
+     ],
+     "path": "src/session_overlay/overlay/lifecycle.rs",
+     "purpose": "Overlay lifecycle state machine, leases, seal/rearm/close",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/mod.rs",
+     "purpose": "Ephemeral in-memory write overlay for one live session (ARCH-0052, D1)",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "mod": 7,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/repo_projection.rs",
+     "purpose": "Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/retained.rs",
+     "purpose": "The memory a room's overlay actually retains, the bytes its host's retained-memory line is charged (FIX…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/retire.rs",
+     "purpose": "Promoted-closure retirement reusing the store's index-key builders",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/rows.rs",
+     "purpose": "Row staging, preflight, budget checks, read probes",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TxnSegmentGuard"
+     ],
+     "path": "src/session_overlay/overlay/segment.rs",
+     "purpose": "Txn segment install, leases, commit/apply guards",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RouteTarget",
+      "SessionWriteRoute"
+     ],
+     "path": "src/session_overlay/route.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/short_id.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OverlaySnapshot",
+      "SnapshotLookup",
+      "SnapshotMergePlan",
+      "SnapshotMergeRow",
+      "StagedRows"
+     ],
+     "path": "src/session_overlay/snapshot.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 12,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/session_overlay/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -128576,6 +128774,13 @@
     }
    ],
    "modules": {
+    "attempt_id": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Stable queued-attempt identifiers and their raw storage representation"
+    },
     "batch_op": {
      "files": 1,
      "impl_vault": false,
@@ -128688,6 +128893,13 @@
      "layout": "file",
      "purpose": "Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages"
     },
+    "overlay_db": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Per-database accessor seam for the session write-overlay (ARCH-0052, D2)"
+    },
     "receive_scan": {
      "files": 1,
      "impl_vault": false,
@@ -128702,6 +128914,13 @@
      "layout": "file",
      "purpose": "Host-owned retained-memory accounting for in-memory storage"
     },
+    "run_write_token": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A leased agent run's write identity, as the engine's run-write envelope carries it with each write"
+    },
     "secret_manifest": {
      "files": 1,
      "impl_vault": false,
@@ -128715,6 +128934,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Secret custody floor and binding vocabulary used by the store layer"
+    },
+    "session_overlay": {
+     "files": 16,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)"
     },
     "store_clock": {
      "files": 3,
@@ -128754,8 +128980,8 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 123,
-   "test_files": 1
+   "source_files": 143,
+   "test_files": 4
   },
   "oneiron-uniffi": {
    "files": [
