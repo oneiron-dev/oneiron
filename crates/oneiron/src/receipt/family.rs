@@ -35,7 +35,7 @@ use crate::error::{Error, Result};
 use crate::store::{GateDecisionRecord, GateSystemNoticeRecord, PendingGateConsentRecord};
 
 pub(super) use crate::store::gate_receipt::{
-    SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY, SYSTEM_NOTICE_AUDIENCE_ALL,
+    SYSTEM_NOTICE_AUDIENCE_ALL, SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY,
 };
 
 /// Query for the EF-055 pending tray lane.
