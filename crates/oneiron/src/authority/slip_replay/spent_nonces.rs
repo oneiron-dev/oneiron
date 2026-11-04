@@ -104,8 +104,11 @@ impl JournalRecoveryFailure {
 const SPEND_JOURNAL_FILE: &str = "slip-spend.journal";
 /// One journal record: the spent key (its signed time and digest), the
 /// authority second its slip's replay window ends, the proof clock's `now`
-/// its admission read, and a short tag over them. All integers little-endian.
-const JOURNAL_RECORD_LEN: usize = 60;
+/// its admission read, the highest proof clock any record appended to this
+/// journal before it named (review #4484 P1, 11-04 16:05: a later readable
+/// record bounds an earlier one that does not read, whatever the wall did),
+/// and a short tag over them. All integers little-endian.
+const JOURNAL_RECORD_LEN: usize = 68;
 /// Past this many journal bytes a spend here takes the writer's path
 /// instead (its rows are not landing fast enough to drain the journal):
 /// durable, only slower. Never a reason to truncate.
@@ -214,6 +217,9 @@ struct Nonces {
     /// A past-cap spend has warned since the journal last drained under the
     /// cap, so a stalled drain warns once, not per spend.
     cap_warned: bool,
+    /// The highest proof clock a record of this journal named, read from its
+    /// records when it opens and carried into each record appended after.
+    journal_high: u64,
 }
 
 impl Nonces {
@@ -285,6 +291,13 @@ impl Nonces {
                     }
                     self.journal_len -= torn;
                 }
+                if self.journal_len > 0
+                    && let Ok(bytes) = std::fs::read(root.join(SPEND_JOURNAL_FILE))
+                {
+                    for record in bytes.chunks_exact(JOURNAL_RECORD_LEN).filter_map(parse_journal_record) {
+                        self.journal_high = self.journal_high.max(record.proof_now).max(record.high);
+                    }
+                }
                 self.journal = Some(file);
                 true
             }
@@ -322,7 +335,8 @@ impl Nonces {
             }
             return false;
         }
-        let record = journal_record(key, window_end, proof_now);
+        let high = self.journal_high.max(proof_now);
+        let record = journal_record(key, window_end, proof_now, high);
         let started = Instant::now();
         let Some(file) = self.journal.as_mut() else {
             return false;
@@ -335,6 +349,7 @@ impl Nonces {
         match appended {
             Ok(()) => {
                 self.journal_len += JOURNAL_RECORD_LEN as u64;
+                self.journal_high = high;
                 true
             }
             Err(error) => {
@@ -389,14 +404,20 @@ fn open_journal(path: &Path) -> std::io::Result<File> {
 }
 
 /// One journal record as it is written ([`JOURNAL_RECORD_LEN`]).
-fn journal_record(key: &SpentKey, window_end: u64, proof_now: u64) -> [u8; JOURNAL_RECORD_LEN] {
+fn journal_record(
+    key: &SpentKey,
+    window_end: u64,
+    proof_now: u64,
+    high: u64,
+) -> [u8; JOURNAL_RECORD_LEN] {
     let mut record = [0_u8; JOURNAL_RECORD_LEN];
     record[0..8].copy_from_slice(&key.timestamp.to_le_bytes());
     record[8..40].copy_from_slice(&key.digest);
     record[40..48].copy_from_slice(&window_end.to_le_bytes());
     record[48..56].copy_from_slice(&proof_now.to_le_bytes());
-    let tag = xxhash_rust::xxh32::xxh32(&record[..56], 0);
-    record[56..60].copy_from_slice(&tag.to_le_bytes());
+    record[56..64].copy_from_slice(&high.to_le_bytes());
+    let tag = xxhash_rust::xxh32::xxh32(&record[..64], 0);
+    record[64..68].copy_from_slice(&tag.to_le_bytes());
     record
 }
 
@@ -405,11 +426,13 @@ struct JournalRecord {
     key: SpentKey,
     window_end: u64,
     proof_now: u64,
+    /// The highest proof clock a record before it named.
+    high: u64,
 }
 
 fn parse_journal_record(bytes: &[u8]) -> Option<JournalRecord> {
     if bytes.len() != JOURNAL_RECORD_LEN
-        || xxhash_rust::xxh32::xxh32(&bytes[..56], 0).to_le_bytes() != bytes[56..60]
+        || xxhash_rust::xxh32::xxh32(&bytes[..64], 0).to_le_bytes() != bytes[64..68]
     {
         return None;
     }
@@ -427,6 +450,7 @@ fn parse_journal_record(bytes: &[u8]) -> Option<JournalRecord> {
         },
         window_end: le_u64(40)?,
         proof_now: le_u64(48)?,
+        high: le_u64(56)?,
     })
 }
 
@@ -675,6 +699,9 @@ impl SpentNonces {
     fn note_queued(&self) {
         let mut nonces = self.lock();
         nonces.queuing = nonces.queuing.saturating_sub(1);
+        // Its rows may have landed before it was noted, while it still
+        // counted as queuing (review #4484 P2, 11-04 16:05).
+        nonces.truncate_journal_if_drained();
         drop(nonces);
         self.queued.notify_all();
     }
@@ -779,20 +806,43 @@ impl SpentNonces {
         }
         let mut records = Vec::new();
         let mut unreadable = 0_usize;
+        // A complete record that does not read, with no readable record
+        // after it: no record bounds its proof clock.
+        let mut unbounded = false;
         for chunk in bytes.chunks_exact(JOURNAL_RECORD_LEN) {
             match parse_journal_record(chunk) {
-                Some(record) => records.push(record),
-                None => unreadable += 1,
+                Some(record) => {
+                    records.push(record);
+                    unbounded = false;
+                }
+                // Zeros are an append that never reached the disk: its
+                // fdatasync did not return, so it was never answered.
+                None if chunk.iter().all(|byte| *byte == 0) => {}
+                None => {
+                    unreadable += 1;
+                    unbounded = true;
+                }
             }
         }
         let torn = bytes.len() % JOURNAL_RECORD_LEN;
         // Every proof a record holds was admitted at or below the largest
-        // proof clock a readable record names and the file's last write
-        // time: a failed replay's floor rises past both, whatever the clock
-        // reads after a step back across the crash (review #4484 P1).
+        // proof clock a readable record names, its own or the highest of
+        // the records before it, and the file's last write time: a failed
+        // replay's floor rises past all of them, whatever the clock reads
+        // after a step back across the crash (review #4484 P1 x2). A record
+        // that does not read is bounded by a readable one after it; one with
+        // none after it bounds nothing, so the replay fails closed and the
+        // journal stays for the owner (11-04 16:05).
+        if unbounded {
+            tracing::error!(
+                journal = %path.display(),
+                "the slip-spend journal's last complete record does not read and no record bounds its proof; the open fails"
+            );
+            return Err(Error::CorruptedIndex("slip-spend journal"));
+        }
         let proof_bound = records
             .iter()
-            .map(|record| record.proof_now)
+            .flat_map(|record| [record.proof_now, record.high])
             .chain(journal_written_secs(&path))
             .max()
             .unwrap_or(0);

@@ -44,9 +44,13 @@ pub(crate) struct LeaseJournal {
     state: Mutex<JournalState>,
 }
 
+/// Holds no descriptor between appends (review #4484 P2, 11-04 16:05): a
+/// host that opens many vaults keeps only this small state per root.
 #[derive(Default)]
 struct JournalState {
-    file: Option<File>,
+    /// The root directory was synced after this open first created or
+    /// opened the journal.
+    dir_synced: bool,
     /// The highest bound this open synced: a decision at or below it is
     /// durable, in the journal or, once truncated, in a committed lease.
     covered: u64,
@@ -100,23 +104,19 @@ impl LeaseJournal {
         if now <= state.covered {
             return true;
         }
-        if state.file.is_none() {
-            match open_for_append(&self.path) {
-                Ok(file) => state.file = Some(file),
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        "the clock lease journal did not open; the decision renews the lease in its writer"
-                    );
-                    return false;
-                }
+        let mut file = match open_for_append(&self.path, !state.dir_synced) {
+            Ok(file) => file,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "the clock lease journal did not open; the decision renews the lease in its writer"
+                );
+                return false;
             }
-        }
+        };
+        state.dir_synced = true;
         let bound = now.saturating_add(AUTHORIZATION_LEASE_SECS);
         let record = record(bound);
-        let Some(file) = state.file.as_mut() else {
-            return false;
-        };
         match file.write_all(&record).and_then(|()| file.sync_data()) {
             Ok(()) => {
                 state.covered = bound;
@@ -124,12 +124,11 @@ impl LeaseJournal {
                 true
             }
             Err(error) => {
+                // The append may have torn: the next open trims it.
                 tracing::warn!(
                     %error,
                     "the clock lease journal append failed; the decision renews the lease in its writer"
                 );
-                // The append may have torn: the next open trims it.
-                state.file = None;
                 false
             }
         }
@@ -146,10 +145,7 @@ impl LeaseJournal {
         if !state.owed || leased < state.covered {
             return;
         }
-        let Some(file) = state.file.as_ref() else {
-            return;
-        };
-        match file.set_len(0) {
+        match truncate(&self.path) {
             Ok(()) => state.owed = false,
             Err(error) => tracing::warn!(
                 %error,
@@ -163,9 +159,9 @@ impl LeaseJournal {
 /// a link and leaking no descriptor to a child. The root directory is synced
 /// so a journal a first decision created survives the power loss its
 /// fdatasync guards against, and a torn tail is trimmed so every record
-/// stays aligned. Opening syncs the directory once per open, not per
-/// append.
-fn open_for_append(path: &Path) -> std::io::Result<File> {
+/// stays aligned. The directory syncs only on `sync_dir`: once per open of
+/// the vault, not per append.
+fn open_for_append(path: &Path, sync_dir: bool) -> std::io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true).append(true).create(true);
     #[cfg(unix)]
@@ -179,10 +175,12 @@ fn open_for_append(path: &Path) -> std::io::Result<File> {
     // A directory opens as a file only on unix.
     #[cfg(unix)]
     {
-        if let Some(root) = path.parent() {
+        if sync_dir && let Some(root) = path.parent() {
             File::open(root)?.sync_all()?;
         }
     }
+    #[cfg(not(unix))]
+    let _ = sync_dir;
     let len = file.metadata()?.len();
     let torn = len % (RECORD_LEN as u64);
     if torn > 0 {
@@ -279,21 +277,27 @@ pub(super) fn replay_at_open(root: &Path, committed: u64) -> Result<(Arc<LeaseJo
     Ok((LeaseJournal::install(root), bound))
 }
 
-/// Empties the journal after its bound committed, and keeps it open for
-/// this open's appends. A failed truncate leaves records at or below the
-/// committed floor, which replay harmlessly.
+/// Empties the journal after its bound committed. A failed truncate leaves
+/// records at or below the committed floor, which replay harmlessly.
 pub(super) fn truncate_after_replay(journal: &LeaseJournal) {
-    match open_for_append(&journal.path) {
-        Ok(file) => {
-            if let Err(error) = file.set_len(0) {
-                tracing::warn!(%error, "the replayed clock lease journal did not truncate");
-            }
-            journal
-                .state
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .file = Some(file);
-        }
-        Err(error) => tracing::warn!(%error, "the replayed clock lease journal did not open"),
+    if let Err(error) = truncate(&journal.path) {
+        tracing::warn!(%error, "the replayed clock lease journal did not truncate");
+    }
+}
+
+/// Empties the journal at `path`, without following a link; an absent one
+/// is empty already.
+fn truncate(path: &Path) -> std::io::Result<()> {
+    let mut options = OpenOptions::new();
+    options.write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    match options.open(path) {
+        Ok(file) => file.set_len(0),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
     }
 }
