@@ -5430,7 +5430,7 @@ export type AgentCeilingInput = "auto" | "proposed"
 export type RefusalLevel = "none" | "voice" | "veto" | "full"
 /** `oneiron::agent_def::refusal::RefusalDial` */
 export type RefusalDial = { bond?: RefusalLevel | null; logistics?: RefusalLevel | null }
-/** `oneiron::agent_def::models::AgentModel` */
+/** `oneiron::store::agent_model::AgentModel` */
 export type AgentModel = { model_ref: ModelId; when: string }
 /** `oneiron::code_run::dispatcher::workflow_dispatch::operations::agent_definition::AgentDefinitionSpec` */
 export type AgentDefinitionSpec = { agent_id: string; desc: string; version: string; instructions?: string | null; skills?: AgentSkillInput[]; connectors?: string[]; code_mode_mcps?: AgentMcpInput[]; model_tier?: string | null; scope?: AgentScopeInput; ceiling?: AgentCeilingInput; forked_from?: EntityId | null; enabled?: boolean; display_name?: string | null; refusal?: RefusalDial | null; models?: AgentModel[]; compaction_model?: ModelId | null }
