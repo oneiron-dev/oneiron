@@ -230,7 +230,10 @@ pub(in crate::api::ai::chat) fn start_turn(
     // only when they describe the admitted messages exactly.
     let session_reader = segments::Reader {
         vault: Arc::clone(&vault),
-        auth: auth.clone(),
+        credential: TurnCredential::Request {
+            auth: auth.clone(),
+            vault: Arc::clone(&vault),
+        },
         actor,
         class,
         locality,
@@ -239,6 +242,7 @@ pub(in crate::api::ai::chat) fn start_turn(
         &session_reader,
         segments::Assembled {
             layout: segments::Layout {
+                prompt: layout,
                 system_end,
                 log_end,
             },
