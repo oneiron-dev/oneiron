@@ -26573,6 +26573,7 @@
      "path": "src/dreamer_consolidation/person_about/sources.rs",
      "purpose": "The `about` line a reader sees, with the CLAIM ids it stands on (FIX 3515)",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
