@@ -585,6 +585,24 @@ impl<'a> Exchange<'a> {
         }
     }
 
+    /// Rechecks the issuer before a session sends with its kept credential.
+    fn check_issuer(&self) -> Result<(), Sent> {
+        let Some((vault, key_ref, tool)) = &self.issuer else {
+            return Ok(());
+        };
+        match vault.connector_issuer_hold(key_ref, tool) {
+            Ok(None) => Ok(()),
+            Ok(Some(reason)) => Err(Sent::held(reason)),
+            Err(error) => {
+                tracing::warn!(%error, "connector issuer binding not read");
+                Err(Sent::not_sent(
+                    OutboundFailureKind::TransportNotStarted,
+                    None,
+                ))
+            }
+        }
+    }
+
     /// One send, its answer cleared of `value` when it presents one.
     fn run(&self, auth: Option<HeaderValue>, value: Option<&SentValue<'_>>) -> Sent {
         // Everything before `tools/call` leaves is certain non-delivery.
@@ -639,6 +657,9 @@ impl<'a> Exchange<'a> {
             session,
             auth,
         };
+        if let Err(held) = self.check_issuer() {
+            return held;
+        }
         let notification = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
         match live.post(&notification, Some(HANDSHAKE_TIMEOUT)).send() {
             Ok(response) if response.status().is_success() => {}
@@ -664,6 +685,9 @@ impl<'a> Exchange<'a> {
             .elicitation
             .as_ref()
             .is_some_and(|declared| declared.intake == Intake::Stream);
+        if let Err(held) = self.check_issuer() {
+            return held;
+        }
         let posted = live
             .post(&call, (!asks_on_stream).then_some(CALL_TIMEOUT))
             .headers(self.tool_headers.clone())
@@ -679,7 +703,10 @@ impl<'a> Exchange<'a> {
         };
         // The session ends with the call; a live question's worker took it
         // and ends it with the questions.
-        if let Some(live) = live {
+        if let Some(mut live) = live {
+            if self.check_issuer().is_err() {
+                live.forget_credential();
+            }
             live.end();
         }
         sent
