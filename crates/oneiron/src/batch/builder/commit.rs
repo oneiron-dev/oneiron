@@ -37,7 +37,7 @@ impl BatchBuilder<'_> {
     /// opening the LMDB write transaction, avoiding unnecessary I/O on bad
     /// input.
     pub fn commit(self) -> Result<()> {
-        self.commit_inner(None, None, |_| Ok(()), |_| Ok(()))
+        self.commit_inner(None, None, |_| Ok(()), |_| Ok(()), None)
     }
 
     /// [`Self::commit`] for a writer its host bound to `reader` (OF-063, FIX
@@ -47,7 +47,7 @@ impl BatchBuilder<'_> {
     /// must resolve under `reader` once the batch's own rows are staged; one
     /// that does not is the claim gate's hard deny, receipted once.
     pub(crate) fn commit_read_by(self, reader: &ScopedRead<'_>) -> Result<()> {
-        self.commit_inner(None, Some(reader), |_| Ok(()), |_| Ok(()))
+        self.commit_inner(None, Some(reader), |_| Ok(()), |_| Ok(()), None)
     }
 
     /// [`Self::commit`] for a writer below owner grade. A put that turns an
@@ -173,7 +173,7 @@ impl BatchBuilder<'_> {
             }
             Ok(())
         };
-        self.commit_inner(None, reader, guard, |_| Ok(()))
+        self.commit_inner(None, reader, guard, |_| Ok(()), None)
     }
 
     /// Runs an app-door target guard in the same writer snapshot as admission.
@@ -183,7 +183,7 @@ impl BatchBuilder<'_> {
         self,
         guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
-        self.commit_inner(None, None, guard, |_| Ok(()))
+        self.commit_inner(None, None, guard, |_| Ok(()), None)
     }
 
     /// Promotion's checker-aware terminal owns the transaction so a preflight
@@ -201,8 +201,15 @@ impl BatchBuilder<'_> {
         checker: &BoundedAutoChecker,
         before_apply: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+        writer_hold_site: Option<&'static str>,
     ) -> Result<()> {
-        self.commit_inner(Some(checker), None, before_apply, after_apply)
+        self.commit_inner(
+            Some(checker),
+            None,
+            before_apply,
+            after_apply,
+            writer_hold_site,
+        )
     }
 
     /// [`Self::commit_with_checker_guard_and_then`] with nothing read first.
@@ -212,7 +219,7 @@ impl BatchBuilder<'_> {
         checker: &BoundedAutoChecker,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
-        self.commit_inner(Some(checker), None, |_| Ok(()), after_apply)
+        self.commit_inner(Some(checker), None, |_| Ok(()), after_apply, None)
     }
 
     fn commit_inner(
@@ -221,6 +228,7 @@ impl BatchBuilder<'_> {
         reader: Option<&ScopedRead<'_>>,
         target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+        writer_hold_site: Option<&'static str>,
     ) -> Result<()> {
         let vault = self.vault;
         // The group holds its transaction open for this write while it does
@@ -256,6 +264,10 @@ impl BatchBuilder<'_> {
         let removed_edges = super::super::vad_postcommit::ops_removed_edges(&ops);
         let stale_sweep = crate::federation::StaleSweepWatch::begin(vault);
         let committed = vault.store.group_write(Some(announced), |wtxn| {
+            // The caller's writer-hold site, when it named one: started
+            // here so the span is this closure's hold only (FIX 12511).
+            let _hold =
+                writer_hold_site.map(crate::dreamer_consolidation::stage_log::WriterHold::start);
             if let Err(err) = target_guard(wtxn) {
                 return Rows::Discard(Err(err.into()));
             }
