@@ -205,6 +205,7 @@ impl OffRecordSession<'_> {
                 author: crate::memory::WitnessAuthor::Companion,
                 message_type: kind.as_message_type().to_owned(),
                 content: text.to_owned(),
+                parts: None,
                 metadata: result.map(|result| result.metadata()).transpose()?,
                 is_visible: kind.is_visible(),
                 order,
