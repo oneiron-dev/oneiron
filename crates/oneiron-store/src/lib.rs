@@ -12,6 +12,7 @@ pub mod embedding_vocabulary;
 pub mod file_secret_marks;
 pub mod identity_hints;
 pub mod index_keys;
+pub mod inference_context;
 pub mod key_material;
 pub mod long_interval;
 pub mod model_decision;

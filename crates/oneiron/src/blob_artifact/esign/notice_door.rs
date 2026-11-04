@@ -21,7 +21,7 @@ use super::notice_dispatch::{
 use super::notice_scope::NoticeScope;
 use crate::EntityId;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
-use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
+use oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 use crate::memory::Memory;
 use crate::outbound::{
       OutboundDispatchRequest, OutboundIntent,

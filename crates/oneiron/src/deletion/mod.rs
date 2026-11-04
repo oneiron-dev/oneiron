@@ -199,3 +199,6 @@ use crate::entity_id::EntityId;
 
 #[cfg(test)]
 pub(crate) use receipt::receipt_envelope_header;
+
+#[cfg(feature = "sync")]
+pub(crate) mod owed_window_compaction;

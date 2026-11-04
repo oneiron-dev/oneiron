@@ -584,7 +584,7 @@ impl Vault {
             encode_redaction_audit_receipt(input, Vec::new(), Vec::new(), &receipt_id, &identity)?;
         self.put_redaction_audit_receipt_in_txn(wtxn, &receipt_id, now, &body)?;
         #[cfg(feature = "sync")]
-        let sweep_key = crate::sweep::owed::owe_window_compaction_for_receipt_in_txn(
+        let sweep_key = crate::deletion::owed_window_compaction::owe_window_compaction_for_receipt_in_txn(
             self,
             wtxn,
             &window,

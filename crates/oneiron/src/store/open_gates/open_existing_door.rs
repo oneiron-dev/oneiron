@@ -215,7 +215,7 @@ impl Store {
                         .bound(crate::limit_ask::EngineLimit::CodeResultMemoryBytes),
                 ),
             )),
-            inference_snapshots: crate::inference_snapshot::SnapshotLifecycle::default(),
+            inference_snapshots: crate::store::snapshot_lifecycle::SnapshotLifecycle::default(),
             l2_base_cache: Mutex::new(crate::store::l2_evidence::L2BaseCache::default()),
             legal_hold_refusals: crate::store::legal_hold::LegalHoldRefusals::default(),
             backup_hold_rechecks: tokio::sync::watch::channel(0).0,

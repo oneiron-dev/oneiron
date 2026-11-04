@@ -829,7 +829,7 @@ impl Vault {
             persistence.version_vector,
         )?;
         if persistence.owes_compaction {
-            crate::sweep::owed::owe_window_compaction_in_txn(self, wtxn, window_key)?;
+            crate::deletion::owed_window_compaction::owe_window_compaction_in_txn(self, wtxn, window_key)?;
         }
         if is_hard {
             // ARCH-0038 carrier 15: pending `q:` rows for this window
