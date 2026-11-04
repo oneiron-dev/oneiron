@@ -279,10 +279,12 @@ fn apply_tombstone_batch(
             staged.iter().filter(|work| work.hard).map(|work| work.id),
         )?;
         let mut affected = Vec::new();
+        let mut cancelled = Vec::new();
         for work in staged {
             let (stage, err) = match apply_tombstone_in_savepoint(vault, parent, window_key, work) {
-                Ok(ids) => {
+                Ok((ids, item_cancelled)) => {
                     affected.extend(ids);
+                    cancelled.extend(item_cancelled);
                     applied.push(work.id);
                     continue;
                 }
@@ -358,7 +360,7 @@ fn apply_tombstone_batch(
                 );
             }
         }
-        Ok(affected)
+        Ok((affected, cancelled))
     });
 
     if let Err(e) = &batch {
@@ -386,6 +388,10 @@ fn apply_tombstone_batch(
         return None;
     }
 
+    if let Ok((_, cancelled)) = &batch {
+        crate::attempt_queue::AttemptQueue::new(vault)
+            .erased_payload_cancellations_committed(cancelled);
+    }
     loop {
         match vault.collect_lfs_garbage(32) {
             Ok(0) => break,
@@ -423,7 +429,7 @@ fn apply_tombstone_batch(
         // materializer lock, which the lock-held variant skips taking.
         crate::sync::note::deleted_elsewhere_under_lock(vault, window_key, applied);
     }
-    batch.ok()
+    batch.ok().map(|(affected, _)| affected)
 }
 
 /// Applies one staged tombstone inside a nested write transaction (savepoint)
@@ -437,7 +443,10 @@ fn apply_tombstone_in_savepoint(
     parent: &mut heed::RwTxn<'_>,
     window_key: &str,
     work: &TombstoneWork,
-) -> std::result::Result<Vec<EntityId>, (TombstoneFailureStage, Error)> {
+) -> std::result::Result<
+    (Vec<EntityId>, Vec<(crate::attempt_queue::AttemptId, u32)>),
+    (TombstoneFailureStage, Error),
+> {
     let mut child = vault
         .store
         .env
@@ -471,21 +480,21 @@ fn apply_tombstone_in_savepoint(
         &work.id,
         &work.raw_value,
     );
-    if let Ok((_, changed_documents)) = &applied {
+    if let Ok((_, changed_documents, _)) = &applied {
         affected.extend(changed_documents);
     }
     let item = match applied {
-        Ok(_) if work.hard => {
+        Ok((_, _, cancelled)) if work.hard => {
             scrub_receiver_outbox_on_remote_hard_delete_in_txn(vault, &mut child, window_key)
-                .map(|_| ())
+                .map(|_| cancelled)
                 .map_err(|e| (TombstoneFailureStage::ReceiverScrub, e))
         }
-        Ok(_) => Ok(()),
+        Ok((_, _, cancelled)) => Ok(cancelled),
         Err(e) => Err((TombstoneFailureStage::Replay, e)),
     };
 
     match item {
-        Ok(()) => {
+        Ok(cancelled) => {
             if crate::sync::WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
             {
                 vault
@@ -500,7 +509,7 @@ fn apply_tombstone_in_savepoint(
             }
             child
                 .commit()
-                .map(|()| affected)
+                .map(|()| (affected, cancelled))
                 .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e)))
         }
         Err(failure) => {
@@ -511,7 +520,6 @@ fn apply_tombstone_in_savepoint(
         }
     }
 }
-
 // Top-level write transactions this delta's tombstone batch opened
 // (ONE-521 acceptance). Nested savepoints are deliberately NOT counted —
 // they add no durability boundary — and neither are the pre-batch door

@@ -64,7 +64,7 @@ const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_toke
 pub(super) fn erase_actor_fields_in_txn(
     mut erase: ActorErasureWriter<'_, '_>,
     act: Option<&EraseOwnerAct<'_>>,
-) -> Result<()> {
+) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
     let (vault, wtxn, actor) = erase.parts();
     let actor = &actor;
     // A marker-only hard path writes the marker before this sweep and never
@@ -91,10 +91,9 @@ pub(super) fn erase_actor_fields_in_txn(
     }
     scrub_actor_fields_in_txn(&mut erase)?;
     if hard {
-        let (vault, wtxn, actor) = erase.parts();
-        crate::attempt_queue::erase_attempt_payload_actor_in_txn(&vault.store, wtxn, &actor)?;
+        return crate::attempt_queue::ForceCancelAuthority::erase_actor_payloads_in_txn(&mut erase);
     }
-    Ok(())
+    Ok(Vec::new())
 }
 
 /// The sweep's scrubs without the attempt payloads, which a restore's sweep
