@@ -1,19 +1,16 @@
 //! Physical custody of captured agent source, without authorship or delete grants.
-use super::portable_source::{birth_source_id, decode_birth_source};
+use super::portable_source::decode_birth_source;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::agent_birth_custody::{OWNED, birth_carriers_for_holder_in_txn};
 use crate::{
     entity_id::EntityId,
     error::{Error, Result},
     store::Store,
 };
 
-/// Which asset entity currently holds custody of a birthed agent's captured
-/// source. Key: the birthed child's id; value: the holder asset's id.
-const OWNED: SideTable<EntityId, EntityId, Raw> =
-    SideTable::new(&side_table::AGENT_DEF_BIRTH_CUSTODY_OWNED);
 /// Binds a captured-source ASSET id back to the child agent it was birthed
 /// for. Key: the asset's id; value: the child's id.
 const BINDING: SideTable<EntityId, EntityId, Raw> =
@@ -97,34 +94,6 @@ pub(crate) fn stage_birth_custody_put(
         retire_birth_source_holder_in_txn(store, txn, id)?;
     }
     Ok(())
-}
-pub(crate) fn birth_carriers_for_holder_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    child: &EntityId,
-) -> Result<Vec<EntityId>> {
-    match OWNED.get(store, txn, child)? {
-        None => Ok(vec![]),
-        Some(id) => {
-            if id != birth_source_id(child)? {
-                return Err(Error::CorruptedIndex("agent source custody ID"));
-            }
-            Ok(vec![id])
-        }
-    }
-}
-pub(crate) fn birth_custody_exists_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    child: &EntityId,
-) -> Result<bool> {
-    for id in super::birth_dependencies::birth_carriers_for_erased_entity_in_txn(store, txn, child)?
-    {
-        if crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 /// Source-only retirement also records tombstone-before-source arrival. It
 /// does not write a generic tombstone, restore authority, or remove the child.
