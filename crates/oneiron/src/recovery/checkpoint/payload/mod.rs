@@ -159,6 +159,8 @@ getters! {
     BlobArtifact = 14 => crate::blob_artifact::checkpoint;
     /// Outbound calls' frozen input.
     OutboundCall = 15 => crate::outbound_intent_ledger::checkpoint;
+    /// Independent owners of blocked step captures.
+    BlockedSourceOwner = 16 => crate::self_heal::blocked_reports::checkpoint;
 }
 
 /// The mixed sync carriers KS7-3's port splits, with the tag a bundle's

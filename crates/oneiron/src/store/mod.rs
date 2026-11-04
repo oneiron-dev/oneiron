@@ -291,8 +291,8 @@ pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
-pub(crate) mod world_pad_rows;
 pub mod world_authority;
+pub(crate) mod world_pad_rows;
 pub mod world_registration_keys;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
@@ -398,10 +398,11 @@ pub(crate) use body_envelope::{
 #[cfg(unix)]
 pub(crate) use body_envelope::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
-    ResponseOwners, ResponseRead, ResponseScan, bind_response_in_txn, carrier_row,
-    erase_response_owner_in_txn, is_opaque_erased, opaque_retired_at, release_response_in_txn,
-    response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
-    settle_shared_response_in_txn, stamp_opaque_erased,
+    ResponseOwners, ResponseRead, ResponseScan, bind_missing_response_owners_in_txn,
+    bind_response_in_txn, carrier_row, erase_response_owner_in_txn, is_opaque_erased,
+    opaque_retired_at, release_response_in_txn, response_binding_in_txn, response_carrier,
+    response_owed_to_all_in_txn, response_owners_bound_in_txn, settle_shared_response_in_txn,
+    stamp_opaque_erased,
 };
 #[cfg(unix)]
 pub(crate) use body_store::{

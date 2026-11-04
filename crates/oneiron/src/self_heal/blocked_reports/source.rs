@@ -39,6 +39,8 @@ use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, LlmRequest, Result, Vault};
 
+pub(crate) use self::ownership::blocked_capture_witness_owner;
+
 // FIX 6708: both row kinds in checkpoint images, as row-held responses.
 pub(crate) use self::response::{
     blocked_capture_owners, blocked_capture_owners_in_txn, blocked_capture_scan,

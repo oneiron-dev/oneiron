@@ -27,6 +27,7 @@
 //!   its holders: one holder's erase owes its retirement to the final
 //!   holder's release ([`shared_wait`], FIX 6588).
 
+pub(super) mod owners;
 mod replay;
 mod shared_wait;
 
@@ -39,6 +40,7 @@ use super::retention::{ErasedNotes, stage_erase};
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::self_heal::blocked_reports::blocked_capture_owners_in_txn;
 use crate::side_table::{self, Raw, SideKey, SideTable, SideTableDbs};
 use crate::store::{ManifestDbs, MediaKey, Store};
 pub(crate) use shared_wait::{response_owed_to_all_in_txn, settle_shared_response_in_txn};
@@ -457,9 +459,7 @@ impl ResponseFamily {
             Self::Http => Ok(crate::store::http_owners(value)),
             Self::InvocationClaim => Ok(crate::store::invocation_claim_owners(value)),
             Self::MediaJob => Ok(crate::store::media_job_owners(value)),
-            Self::BlockedCapture => Ok(crate::self_heal::blocked_reports::blocked_capture_owners(
-                key, value,
-            )),
+            Self::BlockedCapture => blocked_capture_owners_in_txn(store, txn, key, value),
             Self::WaitDelivery => crate::code_run::wait_delivery_owners(store, txn, key),
             Self::WaitSettled => {
                 crate::store::executor_wait_delivery::wait_settled_owners(store, txn, key)

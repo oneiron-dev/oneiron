@@ -59,6 +59,9 @@ pub(crate) use self::plan::{
     body_instances_in_rows, prune_retired_bodies_in_rows, require_body_instances,
 };
 pub(crate) use self::reader::BodyFile;
+pub(crate) use self::response::owners::{
+    bind_missing_response_owners_in_txn, response_owners_bound_in_txn,
+};
 pub(crate) use self::response::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
     bind_response_in_txn, carrier_row, erase_response_owner_in_txn, release_response_in_txn,

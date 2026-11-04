@@ -79,6 +79,13 @@ impl SideKey for OwnerKey {
 const OWNERS: SideTable<OwnerKey, (), Raw> =
     SideTable::new(&side_table::COACH_BLOCKED_SOURCE_OWNER);
 
+/// The actual owner named by a canonical witness's full stored key. Invalid roles or
+/// partial step keys prove no owner.
+pub(crate) fn blocked_capture_witness_owner(key: &[u8]) -> Option<EntityId> {
+    let key = key.strip_prefix(OWNERS.decl().prefix)?;
+    OwnerKey::decode_key(key).map(|witness| witness.owner)
+}
+
 /// Puts the actor and subject witnesses for the capture kept under `step`, in `wtxn`: the
 /// row's actual owners, no claim yet.
 pub(super) fn put_capture_owners_in_txn(
