@@ -163,6 +163,13 @@ impl Vault {
                 "clock recovery needs this process to hold the vault's writer lease",
             ));
         }
+        // The stopped vault it needs, enforced (L02 11-04 16:34): no spend made
+        // in memory here is unlanded, and none starts until it ends.
+        let Some(recovery) = self.spent_nonces.begin_clock_recovery() else {
+            return Err(Error::ConcurrentWrite(
+                "clock recovery needs every in-memory nonce spend landed: stop serving the vault first",
+            ));
+        };
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let floor = proof_floor_in_txn(self, &txn)?;
@@ -193,7 +200,7 @@ impl Vault {
         txn.commit()?;
         // The recovered clock is the wall: the spends judged on the clock
         // that ran ahead no longer hold it there.
-        self.spent_nonces.forget_proof_high();
+        recovery.recovered();
         Ok(ProofClockRecovery::Recovered {
             old_floor: floor,
             new_floor: wall,
