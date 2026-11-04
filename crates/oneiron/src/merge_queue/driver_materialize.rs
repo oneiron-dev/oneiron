@@ -17,7 +17,7 @@ use super::{
     QueueStageOverlap,
 };
 use crate::EntityId;
-use crate::contract_oracle::invalid;
+use crate::store::contract_oracle::invalid;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{
     GitOid, GitWire, lock_repository, redact_bridged_failure, run_bridged_git_argv,
