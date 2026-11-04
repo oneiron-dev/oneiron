@@ -343,6 +343,23 @@ fn distill(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> oneiron::R
         )?,
         vault,
         owner: vault.ensure_embedded_owner_actor().ok(),
+        // The core door validates the same stamp against the Coach's actual
+        // authority before calling this distiller. A missing binding loses
+        // only evidence, never the existing distill.
+        caller: match vault.dreamer_attempt_authority(admitted.status.attempt.id) {
+            Ok(Some(stamp))
+                if admitted.status.payload.attempt_type == COACH_SKILL_DISTILL_FACET
+                    && stamp.facet == COACH_SKILL_DISTILL_FACET =>
+            {
+                Some(stamp.actor)
+            }
+            _ => {
+                tracing::warn!(
+                    "Coach distill model-call record skipped: no matching execution stamp"
+                );
+                None
+            }
+        },
     };
     let drain = vault.run_coach_skill_distill(admitted, DISTILL_SESSIONS, &distiller)?;
     tracing::debug!(
@@ -363,6 +380,9 @@ struct HostDistiller<'a> {
     vault: &'a Vault,
     /// The vault's person, whom the core turn door names [`OWNER_SPEAKER`].
     owner: Option<EntityId>,
+    /// The executing attempt's actor, not a speaker in the sitting it reads.
+    /// The standing worker has no calling session.
+    caller: Option<EntityId>,
 }
 
 /// The actor a speaker label names in one sitting (FIX 2015), from what the
@@ -443,13 +463,14 @@ impl SessionActorDistiller for HostDistiller<'_> {
         let rows = union_source_rows([brief.source_rows.as_deref(), Some(speaker_rows.as_slice())]);
         let text = self
             .models
-            .generate_sourced(
+            .generate_sourced_recorded(
                 self.models.coach(),
                 vec![
                     message(LlmMessageRole::System, DISTILL_SYSTEM.to_owned()),
                     message(LlmMessageRole::User, data.to_string()),
                 ],
                 rows,
+                self.caller,
             )?
             .ok_or_else(|| Error::InvalidConfig("no seat took the Coach's distill".into()))?;
         let wire = parse_notes(&text).ok_or_else(|| {
