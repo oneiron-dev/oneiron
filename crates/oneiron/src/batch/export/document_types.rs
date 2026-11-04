@@ -210,6 +210,7 @@ pub struct ExportRun {
     pub bindings: Vec<ExportRunBinding>,
     /// Frozen nondeterministic inputs when the replay record supplied them.
     /// Required on export and import; `null` means unknown, not zero.
+    #[serde(deserialize_with = "Option::<ExportDeterminism>::deserialize")]
     pub determinism: Option<ExportDeterminism>,
     /// The run's fold receipts (ARCH-0079 #reader-forks), each beside the
     /// manifest of the occurrence it describes.
