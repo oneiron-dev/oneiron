@@ -119,6 +119,26 @@ impl Vault {
         }
         Ok(erased)
     }
+
+    /// The owner's per-call erase, admitted in the erase's own writer.
+    pub(crate) fn erase_outbound_call_request_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        attempt_id: AttemptId,
+        call_seq: u64,
+    ) -> IntentLedgerResult<bool> {
+        let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
+        owner.revalidate_in_txn(self, &wtxn)?;
+        let erased = erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
+        wtxn.commit().map_err(Error::from)?;
+        force_sync(self)?;
+        if erased {
+            self.finish_connector_resume_retirements_after_commit();
+            self.store
+                .finish_checkpoint_payload_retirements_after_commit();
+        }
+        Ok(erased)
+    }
 }
 
 /// Erases call `attempt_id`/`call_seq`'s checkpoint compartment in `wtxn`,
