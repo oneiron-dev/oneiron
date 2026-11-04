@@ -431,6 +431,9 @@ side_tables! {
     /// erase re-keys the project it names (FIX 6038). Key: string.
     EDIT_DISTANCE_AMENDMENT_JUDGMENT: VaultMeta b"edit_distance/amendment_judgment/v1\0" Raw
         => crate::edit_distance::attribution::erase_amendment_project_in_txn;
+    /// Uncaptured-amendment counters per door (FIX 11542): how many store-row
+    /// and inbox amendments measured nothing. Key: string (door).
+    EDIT_DISTANCE_AMENDMENT_UNCAPTURED_COUNT: VaultMeta b"edit_distance/amendment_uncaptured_count/v1\0" Raw;
     /// Live edit-cost head for a (predicate, subject, scope) tuple; the retraction ledger for re-
     /// judged receipts. Key: string "\x00" hex32 "\x00" string.
     EDIT_DISTANCE_EDIT_COST_TARGET: VaultMeta b"edit_distance/edit_cost_target/v1\0" Raw;
@@ -454,6 +457,9 @@ side_tables! {
     EDIT_DISTANCE_JUDGE_AUDIT: VaultMeta b"edit_distance/judge_audit/v1\0" Raw;
     /// Monotonic counter behind EDIT_DISTANCE_JUDGE_AUDIT's sequence half. Key: ().
     EDIT_DISTANCE_JUDGE_AUDIT_SEQUENCE: VaultMeta b"edit_distance/judge_audit_sequence/v1" Raw;
+    /// Claim-to-receipt index bounding the teaching-copy erase (FIX 11347): the receipt ids taught
+    /// on one claim. Key: id16.
+    EDIT_DISTANCE_MINER_CLAIM_RECEIPTS: VaultMeta b"edit_distance/miner_claim_receipts/v1\0" Named;
     /// Mint-mark preventing a re-mint of the same substitution cluster, keyed by cluster handle. Key:
     /// hash32.
     EDIT_DISTANCE_MINER_MINT_MARK: VaultMeta b"edit_distance/miner_mint_mark/v1\0" Raw;

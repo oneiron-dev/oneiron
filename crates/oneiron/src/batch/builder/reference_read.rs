@@ -14,10 +14,10 @@ use crate::Vault;
 use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::gate::{RecordedClaimGateDecision};
-use crate::store::gate_reason::{GateReasonCode};
+use crate::gate::RecordedClaimGateDecision;
 use crate::store::GateRetentionContext;
 use crate::store::Store;
+use crate::store::gate_reason::GateReasonCode;
 use crate::write_envelope::claim_body::ClaimBody;
 
 /// One CLAIM body the batch's preflight gates, as it gates it.

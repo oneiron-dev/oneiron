@@ -21,7 +21,6 @@ const MODE_SYMLINK: u32 = 0o120_000;
 /// An executable regular file's Git mode.
 const MODE_EXECUTABLE: u32 = 0o100_755;
 
-
 pub(crate) use crate::git_wire::bundle_tree::BundleTreeEdit;
 
 /// The tree change a bundle's files make: removals first, then

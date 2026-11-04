@@ -10,7 +10,7 @@ use crate::Vault;
 use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, CodecError, Named, Raw, RawValue, SideTable};
 use crate::store::GateDecisionRecord;
 
 const LABEL: &str = "principal-bound inbox decision";
@@ -20,6 +20,11 @@ const LABEL: &str = "principal-bound inbox decision";
 /// its principal (`erase.rs`, FIX 9805).
 pub(super) const DECISION: SideTable<String, PrincipalDecision, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_PRINCIPAL_DECISION);
+
+/// Claim-to-receipt index bounding the teaching-copy erase (FIX 11347): the
+/// receipt ids taught on one claim.
+pub(super) const CLAIM_RECEIPTS: SideTable<EntityId, Vec<String>, Named> =
+    SideTable::new(&side_table::EDIT_DISTANCE_MINER_CLAIM_RECEIPTS);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PrincipalDecision {
@@ -121,6 +126,17 @@ pub(crate) fn record_inbox_learning_in_txn(
         return Err(Error::InvariantViolation("inbox decision already captured"));
     }
     DECISION.put(&vault.store, txn, &receipt, &row)?;
+    // The claim-to-receipt index bounds the teaching-copy erase (FIX 11347).
+    {
+        let mut receipts = CLAIM_RECEIPTS
+            .get(&vault.store, &*txn, &claim)?
+            .unwrap_or_default();
+        if !receipts.contains(&receipt) {
+            receipts.push(receipt.clone());
+            receipts.sort();
+            CLAIM_RECEIPTS.put(&vault.store, txn, &claim, &receipts)?;
+        }
+    }
     // The reviewed claim's project audience scopes the cell (FIX 6038); the
     // reserved default project is the vault's. Never the consent scope.
     let project = (reviewed.scope_project != crate::claim::default_project_id())

@@ -119,6 +119,36 @@ fn project(
         if let Some(owner) = owner {
             owner.revalidate_in_txn(vault, txn)?;
         }
+        // Recheck the pre-write reads: an erase between them and this writer
+        // must not mint a credit naming the erased id (FIX 10641). Stale
+        // reads refuse so the pass re-runs.
+        {
+            let fresh_receipt =
+                crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, attempt_receipt)?;
+            if fresh_receipt.as_ref() != Some(&receipt) {
+                return Err(Error::InvalidClaimBody(
+                    "the pack receipt changed before its credit was written",
+                ));
+            }
+            let fresh_evidence: Vec<_> = super::codec::evidence_after_in_txn(vault, txn, 0)?
+                .into_iter()
+                .filter(|(_, row)| row.receipt_ref == attempt_receipt)
+                .collect();
+            if fresh_evidence != evidence {
+                return Err(Error::InvalidClaimBody(
+                    "the attribution evidence changed before its credit was written",
+                ));
+            }
+            let fresh_judgments: BTreeMap<_, _> = super::attribution_judgments_in_txn(vault, txn)?
+                .into_iter()
+                .map(|row| (row.sequence, row))
+                .collect();
+            if fresh_judgments != judgments {
+                return Err(Error::InvalidClaimBody(
+                    "the attribution judgments changed before their credit was written",
+                ));
+            }
+        }
         // A matched-fork check recorded for this outcome counts as the
         // skill's contribution or the edge's hop check, and a use that landed
         // late joins the used chain, though both came after the run froze.
@@ -252,6 +282,19 @@ fn project(
                 observations.entry(subject).or_insert((true, share.weight));
             }
         }
+        let has_observations = !observations.is_empty();
+        let mut person_share: Option<f32> = None;
+        for subject in observations.keys() {
+            if let Some(share) = crate::skill_reliability::amended_share_in_txn(
+                vault,
+                txn,
+                subject,
+                Some(fields.executor.as_str()),
+                attempt_receipt,
+            )? {
+                person_share = Some(person_share.map_or(share, |held| held.max(share)));
+            }
+        }
         for (subject, (success, weight)) in observations {
             let cell = credit_cell(&fields, &outcome.axis, subject);
             let (success, weight) = effective_observation_in_txn(
@@ -259,6 +302,32 @@ fn project(
             )?;
             let learning = credit_evidence(&credit, &fields, success, weight);
             record_credit_in_txn(vault, txn, &fields, &cell, &learning, now)?;
+        }
+        // The same attempt under the driver's own cell (FIX 8968): one person
+        // row per credited outcome, with the established per-attempt amendment
+        // share across its credited subjects, never a second run.
+        if has_observations
+            && let Some(person) = receipt
+                .on_behalf_of
+                .as_deref()
+                .or(receipt.actor.as_deref())
+                .and_then(|actor| EntityId::from_hex(actor).ok())
+        {
+            let (success, weight) = match person_share {
+                Some(share) => (false, f64::from(share)),
+                None => (outcome.succeeded, 1.0),
+            };
+            let person_cell = crate::learning::LearningCell::new(
+                crate::learning::LearningPredicate::Reliability,
+                person,
+            )
+            .executor(person.to_hex())
+            .type_ref(fields.type_ref.clone())
+            .axis(outcome.axis.clone())
+            .project(fields.project);
+            person_cell.validate()?;
+            let person_evidence = credit_evidence(&credit, &fields, success, weight);
+            record_credit_in_txn(vault, txn, &fields, &person_cell, &person_evidence, now)?;
         }
         // If facts were unavailable, leave this receipt retryable rather than
         // sealing an empty result before attribution has caught up.
