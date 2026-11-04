@@ -362,7 +362,7 @@ fn spans_values(
 /// the repo:landing binding, so a secret or binding withdrawn after the
 /// mint refuses typed instead of landing the successor's cached plaintext.
 /// A consumed successor (its operation already applied) needs no replay.
-pub(super) fn revalidate_resolved_successor_in_txn(
+pub(crate) fn revalidate_resolved_successor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     successor: &RepoProposal,
