@@ -65527,7 +65527,7 @@ pub struct SignalExtractionResult {
     pub claims: Vec<SignalExtractionClaim>,
 }
 
-/// `oneiron::channel_identity::shape::SelfHeldShape`.
+/// `oneiron_authority::channel_identity_shape::SelfHeldShape`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SelfHeldShape {
     #[serde(rename = "dedicated_address")]
@@ -65590,7 +65590,7 @@ pub struct ChannelIdentityProvisionRequest {
     pub request_ref: Option<String>,
 }
 
-/// `oneiron::channel_identity::shape::ChannelIdentityShape`.
+/// `oneiron_authority::channel_identity_shape::ChannelIdentityShape`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ChannelIdentityShape {
     #[serde(rename = "dedicated_address")]
