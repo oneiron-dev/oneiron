@@ -404,7 +404,7 @@ fn workbook_sheet_target(
                         grow_temp(&mut decode, bounds, bytes, bytes)?;
                     }
                     let key_bytes = attr.key.as_ref();
-                    let is_xmlns = key_bytes == b"xmlns" || key_bytes.starts_with(b"xmlns:");
+                    let is_xmlns = key_bytes == "xmlns" || key_bytes.starts_with("xmlns:");
                     let (ans, alocal) = reader.resolver().resolve_attribute(attr.key);
                     if !is_xmlns {
                         match ans {
@@ -579,7 +579,7 @@ fn workbook_relationship_target(
                         grow_temp(&mut decode, bounds, bytes, bytes)?;
                     }
                     let key_bytes = attr.key.as_ref();
-                    let is_xmlns = key_bytes == b"xmlns" || key_bytes.starts_with(b"xmlns:");
+                    let is_xmlns = key_bytes == "xmlns" || key_bytes.starts_with("xmlns:");
                     let (ans, alocal) = reader.resolver().resolve_attribute(attr.key);
                     if !is_xmlns {
                         match ans {
