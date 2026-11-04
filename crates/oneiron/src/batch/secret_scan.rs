@@ -24,8 +24,8 @@ pub use self::lift_history::{
     SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner, secret_lift_as_owner_toward,
 };
 pub(crate) use self::lift_history::{
-    enqueue_known_remark_in_txn, enqueue_lift_in_txn, propose_typed_body_at_in_txn, run_lift_pass,
-    typed_body_at_proposal_due_in_txn,
+    enqueue_known_remark_in_txn, enqueue_lift_in_txn, propose_sync_text_in_txn,
+    propose_typed_body_at_in_txn, run_lift_pass, typed_body_at_proposal_due_in_txn,
 };
 pub(super) use self::mask::MaskedFiles;
 pub(crate) use self::mask::admit::{
