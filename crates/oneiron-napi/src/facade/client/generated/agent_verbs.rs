@@ -1890,6 +1890,21 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_inbox_reply(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.reply", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_reply_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.reply.status", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_inbox_done(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.inbox.done", js_json(input))

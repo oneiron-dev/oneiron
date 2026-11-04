@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1275 code-mode rows (1235 host rows, 40 run rows), 4499 declarations.
-// Replies: 1087 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1277 code-mode rows (1237 host rows, 40 run rows), 4505 declarations.
+// Replies: 1089 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 118; unread shapes: none.
 declare namespace Sdk {
@@ -1017,8 +1017,14 @@ declare namespace Sdk {
   type InboxBundleResolution = { group_key: string; verb: InboxBulkVerb; bundle_ref: string; bundle_receipt: ReceiptRecord; item_receipts?: ReceiptRecord[]; review_items?: string[] };
   type InboxGroupResolution = { kind: "dreamer"; resolution: InboxBundleResolution } | { kind: "shape"; receipt: ShapeApplyReceipt };
   type InboxItemRequest = { item_id: string };
-  type InboxItemMessage = { identity: string; channel: string; payload_ref: string; occurred_at: number; text: string; claims_not_instructions: boolean };
+  type InboxItemMessage = { identity: string; channel: string; payload_ref: string; reply_event_ref?: string | null; occurred_at: number; text: string; claims_not_instructions: boolean };
   type InboxItemView = { item: InboxLensRow; messages: InboxItemMessage[]; notification?: NotificationRow | null; lens?: GeneratedLens | null };
+  type InboxReplyRequest = { item_id: string; event_ref: string; request_ref: string; text: string };
+  type ConnectorReplyStage = "no_reply" | "dispatched" | "held" | "failed" | "ambiguous" | "fault";
+  type ConnectorReplyJobResult = { stage: ConnectorReplyStage; body_ref?: string | null; outcome?: string | null; gate_reason_codes?: string[]; actual_units: number; witness_refs?: string[]; witness_repair?: string | null; reason?: string | null; waits_on_owner?: boolean };
+  type InboxReplyJobStatus = { job_ref: string; state: string; results: ConnectorReplyJobResult[] };
+  type InboxReplyReceipt = { item_id: string; event_ref: string; job: InboxReplyJobStatus };
+  type InboxReplyStatusRequest = { job_ref: string };
   type InboxItemMarked = { item_id: string; read_state: AgentInboxReadState; until?: number | null };
   type InboxItemLaterRequest = { item_id: string; until?: number | null };
   type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };
@@ -4933,6 +4939,11 @@ declare namespace self {
     list(input: Sdk.InboxListRequest): Promise<Sdk.NotificationPage | StoredResult>;
     /** Marks one delivered notification seen or acknowledged for the bound actor. */
     mark(input: Sdk.InboxMarkRequest): Promise<Sdk.NotificationRow | StoredResult>;
+    /** Queues exact text for a get-returned reply_event_ref. Reuse request_ref and text to retry; use a new request_ref for a follow-up. Returns the durable job, not delivery; leaves inbound read state unchanged. */
+    reply: ((input: Sdk.InboxReplyRequest) => Promise<Sdk.InboxReplyReceipt | StoredResult>) & {
+      /** Reads the bound actor's reply job and its existing results. Dispatched does not mean delivered: inspect the exact outcome, including held, failed or ambiguous. */
+      status(input: Sdk.InboxReplyStatusRequest): Promise<Sdk.InboxReplyJobStatus | StoredResult>;
+    };
   };
   const leader: {
     advice(input: Sdk.LeaderAdviceInput): Promise<Sdk.LeaderAdvice | StoredResult>;

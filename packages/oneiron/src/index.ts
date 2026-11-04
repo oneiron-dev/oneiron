@@ -3236,6 +3236,11 @@ export class Oneiron {
       lens: (input: Facade.InboxLensRequest): Facade.InboxLensPage => this.#call(() => this.#client.selfInboxLens(input) as Facade.InboxLensPage),
       /** Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done. */
       get: (input: Facade.InboxItemRequest): Facade.InboxItemView => this.#call(() => this.#client.selfInboxGet(input) as Facade.InboxItemView),
+      /** Queues exact text for a get-returned reply_event_ref. Reuse request_ref and text to retry; use a new request_ref for a follow-up. Returns the durable job, not delivery; leaves inbound read state unchanged. */
+      reply: Object.assign((input: Facade.InboxReplyRequest): Facade.InboxReplyReceipt => this.#call(() => this.#client.selfInboxReply(input) as Facade.InboxReplyReceipt), {
+        /** Reads the bound actor's reply job and its existing results. Dispatched does not mean delivered: inspect the exact outcome, including held, failed or ambiguous. */
+        status: (input: Facade.InboxReplyStatusRequest): Facade.InboxReplyJobStatus => this.#call(() => this.#client.selfInboxReplyStatus(input) as Facade.InboxReplyJobStatus),
+      }),
       /** Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it. */
       done: (input: Facade.InboxItemRequest): Facade.InboxItemMarked => this.#call(() => this.#client.selfInboxDone(input) as Facade.InboxItemMarked),
       /** Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it. */

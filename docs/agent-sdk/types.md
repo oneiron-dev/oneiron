@@ -4219,6 +4219,8 @@ class Oneiron:
             """Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."""
         def get(self, spec: Facade.InboxItemRequest) -> Facade.InboxItemView:
             """Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done."""
+        @property
+        def reply(self) -> "Oneiron._SelfInboxReplyVerbs": ...
         def done(self, spec: Facade.InboxItemRequest) -> Facade.InboxItemMarked:
             """Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it."""
         def later(self, spec: Facade.InboxItemLaterRequest) -> Facade.InboxItemMarked:
@@ -4227,6 +4229,11 @@ class Oneiron:
         def __call__(self, spec: Facade.ConcernCardRequest) -> Facade.AgentHealthCardView: ...
         def outcome(self, spec: Facade.ConcernOutcomeRequest) -> Facade.ConcernCardSummary: ...
         def move(self, spec: Facade.ConcernMoveRequest) -> Facade.ConcernMoveOutcome: ...
+    class _SelfInboxReplyVerbs:
+        def __call__(self, spec: Facade.InboxReplyRequest) -> Facade.InboxReplyReceipt:
+            """Queues exact text for a get-returned reply_event_ref. Reuse request_ref and text to retry; use a new request_ref for a follow-up. Returns the durable job, not delivery; leaves inbound read state unchanged."""
+        def status(self, spec: Facade.InboxReplyStatusRequest) -> Facade.InboxReplyJobStatus:
+            """Reads the bound actor's reply job and its existing results. Dispatched does not mean delivered: inspect the exact outcome, including held, failed or ambiguous."""
     class _SelfGrantsVerbs:
         def ask(self, spec: Facade.GrantAskRequest) -> Facade.GrantAskReceipt:
             """Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."""

@@ -156,6 +156,61 @@ impl Vault {
         }
         Ok(out)
     }
+
+    /// Exact frozen connector events for the latest surface entry under
+    /// each row key. Unmatched entries remain readable without a reply anchor.
+    pub(super) fn surface_reply_anchors_for_actor(
+        &self,
+        actor: EntityId,
+    ) -> Result<BTreeMap<String, (Option<String>, u64, String)>> {
+        let rows = AttemptQueue::new(self).list_kind_bounded(
+            SURFACE_EVENT_ATTEMPT_KIND,
+            crate::receipt::MAX_RECEIPT_QUERY_SCAN,
+        )?;
+        let mut latest = BTreeMap::new();
+        for row in rows {
+            let payload = decode_surface_event_attempt_payload(&row.payload)?;
+            let event = &payload.event;
+            if !matches!(event.action, SurfaceEventAction::Message)
+                || EntityId::from_hex(&event.actor_ref)? != actor
+            {
+                continue;
+            }
+            let identity = EntityId::from_hex(&event.receiving_identity_ref)?;
+            let key = format!("surface:{}:{}", identity.to_hex(), event.correlation_id);
+            // Keep the same strict updated-at tie rule as the row projection.
+            if latest.get(&key).is_none_or(|(at, _)| row.updated_at > *at) {
+                latest.insert(key, (row.updated_at, payload));
+            }
+        }
+        let mut anchors = BTreeMap::new();
+        for (key, (_, payload)) in latest {
+            let Some(woken) =
+                self.connector_event_woken(actor, &payload.dispatch_idempotency_key)?
+            else {
+                continue;
+            };
+            let event = &payload.event;
+            let expected = crate::surface_event::connector_event_from_surface(
+                &crate::surface_event::SurfaceEventDispatchRequest {
+                    event,
+                    route: payload.route,
+                    agent_ref: &event.actor_ref,
+                    correlation_id: &event.correlation_id,
+                    idempotency_key: &payload.dispatch_idempotency_key,
+                    thread_ref: payload.thread_ref.as_deref(),
+                },
+            )?;
+            if woken != expected {
+                continue;
+            }
+            anchors.insert(
+                key,
+                (event.payload_ref.clone(), event.received_at, woken.event_id),
+            );
+        }
+        Ok(anchors)
+    }
 }
 
 fn comm_error(error: crate::write_envelope::communication::CommError) -> Error {

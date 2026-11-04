@@ -38,8 +38,14 @@ use crate::{EntityId, TimeRange, Vault, WriteActor};
 pub const CONNECTOR_REPLY_JOB_KIND: &str = "connector.reply";
 /// Every job result ref starts with this: `connector-reply-result:<artifact hex>`.
 pub const CONNECTOR_REPLY_RESULT_PREFIX: &str = "connector-reply-result:";
-/// Domain of a job's dedupe and run key: one job per (agent, event).
+/// Domain of a job's base dedupe and run key over (agent, event); generated
+/// work uses it as is, a chosen request suffixes its reply ref (see
+/// [`ConnectorReplyJob::queue_key`]).
 const CONNECTOR_REPLY_JOB_KEY_DOMAIN: &[u8] = b"oneiron.connector-reply-job.v1\0";
+/// Domain of a chosen-body request's namespaced reply ref: the digest binds
+/// the caller's request identity to the exact chosen words (mechanical
+/// namespace, not a policy).
+const CONNECTOR_REPLY_CHOSEN_REF_DOMAIN: &[u8] = b"oneiron.connector-reply-chosen-ref.v1\0";
 /// Domain of a job result's artifact id: one per job attempt.
 const CONNECTOR_REPLY_RESULT_DOMAIN: &[u8] = b"oneiron:connector-reply-job-result:v1";
 const CONNECTOR_REPLY_RESULT_MEDIA_TYPE: &str = "application/json";
@@ -59,19 +65,46 @@ const CONNECTOR_REPLY_RETRY_MAX_SECS: u64 = 60;
 /// worker's log.
 const CONNECTOR_REPLY_QUEUE_REASON_BYTES: usize = 2048;
 
-/// One agent's reply to one connector event, handed off by the Dreamer
-/// pass that woke the agent.
+/// One agent's reply to one connector event: either generated off the Dreamer
+/// pass that woke the agent, or the exact words a user chose for one request.
+/// A chosen job carries its words inside its own payload, so queueing the job
+/// atomically persists the exact text; the worker saves them to the job's
+/// request-specific kept-body slot and dispatches through the ordinary
+/// recorded pipeline. Queueing is not delivery; the job's result names what
+/// happened.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorReplyJob {
     pub agent: EntityId,
     pub event: ConnectorEvent,
-    /// The wake attempt that handed the reply off.
-    pub parent_attempt: AttemptId,
-    /// The 80%/95% budget messages the wake's charge fired (FIX 3761),
-    /// shown to the agent's reply turn. Empty when none fired.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub budget_steering: Vec<String>,
+    /// How the reply's words arise: generated off the wake, or chosen exactly.
+    pub source: ConnectorReplyJobSource,
+}
+
+/// Where one reply job's words come from (format change, no legacy reader:
+/// rows written before the source split do not decode).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConnectorReplyJobSource {
+    /// The Dreamer pass that woke the agent hands the reply off; the worker
+    /// generates (or reuses the kept body). Unchanged automatic behavior.
+    Generated {
+        /// The wake attempt that handed the reply off.
+        parent_attempt: AttemptId,
+        /// The 80%/95% budget messages the wake's charge fired (FIX 3761),
+        /// shown to the agent's reply turn. Empty when none fired.
+        budget_steering: Vec<String>,
+    },
+    /// The exact words a user chose for one request, carried in the payload.
+    Chosen {
+        /// Request-namespaced reply slot (`inbox:<digest>` over request
+        /// identity + exact text); distinct requests never share a slot, and
+        /// retries of one request reuse it and replay instead of sending twice.
+        reply_ref: String,
+        /// The exact chosen words, byte for byte; never trimmed, capped or
+        /// rewritten here.
+        text: String,
+    },
 }
 
 impl ConnectorReplyJob {
@@ -95,6 +128,45 @@ impl ConnectorReplyJob {
             );
         }
         ids
+    }
+
+    /// The reply slot this job's send names: the long-standing `"reply"` for
+    /// generated work, the request-namespaced ref for chosen words.
+    pub fn reply_ref(&self) -> &str {
+        match &self.source {
+            ConnectorReplyJobSource::Generated { .. } => "reply",
+            ConnectorReplyJobSource::Chosen { reply_ref, .. } => reply_ref,
+        }
+    }
+
+    /// The exact chosen words, when this job carries them.
+    pub fn chosen_text(&self) -> Option<&str> {
+        match &self.source {
+            ConnectorReplyJobSource::Generated { .. } => None,
+            ConnectorReplyJobSource::Chosen { text, .. } => Some(text),
+        }
+    }
+
+    /// The wake's budget messages for the reply turn; empty for chosen words.
+    pub fn budget_steering(&self) -> &[String] {
+        match &self.source {
+            ConnectorReplyJobSource::Generated {
+                budget_steering, ..
+            } => budget_steering,
+            ConnectorReplyJobSource::Chosen { .. } => &[],
+        }
+    }
+
+    /// The job's dedupe and run key: the long-standing (agent, event) key for
+    /// generated work (automatic behavior unchanged), suffixed with the chosen
+    /// reply ref for chosen words so distinct requests never coalesce while a
+    /// shared retry of one request still does.
+    fn queue_key(&self) -> String {
+        let base = connector_reply_job_key(self.agent, &self.event.event_id);
+        match &self.source {
+            ConnectorReplyJobSource::Generated { .. } => base,
+            ConnectorReplyJobSource::Chosen { reply_ref, .. } => format!("{base}:{reply_ref}"),
+        }
     }
 }
 
@@ -189,8 +261,9 @@ impl ConnectorReplyJobResult {
 }
 
 impl Vault {
-    /// Queues `job`, once per (agent, event): a live job for the same pair
-    /// answers with its own id.
+    /// Queues `job`: generated work once per (agent, event), chosen words
+    /// once per (agent, event, request) — a live job for the same key answers
+    /// with its own id.
     ///
     /// # Errors
     /// The job does not encode, or the queue write fails.
@@ -199,7 +272,7 @@ impl Vault {
         job: &ConnectorReplyJob,
         now: u64,
     ) -> Result<AttemptId> {
-        let key = connector_reply_job_key(job.agent, &job.event.event_id);
+        let key = job.queue_key();
         let payload = serde_json::to_vec(job)
             .map_err(|_| Error::InvariantViolation("connector reply job did not encode"))?;
         let outcome = AttemptQueue::new(self).enqueue(EnqueueAttempt {
@@ -212,6 +285,42 @@ impl Vault {
         Ok(match outcome {
             EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record) => record.id,
         })
+    }
+
+    /// Queues one exact-words reply for `agent`'s `event` under the caller's
+    /// `request_ref`, atomically persisting the words inside the job payload.
+    ///
+    /// Data contract: the request's reply slot is `inbox:<blake3>` over the
+    /// length-prefixed `request_ref` + exact `text` bytes, so a distinct
+    /// `request_ref` permits identical-word followups, changed words are
+    /// distinct identities, and retries of one `request_ref` + `text` share
+    /// one slot: they coalesce onto the live job while pending, and the
+    /// recorded send replays (never double-sends) on that slot's logical ref
+    /// once terminal. The text is kept byte for byte — never trimmed, capped
+    /// or rewritten — and no body is saved beforehand: the worker saves these
+    /// words to the job's slot with no model call, then dispatches as usual.
+    /// Queueing is not delivery; read the job's result for what happened. No
+    /// wake is named or faked here.
+    ///
+    /// # Errors
+    /// The job does not encode, or the queue write fails.
+    pub fn enqueue_connector_reply_text(
+        &self,
+        agent: EntityId,
+        event: &ConnectorEvent,
+        request_ref: &str,
+        text: &str,
+        now: u64,
+    ) -> Result<AttemptId> {
+        let job = ConnectorReplyJob {
+            agent,
+            event: (*event).clone(),
+            source: ConnectorReplyJobSource::Chosen {
+                reply_ref: chosen_reply_ref(request_ref, text),
+                text: text.to_owned(),
+            },
+        };
+        self.enqueue_connector_reply_job(&job, now)
     }
 
     /// Returns to the queue every job left leased, by a stopped process or
@@ -395,10 +504,7 @@ impl Vault {
             };
             self.put_blob_artifact(
                 &artifact_id,
-                &BlobArtifactBody::new(
-                    connector_reply_job_key(job.agent, &job.event.event_id),
-                    CONNECTOR_REPLY_RESULT_MEDIA_TYPE,
-                ),
+                &BlobArtifactBody::new(job.queue_key(), CONNECTOR_REPLY_RESULT_MEDIA_TYPE),
                 at,
                 now,
             )?;
@@ -412,7 +518,7 @@ impl Vault {
             .transpose()?
             .flatten();
         if head_bytes.as_deref() != Some(bytes.as_slice()) {
-            let run_ref = connector_reply_job_key(job.agent, &job.event.event_id);
+            let run_ref = job.queue_key();
             let at = TimeRange {
                 start: now,
                 end: now,
@@ -467,10 +573,10 @@ fn connector_reply_result_id(attempt: AttemptId) -> Result<EntityId> {
 
 /// Leaves a reply job row's payload without its event's payload when the
 /// job names anyone among `erased`: its agent, or the event's actor,
-/// receiving identity or known counterparty. The event's id, connector,
-/// kind and predicate stay, so the row still decodes; a claim of it answers
-/// nothing. Returns whether the row changed: a row that does not decode, or
-/// one already erased, names nobody.
+/// receiving identity or known counterparty. A chosen job's carried text goes
+/// with it. The event's id, connector, kind and predicate stay, so the row
+/// still decodes; a claim of it answers nothing. Returns whether the row
+/// changed: a row that does not decode, or one already erased, names nobody.
 ///
 /// # Errors
 /// The erased job does not encode.
@@ -489,6 +595,9 @@ pub(crate) fn erase_connector_reply_job_payload(
         return Ok(false);
     }
     job.event.payload = serde_json::Value::Null;
+    if let ConnectorReplyJobSource::Chosen { text, .. } = &mut job.source {
+        text.clear();
+    }
     record.payload = serde_json::to_vec(&job)
         .map_err(|_| Error::InvariantViolation("erased connector reply job did not encode"))?;
     Ok(true)
@@ -644,4 +753,18 @@ fn connector_reply_job_key(agent: EntityId, event_id: &str) -> String {
         hasher.update(value);
     }
     format!("connector-reply-job:{}", hasher.finalize().to_hex())
+}
+
+// No helper nesting: request slot derivation stays a top-level private fn
+// beside the queue key it namespaces.
+/// The request-namespaced reply slot for one exact-words request: `inbox:`
+/// over the blake3 of the length-prefixed request identity + exact text.
+fn chosen_reply_ref(request_ref: &str, text: &str) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(CONNECTOR_REPLY_CHOSEN_REF_DOMAIN);
+    for value in [request_ref.as_bytes(), text.as_bytes()] {
+        hasher.update(&(value.len() as u64).to_be_bytes());
+        hasher.update(value);
+    }
+    format!("inbox:{}", hasher.finalize().to_hex())
 }

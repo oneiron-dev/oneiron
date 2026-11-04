@@ -84,7 +84,7 @@ pub use self::recovery_suggestions::OutboundRecoverySuggestion;
 pub use self::reply_content::{CONNECTOR_REPLY_BODY_PREFIX, ConnectorReplyBody};
 pub use self::reply_job::{
     CONNECTOR_REPLY_JOB_KIND, CONNECTOR_REPLY_RESULT_PREFIX, ConnectorReplyJob,
-    ConnectorReplyJobResult, ConnectorReplyStage,
+    ConnectorReplyJobResult, ConnectorReplyJobSource, ConnectorReplyStage,
 };
 pub use self::served_sink::{
     LINE_API_BASE, OwnedServedChannelSink, SLACK_API_BASE, ServedChannelSink, ServedConnectorCalls,

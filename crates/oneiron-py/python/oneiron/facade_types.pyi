@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1224 facade rows, 4444 declarations.
-Inputs: 1151 of 1224 fully typed, 73 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1057 of 1224 fully typed, 167 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1226 facade rows, 4450 declarations.
+Inputs: 1153 of 1226 fully typed, 73 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1059 of 1226 fully typed, 167 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 122; unread shapes: 0.
 """
 
@@ -5194,6 +5194,7 @@ class InboxItemMessage(TypedDict):
     identity: str
     channel: str
     payload_ref: str
+    reply_event_ref: NotRequired[str | None]
     occurred_at: int
     text: str
     claims_not_instructions: bool
@@ -5202,6 +5203,32 @@ class InboxItemView(TypedDict):
     messages: list[InboxItemMessage]
     notification: NotRequired[NotificationRow | None]
     lens: NotRequired[GeneratedLens | None]
+class InboxReplyRequest(TypedDict):
+    item_id: str
+    event_ref: str
+    request_ref: str
+    text: str
+ConnectorReplyStage = Literal["no_reply", "dispatched", "held", "failed", "ambiguous", "fault"]
+class ConnectorReplyJobResult(TypedDict):
+    stage: ConnectorReplyStage
+    body_ref: NotRequired[str | None]
+    outcome: NotRequired[str | None]
+    gate_reason_codes: NotRequired[list[str]]
+    actual_units: int
+    witness_refs: NotRequired[list[str]]
+    witness_repair: NotRequired[str | None]
+    reason: NotRequired[str | None]
+    waits_on_owner: NotRequired[bool]
+class InboxReplyJobStatus(TypedDict):
+    job_ref: str
+    state: str
+    results: list[ConnectorReplyJobResult]
+class InboxReplyReceipt(TypedDict):
+    item_id: str
+    event_ref: str
+    job: InboxReplyJobStatus
+class InboxReplyStatusRequest(TypedDict):
+    job_ref: str
 class InboxItemMarked(TypedDict):
     item_id: str
     read_state: AgentInboxReadState

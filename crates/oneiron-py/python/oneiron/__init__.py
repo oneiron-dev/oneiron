@@ -5838,6 +5838,9 @@ class Oneiron:
         def get(self, spec):
             """Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done."""
             return json.loads(_translate(lambda: self._client.self_inbox_get(json.dumps(spec))))
+        @property
+        def reply(self) -> "Oneiron._SelfInboxReplyVerbs":
+            return Oneiron._SelfInboxReplyVerbs(self._client)
         def done(self, spec):
             """Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it."""
             return json.loads(_translate(lambda: self._client.self_inbox_done(json.dumps(spec))))
@@ -5853,6 +5856,15 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.self_inbox_concern_outcome(json.dumps(spec))))
         def move(self, spec):
             return json.loads(_translate(lambda: self._client.self_inbox_concern_move(json.dumps(spec))))
+    class _SelfInboxReplyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Queues exact text for a get-returned reply_event_ref. Reuse request_ref and text to retry; use a new request_ref for a follow-up. Returns the durable job, not delivery; leaves inbound read state unchanged."""
+            return json.loads(_translate(lambda: self._client.self_inbox_reply(json.dumps(spec))))
+        def status(self, spec):
+            """Reads the bound actor's reply job and its existing results. Dispatched does not mean delivered: inspect the exact outcome, including held, failed or ambiguous."""
+            return json.loads(_translate(lambda: self._client.self_inbox_reply_status(json.dumps(spec))))
     class _SelfGrantsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

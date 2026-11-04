@@ -702,6 +702,12 @@ impl OneironClient {
                 "self.inbox.get" => remote_agent_verb_output::<
                     oneiron::agent_inbox_lens::InboxItemView,
                 >(client, verb, &input),
+                "self.inbox.reply" => remote_agent_verb_output::<
+                    oneiron::agent_inbox_lens::InboxReplyReceipt,
+                >(client, verb, &input),
+                "self.inbox.reply.status" => remote_agent_verb_output::<
+                    oneiron::agent_inbox_lens::InboxReplyJobStatus,
+                >(client, verb, &input),
                 "self.inbox.done" => remote_agent_verb_output::<
                     oneiron::agent_inbox_lens::InboxItemMarked,
                 >(client, verb, &input),
@@ -6575,6 +6581,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.inbox.get", value)
+    }
+    pub fn self_inbox_reply(
+        &self,
+        input: &oneiron::agent_inbox_lens::InboxReplyRequest,
+    ) -> Result<oneiron::agent_inbox_lens::InboxReplyReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.inbox.reply", value)
+    }
+    pub fn self_inbox_reply_status(
+        &self,
+        input: &oneiron::agent_inbox_lens::InboxReplyStatusRequest,
+    ) -> Result<oneiron::agent_inbox_lens::InboxReplyJobStatus, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.inbox.reply.status", value)
     }
     pub fn self_inbox_done(
         &self,
