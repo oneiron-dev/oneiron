@@ -673,16 +673,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "AgentModel"
-     ],
+     "notable": [],
      "path": "src/agent_def/models.rs",
      "purpose": "The owner's per-agent model list (FIX 4472): the models an agent may run on, each with the owner's own words…",
      "surface": {
       "const": 1,
       "crate-vis": 7,
       "fn": 7,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -69100,6 +69098,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AgentModel"
+     ],
+     "path": "src/store/agent_model.rs",
+     "purpose": "One model on an agent's model list (FIX 4472): the revision-pinned model and the owner's words on when the…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AgentCeiling",
       "AgentWakeCadence",
       "CompactionOwnership",
@@ -72104,7 +72114,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 111,
+      "crate-vis": 112,
       "mod": 108,
       "re-export": 31
      }
@@ -90451,7 +90461,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 419,
+     "files": 420,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90691,7 +90701,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6301,
+   "source_files": 6302,
    "test_files": 895
   },
   "oneiron-android": {
