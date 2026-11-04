@@ -3,16 +3,16 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::Vault;
-use crate::entity_id::EntityId;
-use crate::error::Result;
-use crate::claim::learning_evidence::EVIDENCE;
-use crate::learning::evidence::{cells_for_subject_in_txn};
-use crate::learning::project::project_cell_in_txn;
 use crate::claim::learning_evidence::Anchor;
+use crate::claim::learning_evidence::EVIDENCE;
 use crate::claim::learning_evidence::EvidenceSource;
 use crate::claim::learning_evidence::LearningEvidence;
 use crate::claim::learning_evidence::Observation;
-use crate::learning::{LearningCell};
+use crate::entity_id::EntityId;
+use crate::error::Result;
+use crate::learning::LearningCell;
+use crate::learning::evidence::cells_for_subject_in_txn;
+use crate::learning::project::project_cell_in_txn;
 use crate::receipt::ReceiptRecord;
 use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
 use crate::temporal::TimeRange;
@@ -32,7 +32,8 @@ use super::read::{
     SkillReliabilityQuery, posterior_from_estimate, resolved_estimate_in_txn, validate_executor,
 };
 
-pub const PREDICATE_SKILL_RELIABILITY: &str = crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY;
+pub const PREDICATE_SKILL_RELIABILITY: &str =
+    crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY;
 
 /// Receipt task placement: JSON {node_id, tree_version}. Missing is invalid.
 pub const FIELD_SKILL_TYPE_REF: &str = "typeRef";

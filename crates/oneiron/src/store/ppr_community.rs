@@ -7,20 +7,20 @@ use std::collections::BTreeSet;
 use heed::{RoTxn, RwTxn};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::config::community_graph::{
+    CommunityEdge, CommunityGraphInput, CommunityMembership, CommunityRefreshReport,
+    CommunitySnapshot, PPR_COMMUNITY_CACHE_PREFIX, PprCommunityConfig, compute_communities,
+};
 use crate::edge::parse_strict_edge_record;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::ports::{DeletionMarker, EdgeStoreInventory, EntityStoreRead, TombstoneStoreRead};
-use crate::store::graph_version::read_graph_version;
-use crate::config::community_graph::{
-    CommunityEdge, CommunityGraphInput, CommunityMembership, CommunityRefreshReport,
-    CommunitySnapshot, PPR_COMMUNITY_CACHE_PREFIX, PprCommunityConfig, compute_communities,
-};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::store::{EngineScan};
-use crate::scan_check::{ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::EngineScan;
+use crate::store::graph_version::read_graph_version;
 
 use super::Store;
 

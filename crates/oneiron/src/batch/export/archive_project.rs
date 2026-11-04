@@ -54,8 +54,8 @@ use crate::error::{Error, Result};
 use crate::provenance::birth::WithheldKey;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::serialize::ExportBodyFile;
-use crate::write_envelope::skill_record::SkillRecord;
 use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body};
+use crate::write_envelope::skill_record::SkillRecord;
 
 /// Where the export writer (`serialize::vault_document`) writes an attached
 /// file's digest, by member kind: field names from the row's root, `*` for
@@ -416,7 +416,8 @@ impl KeptAgentRows {
                             serde_json::from_slice(line).map_err(|_| invalid())?;
                         if let Ok(id) = EntityId::from_hex(&skill.entity.id)
                             && let Ok(body) = skill.entity.body.to_bytes()
-                            && let Ok(record) = crate::write_envelope::skill_record::decode_skill_record(&body)
+                            && let Ok(record) =
+                                crate::write_envelope::skill_record::decode_skill_record(&body)
                         {
                             rows.skills.push((id, record));
                         }

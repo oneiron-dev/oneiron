@@ -6,7 +6,10 @@ pub(crate) mod index;
 pub(crate) use crate::config::bm25::{Bm25Config, FieldLengthPolicy};
 pub(crate) use codec::read_total_docs;
 pub(crate) use diagnostics::{Bm25Diagnostics, Bm25DiagnosticsSnapshot};
-pub(crate) use index::{AnalyzedText, analyze_text, check_indexed_text_bytes, deindex_text, index_analyzed_text, index_text};
+pub(crate) use index::{
+    AnalyzedText, analyze_text, check_indexed_text_bytes, deindex_text, index_analyzed_text,
+    index_text,
+};
 
 // === Layout constants ===
 

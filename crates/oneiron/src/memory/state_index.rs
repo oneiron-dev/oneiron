@@ -1,7 +1,7 @@
 //! Composite-state projection records and owner-authored window targets.
 
-use serde::{Deserialize, Serialize};
 use crate::{EntityId, Error, Result};
+use serde::{Deserialize, Serialize};
 
 /// Input claims use unit-interval values. Producers own measurement, not this projection.
 pub const GOAL_VELOCITY: &str = "state.goal_velocity";

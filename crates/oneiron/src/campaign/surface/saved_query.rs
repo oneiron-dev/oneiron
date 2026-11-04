@@ -9,26 +9,26 @@
 //! archive transition stay CA-02's, and evaluation stays
 //! [`crate::saved_query::SavedQueryEvaluator`]'s.
 
-use serde::{Deserialize, Serialize};
 use crate::entity_id::EntityId;
 use crate::saved_query::{MatchVerdict, VerdictMemoRow};
+use serde::{Deserialize, Serialize};
 
-pub use crate::memory::query_records::surface::SavedQueryScopeSpec;
+pub use crate::memory::query_records::surface::SavedQueryArchiveRequest;
+pub use crate::memory::query_records::surface::SavedQueryCreateRequest;
+pub use crate::memory::query_records::surface::SavedQueryDefinitionView;
+pub use crate::memory::query_records::surface::SavedQueryEvalSpec;
+pub use crate::memory::query_records::surface::SavedQueryEvaluateRequest;
 pub use crate::memory::query_records::surface::SavedQueryFilterSpec;
 pub use crate::memory::query_records::surface::SavedQueryMatcherSpec;
-pub use crate::memory::query_records::surface::SavedQueryEvalSpec;
-pub use crate::memory::query_records::surface::SavedQueryCreateRequest;
-pub use crate::memory::query_records::surface::SavedQueryReadRequest;
-pub use crate::memory::query_records::surface::SavedQueryUpdateRequest;
-pub use crate::memory::query_records::surface::SavedQueryArchiveRequest;
 pub use crate::memory::query_records::surface::SavedQueryMembersRequest;
-pub use crate::memory::query_records::surface::SavedQueryEvaluateRequest;
-pub use crate::memory::query_records::surface::SavedQueryDefinitionView;
-pub use crate::memory::query_records::surface::SavedQueryRecordView;
-pub use crate::memory::query_records::surface::SavedQueryReadResult;
-pub use crate::memory::query_records::surface::SavedQueryMembershipRowView;
 pub use crate::memory::query_records::surface::SavedQueryMembershipPageView;
+pub use crate::memory::query_records::surface::SavedQueryMembershipRowView;
 pub use crate::memory::query_records::surface::SavedQueryMemoReceipt;
+pub use crate::memory::query_records::surface::SavedQueryReadRequest;
+pub use crate::memory::query_records::surface::SavedQueryReadResult;
+pub use crate::memory::query_records::surface::SavedQueryRecordView;
+pub use crate::memory::query_records::surface::SavedQueryScopeSpec;
+pub use crate::memory::query_records::surface::SavedQueryUpdateRequest;
 
 /// One entity's manual-evaluation receipt.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -78,8 +78,8 @@ pub struct SavedQueryEvaluationReceipt {
     pub outcomes: Vec<SavedQueryEntityReceipt>,
 }
 
-pub(crate) use crate::memory::query_records::surface::saved_query_record_view;
 pub(crate) use crate::memory::query_records::surface::saved_query_membership_page_view;
+pub(crate) use crate::memory::query_records::surface::saved_query_record_view;
 
 /// The wire receipt of a persisted verdict memo.
 #[must_use]

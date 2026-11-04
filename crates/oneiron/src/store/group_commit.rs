@@ -62,12 +62,10 @@ use std::time::{Duration, Instant};
 use heed::{RoTxn, RwTxn};
 
 use crate::error::Error;
+use crate::learning_setting::setting_value_in_txn;
 use crate::store::setting_seed::GROUP_COMMIT_MAX_WRITES;
 use crate::store::setting_seed::GROUP_COMMIT_WINDOW_MS;
 use crate::store::setting_seed::SettingSpec;
-use crate::learning_setting::{
-    setting_value_in_txn,
-};
 
 use super::legal_hold::RefusalBatch;
 use super::{Store, StoreCore, active_write_txn_depth};
