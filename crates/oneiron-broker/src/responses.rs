@@ -78,7 +78,7 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
         if name == "content-type" {
             continue;
         }
-        let name = match name.parse() {
+        let name: reqwest::header::HeaderName = match name.parse() {
             Ok(name) => name,
             Err(_) => {
                 return answer(
