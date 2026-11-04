@@ -413,7 +413,7 @@ impl Ord for CustodyPermitSet {
 
 impl std::hash::Hash for CustodyPermitSet {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_length_prefix(self.len());
+        state.write_usize(self.len());
         for permit in self.iter() {
             permit.hash(state);
         }
