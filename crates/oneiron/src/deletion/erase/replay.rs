@@ -424,7 +424,7 @@ impl Vault {
                 "cleanup archives cannot be replayed as deletion intent",
             ));
         }
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::store::base_agent::guard_actor_delete(id)?;
         self.store
             .delete_guards
             .reject_ruling_delete(&self.store, txn, id)?;

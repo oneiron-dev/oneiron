@@ -119,6 +119,13 @@ pub mod ports {
     };
 }
 
+pub(crate) mod base_agent;
+pub(crate) mod centroid_evidence;
+pub(crate) mod conversation_residency;
+pub(crate) mod claim_vad_payment;
+pub mod consolidation_evidence;
+pub(crate) mod housekeeping_wake;
+pub(crate) mod writer_hold;
 pub(crate) mod agent_birth_custody;
 pub(crate) mod agent_birth_identity;
 pub mod agent_record;
