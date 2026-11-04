@@ -66269,7 +66269,7 @@
      "path": "src/skill_attribution/causes.rs",
      "purpose": "The labels the attribution judge settled on each attempt's terminal outcome, kept whatever their subject…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "struct": 1
      }
     },
@@ -66280,7 +66280,7 @@
      "path": "src/skill_attribution/codec.rs",
      "purpose": "Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 13
      }
     },
     {
@@ -66460,7 +66460,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 23,
       "re-export": 21
      }
     },
@@ -66481,17 +66481,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "PositiveFinding",
-      "PositiveSkillProposal"
-     ],
+     "notable": [],
      "path": "src/skill_attribution/positive.rs",
      "purpose": "The positive lane (OF-379): a win that taught the skill something",
      "surface": {
-      "crate-vis": 1,
-      "enum": 1,
       "fn": 4,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -66522,15 +66517,11 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SiteSkillExposure"
-     ],
+     "notable": [],
      "path": "src/skill_attribution/site_exposure.rs",
-     "purpose": "Site-skill exposures (FIX 11436): the site knowledge a run's browser was shown",
+     "purpose": "Site-skill exposures (FIX 11436): the rows live in `store::site_skill_exposure`; this module keeps the skill…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -66540,7 +66531,7 @@
      "path": "src/skill_attribution/skill_erase.rs",
      "purpose": "An erase in the attribution ledgers (FIX 8265, OF-568 L10; FIX 8988): the rows that name an erased skill or…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -66856,8 +66847,9 @@
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
-      "fn": 13,
+      "crate-vis": 2,
+      "fn": 12,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -67765,7 +67757,7 @@
      "path": "src/skill_hub/refinement_admission.rs",
      "purpose": "Content-free refinement identity and the transaction-local exact-admission capability",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 16
      }
     },
     {
@@ -70462,6 +70454,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/default_skill_hub.rs",
+     "purpose": "The first-party library skill hub every vault opens with: its stable id and the offline seed of its pinned…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "StoreDeleteGuards"
      ],
@@ -70645,12 +70648,9 @@
       "EgressPredicate",
       "Embedder",
       "EmbedderLocality",
-      "EmbeddingDevice",
       "EmbeddingMatchEvidence",
-      "EmbeddingProvenance",
       "EmbeddingProvenanceCount",
       "EmbeddingSpace",
-      "InputKind",
       "KindSlotBindings",
       "MediaEmbedReport",
       "MediaEmbedder",
@@ -70662,11 +70662,12 @@
      "path": "src/store/embedding.rs",
      "purpose": "Embedding space, input, provenance and host-provider vocabulary",
      "surface": {
-      "const": 10,
-      "crate-vis": 9,
-      "enum": 5,
-      "fn": 11,
-      "struct": 9,
+      "const": 9,
+      "crate-vis": 6,
+      "enum": 3,
+      "fn": 7,
+      "re-export": 2,
+      "struct": 8,
       "trait": 3,
       "type": 1
      }
@@ -71880,6 +71881,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/linear_task_revision.rs",
+     "purpose": "The tracker mirror's revision rows for a typed TASK (`LINEAR_TASK_REVISION`, `LINEAR_TASK_DIRTY`…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/local_queue_budget.rs",
      "purpose": "Byte accounting for bounded device-local queues, separate from verdict/rate policy",
      "surface": {
@@ -71951,8 +71962,8 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 85,
-      "mod": 81,
+      "crate-vis": 90,
+      "mod": 84,
       "re-export": 31
      }
     },
@@ -72374,6 +72385,21 @@
      "purpose": "The billing account a PERSON filed (`PERSON_BILLING_ACCOUNT` rows) and the erase that takes it with the PERSON",
      "surface": {
       "crate-vis": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PositiveFinding",
+      "PositiveSkillProposal"
+     ],
+     "path": "src/store/positive_skill_proposals.rs",
+     "purpose": "The pending positive skill proposals (`SKILL_ATTRIBUTION_POSITIVE_PROPOSAL` rows): what a succeeded attempt…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
       "struct": 1
      }
     },
@@ -73205,6 +73231,50 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/side_table_erase_scan.rs",
+     "purpose": "The scan an erase's scrub makes of one side table: every row whose key and value decode, with any row whose…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SiteSkillExposure"
+     ],
+     "path": "src/store/site_skill_exposure.rs",
+     "purpose": "Site-skill exposures (FIX 11436): the site knowledge a run's browser was shown",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_attribution_causes.rs",
+     "purpose": "The ledger of the labels the attribution judge settled on each attempt's terminal outcome…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_attribution_judgments.rs",
+     "purpose": "The attribution judge's durable verdicts and the edit proposals they mint (`SKILL_ATTRIBUTION_JUDGMENT`…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/skill_content_index.rs",
      "purpose": "Content-hash lookup rows for stored skills and their maintenance",
      "surface": {
@@ -73297,6 +73367,16 @@
      "purpose": "The custody index of a skill candidate's refinement carriers: which carriers a candidate owns, the holder…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_refinement_origin.rs",
+     "purpose": "The permanent origin facts of a refinement candidate: the hash of the first native Proposed claim or…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -79425,7 +79505,7 @@
      "path": "src/task_verb/linear_store.rs",
      "purpose": "Vault storage for the tracker mirror: replicated fields, local OCC and CAS links",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 6,
       "struct": 1
      }
@@ -89979,7 +90059,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 359,
+     "files": 367,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90219,7 +90299,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6255,
+   "source_files": 6263,
    "test_files": 898
   },
   "oneiron-android": {
@@ -126186,6 +126266,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BatchOp"
+     ],
+     "path": "src/batch_op.rs",
+     "purpose": "The batch op vocabulary: one write a batch applies, as the engine's batch builder records it",
+     "surface": {
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "SealedBundleGeneration"
      ],
      "path": "src/bundle_generations.rs",
@@ -126486,6 +126578,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EmbeddingDevice",
+      "EmbeddingProvenance",
+      "InputKind"
+     ],
+     "path": "src/embedding_vocabulary.rs",
+     "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "KeySpan",
       "MemberStep",
       "SecretSight"
@@ -126542,7 +126651,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 23
+      "mod": 25
      }
     },
     {
@@ -127971,6 +128080,13 @@
     }
    ],
    "modules": {
+    "batch_op": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The batch op vocabulary: one write a batch applies, as the engine's batch builder records it"
+    },
     "bundle_generations": {
      "files": 1,
      "impl_vault": false,
@@ -128012,6 +128128,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages…"
+    },
+    "embedding_vocabulary": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…"
     },
     "file_secret_marks": {
      "files": 1,
@@ -128135,7 +128258,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 121,
+   "source_files": 123,
    "test_files": 1
   },
   "oneiron-uniffi": {
