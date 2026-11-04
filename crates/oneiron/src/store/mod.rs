@@ -150,8 +150,12 @@ pub(crate) mod loro_document;
 pub(crate) mod loro_tombstones;
 #[cfg(feature = "sync")]
 pub mod materialization_event;
+pub mod model_description_rows;
+pub mod model_score_diff;
+pub(crate) mod model_stream_row;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
+pub mod pack_hook_actor_class;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
 pub(crate) mod project_kind;
@@ -206,6 +210,8 @@ pub mod body_descriptor;
 mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
+pub mod decision_ask_role;
+pub(crate) mod decision_question_watches;
 pub mod derivation;
 pub mod diagnostic_record;
 mod diagnostics;
@@ -219,6 +225,7 @@ pub(crate) mod known_value_index;
 pub(crate) mod l2_evidence;
 pub mod receipt_identity;
 pub(crate) mod result_body_erasure;
+pub(crate) mod result_body_rows;
 pub mod retrieval_deadline;
 pub mod retrieval_signal;
 pub mod row_birth;
@@ -253,6 +260,7 @@ mod key_custody;
 mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
+pub(crate) mod linear_pull_cursor;
 mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
