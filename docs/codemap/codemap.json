@@ -7178,10 +7178,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/export/home_room_project.rs",
+     "purpose": "The project a home-room body names, read by an importer to order a room after its project",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 13
      }
     },
@@ -7332,7 +7342,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 40,
       "mod": 1,
       "re-export": 3
      }
@@ -7584,6 +7594,16 @@
      "notable": [],
      "path": "src/batch/recovery_shell.rs",
      "purpose": "Header-only recovery of a retained soft-delete shell, never a body put",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/row_put.rs",
+     "purpose": "What a put is to the row it writes, as the record-scope stamp reads it",
      "surface": {
       "crate-vis": 1
      }
@@ -8136,6 +8156,20 @@
      "purpose": "A room's delete of a row only it staged (FIX 10763, FIX 11932, FIX 12012)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OrgAdminPower",
+      "SharedVaultWrite"
+     ],
+     "path": "src/batch/shared_vault_write.rs",
+     "purpose": "A requested shared-vault mutation and the closed organization-administration vocabulary it names",
+     "surface": {
+      "enum": 2,
+      "fn": 2
      }
     },
     {
@@ -24752,6 +24786,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/deletion/archive_role.rs",
+     "purpose": "The role an archive delete was admitted under, as a delete's receipts and gate reason codes name it",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/deletion/checkpoint_payload.rs",
      "purpose": "The deletion side of the checkpoint payload compartments (KS7-4, FIX 5688): which compartments a deleted…",
      "surface": {
@@ -25017,6 +25061,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/deletion/delete_bearing_update.rs",
+     "purpose": "The opaque delete-bearing delta a tombstone commit queues, and its single constructor",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/deletion/derived_rows.rs",
      "purpose": "Rows a record feeds outside the generic index set, torn with the record",
      "surface": {
@@ -25210,7 +25264,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 40,
       "re-export": 13
      }
     },
@@ -25389,6 +25443,16 @@
      "purpose": "Durable, request-bound interlock between tombstone publication and purge",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/window_document_format.rs",
+     "purpose": "The window-document format marker a native NOTE carrier writes, read by the publish path to choose a…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -35340,7 +35404,7 @@
      "path": "src/federation/archive_delete.rs",
      "purpose": "Who may delete one record the cleanup archived (ARCH-0073 §7, OF-449 L4), judged from the vault's own rows…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -35636,15 +35700,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "MembershipStanding",
-      "SharedVaultWrite"
+      "MembershipStanding"
      ],
      "path": "src/federation/membership_gate.rs",
      "purpose": "Transaction-bound shared-vault membership write authorization",
      "surface": {
       "crate-vis": 10,
-      "enum": 2,
-      "fn": 1
+      "enum": 1,
+      "fn": 1,
+      "re-export": 1
      }
     },
     {
@@ -35662,7 +35726,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "mod": 2,
       "re-export": 19
      }
@@ -35672,14 +35736,14 @@
      "kind": "src",
      "notable": [
       "OrgAdminError",
-      "OrgAdminPolicy",
-      "OrgAdminPower"
+      "OrgAdminPolicy"
      ],
      "path": "src/federation/org_admin.rs",
      "purpose": "Closed organization-administration powers",
      "surface": {
-      "enum": 2,
-      "fn": 9,
+      "enum": 1,
+      "fn": 7,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -52710,6 +52774,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/git_ref_change.rs",
+     "purpose": "One ref a checkout push moves and the paths that move changes, as the smart-HTTP door reads them back and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -52990,7 +53064,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 16,
       "re-export": 5
      }
@@ -72121,8 +72195,18 @@
      "path": "src/store/loro_document.rs",
      "purpose": "Loro byte-map operations and document codecs used by storage readers",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/loro_tombstones.rs",
+     "purpose": "The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -72149,7 +72233,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 61,
+      "crate-vis": 64,
       "mod": 75,
       "re-export": 23
      }
@@ -72517,6 +72601,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/project_kind.rs",
+     "purpose": "The run-time kind lookups for PROJECT and its revision companion: the pack and short-id prefixes they are…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ProposalSpoolClaim",
       "ProposalSpoolFloor",
@@ -72670,6 +72764,16 @@
      "purpose": "The txn ids of recent commits that wrote only request-replay rows (a slip's nonce and proof clock) or the…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/replica_edge_key.rs",
+     "purpose": "The CRDT map key of an edge in a window document",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -74133,7 +74237,8 @@
      "purpose": "Identity topology ingest, endpoint hydration, and edge key/value helpers",
      "surface": {
       "crate-vis": 4,
-      "fn": 4
+      "fn": 3,
+      "re-export": 1
      }
     },
     {
@@ -75865,7 +75970,7 @@
      "path": "src/sync/loro_support.rs",
      "purpose": "Loro-native helpers for the sync layer",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 8,
       "re-export": 1
      }
     },
@@ -77797,7 +77902,7 @@
      "path": "src/sync/window/tombstones.rs",
      "purpose": "Tombstone apply/export/replay plus window rebuild from updates",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -85567,7 +85672,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 1,
       "re-export": 22
      }
@@ -85898,7 +86003,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 46,
+      "crate-vis": 45,
       "enum": 3,
       "fn": 19,
       "re-export": 16,
@@ -86082,7 +86187,7 @@
      "path": "src/workspace_roster/project/revision.rs",
      "purpose": "Immutable, content-addressed project revisions (decision 8)",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -89671,7 +89776,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 179,
+     "files": 182,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90042,7 +90147,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 55,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90511,7 +90616,7 @@
      "purpose": "Live office body records and Vault doors"
     },
     "origin": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90917,7 +91022,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 322,
+     "files": 325,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91171,7 +91276,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6299,
+   "source_files": 6309,
    "test_files": 899
   },
   "oneiron-android": {
