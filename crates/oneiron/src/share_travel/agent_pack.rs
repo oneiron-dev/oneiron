@@ -15,7 +15,8 @@
 //! - `identity.md`: the instructions;
 //! - `policy.md`: JSON with the schema tag, the policy, the display name and
 //!   the born-with text that travelled;
-//! - `skills.json`: each skill dependency, pinned by content hash;
+//! - `skills.json`: each skill dependency, its format and native metadata,
+//!   pinned by content hash;
 //! - `skills/<content_hash>/<path>`: each skill's files;
 //! - `knowledge/selected.json`: the selected knowledge, as text.
 
@@ -36,11 +37,14 @@ use crate::context_pack::FieldProfile;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::{ModelId, ModelTierRef};
-use crate::skill::{SkillDependency, canonical_skill_tree_hash};
-use crate::skill_hub::{HubFile, HubPackage};
+use crate::skill::{
+    SkillCallContract, SkillContentHash, SkillDependency, SkillLifecycle, SkillRecord, SkillRole,
+    canonical_skill_tree_hash,
+};
+use crate::skill_hub::{HubFile, HubPackage, SkillPackageFormat};
 
 /// The schema tag `policy.md` carries.
-pub const AGENT_PACK_TRAVEL_SCHEMA: &str = "oneiron.agent-pack-travel.v1";
+pub const AGENT_PACK_TRAVEL_SCHEMA: &str = "oneiron.agent-pack-travel.v2";
 
 const PACK_MANIFEST: &str = "PACK.md";
 const IDENTITY: &str = "identity.md";
@@ -398,7 +402,119 @@ pub struct AgentPackPolicy {
     pub compaction_model: Option<ModelId>,
 }
 
-/// One `skills.json` row: a skill dependency pinned by its content hash.
+/// How a travelling skill's source fields relate to its native metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentPackSkillFormat {
+    Folder,
+    Native,
+}
+
+impl From<SkillPackageFormat> for AgentPackSkillFormat {
+    fn from(format: SkillPackageFormat) -> Self {
+        match format {
+            SkillPackageFormat::Folder => Self::Folder,
+            SkillPackageFormat::Native => Self::Native,
+        }
+    }
+}
+
+impl From<AgentPackSkillFormat> for SkillPackageFormat {
+    fn from(format: AgentPackSkillFormat) -> Self {
+        match format {
+            AgentPackSkillFormat::Folder => Self::Folder,
+            AgentPackSkillFormat::Native => Self::Native,
+        }
+    }
+}
+
+/// A skill's native role, carried without granting its authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentPackSkillRole {
+    Knowledge,
+    Workflow,
+    Callable,
+}
+
+impl From<SkillRole> for AgentPackSkillRole {
+    fn from(role: SkillRole) -> Self {
+        match role {
+            SkillRole::Knowledge => Self::Knowledge,
+            SkillRole::Workflow => Self::Workflow,
+            SkillRole::Callable => Self::Callable,
+        }
+    }
+}
+
+impl From<AgentPackSkillRole> for SkillRole {
+    fn from(role: AgentPackSkillRole) -> Self {
+        match role {
+            AgentPackSkillRole::Knowledge => Self::Knowledge,
+            AgentPackSkillRole::Workflow => Self::Workflow,
+            AgentPackSkillRole::Callable => Self::Callable,
+        }
+    }
+}
+
+/// The executable call contract a callable skill carries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPackSkillCall {
+    pub reference: String,
+    pub arguments: serde_json::Value,
+    pub returns: serde_json::Value,
+}
+
+impl From<&SkillCallContract> for AgentPackSkillCall {
+    fn from(call: &SkillCallContract) -> Self {
+        Self {
+            reference: call.reference.clone(),
+            arguments: call.arguments.clone(),
+            returns: call.returns.clone(),
+        }
+    }
+}
+
+impl From<AgentPackSkillCall> for SkillCallContract {
+    fn from(call: AgentPackSkillCall) -> Self {
+        Self {
+            reference: call.reference,
+            arguments: call.arguments,
+            returns: call.returns,
+        }
+    }
+}
+
+/// A reference-free skill dependency: its id and version floor, never an
+/// entity ref (FIX 3276).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPackSkillDependency {
+    pub skill_id: String,
+    pub min_version: Option<String>,
+}
+
+impl From<&SkillDependency> for AgentPackSkillDependency {
+    fn from(dependency: &SkillDependency) -> Self {
+        Self {
+            skill_id: dependency.skill_id.clone(),
+            min_version: dependency.min_version.clone(),
+        }
+    }
+}
+
+impl From<AgentPackSkillDependency> for SkillDependency {
+    fn from(dependency: AgentPackSkillDependency) -> Self {
+        Self {
+            skill_id: dependency.skill_id,
+            min_version: dependency.min_version,
+        }
+    }
+}
+
+/// One `skills.json` row: a skill dependency and the native metadata its
+/// receiver needs, pinned by content hash (FIX 3276).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentPackSkillRef {
@@ -407,9 +523,14 @@ pub struct AgentPackSkillRef {
     pub min_version: Option<String>,
     /// `canonical_skill_tree_hash` over the skill's files, lowercase hex.
     pub content_hash: String,
+    pub format: AgentPackSkillFormat,
+    pub desc: String,
+    pub role: AgentPackSkillRole,
+    pub call: Option<AgentPackSkillCall>,
+    pub dependencies: Vec<AgentPackSkillDependency>,
 }
 
-/// One skill the agent depends on, with its body.
+/// One skill the agent depends on, with its body and native metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentPackSkill {
     pub skill_id: String,
@@ -417,17 +538,28 @@ pub struct AgentPackSkill {
     /// The dependency's floor, as the definition names it.
     pub min_version: Option<String>,
     pub content_hash: String,
+    pub format: AgentPackSkillFormat,
+    pub desc: String,
+    pub role: AgentPackSkillRole,
+    pub call: Option<AgentPackSkillCall>,
+    pub dependencies: Vec<AgentPackSkillDependency>,
     /// The skill's files, path-sorted, relative to its folder.
     pub files: Vec<HubFile>,
 }
 
 impl AgentPackSkill {
-    /// A skill from its files; the content hash is computed here.
+    /// A skill from its files and native metadata; the hash is computed here.
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         skill_id: impl Into<String>,
         version: impl Into<String>,
         min_version: Option<String>,
         mut files: Vec<HubFile>,
+        format: AgentPackSkillFormat,
+        desc: String,
+        role: AgentPackSkillRole,
+        call: Option<AgentPackSkillCall>,
+        dependencies: Vec<AgentPackSkillDependency>,
     ) -> Result<Self> {
         files.sort_by(|left, right| left.path.as_bytes().cmp(right.path.as_bytes()));
         let content_hash = tree_hash(&files)?;
@@ -436,6 +568,11 @@ impl AgentPackSkill {
             version: version.into(),
             min_version,
             content_hash,
+            format,
+            desc,
+            role,
+            call,
+            dependencies,
             files,
         };
         skill.validate()?;
@@ -455,11 +592,23 @@ impl AgentPackSkill {
         {
             return Err(invalid("a skill package does not match its stored hash"));
         }
+        let files = package.export_files()?;
+        if let Some(file) = files
+            .iter()
+            .find(|file| std::str::from_utf8(&file.content).is_err())
+        {
+            return Err(binary_file_error(&package.record.skill_id, &file.path));
+        }
         Self::new(
             dependency.skill_id.clone(),
             package.record.version.clone(),
             dependency.min_version.clone(),
-            package.export_files()?,
+            files,
+            package.format.into(),
+            package.record.desc.clone(),
+            package.record.role.into(),
+            package.record.call.as_ref().map(Into::into),
+            package.record.dependencies.iter().map(Into::into).collect(),
         )
     }
 
@@ -471,18 +620,69 @@ impl AgentPackSkill {
             version: self.version.clone(),
             min_version: self.min_version.clone(),
             content_hash: self.content_hash.clone(),
+            format: self.format,
+            desc: self.desc.clone(),
+            role: self.role,
+            call: self.call.clone(),
+            dependencies: self.dependencies.clone(),
         }
+    }
+
+    /// Rebuilds the untrusted package at the destination through the existing
+    /// source validator. Imported/inert record fields confer no authority;
+    /// the common skill-import door performs its own admission (FIX 3276).
+    pub fn package(&self) -> Result<HubPackage> {
+        let record = SkillRecord::new(
+            self.skill_id.clone(),
+            self.desc.clone(),
+            self.version.clone(),
+            ClaimApprovalStatus::Proposed,
+            SkillLifecycle::Candidate,
+            ClaimSource::Imported,
+            0.5,
+            false,
+            true,
+            self.dependencies
+                .clone()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            crate::skill_hub::hub_folder_provenance(&self.files),
+        )
+        .with_role(self.role.into(), self.call.clone().map(Into::into))
+        .with_content_hash(SkillContentHash::parse_hex(&self.content_hash)?);
+        crate::skill_hub::package_from_source(&record, self.files.clone(), self.format.into())
     }
 
     fn validate(&self) -> Result<()> {
         if self.skill_id.trim().is_empty()
             || self.version.trim().is_empty()
+            || self.desc.trim().is_empty()
             || self
                 .min_version
                 .as_deref()
                 .is_some_and(|v| v.trim().is_empty())
         {
-            return Err(invalid("a skill needs an id and a version"));
+            return Err(invalid("a skill needs an id, description and version"));
+        }
+        if (self.role == AgentPackSkillRole::Callable) != self.call.is_some() {
+            return Err(invalid("a callable skill needs its call contract"));
+        }
+        if self.dependencies.iter().any(|dependency| {
+            dependency.skill_id.trim().is_empty()
+                || dependency
+                    .min_version
+                    .as_deref()
+                    .is_some_and(|version| version.trim().is_empty())
+        }) {
+            return Err(invalid("a skill dependency needs an id and version floor"));
+        }
+        if let Some(file) = self
+            .files
+            .iter()
+            .find(|file| std::str::from_utf8(&file.content).is_err())
+        {
+            return Err(binary_file_error(&self.skill_id, &file.path));
         }
         if tree_hash(&self.files)? != self.content_hash {
             return Err(invalid("a skill's files do not match its content hash"));
@@ -757,6 +957,11 @@ impl AgentPackTravelProjection {
                 reference.version,
                 reference.min_version,
                 skill_files,
+                reference.format,
+                reference.desc,
+                reference.role,
+                reference.call,
+                reference.dependencies,
             )?;
             if skill.content_hash != reference.content_hash {
                 return Err(invalid("a skill's files do not match its content hash"));
@@ -850,6 +1055,12 @@ fn tree_hash(files: &[HubFile]) -> Result<String> {
             .map(|file| (file.path.as_str(), file.content.as_slice())),
     )?
     .to_hex())
+}
+
+fn binary_file_error(skill_id: &str, path: &str) -> Error {
+    Error::InvalidConfig(format!(
+        "agent pack travel: skill {skill_id} file {path} is binary and cannot travel"
+    ))
 }
 
 fn invalid(reason: &'static str) -> Error {

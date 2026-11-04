@@ -8,8 +8,9 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::temporal::TimeRange;
 
-use super::codec::{decode_access_grant_body, decode_erased_grant_body, encode_access_grant_body,
-    erased_grant, invalid_grant,
+use super::codec::{
+    decode_access_grant_body, decode_erased_grant_body, encode_access_grant_body, erased_grant,
+    invalid_grant,
 };
 use super::record::{AccessGrant, AccessGrantScope, CalendarAccessGrantRow};
 use crate::error::RecordError;

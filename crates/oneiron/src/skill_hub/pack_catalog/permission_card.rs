@@ -39,21 +39,8 @@ pub(super) fn pack_permissions(
             .collect()
     };
     let empty: &[String] = &[];
-    let mut folders = std::collections::BTreeMap::<String, Vec<crate::skill_hub::HubFile>>::new();
-    for file in source.files() {
-        if let Some(relative) = file.path.strip_prefix("skills/") {
-            let (folder, path) = relative
-                .split_once('/')
-                .ok_or_else(|| invalid("pack skill must have a folder"))?;
-            folders
-                .entry(folder.to_owned())
-                .or_default()
-                .push(crate::skill_hub::HubFile::new(path, file.content.clone()));
-        }
-    }
     let mut bundled_skills = Vec::<BundledSkillPermissions>::new();
-    for files in folders.into_values() {
-        let package = super::super::folder::package_from_files(files)?;
+    for (_folder, package) in super::bundled_skills::bundled_skill_packages(source)? {
         let caps = &package.capabilities;
         let skill = BundledSkillPermissions {
             skill_id: package.record.skill_id,
