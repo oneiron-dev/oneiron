@@ -432,11 +432,9 @@ pub(super) fn finish_cell(
     bounds: &mut Option<Bounds<'_>>,
 ) -> Result<()> {
     checkpoint(bounds)?;
-    let CurrentCell {
-        read: (cell, kind, value, formula, value_seen),
-        scope: mut cell_scope,
-        ..
-    } = current.take().ok_or_else(invalid)?;
+    let current = current.take().ok_or_else(invalid)?;
+    let mut cell_scope = current.scope;
+    let (cell, kind, value, formula, value_seen) = current.read;
     let expr_bytes = formula.as_ref().map_or(0, |s| wide(s.capacity()));
     let mut moved: u64 = 0;
     let mut shared_scope = None;
@@ -687,11 +685,11 @@ pub(super) fn attributes(
     bounds: &mut Option<Bounds<'_>>,
 ) -> Result<Scoped<BTreeMap<String, String>>> {
     checkpoint(bounds)?;
+    let mut scope = temp_scope(bounds);
     let mut out = BTreeMap::new();
     // One tag's map with its scope, dropped after `r`/`t` are read: each
     // attribute grows by its measured bytes plus one node estimate, acked
     // to actual capacities, never volume across tags.
-    let mut scope = temp_scope(bounds);
     let mut live: u64 = 0;
     for a in tag.attributes() {
         checkpoint(bounds)?;
