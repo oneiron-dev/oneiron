@@ -7919,6 +7919,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "gix",
+ "gix-quote",
  "half",
  "heed",
  "icalendar",

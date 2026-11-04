@@ -440,6 +440,10 @@ fn read_framed_stream(
             continue;
         }
         let (oid, len, path) = parse_blob_record_header(header)?;
+        // TIP ONLY (FIX20 PART): the tip stream frames `git diff-tree --raw`
+        // text, so a quoted tip path is git's C-quoted form; history labels
+        // are cat-file `%(rest)` and stay verbatim.
+        let path = if moves { decode_tip_path(&path)? } else { path };
         if len > scan.blob_bytes() {
             return Err(InputRefused::BlobTooLarge);
         }
@@ -570,7 +574,14 @@ fn verdict_line(verdict: &DoorWindowVerdict) -> String {
         }
         DoorWindowVerdict::NotInvoked => "oneiron door: no request".to_owned(),
         DoorWindowVerdict::Rejected { reasons } => {
-            bounded_verdict_line("oneiron door refused this push: ", reasons)
+            // Printable emission guard (FIX20 PART): a decoded tip control
+            // path must not inject raw lines/control bytes here; escape the
+            // displayed reasons before the existing bound/truncate.
+            let escaped: Vec<String> = reasons
+                .iter()
+                .map(|reason| reason.escape_default().to_string())
+                .collect();
+            bounded_verdict_line("oneiron door refused this push: ", &escaped)
         }
     }
 }
@@ -724,4 +735,44 @@ fn parse_blob_record_header(header: &str) -> Result<(String, u64, String)> {
         .parse::<u64>()
         .map_err(|_| serve_failed("door blob record declares an unparsable length"))?;
     Ok((oid.to_owned(), len, path.to_owned()))
+}
+
+/// Decode a TIP-stream path (FIX20 PART, tip-only).
+///
+/// The tip producer frames `git diff-tree --raw` text, so a tip path that
+/// starts with `"` is git's C-quoted form; plain tip paths pass through
+/// byte-identical. History labels are cat-file `%(rest)` and never reach
+/// here. A malformed actual tip quote is the existing generic refusal, never
+/// an echoed input; undecodable UTF-8 keeps the original quoted string (the
+/// admitted call is preserved; the LFS match residual stays unresolved).
+fn decode_tip_path(path: &str) -> Result<String> {
+    if !path.starts_with('"') {
+        return Ok(path.to_owned());
+    }
+    let input = gix::bstr::BStr::new(path);
+    let (decoded, consumed) = gix_quote::ansi_c::undo(input)
+        .map_err(|_| serve_failed("door tip path quoting is malformed"))?;
+    if consumed != input.len() {
+        return Err(serve_failed("door tip path quoting is malformed"));
+    }
+    // `undo` also accepts an unterminated quote, so require a genuine
+    // unescaped closing quote: the last byte is `"` preceded by an even run
+    // of backslashes (an odd run escapes the quote itself).
+    let bytes = path.as_bytes();
+    let mut backslashes = 0;
+    for &byte in bytes[..bytes.len().saturating_sub(1)].iter().rev() {
+        if byte == b'\\' {
+            backslashes += 1;
+        } else {
+            break;
+        }
+    }
+    if bytes.last() != Some(&b'"') || backslashes % 2 == 1 {
+        return Err(serve_failed("door tip path quoting is malformed"));
+    }
+    let decoded_bstr: &gix::bstr::BStr = &decoded;
+    match std::str::from_utf8(decoded_bstr) {
+        Ok(valid) => Ok(valid.to_owned()),
+        Err(_) => Ok(path.to_owned()),
+    }
 }
