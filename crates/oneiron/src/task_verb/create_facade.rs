@@ -290,7 +290,14 @@ impl Memory<'_> {
                     return None;
                 }
                 match proposal_origin_in(self.vault(), &rtxn, *id) {
-                    Ok(parked) => (parked == origin).then_some(*id),
+                    Ok(parked) => {
+                        let same_creator = match (&parked, &origin) {
+                            (Some(parked), Some(origin)) => parked.same_creator_as(origin),
+                            (None, None) => true,
+                            _ => false,
+                        };
+                        same_creator.then_some(*id)
+                    }
                     Err(error) => {
                         unreadable = Some(error);
                         None
@@ -527,7 +534,7 @@ impl Memory<'_> {
     /// [`Self::route_created_task_in_txn`] under an origin already resolved:
     /// a live binding's, a host-bound post's, or the one an approved
     /// proposal or wave plan witnessed. `None` is an unstamped root; a root
-    /// witness carries only the conversation that started the work.
+    /// witness keeps caller provenance and the conversation, when known.
     pub(super) fn route_created_task_with_origin_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -593,6 +600,7 @@ impl Memory<'_> {
                         type_ref: Some(validated.type_ref.clone()),
                         budget,
                         origin_conversation: origin.and_then(TaskCreateOrigin::origin_conversation),
+                        caller_origin: origin.map(TaskCreateOrigin::caller_origin),
                         team,
                         objectives,
                         // FIX 11592: the instrument this request was admitted

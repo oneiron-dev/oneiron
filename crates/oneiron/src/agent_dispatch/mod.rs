@@ -24,6 +24,8 @@ mod agent_run;
 mod attenuation;
 pub mod budget_doors;
 mod budget_hold;
+mod caller_origin;
+pub use caller_origin::CallerOrigin;
 mod codec;
 mod comm;
 pub(crate) use self::comm::{

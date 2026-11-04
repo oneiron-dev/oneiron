@@ -419,6 +419,7 @@ pub(super) fn dispatch_obligor_agent_turn(
             now,
         },
         AgentSpawnContext {
+            caller_origin: Some(crate::agent_dispatch::CallerOrigin::NativeHost),
             context_spec: Some(ContextSpec {
                 briefing: Some(briefing),
                 ..ContextSpec::default()
