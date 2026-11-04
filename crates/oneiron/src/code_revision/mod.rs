@@ -4,6 +4,11 @@
 
 mod commit_metadata;
 pub use commit_metadata::CodeCommitMetadata;
+mod production;
+pub(crate) use self::production::{
+    erase_code_revision_proposal_production_actor_in_txn,
+    erase_code_revision_record_production_actor_in_txn,
+};
 mod promotion;
 pub use promotion::{CodeRevisionFileOps, CodeSessionRun};
 mod codec;

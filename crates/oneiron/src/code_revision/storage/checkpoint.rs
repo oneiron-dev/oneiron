@@ -10,9 +10,11 @@
 //!
 //! A revision's commit metadata names its author, and its integrity fold
 //! binds those bytes, so no split leaves a no-one form: a revision that
-//! carries one stays under the vault-wide seal, named with its session. No
-//! revision row names another actor. Nothing calls this until KS7-5, and only
-//! once CHECKPOINT_PAYLOADS_ENABLED is on.
+//! carries one stays under the vault-wide seal, named with its session. The
+//! host production witness is a separate actor payload outside the fold: if
+//! it does not open, only the witness restores Erased and the revision is
+//! unchanged. Nothing calls this until KS7-5, and only once
+//! CHECKPOINT_PAYLOADS_ENABLED is on.
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
@@ -26,13 +28,16 @@ use super::super::CodeRevision;
 use super::super::keys::{
     FORK_PARENT_INDEX, FORKS, FRONTIER, INTEGRITY, PARENT_INDEX, RECORDS, SESSION_INDEX,
 };
+use super::super::production::{PRODUCTION_PART, rejoin_production_part, split_production_part};
 use super::super::promotion::checkpoint as promotion;
 use super::super::proposals::checkpoint as proposals;
+use crate::blob_artifact::OutputProductionStamp;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
-    self, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator, Unresolved,
+    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator, RowPart,
+    Unresolved,
 };
 
 /// The carrier a revision's commit metadata is: it names the author, and the
@@ -40,19 +45,35 @@ use crate::store::checkpoint_payload::rows::{
 const COMMIT_AUTHOR: &str = "code revision commit metadata names its author";
 
 /// Files a revision's row under its session, or leaves it under the
-/// vault-wide seal when its commit metadata names an author.
+/// vault-wide seal when its commit metadata names an author. A Host
+/// production witness splits into its own actor part and the row keeps the
+/// Erased skeleton `erased_bytes` spells; Unknown and Erased stay exact.
 pub(crate) fn revision_row(
     out: &mut Captured,
     revision: &CodeRevision,
     at: RowLocator,
     bytes: Vec<u8>,
-) {
+    erased_bytes: impl FnOnce() -> Result<Vec<u8>>,
+) -> Result<()> {
     let owner = OwnerRef::entity(&revision.session_id);
     if revision.commit_metadata.is_some() {
         out.unclassified(at, Some(owner), Unresolved::ActorSplit(COMMIT_AUTHOR));
-    } else {
-        out.exact(owner, at, bytes);
+        return Ok(());
     }
+    let Some((actor, part)) = split_production_part(&revision.production)? else {
+        out.exact(owner, at, bytes);
+        return Ok(());
+    };
+    let content = erased_bytes()?;
+    let rows = out.owner(owner);
+    rows.actor_parts.push(ActorPart {
+        actor_entity: actor,
+        content_locator: at.clone(),
+        field: PRODUCTION_PART.to_owned(),
+        bytes: part,
+    });
+    rows.rows.push(RowPart::NoActor { at, value: content });
+    Ok(())
 }
 
 /// Files a row under the session `revision` belongs to; a revision no
@@ -80,7 +101,11 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             continue;
         }
         sessions.insert(row.key, row.value.session_id);
-        revision_row(&mut out, &row.value, row.at, row.bytes);
+        revision_row(&mut out, &row.value, row.at, row.bytes, || {
+            let mut skeleton = row.value.clone();
+            skeleton.production = OutputProductionStamp::Erased;
+            RECORDS.encode_value(&skeleton)
+        })?;
     }
     proposals::capture(dbs, txn, &mut sessions, &mut out)?;
     for row in rows::typed_rows(dbs, txn, INTEGRITY, &mut out)? {
@@ -166,11 +191,32 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     }
 }
 
+/// Puts a split record's or proposal's production witness back; a missing
+/// part restores the skeleton as it stands, never withheld. Every other
+/// no-one-form part refuses, as before.
+fn join(
+    txn: &RoTxn<'_>,
+    at: &RowLocator,
+    value: &[u8],
+    parts: &[&ActorPart],
+) -> Result<Option<Vec<u8>>> {
+    if at.in_table(RECORDS.decl()) {
+        let mut revision = RECORDS.decode_value(value)?;
+        let skeleton = std::mem::replace(&mut revision.production, OutputProductionStamp::Erased);
+        revision.production = rejoin_production_part(skeleton, parts)?;
+        return RECORDS.encode_value(&revision).map(Some);
+    }
+    if proposals::owns(at) {
+        return proposals::join(value, parts);
+    }
+    rows::no_join(txn, at, value, parts)
+}
+
 /// Puts `opened`'s code-revision rows back exactly.
 pub(crate) fn restore_in_txn(
     dbs: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, rows::no_join)
+    rows::restore_parts(dbs, txn, &opened, check, join)
 }
