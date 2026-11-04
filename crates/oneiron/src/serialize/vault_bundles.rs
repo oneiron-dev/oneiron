@@ -1,6 +1,6 @@
 //! Build portable facets after every native body has passed credential nulling.
 use super::{ExportBody, export_source_tree};
-use crate::agent_def::KnowledgeFormat;
+use crate::batch::export::agent_knowledge_format::KnowledgeFormat;
 use crate::batch::export::{AgentBundleOmission, ExportAgentBundle, ExportEntity};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -84,7 +84,9 @@ pub(crate) fn agent_bundle(
         .and_then(|b| crate::agent_def::decode_agent_definition(&b).ok());
     if let Some(definition) = definition {
         if let Some(refs) = crate::agent_def::resolve_agent_skill_refs(&definition, skills) {
-            let selected = crate::agent_def::select_agent_knowledge(&id, claims);
+            let selected = crate::batch::export::agent_knowledge_selection::select_agent_knowledge(
+                &id, claims,
+            );
             let files = crate::agent_def::agent_pack_files_in(
                 knowledge,
                 &id,
