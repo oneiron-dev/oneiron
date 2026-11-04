@@ -70,12 +70,13 @@ impl Vault {
         body: &ClaimBody,
         occurred: TimeRange,
         learned_at: u64,
+        explicit_prior: Option<&EntityId>,
         cut: bool,
     ) -> Result<()> {
         if body.source != Some(ClaimSource::Imported) {
             return Err(invalid("archive source floor missing"));
         }
-        let mut record = decode_edge_provenance_body(&body.value)?;
+        let record = decode_edge_provenance_body(&body.value)?;
         if occurred.start != record.valid_from.unwrap_or(learned_at)
             || occurred.end != record.valid_to.unwrap_or(u64::MAX)
         {
@@ -90,9 +91,10 @@ impl Vault {
         else {
             return Err(invalid("archive provenance subject"));
         };
-        if body.lifecycle != ClaimLifecycleStatus::Active {
-            record.supersession_status = SupersessionStatus::Proposed;
-        }
+        // The archived assertion status travels in the put body exactly as a
+        // native write carries it (FIX 9594): a Confirmed or Disputed row is
+        // never flattened to Proposed; supersession closures preserve it, and
+        // the retract below still stamps Retracted.
         let scope = body
             .scope
             .as_ref()
@@ -116,7 +118,8 @@ impl Vault {
             body: &record,
             actor_class: class,
             learned_at,
-            explicit_prior: None,
+            explicit_prior,
+            scope_project: Some(body.scope_project),
             imported_evidence: Some(scope),
             generated_evidence: None,
         };

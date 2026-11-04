@@ -44,6 +44,9 @@ pub(crate) struct EdgeProvenanceWrite<'a> {
     pub(crate) actor_class: EdgeActorClass,
     pub(crate) learned_at: u64,
     pub(crate) explicit_prior: Option<&'a EntityId>,
+    /// The project the wrapper lands in when the write carries one (archive
+    /// restore, FIX 10052); a native write names none and defaults.
+    pub(crate) scope_project: Option<EntityId>,
     pub(crate) imported_evidence: Option<Value>,
     /// Computed evidence source for an attributed derived edge. The original
     /// head is not re-sourced; the provenance wrapper records this assertion.
@@ -162,6 +165,7 @@ impl Vault {
                     actor_class,
                     learned_at,
                     explicit_prior: None,
+                    scope_project: None,
                     imported_evidence: None,
                     generated_evidence: None,
                 },
@@ -206,6 +210,7 @@ impl Vault {
                     actor_class,
                     learned_at,
                     explicit_prior: None,
+                    scope_project: None,
                     imported_evidence: None,
                     generated_evidence: None,
                 },
@@ -245,6 +250,91 @@ impl Vault {
     /// * prior is no longer live → [`ClaimError::ProvenanceClaimAlreadyClosed`](crate::error::ClaimError::ProvenanceClaimAlreadyClosed);
     /// * `learned_at` older than the live frontier →
     ///   [`ClaimError::ProvenancePrecedenceViolation`](crate::error::ClaimError::ProvenancePrecedenceViolation).
+    /// Closes a just-restored still-live tied prior whose archived closer
+    /// is already present (blind-review P1 rounds 5-6, REVIEW-4378.md +
+    /// REVIEW-4378-kimi.md): the import loop found no later missing row to
+    /// name it, so the cohort would abort its final exact comparison with
+    /// the prior left live. Replays the writer's own closure derivation
+    /// (same record close + policy + materialization), then restamps the
+    /// subject edge from the surviving cohort exactly like the retract
+    /// path (D14 winner, closer's actor class on the Retracted stamp when
+    /// none survives). Idempotent: an already-closed prior is left alone.
+    pub(crate) fn close_restored_tied_prior_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        prior_id: &EntityId,
+        closer_id: &EntityId,
+        close_at: u64,
+        without_edge: bool,
+    ) -> Result<()> {
+        let prior = self.load_provenance_claim_in_txn(wtxn, prior_id)?;
+        if prior.wrapper.lifecycle != ClaimLifecycleStatus::Active {
+            return Ok(());
+        }
+        let closed_record = close_record_for_supersession(&prior.record, close_at)?;
+        let (closed_occurred, closed_learned_at, closed_claim_body, closed_data) =
+            closed_claim_put_payload(&prior, &closed_record, ClaimLifecycleStatus::Superseded)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
+        crate::gate::check_edge_provenance_claim_policy(
+            &self.store,
+            wtxn,
+            &closed_claim_body,
+            &closed_record,
+            prior.actor_class,
+            &policy,
+        )?;
+        let (op, binding) = provenance_materialization_op(
+            &self.store,
+            wtxn,
+            prior.id,
+            closed_occurred,
+            closed_learned_at,
+            closed_data,
+        )?;
+        crate::batch::apply_owner_bound_claim_puts(self, wtxn, vec![op], vec![binding], true)?;
+        // The close changes the live head, so the subject edge must carry
+        // the surviving cohort's flags, not the inserted prior's. Mirror
+        // the retract path; a no-op when the edge is gone or already
+        // stamped.
+        let closer = self.load_provenance_claim_in_txn(wtxn, closer_id)?;
+        let subject = prior.subject;
+        // Structural values have no hot flags; cut imports must leave any
+        // pre-existing subject edge alone, just like the retract path.
+        if without_edge
+            || edge_value_layout_for_kind(subject.kind, false) == EdgeValueLayout::Structural
+        {
+            return Ok(());
+        }
+        let Some(edge) =
+            self.store
+                .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
+        else {
+            return Ok(());
+        };
+        let live = self.live_edge_provenance_claims_in_txn(wtxn, &subject, None)?;
+        let survivors = self.eligible_provenance_claims_in_txn(wtxn, live)?;
+        let precedence: Vec<ProvenancePrecedence> = survivors
+            .iter()
+            .map(StoredProvenanceClaim::precedence)
+            .collect();
+        let flags = match winner_index(&precedence) {
+            Some(index) => survivors[index].flags(),
+            None => EdgeProvenanceFlags {
+                confirmation_status: EdgeConfirmationStatus::Retracted,
+                actor_class: closer.actor_class,
+            },
+        };
+        if edge.provenance == Some(flags) {
+            return Ok(());
+        }
+        restamp_edge_flags(&self.store, wtxn, &subject, flags)?;
+        ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
+        // The edge bytes changed without an edge BatchOp in this txn, so the
+        // graph version is bumped explicitly (apply_ops does it for edge ops).
+        crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
+        Ok(())
+    }
+
     pub fn supersede_edge_provenance(
         &self,
         prior_claim_id: &EntityId,
@@ -496,6 +586,7 @@ impl Vault {
                     actor_class,
                     learned_at,
                     explicit_prior,
+                    scope_project: None,
                     imported_evidence: None,
                     generated_evidence: None,
                 },
@@ -559,6 +650,7 @@ impl Vault {
             actor_class,
             learned_at,
             explicit_prior,
+            scope_project,
             imported_evidence,
             generated_evidence,
         } = write;
@@ -624,6 +716,9 @@ impl Vault {
         )?;
         claim_body.valid_from = body.valid_from;
         claim_body.valid_to = body.valid_to;
+        if let Some(project) = scope_project {
+            claim_body.scope_project = project;
+        }
         if let Some(evidence) = imported_evidence {
             imported::stamp_imported_source(&mut claim_body, evidence);
         }

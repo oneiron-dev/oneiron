@@ -204,6 +204,7 @@ impl Vault {
                 ExportBody::File(file) => {
                     if file_row_stored(self, &wtxn, &id, &row, file, &archive.files)? {
                         validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                        stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                         unchanged_entities += 1;
                         continue;
                     }
@@ -220,6 +221,7 @@ impl Vault {
                 let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
                 if matches_row(&row, &existing, &row.body) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
                 }
@@ -230,6 +232,7 @@ impl Vault {
                     &ExportBody::from_bytes(&body, row.entity_type),
                 ) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
                 }
@@ -480,10 +483,11 @@ fn insert_ready_row<R: Read + Seek>(
             Ok(())
         })?;
         let staged = staged.ok_or(Error::InvariantViolation("archive file body not staged"))?;
-        return vault.put_asset_body_in_txn(wtxn, &id, occurred, row.learned_at, &staged);
+        vault.put_asset_body_in_txn(wtxn, &id, occurred, row.learned_at, &staged)?;
+        return stamp_archived_birth(vault, wtxn, archive, &id);
     }
     let body = imported_body(&row, &archive.index, &archive.files)?;
-    match row.entity_type {
+    let landed = match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let claim = decode_import_claim(&body)?;
             if crate::write_envelope::learning_predicate::is_learning_predicate(&claim.predicate) {
@@ -548,6 +552,61 @@ fn insert_ready_row<R: Read + Seek>(
                 .put(&id, row.entity_type, occurred, row.learned_at, &body)
                 .apply(wtxn)
         }
+    };
+    landed?;
+    stamp_archived_birth(vault, wtxn, archive, &id)
+}
+
+/// FIX 1178: stamps the birth the archive carries for `id` beside its landed
+/// row, in the import's own transaction. Its refs are renamed onto this
+/// vault's MODEL ids (FIX 3890), as the row's own refs were. The replicated
+/// writer needs no named row present, so a birth lands whole even when an
+/// input or trigger sits outside this archive. As on sync
+/// (`stamp_birth_or_warn`), a birth this vault refuses — a different one
+/// already stands, or its actor was erased here — is left out with a
+/// warning: the row stands, and its stored birth is never replaced, but
+/// for a document birth that stood in for it (FIX 1180).
+pub(super) fn stamp_archived_birth<R: Read + Seek>(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    archive: &IndexedArchive<'_, R>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(row) = archive.row_birth(id)? else {
+        return Ok(());
+    };
+    let mut renamed = BTreeMap::new();
+    for input in &row.birth.made_by.inputs {
+        renamed.insert(
+            input.row,
+            super::provenance_import::mapped(&archive.index, input.row)?,
+        );
+    }
+    if let Some(trigger) = &row.birth.made_by.trigger {
+        renamed.insert(
+            trigger.row(),
+            super::provenance_import::mapped(&archive.index, trigger.row())?,
+        );
+    }
+    let birth = row
+        .birth
+        .renamed_refs(|row| renamed.get(&row).copied().unwrap_or(row));
+    match crate::provenance::birth::stamp_replicated_row_birth_in_txn(
+        &vault.store,
+        wtxn,
+        id,
+        &birth,
+    ) {
+        Ok(()) => Ok(()),
+        Err(error @ (Error::InvalidConfig(_) | Error::InvariantViolation(_))) => {
+            tracing::warn!(
+                entity = %id.to_hex(),
+                %error,
+                "archived row birth refused; the row stands without it"
+            );
+            Ok(())
+        }
+        Err(error) => Err(error),
     }
 }
 
