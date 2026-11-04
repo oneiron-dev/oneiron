@@ -424,6 +424,11 @@ async fn execute(
     // One physical request, observed from its send (FIX 9297, FIX 9417 pattern).
     let publisher = InferencePublisher::begin(lease);
     let mut last = loop {
+        // Arm the wait before reading the flag (FIX 11961): a stop landing
+        // between the two still trips the flag read, so no trip waits on
+        // the next wire event to be seen.
+        let wake = device_cancel_wake.notified();
+        tokio::pin!(wake);
         if device_cancel.load(Ordering::Acquire) {
             // The pre-grant cancel maps here too (FIX 11961): a stop is a
             // cut stream for the caller's own retry authority, never a
@@ -431,11 +436,18 @@ async fn execute(
             return Err(OpenAiCompatTransportError::Connection);
         }
         tokio::select! {
-            () = device_cancel_wake.notified() => {
+            () = &mut wake => {
                 return Err(OpenAiCompatTransportError::Connection);
             }
             next = sent.call.next() => match next {
-                Ok(Event::Final(last)) => break last,
+                Ok(Event::Final(last)) => {
+                    // A stop that landed with the last frame aborts the
+                    // answer instead of returning success after stop.
+                    if device_cancel.load(Ordering::Acquire) {
+                        return Err(OpenAiCompatTransportError::Connection);
+                    }
+                    break last;
+                }
                 Ok(Event::Admitted(mark)) => report(&route, &mark),
                 Ok(Event::Scheduled(ack)) => report_stats(&route, ack.stats.as_ref()),
                 Ok(Event::FirstToken | Event::Token { .. }) => {}

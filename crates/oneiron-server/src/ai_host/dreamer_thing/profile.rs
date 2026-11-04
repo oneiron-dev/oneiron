@@ -23,7 +23,7 @@ use oneiron::dreamer_consolidation::{
     PortFuture, ThingChildEvent, ThingChildSession, ThingChildSettled, ThingPortCall,
 };
 use oneiron::llm::BudgetDenied;
-use oneiron::llm::run_admission::WorkCancel;
+use oneiron::llm::run_admission::{WorkCancel, forget_work_parent};
 use oneiron::{
     BudgetLease, EntityId, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmRequest,
     LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, ModelId, Vault,
@@ -275,6 +275,8 @@ impl Drop for ThingSession {
         if let Some(hosts) = self.provider.scoped_child_hosts() {
             hosts.remove(self.task);
         }
+        // The child is gone: no later parent may use its ticket (FIX 11960).
+        forget_work_parent(&self.task);
     }
 }
 

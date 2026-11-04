@@ -61,7 +61,7 @@ pub use settle::CallOutcome;
 pub use wire::{WireCallError, WireSeat};
 pub use work_context::{
     WorkCancel, WorkContext, WorkId, WorkPhysical, forget_work_parent, lookup_work_parent,
-    record_work_parent,
+    record_work_parent, take_work_parent,
 };
 
 #[cfg(test)]

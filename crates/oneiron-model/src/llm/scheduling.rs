@@ -375,6 +375,18 @@ pub fn lookup_work_parent(entity: &EntityId) -> Option<(u64, WorkId)> {
         .copied()
 }
 
+/// Removes and returns the admission and device ticket `entity`'s admission
+/// took, if still known. A retry takes its source's mapping when it takes
+/// over (FIX 11960): the source is superseded, and nothing else may parent
+/// on its ticket after the retry's own admission records under the retry.
+#[must_use]
+pub fn take_work_parent(entity: &EntityId) -> Option<(u64, WorkId)> {
+    work_parents()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(entity)
+}
+
 /// Forgets `entity`'s ticket once nothing can parent on it anymore.
 pub fn forget_work_parent(entity: &EntityId) {
     work_parents()
