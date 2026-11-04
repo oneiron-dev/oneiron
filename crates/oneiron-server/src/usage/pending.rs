@@ -105,6 +105,12 @@ impl UsageLedger {
                         tracing::warn!(%key, "pending usage conflicts with the first event; both remain for repair");
                         continue;
                     }
+                    Err(error @ UsageError::Decode(_)) => {
+                        // The existing event is decoded before the first put.
+                        // Storage and any error after a put still abort the batch.
+                        tracing::warn!(%key, ?error, "an existing usage event needs repair; its pending settlement remains");
+                        continue;
+                    }
                     Err(error) => return Err(error),
                 };
                 self.vault.sync_state_delete_in_write_txn(txn, key)?;
