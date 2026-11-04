@@ -1,4 +1,4 @@
-//! Typed Gmail From-header projection and message metadata.
+//! Typed Gmail message projection: routing headers and optional plain text.
 
 use super::gmail::{
     GMAIL_EVENT_ID_PREFIX, GMAIL_THREAD_PAYLOAD_PREFIX, MAX_GMAIL_MESSAGE_ID_BYTES,
@@ -92,10 +92,9 @@ impl<'de> Deserialize<'de> for HeaderMailbox {
 
 /// One Gmail message projected down to what routing needs.
 ///
-/// Deliberately header-shaped: the adapter never carries body text into the
-/// engine, only the identifiers and envelope needed to route and to point back
-/// at the provider-held message. The host owns RFC 5322 parsing at the wire
-/// boundary and supplies a typed [`HeaderMailbox`] result.
+/// The host owns RFC 5322 and MIME parsing at the wire boundary and supplies
+/// a typed [`HeaderMailbox`] result. A body-readable grant may also carry the
+/// decoded plain text; the shared inbound keeps only the reply's top text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GmailMessageMetadata {
     pub message_id: String,
@@ -109,11 +108,14 @@ pub struct GmailMessageMetadata {
     /// thread id stays a payload ref; these join the passport graph.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_headers: Option<EmailThreadHeaders>,
-    /// The `Subject` header, when the host wire read one. A header, so the
-    /// header-only intake may carry it; the STOP check reads it back through
-    /// the archived provider email. No body text ever rides here.
+    /// The `Subject` header, when the host wire read one. Metadata-only
+    /// intake may carry it; the STOP check reads the archived provider email.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    /// Decoded non-attachment plain text, only when the mailbox's grant
+    /// permits body reads. Normalized to top text when it becomes inbound.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plain_text: Option<String>,
 }
 
 impl GmailMessageMetadata {
@@ -141,6 +143,7 @@ impl GmailMessageMetadata {
             placement,
             thread_headers: None,
             subject: None,
+            plain_text: None,
         }
     }
 
@@ -158,6 +161,43 @@ impl GmailMessageMetadata {
         self
     }
 
+    /// Attaches decoded plain text read under the mailbox's body-read grant.
+    #[must_use]
+    pub fn with_plain_text(mut self, text: impl Into<String>) -> Self {
+        self.plain_text = Some(text.into());
+        self
+    }
+
+    /// Decodes Gmail's base64url plain-text bytes using the MIME charset.
+    /// UTF-8 is used when the part names no charset.
+    ///
+    /// # Errors
+    /// Invalid base64url, an unknown charset or malformed text bytes.
+    pub fn decode_plain_text(data: &str, charset: Option<&str>) -> Result<String> {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
+
+        let bytes = URL_SAFE_NO_PAD
+            .decode(data)
+            .or_else(|_| URL_SAFE.decode(data))
+            .map_err(|_| {
+                crate::Error::InvalidConfig("gmail plain text is not base64url".to_owned())
+            })?;
+        let encoding = match charset {
+            Some(label) => encoding_rs::Encoding::for_label(label.as_bytes()).ok_or_else(|| {
+                crate::Error::InvalidConfig("gmail plain-text charset is unknown".to_owned())
+            })?,
+            None => encoding_rs::UTF_8,
+        };
+        let (text, _, malformed) = encoding.decode(&bytes);
+        if malformed {
+            return Err(crate::Error::InvalidConfig(
+                "gmail plain text does not match its charset".to_owned(),
+            ));
+        }
+        Ok(text.into_owned())
+    }
+
     /// Selects a provider-classified placement.
     #[must_use]
     pub fn with_placement(mut self, placement: MailPlacement) -> Self {
@@ -169,9 +209,10 @@ impl GmailMessageMetadata {
     ///
     /// Gmail's message id becomes the provider event id and its thread id the
     /// payload ref the archive keeps for replies; the run door archives this
-    /// inbound, so routing carries the archive's ref. The `Subject` header
-    /// becomes the inbound's subject while `reply_top_text` stays empty: the
-    /// intake is header-only, so a Gmail STOP is a subject STOP.
+    /// inbound, so routing carries the archive's ref. The subject and any
+    /// decoded plain text use the shared email top-text projection: quoted
+    /// history and signatures are not the sender's new words. A metadata-only
+    /// read still carries no reply text.
     ///
     /// # Errors
     ///
@@ -203,7 +244,7 @@ impl GmailMessageMetadata {
         .with_payload_ref(format!("{GMAIL_THREAD_PAYLOAD_PREFIX}{thread_id}"))
         .with_header_mailbox(self.from);
         inbound.thread_headers = self.thread_headers;
-        inbound.subject = self.subject;
+        inbound = inbound.with_reply_text(self.subject, self.plain_text.as_deref());
         validate_email_inbound_metadata(&inbound)?;
         Ok(inbound)
     }
