@@ -9,6 +9,20 @@ use crate::vault::ReadMode;
 use crate::{EntityId, Error, HydratedShortIdDeletion, Result, TimeRange};
 type EntityParts = (u8, u64, Vec<u8>);
 
+/// One read snapshot several scoped reads share
+/// ([`ScopedRead::shared_snapshot`]), with the body pins it opened under.
+pub(crate) struct SharedReadSnapshot<'s> {
+    pub(super) txn: heed::RoTxn<'s>,
+    _bodies: Option<crate::store::result_body_pins::ResultBodyPin>,
+}
+
+impl SharedReadSnapshot<'_> {
+    /// The snapshot's read transaction.
+    pub(crate) fn txn(&self) -> &heed::RoTxn<'_> {
+        &self.txn
+    }
+}
+
 /// What one point read names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadTarget<'r> {
@@ -331,7 +345,44 @@ impl<'v> ScopedRead<'v> {
         // opens, so the bodies are pinned before it opens (FIX 12149).
         let _bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
         let txn = self.grant_read_txn()?;
-        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        self.read_projected_opaque_in(&txn, reads, requested, opaque, project)
+    }
+
+    /// One snapshot several scoped reads share: a recall's hydrate reads
+    /// every item in it (L15 recall speed; L02 11-04 16:07 = A). It opens as
+    /// each read's own did, bodies pinned and grant clock persisted first;
+    /// every read in it still judges each row, edge and reaction itself.
+    pub(crate) fn shared_snapshot(&self) -> Result<SharedReadSnapshot<'_>> {
+        let bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
+        let txn = self.grant_read_txn()?;
+        Ok(SharedReadSnapshot {
+            txn,
+            _bodies: bodies,
+        })
+    }
+
+    /// [`Self::read_projected`] in a shared snapshot.
+    pub(crate) fn read_projected_shared<T, E: From<Error>>(
+        &self,
+        snapshot: &SharedReadSnapshot<'_>,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        self.read_projected_opaque_in(&snapshot.txn, reads, requested, |_, _| Ok(false), project)
+    }
+
+    /// [`Self::read_projected_opaque`] in the snapshot `txn`, which its
+    /// caller opened as that one does: bodies pinned, grant clock persisted.
+    fn read_projected_opaque_in<T, E: From<Error>>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        mut opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
         // One serving txn, one held authority: the reader's relationship
         // context and its own Grants load once for every slot (FIX 7462).
         let authority = HeldAuthority::for_request(requested);
@@ -341,8 +392,8 @@ impl<'v> ScopedRead<'v> {
             let (row, withheld) = match read.target {
                 ReadTarget::Id(id) => {
                     let (row, withheld) =
-                        self.id_row_in(&txn, &policy, &filter, id, read.mode, &authority)?;
-                    if withheld > 0 && opaque(&txn, &id)? {
+                        self.id_row_in(txn, &policy, &filter, id, read.mode, &authority)?;
+                    if withheld > 0 && opaque(txn, &id)? {
                         (row, 0)
                     } else {
                         (row, withheld)
@@ -352,7 +403,7 @@ impl<'v> ScopedRead<'v> {
                     short_id,
                     content_hash,
                 } => self.short_ref_in(
-                    &txn,
+                    txn,
                     &policy,
                     &filter,
                     short_id,
@@ -366,7 +417,7 @@ impl<'v> ScopedRead<'v> {
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
         Ok(ScopedReadResult {
-            value: project(&txn, value)?,
+            value: project(txn, value)?,
             receipt,
         })
     }

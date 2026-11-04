@@ -64,6 +64,7 @@ pub(crate) use claim_admission::ClaimReadStatus;
 pub use frozen::FrozenReadLane;
 pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
+pub(crate) use point_reads::SharedReadSnapshot;
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
 pub use weave_correction::{WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection};
 pub use weave_report::sieve_score::RedactedSieveDecision;

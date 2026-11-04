@@ -643,8 +643,9 @@ impl Memory<'_> {
                 continue;
             };
             let mode = crate::vault::ReadMode::Pinned(revision);
+            let snapshot = lane.shared_snapshot()?;
             let item =
-                match self.memory_item_for(&lane, &candidate.id, None, mode, &[], &mut receipt) {
+                match self.memory_item_for(&lane, &snapshot, &candidate.id, None, mode, &[], &mut receipt) {
                     Ok(item) => item,
                     Err(error) if error.code == MEMORY_CODE_NOT_FOUND => None,
                     Err(error) => return Err(error),

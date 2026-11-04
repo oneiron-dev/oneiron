@@ -1,12 +1,16 @@
 //! Builds typed recall items from actor-admitted rows at the selected revision.
 use super::*;
-use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt, ScopedReadResult};
+use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt, ScopedReadResult, SharedReadSnapshot};
 
 impl Memory<'_> {
     /// No item or its provenance may be assembled before the actor's scoped read.
+    /// Every read of the item, its edges, reactions and quoted messages runs
+    /// in `snapshot`, the one its hydrate opened after retrieval (L15 recall
+    /// speed; L02 11-04 16:07 = A), each still judged on its own.
     pub(super) fn memory_item_for(
         &self,
         lane: &ScopedRead<'_>,
+        snapshot: &SharedReadSnapshot<'_>,
         id: &EntityId,
         facet_hint: Option<EntityId>,
         mode: crate::vault::ReadMode,
@@ -20,7 +24,7 @@ impl Memory<'_> {
         let ScopedReadResult {
             value: admitted,
             receipt: read,
-        } = lane.read_projected(&[PointRead::id(*id).at(mode)], None, |txn, rows| {
+        } = lane.read_projected_shared(snapshot, &[PointRead::id(*id).at(mode)], None, |txn, rows| {
             let Some(row) = rows.into_iter().next().flatten() else {
                 return Ok::<_, MemoryError>(None);
             };
@@ -115,7 +119,7 @@ impl Memory<'_> {
         let ScopedReadResult {
             value: edges,
             receipt: graph,
-        } = lane.edges_out(id)?;
+        } = lane.edges_out_shared(snapshot, id)?;
         receipt.restrict_with(&graph);
         let edges = edges.unwrap_or_default();
 
@@ -247,7 +251,7 @@ impl Memory<'_> {
                 );
             let mut reactions = if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
                 let mut counted = Vec::new();
-                let lines = lane.reaction_lines_counting(id, &mut counted)?;
+                let lines = lane.reaction_lines_counting_shared(snapshot, id, &mut counted)?;
                 // Each reaction claim a line counts is a producer of the item.
                 self.produced_from(counted);
                 lines
@@ -273,20 +277,14 @@ impl Memory<'_> {
             };
             let mut conversation_id = None;
             {
-                // Closed before the quotes below, which open their own.
-                let txn = self
-                    .vault
-                    .store
-                    .env
-                    .read_txn()
-                    .map_err(crate::error::Error::from)?;
+                let txn = snapshot.txn();
                 for edge in edges
                     .iter()
                     .filter(|edge| Some(edge.kind) == conversation_kind)
                 {
                     if crate::ports::EntityStoreRead::port_entity_record(
                         &content,
-                        &txn,
+                        txn,
                         &edge.target,
                     )?
                     .map(|row| row.entity_type)
@@ -309,6 +307,7 @@ impl Memory<'_> {
                 };
                 if let Some(item) = self.memory_item_for(
                     lane,
+                    snapshot,
                     message,
                     None,
                     crate::vault::ReadMode::Live,

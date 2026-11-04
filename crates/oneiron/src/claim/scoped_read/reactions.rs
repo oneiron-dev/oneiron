@@ -25,6 +25,18 @@ impl ScopedRead<'_> {
         self.reaction_lines_in(&rtxn, &policy, None, record, counted)
     }
 
+    /// [`Self::reaction_lines_counting`] in a shared snapshot (L15 recall
+    /// speed).
+    pub(crate) fn reaction_lines_counting_shared(
+        &self,
+        snapshot: &super::SharedReadSnapshot<'_>,
+        record: &EntityId,
+        counted: &mut Vec<EntityId>,
+    ) -> Result<Vec<String>> {
+        let policy = self.live_policy_manifest_in(snapshot.txn())?;
+        self.reaction_lines_in(snapshot.txn(), &policy, None, record, counted)
+    }
+
     fn reaction_lines_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
