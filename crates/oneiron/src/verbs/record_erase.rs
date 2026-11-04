@@ -206,6 +206,19 @@ pub fn preview_record_erase(
     };
     vault
         .with_write_txn_grouped(|txn| {
+            // The caller is checked only in the earlier preview snapshot: a
+            // hard erase of the caller committing after it runs this
+            // writer's actor scrub first, so refuse the insert when the
+            // caller carries its hard-delete marker here (review P1 on
+            // #4445).
+            if vault
+                .archive_tombstone_in_txn(txn, &memory.actor())?
+                .is_some()
+            {
+                return Err(crate::Error::InvariantViolation(
+                    "erase preview caller was erased",
+                ));
+            }
             // Rows key by caller and record, not by issue time, so expiry has
             // no order to stop at: every expired row goes.
             let mut expired = Vec::new();
