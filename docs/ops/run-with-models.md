@@ -1838,7 +1838,10 @@ weights, builds the worker's environment from the row's `env_lock`, starts
 it on the provider's `base_url`, counts it ready after one real render,
 restarts it after a crash and, when `idle_stop_secs` asks, stops it when
 idle. A row with `kind = "asr"` on a `local-openai-compat` provider does the
-same for the local Whisper worker, from an operator's weights manifest. A
+same for the local Whisper worker, from the house `whisper-large-v3` pin or
+an operator's weights manifest; its `env_lock` names the shipped
+`deploy/asr/whisper-py312.lock` (CPython 3.12 on x86_64 Linux, CUDA 12.8
+torch; resolved and hash-locked, GPU not qualified). A
 call to a managed worker's rung waits while it starts and holds it through
 its renders or its transcription; the worker runs one inference at a time.
 `deploy/voxcpm2/README.md` and `deploy/asr/README.md` give the rows. A
@@ -2716,6 +2719,8 @@ of them at `/v1/owner/decisions/asks`. A one-off graph ask still holds
 `human` at Big. Each unit has its own
 clock: the definition's `deadline_ms` (1 to 60000), or 10 seconds when it
 names none.
+
+A yes on an open pack setup allow ask at the role door returns the still-open ask, records nothing and wakes no waiter (positive input only: a no and every other ask behave exactly as before); the allow lands only on the owner's proof at `/v1/owner/decisions/asks/answer`.
 
 - **What the ladder reads.** The unit's body and the bodies of its outgoing
   neighbours go into the call's state, as the JSON a reader is served. A
