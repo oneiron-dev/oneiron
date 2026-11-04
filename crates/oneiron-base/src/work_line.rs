@@ -390,7 +390,11 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
     }
 
     /// [`Self::admit_in_line_until`] on this thread.
-    pub fn admit_blocking_until(&self, key: K, deadline: Instant) -> Result<LinePermit, WaitTimedOut> {
+    pub fn admit_blocking_until(
+        &self,
+        key: K,
+        deadline: Instant,
+    ) -> Result<LinePermit, WaitTimedOut> {
         if Instant::now() >= deadline {
             return Err(WaitTimedOut);
         }

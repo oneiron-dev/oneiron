@@ -6,17 +6,17 @@ use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
 };
-use crate::llm::{Scope, ScopeResource};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_model::llm::{Scope, ScopeResource};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::super::recipes::WakeRecipePolicy;
 use super::{QUEUE, QueueKey, READ, SPANS, SieveSpan, chunks};
 use crate::dreamer_consolidation::KeptDecision;
-use crate::llm::decision::EvidenceVersion;
+use crate::model_decision::EvidenceVersion;
 
 mod consumption;
 pub(crate) use consumption::{consumed_carriers, retarget_consumed_in_txn};

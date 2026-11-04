@@ -66,8 +66,8 @@ pub use self::source::{
     FeedbackTriageSourceError, FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault,
 };
 pub use self::work::{
-    FeedbackTriageNodeAnswer, FeedbackTriagePin, FeedbackTriageSpan, FeedbackTriageSplit,
-    FeedbackTriageStep, FeedbackTriageWork, FeedbackTriageWorkNode,
+    FeedbackTriageNodeAnswer, FeedbackTriageParkOutcome, FeedbackTriagePin, FeedbackTriageSpan,
+    FeedbackTriageSplit, FeedbackTriageStep, FeedbackTriageWork, FeedbackTriageWorkNode,
 };
 pub use self::work_store::{FeedbackTriageNodeInput, FeedbackTriageNodeJob};
 

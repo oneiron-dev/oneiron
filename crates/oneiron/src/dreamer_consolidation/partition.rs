@@ -285,6 +285,29 @@ pub(crate) fn partition_turns_in_txn(
     partition_screened_turns_in_txn(vault, txn, turns, watermark)
 }
 
+/// The partition hash `turn` plans under in `txn`: the same key
+/// [`partition_screened_turns_in_txn`] groups it by, for one turn. None
+/// when it has no conversation edge.
+pub(crate) fn turn_partition_hash_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    let Some(conversation_ref) = super::redirty::conversation_in_txn(vault, txn, turn)? else {
+        return Ok(None);
+    };
+    let turn_facts = read_turn_facts_in_txn(vault, txn, turn)?;
+    let conversation_facts = read_turn_facts_in_txn(vault, txn, &conversation_ref)?;
+    Ok(Some(
+        ConsolidationPartitionKey {
+            conversation_ref,
+            world_ref: turn_facts.world_ref.or(conversation_facts.world_ref),
+            facet_ref: turn_facts.facet_ref.or(conversation_facts.facet_ref),
+        }
+        .partition_hash(),
+    ))
+}
+
 fn partition_screened_turns_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

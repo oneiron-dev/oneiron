@@ -62,6 +62,7 @@ mod checkpoint_root_stage;
 mod checkpoint_root_status;
 mod claim_write;
 mod clock_repair;
+pub mod consolidation_evidence;
 mod conversation_training;
 mod conversation_training_vault;
 mod critical_confirm_door;
@@ -144,6 +145,7 @@ mod support_grant;
 mod support_receipt;
 mod support_repair;
 mod task_actor;
+pub mod task_ask_handle;
 mod valid_entries;
 mod vault_api;
 mod weave_admin;
@@ -346,12 +348,12 @@ pub use slip_renewal::{
     OwnerDeviceRenewalProof, RENEWAL_GRANT_AND_DEVICE, RENEWAL_K04, RENEWAL_LIFETIME,
     RENEWAL_PROOF_NOT_FRESH,
 };
-pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
+pub(crate) use slip_replay::{SpentNonces, refuse_moved_proof_freshness};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::{
-    ConnectOffer, ConnectRescopeOffer, HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT,
-    HostSlipIssuer, ScopeOpeningKey,
+    ConnectOffer, ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
+    HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer, ScopeOpeningKey,
 };
 pub use support_grant::{
     SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,

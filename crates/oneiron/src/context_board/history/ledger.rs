@@ -185,7 +185,7 @@ impl Vault {
         turn: EntityId,
         owner: EntityId,
         memories: Option<&crate::context_board::MemoriesSection>,
-        worlds: Option<&crate::pipeline::ResolvedWorldAuthority>,
+        worlds: Option<&crate::claim::world_access::ResolvedWorldAuthority>,
         caller: &ScopedRead<'_>,
         accept: impl FnOnce(&BoardTurnReceipt) -> bool,
     ) -> Result<Option<BoardTurnReceipt>> {
@@ -203,7 +203,7 @@ impl Vault {
             }
         };
         if let Some(worlds) = worlds {
-            let readable = |set: &crate::pipeline::WorldAuthoritySet| {
+            let readable = |set: &crate::claim::world_access::WorldAuthoritySet| {
                 let mut kept = std::collections::BTreeSet::new();
                 for id in set.worlds() {
                     if caller.is_entity_readable(id)? {

@@ -20,10 +20,12 @@ use super::super::container::{Stop, holds_spans, is_sealed, walk_members};
 use super::{REASON_KNOWN_VALUE, offset};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::secret_custody::{
-    KeptValues, KeyPlaces, KeySpan, KnownValues, MASKED_FILE_BAND, MaskedFile, MemberStep,
-    masked_file_in_txn, put_masked_file_in_txn,
-};
+use crate::file_secret_marks::KeyPlaces;
+use crate::file_secret_marks::KeySpan;
+use crate::file_secret_marks::MemberStep;
+use crate::secret_custody::KeptValues;
+use crate::secret_custody::{KnownValues, MASKED_FILE_BAND, MaskedFile};
+use crate::secret_custody::{masked_file_in_txn, put_masked_file_in_txn};
 use crate::store::Store;
 
 /// One known value a file's mark does not cover yet: the member that holds
@@ -57,11 +59,9 @@ pub(super) fn unmarked_known(
             .iter()
             .find(|(at, _)| at.as_slice() == path)
             .map_or(&[][..], |(_, spans)| spans.as_slice());
-        for hit in known.spans(leaf) {
+        for hit in known.spans_except(leaf, &keep) {
             let (start, end) = (offset(hit.span.start)?, offset(hit.span.end)?);
-            if held.iter().any(|&(from, to)| from < end && start < to)
-                || leaf.get(hit.span.clone()).is_none_or(&keep)
-            {
+            if held.iter().any(|&(from, to)| from < end && start < to) {
                 continue;
             }
             found.push(KnownMark {

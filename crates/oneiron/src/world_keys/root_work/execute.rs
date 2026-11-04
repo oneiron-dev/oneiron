@@ -31,7 +31,7 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::recovery::{KitIssue, KitPassphrase, KitPiece};
+use crate::store::recovery_kit::{KitIssue, KitPassphrase, KitPiece};
 use crate::{EntityId, Vault};
 
 /// One pending root request this install answers, as the door read it.
@@ -331,6 +331,7 @@ impl Vault {
                 activated,
                 replaced,
                 escrow,
+                mirror_pending: false,
             })
         })?;
         // A kit the answer made current: its piece leaves its pending key
@@ -352,10 +353,13 @@ impl Vault {
             }
         };
         Ok(match confirmed.done() {
-            Ok(kit) => RootWorkDone::KitConfirmed {
-                kit: Box::new(kit),
-                mirror_pending,
-            },
+            Ok(mut kit) => {
+                kit.mirror_pending = mirror_pending;
+                RootWorkDone::KitConfirmed {
+                    kit: Box::new(kit),
+                    mirror_pending,
+                }
+            }
             Err(report) => report,
         })
     }

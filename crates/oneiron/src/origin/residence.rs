@@ -7,8 +7,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo, lock_repository};
-use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, Raw, SideTable};
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -53,6 +53,11 @@ pub struct OriginAuthorityLease {
     repo_id: EntityId,
     epoch: u64,
     writer: String,
+}
+impl OriginAuthorityLease {
+    pub(in crate::origin) fn epoch(&self) -> u64 {
+        self.epoch
+    }
 }
 /// What one host holds of a served repository's origin authority, read from
 /// trusted host configuration and the authority row, never from the pusher.
@@ -314,7 +319,7 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             (
                 AUTHORITY.get(&self.store, &txn, &repo_id)?,
-                crate::identity::read_machine_id_in_txn(self, &txn)?,
+                crate::store::install_identity::read_machine_id_in_txn(self, &txn)?,
             )
         };
         let Some(row) = row else {
@@ -347,7 +352,7 @@ impl Vault {
         let Some(row) = AUTHORITY.get(&self.store, txn, &repo_id)? else {
             return Ok(true);
         };
-        let host = crate::identity::read_machine_id_in_txn(self, txn)?;
+        let host = crate::store::install_identity::read_machine_id_in_txn(self, txn)?;
         Ok(!row.mirror
             && row.writer != ORIGIN_ERASED_WRITER
             && host.is_some_and(|host| row.writer == host.to_hex()))

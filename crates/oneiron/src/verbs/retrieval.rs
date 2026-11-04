@@ -16,16 +16,7 @@ use crate::store::{
 /// This is a response default, not a retrieval or learning budget.
 pub const RETRIEVAL_RUNS_DEFAULT: usize = 100;
 
-/// Opt-in stage capture and the actual host turn whose retrieval is being observed.
-/// The vault's capture setting remains authoritative; this cannot turn it on.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RecallTelemetry {
-    #[serde(default)]
-    pub capture_trace: bool,
-    #[serde(default)]
-    pub turn: Option<RetrievalTurn>,
-}
+pub use crate::retrieval_depth::RecallTelemetry;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

@@ -16,12 +16,12 @@ use super::carrier_erase::offer_answer_erased_wins;
 use super::offer_settle::{OfferAnswer, RecordedOfferAnswer};
 use super::offers::{OfferBallot, OfferState, OfferVoteTally, StoredOffer};
 use crate::EntityId;
-use crate::agent_dispatch::SpendScopeId;
 use crate::deletion::carrier_actor_merged;
 use crate::error::{Error, Result};
-use crate::llm::run_admission::DeclaredMaximum;
+use crate::run_budget::DeclaredMaximum;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::workspace_roster::{RequiredParty, RosterActor, RosterBindingErase};
 
 /// A settled card's id keys its join's intent and the participation facts

@@ -23,25 +23,7 @@ use crate::repo_mutation::proposal::RepoProposalStatus;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::{EntityId, Vault};
 
-/// Why a tested queue revision cannot be promoted yet.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum QueuePromotionGap {
-    /// The chain's root holds untouched bytes no reviewed import admitted.
-    UntouchedBytes(String),
-    /// A changed path has no admitted reviewed operation covering it.
-    Unreviewed(String),
-}
-
-impl QueuePromotionGap {
-    fn error(&self) -> Error {
-        Error::InvalidClaimBody(match self {
-            Self::UntouchedBytes(_) => {
-                "untouched imported bytes have no reviewed import admission (G4)"
-            }
-            Self::Unreviewed(_) => "a tested queue revision change lacks its reviewed operation",
-        })
-    }
-}
+pub(crate) use crate::store::code_promotion_gap::QueuePromotionGap;
 
 impl Vault {
     /// Promotes the current green's tested revision and each unpromoted

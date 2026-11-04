@@ -6,8 +6,10 @@
 //! fixed second, so every page of one search ranks the same list.
 
 use super::*;
-use crate::pipeline::{FacetMode, WorldAuthoritySet, WorldScope};
-use crate::sync::residence::ResolvedRecallSelection;
+use crate::claim::retrieval_scope::FacetMode;
+use crate::claim::world_access::WorldAuthoritySet;
+use crate::memory::resolved_recall_scope::ResolvedRecallSelection;
+use crate::pipeline::WorldScope;
 
 impl ScopedRead<'_> {
     /// Ranks `window` rows for `query` at `as_of` (unix seconds), narrowed by
@@ -121,9 +123,9 @@ impl ScopedRead<'_> {
             .residence_page();
         if let Some((scope, world_scope)) = selected {
             let corpus = if scope.project_ids.is_empty() {
-                crate::corpus::CorpusScope::All
+                crate::claim::corpus_scope::CorpusScope::All
             } else {
-                crate::corpus::CorpusScope::AnyOf(scope.project_ids.clone())
+                crate::claim::corpus_scope::CorpusScope::AnyOf(scope.project_ids.clone())
             };
             pipeline = pipeline
                 .fold_messages_into_turns(kinds.turn_fold())

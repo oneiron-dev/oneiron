@@ -262,6 +262,24 @@ pub(crate) trait OutboundTransport {
         false
     }
 
+    /// Whether this transport's caller holds a paced result and brings the
+    /// call back at its `paced_until` (FIX 8686): a new call whose only full
+    /// budget rows are count-bound windows that refuse rather than suspend
+    /// then waits for them, nothing recorded, charged or sent. By default a
+    /// caller reads no paced result, and such a call is denied as its
+    /// budget's exhaustion.
+    fn waits_for_paced_window(&self) -> bool {
+        false
+    }
+
+    /// The actual cost the last send's provider reported for it, in a Spend
+    /// row's denomination (FIX 11662): a delivered send's preauthorized
+    /// spend is reconciled to it. By default a transport reports none, and
+    /// the declared price stays the charge.
+    fn reported_cost(&self) -> Option<crate::connector_key::ConnectorSpendEstimate> {
+        None
+    }
+
     /// Judges a new call once more under the writer that would record its
     /// gate decision, before any decision is recorded (FIX 6404): a refusal
     /// records none and sends nothing. By default a transport takes every
@@ -290,7 +308,10 @@ pub(crate) trait OutboundTransport {
 pub(crate) fn frozen_call_hygiene_headers(
     call: &FrozenOutboundCall,
 ) -> Result<std::collections::BTreeMap<String, String>, OutboundEffectError> {
-    crate::campaign::send_hygiene::frozen_payload_hygiene_headers(call.payload()).map_err(|_| {
-        IntentLedgerError::InvalidRecord("frozen outbound payload carries invalid hygiene headers")
-    })
+    crate::outbound_intent_ledger::email_headers::frozen_payload_hygiene_headers(call.payload())
+        .map_err(|_| {
+            IntentLedgerError::InvalidRecord(
+                "frozen outbound payload carries invalid hygiene headers",
+            )
+        })
 }

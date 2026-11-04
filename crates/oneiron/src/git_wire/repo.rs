@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use super::failure::invalid;
 use super::record::{hash_field, hex_lower};
 use super::{GIT_WIRE_DOMAIN, GIT_WIRE_REPO_LOCK_FILE_NAME, GitOid, GitWireResult};
-use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
+use crate::store::code_snapshot::RepoRef;
 
 /// The identity of one object store.
 ///

@@ -39,9 +39,9 @@ mod types;
 
 use crate::{
     Vault,
-    codebase::RepoRef,
     error::Result,
     git_wire::{GitWire, GitWireRepo},
+    store::code_snapshot::RepoRef,
 };
 // The pinned-plan checker (FIX 6868).
 pub use check_inputs::{

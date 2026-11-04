@@ -13,33 +13,8 @@ pub use self::headers::header_parameters;
 
 use self::headers::{canonical_header, declared_headers, dynamic_header};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolGrantDataClass {
-    Arguments,
-    XMcpHeader,
-}
-impl ToolGrantDataClass {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Arguments => "arguments",
-            Self::XMcpHeader => "x_mcp_header",
-        }
-    }
-    pub(crate) fn valid_grant_set(classes: &[Self]) -> bool {
-        matches!(
-            classes,
-            [Self::Arguments] | [Self::XMcpHeader] | [Self::Arguments, Self::XMcpHeader]
-        )
-    }
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "arguments" => Some(Self::Arguments),
-            "x_mcp_header" => Some(Self::XMcpHeader),
-            _ => None,
-        }
-    }
-}
+pub use crate::consent::tool_scope::ToolGrantDataClass;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HeaderGrantRequirement {
@@ -125,6 +100,22 @@ impl PreparedToolCall {
     }
     pub fn call(&self) -> &ScopedMcpCallContext {
         &self.frozen.call
+    }
+    /// The frozen arguments, with header parameters already removed.
+    pub(crate) fn arguments(&self) -> &BTreeMap<String, Value> {
+        &self.frozen.arguments
+    }
+    /// The frozen header values, by canonical header name.
+    pub(crate) fn headers(&self) -> &BTreeMap<String, String> {
+        &self.frozen.headers
+    }
+    /// Whether preparation forced `dry_run` from the mutation intent.
+    pub(crate) fn destructive_hint(&self) -> bool {
+        self.frozen.destructive_hint
+    }
+    /// The mutation intent frozen with the call.
+    pub(crate) fn mutation(&self) -> MutationIntent {
+        self.frozen.mutation
     }
     /// Whether the approved tool declared itself read-only and not
     /// destructive: retrieval, for its budget class (FIX 8688).

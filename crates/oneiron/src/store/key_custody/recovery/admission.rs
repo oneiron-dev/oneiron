@@ -8,7 +8,9 @@ use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because};
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
+use crate::store::restore_admission::because;
 
 use super::super::anchor::verified_position;
 use super::super::body_history::HistoryRows;

@@ -20,7 +20,7 @@ use crate::connector_key;
 use crate::error::Error;
 use crate::gate::{self, GateOutcome};
 use crate::outbound::validate_publisher_signature_in_txn;
-use crate::outbound_consent::OutboundBindingAuthority;
+use crate::outbound_consent::{OutboundBindingAuthority, SLATE_ALWAYS_ASK_REASON};
 use crate::outbound_intent_ledger::{
     BudgetChargeMarker, IntentEscalationReason, IntentLedgerError, IntentState,
     LedgerPayloadContext, OutboundCallRequest, RecordedOutboundOutcome, force_sync,
@@ -435,14 +435,15 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
         _ => true,
     };
-    // FIX 8788, FIX 8686: a Linear mutation or a scoped connector call whose
+    // FIX 8788, FIX 8686: a Linear mutation, a scoped connector call, or a
+    // send whose caller holds a paced result (the dispatch pipeline's), whose
     // only full rows are count-bound windows that refuse waits for them:
     // dropping the writer leaves nothing recorded, bound or charged.
     let scoped_call = matches!(
         prepared.authorization,
         PreparedAuthorization::ScopedMcp { .. }
     );
-    if co_governance.is_some() || scoped_call {
+    if co_governance.is_some() || scoped_call || transport.waits_for_paced_window() {
         let co = co_governance.as_mut().filter(|_| co_key_distinct);
         if let Some(next_eligible_at) = rate_paced(
             vault,
@@ -521,9 +522,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     .ok_or(Error::InvariantViolation(
         "preauthorized spend changed inside admission transaction",
     ))?;
-    let spend_basis = spend.map(|(debits, basis)| {
+    let spend_basis = spend.map(|(debits, basis, rows)| {
         reserved.extend(debits);
-        basis
+        (basis, rows)
     });
     if co_key_distinct && let Some(co) = co_governance.as_mut() {
         let (_, co_charge, exhausted) =
@@ -664,17 +665,25 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
 
     let mut result = send_admitted(vault, authority, pending, spent, now_ms, transport)?;
     result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));
-    result.gate_outcome = Some(decision.outcome().as_str().to_owned());
-    result.gate_reason_codes = decision
-        .reason_codes()
+    // FIX 9228: a send-time AlwaysAsk hold keeps its slate outcome/reasons;
+    // stamping the admission Allow here would surface gate.allow instead.
+    let slate_held = result
+        .gate_receipt_reasons
         .iter()
-        .map(|reason| reason.as_str().to_owned())
-        .collect();
-    result.gate_receipt_reasons = decision
-        .receipt_reasons()
-        .iter()
-        .map(|reason| (*reason).to_owned())
-        .collect();
+        .any(|reason| reason == SLATE_ALWAYS_ASK_REASON);
+    if !slate_held {
+        result.gate_outcome = Some(decision.outcome().as_str().to_owned());
+        result.gate_reason_codes = decision
+            .reason_codes()
+            .iter()
+            .map(|reason| reason.as_str().to_owned())
+            .collect();
+        result.gate_receipt_reasons = decision
+            .receipt_reasons()
+            .iter()
+            .map(|reason| (*reason).to_owned())
+            .collect();
+    }
     result.budget_charge = budget_charge;
     Ok(result)
 }
@@ -707,7 +716,8 @@ pub(super) fn enforce_step_failure_policy(
     payload: &[u8],
     actor: Option<crate::entity_id::EntityId>,
 ) -> Result<(), IntentLedgerError> {
-    let Some(binding) = crate::llm::StepEffectBinding::from_frozen_payload(payload)? else {
+    let Some(binding) = crate::model_step_effect::StepEffectBinding::from_frozen_payload(payload)?
+    else {
         return Ok(());
     };
     let actor = actor.ok_or(IntentLedgerError::InvalidBoundActor)?;
@@ -733,8 +743,8 @@ pub(super) fn verify_booking_effect(
             // owner-binding half of the same refusal family FORBIDDEN carries,
             // and classifying it as stale input would tell a caller to refresh
             // state when the actor is simply no longer authorized.
-            if error.code == crate::memory::MEMORY_CODE_FORBIDDEN
-                || error.code == crate::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
+            if error.code == oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN
+                || error.code == oneiron_contracts::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
             {
                 IntentLedgerError::InvalidBoundActor
             } else {

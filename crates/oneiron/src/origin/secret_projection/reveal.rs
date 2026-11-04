@@ -24,9 +24,8 @@ use super::{
 use crate::Vault;
 use crate::error::Result;
 use crate::origin::secret_marks::RepoBlobMarks;
-use crate::secret_custody::{
-    RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealTarget, RepoFileSight,
-};
+use crate::secret_custody::{RepoFileReadDisclosure, RepoFileRevealTarget, RepoFileSight};
+use crate::secret_record::{RepoFileKeys, RepoFileOriginal};
 
 /// CALL 4: what a text door names when the bytes a grant would open are not
 /// text. The byte-valued doors deliver granted bytes with their receipts.

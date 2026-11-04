@@ -6,14 +6,14 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use image::RgbaImage;
 use oneiron_organ_protocol::{
     Answer, CallContext, ErrorCode, Hash32, InputBytes, Loss, Notes, Organ, OrganError,
-    OrganIdentity, OutputBytes, VerbSpec,
+    OrganIdentity, OutputBytes, Value, VerbSpec,
 };
 use serde::Deserialize;
 
 use crate::body::{Filter, Format, Icc, ImageBody, KIND, Shape, Source, Stroke, bad, from_value};
 use crate::decode::{Header, Profile, check_size, decode, header_cost, read_header};
 use crate::ops::{self, Edited};
-use crate::render::{check_paint, encode_png, render};
+use crate::render::{encode_png, render};
 
 pub const VERB_INSPECT: &str = "image.inspect";
 pub const VERB_OPEN: &str = "image.open";
@@ -199,24 +199,29 @@ impl Organ for ImageOrgan {
             VERB_OPEN => self.open(call),
             VERB_CROP => {
                 let args: CropArgs = from_value(call.args, "crop args")?;
-                let body = ImageBody::from_typed(call.body)?;
-                edited(ops::crop(body, args.x, args.y, args.w, args.h)?)
+                let body = ImageBody::from_typed(call.body, &|| call.check_cancel())?;
+                edited(ops::crop(body, args.x, args.y, args.w, args.h, &|| {
+                    call.check_cancel()
+                })?)
             }
             VERB_RESIZE => {
                 let args: ResizeArgs = from_value(call.args, "resize args")?;
-                let body = ImageBody::from_typed(call.body)?;
+                let body = ImageBody::from_typed(call.body, &|| call.check_cancel())?;
                 edited(ops::resize(
                     body,
                     args.w,
                     args.h,
                     args.filter,
                     work_budget(call),
+                    &|| call.check_cancel(),
                 )?)
             }
             VERB_ANNOTATE => {
                 let args: AnnotateArgs = from_value(call.args, "annotate args")?;
-                let body = ImageBody::from_typed(call.body)?;
-                edited(ops::annotate(body, args.shape, args.stroke)?)
+                let body = ImageBody::from_typed(call.body, &|| call.check_cancel())?;
+                edited(ops::annotate(body, args.shape, args.stroke, &|| {
+                    call.check_cancel()
+                })?)
             }
             VERB_EXPORT => self.export(call),
             other => Err(OrganError::new(ErrorCode::UnknownVerb, other)),
@@ -255,18 +260,18 @@ fn note_source(notes: &mut Notes, input: &InputBytes, header: &Header) {
     }
 }
 
-fn header_report(header: &Header, too_large: Option<OrganError>) -> rmpv::Value {
+fn header_report(header: &Header, too_large: Option<OrganError>) -> Value {
     let (width, height) = header.size();
     let (icc, icc_name) = match &header.profile {
-        Profile::Untagged => ("none", rmpv::Value::Nil),
-        Profile::Srgb => ("srgb", rmpv::Value::Nil),
+        Profile::Untagged => ("none", Value::Nil),
+        Profile::Srgb => ("srgb", Value::Nil),
         Profile::Other(name) => ("other", name.as_str().into()),
     };
     let refusal = header
         .refusal()
         .or_else(|| too_large.map(|err| err.detail))
-        .map_or(rmpv::Value::Nil, rmpv::Value::from);
-    let pairs: Vec<(&str, rmpv::Value)> = vec![
+        .map_or(Value::Nil, Value::from);
+    let pairs: Vec<(&str, Value)> = vec![
         ("format", header.format.media_type().into()),
         ("width", width.into()),
         ("height", height.into()),
@@ -282,7 +287,7 @@ fn header_report(header: &Header, too_large: Option<OrganError>) -> rmpv::Value 
         ("supported", refusal.is_nil().into()),
         ("refusal", refusal),
     ];
-    rmpv::Value::Map(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
+    Value::Map(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
 }
 
 /// Refuses what the first slice cannot keep, then checks the size.
@@ -399,9 +404,8 @@ impl ImageOrgan {
                 format!("export to {} is not built; png is", args.format),
             ));
         }
-        let body = ImageBody::from_typed(call.body)?;
-        let peak = ops::render_peak(&body)?;
-        check_paint(&body)?;
+        let body = ImageBody::from_typed(call.body, &|| call.check_cancel())?;
+        let peak = ops::render_peak(&body, &|| call.check_cancel())?;
         let input = call
             .inputs
             .iter()
@@ -420,7 +424,7 @@ impl ImageOrgan {
         drop(source);
         call.check_cancel()?;
         let png = encode_png(&pixels, header.alpha)?;
-        let report = rmpv::Value::Map(vec![
+        let report = Value::Map(vec![
             ("format".into(), "png".into()),
             ("width".into(), pixels.width().into()),
             ("height".into(), pixels.height().into()),

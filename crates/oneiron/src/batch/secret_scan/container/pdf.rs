@@ -22,10 +22,10 @@ use lopdf::xref::XrefEntry;
 use lopdf::{Document, LoadOptions, Object, ObjectId, ObjectStream, Stream};
 
 use super::{
-    Budget, MAX_EXPANDED_BYTES, Stop, Walked, encode_failed, hidden_member, over_budget, unreadable,
+    Budget, Stop, Walked, encode_failed, expanded_floor, hidden_member, over_budget, unreadable,
 };
 use crate::blob_artifact::esign::render::{PdfPreparationError, decode_stream};
-use crate::secret_custody::MemberStep;
+use crate::file_secret_marks::MemberStep;
 
 /// The type an object stream carries until this reader expands it: lopdf
 /// expands an `ObjStm` as it loads, with no bound over all of them.
@@ -97,7 +97,7 @@ pub(super) fn opens(bytes: &[u8]) -> bool {
         bytes,
         LoadOptions {
             filter: Some(|_, _| None),
-            max_decompressed_size: Some(MAX_EXPANDED_BYTES),
+            max_decompressed_size: Some(expanded_floor()),
             ..LoadOptions::default()
         },
     )

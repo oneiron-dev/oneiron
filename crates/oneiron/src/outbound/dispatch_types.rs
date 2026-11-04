@@ -8,7 +8,6 @@ use super::OutboundDeliveryWindowDecision;
 use super::capability::{OutboundVerbContract, UnsupportedOutboundCapability};
 use super::intent::OutboundIntent;
 use crate::calendar::invite::{CalendarInviteMimePart, CalendarInvitePayload};
-use crate::campaign::send_hygiene::ListUnsubscribeTarget;
 use crate::channel_identity_autonomy::SendAutonomyContext;
 use crate::channel_identity_selection::RelationshipContext;
 use crate::connector_key::{EffectorBudgetLadderEvent, EffectorBudgetRead, EffectorPoolCharge};
@@ -20,7 +19,8 @@ use crate::delivery_window::{
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles};
-use crate::linkedin_connector::LinkedInSeatSandboxPolicy;
+use crate::outbound::linkedin_policy::LinkedInSeatSandboxPolicy;
+use crate::outbound_intent_ledger::email_headers::ListUnsubscribeTarget;
 use crate::receipt::{ContextReceiptFields, ReceiptRecord};
 
 /// Actor context supplied to the outbound dispatch gate.
@@ -195,6 +195,11 @@ pub struct OutboundDispatchRequest {
     /// when the delivery window degrades this send to its surface, the
     /// pipeline sends it as a send of its own. `None` keeps today's park.
     pub ambient_alternative: Option<Box<super::OutboundAmbientAlternative>>,
+    /// Set when the pipeline resolves this send's sender: its outbound send
+    /// runs under the posture the default manifest ships, because the
+    /// vault's manifests name no act row for its pairing. The dispatch
+    /// receipt names that fallback. In memory only, never persisted.
+    pub(crate) sender_posture_fallback: bool,
 }
 
 /// A drain's clock for one send's delivery window (FIX 8817): the frozen host
@@ -249,6 +254,7 @@ impl OutboundDispatchRequest {
             send_autonomy: None,
             publisher_signature: None,
             ambient_alternative: None,
+            sender_posture_fallback: false,
         }
     }
 
@@ -275,6 +281,16 @@ impl OutboundDispatchRequest {
         explicit_class: Option<&str>,
     ) -> Self {
         self.send_autonomy = Some(SendAutonomyContext::from_host(relationship, explicit_class));
+        self
+    }
+
+    /// The host's whole handoff from sender selection: the context its
+    /// selection query asked with, its scope keys and identity faces
+    /// included ([`SendAutonomyContext::with_selection`]), so an unpinned
+    /// send's dispatch selects its sender by the vault's selection rules.
+    #[must_use]
+    pub fn send_autonomy_context(mut self, context: SendAutonomyContext) -> Self {
+        self.send_autonomy = Some(context);
         self
     }
 
@@ -636,35 +652,7 @@ pub trait OutboundExecutionSink {
     }
 }
 
-/// Coarse pipeline outcome.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub enum OutboundDispatchOutcome {
-    DeliveredToChannel,
-    Held,
-    Degraded,
-    Suppressed,
-    LetGo,
-    Failed,
-    Ambiguous,
-    /// The provider accepted the send as a remote task (FIX 7960).
-    Deferred,
-}
-
-impl OutboundDispatchOutcome {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::DeliveredToChannel => "delivered_to_channel",
-            Self::Held => "held",
-            Self::Degraded => "degraded",
-            Self::Suppressed => "suppressed",
-            Self::LetGo => "let_go",
-            Self::Failed => "failed",
-            Self::Ambiguous => "ambiguous",
-            Self::Deferred => "deferred",
-        }
-    }
-}
+pub use crate::store::outbound_outcome::OutboundDispatchOutcome;
 
 /// Result of the single dispatch pipeline.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -715,7 +703,7 @@ pub enum OutboundDispatchError {
     #[error("the resident failure rule makes this step result ineligible for effects")]
     FailureResultIneligible,
     #[error(transparent)]
-    Step(#[from] crate::llm::DurableStepError),
+    Step(#[from] crate::model_step_error::DurableStepError),
     #[error(transparent)]
     Engine(#[from] Error),
     #[error(transparent)]

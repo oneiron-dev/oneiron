@@ -2,9 +2,9 @@
 //! receipt. No writer states completeness: a reply is complete only when its
 //! latest generation ended final and for a reason that finishes an answer.
 use super::*;
-use crate::FinishReason;
 use crate::error::Result;
 use crate::memory::MemoryResult;
+use oneiron_model::llm::FinishReason;
 use serde::Serialize;
 
 /// A MESSAGE's completion, read from its latest stream receipt and its seed.
@@ -56,12 +56,34 @@ pub(crate) fn message_completion_in_txn(
 impl Memory<'_> {
     /// Whether `message` holds a complete reply. It reveals no text.
     pub fn message_completion(&self, message: &EntityId) -> MemoryResult<MessageCompletion> {
-        let txn = self
-            .vault
-            .store
-            .env
-            .read_txn()
-            .map_err(|error| crate::memory::MemoryError::from(crate::Error::from(error)))?;
-        Ok(message_completion_in_txn(self.vault, &txn, message)?)
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let result = lane.read_projected(
+            &[crate::claim::PointRead::id(*message)],
+            None,
+            |txn, rows| {
+                let Some(row) = rows
+                    .into_iter()
+                    .next()
+                    .flatten()
+                    .filter(|row| row.body.is_some())
+                else {
+                    return Ok::<_, crate::memory::MemoryError>(None);
+                };
+                if row.entity_type != crate::registry::ENTITY_TYPE_MESSAGE {
+                    return Ok(None);
+                }
+                Ok(Some(message_completion_in_txn(self.vault, txn, message)?))
+            },
+        )?;
+        if let Some(completion) = result.value {
+            self.produced_from([*message]);
+            Ok(completion)
+        } else {
+            Ok(MessageCompletion {
+                incomplete: false,
+                generating: false,
+                finish_reason: None,
+            })
+        }
     }
 }

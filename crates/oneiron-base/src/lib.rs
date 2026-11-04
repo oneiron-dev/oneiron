@@ -8,15 +8,20 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod analyzer;
+pub mod config;
 pub mod distance;
+pub mod edge;
 pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
 pub mod fusion;
 pub mod limits;
+pub mod live_rows;
 pub mod msgpack_shape;
 pub mod panic_report;
 pub mod posterior;
+pub mod registry;
+pub mod request_limits;
 pub mod retrieval_quality;
 pub mod tokenizer;
 pub mod work_line;

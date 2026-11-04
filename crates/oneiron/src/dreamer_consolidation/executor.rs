@@ -46,14 +46,16 @@ use crate::dreamer_runner::{DreamerClaimAuthoringStrategy, DreamerParkCause, dre
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepError, DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome,
-    TierPrecedence, call_as_step,
-};
+use crate::inference_context::HostInferenceContext;
+use crate::llm::call_as_step;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::{DurableStepError, DurableStepResult};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
+};
 
 // ---------------------------------------------------------------------------
 // Phase 3 executor — bucket attempts over the step layer
@@ -82,7 +84,7 @@ pub struct ConsolidationExecutor<'a> {
     /// Trusted caller's exact branch scope, in addition to actor authority.
     /// A queued scope is its upper bound. None inherits that scope, or admits
     /// only the queued partition's resources when no caller bound was queued.
-    pub scope: Option<crate::llm::Scope>,
+    pub scope: Option<oneiron_model::llm::Scope>,
     /// The host's ladder for the typed questions: how a conflict resolves,
     /// and which listed claim a candidate corrects.
     pub decisions: ConsolidationDecisions,
@@ -254,7 +256,7 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// Where `role`'s calls go in this executor.
-    pub(super) fn role(&self, role: crate::llm::manifest::ModelRole) -> RoleCall<'_> {
+    pub(super) fn role(&self, role: crate::model_binding::ModelRole) -> RoleCall<'_> {
         RoleCall::resolve(
             &self.roles,
             role,
@@ -691,39 +693,18 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 };
             }
         };
-        if plan.attempt_id() != attempt.status.attempt.id
-            || !plan.matches_queued(&attempt.status.payload.input)
-            || (ctx.prepared_wake.is_some()
-                && self.scope.as_ref().is_some()
-                && self.scope.as_ref() != plan.scope())
-        {
-            return Err(invalid_consolidation(
-                "executor scope/identity differs from prepared attempt",
-            ));
-        }
-        let branch_scope = super::branch_scope::pin_execution_scope(
-            ctx.vault,
-            attempt.status.attempt.id,
-            plan.scope(),
-        )?;
-        if branch_scope.as_ref() != plan.scope() {
-            return Err(invalid_consolidation(
-                "prepared branch scope changed after the wake pin",
-            ));
-        }
-        // FIX 7729: a child its preparation narrowed holds only what it runs.
-        let narrowed = plan.branch().bucket_set();
-        if decode_partition_payload(&attempt.status.payload.input)
-            .is_ok_and(|queued| queued.bucket_set() != narrowed)
-        {
-            super::running_buckets::record_running_buckets(
-                ctx.vault,
-                attempt.status.attempt.id,
-                attempt.status.attempt.attempt_count,
-                &narrowed,
-            )?;
-        }
+        self.pin_prepared_partition(attempt, ctx, plan)?;
         self.execute_prepared_partition(attempt, ctx, plan, wake)
             .await
+    }
+
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(
+            &'w crate::dreamer_runner::DreamerAdmittedAttempt,
+            WakeAttemptContext<'w>,
+        )],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        self.run_partition_window(window).await
     }
 }

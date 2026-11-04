@@ -6,9 +6,9 @@
 //! run row stays in the room and goes when it closes.
 
 use super::OffRecordSession;
-use crate::ScoredEntity;
 use crate::error::{Error, Result};
 use crate::session_overlay::SessionWriteRoute;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 impl OffRecordSession<'_> {
     /// Nearest neighbours of `query` by cosine similarity over this room's

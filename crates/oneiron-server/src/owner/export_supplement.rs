@@ -5,10 +5,12 @@
 //! as `GET /v1/core/export-secret-supplements/{request}` returns them, opens
 //! the sealed copy on this install and restores its secret through the
 //! archive import's custody restore. The value never leaves the engine: the
-//! answer names only what the import did.
+//! answer names only what the import did. The read itself ([`show`], FIX
+//! 12296) is shared beside it by that `GET` and `oneiron secrets
+//! show-supplement`.
 
 use base64::Engine as _;
-use oneiron::authority::{ActSurface, SecretSupplementImport};
+use oneiron::authority::{ActSurface, ExportSecretSupplement, SecretSupplementImport};
 use oneiron::consent::AuthenticatedOwner;
 use serde::Serialize;
 
@@ -51,4 +53,25 @@ pub(crate) fn import(
         request: request.to_hex().to_string(),
         outcome,
     })
+}
+
+/// Reads the export secret request `request` (64 hex) as `owner` whose export
+/// asked for it reads it: where it stands and, once its holder sealed it and
+/// this install keeps the copy, the sealed copy itself. The missing case keeps
+/// the `GET`'s words, as `no {what} {which}` reads them.
+pub(crate) fn show(
+    vault: &oneiron::Vault,
+    owner: &AuthenticatedOwner,
+    request: &str,
+) -> OwnerResult<ExportSecretSupplement> {
+    let request = blake3::Hash::from_hex(request)
+        .map_err(|_| OwnerError::Invalid("request must be a 64-hex authority entry".to_owned()))?;
+    vault
+        .export_secret_supplement(owner, *request.as_bytes())?
+        .ok_or_else(|| {
+            OwnerError::NotFound(
+                "export secret request of this owner's",
+                "is recorded under this entry".to_owned(),
+            )
+        })
 }

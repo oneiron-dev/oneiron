@@ -6,10 +6,12 @@
 use std::path::Path;
 
 use super::MergeFile;
-use crate::code_document::CodeFileMetadataEdit;
 use crate::contract_oracle::{invalid, safe_entry_path};
 use crate::error::{Error, Result};
-use crate::repo_mutation::{ReceivedTreeEdit, stage_received_tree_edits};
+use crate::store::code_document_values::CodeFileMetadataEdit;
+use crate::{
+    repo_mutation::stage_received_tree_edits, store::repo_proposal_record::ReceivedTreeEdit,
+};
 
 /// A symlink's Git mode.
 const MODE_SYMLINK: u32 = 0o120_000;
@@ -97,11 +99,11 @@ fn file_mode(metadata: &std::fs::Metadata) -> u32 {
     if metadata.permissions().mode() & 0o111 != 0 {
         0o100_755
     } else {
-        crate::codebase::DEFAULT_CODE_FILE_MODE
+        crate::store::code_snapshot::DEFAULT_CODE_FILE_MODE
     }
 }
 
 #[cfg(not(unix))]
 fn file_mode(_metadata: &std::fs::Metadata) -> u32 {
-    crate::codebase::DEFAULT_CODE_FILE_MODE
+    crate::store::code_snapshot::DEFAULT_CODE_FILE_MODE
 }
