@@ -186,7 +186,14 @@ impl EngineNativeExecutor<'_> {
         // A sealing or build error after the pre-chain keeps the unlanded
         // pre-chain records in the room (REVIEW-4357 P1): without a flight
         // the hooks never reach a post chain, and no post hooks run here.
-        let build = |window, pins, note| {
+        let build = |window,
+                     pins,
+                     note|
+         -> EngineExecutorResult<(
+            Vec<crate::EntityId>,
+            crate::EntityId,
+            crate::compaction::CompactionRequest,
+        )> {
             let captured = newest.map_or(0, |row| row.calls());
             let calls = usize::try_from(captured)
                 .ok()
