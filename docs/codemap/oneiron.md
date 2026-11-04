@@ -1136,7 +1136,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity_selection/selection_resolution.rs` | src | m | 4 struct · 3 enum · 7 fn · 1 type · 1 crate-vis | ChannelIdentityCandidate, ChannelIdentitySelectionDecision, ChannelIdentitySelectionError, ChannelIdentitySelectionPatch, ChannelIdentitySelectionQuery, ChannelIdentityThreadPin, SelectionRuleScope | Resolution law for channel-identity selection: scope ladder, builtins, compile overlay, resolve query |
 | `src/channel_identity_selection/selection_rules.rs` | src | s | 3 struct · 3 fn · 8 crate-vis | ChannelIdentitySelectionRule, ChannelIdentitySelectionRuleSet, ChannelIdentitySelectionWriter | Rule and rule-set types for channel-identity selection law |
 | `src/channel_identity_selection/selection_storage.rs` | src | s | 3 fn · 2 crate-vis | — | Vault persistence and amendment for the channel-identity selection rule set |
-| `src/channel_identity_selection/selection_vocabulary.rs` | src | s | 3 enum · 6 fn · 3 const · 1 crate-vis | ChannelIdentityFace, RelationshipContext, SelectionRuleWriterKind | Stable token vocabulary for channel-identity selection law |
 | `src/channel_identity_selection/tests.rs` | test | L | — | — | — |
 | `src/channel_identity_selection/thread_mask.rs` | src | s | 1 trait | ThreadMaskSelectionExt | Selection-law projection of an email thread mask |
 | `src/checkout.rs` | src | s | 1 fn · 2 mod · 2 re-export | — | Checkout leases and optional repository environment plans |
@@ -2641,7 +2640,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/mod.rs` | src | s | 6 mod · 15 re-export · 4 crate-vis | — | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
 | `src/edit_roundtrip/native_recalc.rs` | src | s | 2 crate-vis | — | Stage-3 default: in-process xlsx recalculation over the host session |
 | `src/edit_roundtrip/native_recalc_tests.rs` | test | L | — | — | The default stage-3 route ([`RecalcPolicy::NativeFirst`]) on real XLSX |
-| `src/edit_roundtrip/opc.rs` | src | m | 14 crate-vis | — | Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline |
 | `src/edit_roundtrip/ops.rs` | src | m | 2 struct · 3 enum · 5 fn | AnchorEffect, CellValue, CellWrite, EditOp, StructuralShift | Edit operation vocabulary and anchor effects |
 | `src/edit_roundtrip/paragraph_review.rs` | src | m | 2 struct · 1 fn · 4 crate-vis | ParagraphAsk, ParagraphJudgment | Typed questions over paragraphs (ARCH-0076 §2, "Paragraph or clause"): each selected paragraph of a DOCX… |
 | `src/edit_roundtrip/pipeline.rs` | src | m | 1 struct · 2 enum · 3 fn | EditOutcome, EditProposal, RecalcStatus | Round-trip pipeline entry |
@@ -2661,7 +2659,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/slides_review/tests.rs` | test | L | — | — | — |
 | `src/edit_roundtrip/slides_review/verify.rs` | src | s | 6 crate-vis | — | Verification of retained slide judgment rows |
 | `src/edit_roundtrip/tests.rs` | test | L | — | — | ARTL-3 pipeline tests |
-| `src/edit_roundtrip/xml.rs` | src | s | 12 crate-vis | — | Namespace-aware OPC and worksheet XML reads for the edit gate |
 | `src/edit_settle/carry.rs` | src | XL | 2 struct · 3 enum · 4 fn · 7 crate-vis | ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit | ARCH-0075 §4: a held answer proposal whose units change under it |
 | `src/edit_settle/carry/live.rs` | src | m | 14 crate-vis | — | The live-body half of a held answer proposal's split (FIX 2115) |
 | `src/edit_settle/codec.rs` | src | m | 7 crate-vis | — | Row and anchor codec |
@@ -4359,11 +4356,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/executor/send_line.rs` | src | s | 2 crate-vis | — | The connector-send executor's claim order (FIX 12157) |
 | `src/outbound/fair_line.rs` | src | s | 1 crate-vis | — | The order paced sends go out in once their window opens (FIX 12157) |
 | `src/outbound/intent.rs` | src | s | 2 struct · 7 fn · 1 const · 2 re-export | OutboundIntent, OutboundIntentDraft | Outbound intent wire vocabulary |
-| `src/outbound/linkedin_policy/mod.rs` | src | s | 4 struct · 5 enum · 5 fn · 7 const · 1 re-export · 5 crate-vis | LinkedInEscalationConfig, LinkedInLoginHandoff, LinkedInManagedTransport, LinkedInMcpServerHarness, LinkedInNetworkRoute, LinkedInPasswordCustody, LinkedInSandboxHostConfig, LinkedInSandboxRuntime +1 | LinkedIn seat policy values consumed by outbound admission |
-| `src/outbound/linkedin_policy/seat.rs` | src | m | 5 struct · 1 enum · 20 fn · 1 crate-vis | LinkedInAccountRiskLimits, LinkedInKillSwitchState, LinkedInSeatDispatchState, LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy | Seat risk limits, sandbox policy evaluation, kill switch, and consent copy |
 | `src/outbound/manifests.rs` | src | s | 1 crate-vis | — | Built-in outbound capability manifests |
 | `src/outbound/manifests/channels.rs` | src | m | 11 crate-vis | — | The built-in channel manifests, one builder per capability, in the order… |
-| `src/outbound/mod.rs` | src | s | 1 fn · 2 mod · 15 re-export · 15 crate-vis | — | Outbound action capability manifests and dispatch spine for OF-327 |
+| `src/outbound/mod.rs` | src | s | 1 fn · 1 mod · 16 re-export · 15 crate-vis | — | Outbound action capability manifests and dispatch spine for OF-327 |
 | `src/outbound/receipt_fields.rs` | src | m | 11 crate-vis | — | Outbound receipt field projection |
 | `src/outbound/recovery_suggestions.rs` | src | s | 1 enum · 1 fn · 3 crate-vis | OutboundRecoverySuggestion | Typed recovery suggestions on a failed or uncertain outbound receipt (FIX 7965): what the caller may do… |
 | `src/outbound/reply_content.rs` | src | s | 1 struct · 3 fn · 1 const · 2 crate-vis | ConnectorReplyBody | The body of an agent's reply to a connector event (OF-519) |
@@ -6301,7 +6296,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/window/withdrawn.rs` | src | s | 4 crate-vis | — | Withdrawn generations in a window's live map (OF-013, FIX 931) |
 | `src/sync/window_rows.rs` | src | s | 1 crate-vis | — | Window/root row vocabulary, defined in the storage layer |
 | `src/sync/withdrawn_cutoffs.rs` | src | m | 12 crate-vis | — | OF-013: withdrawn-generation cutoffs on the window plane |
-| `src/tagging/body.rs` | src | s | 3 crate-vis | — | An earlier MESSAGE's text, read from its stored MessagePack row as far as the live window keeps it and no… |
 | `src/tagging/freshness.rs` | src | s | 2 struct · 3 fn · 3 crate-vis | TaggingFreshness, TaggingMoodPartView | Whether a saved tag set still reads its turn as published (FIX 10169) |
 | `src/tagging/held.rs` | src | s | 2 enum · 1 fn · 1 crate-vis | HeldTagsOutcome, UnreadText | An importer completes a turn's marker with tags it already holds: no tagger call |
 | `src/tagging/history.rs` | src | s | 1 struct · 1 fn · 7 crate-vis | TaggingTraceRecord | The trace history: what stays of a turn's tagging once its settled marker has left the job ledger |
