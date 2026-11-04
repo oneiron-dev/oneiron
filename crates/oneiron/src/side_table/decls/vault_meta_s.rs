@@ -402,7 +402,7 @@ side_tables! {
     /// and skill (each nil once erased), label, share, judge revision, time. Key: hash32 (blake3
     /// of the terminal pack receipt id) + u64be (evidence sequence).
     SKILL_ATTRIBUTION_CAUSE: VaultMeta b"skill_attribution:cause:v1:" Named Engine
-        => crate::skill_attribution::erase_attribution_cause_entity_in_txn;
+        => crate::store::skill_attribution_causes::erase_attribution_cause_entity_in_txn;
     /// One run's matched-fork contribution checks for one experiment (its outcome, goal revision,
     /// axis and target: a loaded skill or a used edge): the measured verdict and the pair it was
     /// read from (both fork receipts and results, the anchor, the axis, the edge), and each pair

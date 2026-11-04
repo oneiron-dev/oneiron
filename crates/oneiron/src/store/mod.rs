@@ -280,6 +280,7 @@ mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
 mod short_id_alias;
+pub(crate) mod skill_attribution_causes;
 pub(crate) mod skill_content_index;
 pub mod skill_hub_predicates;
 pub mod skill_package;
