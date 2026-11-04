@@ -14,7 +14,7 @@ use crate::compaction::output::OutputRef;
 use crate::side_table::{self, Erased, ErasedForm, Named, SideKey, SideTable};
 use crate::{EntityId, Error, ModelLocality, Result, Vault};
 
-const SCHEMA: u8 = 1;
+pub const MODEL_CALL_SCHEMA: u8 = 2;
 const MODEL_CALLS: SideTable<(EntityId, u64, u64), ModelCallRecord, Named> =
     SideTable::new(&side_table::CODE_RUN_MODEL_CALL);
 
@@ -179,12 +179,95 @@ pub fn model_call_digests(request: &crate::LlmRequest) -> Result<ModelCallDigest
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct NativeReadDigests {
+    pub request_hash: [u8; 32],
+}
+
+#[derive(Serialize)]
+enum NativeLabels {
+    Noul,
+    Choice(Vec<String>),
+}
+
+#[derive(Serialize)]
+struct NativeReadCanonical<'a> {
+    state: &'a serde_json::Value,
+    questions: Vec<(String, NativeLabels, Option<String>)>,
+}
+
+/// Canonical fingerprint of the actual reader-bound label-read pack.
+pub fn native_read_digests(
+    state: &serde_json::Value,
+    questions: &[crate::llm::LabelReadout<'_>],
+) -> Result<NativeReadDigests> {
+    let invalid = || Error::InvalidConfig("native read request did not canonicalize".to_owned());
+    let questions = questions
+        .iter()
+        .map(|question| {
+            let labels = match question.labels {
+                crate::llm::LabelSet::Noul => NativeLabels::Noul,
+                crate::llm::LabelSet::Choice(options) => NativeLabels::Choice(options.to_vec()),
+            };
+            (
+                question.text.to_owned(),
+                labels,
+                question.paired.map(|paired| paired.to_owned()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let canonical = NativeReadCanonical { state, questions };
+    let request_hash =
+        *blake3::hash(&crate::llm::canonical_json_bytes(&canonical).map_err(|_| invalid())?)
+            .as_bytes();
+    Ok(NativeReadDigests { request_hash })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeReadFailure {
+    InvalidRequest,
+    Auth,
+    RateLimited,
+    Timeout,
+    ServerError,
+    LabelRead(crate::llm::LabelReadFailure),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NativeReadOutcome {
+    Completed {
+        usage: crate::LlmUsage,
+    },
+    Failed {
+        failure: NativeReadFailure,
+        usage: Option<crate::LlmUsage>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ModelCallKind {
+    Generate {
+        digests: ModelCallDigests,
+        usage: crate::LlmUsage,
+        finish_reason: crate::FinishReason,
+    },
+    LabelRead {
+        digests: NativeReadDigests,
+        revision: String,
+        outcome: NativeReadOutcome,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelCallRecord {
     pub schema: u8,
     pub attempt: EntityId,
     pub lease_generation: u64,
     pub call_index: u64,
-    pub digests: ModelCallDigests,
+    pub kind: ModelCallKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route: Option<ReplayRoutePin>,
     pub rung: CapsuleRungBinding,
@@ -205,8 +288,6 @@ pub struct ModelCallRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
     pub captured_at: u64,
-    pub usage: crate::LlmUsage,
-    pub finish_reason: crate::FinishReason,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -249,7 +330,7 @@ impl ModelCallRecord {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.schema != SCHEMA {
+        if self.schema != MODEL_CALL_SCHEMA {
             return Err(invalid("unknown model-call record schema"));
         }
         if self.erased {
@@ -271,6 +352,11 @@ impl ModelCallRecord {
         }
         for part in &self.reasoning {
             part.validate()?;
+        }
+        if let ModelCallKind::LabelRead { revision, .. } = &self.kind {
+            if revision.trim().is_empty() {
+                return Err(invalid("a native read needs a revision"));
+            }
         }
         match (
             &self.read_world_epoch,
@@ -306,14 +392,35 @@ impl ErasedForm for ModelCallRecord {
             part.bytes = None;
             part.signature = None;
         }
-        // The OpenAI-compatible adapter passes arbitrary upstream usage
-        // members and finish text through; an erased row keeps neither, only
-        // the typed counters and a known reason shape.
-        self.usage.raw_provider = Default::default();
-        if matches!(self.finish_reason, crate::FinishReason::Other { .. }) {
-            self.finish_reason = crate::FinishReason::Other {
-                name: String::new(),
-            };
+        match &mut self.kind {
+            ModelCallKind::Generate {
+                usage,
+                finish_reason,
+                ..
+            } => {
+                // The OpenAI-compatible adapter passes arbitrary upstream usage
+                // members and finish text through; an erased row keeps neither, only
+                // the typed counters and a known reason shape.
+                usage.raw_provider = Default::default();
+                if matches!(&*finish_reason, crate::FinishReason::Other { .. }) {
+                    *finish_reason = crate::FinishReason::Other {
+                        name: String::new(),
+                    };
+                }
+            }
+            // A native row keeps its hash, revision and failure; only provider
+            // usage is scrubbed, and unknown stays unknown.
+            ModelCallKind::LabelRead { outcome, .. } => match outcome {
+                NativeReadOutcome::Completed { usage } => {
+                    usage.raw_provider = Default::default();
+                }
+                NativeReadOutcome::Failed {
+                    usage: Some(usage), ..
+                } => {
+                    usage.raw_provider = Default::default();
+                }
+                NativeReadOutcome::Failed { usage: None, .. } => {}
+            },
         }
         Ok(self)
     }

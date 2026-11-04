@@ -15,8 +15,8 @@ use axum::{
 use futures_util::StreamExt;
 use oneiron::code_run::ReadWorldUnknown;
 use oneiron::code_run::model_call::{
-    ModelCallInputPart, ModelCallReasoningPart, ModelCallRecord, model_call_digests,
-    record_model_call_in_txn,
+    MODEL_CALL_SCHEMA, ModelCallInputPart, ModelCallKind, ModelCallReasoningPart, ModelCallRecord,
+    model_call_digests, record_model_call_in_txn,
 };
 use oneiron::llm::run_admission::{RunAdmission, RunDenied};
 use oneiron::{LlmError, LlmRequest, LlmResponse, LlmStreamEvent};
@@ -303,11 +303,15 @@ pub(crate) fn record_raw_response(
         Vec::new()
     };
     let record = ModelCallRecord {
-        schema: 1,
+        schema: MODEL_CALL_SCHEMA,
         attempt: run.instance(),
         lease_generation: u64::from(run.revision()),
         call_index: 1,
-        digests,
+        kind: ModelCallKind::Generate {
+            digests,
+            usage: response.usage.clone(),
+            finish_reason: response.finish_reason.clone(),
+        },
         route,
         rung,
         issuing_login: None,
@@ -319,8 +323,6 @@ pub(crate) fn record_raw_response(
         previous_response_id: None,
         store: None,
         captured_at: vault.now_recorded_at(),
-        usage: response.usage.clone(),
-        finish_reason: response.finish_reason.clone(),
         receipt_ref: None,
         actor: run.principal(),
         produced_pending: false,
