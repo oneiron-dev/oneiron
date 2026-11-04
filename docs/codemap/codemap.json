@@ -36803,7 +36803,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 131
+      "crate-vis": 127
      }
     },
     {
@@ -38024,7 +38024,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 47
+      "crate-vis": 45
      }
     },
     {
