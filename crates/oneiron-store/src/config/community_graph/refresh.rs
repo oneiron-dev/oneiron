@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::entity_id::EntityId;
+use oneiron_contracts::entity_id::EntityId;
 
 use super::codec::CommunitySnapshot;
 use super::detection::{Graph, leiden, project_graph};
@@ -116,7 +116,7 @@ fn affected_entities(
 }
 
 impl CommunityQueryView {
-    pub(crate) fn from_snapshot(
+    pub fn from_snapshot(
         snapshot: &CommunitySnapshot,
         selected: &BTreeSet<EntityId>,
     ) -> Result<Self> {
@@ -137,7 +137,7 @@ impl CommunityQueryView {
         })
     }
 
-    pub(crate) fn cache(&self) -> PprCommunityCache<'_> {
+    pub fn cache(&self) -> PprCommunityCache<'_> {
         PprCommunityCache {
             nodes: &self.nodes,
             sizes: self.sizes.clone(),

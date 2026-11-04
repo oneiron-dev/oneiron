@@ -2,12 +2,12 @@
 
 use std::collections::BTreeMap;
 
-use crate::error::{Error, Result};
+use oneiron_contracts::error::{Error, Result};
 
 /// Attempt kind of a tagging marker in the job tables.
 pub const TAGGING_MARKER_KIND: &str = "oneironer.tag_turn";
 
-pub(crate) const CHECKPOINT_HEX_LEN: usize = 16;
+pub const CHECKPOINT_HEX_LEN: usize = 16;
 
 /// The live window's default size in tagger tokens: the serving runtime's
 /// default `LIVE_K`.
@@ -62,10 +62,10 @@ const MAX_LABEL_BYTES: usize = 64;
 /// label out of the table.
 #[must_use]
 pub fn label_kind_admitted(kind: u8) -> bool {
-    !crate::store::identity_hints::identity_fields_for_kind(kind).is_empty()
+    !crate::identity_hints::identity_fields_for_kind(kind).is_empty()
 }
 
-/// Arms the tagging marker on a vault ([`crate::VaultConfig::tagging`]).
+/// Arms the tagging marker on a vault ([`crate::config::VaultConfig::tagging`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaggingMarkerConfig {
     /// The active tagger's checkpoint identity: the first 16 lowercase hex
@@ -187,7 +187,7 @@ impl TaggingMarkerConfig {
 
 /// Whether `value` is 16 lowercase hex digits: the form of a checkpoint and
 /// of a stack identity.
-pub(crate) fn is_checkpoint(value: &str) -> bool {
+pub fn is_checkpoint(value: &str) -> bool {
     value.len() == CHECKPOINT_HEX_LEN
         && value
             .bytes()

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{ArtifactError, Error, RecordError, Result};
+use oneiron_contracts::error::{ArtifactError, Error, RecordError, Result};
 
 /// Most layer names one projection may name.
 pub const CONTEXT_SPEC_MAX_LAYERS: usize = 32;
@@ -41,7 +41,7 @@ pub struct ContextSpec {
     #[serde(default)]
     pub briefing: Option<String>,
     /// Dev-only authoring note. Stripped at resolution — it never reaches a
-    /// [`ResolvedContextProjection`](crate::context_projection::ResolvedContextProjection) and therefore never reaches a prompt.
+    /// `ResolvedContextProjection` and therefore never reaches a prompt.
     #[serde(
         rename = "_annotation",
         default,
@@ -201,7 +201,7 @@ pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
 /// Whether the memory domain `outer` contains `inner` (FIX 7751, 7752): the
 /// same domain, or one under it at a dot boundary. `goal.career` contains
 /// `goal.career` and `goal.career.pm`, never `goal.careers` or `goal`.
-pub(crate) fn domain_contains(outer: &str, inner: &str) -> bool {
+pub fn domain_contains(outer: &str, inner: &str) -> bool {
     inner
         .strip_prefix(outer)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
@@ -233,7 +233,7 @@ fn validate_label(label: &str, reason: &'static str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_optional_text(text: Option<&str>, reason: &'static str) -> Result<()> {
+pub fn validate_optional_text(text: Option<&str>, reason: &'static str) -> Result<()> {
     match text {
         Some(text) if text.len() > CONTEXT_SPEC_MAX_TEXT_BYTES => Err(Error::Artifact(
             ArtifactError::InvalidAgentDispatchInput(reason),
@@ -242,7 +242,7 @@ pub(crate) fn validate_optional_text(text: Option<&str>, reason: &'static str) -
     }
 }
 
-pub(crate) fn validate_panel_text(text: &str, _field: &'static str) -> Result<()> {
+pub fn validate_panel_text(text: &str, _field: &'static str) -> Result<()> {
     if text.trim().is_empty() {
         return Err(Error::Record(RecordError::InvalidTaskBody(
             "panel spec text must be non-empty",
