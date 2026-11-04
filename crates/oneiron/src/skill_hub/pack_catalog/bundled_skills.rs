@@ -93,6 +93,17 @@ impl Vault {
                 TimeRange { start: at, end: at },
                 at,
             )?;
+            let holder = self.read_skill_record_in_txn(txn, &id)?;
+            if holder.desc != package.record.desc
+                || holder.version != package.record.version
+                || holder.dependencies != package.record.dependencies
+                || holder.role != package.record.role
+                || holder.call != package.record.call
+            {
+                return Err(invalid(
+                    "travelling pack skill conflicts with the installed skill portable metadata",
+                ));
+            };
             if !held {
                 self.revive_removed_pack_skill_in_txn(txn, &id, &source.manifest.name, at)?;
             }
