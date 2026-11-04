@@ -9,10 +9,15 @@ use crate::error::Result;
 use std::collections::{BTreeSet, HashSet};
 
 use crate::analyzer::MultilingualAnalyzer;
+use crate::batch::row_put::RowPut;
 use crate::config::{HostingPrivacyPosture, VaultConfig};
+#[cfg(feature = "sync")]
+use crate::deletion::delete_bearing_update::DeleteBearingUpdate;
 use crate::edge::EdgeKind;
 #[cfg(feature = "sync")]
 use crate::store::StoreSyncHooks;
+#[cfg(feature = "sync")]
+use crate::store::window_rows::CarrierRemoval;
 use crate::store::{
     GateDecisionId, Store, StoreActorScrubs, StoreDeleteGuards, StoreHooks, StoreProjectWrites,
     StoreRecordHooks, StoreScopeStamps,
@@ -116,6 +121,18 @@ impl StoreDeleteGuards for EngineDeleteGuards {
 impl StoreScopeStamps for EngineScopeStamps {
     fn retire_stamp(&self, store: &Store, txn: &mut RwTxn<'_>, id: EntityId) -> Result<()> {
         crate::federation::record_scope::retire_stamp(store, txn, id)
+    }
+
+    fn stamp_put(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: EntityId,
+        kind: u8,
+        data: &[u8],
+        put: RowPut,
+    ) -> Result<()> {
+        crate::federation::record_scope::stamp_put(store, txn, id, kind, data, put)
     }
 
     fn restamp_document_pointer(
@@ -298,6 +315,10 @@ impl StoreProjectWrites for EngineProjectWrites {
         crate::workspace_roster::root_project_in(store, txn)
     }
 
+    fn seed_root_project(&self, vault: &crate::Vault) -> Result<()> {
+        crate::workspace_roster::seed_root_project(vault)
+    }
+
     fn project_mint_gate_refs_in_txn(
         &self,
         vault: &crate::Vault,
@@ -415,6 +436,15 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::workspace_roster::record_thread_admits_in(vault, txn, id, actor)
     }
 
+    fn erase_room_side_rows(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_room_side_rows(store, txn, id)
+    }
+
     fn erase_audience_actor_in_txn(
         &self,
         vault: &crate::Vault,
@@ -506,6 +536,52 @@ impl StoreSyncHooks for EngineSyncHooks {
 
     fn merge_window_heads(&self, doc: &LoroDoc) -> Result<()> {
         crate::sync::window::merge_window_heads(doc)
+    }
+
+    fn erase_carried_born_with_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::sync::selector::erase_carried_born_with_in_txn(store, wtxn, id)
+    }
+
+    fn erase_retained_copies_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::sync::federation_burst::erase_retained_copies_in_txn(store, txn, id)
+    }
+
+    fn apply_tombstone_to_window_doc(
+        &self,
+        doc: &LoroDoc,
+        id: &EntityId,
+        raw_value: &[u8],
+    ) -> Result<()> {
+        crate::sync::window::apply_tombstone_to_window_doc(doc, id, raw_value)
+    }
+
+    fn mark_removed_carriers_first(
+        &self,
+        vault: &crate::Vault,
+        path: CarrierRemoval,
+        carriers: &[(EntityId, Vec<u8>)],
+    ) -> Result<()> {
+        crate::sync::window::mark_removed_carriers_first(vault, path, carriers)
+    }
+
+    fn push_delete_bearing_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        window_key: &str,
+        update: &DeleteBearingUpdate,
+    ) -> Result<u64> {
+        crate::sync::queue::push_delete_bearing_in_txn(vault, wtxn, window_key, update)
     }
 
     fn compact_document(&self, vault: &crate::Vault, id: EntityId, erased: bool) -> Result<()> {
