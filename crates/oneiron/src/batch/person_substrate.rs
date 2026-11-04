@@ -75,7 +75,7 @@ pub(crate) fn ensure_person_substrate(
             facet,
             ENTITY_TYPE_FACET,
             &bytes,
-            crate::federation::record_scope::RowPut::Birth,
+            crate::batch::row_put::RowPut::Birth,
         )?;
     }
     super::edge_apply::apply_edge_with_created_at(
@@ -178,7 +178,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 id,
                 header.entity_type,
                 &bytes,
-                crate::federation::record_scope::RowPut::Birth,
+                crate::batch::row_put::RowPut::Birth,
             )?;
         }
         if !tasks_done && header.entity_type == crate::registry::ENTITY_TYPE_TASK {
@@ -262,7 +262,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 id,
                 header.entity_type,
                 &bytes,
-                crate::federation::record_scope::RowPut::Birth,
+                crate::batch::row_put::RowPut::Birth,
             )?;
         }
     }
