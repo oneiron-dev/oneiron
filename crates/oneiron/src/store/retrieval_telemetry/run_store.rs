@@ -6,9 +6,9 @@ use heed::{RoTxn, RwTxn};
 
 use crate::batch::secret_scan;
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
-use crate::store::scan_count::ScanCount;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::EngineScan;
+use crate::store::scan_count::ScanCount;
 #[cfg(test)]
 use crate::store::test_hooks;
 use crate::store::{
