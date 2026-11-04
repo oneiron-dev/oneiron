@@ -340,7 +340,7 @@ fn mark_room_stale_in_txn(
     if view.hnsw_neighbors.get(&*txn, id.as_bytes())?.is_some() {
         let count = view.hnsw_neighbors.len(&*txn)?;
         view.hnsw_meta
-            .put(txn, crate::hnsw::COUNT_KEY, &count.to_le_bytes())?;
+            .put(txn, crate::store::vector_index::keys::COUNT_KEY, &count.to_le_bytes())?;
         // A room can outlive base's entry point: base deleted its sole node
         // while the overlay still holds neighbor rows. Seed the missing
         // entry point from the composed graph so the strict delete finds
@@ -611,7 +611,7 @@ fn mark_one_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> R
     if had_vector {
         crate::store::vector_index::increment_vector_version(store, txn)?;
     }
-    crate::ppr::invalidate_ppr_for_delete(store, txn, id, &[])?;
+    crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(store, txn, id, &[])?;
     // Withdrawn words are never embedded: a queued or leased fill finds no
     // current marker, so it neither sends them out nor writes a vector back.
     store.clear_pending_embedding(txn, id)?;

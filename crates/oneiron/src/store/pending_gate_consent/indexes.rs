@@ -8,6 +8,7 @@ use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::attempt_run_root::dreamer_run_root_id_in_txn;
 
 use super::ENTITY_BODY_OFFSET;
 use super::Store;
@@ -114,11 +115,10 @@ impl Store {
                 }
             }
         };
-        let group_key = crate::attempt_queue::dreamer_run_root_id_in_txn(self, wtxn, run_id)?
-            .map_or_else(
-                || run_id.to_owned(),
-                |root| bytes_to_hex_lower(root.as_bytes()),
-            );
+        let group_key = dreamer_run_root_id_in_txn(self, wtxn, run_id)?.map_or_else(
+            || run_id.to_owned(),
+            |root| bytes_to_hex_lower(root.as_bytes()),
+        );
         Ok(Some(PendingGateConsentIndexState {
             version: PENDING_GATE_CONSENT_INDEX_STATE_VERSION,
             run_id: run_id.to_owned(),
@@ -412,7 +412,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &PendingGateConsentRecord,
     ) -> Result<()> {
-        let Ok(binding) = crate::gate::critical_write_confirm_binding(record) else {
+        let Ok(binding) = crate::store::critical_confirm_record::critical_write_confirm_binding(record) else {
             return Ok(());
         };
         let claim_id = EntityId::from_bytes(record.claim_id)
@@ -438,7 +438,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &PendingGateConsentRecord,
     ) -> Result<()> {
-        let Ok(binding) = crate::gate::critical_write_confirm_binding(record) else {
+        let Ok(binding) = crate::store::critical_confirm_record::critical_write_confirm_binding(record) else {
             return Ok(());
         };
         CRITICAL_CONFIRM_INDEX.delete(self, wtxn, &binding.confirm_id)?;
