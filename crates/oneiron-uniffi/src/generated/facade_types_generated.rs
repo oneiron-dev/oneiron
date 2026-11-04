@@ -1011,7 +1011,7 @@ pub struct DiaryEntryRequest {
     pub kind: Option<String>,
 }
 
-/// `oneiron::lens::record_ref::RecordRef`.
+/// `oneiron::store::record_ref::RecordRef`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RecordRef {
     #[serde(rename = "kind")]
@@ -31209,6 +31209,8 @@ pub struct SpaceMove {
 pub enum ModelRole {
     #[serde(rename = "retrieval_embedder")]
     RetrievalEmbedder,
+    #[serde(rename = "media_embedder")]
+    MediaEmbedder,
     #[serde(rename = "reranker")]
     Reranker,
     #[serde(rename = "extraction_encoder")]
@@ -31221,6 +31223,14 @@ pub enum ModelRole {
     LocalReasoner,
     #[serde(rename = "checker")]
     Checker,
+    #[serde(rename = "decision_head")]
+    DecisionHead,
+    #[serde(rename = "decision_band")]
+    DecisionBand,
+    #[serde(rename = "decision_escalation")]
+    DecisionEscalation,
+    #[serde(rename = "policy_safeguard")]
+    PolicySafeguard,
     #[serde(rename = "dreamer_current")]
     DreamerCurrent,
     #[serde(rename = "dreamer_target")]
@@ -38195,7 +38205,7 @@ pub struct CodeSymbolsReleased {
     pub released: bool,
 }
 
-/// `oneiron::code_document::types::CodeOpProvenance`.
+/// `oneiron::store::code_document_receipt::CodeOpProvenance`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CodeOpProvenance {
@@ -42831,7 +42841,7 @@ pub enum AgentCeilingInput {
     Proposed,
 }
 
-/// `oneiron::agent_def::refusal::RefusalLevel`.
+/// `oneiron::store::agent_refusal::RefusalLevel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RefusalLevel {
     #[serde(rename = "none")]
@@ -42844,7 +42854,7 @@ pub enum RefusalLevel {
     Full,
 }
 
-/// `oneiron::agent_def::refusal::RefusalDial`.
+/// `oneiron::store::agent_refusal::RefusalDial`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RefusalDial {
@@ -42854,7 +42864,7 @@ pub struct RefusalDial {
     pub logistics: Option<RefusalLevel>,
 }
 
-/// `oneiron::agent_def::models::AgentModel`.
+/// `oneiron::store::agent_model::AgentModel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentModel {
