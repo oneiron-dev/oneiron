@@ -12786,6 +12786,17 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/carry_forward_admission.rs",
+     "purpose": "The engine side of carry-forward claims (`write_envelope::carry_forward`): the confidence floor enforced at…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -12797,22 +12808,6 @@
      "surface": {
       "fn": 2,
       "struct": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "AssignmentAddress",
-      "AssignmentKey",
-      "ChannelKey",
-      "MailboxAddr"
-     ],
-     "path": "src/channel_identity/address.rs",
-     "purpose": "Identity-bearing address VALUES, and the canonical assignment key",
-     "surface": {
-      "fn": 16,
-      "struct": 4
      }
     },
     {
@@ -20393,158 +20388,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "Bm25RankProfile",
-      "HnswConfig",
-      "VaultConfig"
-     ],
-     "path": "src/config.rs",
-     "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…",
-     "surface": {
-      "crate-vis": 2,
-      "fn": 6,
-      "mod": 4,
-      "re-export": 2,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "Bm25Formula"
-     ],
-     "path": "src/config/bm25.rs",
-     "purpose": "Rank-profile config: field/channel params, formula, recency, defaults",
-     "surface": {
-      "crate-vis": 10,
-      "enum": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CommunitySnapshot"
-     ],
-     "path": "src/config/community_graph/codec.rs",
-     "purpose": "Snapshot and membership encode/decode with strict guards",
-     "surface": {
-      "crate-vis": 4,
-      "fn": 5,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/config/community_graph/detection.rs",
-     "purpose": "Graph projection and Leiden/CPM partition detection",
-     "surface": {
-      "crate-vis": 8,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/config/community_graph/mod.rs",
-     "purpose": "Pure community graph projection, snapshot codecs and configuration",
-     "surface": {
-      "crate-vis": 6,
-      "re-export": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/config/community_graph/refresh.rs",
-     "purpose": "Refresh policy, affected-set expansion and read-side cache view",
-     "surface": {
-      "crate-vis": 2,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CommunityCacheMeta",
-      "CommunityEdge",
-      "CommunityGraphInput",
-      "CommunityId",
-      "CommunityMembership",
-      "CommunityProjection",
-      "CommunityRefreshReport",
-      "PprCommunityCache"
-     ],
-     "path": "src/config/community_graph/types.rs",
-     "purpose": "Community constants, error, ids, config and shared shells",
-     "surface": {
-      "const": 6,
-      "crate-vis": 3,
-      "fn": 3,
-      "re-export": 1,
-      "struct": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "ChatProjection",
-      "ContextSpec",
-      "MemoryProjection"
-     ],
-     "path": "src/config/context_spec.rs",
-     "purpose": "The `ContextSpec` descriptor, its bounds, normalization, and structural validation",
-     "surface": {
-      "const": 9,
-      "crate-vis": 3,
-      "enum": 2,
-      "fn": 5,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "AffectRetrievalPolicy"
-     ],
-     "path": "src/config/retrieval_affect.rs",
-     "purpose": "Per-vault read-side affect retrieval policy",
-     "surface": {
-      "const": 3,
-      "crate-vis": 2,
-      "fn": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "TaggingMarkerConfig",
-      "TaggingMode",
-      "TaggingTraceHistory"
-     ],
-     "path": "src/config/tagging.rs",
-     "purpose": "Tagging marker configuration and identity validation",
-     "surface": {
-      "const": 6,
-      "crate-vis": 2,
-      "enum": 1,
-      "fn": 8,
-      "struct": 2
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -24266,52 +24109,34 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "CoreBatchCommit",
-      "CoreBatchEntityInput",
-      "CoreBatchEntityReceipt",
-      "CoreBatchWriteInput",
-      "CoreBatchWriteReceipt",
       "CoreWriteLane"
      ],
      "path": "src/core_write/batch.rs",
      "purpose": "`vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes",
      "surface": {
       "crate-vis": 2,
-      "enum": 2,
-      "fn": 3,
-      "struct": 4
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "ConversationCreateInput",
-      "ConversationTurnCreateInput",
-      "CoreEntityWriteReceipt"
-     ],
-     "path": "src/core_write/conversations.rs",
-     "purpose": "`vault.conversations.create` and `vault.conversations.turns.create` (OF-181): a conversation, and a TURN…",
-     "surface": {
-      "fn": 5,
-      "struct": 3
+      "enum": 1,
+      "fn": 3
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "CoreDagAddressMode",
-      "CoreDagQuoteInput",
-      "DagRecordAppendInput",
-      "DagRecordAppendReceipt"
-     ],
+     "notable": [],
+     "path": "src/core_write/conversations.rs",
+     "purpose": "`vault.conversations.create` and `vault.conversations.turns.create` (OF-181): a conversation, and a TURN…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/core_write/dag.rs",
      "purpose": "`vault.conversations.records.append` (OF-181): one DAG record and its topology, the write `POST…",
      "surface": {
-      "enum": 1,
-      "fn": 3,
-      "struct": 3
+      "fn": 2
      }
     },
     {
@@ -24322,26 +24147,19 @@
      "purpose": "Core entity writes as typed rows (OF-181): the conversation container, a TURN under it, a DAG record and the…",
      "surface": {
       "mod": 1,
-      "re-export": 4
+      "re-export": 3
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AnnouncementAuthority",
-      "CoreWriteRefusal",
-      "CoreWriteTextField",
-      "CoreWriteTimes"
-     ],
+     "notable": [],
      "path": "src/core_write/shape.rs",
      "purpose": "The shape every core entity write shares: its id, its interval, its announcement-normalized body and its…",
      "surface": {
-      "const": 5,
-      "crate-vis": 5,
-      "enum": 2,
-      "fn": 11,
-      "struct": 2
+      "crate-vis": 1,
+      "fn": 1,
+      "re-export": 1
      }
     },
     {
@@ -33875,16 +33693,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/engine_delete_guards.rs",
-     "purpose": "The engine's implementation of the store layer's delete guards: each method forwards to the engine function…",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/engine_executor/attempt_cancels.rs",
      "purpose": "The step loops leased attempts are running in this vault (FIX 600), each under its attempt's root token, so…",
      "surface": {
@@ -34432,6 +34240,16 @@
      "purpose": "Reply normalization: fence/exec stripping, console-block scanning, and the structural gate",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_store_hooks.rs",
+     "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -40022,16 +39840,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/hnsw/entry_point.rs",
-     "purpose": "Tarjan-SCC entry-point selection",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
      "path": "src/hnsw/insert.rs",
      "purpose": "Insert, localized refresh, and backlink attachment",
      "surface": {
@@ -42712,9 +42520,9 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 28,
-      "mod": 206,
-      "re-export": 98
+      "crate-vis": 29,
+      "mod": 202,
+      "re-export": 102
      }
     },
     {
@@ -50681,28 +50489,6 @@
       "fn": 10,
       "struct": 10,
       "trait": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CalibratedVerdict",
-      "ModelBinding",
-      "ModelDisposition",
-      "ModelRole",
-      "ModelSlot",
-      "VerdictBinding",
-      "VerdictMode"
-     ],
-     "path": "src/model_binding.rs",
-     "purpose": "Model-role bindings and calibrated verdict values",
-     "surface": {
-      "const": 1,
-      "crate-vis": 1,
-      "enum": 4,
-      "fn": 4,
-      "struct": 3
      }
     },
     {
@@ -65717,7 +65503,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/session_overlay/overlay/retire.rs",
-     "purpose": "Promoted-closure retirement reusing Store key builders",
+     "purpose": "Promoted-closure retirement reusing the store's index-key builders",
      "surface": {
       "crate-vis": 1
      }
@@ -66925,16 +66711,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/skill_attribution/row_ids.rs",
-     "purpose": "The row behind each forwarded judgment and discovery proposal (FIX 12088): the row ids a sourced brief names…",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "RunWriteToken"
      ],
@@ -67032,35 +66808,6 @@
      "surface": {
       "fn": 2,
       "struct": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "AttemptOutcome",
-      "AttributionJudgment",
-      "AttributionLane",
-      "AttributionShare",
-      "AttributionSplit",
-      "AttributionVerdict",
-      "DeviationCause",
-      "EditHunk",
-      "FollowedState",
-      "HunkVerdict",
-      "JudgeRequest",
-      "OutcomeEvidence",
-      "SkillEditProposal",
-      "UnclearNote",
-      "UnclearReason"
-     ],
-     "path": "src/skill_attribution/types.rs",
-     "purpose": "Verdict taxonomy and row shapes: evidence in, judgments and edit proposals out",
-     "surface": {
-      "const": 2,
-      "enum": 6,
-      "fn": 20,
-      "struct": 9
      }
     },
     {
@@ -70771,30 +70518,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AddressMode",
-      "AppendRecord",
-      "AppendedRecord",
-      "DagPage",
-      "DagPageRequest",
-      "DagReplyTarget",
-      "QuoteSpan",
-      "ResolvedScope",
-      "ScopePath",
-      "ScopeSelector"
-     ],
-     "path": "src/store/conversation_record.rs",
-     "purpose": "Door inputs and snapshot results",
-     "surface": {
-      "crate-vis": 2,
-      "enum": 3,
-      "fn": 3,
-      "struct": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/store/conversation_span.rs",
      "purpose": "Result vocabulary for a fingerprint-pinned conversation span read",
@@ -71494,6 +71217,18 @@
      "purpose": "The erasable handoff key's envelopes (FIX 8875): content sealed under the key itself, and the key's transit…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StoreHooks"
+     ],
+     "path": "src/store/hooks.rs",
+     "purpose": "The engine hooks every store opens with",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -72270,8 +72005,8 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 64,
-      "mod": 74,
-      "re-export": 25
+      "mod": 72,
+      "re-export": 29
      }
     },
     {
@@ -72960,18 +72695,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RetainedCharge"
-     ],
-     "path": "src/store/retained_memory.rs",
-     "purpose": "Host-owned retained-memory accounting for in-memory storage",
-     "surface": {
-      "trait": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
       "RetrievalDeadline",
       "SlowRetrievalStage"
      ],
@@ -73312,6 +73035,18 @@
       "const": 2,
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StoreScopeStamps"
+     ],
+     "path": "src/store/scope_stamps.rs",
+     "purpose": "The record-scope stamp hooks the store layer's write and erase paths run, supplied by the engine when a…",
+     "surface": {
+      "trait": 1
      }
     },
     {
@@ -80304,21 +80039,6 @@
      "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…",
      "surface": {
       "fn": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "TeacherProbePolicy"
-     ],
-     "path": "src/teacher_probe_policy.rs",
-     "purpose": "Resolved extraction-teacher probe policy values",
-     "surface": {
-      "const": 1,
-      "crate-vis": 3,
-      "fn": 2,
-      "struct": 1
      }
     },
     {
@@ -87895,1018 +87615,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "ClaimCandidate",
-      "MachineWriteSignature",
-      "SourceLineage",
-      "WriteEnvelope",
-      "WriteProvenance"
-     ],
-     "path": "src/write_envelope.rs",
-     "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
-     "surface": {
-      "crate-vis": 30,
-      "fn": 27,
-      "mod": 29,
-      "re-export": 2,
-      "struct": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/actor_predicate.rs",
-     "purpose": "Learned actor claim predicate vocabulary",
-     "surface": {
-      "const": 4,
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/actor_tokens.rs",
-     "purpose": "Stored actor-class wire tokens",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "AffectTriggerValue",
-      "VadDelta"
-     ],
-     "path": "src/write_envelope/affect_trigger.rs",
-     "purpose": "Affect trigger claim codec: encoders, strict and lenient decoders, and shared scalar validators",
-     "surface": {
-      "const": 1,
-      "crate-vis": 6,
-      "fn": 15,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CarryForwardClaim",
-      "CarryForwardKind"
-     ],
-     "path": "src/write_envelope/carry_forward.rs",
-     "purpose": "Confidence-gated forward commitments, separate from belief consolidation and the commitment ledger",
-     "surface": {
-      "crate-vis": 3,
-      "enum": 1,
-      "fn": 4,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/channel_identity/keys.rs",
-     "purpose": "Pinned ChannelIdentity schema versions, body key sets, claim predicates, and byte bounds",
-     "surface": {
-      "const": 22,
-      "crate-vis": 17
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/channel_identity/mod.rs",
-     "purpose": "Channel-identity claim predicates and pinned wire keys",
-     "surface": {
-      "crate-vis": 1,
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/claim_body/codec.rs",
-     "purpose": "The pinned MessagePack codec for type-0 (CLAIM) bodies: the canonical encoder and the single fail-closed…",
-     "surface": {
-      "crate-vis": 1,
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CursorSpan",
-      "EvidenceKind",
-      "EvidenceRef"
-     ],
-     "path": "src/write_envelope/claim_body/evidence_refs.rs",
-     "purpose": "Typed document citations a claim's evidence carries (ARCH-0032, FIX 904): the [`EvidenceRef`] vocabulary…",
-     "surface": {
-      "crate-vis": 4,
-      "enum": 1,
-      "fn": 1,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/claim_body/lexical_query_hint.rs",
-     "purpose": "Codec primitives for `core.lexical.query_hint` side records",
-     "surface": {
-      "const": 1,
-      "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "MadeByClass"
-     ],
-     "path": "src/write_envelope/claim_body/made_by.rs",
-     "purpose": "The provenance class a stored claim offers to readers",
-     "surface": {
-      "enum": 1,
-      "fn": 3
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "ClaimBody",
-      "ClaimSubject",
-      "SessionClaimBundle",
-      "SessionClaimBundleClaim"
-     ],
-     "path": "src/write_envelope/claim_body/mod.rs",
-     "purpose": "The stored CLAIM body, its MessagePack codec, scope stamps and citations",
-     "surface": {
-      "const": 1,
-      "crate-vis": 19,
-      "enum": 1,
-      "fn": 3,
-      "re-export": 6,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/claim_body/relationship_scope.rs",
-     "purpose": "CLAIM relationship scope sets (ARCH-0022): the relationship key holds everything (`all`), a set of…",
-     "surface": {
-      "crate-vis": 2,
-      "fn": 4,
-      "type": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/claim_body/scope.rs",
-     "purpose": "The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed…",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/claim_body/scope_stamp.rs",
-     "purpose": "Stable CLAIM scope identifiers and their MessagePack representation",
-     "surface": {
-      "const": 1,
-      "crate-vis": 3,
-      "fn": 2,
-      "re-export": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "ClaimDemotion",
-      "ClaimDemotionAction",
-      "ClaimDemotionRung"
-     ],
-     "path": "src/write_envelope/claim_body/source_trust.rs",
-     "purpose": "CLAIM scope-map values used by write envelopes and stored-body codecs",
-     "surface": {
-      "crate-vis": 14,
-      "enum": 2,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "ExpressionKeigo",
-      "ExpressionPreferenceChange",
-      "ExpressionPreferenceKind",
-      "ExpressionPreferenceOrigin",
-      "ExpressionPreferenceSet",
-      "ExpressionPreferenceValue",
-      "ExpressionPreferenceWriteResult",
-      "ExpressionRegister"
-     ],
-     "path": "src/write_envelope/claim_predicate.rs",
-     "purpose": "Predicate grammar and the engine-owned predicate vocabulary used by stored claims",
-     "surface": {
-      "const": 27,
-      "crate-vis": 11,
-      "enum": 5,
-      "fn": 1,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "ClaimVadConsolidation",
-      "ClaimVadReappraisal",
-      "ClaimVadTurnEvidence"
-     ],
-     "path": "src/write_envelope/claim_vad.rs",
-     "purpose": "Claim-level VAD evidence aggregation: turn-evidence refs, mean VAD, and consolidation result types",
-     "surface": {
-      "const": 1,
-      "crate-vis": 4,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/cohort_claims/codec.rs",
-     "purpose": "MessagePack codecs, write-door validator, and map/key/token toolkit",
-     "surface": {
-      "crate-vis": 36,
-      "fn": 7
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "ExternalStageEvidenceHook",
-      "NoShowRecoveryRule",
-      "PromotionMode",
-      "ReplyCode",
-      "ReplyDisposition",
-      "ReplyRouteRule",
-      "StageDefinition",
-      "StageEvidence",
-      "StageLadderDefinition",
-      "StageTransitionRule"
-     ],
-     "path": "src/write_envelope/cohort_claims/ladder.rs",
-     "purpose": "Pure stage-ladder schema types, validation, and ladder-query helpers",
-     "surface": {
-      "const": 1,
-      "crate-vis": 5,
-      "enum": 3,
-      "fn": 1,
-      "struct": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/cohort_claims/mod.rs",
-     "purpose": "Cohort membership, stage, contact suppression and jurisdiction claim vocabulary",
-     "surface": {
-      "crate-vis": 2,
-      "mod": 3,
-      "re-export": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "SnoozePolicyData"
-     ],
-     "path": "src/write_envelope/cohort_claims/snooze_policy.rs",
-     "purpose": "Declarative pause dials carried by cohort records",
-     "surface": {
-      "crate-vis": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "SuppressionCause",
-      "SuppressionInput",
-      "SuppressionReceipt"
-     ],
-     "path": "src/write_envelope/cohort_claims/suppression.rs",
-     "purpose": "Restrictive contact-suppression inputs, causes and receipts",
-     "surface": {
-      "enum": 1,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "BounceKind",
-      "CampaignMemberChannel",
-      "CampaignMemberDerivation",
-      "CampaignMemberState",
-      "CampaignMemberValue",
-      "ClaimClassDescriptorRow",
-      "CommBounceValue",
-      "CommDoNotContactValue",
-      "CommJurisdictionValue",
-      "CrmFitValue",
-      "CrmFitVerdict",
-      "CrmStageValue",
-      "EvidenceBasis",
-      "StageEvidenceClass",
-      "StageKey"
-     ],
-     "path": "src/write_envelope/cohort_claims/types.rs",
-     "purpose": "CRM-pack claim predicates, value types, token enums, and descriptor table",
-     "surface": {
-      "const": 9,
-      "enum": 5,
-      "fn": 11,
-      "struct": 10
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/commitment_actor.rs",
-     "purpose": "Deterministic identity used by commitment projection writes",
-     "surface": {
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/commitment_transition.rs",
-     "purpose": "Commitment successor identity rules",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "ClaimClassDescriptorRow",
-      "CommClearOptOutOutcome",
-      "CommError",
-      "SendOverrideMatch",
-      "SendOverrideScope"
-     ],
-     "path": "src/write_envelope/communication.rs",
-     "purpose": "Communication predicate, error, send-override and descriptor-row vocabulary",
-     "surface": {
-      "const": 7,
-      "crate-vis": 15,
-      "enum": 4,
-      "fn": 4,
-      "struct": 1,
-      "type": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/communication_record.rs",
-     "purpose": "Communication event, gate and receipt wire values and their strict MessagePack codec",
-     "surface": {
-      "crate-vis": 22
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CompanionExpression",
-      "CompanionScope",
-      "CompanionSubject",
-      "CompanionSubjectKind",
-      "CompanionTaskKey"
-     ],
-     "path": "src/write_envelope/companion_subject.rs",
-     "purpose": "Typed companion task domain: scopes, PERSON/relationship subjects, and task keys",
-     "surface": {
-      "crate-vis": 3,
-      "enum": 4,
-      "fn": 13,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CompanionTaskKind"
-     ],
-     "path": "src/write_envelope/companion_task_kind.rs",
-     "purpose": "Companion background task family strings",
-     "surface": {
-      "enum": 1,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "CopingOutcomeRecord",
-      "CopingOutcomeUpdate",
-      "CopingOutcomeValue",
-      "CopingStrategy"
-     ],
-     "path": "src/write_envelope/coping_outcome.rs",
-     "purpose": "Coping outcome records and canonical claim value codec",
-     "surface": {
-      "const": 1,
-      "crate-vis": 2,
-      "enum": 1,
-      "fn": 16,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/counterparty_fields.rs",
-     "purpose": "Counterparty contact body keys and disclosure field profiles",
-     "surface": {
-      "const": 1,
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "EffectDigest"
-     ],
-     "path": "src/write_envelope/effect_digest.rs",
-     "purpose": "Engine-emitted effect digest value",
-     "surface": {
-      "fn": 3,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/identity_pair.rs",
-     "purpose": "Symmetric identity-pair claim vocabulary and structural validation",
-     "surface": {
-      "const": 1,
-      "crate-vis": 7,
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "EmailReputationWebhookSignal",
-      "IdentityAttestationTier",
-      "IdentityReputation",
-      "IdentityReputationSignal",
-      "IdentityReputationStatus",
-      "IdentitySendRateClamp",
-      "IdentityWarmupStage"
-     ],
-     "path": "src/write_envelope/identity_reputation.rs",
-     "purpose": "Sender reputation values, wire predicates, and pure claim validation",
-     "surface": {
-      "const": 17,
-      "crate-vis": 1,
-      "enum": 4,
-      "fn": 15,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/learning_predicate.rs",
-     "purpose": "The measured-state claim family and its namespace classifier",
-     "surface": {
-      "const": 5,
-      "fn": 1,
-      "re-export": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/person_identity.rs",
-     "purpose": "Identity-bearing facet classification and canonical PERSON body maps",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/profile_snapshot/codec.rs",
-     "purpose": "Canonical MessagePack encode/decode and field validation helpers",
-     "surface": {
-      "crate-vis": 9,
-      "fn": 2,
-      "re-export": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/profile_snapshot/codec/source_pages.rs",
-     "purpose": "The paged source frames of a PSYCH_PROFILE body (FIX 10054, Rule 5): a size bound is a codec frame, never a…",
-     "surface": {
-      "const": 1,
-      "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "PsychProfileKey"
-     ],
-     "path": "src/write_envelope/profile_snapshot/keys.rs",
-     "purpose": "Stable Person x Facet x World addressing and entity-id derivation",
-     "surface": {
-      "fn": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/profile_snapshot/mod.rs",
-     "purpose": "Profile snapshot records, addressing and canonical MessagePack codec",
-     "surface": {
-      "crate-vis": 5,
-      "re-export": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "PsychProfile",
-      "PsychProfileConfidence",
-      "PsychProfileSnapshotStatus",
-      "PsychProfileSource",
-      "PsychProfileStaleReason",
-      "PsychProfileState"
-     ],
-     "path": "src/write_envelope/profile_snapshot/record.rs",
-     "purpose": "Snapshot record types, projections, and constructors/validators",
-     "surface": {
-      "const": 2,
-      "crate-vis": 18,
-      "enum": 3,
-      "fn": 6,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "ActorStamp"
-     ],
-     "path": "src/write_envelope/provenance/actor_stamp.rs",
-     "purpose": "Opaque actor stamp identity",
-     "surface": {
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/provenance/actor_substrate.rs",
-     "purpose": "Actor-class validation and model substrate codec",
-     "surface": {
-      "const": 1,
-      "crate-vis": 5,
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "EdgeProvenanceClaimBody"
-     ],
-     "path": "src/write_envelope/provenance/codec.rs",
-     "purpose": "Edge-provenance value record and its fail-closed MessagePack gate",
-     "surface": {
-      "crate-vis": 2,
-      "fn": 3,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/provenance/edge_lifecycle.rs",
-     "purpose": "Edge provenance precedence and pure record lifecycle values",
-     "surface": {
-      "crate-vis": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "EdgeRef",
-      "SupersessionStatus"
-     ],
-     "path": "src/write_envelope/provenance/edge_ref.rs",
-     "purpose": "Pinned predicate, body-key vocabulary, EdgeRef addressing, and supersession status",
-     "surface": {
-      "const": 4,
-      "crate-vis": 10,
-      "enum": 1,
-      "fn": 4,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/provenance/entity_ref_wire.rs",
-     "purpose": "Validated hexadecimal entity references in provenance receipts",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "MadeBy",
-      "MadeByInput",
-      "MadeByInputRole",
-      "MadeByPredicate",
-      "MadeByProcess",
-      "MadeByTrigger"
-     ],
-     "path": "src/write_envelope/provenance/made_by.rs",
-     "purpose": "Rule A provenance vocabulary shared by text commits and retrieval",
-     "surface": {
-      "crate-vis": 1,
-      "enum": 3,
-      "fn": 2,
-      "re-export": 1,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/provenance/mod.rs",
-     "purpose": "Edge provenance and derivation record vocabulary and codecs",
-     "surface": {
-      "crate-vis": 2,
-      "mod": 7,
-      "re-export": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "RowProvenance",
-      "TextCommitReceipt"
-     ],
-     "path": "src/write_envelope/provenance/text_commit.rs",
-     "purpose": "Durable per-commit text provenance",
-     "surface": {
-      "fn": 1,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/skill_record/admission.rs",
-     "purpose": "Pure runtime admission invariant over one stored skill record",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/skill_record/codec.rs",
-     "purpose": "MessagePack encode and decode for SKILL bodies and dependencies",
-     "surface": {
-      "crate-vis": 3,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "SkillContentHash"
-     ],
-     "path": "src/write_envelope/skill_record/identity.rs",
-     "purpose": "Canonical skill identity: content hash, tree hash, and hub cross-check",
-     "surface": {
-      "const": 3,
-      "fn": 6,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "SkillGovernanceTier",
-      "SkillLifecycle"
-     ],
-     "path": "src/write_envelope/skill_record/lifecycle.rs",
-     "purpose": "SKILL lifecycle machine and governance-tier axis",
-     "surface": {
-      "crate-vis": 1,
-      "enum": 2,
-      "fn": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/skill_record/mod.rs",
-     "purpose": "Stored skill records, canonical identity, call contracts and pure validation",
-     "surface": {
-      "crate-vis": 12,
-      "re-export": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "SkillDependency",
-      "SkillRecord"
-     ],
-     "path": "src/write_envelope/skill_record/record.rs",
-     "purpose": "SKILL record types with pinned wire keys and size bounds",
-     "surface": {
-      "const": 5,
-      "crate-vis": 18,
-      "fn": 7,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/skill_record/resident.rs",
-     "purpose": "Immutable resident ownership encoded in a skill record",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "SkillCallContract",
-      "SkillRole"
-     ],
-     "path": "src/write_envelope/skill_record/role.rs",
-     "purpose": "Skill roles and the executable call contract",
-     "surface": {
-      "crate-vis": 3,
-      "enum": 1,
-      "fn": 2,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/skill_record/validate.rs",
-     "purpose": "SKILL record-shape invariants and the update gate",
-     "surface": {
-      "crate-vis": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "HubFile",
-      "SkillPackageFormat"
-     ],
-     "path": "src/write_envelope/skill_source/files.rs",
-     "purpose": "Exact skill source files and their declared metadata format",
-     "surface": {
-      "enum": 1,
-      "fn": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "HubPin",
-      "HubRef",
-      "HubSyncPolicy",
-      "SkillHubKind",
-      "SkillHubRecord",
-      "SkillHubTrustTier",
-      "TrackedHubRef"
-     ],
-     "path": "src/write_envelope/skill_source/hub_record.rs",
-     "purpose": "Hub and pinned skill reference vocabulary",
-     "surface": {
-      "const": 3,
-      "crate-vis": 2,
-      "enum": 4,
-      "fn": 14,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/skill_source/mod.rs",
-     "purpose": "Hub reference records and exact skill source file vocabulary",
-     "surface": {
-      "crate-vis": 2,
-      "re-export": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/skill_source/support.rs",
-     "purpose": "Bounded hub value parsing helpers",
-     "surface": {
-      "crate-vis": 9
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "ActorSubjectAnchor",
-      "PersonSubstrate",
-      "SubjectKind"
-     ],
-     "path": "src/write_envelope/subject_record.rs",
-     "purpose": "Subject identity and substrate vocabulary with pure claim-shape validation",
-     "surface": {
-      "const": 2,
-      "crate-vis": 6,
-      "enum": 2,
-      "fn": 4,
-      "re-export": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "TaskRole"
-     ],
-     "path": "src/write_envelope/task_body.rs",
-     "purpose": "TASK roles, canonical body fields, and deterministic check-in streak values",
-     "surface": {
-      "const": 1,
-      "crate-vis": 11,
-      "enum": 1,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/thread_claim/codec.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 14
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "CanonicalMessageId",
-      "StickyMaskDecision",
-      "ThreadMask",
-      "ThreadPassport",
-      "ThreadPassportInput",
-      "ThreadPassportResolution"
-     ],
-     "path": "src/write_envelope/thread_claim/mod.rs",
-     "purpose": "Email thread claim vocabulary, canonical message identities and value codecs",
-     "surface": {
-      "const": 9,
-      "crate-vis": 16,
-      "enum": 1,
-      "fn": 12,
-      "struct": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/vad_annotation.rs",
-     "purpose": "VAD annotation claim values, stable ids, and cleanup result data",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/validation.rs",
-     "purpose": "Write-envelope shape validation",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/voice_segment.rs",
-     "purpose": "`voice.segment` claim family — the metadata of one committed capture segment: its span, channel count…",
-     "surface": {
-      "const": 7,
-      "crate-vis": 1,
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/write_envelope/world_access_predicates.rs",
-     "purpose": "World-access authority claim predicates",
-     "surface": {
-      "const": 2
-     }
-    },
-    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -89888,8 +88596,15 @@
      "layout": "file+dir",
      "purpose": "CRM pack engine-side registration home"
     },
+    "carry_forward_admission": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine side of carry-forward claims (`write_envelope::carry_forward`): the confidence floor enforced at…"
+    },
     "channel_identity": {
-     "files": 22,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90070,13 +88785,6 @@
      "layout": "dir",
      "purpose": "Companion task queue and PERSON/FACET persona compilation"
     },
-    "config": {
-     "files": 10,
-     "impl_vault": false,
-     "largest_src_bucket": "m",
-     "layout": "file+dir",
-     "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
-    },
     "connect_delivery": {
      "files": 1,
      "impl_vault": false,
@@ -90157,7 +88865,7 @@
     "core_write": {
      "files": 5,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "Core entity writes as typed rows (OF-181): the conversation container, a TURN under it, a DAG record and the…"
     },
@@ -90301,19 +89009,19 @@
      "layout": "file+dir",
      "purpose": "—"
     },
-    "engine_delete_guards": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "The engine's implementation of the store layer's delete guards: each method forwards to the engine function…"
-    },
     "engine_executor": {
      "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Engine-native JS code-mode executor"
+    },
+    "engine_store_hooks": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
     "entity_doc": {
      "files": 41,
@@ -90421,7 +89129,7 @@
      "purpose": "Counts reported by rebuildable index and window heap drops"
     },
     "hnsw": {
-     "files": 13,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90608,13 +89316,6 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Durable batched speculation over real detached worktrees"
-    },
-    "model_binding": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Model-role bindings and calibrated verdict values"
     },
     "model_decision": {
      "files": 1,
@@ -91023,7 +89724,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 33,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91147,13 +89848,6 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…"
-    },
-    "teacher_probe_policy": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Resolved extraction-teacher probe policy values"
     },
     "team": {
      "files": 19,
@@ -91322,18 +90016,11 @@
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
-    },
-    "write_envelope": {
-     "files": 72,
-     "impl_vault": true,
-     "largest_src_bucket": "m",
-     "layout": "file+dir",
-     "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6315,
+   "source_files": 6228,
    "test_files": 898
   },
   "oneiron-android": {
@@ -92058,6 +90745,22 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AssignmentAddress",
+      "AssignmentKey",
+      "ChannelKey",
+      "MailboxAddr"
+     ],
+     "path": "src/channel_address.rs",
+     "purpose": "Identity-bearing address VALUES, and the canonical assignment key",
+     "surface": {
+      "fn": 16,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -92229,7 +90932,7 @@
      "path": "src/lib.rs",
      "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
      "surface": {
-      "mod": 6
+      "mod": 7
      }
     },
     {
@@ -92265,6 +90968,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…"
+    },
+    "channel_address": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Identity-bearing address VALUES, and the canonical assignment key"
     },
     "channel_identity_manifest": {
      "files": 1,
@@ -92304,7 +91014,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 55,
+   "source_files": 56,
    "test_files": 1
   },
   "oneiron-base": {
@@ -104105,7 +102815,7 @@
      "path": "src/lib.rs",
      "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
      "surface": {
-      "mod": 2
+      "mod": 4
      }
     },
     {
@@ -104939,6 +103649,41 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalibratedVerdict",
+      "ModelBinding",
+      "ModelDisposition",
+      "ModelRole",
+      "ModelSlot",
+      "VerdictBinding",
+      "VerdictMode"
+     ],
+     "path": "src/model_binding.rs",
+     "purpose": "Model-role bindings and calibrated verdict values",
+     "surface": {
+      "const": 1,
+      "enum": 4,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TeacherProbePolicy"
+     ],
+     "path": "src/teacher_probe_policy.rs",
+     "purpose": "Resolved extraction-teacher probe policy values",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/widened_seams.rs",
@@ -104960,11 +103705,25 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Engine-facing LLM invocation seam"
+    },
+    "model_binding": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Model-role bindings and calibrated verdict values"
+    },
+    "teacher_probe_policy": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Resolved extraction-teacher probe policy values"
     }
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 49,
+   "source_files": 51,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -107383,13 +106142,23 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/hnsw_entry_point.rs",
+     "purpose": "Tarjan-SCC entry-point selection for an HNSW graph rebuild (the engine's `hnsw::rebuild` calls it)",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
      "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
      "surface": {
-      "mod": 4
+      "mod": 5
      }
     },
     {
@@ -107435,6 +106204,13 @@
      "layout": "file+dir",
      "purpose": "Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity…"
     },
+    "hnsw_entry_point": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Tarjan-SCC entry-point selection for an HNSW graph rebuild (the engine's `hnsw::rebuild` calls it)"
+    },
     "pipeline": {
      "files": 1,
      "impl_vault": false,
@@ -107445,7 +106221,7 @@
    },
    "over_bar": 0,
    "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
-   "source_files": 19,
+   "source_files": 20,
    "test_files": 5
   },
   "oneiron-run-budget": {
@@ -126731,6 +125507,79 @@
    "source_files": 1517,
    "test_files": 182
   },
+  "oneiron-skill-attribution": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's…",
+     "surface": {
+      "mod": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/row_ids.rs",
+     "purpose": "The row behind each forwarded judgment and discovery proposal (FIX 12088): the row ids a sourced brief names…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AttemptOutcome",
+      "AttributionJudgment",
+      "AttributionLane",
+      "AttributionShare",
+      "AttributionSplit",
+      "AttributionVerdict",
+      "DeviationCause",
+      "EditHunk",
+      "FollowedState",
+      "HunkVerdict",
+      "JudgeRequest",
+      "OutcomeEvidence",
+      "SkillEditProposal",
+      "UnclearNote",
+      "UnclearReason"
+     ],
+     "path": "src/types.rs",
+     "purpose": "Verdict taxonomy and row shapes: evidence in, judgments and edit proposals out",
+     "surface": {
+      "const": 2,
+      "enum": 6,
+      "fn": 20,
+      "struct": 9
+     }
+    }
+   ],
+   "modules": {
+    "row_ids": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The row behind each forwarded judgment and discovery proposal (FIX 12088): the row ids a sourced brief names…"
+    },
+    "types": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Verdict taxonomy and row shapes: evidence in, judgments and edit proposals out"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's…",
+   "source_files": 3,
+   "test_files": 0
+  },
   "oneiron-spawn": {
    "files": [
     {
@@ -126806,6 +125655,161 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Bm25RankProfile",
+      "HnswConfig",
+      "VaultConfig"
+     ],
+     "path": "src/config.rs",
+     "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…",
+     "surface": {
+      "fn": 7,
+      "mod": 5,
+      "re-export": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Bm25Config",
+      "Bm25Formula",
+      "Bm25RecencyConfig",
+      "FieldConfig",
+      "FieldLengthPolicy"
+     ],
+     "path": "src/config/bm25.rs",
+     "purpose": "Rank-profile config: field/channel params, formula, recency, defaults",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommunitySnapshot"
+     ],
+     "path": "src/config/community_graph/codec.rs",
+     "purpose": "Snapshot and membership encode/decode with strict guards",
+     "surface": {
+      "fn": 9,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Graph"
+     ],
+     "path": "src/config/community_graph/detection.rs",
+     "purpose": "Graph projection and Leiden/CPM partition detection",
+     "surface": {
+      "fn": 9,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/community_graph/mod.rs",
+     "purpose": "Pure community graph projection, snapshot codecs and configuration",
+     "surface": {
+      "mod": 4,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/community_graph/refresh.rs",
+     "purpose": "Refresh policy, affected-set expansion and read-side cache view",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommunityCacheMeta",
+      "CommunityEdge",
+      "CommunityGraphInput",
+      "CommunityId",
+      "CommunityMembership",
+      "CommunityProjection",
+      "CommunityQueryView",
+      "CommunityRefreshReport",
+      "PprCommunityCache"
+     ],
+     "path": "src/config/community_graph/types.rs",
+     "purpose": "Community constants, error, ids, config and shared shells",
+     "surface": {
+      "const": 7,
+      "fn": 3,
+      "re-export": 1,
+      "struct": 9,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChatProjection",
+      "ContextSpec",
+      "MemoryProjection"
+     ],
+     "path": "src/config/context_spec.rs",
+     "purpose": "The `ContextSpec` descriptor, its bounds, normalization, and structural validation",
+     "surface": {
+      "const": 9,
+      "enum": 2,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AffectRetrievalPolicy"
+     ],
+     "path": "src/config/retrieval_affect.rs",
+     "purpose": "Per-vault read-side affect retrieval policy",
+     "surface": {
+      "const": 3,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaggingMarkerConfig",
+      "TaggingMode",
+      "TaggingTraceHistory"
+     ],
+     "path": "src/config/tagging.rs",
+     "purpose": "Tagging marker configuration and identity validation",
+     "surface": {
+      "const": 7,
+      "enum": 1,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -126816,6 +125820,109 @@
      "surface": {
       "enum": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AddressMode",
+      "AppendFailure",
+      "AppendRecord",
+      "AppendedRecord",
+      "DagPage",
+      "DagPageRequest",
+      "DagReplyTarget",
+      "QuoteSpan",
+      "ResolvedScope",
+      "ScopePath",
+      "ScopeSelector"
+     ],
+     "path": "src/conversation_record.rs",
+     "purpose": "Door inputs and snapshot results",
+     "surface": {
+      "const": 1,
+      "enum": 4,
+      "fn": 3,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CoreBatchCommit",
+      "CoreBatchEntityInput",
+      "CoreBatchEntityReceipt",
+      "CoreBatchWriteInput",
+      "CoreBatchWriteReceipt"
+     ],
+     "path": "src/core_write/batch.rs",
+     "purpose": "The `vault.batch` row's input and receipt types (OF-181)",
+     "surface": {
+      "enum": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConversationCreateInput",
+      "ConversationTurnCreateInput",
+      "CoreEntityWriteReceipt"
+     ],
+     "path": "src/core_write/conversations.rs",
+     "purpose": "The `vault.conversations.create` and `vault.conversations.turns.create` rows' input and receipt types (OF-181)",
+     "surface": {
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CoreDagAddressMode",
+      "CoreDagQuoteInput",
+      "DagRecordAppendInput",
+      "DagRecordAppendReceipt"
+     ],
+     "path": "src/core_write/dag.rs",
+     "purpose": "The `vault.conversations.records.append` row's input and receipt types (OF-181) and the append door's input…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/core_write/mod.rs",
+     "purpose": "Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages…",
+     "surface": {
+      "mod": 1,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AnnouncementAuthority",
+      "CoreWriteRefusal",
+      "CoreWriteTextField",
+      "CoreWriteTimes"
+     ],
+     "path": "src/core_write/shape.rs",
+     "purpose": "The shape every core entity write shares: its id, its interval, its announcement-normalized body and its…",
+     "surface": {
+      "const": 5,
+      "enum": 2,
+      "fn": 14,
+      "struct": 2
      }
     },
     {
@@ -126849,6 +125956,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/index_keys.rs",
+     "purpose": "Byte layouts of the edge, temporal and type index keys",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "WorldKeyDestroyCause",
       "WorldKeyDestruction"
@@ -126868,7 +125985,17 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 14
+      "mod": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/long_interval.rs",
+     "purpose": "The occurrence span past which a stored record is a long interval",
+     "surface": {
+      "const": 1
      }
     },
     {
@@ -127110,6 +126237,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/overlay_bookkeeping.rs",
+     "purpose": "Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages",
+     "surface": {
+      "const": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "PushedBlob",
       "ReceiveBlobKind",
@@ -127122,6 +126259,18 @@
       "enum": 1,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RetainedCharge"
+     ],
+     "path": "src/retained_memory.rs",
+     "purpose": "Host-owned retained-memory accounting for in-memory storage",
+     "surface": {
+      "trait": 1
      }
     },
     {
@@ -127230,6 +126379,1023 @@
       "fn": 15,
       "struct": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimCandidate",
+      "MachineWriteSignature",
+      "SourceLineage",
+      "WriteEnvelope",
+      "WriteProvenance"
+     ],
+     "path": "src/write_envelope.rs",
+     "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
+     "surface": {
+      "const": 6,
+      "fn": 48,
+      "mod": 31,
+      "re-export": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/actor_predicate.rs",
+     "purpose": "Learned actor claim predicate vocabulary",
+     "surface": {
+      "const": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/actor_tokens.rs",
+     "purpose": "Stored actor-class wire tokens",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AffectTriggerValue",
+      "VadDelta"
+     ],
+     "path": "src/write_envelope/affect_trigger.rs",
+     "purpose": "Affect trigger claim codec: encoders, strict and lenient decoders, and shared scalar validators",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 20,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CarryForwardClaim",
+      "CarryForwardKind"
+     ],
+     "path": "src/write_envelope/carry_forward.rs",
+     "purpose": "Confidence-gated forward commitments, separate from belief consolidation and the commitment ledger",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/channel_identity/keys.rs",
+     "purpose": "Pinned ChannelIdentity schema versions, body key sets, claim predicates, and byte bounds",
+     "surface": {
+      "const": 39
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/channel_identity/mod.rs",
+     "purpose": "Channel-identity claim predicates and pinned wire keys",
+     "surface": {
+      "fn": 1,
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/claim_body/codec.rs",
+     "purpose": "The pinned MessagePack codec for type-0 (CLAIM) bodies: the canonical encoder and the single fail-closed…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CursorSpan",
+      "EvidenceKind",
+      "EvidenceRef"
+     ],
+     "path": "src/write_envelope/claim_body/evidence_refs.rs",
+     "purpose": "Typed document citations a claim's evidence carries (ARCH-0032, FIX 904): the [`EvidenceRef`] vocabulary…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LexicalQueryHintValue"
+     ],
+     "path": "src/write_envelope/claim_body/lexical_query_hint.rs",
+     "purpose": "Codec primitives for `core.lexical.query_hint` side records",
+     "surface": {
+      "const": 4,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MadeByClass"
+     ],
+     "path": "src/write_envelope/claim_body/made_by.rs",
+     "purpose": "The provenance class a stored claim offers to readers",
+     "surface": {
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimBody",
+      "ClaimSubject",
+      "SessionClaimBundle",
+      "SessionClaimBundleClaim",
+      "SessionClaimBundleMember"
+     ],
+     "path": "src/write_envelope/claim_body/mod.rs",
+     "purpose": "The stored CLAIM body, its MessagePack codec, scope stamps and citations",
+     "surface": {
+      "const": 10,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 5,
+      "mod": 2,
+      "re-export": 11,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/claim_body/relationship_scope.rs",
+     "purpose": "CLAIM relationship scope sets (ARCH-0022): the relationship key holds everything (`all`), a set of…",
+     "surface": {
+      "fn": 6,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/claim_body/scope.rs",
+     "purpose": "The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/claim_body/scope_stamp.rs",
+     "purpose": "Stable CLAIM scope identifiers and their MessagePack representation",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClaimDemotion",
+      "ClaimDemotionAction",
+      "ClaimDemotionRung",
+      "ClaimSuccession",
+      "MapValue"
+     ],
+     "path": "src/write_envelope/claim_body/source_trust.rs",
+     "purpose": "CLAIM scope-map values used by write envelopes and stored-body codecs",
+     "surface": {
+      "const": 5,
+      "crate-vis": 1,
+      "enum": 4,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExpressionKeigo",
+      "ExpressionPreferenceChange",
+      "ExpressionPreferenceKind",
+      "ExpressionPreferenceOrigin",
+      "ExpressionPreferenceSet",
+      "ExpressionPreferenceValue",
+      "ExpressionPreferenceWriteResult",
+      "ExpressionRegister"
+     ],
+     "path": "src/write_envelope/claim_predicate.rs",
+     "purpose": "Predicate grammar and the engine-owned predicate vocabulary used by stored claims",
+     "surface": {
+      "const": 32,
+      "enum": 5,
+      "fn": 7,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClaimVadConsolidation",
+      "ClaimVadReappraisal",
+      "ClaimVadTurnEvidence"
+     ],
+     "path": "src/write_envelope/claim_vad.rs",
+     "purpose": "Claim-level VAD evidence aggregation: turn-evidence refs, mean VAD, and consolidation result types",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/cohort_claims/codec.rs",
+     "purpose": "MessagePack codecs, write-door validator, and map/key/token toolkit",
+     "surface": {
+      "const": 27,
+      "fn": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ExternalStageEvidenceHook",
+      "NoShowRecoveryRule",
+      "PromotionMode",
+      "ReplyCode",
+      "ReplyDisposition",
+      "ReplyRouteRule",
+      "StageDefinition",
+      "StageEvidence",
+      "StageLadderDefinition",
+      "StageTransitionRule"
+     ],
+     "path": "src/write_envelope/cohort_claims/ladder.rs",
+     "purpose": "Pure stage-ladder schema types, validation, and ladder-query helpers",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 6,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/cohort_claims/mod.rs",
+     "purpose": "Cohort membership, stage, contact suppression and jurisdiction claim vocabulary",
+     "surface": {
+      "mod": 4,
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SnoozePolicyData"
+     ],
+     "path": "src/write_envelope/cohort_claims/snooze_policy.rs",
+     "purpose": "Declarative pause dials carried by cohort records",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SuppressionCause",
+      "SuppressionInput",
+      "SuppressionReceipt"
+     ],
+     "path": "src/write_envelope/cohort_claims/suppression.rs",
+     "purpose": "Restrictive contact-suppression inputs, causes and receipts",
+     "surface": {
+      "enum": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BounceKind",
+      "CampaignMemberChannel",
+      "CampaignMemberDerivation",
+      "CampaignMemberState",
+      "CampaignMemberValue",
+      "ClaimClassDescriptorRow",
+      "CommBounceValue",
+      "CommDoNotContactValue",
+      "CommJurisdictionValue",
+      "CrmFitValue",
+      "CrmFitVerdict",
+      "CrmStageValue",
+      "EvidenceBasis",
+      "StageEvidenceClass",
+      "StageKey"
+     ],
+     "path": "src/write_envelope/cohort_claims/types.rs",
+     "purpose": "CRM-pack claim predicates, value types, token enums, and descriptor table",
+     "surface": {
+      "const": 9,
+      "enum": 5,
+      "fn": 11,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/commitment_actor.rs",
+     "purpose": "Deterministic identity used by commitment projection writes",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/commitment_transition.rs",
+     "purpose": "Commitment successor identity rules",
+     "surface": {
+      "const": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClaimClassDescriptorRow",
+      "CommClearOptOutOutcome",
+      "CommError",
+      "SendOverrideMatch",
+      "SendOverrideScope"
+     ],
+     "path": "src/write_envelope/communication.rs",
+     "purpose": "Communication predicate, error, send-override and descriptor-row vocabulary",
+     "surface": {
+      "const": 21,
+      "enum": 4,
+      "fn": 5,
+      "struct": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CommEventKind",
+      "CommRecord"
+     ],
+     "path": "src/write_envelope/communication_record.rs",
+     "purpose": "Communication event, gate and receipt wire values and their strict MessagePack codec",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompanionExpression",
+      "CompanionScope",
+      "CompanionSubject",
+      "CompanionSubjectKind",
+      "CompanionTaskKey"
+     ],
+     "path": "src/write_envelope/companion_subject.rs",
+     "purpose": "Typed companion task domain: scopes, PERSON/relationship subjects, and task keys",
+     "surface": {
+      "enum": 4,
+      "fn": 16,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompanionTaskKind"
+     ],
+     "path": "src/write_envelope/companion_task_kind.rs",
+     "purpose": "Companion background task family strings",
+     "surface": {
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CopingOutcomeRecord",
+      "CopingOutcomeUpdate",
+      "CopingOutcomeValue",
+      "CopingStrategy"
+     ],
+     "path": "src/write_envelope/coping_outcome.rs",
+     "purpose": "Coping outcome records and canonical claim value codec",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 18,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/counterparty_fields.rs",
+     "purpose": "Counterparty contact body keys and disclosure field profiles",
+     "surface": {
+      "const": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EffectDigest"
+     ],
+     "path": "src/write_envelope/effect_digest.rs",
+     "purpose": "Engine-emitted effect digest value",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/identity_pair.rs",
+     "purpose": "Symmetric identity-pair claim vocabulary and structural validation",
+     "surface": {
+      "const": 3,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EmailReputationWebhookSignal",
+      "IdentityAttestationTier",
+      "IdentityReputation",
+      "IdentityReputationSignal",
+      "IdentityReputationStatus",
+      "IdentitySendRateClamp",
+      "IdentityWarmupStage"
+     ],
+     "path": "src/write_envelope/identity_reputation.rs",
+     "purpose": "Sender reputation values, wire predicates, and pure claim validation",
+     "surface": {
+      "const": 17,
+      "enum": 4,
+      "fn": 16,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/learning_predicate.rs",
+     "purpose": "The measured-state claim family and its namespace classifier",
+     "surface": {
+      "const": 5,
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/person_identity.rs",
+     "purpose": "Identity-bearing facet classification and canonical PERSON body maps",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/profile_snapshot/codec.rs",
+     "purpose": "Canonical MessagePack encode/decode and field validation helpers",
+     "surface": {
+      "fn": 11,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/profile_snapshot/codec/source_pages.rs",
+     "purpose": "The paged source frames of a PSYCH_PROFILE body (FIX 10054, Rule 5): a size bound is a codec frame, never a…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PsychProfileKey"
+     ],
+     "path": "src/write_envelope/profile_snapshot/keys.rs",
+     "purpose": "Stable Person x Facet x World addressing and entity-id derivation",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/profile_snapshot/mod.rs",
+     "purpose": "Profile snapshot records, addressing and canonical MessagePack codec",
+     "surface": {
+      "mod": 3,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PsychProfile",
+      "PsychProfileConfidence",
+      "PsychProfileSnapshotStatus",
+      "PsychProfileSource",
+      "PsychProfileStaleReason",
+      "PsychProfileState"
+     ],
+     "path": "src/write_envelope/profile_snapshot/record.rs",
+     "purpose": "Snapshot record types, projections, and constructors/validators",
+     "surface": {
+      "const": 18,
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 6,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActorStamp"
+     ],
+     "path": "src/write_envelope/provenance/actor_stamp.rs",
+     "purpose": "Opaque actor stamp identity",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/provenance/actor_substrate.rs",
+     "purpose": "Actor-class validation and model substrate codec",
+     "surface": {
+      "const": 1,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EdgeProvenanceClaimBody"
+     ],
+     "path": "src/write_envelope/provenance/codec.rs",
+     "purpose": "Edge-provenance value record and its fail-closed MessagePack gate",
+     "surface": {
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProvenancePrecedence",
+      "StoredProvenanceClaim"
+     ],
+     "path": "src/write_envelope/provenance/edge_lifecycle.rs",
+     "purpose": "Edge provenance precedence and pure record lifecycle values",
+     "surface": {
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EdgeRef",
+      "SupersessionStatus"
+     ],
+     "path": "src/write_envelope/provenance/edge_ref.rs",
+     "purpose": "Pinned predicate, body-key vocabulary, EdgeRef addressing, and supersession status",
+     "surface": {
+      "const": 14,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/provenance/entity_ref_wire.rs",
+     "purpose": "Validated hexadecimal entity references in provenance receipts",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MadeBy",
+      "MadeByInput",
+      "MadeByInputRole",
+      "MadeByPredicate",
+      "MadeByProcess",
+      "MadeByTrigger"
+     ],
+     "path": "src/write_envelope/provenance/made_by.rs",
+     "purpose": "Rule A provenance vocabulary shared by text commits and retrieval",
+     "surface": {
+      "enum": 3,
+      "fn": 3,
+      "re-export": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/provenance/mod.rs",
+     "purpose": "Edge provenance and derivation record vocabulary and codecs",
+     "surface": {
+      "mod": 8,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RowProvenance",
+      "TextCommitReceipt"
+     ],
+     "path": "src/write_envelope/provenance/text_commit.rs",
+     "purpose": "Durable per-commit text provenance",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_record/admission.rs",
+     "purpose": "Pure runtime admission invariant over one stored skill record",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_record/codec.rs",
+     "purpose": "MessagePack encode and decode for SKILL bodies and dependencies",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillContentHash"
+     ],
+     "path": "src/write_envelope/skill_record/identity.rs",
+     "purpose": "Canonical skill identity: content hash, tree hash, and hub cross-check",
+     "surface": {
+      "const": 3,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillGovernanceTier",
+      "SkillLifecycle"
+     ],
+     "path": "src/write_envelope/skill_record/lifecycle.rs",
+     "purpose": "SKILL lifecycle machine and governance-tier axis",
+     "surface": {
+      "enum": 2,
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_record/mod.rs",
+     "purpose": "Stored skill records, canonical identity, call contracts and pure validation",
+     "surface": {
+      "crate-vis": 1,
+      "mod": 7,
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillDependency",
+      "SkillRecord"
+     ],
+     "path": "src/write_envelope/skill_record/record.rs",
+     "purpose": "SKILL record types with pinned wire keys and size bounds",
+     "surface": {
+      "const": 23,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_record/resident.rs",
+     "purpose": "Immutable resident ownership encoded in a skill record",
+     "surface": {
+      "const": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillCallContract",
+      "SkillRole"
+     ],
+     "path": "src/write_envelope/skill_record/role.rs",
+     "purpose": "Skill roles and the executable call contract",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_record/validate.rs",
+     "purpose": "SKILL record-shape invariants and the update gate",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HubFile",
+      "SkillPackageFormat"
+     ],
+     "path": "src/write_envelope/skill_source/files.rs",
+     "purpose": "Exact skill source files and their declared metadata format",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HubPin",
+      "HubRef",
+      "HubSyncPolicy",
+      "SkillHubKind",
+      "SkillHubRecord",
+      "SkillHubTrustTier",
+      "TrackedHubRef"
+     ],
+     "path": "src/write_envelope/skill_source/hub_record.rs",
+     "purpose": "Hub and pinned skill reference vocabulary",
+     "surface": {
+      "const": 3,
+      "enum": 4,
+      "fn": 16,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_source/mod.rs",
+     "purpose": "Hub reference records and exact skill source file vocabulary",
+     "surface": {
+      "mod": 2,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_source/support.rs",
+     "purpose": "Bounded hub value parsing helpers",
+     "surface": {
+      "const": 1,
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActorSubjectAnchor",
+      "PersonSubstrate",
+      "SubjectKind"
+     ],
+     "path": "src/write_envelope/subject_record.rs",
+     "purpose": "Subject identity and substrate vocabulary with pure claim-shape validation",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 10,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HabitStreak",
+      "TaskRole"
+     ],
+     "path": "src/write_envelope/task_body.rs",
+     "purpose": "TASK roles, canonical body fields, and deterministic check-in streak values",
+     "surface": {
+      "const": 4,
+      "enum": 1,
+      "fn": 9,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/thread_claim/codec.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CanonicalMessageId",
+      "StickyMaskDecision",
+      "ThreadMask",
+      "ThreadPassport",
+      "ThreadPassportInput",
+      "ThreadPassportResolution"
+     ],
+     "path": "src/write_envelope/thread_claim/mod.rs",
+     "purpose": "Email thread claim vocabulary, canonical message identities and value codecs",
+     "surface": {
+      "const": 16,
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 15,
+      "re-export": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VadAnnotationCleanup"
+     ],
+     "path": "src/write_envelope/vad_annotation.rs",
+     "purpose": "VAD annotation claim values, stable ids, and cleanup result data",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/validation.rs",
+     "purpose": "Write-envelope shape validation",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/voice_segment.rs",
+     "purpose": "`voice.segment` claim family — the metadata of one committed capture segment: its span, channel count…",
+     "surface": {
+      "const": 7,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/world_access_predicates.rs",
+     "purpose": "World-access authority claim predicates",
+     "surface": {
+      "const": 2
+     }
     }
    ],
    "modules": {
@@ -127247,12 +127413,33 @@
      "layout": "file",
      "purpose": "Host recipient and sealing policy for checkpoint legal-hold members"
     },
+    "config": {
+     "files": 10,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
+    },
     "connector_key_status": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Connector-key lifecycle status and its pinned wire strings"
+    },
+    "conversation_record": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Door inputs and snapshot results"
+    },
+    "core_write": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages…"
     },
     "file_secret_marks": {
      "files": 1,
@@ -127268,12 +127455,26 @@
      "layout": "file",
      "purpose": "Per-kind declared identity fields (human-facing identity hints)"
     },
+    "index_keys": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Byte layouts of the edge, temporal and type index keys"
+    },
     "key_material": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor"
+    },
+    "long_interval": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The occurrence span past which a stored record is a long interval"
     },
     "model_decision": {
      "files": 13,
@@ -127289,12 +127490,26 @@
      "layout": "file",
      "purpose": "Durable model-step claim vocabulary and progression values"
     },
+    "overlay_bookkeeping": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages"
+    },
     "receive_scan": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Pushed-blob scan inputs, value-free hits, and the receive-pack effector name"
+    },
+    "retained_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Host-owned retained-memory accounting for in-memory storage"
     },
     "secret_manifest": {
      "files": 1,
@@ -127330,11 +127545,18 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
+    },
+    "write_envelope": {
+     "files": 72,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 28,
+   "source_files": 120,
    "test_files": 1
   },
   "oneiron-uniffi": {
