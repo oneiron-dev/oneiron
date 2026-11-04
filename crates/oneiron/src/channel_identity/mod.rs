@@ -33,7 +33,7 @@
 //! ```
 
 mod actors;
-mod address;
+use oneiron_authority::channel_address as address;
 mod alias;
 mod assignment;
 mod auth_mode;
