@@ -22,10 +22,15 @@ The capture uses the actual caller at each entry:
   is not substituted for one. Existing payer and spend handling stay unchanged.
 - A generative hook verdict uses its grant's reader as principal and has no
   bound request session.
+- A generative eval arm uses the registered judge's principal with no bound
+  request session. It records only an actual successful terminal response and
+  its answering binding. The job's shared run, exact-model call and wait
+  deadline stay unchanged.
 
-The caller context is one thread-local scope on the blocking decision thread.
-It restores the entire previous context on return or panic. It is not authority,
-a payer, or an async context propagated to another thread.
+The Big-rung caller context is one thread-local scope on the blocking decision
+thread. It restores the entire previous context on return or panic. It is not
+authority, a payer, or an async context propagated to another thread. Generative
+eval arms pass their recording principal directly.
 
 ## Recording and privacy
 
@@ -39,6 +44,11 @@ returns. It does not change the live run, admission, route, meter, payer, reply,
 or typed decision. A failed evidence write is logged and never fails the answer.
 An unbound call records as usual; a call outside every capture scope is not
 assigned a guessed actor.
+
+Each raw/Big/generative-eval evidence row takes a distinct record stamp from
+its shared run. This is an evidence-key sequence, not an admission or receipt
+number. Cloned handles share it and declaration revisions do not reset it.
+A failed or suppressed write does not require a dense sequence.
 
 ## Limits of this coverage
 

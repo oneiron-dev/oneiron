@@ -286,6 +286,7 @@ impl Arms {
         arm: &ServedArm,
         task: &str,
         clock: &RetrievalDeadline,
+        principal: oneiron::EntityId,
     ) -> Generated {
         let runtime = server.ai.model_runtime();
         let Ok(call) = runtime.admit_seat_bound(vault, self.role, request(arm, task)) else {
@@ -298,19 +299,35 @@ impl Arms {
         if !may_send() {
             return Generated::Unavailable(MeasurementUnavailable::ClockExhausted);
         }
+        let record_request = call.request.clone();
+        let no_record_at_arrival = vault.model_call_keeps_no_record_for(None, Some(principal));
         let answered =
-            tokio::runtime::Handle::current().block_on(call.ladder.generate_exact_within(
+            tokio::runtime::Handle::current().block_on(call.ladder.generate_exact_recorded_by(
                 run,
                 call.request,
                 None,
                 &may_send,
-                clock.decision_time_left(),
+                crate::models::CallDeadline::waits_within(clock.decision_time_left()),
             ));
         match answered {
-            Ok(response) => Generated::Answer {
-                text: answer_text(&response),
-                served: response.usage.served_provider().map(str::to_owned),
-            },
+            Ok((response, binding)) => {
+                let no_record = no_record_at_arrival
+                    || vault.model_call_keeps_no_record_for(None, Some(principal));
+                let evidence_run = run.initiated_by(Some(principal));
+                crate::api::llm::record_raw_response(
+                    vault,
+                    &call.ladder,
+                    &evidence_run,
+                    &record_request,
+                    &response,
+                    Some(&binding),
+                    no_record,
+                );
+                Generated::Answer {
+                    text: answer_text(&response),
+                    served: response.usage.served_provider().map(str::to_owned),
+                }
+            }
             Err(LlmError::BudgetDenied(_)) => {
                 Generated::Unavailable(MeasurementUnavailable::BudgetExhausted)
             }
