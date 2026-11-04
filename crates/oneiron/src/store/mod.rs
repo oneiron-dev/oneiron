@@ -168,6 +168,7 @@ pub(crate) mod model_stream_row;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
 pub mod pack_hook_actor_class;
+pub mod pack_hook_proposal;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
 pub mod person_billing_account;
