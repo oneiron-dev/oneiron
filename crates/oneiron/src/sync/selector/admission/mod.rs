@@ -34,8 +34,8 @@ pub(in crate::sync) use self::revalidate::{
     revalidate_admitted_facet_stamps, revalidate_admitted_federated_claims,
 };
 use self::routing::Routes;
-pub(in crate::sync) use self::state::{release_landed_stamps, staged_births};
 pub(crate) use self::state::{AdmittedUpdate, StagedBirths};
+pub(in crate::sync) use self::state::{release_landed_stamps, staged_births};
 
 pub use crate::store::window_protocol::FederationAdmissionRole;
 
