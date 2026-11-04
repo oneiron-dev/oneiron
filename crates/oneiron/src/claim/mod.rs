@@ -65,7 +65,7 @@ mod expression_archive;
 mod expression_preference;
 mod history_handoff;
 mod history_pin_exchange;
-pub mod learning_estimate;
+pub use oneiron_base::learning_estimate;
 pub mod learning_evidence;
 pub mod learning_predicate;
 pub mod maintenance_kind;

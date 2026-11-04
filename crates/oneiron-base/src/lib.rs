@@ -15,6 +15,8 @@ pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
 pub mod fusion;
+pub mod learning_estimate;
+pub mod learning_ranking;
 pub mod limits;
 pub mod live_rows;
 pub mod msgpack_shape;
