@@ -475,7 +475,7 @@ impl Posterior for BetaView {
 /// The prior enters at its weight: a Beta prior's mean is spread over
 /// `weight_runs` pseudo-runs, a mean prior counts as `weight_runs` samples of
 /// its value, and prior counts are rescaled to `weight_runs` in total.
-pub(crate) fn fold_value(prior: &Prior, own: &OwnTally) -> EstimateValue {
+pub fn fold_value(prior: &Prior, own: &OwnTally) -> EstimateValue {
     let w = prior.weight_runs;
     match (&prior.value, own) {
         (EstimateValue::Beta { alpha, beta }, OwnTally::Beta { wins, losses }) => {
@@ -539,7 +539,7 @@ pub(crate) fn fold_value(prior: &Prior, own: &OwnTally) -> EstimateValue {
 
 /// Windowed own evidence for one cell, by form.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum OwnTally {
+pub enum OwnTally {
     Beta {
         wins: f64,
         losses: f64,
@@ -555,7 +555,7 @@ pub(crate) enum OwnTally {
 }
 
 impl OwnTally {
-    pub(crate) fn empty(form: EstimateForm) -> Self {
+    pub fn empty(form: EstimateForm) -> Self {
         match form {
             EstimateForm::Beta => Self::Beta {
                 wins: 0.0,
@@ -572,7 +572,7 @@ impl OwnTally {
         }
     }
 
-    pub(crate) const fn form(&self) -> EstimateForm {
+    pub const fn form(&self) -> EstimateForm {
         match self {
             Self::Beta { .. } => EstimateForm::Beta,
             Self::Mean { .. } => EstimateForm::Mean,
