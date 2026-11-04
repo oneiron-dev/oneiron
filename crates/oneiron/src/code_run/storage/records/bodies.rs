@@ -10,8 +10,6 @@ pub(crate) use crate::store::result_body_rows::code_run_body_row_key;
 mod host_occurrence;
 mod reader;
 
-pub(crate) use self::reader::CodeRunResultBodyReader;
-
 impl Vault {
     /// A writer for one result body, into this vault's `bodies/`. Each value
     /// custody knows is replaced by its handle as it streams (OF-560 C).
