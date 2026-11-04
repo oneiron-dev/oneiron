@@ -222,7 +222,8 @@ impl Vault {
     /// object store and every row stay. How many copies were erased.
     ///
     /// # Errors
-    /// A store or object store failure.
+    /// The vault's queue-source root cannot be resolved. A per-store failure
+    /// warns and leaves that copy for another pass; other stores continue.
     pub fn erase_withheld_queue_sources(&self) -> Result<usize> {
         let dir = self.store.env.path().canonicalize()?.join(QUEUE_SOURCE_DIR);
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -246,7 +247,13 @@ impl Vault {
                     continue;
                 }
             };
-            let git = GitWire::new(self)?;
+            let git = match GitWire::new(self) {
+                Ok(git) => git,
+                Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "a queue source's Git reader did not open");
+                    continue;
+                }
+            };
             let served = match self.bound_served_store(&git, &bound) {
                 Ok(served) => served,
                 Err(error) => {
@@ -254,9 +261,20 @@ impl Vault {
                     continue;
                 }
             };
-            let _guard = lock_repository(served.common_dir())?;
-            if self.erase_withheld_copy(&git, &served, &bound)?.is_some() {
-                erased += 1;
+            let _guard = match lock_repository(served.common_dir()) {
+                Ok(guard) => guard,
+                Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "a queue source's repository lock failed");
+                    continue;
+                }
+            };
+            match self.erase_withheld_copy(&git, &served, &bound) {
+                Ok(Some(_)) => erased += 1,
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "a withheld queue source copy could not be erased");
+                    continue;
+                }
             }
         }
         Ok(erased)
