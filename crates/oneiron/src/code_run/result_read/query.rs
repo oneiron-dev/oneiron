@@ -1231,6 +1231,13 @@ fn table_rows(
             scan = Scan::new(bounds.scan_bytes());
         }
     }
+    // A continuation re-reads the header above with a fresh scan: the data
+    // phase gets its own full allowance, so a header-spent bound cannot leave
+    // a zero-partial Limit that repeats the same cursor (FIX 1188 round 3).
+    // The allowance still covers only new bytes from the cursor.
+    if cursor.offset.is_some() {
+        scan = Scan::new(bounds.scan_bytes());
+    }
     let mut row = cursor.row.unwrap_or(0);
     let data_start = cursor.offset.unwrap_or(body_start).max(body_start);
     if data_start != lines.at {
