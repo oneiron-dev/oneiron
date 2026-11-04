@@ -910,6 +910,7 @@ impl Memory<'_> {
                 run_ref: &input.run_ref,
                 made_by: made_by.as_ref(),
                 zone: &zone,
+                host: self.task_host(),
             },
         )?;
         Ok(OfficeBodyExportView {

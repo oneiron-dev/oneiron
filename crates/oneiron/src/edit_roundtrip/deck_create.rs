@@ -252,6 +252,8 @@ pub struct DeckCreateRequest<'a> {
     /// The task or ask the creation answers: the deck's born-from.
     pub trigger: Option<MadeByTrigger>,
     pub actor: WriteActor,
+    /// The sealed host context the first version records; `None` is explicitly unknown.
+    pub host: Option<&'a crate::task_verb::HostBinding>,
 }
 
 #[derive(Debug, Clone)]
@@ -651,18 +653,20 @@ impl crate::Vault {
                     body,
                 },
             )?;
-            let version = self.append_blob_artifact_version_made_by_in_txn(
+            let version = self.append_blob_artifact_version_from_host_in_txn(
                 wtxn,
                 &artifact,
-                None,
                 &candidate.bytes,
                 &BlobVersionProvenance::AgentRun {
                     run_ref: request.run_ref.to_owned(),
                 },
-                &made_by,
                 request.actor,
                 occurred,
                 now,
+                None,
+                None,
+                Some(&made_by),
+                request.host,
             )?;
             let record = DeckCreationRecord {
                 artifact,
