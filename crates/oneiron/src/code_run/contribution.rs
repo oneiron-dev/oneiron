@@ -27,8 +27,8 @@ pub(crate) use self::admission::matched_contribution_facts_in_txn;
 use self::ancestor::{target_slots, target_step};
 use super::replay_capsule::{CapsuleRungBinding, ExposureSlot, StepReplayCapsule};
 use super::storage::{
-    ForkRows, capsule_request, fork_response, fork_rows, put_fork, put_unavailable,
-    step_replay_capsules, store_fork_response,
+    ForkProvenance, ForkRows, capsule_request, fork_response, fork_rows, put_fork, put_unavailable,
+    step_replay_capsules_in_txn, store_fork_response,
 };
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::maintenance::ContributionForks;
@@ -43,9 +43,9 @@ use crate::{ContentPart, EntityId, Error, LlmRequest, LlmResponse, ModelId, Resu
 /// input no answer of the run has touched yet. A skill body the host put in
 /// the task is in it, so its first exposure is there.
 const FIRST_STEP: u64 = 0;
-/// A fork receipt's prefix. The rest is a hash that names neither the
+/// A fork receipt's prefix. The rest is an opaque id that names neither the
 /// fork's treatment nor its run, so a scorer reading it stays blind.
-const FORK_RECEIPT_PREFIX: &str = "contribution_fork:";
+pub(super) const FORK_RECEIPT_PREFIX: &str = "contribution_fork:";
 
 /// Why a matched pair cannot be run. None of these is a verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -267,8 +267,16 @@ pub fn run_contribution_forks(
     scorer: &dyn ContributionForkScorer,
     clock: &RetrievalDeadline,
 ) -> Result<std::result::Result<ContributionForks, ContributionReplayUnavailable>> {
+    let provenance = {
+        let txn = vault.store.env.read_txn()?;
+        ForkProvenance::for_candidate_in_txn(vault, &txn, candidate)?
+    };
+    let Some(provenance) = provenance else {
+        return Ok(Err(ContributionReplayUnavailable::Unreadable));
+    };
     let runner = Runner {
         vault,
+        provenance,
         candidate,
         model,
         scorer,
@@ -286,7 +294,7 @@ pub fn run_contribution_forks(
     if let Err(reason) = &outcome
         && reason.lasting()
     {
-        put_unavailable(vault, &runner.pair, *reason)?;
+        put_unavailable(vault, &runner.pair, &runner.provenance, *reason)?;
     }
     Ok(outcome)
 }
@@ -329,6 +337,7 @@ struct Runner<'a> {
     scorer: &'a dyn ContributionForkScorer,
     clock: &'a RetrievalDeadline,
     pair: [u8; 32],
+    provenance: ForkProvenance,
 }
 
 impl Runner<'_> {
@@ -341,13 +350,12 @@ impl Runner<'_> {
             return Ok(Err(Unavailable::AnchorNotReplayable));
         }
         let target = self.candidate.target;
-        let capsules = match receipt_attempt(&self.candidate.attempt_receipt) {
-            Some(attempt) => step_replay_capsules(self.vault, attempt)?,
-            None => Vec::new(),
-        };
-        let capsule = match target_step(capsules, target) {
-            Ok(capsule) => capsule,
-            Err(reason) => return Ok(Err(reason)),
+        let capsule = {
+            let txn = self.vault.store.env.read_txn()?;
+            match target_capsule_in_txn(self.vault, &txn, self.candidate)? {
+                Ok(capsule) => capsule,
+                Err(reason) => return Ok(Err(reason)),
+            }
         };
         // An erased capsule's content went with its actor (FIX 6144): none of
         // its rung, exposures or request is read, and the pair is unreadable.
@@ -472,37 +480,45 @@ impl Runner<'_> {
             return Ok(Err(ContributionReplayUnavailable::ModelUnavailable));
         };
         let capsule = &prepared.capsule;
-        let digest = fork_digest(&self.pair, capsule, treatment);
+        // The receipt and path are opaque, not descendants of any target id.
+        let digest = bytes_to_hex_lower(&self.vault.store.clock.ulid()?);
         let path = format!("replay/contribution/{digest}.response.json");
-        // A fork answer is kept only while its capsule's actor is (FIX 6144).
-        let stored = store_fork_response(self.vault, capsule, &path, &response)?;
-        let Some(response_ref) = stored else {
+        // Publication and its discoverable erase ownership commit together.
+        let stored = store_fork_response(
+            self.vault,
+            capsule,
+            &self.pair,
+            &self.provenance,
+            treatment,
+            &path,
+            &response,
+            |response_ref| ContributionForkReceipt {
+                receipt: format!("{FORK_RECEIPT_PREFIX}{digest}"),
+                treatment,
+                attempt: capsule.attempt,
+                lease_generation: capsule.lease_generation,
+                step: capsule.step,
+                capsule_request: capsule.request_hash,
+                request: hash,
+                model: prepared.binding.model.clone(),
+                route_prompt: prepared
+                    .binding
+                    .prompt
+                    .as_deref()
+                    .map(|prompt| *blake3::hash(prompt.as_bytes()).as_bytes()),
+                seed: capsule.seed,
+                seed_unsupported: capsule.seed.is_none(),
+                response: response_ref,
+                response_path: path.clone(),
+                anchor: prepared.anchor_hash,
+                scoring: ForkScoring::of(self.candidate),
+                passed: None,
+                generated_at: crate::unix_seconds_now(),
+            },
+        )?;
+        let Some(fork) = stored else {
             return Ok(Err(ContributionReplayUnavailable::Unreadable));
         };
-        let fork = ContributionForkReceipt {
-            receipt: format!("{FORK_RECEIPT_PREFIX}{digest}"),
-            treatment,
-            attempt: capsule.attempt,
-            lease_generation: capsule.lease_generation,
-            step: capsule.step,
-            capsule_request: capsule.request_hash,
-            request: hash,
-            model: prepared.binding.model.clone(),
-            route_prompt: prepared
-                .binding
-                .prompt
-                .as_deref()
-                .map(|prompt| *blake3::hash(prompt.as_bytes()).as_bytes()),
-            seed: capsule.seed,
-            seed_unsupported: capsule.seed.is_none(),
-            response: response_ref,
-            response_path: path,
-            anchor: prepared.anchor_hash,
-            scoring: ForkScoring::of(self.candidate),
-            passed: None,
-            generated_at: crate::unix_seconds_now(),
-        };
-        put_fork(self.vault, &self.pair, &fork)?;
         Ok(Ok(fork))
     }
 
@@ -535,9 +551,25 @@ impl Runner<'_> {
             return Ok(Err(ContributionReplayUnavailable::Unfinished));
         };
         fork.passed = Some(passed);
-        put_fork(self.vault, &self.pair, &fork)?;
+        if !put_fork(self.vault, &self.pair, &fork)? {
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
+        }
         Ok(Ok(fork))
     }
+}
+
+/// The existing target-step selection on the caller's snapshot, shared by
+/// preparation and the capture of its actual erase actor.
+pub(super) fn target_capsule_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    candidate: &ContributionCandidate,
+) -> Result<std::result::Result<StepReplayCapsule, ContributionReplayUnavailable>> {
+    let capsules = match receipt_attempt(&candidate.attempt_receipt) {
+        Some(attempt) => step_replay_capsules_in_txn(vault, txn, attempt)?,
+        None => Vec::new(),
+    };
+    Ok(target_step(capsules, candidate.target))
 }
 
 /// The attempt a terminal pack receipt names, when it is one.
@@ -595,18 +627,6 @@ fn pair_digest(candidate: &ContributionCandidate) -> [u8; 32] {
         .hasher("oneiron contribution fork pair v2")
         .finalize()
         .as_bytes()
-}
-
-/// A fork's id: the pair, the capsule and the treatment, hashed.
-fn fork_digest(pair: &[u8; 32], capsule: &StepReplayCapsule, treatment: ForkTreatment) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(pair);
-    hasher.update(&capsule.request_hash);
-    hasher.update(match treatment {
-        ForkTreatment::WithSkill => b"with",
-        ForkTreatment::WithoutSkill => b"sans",
-    });
-    bytes_to_hex_lower(hasher.finalize().as_bytes())
 }
 
 /// The anchor's identity: its kind, the outcome it settled, its axis, the

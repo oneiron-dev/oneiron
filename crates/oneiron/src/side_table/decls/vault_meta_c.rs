@@ -289,7 +289,8 @@ side_tables! {
     /// outcome, goal revision and axis it was scored for, and its score), or why the pair is
     /// unavailable for good. Key: hash32(attempt receipt, outcome, goal revision, axis, target) +
     /// string(row: `with_skill`, `without_skill` or `unavailable`).
-    CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine;
+    CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine
+        => crate::code_run::erase_contribution_forks_in_txn;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches
     /// it when a record the fold's summary came from is withdrawn (fixed 24-byte frame: id16(run)
     /// + fold u64 BE). Key: id16(dependent).
