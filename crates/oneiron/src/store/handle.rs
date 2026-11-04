@@ -252,6 +252,25 @@ pub struct StoreCore {
     /// The engine's record-scope stamp hooks, supplied by the open door with
     /// the delete guards.
     pub(crate) scope_stamps: &'static dyn crate::store::StoreScopeStamps,
+    /// The engine's project write hooks, supplied by the open door with the
+    /// delete guards.
+    pub(crate) project_writes: &'static dyn crate::store::StoreProjectWrites,
+    /// The engine's record hooks, supplied by the open door with the delete
+    /// guards.
+    pub(crate) record_hooks: &'static dyn crate::store::StoreRecordHooks,
+    /// The engine's side-table actor scrubs, supplied by the open door with
+    /// the delete guards.
+    pub(crate) actor_scrubs: &'static dyn crate::store::StoreActorScrubs,
+    /// The engine's gate hooks, supplied by the open door with the delete
+    /// guards.
+    pub(crate) gate_hooks: &'static dyn crate::store::StoreGateHooks,
+    /// The engine's sync hooks, supplied by the open door with the delete
+    /// guards.
+    #[cfg(feature = "sync")]
+    pub(crate) sync_hooks: &'static dyn crate::store::StoreSyncHooks,
+    /// The engine's attempt queue operations, supplied by the open door with
+    /// the delete guards.
+    pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
@@ -305,7 +324,9 @@ pub struct StoreCore {
     /// per-process: see [`Diagnostics`] for why the three families moved here.
     pub(crate) diagnostics: Diagnostics,
     /// Bounded, content-addressed L2 render cache. Never persisted.
-    pub(crate) l2_base_cache: Mutex<crate::context_pack::L2BaseCache>,
+    pub(crate) l2_base_cache: Mutex<crate::store::l2_evidence::L2BaseCache>,
+    pub(in crate::store) ppr_cache_invalidation:
+        &'static dyn crate::store::ppr_cache_invalidation::PprCacheInvalidation,
     /// Legal-hold refusals waiting for their hold log: the refusing
     /// transaction rolls back (OF-470). Never persisted.
     pub(crate) legal_hold_refusals: super::legal_hold::LegalHoldRefusals,
@@ -333,11 +354,11 @@ pub struct StoreCore {
     pub(crate) credential_revocations: tokio::sync::watch::Sender<u64>,
     /// The container output guard: each container's last attendee-entry
     /// mark (OF-365 P5). Per vault, in memory, never persisted.
-    pub(crate) container_output: crate::conversation::ContainerOutputGuard,
+    pub(crate) container_output: crate::store::container_output::ContainerOutputGuard,
     /// The voice calls live in each room, by host token (FIX 1388/1389 C1).
     /// Per vault, in memory, never persisted: hosts register again after a
     /// restart.
-    pub(crate) live_speakers: crate::conversation::LiveSpeakers,
+    pub(crate) live_speakers: crate::store::live_speaker_calls::LiveSpeakers,
     /// Content-free local invalidations. Readers always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,
@@ -678,7 +699,7 @@ macro_rules! manifest_dbs {
             /// writing, and the write target is the only handle it holds.
             fn diagnostics(&self) -> &Diagnostics;
             /// The scan checks this vault holds until its next write
-            /// ([`crate::scan_check::ScanCount::defer`]).
+            /// ([`crate::store::scan_count::ScanCount::defer`]).
             fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks;
             fn clock(&self) -> &crate::ports::StoreClock;
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody;
@@ -746,7 +767,7 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
-            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+            fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks {
                 &self.core.pending_scan_checks
             }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
@@ -831,6 +852,7 @@ impl Drop for StoreOwner {
 }
 
 pub(super) fn seed_default_policy_manifest_in_txn(
+    gate_hooks: &dyn crate::store::StoreGateHooks,
     entities: &OverlayDb,
     sync_state: &OverlayStrDb,
     type_index: &OverlayDb,
@@ -844,8 +866,8 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     if entities.get(wtxn, id.as_bytes())?.is_some() {
         return Err(Error::CorruptedIndex("default policy manifest id occupied"));
     }
-    let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
-    let body = crate::gate::default_policy_manifest()?;
+    let timestamp = crate::store::policy_record::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
+    let body = gate_hooks.default_policy_manifest()?;
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     payload.push(ENTITY_TYPE_POLICY_MANIFEST);
     payload.extend_from_slice(&timestamp.to_be_bytes());
@@ -855,12 +877,12 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     entities.put(wtxn, id.as_bytes(), &payload)?;
     sync_state.put(
         wtxn,
-        &crate::gate::trusted_manifest_key(id),
+        &oneiron_store::manifest_origin_keys::trusted_manifest_key(id),
         blake3::hash(&body).as_bytes(),
     )?;
     sync_state.put(
         wtxn,
-        &crate::gate::seeded_manifest_key(id),
+        &oneiron_store::manifest_origin_keys::seeded_manifest_key(id),
         blake3::hash(&body).as_bytes(),
     )?;
     type_index.put(

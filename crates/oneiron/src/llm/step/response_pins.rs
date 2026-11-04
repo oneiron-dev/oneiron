@@ -123,7 +123,7 @@ fn carried_pin_in_txn(
 
 /// [`carried_pin_in_txn`] over a stored row already read. Most claims are
 /// not a step's: their bodies are never decoded here (as
-/// `response_bodies::step_claim_carriage` reads them).
+/// `store::model_step_response_carriage::step_claim_carriage` reads them).
 fn carried_pin_in_raw(raw: &[u8]) -> Option<StepResponseRef> {
     if raw.len() <= ENTITY_METADATA_HEADER_LEN || raw[0] != ENTITY_TYPE_CLAIM {
         return None;

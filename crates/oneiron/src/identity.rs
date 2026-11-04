@@ -89,64 +89,10 @@ impl InstallSignerDerive for InstallSigner {
     }
 }
 
-fn signer_not_loaded() -> Error {
-    Error::Secret(crate::error::SecretError::KeystoreUnavailable(
-        "this install's signing keys are not loaded; the host installs a keystore",
-    ))
-}
-
-/// The handle's signer for the machine id in `txn`'s snapshot. Never touches
-/// the keystore: with no loaded signer, or one for another machine id, this
-/// refuses `KeystoreUnavailable`.
-pub(crate) fn loaded_signer_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<std::sync::Arc<InstallSigner>> {
-    let machine = read_machine_id_in_txn(vault, txn)?;
-    match (machine, vault.loaded_install_signer()) {
-        (Some(machine), Some(signer)) if signer.machine == machine => Ok(signer),
-        _ => Err(signer_not_loaded()),
-    }
-}
-
-/// The full device identity (client id + Ed25519 keypair) inside the
-/// CALLER's txn (OD-2): the client id is minted when missing, the key is the
-/// handle's loaded device key ([`loaded_signer_in_txn`]).
-pub(crate) fn ensure_device_identity_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-) -> Result<DeviceIdentity> {
-    let client_id = load_or_mint_client_id_in_txn(vault, wtxn)?;
-    let signer = loaded_signer_in_txn(vault, wtxn)?;
-    put_or_check_device_pk_in_txn(vault, wtxn, &signer.device_key)?;
-    Ok(DeviceIdentity {
-        client_id,
-        signing_key: signer.device_key.clone(),
-    })
-}
-
-/// This install's machine id and machine key in the caller's snapshot, from
-/// the handle's loaded signer ([`loaded_signer_in_txn`]).
-pub(crate) fn machine_signer_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<(crate::EntityId, SigningKey)> {
-    let signer = loaded_signer_in_txn(vault, txn)?;
-    Ok((signer.machine, signer.machine_key.clone()))
-}
-
-/// This install's machine signing key, or `None` before it has a machine id.
-/// Never touches the keystore: an install with an id and no loaded signer
-/// refuses `KeystoreUnavailable`.
-pub(crate) fn read_machine_signing_key_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<Option<SigningKey>> {
-    if read_machine_id_in_txn(vault, txn)?.is_none() {
-        return Ok(None);
-    }
-    Ok(Some(loaded_signer_in_txn(vault, txn)?.machine_key.clone()))
-}
+pub(crate) use crate::store::install_identity::{
+    ensure_device_identity_in_txn, loaded_signer_in_txn, machine_signer_in_txn,
+    read_machine_signing_key_in_txn,
+};
 
 /// Own-txn wrapper around [`ensure_device_identity_in_txn`]: loads the
 /// install's signing keys first, outside the transaction.
@@ -161,26 +107,29 @@ pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {
     Ok(identity.expect("closure ran on Ok"))
 }
 
-/// A machine identity row: a checkpoint image restored directly, which may
-/// land on any install, leaves these behind. The device and machine keys'
+/// An install identity row: a checkpoint image restored directly, which may
+/// land on any install, leaves these behind, including its client/peer id.
+/// The device and machine keys'
 /// public caches go with them, since the new machine's slot holds another
 /// seed. The pinned root goes with them too:
 /// a new machine trusts no root until a pin door on its own install pins one,
 /// so an old image never rolls trust back to an older root, and an image a
 /// host made never arrives pinned to the host's.
 pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
-    key == side_table::IDENTITY_MACHINE_ID.prefix
+    key == side_table::IDENTITY_CLIENT_ID.prefix
+        || key == side_table::IDENTITY_MACHINE_ID.prefix
         || key == side_table::IDENTITY_DEVICE_PK.prefix
         || key == side_table::IDENTITY_MACHINE_PK.prefix
         || crate::authority::is_pinned_root_row(key)
 }
 
-/// Forgets this install's machine and its pin, so the vault joins as a new
+/// Forgets this install's client id, machine and pin, so the vault joins as a new
 /// one: another live vault keeps the machine it was.
 pub(crate) fn drop_machine_identity_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
+    crate::store::install_identity::drop_client_id_in_txn(store, wtxn)?;
     MACHINE_ID.delete(store, wtxn, &())?;
     DEVICE_PK.delete(store, wtxn, &())?;
     MACHINE_PK.delete(store, wtxn, &())?;

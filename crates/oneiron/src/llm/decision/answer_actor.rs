@@ -5,7 +5,6 @@
 
 use super::asks::{ASKS, DecisionAsk};
 use super::ladder::AskRole;
-use super::rules::RULES;
 use crate::{EntityId, Result, Vault};
 
 /// Makes a responsible role name no one when it named `actor`; whether it
@@ -75,35 +74,6 @@ pub(crate) fn erase_ask_actor_in_txn(
     }
     for (seq, ask) in asks {
         ASKS.put(&vault.store, wtxn, &seq, &ask)?;
-    }
-    Ok(())
-}
-
-/// Erasing `actor` from the rule rows (FIX 3520): every revision it wrote
-/// keeps its question, evidence, answer, reason and times, and names no one.
-/// A standing row still answers its question, as a row is advice and never a
-/// grant; the owner's revoke still stops it. One-way, in the erase's own
-/// transaction. An id whose entity is no actor scans nothing.
-///
-/// # Errors
-///
-/// Storage errors, or a rule row that cannot be read.
-pub(crate) fn erase_rule_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    if names_no_actor(vault, wtxn, actor)? {
-        return Ok(());
-    }
-    let mut rows = Vec::new();
-    for (key, mut row) in RULES.scan(&vault.store, wtxn)? {
-        if row.by.forget(*actor) {
-            rows.push((key, row));
-        }
-    }
-    for (key, row) in rows {
-        RULES.put(&vault.store, wtxn, &key, &row)?;
     }
     Ok(())
 }

@@ -28,7 +28,7 @@ impl Vault {
         id: &EntityId,
         entity_type: u8,
     ) -> Result<bool> {
-        if !crate::dreamer_runner::authority::is_base_agent_actor(id)?
+        if !crate::store::base_agent::is_base_agent_actor(id)?
             && !crate::registry::is_delete_protected_engine_record(entity_type)
             && !crate::store::project_kind::is_project_revision_type(&self.store, entity_type)
         {
@@ -186,9 +186,21 @@ impl Vault {
         ledger_clear: bool,
     ) -> Result<bool> {
         if crate::note::citation_delete_scope_exists(&self.store, txn, id)?
-            || crate::skill_hub::source_custody_exists_in_txn(&self.store, txn, id)?
-            || crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, txn, id)?
-            || crate::skill_hub::refinement_custody_exists_in_txn(&self.store, txn, id)?
+            || crate::store::skill_source_custody::source_custody_exists_in_txn(
+                &self.store,
+                txn,
+                id,
+            )?
+            || crate::store::claim_refinement_control::claim_refinement_scope_exists_in_txn(
+                &self.store,
+                txn,
+                id,
+            )?
+            || crate::store::skill_refinement_custody::refinement_custody_exists_in_txn(
+                &self.store,
+                txn,
+                id,
+            )?
             || crate::store::agent_birth_custody::birth_custody_exists_in_txn(&self.store, txn, id)?
             || crate::receipt::receipt_archive_custody_exists(&self.store, txn, id)?
             || crate::blob_artifact::claimed_hash_rows_exist(&self.store, txn, id)?
@@ -197,7 +209,11 @@ impl Vault {
             || self.port_short_id_mapping_exists(txn, id)?
             || crate::tagging::erase_scope_exists_in_txn(&self.store, txn, id)?
             || crate::store::turn_missing::delete_scope_exists_in_txn(&self.store, txn, id)?
-            || crate::identity_redirect::redirect_row_exists_in_txn(&self.store, txn, id)?
+            || crate::store::identity_redirect_rows::redirect_row_exists_in_txn(
+                &self.store,
+                txn,
+                id,
+            )?
             || self.store.known_history_scope_exists_in_txn(txn, id)?
             || crate::world_keys::world_pad_scope_exists_in_txn(&self.store, txn, id)?
         {
