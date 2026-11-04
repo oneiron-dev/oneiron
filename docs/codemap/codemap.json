@@ -42690,8 +42690,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 208,
-      "re-export": 96
+      "mod": 207,
+      "re-export": 97
      }
     },
     {
@@ -56935,22 +56935,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "PolicyModelAnswer",
-      "PolicyOutputContract"
-     ],
-     "path": "src/policy_model/contract.rs",
-     "purpose": "The output contract a substrate owner's policy document asks the model for, and the strict reader of the…",
-     "surface": {
-      "crate-vis": 5,
-      "enum": 1,
-      "fn": 2,
-      "struct": 1
-     }
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -57007,16 +56991,6 @@
       "enum": 2,
       "fn": 7,
       "struct": 3
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/policy_model/goal_limits.rs",
-     "purpose": "DEC-0005 goal limits: the thresholds a confirmed goal intake is counted against",
-     "surface": {
-      "crate-vis": 14
      }
     },
     {
@@ -57322,23 +57296,6 @@
      "purpose": "The one-tap undo of an agent's tighten (FIX 4480): the tapping holder's own act (`by: Owner`), bound to the…",
      "surface": {
       "fn": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "PolicyPatternRole",
-      "PolicyPatternRule"
-     ],
-     "path": "src/policy_model/pattern.rs",
-     "purpose": "Substrate-owner pattern rules",
-     "surface": {
-      "const": 2,
-      "crate-vis": 9,
-      "enum": 1,
-      "fn": 4,
-      "struct": 1
      }
     },
     {
@@ -61919,60 +61876,6 @@
      "path": "src/retrieval_depth/tests/repairs.rs",
      "purpose": "—",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "BudgetLine",
-      "DeclarationEditor",
-      "DeclarationError",
-      "DeclaredTeachers",
-      "LeaseUnit",
-      "RunDeclaration"
-     ],
-     "path": "src/run_budget/declaration.rs",
-     "purpose": "The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid…",
-     "surface": {
-      "crate-vis": 8,
-      "enum": 2,
-      "fn": 15,
-      "struct": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "AddFundsNotice",
-      "CheckpointRef",
-      "DeclaredMaximum",
-      "JobMaximum",
-      "JobSignal",
-      "JobStartRefused",
-      "MaximumShown",
-      "MaximumStop",
-      "ResumeOffer",
-      "ResumeRefused",
-      "StopRefused"
-     ],
-     "path": "src/run_budget/job_maximum.rs",
-     "purpose": "The stop at a paid job's declared maximum (CROSS-ARCH-0023 C2)",
-     "surface": {
-      "enum": 4,
-      "fn": 9,
-      "struct": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/run_budget/mod.rs",
-     "purpose": "Run budget declarations and paid-job maximum state",
-     "surface": {
-      "re-export": 2
-     }
     },
     {
      "bucket": "s",
@@ -90777,7 +90680,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 63,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90915,13 +90818,6 @@
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "ONE-207: the retrieval half of the effort dial"
-    },
-    "run_budget": {
-     "files": 3,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "dir",
-     "purpose": "Run budget declarations and paid-job maximum state"
     },
     "run_tree": {
      "files": 11,
@@ -91374,7 +91270,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6310,
+   "source_files": 6304,
    "test_files": 899
   },
   "oneiron-android": {
@@ -106418,6 +106314,99 @@
    "source_files": 18,
    "test_files": 2
   },
+  "oneiron-policy-vocabulary": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Policy-model vocabulary of the oneiron engine: the output contract a policy document asks the model for, the…",
+     "surface": {
+      "crate-vis": 2,
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PolicyModelAnswer",
+      "PolicyOutputContract"
+     ],
+     "path": "src/policy_model/contract.rs",
+     "purpose": "The output contract a substrate owner's policy document asks the model for, and the strict reader of the…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GoalLimitRow",
+      "GoalLimitScope",
+      "GoalLimitValues",
+      "GoalLimits",
+      "GoalLimitsPrecedence"
+     ],
+     "path": "src/policy_model/goal_limits.rs",
+     "purpose": "DEC-0005 goal limits: the thresholds a confirmed goal intake is counted against",
+     "surface": {
+      "enum": 2,
+      "fn": 9,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/mod.rs",
+     "purpose": "The policy-model modules moved out of `oneiron::policy_model`",
+     "surface": {
+      "mod": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CompiledPatternRule",
+      "CompiledPatternRules",
+      "PatternEvaluation",
+      "PatternRuleDefect",
+      "PolicyPatternRole",
+      "PolicyPatternRule"
+     ],
+     "path": "src/policy_model/pattern.rs",
+     "purpose": "Substrate-owner pattern rules",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 9,
+      "struct": 5
+     }
+    }
+   ],
+   "modules": {
+    "policy_model": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The policy-model modules moved out of `oneiron::policy_model`"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Policy-model vocabulary of the oneiron engine: the output contract a policy document asks the model for, the…",
+   "source_files": 5,
+   "test_files": 0
+  },
   "oneiron-py": {
    "files": [
     {
@@ -107222,6 +107211,86 @@
    "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
    "source_files": 19,
    "test_files": 5
+  },
+  "oneiron-run-budget": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Run budget declarations and paid-job maximum state of the oneiron engine",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BudgetLine",
+      "DeclarationEditor",
+      "DeclarationError",
+      "DeclaredTeachers",
+      "LeaseUnit",
+      "RunDeclaration"
+     ],
+     "path": "src/run_budget/declaration.rs",
+     "purpose": "The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid…",
+     "surface": {
+      "enum": 2,
+      "fn": 23,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AddFundsNotice",
+      "CheckpointRef",
+      "DeclaredMaximum",
+      "JobMaximum",
+      "JobSignal",
+      "JobStartRefused",
+      "MaximumShown",
+      "MaximumStop",
+      "ResumeOffer",
+      "ResumeRefused",
+      "StopRefused"
+     ],
+     "path": "src/run_budget/job_maximum.rs",
+     "purpose": "The stop at a paid job's declared maximum (CROSS-ARCH-0023 C2)",
+     "surface": {
+      "enum": 4,
+      "fn": 9,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/run_budget/mod.rs",
+     "purpose": "Run budget declarations and paid-job maximum state",
+     "surface": {
+      "re-export": 2
+     }
+    }
+   ],
+   "modules": {
+    "run_budget": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Run budget declarations and paid-job maximum state"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Run budget declarations and paid-job maximum state of the oneiron engine",
+   "source_files": 4,
+   "test_files": 0
   },
   "oneiron-sandbox-contract": {
    "files": [

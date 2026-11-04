@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6310 | 899 | 142 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6304 | 899 | 142 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 53 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 24 | 2 | 0 |
@@ -46,9 +46,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-napi](codemap/oneiron-napi.md) | The raw N-API addon root: module registrations and the crate-level native exports | 28 | 1 | 2 |
 | [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 44 | 4 | 1 |
 | [oneiron-organ-protocol](codemap/oneiron-organ-protocol.md) | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 18 | 2 | 0 |
+| [oneiron-policy-vocabulary](codemap/oneiron-policy-vocabulary.md) | Policy-model vocabulary of the oneiron engine: the output contract a policy document asks the model for, the… | 5 | 0 | 0 |
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 5 | 0 | 1 |
 | [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 22 | 8 | 1 |
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 19 | 5 | 0 |
+| [oneiron-run-budget](codemap/oneiron-run-budget.md) | Run budget declarations and paid-job maximum state of the oneiron engine | 4 | 0 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 49 | 12 | 0 |
 | [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1517 | 182 | 42 |
@@ -206,7 +208,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `own_rate` | file | 1 | s | yes | Node-local OF-520 own-rate windows |
 | `persona_snapshot` | dir | 9 | m | yes | OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A) |
 | `pipeline` | dir | 69 | L | — | — |
-| `policy_model` | dir | 63 | m | yes | Policy classification over two planes |
+| `policy_model` | dir | 60 | m | yes | Policy classification over two planes |
 | `policy_setting_doors` | file | 1 | m | yes | The app's policy actions as host verbs (OF-181) |
 | `ports` | dir | 51 | m | yes | Transaction-composable storage ports |
 | `ppr` | dir | 11 | m | — | — |
@@ -226,7 +228,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `result_body` | dir | 5 | m | yes | Result body lifetime (OF-597): reader pins, the collector of released and orphan body files, and the copy of… |
 | `result_memory` | file | 1 | s | — | Result-body memory accounting, defined at the store layer |
 | `retrieval_depth` | file+dir | 7 | m | — | ONE-207: the retrieval half of the effort dial |
-| `run_budget` | dir | 3 | s | — | Run budget declarations and paid-job maximum state |
 | `run_tree` | dir | 11 | m | — | Run tree projection and control adapter over generic AttemptQueue rows |
 | `runtime_hooks` | dir | 45 | L | yes | Runtime hooks (ARCH-0080) |
 | `saved_query` | dir | 18 | L | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
@@ -689,6 +690,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `value` | file+dir | 3 | m | A MessagePack value, as the protocol carries args, bodies, reports and asks (protocol 2.0, FIX 6191) |
 | `wire` | file | 1 | m | The protocol's messages |
 
+## oneiron-policy-vocabulary
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `policy_model` | dir | 4 | m | The policy-model modules moved out of `oneiron::policy_model` |
+
 ## oneiron-py
 
 | module | layout | files | largest src bucket | purpose |
@@ -720,6 +727,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `distance` | file+dir | 2 | m | Cosine distance and similarity over `f32` vectors, with AVX2/FMA and NEON kernels picked at run time and a… |
 | `fusion` | file+dir | 2 | m | Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity… |
 | `pipeline` | file | 1 | s | Value types the retrieval pipeline's kernels share |
+
+## oneiron-run-budget
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `run_budget` | dir | 3 | s | Run budget declarations and paid-job maximum state |
 
 ## oneiron-sandbox-contract
 
