@@ -199,6 +199,7 @@ mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
 pub mod decision_ask_role;
+pub(crate) mod decision_question_watches;
 pub mod derivation;
 pub mod diagnostic_record;
 mod diagnostics;
