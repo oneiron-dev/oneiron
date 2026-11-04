@@ -48,6 +48,11 @@ pub fn responses_can_carry(request: &LlmRequest) -> bool {
         .any(|part| matches!(part, ContentPart::Audio { .. }))
 }
 
+/// The Responses `reasoning.summary` default for a summary-offering model
+/// (`auto` selects its most detailed summarizer); the catalog row, not this
+/// string, is the support claim.
+const DEFAULT_REASONING_SUMMARY: &str = "auto";
+
 pub fn build_openai_responses_turn(
     config: &OpenAiCompatConfig,
     request: &LlmRequest,
@@ -103,6 +108,22 @@ pub fn build_openai_responses_turn(
         } else {
             reasoning.insert("effort".into(), json!(effort));
         }
+    }
+    // A summary-offering reasoning model returns its readable summary only
+    // when asked; `auto` is the documented default, not a support claim.
+    // An explicit seat `None` cleared `reasoning` above and must never
+    // resurrect any controls here.
+    if request.envelope.seat_effort != Some(ReasoningEffort::None)
+        && catalog
+            .capabilities
+            .contains(&oneiron::LlmCapability::Reasoning)
+        && catalog
+            .capabilities
+            .contains(&oneiron::LlmCapability::ReasoningSummary)
+    {
+        reasoning
+            .entry("summary".to_owned())
+            .or_insert(json!(DEFAULT_REASONING_SUMMARY));
     }
     if !reasoning.is_empty() {
         head.insert("reasoning".into(), JsonValue::Object(reasoning));
