@@ -11,11 +11,19 @@
 //! it. Only the disk refuses: a write to the file that would take the disk
 //! below the floor its host keeps ([`SpillFloor`]), a write that fails, or a
 //! file that keeps a name, fails the write.
+//!
+//! A wiping holder ([`HeldBytes::wiping`]) holds bytes that must not
+//! outlive it, a marked push's plans (FIX 8030): its memory grows into a
+//! fresh buffer and wipes the old one, reads back unbuffered, and on drop
+//! wipes its memory and its file's buffer and overwrites the file with
+//! zeros before truncating it.
 
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use zeroize::Zeroize;
 
 /// The free disk a host keeps under what its exchanges hold past memory:
 /// asked before each write reaches a holder's file. The write claims nothing,
@@ -67,6 +75,8 @@ pub struct HeldBytes {
     dir: Option<PathBuf>,
     /// The floor every write to the file keeps; `None` keeps none.
     floor: Option<Arc<dyn SpillFloor>>,
+    /// Whether no copy of the bytes outlives the holder.
+    wipe: bool,
 }
 
 impl HeldBytes {
@@ -81,7 +91,16 @@ impl HeldBytes {
             limit,
             dir,
             floor: None,
+            wipe: false,
         }
+    }
+
+    /// This holder, leaving no copy of its bytes in memory or on disk once
+    /// it drops (FIX 8030).
+    #[must_use]
+    pub fn wiping(mut self) -> Self {
+        self.wipe = true;
+        self
     }
 
     /// This holder, keeping `floor` under every write to its file.
@@ -94,7 +113,9 @@ impl HeldBytes {
     /// An empty holder with the same memory bound, spill directory and floor.
     #[must_use]
     pub fn sibling(&self) -> Self {
-        Self::new(self.limit, self.dir.clone()).with_floor(self.floor.clone())
+        let mut sibling = Self::new(self.limit, self.dir.clone()).with_floor(self.floor.clone());
+        sibling.wipe = self.wipe;
+        sibling
     }
 
     /// How many bytes are held.
@@ -120,6 +141,9 @@ impl HeldBytes {
                 file.flush()?;
                 let file = &mut file.get_mut().file;
                 file.seek(SeekFrom::Start(0))?;
+                if self.wipe {
+                    return Ok(Box::new(file));
+                }
                 Ok(Box::new(BufReader::new(file)))
             }
             None => Ok(Box::new(self.memory.as_slice())),
@@ -135,6 +159,15 @@ impl Write for HeldBytes {
             return Ok(written);
         }
         if bytes.len() <= self.limit.saturating_sub(self.memory.len()) {
+            if self.wipe && self.memory.capacity() - self.memory.len() < bytes.len() {
+                // A grown buffer would free the old one unwiped.
+                let wanted = (self.memory.len() + bytes.len())
+                    .max(self.memory.capacity().saturating_mul(2))
+                    .min(self.limit);
+                let mut grown = Vec::with_capacity(wanted);
+                grown.extend_from_slice(&self.memory);
+                std::mem::replace(&mut self.memory, grown).zeroize();
+            }
             self.memory.extend_from_slice(bytes);
             self.len += bytes.len() as u64;
             return Ok(bytes.len());
@@ -151,13 +184,20 @@ impl Write for HeldBytes {
         if std::os::unix::fs::MetadataExt::nlink(&file.metadata()?) != 0 {
             return Err(io::Error::other("the held bytes' file is still linked"));
         }
-        let mut file = BufWriter::new(FloorFile {
+        // Held before a byte reaches it, so a failed write still drops
+        // through this holder's wipe.
+        let file = self.file.insert(BufWriter::new(FloorFile {
             file,
             floor: self.floor.clone(),
-        });
-        file.write_all(&std::mem::take(&mut self.memory))?;
-        file.write_all(bytes)?;
-        self.file = Some(file);
+        }));
+        let mut spilled = std::mem::take(&mut self.memory);
+        let moved = file
+            .write_all(&spilled)
+            .and_then(|()| file.write_all(bytes));
+        if self.wipe {
+            spilled.zeroize();
+        }
+        moved?;
         self.len += bytes.len() as u64;
         Ok(bytes.len())
     }
@@ -165,6 +205,41 @@ impl Write for HeldBytes {
     fn flush(&mut self) -> io::Result<()> {
         self.file.as_mut().map_or(Ok(()), Write::flush)
     }
+}
+
+impl Drop for HeldBytes {
+    fn drop(&mut self) {
+        if !self.wipe {
+            return;
+        }
+        self.memory.zeroize();
+        let Some(file) = self.file.take() else {
+            return;
+        };
+        let (file, buffered) = file.into_parts();
+        match buffered {
+            Ok(mut buffered) => buffered.zeroize(),
+            Err(panicked) => panicked.into_inner().zeroize(),
+        }
+        if let Err(error) = overwrite_then_truncate(file.file) {
+            tracing::warn!(%error, "a wiping holder's file was not overwritten");
+        }
+    }
+}
+
+/// Writes zeros over every byte `file` holds, then truncates it, so the
+/// disk keeps none of them once the unnamed file is gone.
+fn overwrite_then_truncate(mut file: File) -> io::Result<()> {
+    const ZEROS: [u8; 8192] = [0; 8192];
+    let mut left = file.metadata()?.len();
+    file.seek(SeekFrom::Start(0))?;
+    while left > 0 {
+        let step = usize::try_from(left).map_or(ZEROS.len(), |left| left.min(ZEROS.len()));
+        file.write_all(&ZEROS[..step])?;
+        left -= step as u64;
+    }
+    file.sync_data()?;
+    file.set_len(0)
 }
 
 /// A holder's file, under its buffer: every write that reaches the file,

@@ -26,7 +26,8 @@ pub enum SealProfile {
 }
 
 /// A prepared PDF and the signature revisions the engine wrote for it, one
-/// per contents capacity, smallest first. Revision `i` is `pdf` followed by
+/// per contents capacity, smallest first (or the one larger revision written
+/// when they held too little, FIX 6270). Revision `i` is `pdf` followed by
 /// `revisions[i].suffix`; its `/Contents` hole holds ASCII zeros, and its
 /// ByteRange leaves out exactly that hole, delimiters included.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +123,11 @@ pub enum EsignSealerError {
     Unavailable { retry_after_ms: Option<u64> },
     #[error("the PDF cannot be sealed: {code}")]
     InputInvalid { code: String },
+    /// The signature's CMS needed `needed` DER bytes, more than the largest
+    /// revision the engine wrote holds: the engine writes a larger one and
+    /// seals again (FIX 6270).
+    #[error("the signature needs a revision holding {needed} DER bytes")]
+    ContentsShort { needed: u64 },
 }
 
 impl EsignSealerError {
