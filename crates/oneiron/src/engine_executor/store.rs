@@ -570,9 +570,15 @@ pub(super) fn message_result_attachment(
     record: &CodeRunReplayRecord,
     output: &CodeRunRawOutput,
 ) -> Result<crate::memory::MessageResultAttachment> {
-    let read =
-        crate::code_run::ResultRead::new(storage, record.run_id, output.clone(), None, None)?
-            .map_err(|_| Error::InvariantViolation("a whole result read is refused"))?;
+    let read = crate::code_run::ResultRead::new(
+        storage,
+        record.run_id,
+        output.clone(),
+        None,
+        None,
+        false,
+    )?
+    .map_err(|_| Error::InvariantViolation("a whole result read is refused"))?;
     let card = read.card(storage)?;
     let preview = card["preview"]
         .as_str()

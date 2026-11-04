@@ -284,6 +284,18 @@ impl ResultRead {
                 fields.remove("lines");
             }
         }
+        if self.foreign && self.range.is_none() {
+            // A foreign whole-result card stays in the caller's own names:
+            // the parent resolves findings only by content handle, and a
+            // delegation's name is stable for its caller, while the foreign
+            // occurrence is not resolvable there. Foreign ranges already do
+            // this in `reference`.
+            card["ref"] = json!(
+                self.name
+                    .clone()
+                    .unwrap_or_else(|| self.output.handle.clone())
+            );
+        }
         if self.state.is_tainted() {
             card["preview"] = json!(withheld_preview(self.secret.as_deref()));
             return Ok(card);

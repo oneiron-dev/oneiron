@@ -6,6 +6,14 @@ use super::*;
 use crate::code_run::{ResultOccurrence, unmarked_secret};
 use crate::engine_executor::parse_result_read_path;
 
+/// The ordinal of a stored-value path (`store_result_output_path`'s shape),
+/// for the replay of the store that made it: `None` for any other path.
+fn stored_path_ordinal(path: &str) -> Option<usize> {
+    let stem = path.rsplit('/').next()?.strip_suffix(".result")?;
+    let (_, ordinal) = stem.rsplit_once('.')?;
+    ordinal.parse().ok()
+}
+
 impl RecordingJsHost<'_, '_> {
     /// The run's live result names, oldest first: this step's binds over
     /// the record's.
@@ -184,6 +192,25 @@ impl RecordingJsHost<'_, '_> {
         Ok(self.bind_stored_with(storage, sink, name, &[])?.1)
     }
 
+    /// The ordinal of the earliest recorded store of `digest` no store of
+    /// this step reused yet, consuming it: `None` when this step stored no
+    /// such bytes before, so the store allocates a fresh ordinal. Each
+    /// recorded store is consumed once, in order, so the same bytes stored
+    /// twice replay as two outputs with their original ordinals.
+    fn replayed_store_ordinal(&mut self, digest: &[u8; 32]) -> Option<usize> {
+        let needle = format!("store/{}", crate::entity_id::bytes_to_hex_lower(digest));
+        let path = self
+            .results
+            .iter()
+            .map(|output| output.path.clone())
+            .find(|path| {
+                path.contains(needle.as_str())
+                    && !self.replayed_stores.iter().any(|held| held == path)
+            })?;
+        self.replayed_stores.push(path.clone());
+        stored_path_ordinal(&path)
+    }
+
     /// [`Self::bind_stored`], the body first marked with the taint of every
     /// occurrence in `inherit` (each by the run that holds it): the stored
     /// output and its card.
@@ -197,8 +224,16 @@ impl RecordingJsHost<'_, '_> {
         // The sweep's tail goes through first, so the path names the digest
         // the body is published under (FIX 5399b).
         sink.finalize_sweep()?;
-        let ordinal = self.output_ordinal_base + self.captured.len();
-        let path = store_result_output_path(&sink.digest()?, ordinal);
+        let digest = sink.digest()?;
+        // A resumed entry replays the stores its earlier entries settled:
+        // bytes already recorded reuse that output's ordinal, so the
+        // replayed store keeps its occurrence and ref (a parked summarize
+        // of its card still matches its settled request); only a store of
+        // new bytes allocates a fresh ordinal.
+        let ordinal = self
+            .replayed_store_ordinal(&digest)
+            .unwrap_or_else(|| self.output_ordinal_base + self.captured.len());
+        let path = store_result_output_path(&digest, ordinal);
         let input_rows = self.result_rows();
         let output =
             storage.publish_code_run_output_sourced(path, sink, true, self.run_id, input_rows)?;

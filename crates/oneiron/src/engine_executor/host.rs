@@ -77,6 +77,11 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The run's durable outputs when this step's host started: the base
     /// its stores' ordinals count from.
     output_ordinal_base: usize,
+    /// The recorded store paths this step's replayed stores already reused,
+    /// oldest first: a resumed entry replays each earlier store onto its
+    /// original ordinal, so the same bytes stored twice stay two outputs,
+    /// and only a store of new bytes allocates a fresh ordinal.
+    replayed_stores: Vec<String>,
     /// The run's result names, as its record holds them.
     bindings: Vec<CodeRunResultBinding>,
     /// The names this step bound or rebound, in order, for the record.
@@ -171,6 +176,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             results: Vec::new(),
             captured: Vec::new(),
             output_ordinal_base: 0,
+            replayed_stores: Vec::new(),
             bindings: Vec::new(),
             bound: Vec::new(),
             receipts: Vec::new(),
