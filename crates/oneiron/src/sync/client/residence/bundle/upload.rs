@@ -1,6 +1,8 @@
 //! Staging one sealed object on the home in parts (moved whole from the
 //! bundle root; body byte-identical).
 
+use base64::Engine as _;
+
 use serde_json::json;
 
 use super::super::ResidenceRpc;
