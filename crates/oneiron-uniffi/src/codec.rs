@@ -1136,6 +1136,8 @@ impl Lower<sdk::OutboundScheduleRequest> for OutboundDraftInput {
             job_ref: self.job_ref,
             occurred_at: optional_seconds("occurred_at", self.occurred_at)?,
             mention: self.mention.lower()?,
+            selection: None,
+            counterparty_class: None,
         })
     }
 }

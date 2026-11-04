@@ -16,6 +16,9 @@ pub(super) struct Sent {
     pub(super) resume: Option<RoundResume>,
     /// The remote task the connector took the call as (FIX 7960).
     pub(super) remote_task: Option<RemoteTaskHandle>,
+    /// The hold the call's issuer binding, read again at the door, met
+    /// (FIX 9303): nothing was presented or sent.
+    pub(super) held: Option<&'static str>,
 }
 
 impl Sent {
@@ -33,6 +36,7 @@ impl Sent {
             error: None,
             resume: None,
             remote_task: None,
+            held: None,
         }
     }
 
@@ -52,6 +56,17 @@ impl Sent {
             error: None,
             resume: None,
             remote_task: None,
+            held: None,
+        }
+    }
+
+    /// Certain non-delivery of a send whose row an issuer change the owner
+    /// has not accepted holds (FIX 9303): the door read the call's durable
+    /// binding again and presented nothing, so the request never left.
+    pub(super) fn held(reason: &'static str) -> Self {
+        Self {
+            held: Some(reason),
+            ..Self::not_sent(OutboundFailureKind::TransportNotStarted, None)
         }
     }
 
@@ -65,6 +80,7 @@ impl Sent {
             error: Some(error.to_owned()),
             resume: None,
             remote_task: None,
+            held: None,
         }
     }
 
@@ -78,6 +94,7 @@ impl Sent {
             error: None,
             resume: None,
             remote_task: None,
+            held: None,
         }
     }
 
@@ -92,6 +109,7 @@ impl Sent {
             error: None,
             resume: None,
             remote_task: Some(handle),
+            held: None,
         }
     }
 }
