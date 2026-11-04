@@ -19,6 +19,7 @@ pub mod model_step_record;
 pub mod overlay_bookkeeping;
 pub mod receive_scan;
 pub mod retained_memory;
+pub mod run_write_token;
 pub mod secret_manifest;
 pub mod secret_record;
 pub mod store_clock;
