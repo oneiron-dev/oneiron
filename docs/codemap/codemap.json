@@ -9283,6 +9283,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "BlobArtifactAppendOutcome",
       "BlobArtifactVersion",
       "CalcEngineStamp"
      ],
@@ -9291,7 +9292,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 23,
-      "fn": 8,
+      "enum": 1,
+      "fn": 9,
       "re-export": 1,
       "struct": 2
      }
@@ -32954,7 +32956,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "NativeOutput",
@@ -32965,7 +32967,7 @@
      "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 8,
       "re-export": 1,
@@ -91196,7 +91198,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 117,
+   "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6274,
    "test_files": 900
