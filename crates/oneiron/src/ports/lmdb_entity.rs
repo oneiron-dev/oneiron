@@ -93,8 +93,11 @@ impl Vault {
             row.body = crate::entity_doc::resolve_record_body(&self.store, txn, id, &row.body)?;
             return Ok(Some((row, None)));
         }
-        row.body = crate::note::live_body_in_txn(&self.store, txn, id, row.entity_type, &row.body)?
-            .into_owned();
+        if let std::borrow::Cow::Owned(body) =
+            crate::note::live_body_in_txn(&self.store, txn, id, row.entity_type, &row.body)?
+        {
+            row.body = body;
+        }
         Ok(Some((row, None)))
     }
 }
