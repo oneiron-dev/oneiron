@@ -27,6 +27,8 @@ sys.setrecursionlimit(20000)
 CRATES = {
     'oneiron': 'crates/oneiron/src',
     'oneiron_contracts': 'crates/oneiron-contracts/src',
+    'oneiron_base': 'crates/oneiron-base/src',
+    'oneiron_store': 'crates/oneiron-store/src',
     'oneiron_authority': 'crates/oneiron-authority/src',
     'oneiron_crypto': 'crates/oneiron-crypto/src',
     'oneiron_model': 'crates/oneiron-model/src',
