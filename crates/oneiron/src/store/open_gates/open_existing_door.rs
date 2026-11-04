@@ -194,6 +194,7 @@ impl Store {
             project_writes: hooks.project_writes,
             record_hooks: hooks.record_hooks,
             actor_scrubs: hooks.actor_scrubs,
+            gate_hooks: hooks.gate_hooks,
             #[cfg(feature = "sync")]
             sync_hooks: hooks.sync_hooks,
             attempt_operations: hooks.attempt_operations,
@@ -402,6 +403,7 @@ impl Store {
         }
         let id = crate::store::policy_record::default_policy_manifest_id()?;
         seed_default_policy_manifest_in_txn(
+            self.gate_hooks,
             &self.entities,
             &self.sync_state,
             &self.type_index,
@@ -449,7 +451,7 @@ impl Store {
         let mut attempts = Vec::new();
         for row in crate::ports::JobQueueRead::port_job_rows(self, &wtxn, None)? {
             let (id, raw) = row?;
-            attempts.push(crate::attempt_queue::decode_record(&raw, id)?);
+            attempts.push(crate::store::attempt_record_codec::decode_record(&raw, id)?);
         }
         for attempt in &attempts {
             self.put_attempt_run_index_in_txn(
