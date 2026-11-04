@@ -153,6 +153,12 @@ pub(super) fn resolved_successor(
             "the resolved bytes are not the reviewed operation with its handles replaced",
         ));
     }
+    // Round-6 (review P1 kimi:168): the landing document is text: a
+    // non-UTF-8 resolution can never complete its landing, so refuse with
+    // the document door's own typed refusal before the mint writer opens,
+    // with the original still Approved and no successor minted.
+    std::str::from_utf8(&resolved)
+        .map_err(|_| Error::InvalidClaimBody("code document requires UTF-8"))?;
     let repo = RepoRef::parse(&row.repo)?;
     let repo_root = resolve_mutable_repo_root(&repo)?;
     let snapshot = stored_snapshot(vault, row.pre_action_fork_hash)?;
@@ -288,6 +294,42 @@ fn spans_values(
         values.push((text.clone(), value, id, handle));
     }
     Ok(values)
+}
+
+/// Round-6 (review P1 sol:110): replay the mint-time custody admission for
+/// an unconsumed resolved successor on the retry path, on the caller's open
+/// transaction: every recorded handle is read again through custody under
+/// the repo:landing binding, so a secret or binding withdrawn after the
+/// mint refuses typed instead of landing the successor's cached plaintext.
+/// A consumed successor (its operation already applied) needs no replay.
+pub(super) fn revalidate_resolved_successor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    successor: &RepoProposal,
+) -> Result<()> {
+    if successor.operation_seq.is_some() {
+        return Ok(());
+    }
+    let Some(original_id) = successor.resolves else {
+        return Ok(());
+    };
+    let original = vault
+        .repo_proposal(original_id)?
+        .ok_or(Error::EntityNotFound)?;
+    let (_, content) = original.ordinary_file()?;
+    let mut seen: Vec<String> = Vec::new();
+    for (_, _, text) in handle_spans(content) {
+        if seen.iter().any(|held| held == &text) {
+            continue;
+        }
+        let (_, id) =
+            crate::secret_custody::handle_record_in_txn(&vault.store, txn, &text)?;
+        vault
+            .get_secret_value_in_txn(txn, &id, REPO_LANDING_EFFECTOR)?
+            .ok_or(Error::EntityNotFound)?;
+        seen.push(text);
+    }
+    Ok(())
 }
 
 /// `content` with each span replaced by its handle's bound value.

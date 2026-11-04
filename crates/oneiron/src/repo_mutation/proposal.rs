@@ -404,6 +404,13 @@ impl Vault {
                 "proposal requires unanimous independent multi-critic acceptance",
             ));
         }
+        // Round-6 (review P1 sol:110): a retry that reaches an unconsumed
+        // resolved successor replays the mint-time custody admission on this
+        // transaction first: a secret or binding withdrawn after the mint
+        // refuses typed instead of landing the cached plaintext.
+        if row.resolves.is_some() && row.operation_seq.is_none() {
+            resolve_handles::revalidate_resolved_successor_in_txn(self, &txn, &row)?;
+        }
         if row.merge_stack.is_some() {
             return Err(invalid("stack-bound proposal requires its merge queue"));
         }
