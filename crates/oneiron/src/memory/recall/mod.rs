@@ -1046,6 +1046,10 @@ impl Memory<'_> {
             });
             let l15_hydrate = crate::stage_timing::stage("recall.hydrate");
             let mut items = Vec::new();
+            // One snapshot for every item, opened after retrieval with the
+            // grant clock persisted and the bodies pinned, read for this
+            // loop only (L15 recall speed; L02 11-04 16:07 = A).
+            let snapshot = lane.shared_snapshot()?;
             for entity in pack.results.iter().take(limit) {
                 if let Some(fallback) = door_answered() {
                     return Ok(fallback.clone());
@@ -1061,6 +1065,7 @@ impl Memory<'_> {
                     .map_or(&[][..], Vec::as_slice);
                 if let Some(mut item) = self.memory_item_for(
                     &lane,
+                    &snapshot,
                     &entity.id,
                     selection.facet,
                     mode,
