@@ -8712,6 +8712,7 @@ dependencies = [
  "heed",
  "oneiron-base",
  "oneiron-contracts",
+ "oneiron-crypto",
  "oneiron-docedit",
  "oneiron-model",
  "rmpv",
