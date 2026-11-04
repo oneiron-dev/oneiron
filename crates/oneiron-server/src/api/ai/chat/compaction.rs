@@ -34,7 +34,7 @@ use oneiron::{
     LlmStreamEvent, Vault, WriteActor,
 };
 
-use super::{CONTINUE_INSTRUCTION, text_message};
+use super::{CONTINUE_INSTRUCTION, TurnSources, text_message};
 use crate::ai_host::{AiHandle, CHAT_ROLE, ChatBreakpointCall, ChatSelfMode};
 use crate::models::RoleCall;
 
@@ -299,6 +299,7 @@ fn capture_seed(
 /// always have sent it, on `today`'s route.
 pub(super) fn open_stream(
     run: &RunAdmission,
+    today_run: &RunAdmission,
     admitted: RoleCall,
     today: Option<RoleCall>,
     pending: Option<&PendingSeed>,
@@ -313,10 +314,10 @@ pub(super) fn open_stream(
     if let Err(reason) = live_attempt_headroom(run) {
         live.store(false, Ordering::Release);
         live_fork_unavailable(reason);
-        return today.ladder.stream(run, today.request, None);
+        return today.ladder.stream(today_run, today.request, None);
     }
     match admitted.ladder.stream(run, admitted.request, None) {
-        Ok(stream) => Ok(first_or_today(stream, run.clone(), today, live)),
+        Ok(stream) => Ok(first_or_today(stream, today_run.clone(), today, live)),
         Err(error)
             if matches!(
                 &error,
@@ -327,7 +328,7 @@ pub(super) fn open_stream(
         }
         Err(_) => {
             live.store(false, Ordering::Release);
-            today.ladder.stream(run, today.request, None)
+            today.ladder.stream(today_run, today.request, None)
         }
     }
 }
@@ -472,6 +473,8 @@ pub(crate) struct ChatReused {
     /// craft message names it: what the reused call is shown, never today's.
     /// Empty for a request captured with none.
     pub(crate) craft: Vec<ManifestEntry>,
+    /// The rows in this captured request, not today's fallback.
+    pub(crate) sources: Option<Vec<EntityId>>,
 }
 
 /// `reuse_chat_breakpoint`: a self agent's Retry clones its reply's kept
@@ -536,7 +539,16 @@ pub(crate) fn reuse_chat_breakpoint(
     let Some(ladder) = readmit_rung(ai, vault, &seed, &request) else {
         return ChatReuse::Unavailable("rung_not_admitted");
     };
+    let mut sources = TurnSources::of_agent(seed.agent);
+    sources.add(Some(&seed.summaries));
+    for span in &seed.sources {
+        sources.add(Some(&[span.turn]));
+        sources.add(Some(&span.messages));
+    }
+    sources.craft(&seed.craft_entries);
+    sources.add(context.user_sources.as_deref());
     if action.action == TurnAction::Continue && !context.saved.is_empty() {
+        sources.add(Some(&[action.assistant_turn, action.message]));
         let prefill = ladder.supports(&request.model, &LlmCapability::AssistantPrefill);
         request.messages.push(text_message(
             LlmMessageRole::Assistant,
@@ -576,6 +588,7 @@ pub(crate) fn reuse_chat_breakpoint(
             craft: Vec::new(),
         },
         craft,
+        sources: sources.rows(),
     }))
 }
 

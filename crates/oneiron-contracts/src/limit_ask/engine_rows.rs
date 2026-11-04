@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 136] = [
+    pub const ALL: [Self; 137] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -142,6 +142,7 @@ impl EngineLimit {
         Self::CommunityCacheBytes,
         Self::ConnectorManifestEntries,
         Self::SharedMergeEvidenceRows,
+        Self::RequestedResultRows,
     ];
 
     /// The config key that sets the row.
@@ -283,6 +284,7 @@ impl EngineLimit {
             Self::CommunityCacheBytes => "limits.community_cache_bytes",
             Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
+            Self::RequestedResultRows => "limits.requested_result_rows",
         }
     }
 
@@ -492,6 +494,10 @@ impl EngineLimit {
             Self::ConnectorManifestEntries => 4_096,
             // The shared-merge reserve's old fixed refusal.
             Self::SharedMergeEvidenceRows => 4_096,
+            // Two to the twentieth: far above any page a door serves in
+            // ordinary use. Past it the row asks, and the whole requested
+            // count is served.
+            Self::RequestedResultRows => 1_048_576,
         }
     }
 }

@@ -155,6 +155,21 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
     crate::conversation_training::validate_intake_origin(&config.publisher_training_intake_origin)?;
     if let Some(embedding) = &config.embedding {
         embedding.validate()?;
+        if let Some(models) = &config.models {
+            for space in &embedding.spaces {
+                if let Some((_, provider)) = space.id.rsplit_once('@')
+                    && !models.providers.contains_key(provider)
+                {
+                    // A replica or retired space may not use this declaration.
+                    // Diagnose its configured binding without refusing startup.
+                    tracing::warn!(
+                        space = %space.id,
+                        provider,
+                        "embedding space provider is absent from configured models.providers"
+                    );
+                }
+            }
+        }
     }
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
