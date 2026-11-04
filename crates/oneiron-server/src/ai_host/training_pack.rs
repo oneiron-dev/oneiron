@@ -20,7 +20,7 @@
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
-use oneiron::llm::run_admission::{BudgetLine, PaidConnector, RunAdmission, RunDeclaration};
+use oneiron::llm::run_admission::{BudgetLine, CallOutcome, PaidConnector, RunAdmission, RunDeclaration};
 use oneiron::training_pack::{
     HeldOutResult, TrainingConnector, TrainingEvalInput, TrainingRun, TrainingState,
 };
@@ -209,11 +209,13 @@ fn dispatch(
 /// terminal receipt and completes it, or leaves it Running. A missing
 /// trainer, binding or admission stays Running without a new hold (a Running
 /// run does not await the host); a still-outstanding job polls None and is a
-/// no-op. `ConnectorFailed` stays terminal.
+/// no-op. `ConnectorFailed` stays terminal. A first completion settles the
+/// run's paid reservation as used, as the dispatch does; a run that already
+/// holds its result needs no new settlement.
 fn recover(server: &SyncServer, run: &TrainingRun) -> oneiron::Result<()> {
-    if trainer_binding(server, &run.compute.connector).is_none() {
+    let Some(binding) = trainer_binding(server, &run.compute.connector) else {
         return Ok(());
-    }
+    };
     let Some(connector) = training_connector(server, run) else {
         return Ok(());
     };
@@ -239,8 +241,35 @@ fn recover(server: &SyncServer, run: &TrainingRun) -> oneiron::Result<()> {
     let output = runtime.block_on(connector.poll(&run.id, &run.spec_blake3))?;
     match output {
         Some(output) => {
-            server.vault().complete_training_pack(&admission, output)?;
-            Ok(())
+            // A result recorded since this recovery started was settled by
+            // its own waiter; only a first completion settles here.
+            let fresh = server
+                .vault()
+                .training_run(&run.id)?
+                .ok_or_else(|| Error::InvalidConfig("training run not found".into()))?;
+            if fresh.result.is_some() {
+                server.vault().complete_training_pack(&admission, output)?;
+                return Ok(());
+            }
+            let service_units = output.service_units;
+            let permit = admission
+                .sourced(fresh.source_rows.clone())
+                .admit_paid(&binding, fresh.compute.quantity)
+                .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+            match server.vault().complete_training_pack(&admission, output) {
+                Ok(_) => {
+                    // Keep completed work even when the meter reports a
+                    // settlement error, as the dispatch does.
+                    permit
+                        .settle(CallOutcome::Used(service_units))
+                        .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+                    Ok(())
+                }
+                Err(error) => {
+                    drop(permit);
+                    Err(error)
+                }
+            }
         }
         None => Ok(()),
     }

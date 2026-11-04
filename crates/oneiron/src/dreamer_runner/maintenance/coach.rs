@@ -661,7 +661,9 @@ fn notify_offer_in_txn(
 /// Whether this device should issue training-offer and swap questions. Before
 /// the first home election every device keeps today's behavior; afterwards
 /// only the elected home asks, while every device keeps its idempotent upkeep.
-fn training_offers_at_home(vault: &Vault) -> Result<bool> {
+/// The shared swap-ask issuer enforces this itself, so post-score and nightly
+/// calls alike stay single-issuer.
+pub(crate) fn training_offers_at_home(vault: &Vault) -> Result<bool> {
     let store = DreamerRunnerStore::new(vault);
     let Some(home) = store.home_node_designation()? else {
         return Ok(true);

@@ -504,6 +504,17 @@ fn issue_one(
 /// the next tuple goes on. A run that raises no ask still waits for the
 /// owner's direct swap door.
 pub(crate) fn issue_training_swap_asks(vault: &Vault, now: u64) -> usize {
+    // One issuer: only the elected home asks, while every device keeps its
+    // idempotent upkeep. Before the first home election every device keeps
+    // today's behavior. A failed home read asks nothing.
+    match crate::dreamer_runner::maintenance::coach::training_offers_at_home(vault) {
+        Ok(true) => {}
+        Ok(false) => return 0,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "training swap asks home check failed");
+            return 0;
+        }
+    }
     let unasked = match unasked(vault) {
         Ok(unasked) => unasked,
         Err(error) => {

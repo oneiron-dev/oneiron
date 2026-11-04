@@ -513,6 +513,14 @@ impl Vault {
                 "a trained checkpoint cannot move its role to another slot",
             ));
         }
+        // A refused manifest write must leave no Promotion exposure behind:
+        // the ask settles these errors as NeedsSetup in the same commit, so
+        // the manifest is validated and written before any exposure is
+        // counted. The staged embedder path writes no manifest here.
+        if role != ModelRole::RetrievalEmbedder {
+            manifest.roles.insert(role, binding.clone());
+            self.write_model_manifest_in_txn(txn, &manifest, teacher_approval, None)?;
+        }
         let promotion_exposure = if matches!(&choice, SwapChoice::Evaluated) {
             let candidate = blake3::Hash::from(result.exported_checkpoint.content_hash()?)
                 .to_hex()
@@ -557,8 +565,6 @@ impl Vault {
                 crate::embed::stage_embedder_binding_in_txn(self, txn, source, previous, binding)?;
             return Ok(RoleSwapOutcome::Staged(Box::new(pending)));
         }
-        manifest.roles.insert(role, receipt.binding.clone());
-        self.write_model_manifest_in_txn(txn, &manifest, teacher_approval, None)?;
         SWAPS.put(&self.store, txn, &receipt.id, &receipt)?;
         ROLES.put(&self.store, txn, &key, &receipt)?;
         run.state = TrainingState::Bound;
