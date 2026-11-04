@@ -147,12 +147,16 @@ class Worker:
         # the worker was started by hand.
         self.identity = identity
         self.wire_model = wire_model
-        # The managed reply header must fit the policy's own bound (FIX
-        # 11377): a tighter max_header_bytes would fail every render at the
-        # reply-header check, so it fails here, with the numbers, before
-        # serving. The empty-target header is the lower bound; every real
-        # render's echoed target only adds to it.
-        managed = len(json.dumps(self.answer_meta({}), separators=(",", ":")).encode())
+        # The reply must fit even with the smallest allowed target: its
+        # actual warm identity, narrowed limits and nonempty reference ids.
+        minimum_limits = {key: 1 for key in FIELDS}
+        minimum_limits["max_ref_bytes"] = 12
+        minimum_limits["max_header_bytes"] = self.limits["max_header_bytes"]
+        minimum_target = {key: "x" for key in (
+            "voice_id", "owner", "register", "reference_revision")}
+        minimum_target.update(warm=self.target(), limits=minimum_limits)
+        managed = len(json.dumps(self.answer_meta(minimum_target),
+                                 separators=(",", ":")).encode())
         if self.limits["max_header_bytes"] < managed:
             raise ValueError(f"max_header_bytes {self.limits['max_header_bytes']} is below "
                              f"the managed reply header's {managed} bytes")

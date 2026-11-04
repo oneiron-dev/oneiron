@@ -137,7 +137,8 @@ The row names the serving-policy file, which holds the vault's resolved
 ceiling, either as `policy_file` (FIX 11377) or, as above, in `env` under
 `ONEIRON_VOICE_POLICY_FILE`; naming both at once is an error. `env` names
 nothing else. The worker refuses to start when the file's
-`max_header_bytes` cannot fit even the empty-target managed reply header.
+`max_header_bytes` cannot fit a reply with the required warm identity,
+valid narrowed limits and minimum nonempty reference-identity fields.
 
 A row names no `args`, `draft` or `server`. `mode = "external"` keeps a worker you run yourself (this unit,
 say): it is probed with the same one render and never started or stopped.
