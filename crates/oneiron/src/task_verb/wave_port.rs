@@ -216,6 +216,13 @@ struct WaveFingerprintTask {
     spec: serde_json::Value,
     assignee: Option<String>,
     blocked_by: Vec<String>,
+    /// Hex of the assignee nulled by an actor erase (FIX 12732, REVIEW-4521
+    /// round-2 P1): proves this null is a scrubbed erasure, never a
+    /// never-assigned task. Absent on fresh fingerprints and on seals stored
+    /// before the marker existed; those never tolerantly match a supplied
+    /// assignee (fail closed).
+    #[serde(default)]
+    erased_assignee: Option<String>,
 }
 
 /// See `WaveFingerprintTask`.
@@ -228,9 +235,11 @@ struct WaveFingerprint {
 /// FIX 12732: erasure nulls a sealed assignee while the supplied cut still
 /// names the erased actor. The seal still matches when every task agrees
 /// except that a sealed null accepts the supplied assignee only with erasure
-/// evidence (REVIEW-4521 P1): the supplied id must name no live actor, so a
-/// live-assignee substitution for a never-assigned task is refused. The
-/// stored scrubbed seal is retained, never rewritten here.
+/// evidence (REVIEW-4521 P1, round 2): the sealed task must carry the
+/// scrub-recorded `erased_assignee` hex equal to the supplied assignee, and
+/// that id must name no live actor. A never-assigned null carries no marker,
+/// so it never tolerantly matches (round-1 gap). The stored scrubbed seal is
+/// retained, never rewritten here.
 fn seal_matches_erased_assignees(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -257,6 +266,7 @@ fn seal_matches_erased_assignees(
                 && old.blocked_by == new.blocked_by
                 && (old.assignee == new.assignee
                     || (old.assignee.is_none()
+                        && old.erased_assignee.as_ref() == new.assignee.as_ref()
                         && new
                             .assignee
                             .as_ref()
@@ -315,6 +325,7 @@ pub(super) fn scrub_wave_index_copies_in_txn(
             for task in &mut sealed.tasks {
                 if task.assignee.as_ref() == Some(&hex) {
                     task.assignee = None;
+                    task.erased_assignee = Some(hex.clone());
                     touched = true;
                 }
             }
