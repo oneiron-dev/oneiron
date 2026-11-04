@@ -39,18 +39,6 @@ const BODY_GRACE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 const RAW_OUTPUT_ROWS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT);
 
-/// The taint sidecar of one result occurrence, keyed by the occurrence under
-/// its body's handle.
-#[cfg(unix)]
-const RAW_OUTPUT_TAINTS: SideTable<String, Vec<u8>, Raw> =
-    SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT_TAINT);
-
-/// The secret scan's mark on one result occurrence, keyed as its taint
-/// sidecar is.
-#[cfg(unix)]
-const RAW_OUTPUT_SECRETS: SideTable<String, String, Raw> =
-    SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT_SECRET);
-
 /// The manifest of the body `digest` as its bytes alone name it.
 #[cfg(unix)]
 fn raw_output_of(digest: &[u8; 32]) -> crate::code_run::CodeRunRawOutput {

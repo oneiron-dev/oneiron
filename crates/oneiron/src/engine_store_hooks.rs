@@ -19,8 +19,8 @@ use crate::store::StoreSyncHooks;
 #[cfg(feature = "sync")]
 use crate::store::window_rows::CarrierRemoval;
 use crate::store::{
-    GateDecisionId, Store, StoreActorScrubs, StoreDeleteGuards, StoreHooks, StoreProjectWrites,
-    StoreRecordHooks, StoreScopeStamps,
+    GateDecisionId, GateDecisionRetentionPolicy, Store, StoreActorScrubs, StoreDeleteGuards,
+    StoreGateHooks, StoreHooks, StoreProjectWrites, StoreRecordHooks, StoreScopeStamps,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -35,6 +35,7 @@ pub(crate) const ENGINE_STORE_HOOKS: StoreHooks = StoreHooks {
     project_writes: &EngineProjectWrites,
     record_hooks: &EngineRecordHooks,
     actor_scrubs: &EngineActorScrubs,
+    gate_hooks: &EngineGateHooks,
     #[cfg(feature = "sync")]
     sync_hooks: &EngineSyncHooks,
 };
@@ -53,6 +54,9 @@ pub(crate) struct EngineRecordHooks;
 
 /// The engine's actor scrubs for store-declared side tables.
 pub(crate) struct EngineActorScrubs;
+
+/// The engine's gate hooks.
+pub(crate) struct EngineGateHooks;
 
 /// The engine's sync hooks.
 #[cfg(feature = "sync")]
@@ -669,5 +673,193 @@ impl StoreActorScrubs for EngineActorScrubs {
         actor: &EntityId,
     ) -> Result<()> {
         crate::workspace_roster::erase_member_intent_actor_in_txn(vault, wtxn, actor)
+    }
+}
+
+impl StoreGateHooks for EngineGateHooks {
+    fn default_policy_manifest(&self) -> Result<Vec<u8>> {
+        crate::gate::default_policy_manifest()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn default_policy_manifest_with_scoped_grants(
+        &self,
+        rows: Vec<rmpv::Value>,
+    ) -> Result<Vec<u8>> {
+        crate::gate::default_policy_manifest_with_scoped_grants(rows)
+    }
+
+    fn resolve_gate_decision_retention(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+    ) -> Result<Option<GateDecisionRetentionPolicy>> {
+        crate::gate::resolve_gate_decision_retention(store, txn)
+    }
+
+    fn retention_edit_target(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+    ) -> Result<(GateDecisionRetentionPolicy, EntityId)> {
+        crate::gate::retention_edit_target(store, txn)
+    }
+
+    fn normalize_policy_manifest_scope(&self, data: &[u8]) -> Option<Vec<u8>> {
+        crate::gate::normalize_policy_manifest_scope(data)
+    }
+
+    fn show_owner_answer_item_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+        written: Option<&ClaimBody>,
+    ) -> Result<()> {
+        crate::gate::show_owner_answer_item_in_txn(store, wtxn, claim_id, written)
+    }
+
+    fn reconcile_critical_write_confirm_on_replicated_overwrite(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+        body_changed_or_missing: bool,
+    ) -> Result<()> {
+        crate::gate::reconcile_critical_write_confirm_on_replicated_overwrite(
+            store,
+            wtxn,
+            claim_id,
+            body_changed_or_missing,
+        )
+    }
+
+    fn attach_replicated_critical_confirm_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+        body: &ClaimBody,
+    ) -> Result<()> {
+        crate::gate::attach_replicated_critical_confirm_in_txn(store, wtxn, claim_id, body)
+    }
+
+    fn stamp_manifest_origin(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+        body: &[u8],
+        replicated: bool,
+    ) -> Result<()> {
+        crate::gate::manifest_authenticity::stamp_manifest_origin(store, txn, id, body, replicated)
+    }
+
+    fn update_manifest_origin(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+        kind: u8,
+        body: &[u8],
+        replicated: bool,
+    ) -> Result<()> {
+        crate::gate::manifest_authenticity::update_manifest_origin(
+            store, txn, id, kind, body, replicated,
+        )
+    }
+
+    fn validate_contribution_put(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: EntityId,
+        body: &[u8],
+        replicated: bool,
+        posture: HostingPrivacyPosture,
+    ) -> Result<()> {
+        crate::gate::project_depth::validate_contribution_put(
+            store, txn, id, body, replicated, posture,
+        )
+    }
+
+    fn birth_for_project(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        project: EntityId,
+    ) -> Result<
+        Option<(
+            EntityId,
+            oneiron_store::project_depth_record::ProjectDepthBirth,
+        )>,
+    > {
+        crate::gate::project_depth::birth_for_project(store, txn, project)
+    }
+
+    fn implicit_birth_applies(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        posture: HostingPrivacyPosture,
+        project: EntityId,
+    ) -> Result<bool> {
+        crate::gate::project_depth::implicit_birth_applies(store, txn, posture, project)
+    }
+
+    fn validate_own_device_witness_message_body(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        machine: EntityId,
+        body: &[u8],
+    ) -> Result<()> {
+        crate::gate::validate_own_device_witness_message_body(store, txn, machine, body)
+    }
+
+    fn claim_consolidation_eligible_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        reader: oneiron_store::consolidation_reader::ConsolidationReader,
+    ) -> Result<bool> {
+        crate::gate::claim_consolidation_eligible_in_txn(store, txn, id, reader)
+    }
+
+    fn scoped_read_grant_reads_world(
+        &self,
+        grant: &oneiron_store::policy_scoped_grant::PolicyScopedGrant,
+        world: Option<EntityId>,
+        credential: Option<&oneiron_authority::federation::Scope>,
+    ) -> bool {
+        crate::gate::scoped_read_grant_reads_world(grant, world, credential)
+    }
+
+    fn erase_count_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::gate::proposal_observation::erase_count_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_history_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::gate::proposal_observation::erase_history_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_submission_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::gate::proposal_observation::erase_submission_actor_in_txn(vault, wtxn, actor)
     }
 }

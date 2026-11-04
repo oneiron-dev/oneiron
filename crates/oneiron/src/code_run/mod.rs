@@ -143,6 +143,10 @@ pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
     bind_wait_trap, park_and_bind_wait_trap,
 };
+pub use self::storage::{
+    CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
+    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
+};
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
     ReceiptSource, ReceiptTree,
@@ -172,6 +176,9 @@ pub(crate) use self::storage::{
 pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
+};
+pub(crate) use self::storage::{
+    drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
 // FIX 9180 (coord-b slice d): a replay row's and a step start's parts in
 // checkpoint images, as row-held responses.

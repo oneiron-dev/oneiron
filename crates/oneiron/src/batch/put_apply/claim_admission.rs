@@ -146,7 +146,9 @@ pub(super) fn validate_witness_message_body(
         // own-device door admits the author buckets this store can bind and
         // refuses the rest as the door below does. A lane that vouches for
         // another row or other bytes is no lane: the row meets the door below.
-        crate::gate::validate_own_device_witness_message_body(store, txn, machine, data)?;
+        store
+            .gate_hooks
+            .validate_own_device_witness_message_body(store, txn, machine, data)?;
     } else if replicated {
         // The REPLICATED road has no actor to run the ceiling against and,
         // without a lane, no verified sender: a federated, recovered or

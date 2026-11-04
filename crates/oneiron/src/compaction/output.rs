@@ -5,6 +5,8 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Deserializer, Serialize, de};
 
+pub use crate::store::output_decay::OutputDecayPolicy;
+
 /// The occurrence path a context output's manifest names. Its body is one of
 /// the code-run raw-output family, keyed by its content: inline in its row
 /// up to the inline bound, past it a file beside data.mdb.
@@ -41,12 +43,6 @@ pub struct OutputContextEntry {
     pub source: OutputRef,
     pub created_turn: u64,
     pub overview: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OutputDecayPolicy {
-    pub overview_after_turns: u64,
-    pub stub_after_turns: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

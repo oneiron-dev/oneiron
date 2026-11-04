@@ -76,11 +76,11 @@ fn chain_read_in(
             Ok(row) => row,
             Err(unreadable) => return Ok(Err(unreadable)),
         };
-        held |= !crate::gate::claim_consolidation_eligible_in_txn(
+        held |= !vault.store.gate_hooks.claim_consolidation_eligible_in_txn(
             &vault.store,
             txn,
             &id,
-            crate::gate::ConsolidationReader::EsignLedger,
+            oneiron_store::consolidation_reader::ConsolidationReader::EsignLedger,
         )?;
         if rows.insert(row.sequence, row).is_some() {
             return Ok(Err(invalid("forked document event sequence")));

@@ -128,7 +128,9 @@ pub(crate) mod housekeeping_wake;
 pub(crate) mod writer_hold;
 pub(crate) mod agent_birth_custody;
 pub(crate) mod agent_birth_identity;
+pub(crate) mod agent_model;
 pub mod agent_record;
+pub(crate) mod agent_scope;
 pub(crate) mod attempt_archive_mark;
 pub mod attempt_cancel;
 pub mod attempt_cleanup;
@@ -138,6 +140,7 @@ pub mod attempt_inputs;
 pub mod attempt_lease;
 pub mod attempt_manifest;
 pub mod attempt_outcomes;
+pub(crate) mod attempt_payload_retire;
 pub(crate) mod attempt_payload_route;
 pub mod attempt_read_producer;
 pub mod attempt_record;
@@ -165,6 +168,8 @@ mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
 pub(crate) mod actor_scrubs;
 pub use actor_scrubs::StoreActorScrubs;
+pub(crate) mod gate_hooks;
+pub(crate) use gate_hooks::StoreGateHooks;
 #[cfg(feature = "sync")]
 mod sync_hooks;
 #[cfg(feature = "sync")]
@@ -186,6 +191,7 @@ pub mod model_step_submission;
 pub(crate) mod model_stream_row;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
+pub(crate) mod output_decay;
 pub mod pack_hook_actor_class;
 pub mod pack_hook_proposal;
 #[cfg(feature = "sync")]
@@ -210,6 +216,7 @@ pub mod window_protocol;
 pub(crate) mod window_rows;
 
 pub mod consolidation_scope;
+pub(crate) mod context_field_profile;
 pub(crate) mod conversation_span;
 pub mod dreamer_attempt_kind;
 pub mod dreamer_wake_policy;
@@ -298,8 +305,8 @@ pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
-pub(crate) mod world_pad_rows;
 pub mod world_authority;
+pub(crate) mod world_pad_rows;
 pub mod world_registration_keys;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;

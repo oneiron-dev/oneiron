@@ -161,23 +161,7 @@ pub(super) const AGENT_DISPLAY_NAME_MAX_BYTES: usize = 256;
 
 pub use crate::store::agent_record::McpRef;
 
-/// The run scope persisted with an `AgentDefinition`.
-///
-/// A new persisted descriptor rather than an embedded [`WorldScope`], which is
-/// a runtime-only type that does not implement `Serialize`. `World` carries the
-/// world's [`EntityId`], hex-encoded into the body. `WorldSet` is deliberately
-/// not modelled here — it is a repo-clamp key with no day-1 caller, and a later
-/// additive variant per the `#[non_exhaustive]` marker.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum AgentScope {
-    /// Span every world (the constructor default; matches `PipelineBuilder`).
-    All,
-    /// Base-reality only.
-    Base,
-    /// This world plus base reality.
-    World(EntityId),
-}
+pub use crate::store::agent_scope::AgentScope;
 
 impl AgentScope {
     /// Maps to the runtime [`WorldScope`] a dispatch layer (AGENT-3) reconstitutes.

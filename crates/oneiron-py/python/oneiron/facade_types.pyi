@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1224 facade rows, 4457 declarations.
-Inputs: 1155 of 1224 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1060 of 1224 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1225 facade rows, 4462 declarations.
+Inputs: 1156 of 1225 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1061 of 1225 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -11012,6 +11012,25 @@ class LearningSettingClear(TypedDict):
     goal: NotRequired[str | None]
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+class CodeRunSecretLiftDismiss(TypedDict):
+    handle: str
+    occurrence: str
+class CodeRunSecretLiftRequest(TypedDict):
+    dismiss: NotRequired[CodeRunSecretLiftDismiss | None]
+class CodeRunSecretLiftProposalView(TypedDict):
+    handle: str
+    occurrence: str
+    detector_reason: str
+    suggested_secret_name: str
+class CodeRunSecretLiftDismissal(TypedDict):
+    handle: str
+    occurrence: str
+    dismissed_by: str
+    dismissed_at: int
+    receipt: str
+class CodeRunSecretLiftStatus(TypedDict):
+    proposals: list[CodeRunSecretLiftProposalView]
+    dismissed: NotRequired[CodeRunSecretLiftDismissal | None]
 LiftCloseReason = Literal["not_a_secret", "rotated", "accepted", "read_clean", "answered", "deleted"]
 class SecretLiftClose(TypedDict):
     proposal: str

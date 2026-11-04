@@ -62,12 +62,8 @@ const MANIFEST_QUARANTINED_REASON: &str = "gate.manifest.quarantined";
 /// A manifest's quarantine marker was lifted.
 const MANIFEST_QUARANTINE_LIFTED_REASON: &str = "gate.manifest.quarantine_lifted";
 
-/// `store::handle`'s vault-bootstrap seed writes this row directly, before any vault (and so any
-/// typed door) exists to read it back through — kept as a plain string builder so that raw write
-/// keeps landing under [`TRUSTED_ORIGIN`]'s declared prefix byte-for-byte.
-pub(crate) fn trusted_manifest_key(id: &EntityId) -> String {
-    format!("manifest:trusted:{}", id.to_hex())
-}
+// `store::handle`'s vault-bootstrap seed writes the `TRUSTED_ORIGIN` and `SEEDED` rows
+// directly, under the key builders in `oneiron_store::manifest_origin_keys`.
 
 /// Separate proof that an authenticated vault owner authored an override
 /// row. A generic local manifest trust stamp is not holder authority.
@@ -83,12 +79,6 @@ pub(in crate::gate) fn retention_holder_verified(
     Ok(RETENTION_HOLDER
         .get(store, txn, &HexId(*id))?
         .is_some_and(|hash| hash == *blake3::hash(body).as_bytes()))
-}
-
-/// The bootstrap seed's [`SEEDED`] row key, spelled for the same raw write as
-/// [`trusted_manifest_key`].
-pub(crate) fn seeded_manifest_key(id: &EntityId) -> String {
-    format!("manifest:seeded_confidence:{}", id.to_hex())
 }
 
 pub(crate) fn manifest_is_seeded_default(

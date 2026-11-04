@@ -673,16 +673,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "AgentModel"
-     ],
+     "notable": [],
      "path": "src/agent_def/models.rs",
      "purpose": "The owner's per-agent model list (FIX 4472): the models an agent may run on, each with the owner's own words…",
      "surface": {
       "const": 1,
       "crate-vis": 7,
       "fn": 7,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -783,16 +781,14 @@
      "kind": "src",
      "notable": [
       "AgentDefinition",
-      "AgentScope",
       "MemoryProfile"
      ],
      "path": "src/agent_def/types.rs",
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "crate-vis": 59,
-      "enum": 1,
       "fn": 17,
-      "re-export": 14,
+      "re-export": 15,
       "struct": 2
      }
     },
@@ -16949,9 +16945,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 44,
+      "crate-vis": 45,
       "mod": 8,
-      "re-export": 31
+      "re-export": 32
      }
     },
     {
@@ -17540,8 +17536,8 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 30,
-      "re-export": 5
+      "crate-vis": 31,
+      "re-export": 6
      }
     },
     {
@@ -17625,7 +17621,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 8,
       "struct": 2
      }
@@ -17790,6 +17786,24 @@
      "purpose": "A run's type feedback rows on its own route (FIX 10389, CALLS \"session feedback lives on the session route…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeRunSecretLiftDismiss",
+      "CodeRunSecretLiftDismissal",
+      "CodeRunSecretLiftProposalView",
+      "CodeRunSecretLiftRequest",
+      "CodeRunSecretLiftStatus"
+     ],
+     "path": "src/code_run/storage/secret_lift.rs",
+     "purpose": "Value-free owner decisions on code-run secret lift proposals",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 5
      }
     },
     {
@@ -20078,7 +20092,6 @@
       "OutputAffordance",
       "OutputContextEntry",
       "OutputContextView",
-      "OutputDecayPolicy",
       "OutputRef",
       "OutputTier",
       "OutputWorkingContext"
@@ -20090,7 +20103,8 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 17,
-      "struct": 5
+      "re-export": 1,
+      "struct": 4
      }
     },
     {
@@ -21541,7 +21555,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 6
      }
@@ -34063,13 +34077,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/engine_store_hooks.rs",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -35083,7 +35097,7 @@
      "path": "src/federation/agent_grant.rs",
      "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -36845,7 +36859,7 @@
      "path": "src/gate/consolidation_readers.rs",
      "purpose": "The readers that consolidate a claim, and the question each asks first",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -37602,7 +37616,7 @@
      "path": "src/gate/manifest_authenticity.rs",
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 15,
       "fn": 6,
       "struct": 1
      }
@@ -37624,7 +37638,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 83,
+      "crate-vis": 82,
       "mod": 1,
       "re-export": 8
      }
@@ -37859,7 +37873,7 @@
      "path": "src/gate/project_depth/codec.rs",
      "purpose": "Exact, content-addressed POLICY_MANIFEST carrier and signature grammar",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 16
      }
     },
     {
@@ -39762,6 +39776,16 @@
      "purpose": "Shared graph, heap, and beam option types",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/host_memory.rs",
+     "purpose": "The process-wide physical-memory admission line",
+     "surface": {
+      "re-export": 1
      }
     },
     {
@@ -42318,7 +42342,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 202,
+      "mod": 203,
       "re-export": 102
      }
     },
@@ -64849,13 +64873,13 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "FieldProfile",
       "PackFormat"
      ],
      "path": "src/serialize/pack_format.rs",
      "purpose": "Context-pack output formats and field profiles",
      "surface": {
-      "enum": 2
+      "enum": 1,
+      "re-export": 1
      }
     },
     {
@@ -69072,6 +69096,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AgentModel"
+     ],
+     "path": "src/store/agent_model.rs",
+     "purpose": "One model on an agent's model list (FIX 4472): the revision-pinned model and the owner's words on when the…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AgentCeiling",
       "AgentWakeCadence",
       "CompactionOwnership",
@@ -69086,6 +69122,18 @@
       "enum": 4,
       "fn": 10,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentScope"
+     ],
+     "path": "src/store/agent_scope.rs",
+     "purpose": "The run scope persisted with an agent definition: every world, base reality only, or one world plus base…",
+     "surface": {
+      "enum": 1
      }
     },
     {
@@ -70278,6 +70326,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "FieldProfile"
+     ],
+     "path": "src/store/context_field_profile.rs",
+     "purpose": "The field profile a context pack selects record fields by",
+     "surface": {
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AffectedTests",
       "WorkspaceGraph"
      ],
@@ -71079,6 +71139,16 @@
      "purpose": "Claim-write decision recording and pending-consent mode",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_hooks.rs",
+     "purpose": "The gate hooks the store layer's open, write, erase and read paths run, supplied by the engine when a store…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -72054,7 +72124,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 107,
+      "crate-vis": 113,
       "mod": 108,
       "re-export": 31
      }
@@ -72332,6 +72402,18 @@
      "surface": {
       "enum": 1,
       "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutputDecayPolicy"
+     ],
+     "path": "src/store/output_decay.rs",
+     "purpose": "The output decay policy: after how many turns a context output's view drops from full to its overview, and…",
+     "surface": {
       "struct": 1
      }
     },
@@ -83439,7 +83521,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1256
+      "fn": 1257
      }
     },
     {
@@ -89311,7 +89393,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 174,
+     "files": 175,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89635,7 +89717,7 @@
     "engine_store_hooks": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
@@ -89750,6 +89832,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "HNSW graph index over the persisted neighbor graph"
+    },
+    "host_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The process-wide physical-memory admission line"
     },
     "housekeeping": {
      "files": 8,
@@ -90382,7 +90471,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 416,
+     "files": 421,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90620,9 +90709,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 141,
+   "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6296,
+   "source_files": 6303,
    "test_files": 895
   },
   "oneiron-android": {
@@ -97076,6 +97165,22 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MachineMemory",
+      "MemoryLease",
+      "MemoryRefusal"
+     ],
+     "path": "src/host_memory.rs",
+     "purpose": "The process's physical-memory admission line for host and native work",
+     "surface": {
+      "enum": 1,
+      "fn": 14,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -97096,7 +97201,7 @@
      "path": "src/lib.rs",
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
-      "mod": 23,
+      "mod": 24,
       "re-export": 2
      }
     },
@@ -97545,6 +97650,13 @@
      "layout": "file",
      "purpose": "The caller-supplied retrieval filter"
     },
+    "host_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The process's physical-memory admission line for host and native work"
+    },
     "identity_topology": {
      "files": 1,
      "impl_vault": false,
@@ -97653,7 +97765,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 63,
+   "source_files": 64,
    "test_files": 1
   },
   "oneiron-crypto": {
@@ -104789,7 +104901,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1224
+      "fn": 1225
      }
     },
     {
@@ -106541,7 +106653,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1225
+      "fn": 1226
      }
     },
     {
@@ -110963,6 +111075,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/code_run_secret_lift_doors.rs",
+     "purpose": "The owner's code-result secret lift list and proposal-only dismissal",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/code_view_doors.rs",
      "purpose": "Typed owner projections of linked working views and account-local cache use",
      "surface": {
@@ -111556,7 +111678,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 163
+      "crate-vis": 164
      }
     },
     {
@@ -113826,7 +113948,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 64
+      "crate-vis": 65
      }
     },
     {
@@ -113907,6 +114029,16 @@
      "purpose": "`/v1/owner/cleanup/review` and `/v1/owner/cleanup/decide`: one open cleanup proposal reviewed slot by slot…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/code_run_secret_lift_routes.rs",
+     "purpose": "Value-free code-result secret lift proposals on the owner HTTP door",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -120205,7 +120337,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 16
      }
     },
     {
@@ -125990,7 +126122,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 654,
+     "files": 656,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -126496,7 +126628,7 @@
    },
    "over_bar": 43,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1518,
+   "source_files": 1520,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -126843,6 +126975,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConsolidationReader"
+     ],
+     "path": "src/consolidation_reader.rs",
+     "purpose": "The readers that consolidate a claim: the vocabulary the engine's consolidation check and the store layer's…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AddressMode",
       "AppendFailure",
       "AppendRecord",
@@ -127019,7 +127165,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 29
+      "mod": 33
      }
     },
     {
@@ -127030,6 +127176,16 @@
      "purpose": "The occurrence span past which a stored record is a long interval",
      "surface": {
       "const": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/manifest_origin_keys.rs",
+     "purpose": "The row keys of a policy manifest's trusted-origin and seeded-confidence side tables, spelled for the…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -127346,6 +127502,33 @@
      "path": "src/overlay_db/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PolicyScopedGrant"
+     ],
+     "path": "src/policy_scoped_grant.rs",
+     "purpose": "One scoped grant row of a policy manifest, as the manifest fold decodes it",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProjectBirthOwnerProof",
+      "ProjectDepthBirth"
+     ],
+     "path": "src/project_depth_record.rs",
+     "purpose": "A project's depth birth record, as a POLICY_MANIFEST contribution carries it",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 2
+     }
     },
     {
      "bucket": "s",
@@ -128776,6 +128959,13 @@
      "layout": "file",
      "purpose": "Connector-key lifecycle status and its pinned wire strings"
     },
+    "consolidation_reader": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The readers that consolidate a claim: the vocabulary the engine's consolidation check and the store layer's…"
+    },
     "conversation_record": {
      "files": 1,
      "impl_vault": false,
@@ -128832,6 +129022,13 @@
      "layout": "file",
      "purpose": "The occurrence span past which a stored record is a long interval"
     },
+    "manifest_origin_keys": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The row keys of a policy manifest's trusted-origin and seeded-confidence side tables, spelled for the…"
+    },
     "model_decision": {
      "files": 13,
      "impl_vault": false,
@@ -128859,6 +129056,20 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Per-database accessor seam for the session write-overlay (ARCH-0052, D2)"
+    },
+    "policy_scoped_grant": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "One scoped grant row of a policy manifest, as the manifest fold decodes it"
+    },
+    "project_depth_record": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A project's depth birth record, as a POLICY_MANIFEST contribution carries it"
     },
     "receive_scan": {
      "files": 1,
@@ -128940,7 +129151,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 143,
+   "source_files": 147,
    "test_files": 4
   },
   "oneiron-uniffi": {
@@ -129837,6 +130048,11 @@
       "CodeRepoView",
       "CodeRunModelHealCountRequest",
       "CodeRunModelHealCountView",
+      "CodeRunSecretLiftDismiss",
+      "CodeRunSecretLiftDismissal",
+      "CodeRunSecretLiftProposalView",
+      "CodeRunSecretLiftRequest",
+      "CodeRunSecretLiftStatus",
       "CodeRunTypeDiagnosticsRequest",
       "CodeRunWorkFile",
       "CodeRunWorkLink",
@@ -133559,7 +133775,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1105,
-      "struct": 3351
+      "struct": 3356
      }
     },
     {
