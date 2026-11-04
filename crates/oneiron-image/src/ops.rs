@@ -123,7 +123,7 @@ pub(crate) fn crop(
     let mut touched = vec![pixels(x, y, w, h)];
     for overlay in &mut body.overlays {
         check()?;
-        overlay.shape.translate(-(x as f32), -(y as f32));
+        overlay.shape.translate(-(x as f32), -(y as f32), check)?;
         let clipped = overlay.clipped_by(body.canvas, check)?;
         if clipped && !overlay.clipped {
             touched.push(overlay_locator(overlay.id));
@@ -170,7 +170,7 @@ pub(crate) fn resize(
     let widen = (sx * sy).sqrt();
     for overlay in &mut body.overlays {
         check()?;
-        overlay.shape.scale(sx, sy);
+        overlay.shape.scale(sx, sy, check)?;
         overlay.stroke.width =
             (overlay.stroke.width * widen).clamp(1.0, crate::body::MAX_STROKE_WIDTH);
         overlay.clipped = overlay.clipped_by(to, check)?;

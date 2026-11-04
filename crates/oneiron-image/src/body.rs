@@ -360,25 +360,42 @@ pub(crate) fn check_overlay(
 }
 
 impl Shape {
-    /// Moves every point by `(dx, dy)`.
-    pub(crate) fn translate(&mut self, dx: f32, dy: f32) {
-        self.map_points(|p| Point {
+    /// Moves every point by `(dx, dy)`. `check` runs per freehand
+    /// point, and returns an error once the call is cancelled.
+    pub(crate) fn translate(
+        &mut self,
+        dx: f32,
+        dy: f32,
+        check: &dyn Fn() -> Result<(), OrganError>,
+    ) -> Result<(), OrganError> {
+        self.map_points(check, |p| Point {
             x: p.x + dx,
             y: p.y + dy,
-        });
+        })
     }
 
-    /// Scales every point per axis about the origin.
-    pub(crate) fn scale(&mut self, sx: f32, sy: f32) {
-        self.map_points(|p| Point {
+    /// Scales every point per axis about the origin. `check` runs per
+    /// freehand point, and returns an error once the call is cancelled.
+    pub(crate) fn scale(
+        &mut self,
+        sx: f32,
+        sy: f32,
+        check: &dyn Fn() -> Result<(), OrganError>,
+    ) -> Result<(), OrganError> {
+        self.map_points(check, |p| Point {
             x: p.x * sx,
             y: p.y * sy,
-        });
+        })
     }
 
-    fn map_points(&mut self, f: impl Fn(Point) -> Point) {
+    fn map_points(
+        &mut self,
+        check: &dyn Fn() -> Result<(), OrganError>,
+        f: impl Fn(Point) -> Point,
+    ) -> Result<(), OrganError> {
         match self {
             Self::Rect { x, y, w, h } => {
+                check()?;
                 let from = f(Point { x: *x, y: *y });
                 let to = f(Point {
                     x: *x + *w,
@@ -388,15 +405,20 @@ impl Shape {
                 *y = from.y;
                 *w = to.x - from.x;
                 *h = to.y - from.y;
+                Ok(())
             }
             Self::Arrow { from, to } => {
+                check()?;
                 *from = f(*from);
                 *to = f(*to);
+                Ok(())
             }
             Self::Freehand { points } => {
                 for point in points.iter_mut() {
+                    check()?;
                     *point = f(*point);
                 }
+                Ok(())
             }
         }
     }
