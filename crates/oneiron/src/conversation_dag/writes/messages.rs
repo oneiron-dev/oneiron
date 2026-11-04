@@ -130,8 +130,11 @@ pub(super) fn append_message_in_txn(
         })
         .transpose()?;
     let decoded = decode_map(&input.body)?;
-    let envelope = envelope_of(&decoded, pointer)?;
+    let mut envelope = envelope_of(&decoded, pointer)?;
     require_free_order(vault, txn, turn, envelope.order)?;
+    if let Some(parts) = &mut envelope.parts {
+        crate::batch::secret_scan::seal_message_parts_in_txn(vault, txn, id, 0, parts)?;
+    }
     let bytes = envelope.encode_body()?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     let authorized = crate::gate::check_witness_message_ceiling(
@@ -311,10 +314,14 @@ fn envelope_of(
             let mut encoded = Vec::new();
             rmpv::encode::write_value(&mut encoded, value)
                 .map_err(|_| invalid("a MESSAGE body's parts are not canonical"))?;
-            rmp_serde::from_slice::<Vec<crate::store::witness_message_body::StoredMessagePart>>(
-                &encoded,
-            )
-            .map_err(|_| invalid("a MESSAGE body's parts are not canonical"))
+            rmp_serde::from_slice::<Vec<crate::ContentPart>>(&encoded)
+                .map(|parts| {
+                    parts
+                        .into_iter()
+                        .map(crate::store::witness_message_body::StoredMessagePart::Inline)
+                        .collect()
+                })
+                .map_err(|_| invalid("a MESSAGE body's parts are not canonical"))
         })
         .transpose()?;
     let mut metadata = get("metadata").cloned();

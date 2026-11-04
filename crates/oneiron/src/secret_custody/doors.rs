@@ -530,6 +530,38 @@ pub(crate) fn restore_secret_custody_in_txn(
     Ok(true)
 }
 
+/// Proves an incoming original against this exact MESSAGE part's birth
+/// value, using existing keyed history only. It grants no value read or replay.
+pub(crate) fn message_part_original_matches_in_txn(
+    store: &Store,
+    txn: &heed::RwTxn<'_>,
+    message: &EntityId,
+    index: usize,
+    handle: &str,
+    original: &[u8],
+) -> Result<bool> {
+    use crate::ports::ShortIdStoreRead;
+    use crate::store::known_value_index::KnownValues;
+
+    let place = format!("parts/{index}");
+    for custody in super::found_keys::found_key_custody_in_txn(store, txn, message)? {
+        let own = crate::batch::secret_scan::mask_origin_in_txn(store, txn, &custody)?
+            .is_some_and(|origin| origin.record == *message && origin.place == place);
+        if !own
+            || store
+                .port_short_id_reference(txn, &custody)?
+                .is_none_or(|(reference, _)| reference != handle)
+        {
+            continue;
+        }
+        // Masker::mint records a new whole part at generation zero. Later
+        // rotations do not redefine the immutable MESSAGE's original part.
+        return Ok(KnownValues::load_for_in_writer(store, txn, &custody, &[0])?
+            .is_some_and(|known| known.is_exact_value(original)));
+    }
+    Ok(false)
+}
+
 /// Revokes only custody minted at this MESSAGE's ordered part positions.
 /// The origin inventory remains usable after the MESSAGE body has gone.
 pub(crate) fn revoke_message_part_custody_in_txn(

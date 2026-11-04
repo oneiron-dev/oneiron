@@ -36,6 +36,7 @@ use crate::temporal::TimeRange;
 use crate::workspace_roster::RoomRegenerationPermit;
 
 mod execute;
+mod parts;
 mod planning;
 mod provenance;
 
@@ -126,6 +127,7 @@ enum Landing<'a, 'v> {
 
 /// One MESSAGE as the plan holds it. The envelope the door authorizes and the
 /// canonical body it proves come from ONE value ([`witness_message_envelope`]).
+#[derive(Clone)]
 pub(super) struct PlannedMessage<'t> {
     pub(super) message: &'t WitnessMessage,
     pub(super) id: EntityId,
@@ -137,6 +139,7 @@ pub(super) struct PlannedMessage<'t> {
 }
 
 /// Everything the program decides before its write transaction.
+#[derive(Clone)]
 pub(super) struct WitnessPlan<'t> {
     pub(super) turn: &'t WitnessTurn,
     /// Every row carries the witness's own stamps, never the wall clock:
@@ -211,7 +214,10 @@ enum WitnessSink<'a, 'v> {
 }
 
 enum Landed {
-    Base(WitnessReceipt),
+    Base {
+        receipt: WitnessReceipt,
+        bodies: Vec<(EntityId, u64, Vec<u8>)>,
+    },
     HardDeleted(EntityId),
     Overlay {
         segment: TxnSegmentGuard,

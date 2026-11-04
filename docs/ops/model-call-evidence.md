@@ -83,11 +83,23 @@ transaction with custody registration. A completed generation returns its
 existing receipt before any suffix is sealed again. MESSAGE erasure revokes
 custody under its actual origin and owner act; a restorable delete does not.
 
-This is a narrow storage path, not reasoning delivery. No production caller
-currently supplies parts to the model-stream finalize door. Birth and overlay
-promotion still keep inline parts. Scan-off preserves the direct parts
-writer's existing inline behavior; it does not implement the generic batch
-door's known-only placement policy. Inline parts must not be assumed public
-or secret-free. Chat wiring, scan-off whole-part marks, authorized part serving,
+Base MESSAGE birth and DAG MESSAGE append use the same whole-part policy.
+Base birth runs its original guards before sealing, then authorizes and stages
+one local plan with the converted parts. The original author, topology,
+assertion, quote, thread, full-envelope ceiling and final route checks remain.
+An exact birth retry never mints again: it reuses a stored reference only after
+matching the actual MESSAGE, part position, custody origin and handle, and the
+original whole value's existing keyed fingerprint at that unit's birth
+generation. It then passes the original full-body and topology comparison.
+This identity proof opens no value and gives no reveal or replay permission.
+The on-record room copy keeps the exact admitted stored bodies, not the
+unsealed draft bodies, so its body digests describe what was committed.
+
+This is a storage path, not reasoning delivery. No production caller currently
+supplies parts to the model-stream finalize door. Off-record overlay and
+promotion still keep inline parts. Scan-off preserves the MESSAGE writer's
+existing inline behavior; it does not implement the generic batch door's
+known-only placement policy. Inline parts must not be assumed public or
+secret-free. Chat wiring, scan-off whole-part marks, authorized part serving,
 actual issuing-login replay and whole MESSAGE privacy remain separate work.
 A custody handle is not a reveal grant or provider replay permission.
