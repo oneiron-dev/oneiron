@@ -181,6 +181,7 @@ pub mod model_step_submission;
 pub(crate) mod model_stream_row;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
+pub(crate) mod output_decay;
 pub mod pack_hook_actor_class;
 pub mod pack_hook_proposal;
 #[cfg(feature = "sync")]
@@ -205,6 +206,7 @@ pub mod window_protocol;
 pub(crate) mod window_rows;
 
 pub mod consolidation_scope;
+pub(crate) mod context_field_profile;
 pub(crate) mod conversation_span;
 pub mod dreamer_attempt_kind;
 pub mod dreamer_wake_policy;
