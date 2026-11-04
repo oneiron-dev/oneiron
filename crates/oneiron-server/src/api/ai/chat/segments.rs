@@ -34,7 +34,7 @@ use oneiron::{EdgeActorClass, EntityId, LlmMessage, LlmMessageRole, Vault};
 
 use super::compaction::SelfChat;
 
-mod retry;
+mod actions;
 use super::{Answering, TurnCredential, text_message};
 use crate::api::context_board::BoardSectionSource;
 use crate::api::credential_memory;
@@ -42,7 +42,7 @@ use crate::models::{
     AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
     reply_committed, turn_admitted,
 };
-pub(crate) use retry::RetrySession;
+pub(crate) use actions::ActionSession;
 
 /// Where the turn's messages lay as it assembled them, before its craft and
 /// its board went in.
@@ -124,7 +124,7 @@ pub(super) fn admitted(
     assembled: Assembled<'_>,
     admitted: &[LlmMessage],
 ) -> Option<TurnSegments> {
-    admitted_with_sources(reader, assembled, admitted, &[])
+    admitted_with_sources(reader, assembled, admitted, &[], None)
 }
 
 fn admitted_with_sources(
@@ -132,6 +132,7 @@ fn admitted_with_sources(
     assembled: Assembled<'_>,
     admitted: &[LlmMessage],
     borrowed: &[EntityId],
+    continuation: Option<EntityId>,
 ) -> Option<TurnSegments> {
     let Layout {
         prompt,
@@ -233,6 +234,10 @@ fn admitted_with_sources(
         _ => None,
     };
     let manifest = SegmentManifest::new(segments, anchor, &messages);
+    let manifest = match continuation {
+        Some(message) => manifest.continued(message, admitted)?,
+        None => manifest,
+    };
     if !manifest.describes(admitted) {
         return None;
     }
