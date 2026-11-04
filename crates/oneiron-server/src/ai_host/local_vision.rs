@@ -36,6 +36,9 @@ use oneiron::{
 };
 use serde_json::{Value, json};
 
+use crate::decision_verdict::model_call_context;
+use crate::models::CallDeadline;
+
 use super::AiHandle;
 
 /// The role whose seat answers.
@@ -216,17 +219,48 @@ impl DecisionModel for LocalVisionModel {
             Some(run) => run.sourced(Some(call.evidence.to_vec())),
             None => self.run.sourced(Some(call.evidence.to_vec())),
         };
+        let caller = model_call_context();
+        let no_record_at_arrival = caller.as_ref().is_some_and(|caller| {
+            self.vault
+                .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
+        });
+        let record_request = admitted.request.clone();
         // A rested offer is waited for within the call's own time, not the
-        // vault's longest wait.
+        // vault's longest wait. Retain the actual answering binding through
+        // the same rung/fallback traversal.
         let response = self.runtime.block_on(async {
             tokio::time::timeout(
                 time_left,
-                admitted
-                    .ladder
-                    .generate_within(&run, admitted.request, None, &|| true, time_left),
+                admitted.ladder.generate_recorded_by(
+                    &run,
+                    admitted.request,
+                    None,
+                    &|| true,
+                    CallDeadline::waits_within(time_left),
+                ),
             )
             .await
             .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
+        });
+        let response = response.map(|(response, binding)| {
+            if let Some(caller) = caller {
+                let no_record = no_record_at_arrival
+                    || self.vault.model_call_keeps_no_record_for(
+                        caller.session.as_deref(),
+                        Some(caller.principal),
+                    );
+                let evidence = run.initiated_by(Some(caller.principal));
+                crate::api::llm::record_raw_response(
+                    &self.vault,
+                    &admitted.ladder,
+                    &evidence,
+                    &record_request,
+                    &response,
+                    Some(&binding),
+                    no_record,
+                );
+            }
+            response
         });
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(
             response

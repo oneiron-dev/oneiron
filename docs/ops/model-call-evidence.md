@@ -81,6 +81,23 @@ with required `caller` run provenance. It invents no generative finish reason,
 route, issuer, reasoning part or read-world identity. The run's shared evidence
 sequence is allocated only after privacy, fingerprint and model checks.
 
+## Local-vision calls
+
+Local-vision records actual successful generative terminals before its unchanged
+text and typed-answer projection. A provider response that later fails typed JSON
+parsing still has its raw call evidence, as on the Big rung. Provider errors and
+timeouts create no success record. The outer timeout, Waits deadline, role/model
+checks, full existing rung/fallback traversal and last-usage mapping are unchanged.
+
+Capture uses only a bound model-call principal and its owned optional session.
+An absent context skips evidence, never the call. Both the caller-sourced run
+and the pre-existing host run stay unchanged. The existing raw writer receives
+the actual admitted request, full response and actual answering binding; the
+requested rung is never substituted for a fallback's binding. The same actor
+and session are checked at arrival and terminal, and NoRecord on either suppresses
+the write. Evidence uses only a post-terminal initiated-by clone and the shared
+run sequence. No new call, run, receipt, store or replay permission is created.
+
 ## Recording and privacy
 
 For a bound session, the existing NoRecord/off-record check runs both before the
@@ -94,7 +111,8 @@ or typed decision. A failed evidence write is logged and never fails the answer.
 An unbound call records as usual; a call outside every capture scope is not
 assigned a guessed actor.
 
-Each raw/Big/generative-eval/observed-house/caller-System-One evidence row takes a distinct record
+Each captured raw, Big, generative-eval, Local-vision, house or caller-System-One
+evidence row takes a distinct record
 stamp from its shared run. This is an evidence-key sequence, not an admission or receipt
 number. Cloned handles share it and declaration revisions do not reset it.
 A failed or suppressed write does not require a dense sequence.
