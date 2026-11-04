@@ -1,11 +1,11 @@
 //! Bundle generation identity, upload cadence and retirement selection.
 //! The entry point is `retired_bundle_generations`.
-//! `super` owns generation minting and forwards these public definitions.
+//! `fresh` mints a generation; `world_keys` forwards these public definitions.
 
-use crate::error::Result;
-use crate::key_material::refused;
+use oneiron_contracts::error::Result;
+use crate::key_material::{os_fill, refused};
 
-pub(crate) const GENERATION_LEN: usize = 24;
+pub const GENERATION_LEN: usize = 24;
 
 const KEEP_SLOTS: u64 = SEALED_BUNDLE_KEEP as u64;
 
@@ -57,6 +57,12 @@ pub struct SealedBundleGeneration {
 }
 
 impl SealedBundleGeneration {
+    pub fn fresh(slot: u64) -> Result<Self> {
+        let mut nonce = [0u8; 16];
+        os_fill(&mut nonce)?;
+        Ok(Self { slot, nonce })
+    }
+
     /// `slot (8, big-endian) ‖ nonce (16)`.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; GENERATION_LEN] {
