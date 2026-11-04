@@ -418,7 +418,7 @@ side_tables! {
     /// The billing account a PERSON filed as their own, which their room-paid calls bill (FIX
     /// 3332). Key: id16 (PERSON).
     PERSON_BILLING_ACCOUNT: VaultMeta b"person_billing_account:v1:" Named
-        => crate::llm::run_admission::erase_billing_account_actor_in_txn;
+        => crate::store::person_billing_account::erase_billing_account_actor_in_txn;
     /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
     PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored [accepts: crate::persona_snapshot::persona_snapshot_copy_accepts_masked];
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
