@@ -78,7 +78,7 @@ side_tables! {
     /// it was made at and the generation it revoked, until a pass that can sign carries it. Holds
     /// no value and no proof. Key: id16 (custody record id).
     SECRET_CUSTODY_PENDING_REVOKE: VaultMeta b"secret_custody:pending_revoke:v1:" Named Engine
-        => crate::secret_custody::erase_pending_revoke_actor_in_txn;
+        => crate::store::pending_custody_revoke::erase_pending_revoke_actor_in_txn;
     /// The rewrap request whose bindings this vault took into one custody record it holds as a
     /// receiver (CALLS CUSTODY_REBIND_PENDING_FLOOR): a replay of its carrier never applies again,
     /// while a carrier kept as this vault's latest whose bindings the live floor refused stays
