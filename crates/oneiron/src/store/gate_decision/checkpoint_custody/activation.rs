@@ -290,7 +290,8 @@ impl Store {
             let Some(family) = ResponseFamily::of_row(db, key, &value) else {
                 continue;
             };
-            let Some((carriage, _)) = family.scan(key, &value).carriage() else {
+            let Some((carriage, _)) = family.scan(self.attempt_operations, key, &value).carriage()
+            else {
                 continue;
             };
             let caller = (family == ResponseFamily::Http)
