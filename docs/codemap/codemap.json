@@ -418,9 +418,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/affect/annotation.rs",
-     "purpose": "Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers",
+     "purpose": "Turn and message VAD annotation persistence",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 1
      }
     },
     {
@@ -19429,7 +19429,7 @@
      "path": "src/comm/stop_hold.rs",
      "purpose": "The send hold of an inbound STOP (F06): the external-effect gate's read of a STOP's standing opt-out, the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 4
      }
     },
     {
@@ -23428,15 +23428,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "OutputMark"
-     ],
+     "notable": [],
      "path": "src/conversation/output_guard.rs",
      "purpose": "The container output guard (OF-365 P5, FIX 1389): the fence between an attendee's first entry into a…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 1,
       "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -24081,7 +24079,8 @@
      "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
      "surface": {
       "crate-vis": 16,
-      "fn": 2
+      "fn": 1,
+      "re-export": 1
      }
     },
     {
@@ -34736,20 +34735,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "OversightCounts",
-      "OversightKind",
-      "OversightReceipt"
-     ],
+     "notable": [],
      "path": "src/failure_ladder/oversight.rs",
      "purpose": "Per-vault signed oversight over healer proposals and review decisions",
      "surface": {
-      "crate-vis": 5,
-      "enum": 1,
-      "fn": 5,
-      "struct": 2
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -39940,13 +39933,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/identity.rs",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 8
      }
     },
     {
@@ -39956,7 +39949,7 @@
      "path": "src/identity_redirect.rs",
      "purpose": "ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 4,
       "re-export": 1
      }
@@ -42131,26 +42124,25 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LinkedText",
       "ProseSpan",
       "RecordLinks",
       "RecordLinksRequest",
-      "RecordRef",
       "RecordRefPreview",
       "ResolveRecordRefRequest"
      ],
      "path": "src/lens/record_ref.rs",
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
-      "const": 4,
+      "const": 3,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 7,
-      "re-export": 1,
-      "struct": 6
+      "fn": 4,
+      "re-export": 3,
+      "struct": 5
      }
     },
     {
@@ -65866,9 +65858,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill/resident.rs",
-     "purpose": "Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base",
+     "purpose": "Resident ownership storage and loaded-skill erasure",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 2
      }
     },
     {
@@ -69849,6 +69841,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/channel_class.rs",
+     "purpose": "Canonical recipient-facing channel classes",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ChannelIdentityLifecycleReceiptId",
       "ChannelIdentityLifecycleReceiptRecord"
@@ -70545,6 +70547,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OutputMark"
+     ],
+     "path": "src/store/container_output.rs",
+     "purpose": "Per-container output invalidation marks",
+     "surface": {
+      "crate-vis": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "FieldProfile"
      ],
      "path": "src/store/context_field_profile.rs",
@@ -70660,6 +70675,16 @@
      "notable": [],
      "path": "src/store/conversation_span.rs",
      "purpose": "Result vocabulary for a fingerprint-pinned conversation span read",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/conversation_summary.rs",
+     "purpose": "Coverage references encoded in stored conversation summaries",
      "surface": {
       "crate-vis": 1
      }
@@ -71528,6 +71553,23 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "OversightCounts",
+      "OversightKind",
+      "OversightReceipt"
+     ],
+     "path": "src/store/healer_oversight.rs",
+     "purpose": "Per-vault signed oversight over healer proposals and review decisions",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/store/home_handoff_custody.rs",
      "purpose": "The home handoff's custody contract (FIX 8875, L04's half): each actor's content a home handoff carries is…",
@@ -71654,6 +71696,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/identity_redirect_rows.rs",
+     "purpose": "Redirect projection row encoding, deletion maintenance and inbound traversal",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/inference_snapshot_custody.rs",
      "purpose": "The inference snapshot custody client: one erasable wrapped data key per snapshot, on the one typed custody…",
      "surface": {
@@ -71661,13 +71713,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/install_identity.rs",
      "purpose": "Install identity rows, attestation values, and transaction-bound signing accessors",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 21
      }
     },
     {
@@ -72340,6 +72392,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/live_speaker_calls.rs",
+     "purpose": "Per-room live voice-call registration index",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/local_queue_budget.rs",
      "purpose": "Byte accounting for bounded device-local queues, separate from verdict/rate policy",
      "surface": {
@@ -72411,8 +72473,8 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 134,
-      "mod": 112,
+      "crate-vis": 142,
+      "mod": 115,
       "re-export": 31
      }
     },
@@ -72787,6 +72849,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/pending_comm_stop.rs",
+     "purpose": "Pending inbound STOP markers and transactional put/delete maintenance",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/pending_custody_revoke.rs",
      "purpose": "The custody revokes this install still owes the owner's other machines (CALLS CUSTODY_REVOKE_PENDING_CARRY)…",
      "surface": {
@@ -73130,6 +73202,21 @@
      "purpose": "Pure parsing of record links in Markdown text",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecordRef"
+     ],
+     "path": "src/store/record_ref.rs",
+     "purpose": "Typed record references and bounded record display labels",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -74083,6 +74170,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/skill_resident.rs",
+     "purpose": "Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/skill_source_carrier.rs",
      "purpose": "Holder-bound exact skill source carrier framing",
      "surface": {
@@ -74183,6 +74280,16 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/task_authority_guard.rs",
+     "purpose": "Immutable task-authority fact row and edge deletion guards",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -74307,6 +74414,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/vad_annotation.rs",
+     "purpose": "Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -79073,7 +79190,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities",
      "surface": {
       "const": 2,
-      "crate-vis": 24,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
@@ -90194,7 +90311,7 @@
     "identity": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…"
     },
@@ -90285,7 +90402,7 @@
     "lens": {
      "files": 38,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Closed generated-lens atom vocabulary"
     },
@@ -90808,7 +90925,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 452,
+     "files": 463,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91046,9 +91163,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 143,
+   "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6335,
+   "source_files": 6346,
    "test_files": 895
   },
   "oneiron-android": {
