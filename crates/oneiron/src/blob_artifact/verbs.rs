@@ -81,6 +81,10 @@ pub struct ArtifactExportFile {
     pub content_hash: String,
     pub born_with: BornWith,
     pub content_base64: String,
+    /// The owner's export only: worlds carried despite the recipient
+    /// setting, with the existing owner notice wording (FIX 3184).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<crate::share_travel::WorldRecipientNotice>,
 }
 
 /// Exactly one source: a task, ask, code-mode run or skill row, or an agent run ref.
@@ -493,12 +497,29 @@ impl Memory<'_> {
         // off an unknown machine, and prompt text only from the sources its
         // own read lane reads (FIX 6054).
         let travel = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Artifact);
-        let text = if self.secret_sight()? == SecretSight::Owner {
-            vault.born_with_text(&file.artifact_id, Some(&file.made_by))?
+        let (born_with, notices) = if self.secret_sight()? == SecretSight::Owner {
+            // Like an agent-pack export, a local download can travel onward
+            // to an unproved recipient. This judges a notice, not admission.
+            let onward = if self.destination().is_off_device() {
+                self.destination().clone()
+            } else {
+                crate::claim::CallerLocality::OffDevice.into()
+            };
+            vault.artifact_export_text_with_notices(
+                &file.artifact_id,
+                &file.made_by,
+                &travel,
+                &onward,
+            )?
         } else {
-            self.born_with_text_for_reader(&file.artifact_id, &file.made_by, &travel)?
+            let text = self.born_with_text_for_reader(&file.artifact_id, &file.made_by, &travel)?;
+            (travel.project(text), Vec::new())
         };
-        let born_with = travel.project(text);
+        let result_notices = notices
+            .iter()
+            .cloned()
+            .map(crate::share_travel::WorldRecipientNotice::in_result)
+            .collect();
         // The hash names the copy beside it (FIX 5491): the sighted export's
         // own `content_hash` stays the stored version's, which its internal
         // readers (deck doors) bind their edits to.
@@ -509,6 +530,7 @@ impl Memory<'_> {
             content_hash.clone(),
             &self.actor(),
             &born_with,
+            notices,
         )?;
         Ok(Some(ArtifactExportFile {
             artifact_ref: file.artifact_id.to_hex(),
@@ -519,6 +541,7 @@ impl Memory<'_> {
             content_hash,
             born_with,
             content_base64: base64::engine::general_purpose::STANDARD.encode(&file.bytes),
+            notices: result_notices,
         }))
     }
 
