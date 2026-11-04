@@ -195,6 +195,7 @@ impl MediaRuntime {
                 role: format!("media.{}", operation.as_str()),
                 seat_model: seat_model.as_ref().map(ToString::to_string),
                 state,
+                reason: None,
                 rungs: rung_status,
             });
             let Some(seat_model) = seat_model.filter(|_| !rungs.is_empty()) else {
