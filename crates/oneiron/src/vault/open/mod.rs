@@ -35,6 +35,24 @@ pub(crate) fn embedded_owner_actor_id() -> Result<EntityId> {
     EntityId::derive(EMBEDDED_OWNER_ACTOR, &[])
 }
 
+/// The directory's identity from its path while it is fresh: following
+/// links, as the vault root is canonical by the time it is retained. Only
+/// the fallback where the open kept no bound descriptor; None where the
+/// host cannot name it (REVIEW-4381 P1).
+#[cfg(unix)]
+fn directory_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path)
+        .ok()
+        .map(|meta| (meta.dev(), meta.ino()))
+}
+
+/// No directory identity off unix: path-string checks apply alone.
+#[cfg(not(unix))]
+fn directory_identity(_path: &Path) -> Option<(u64, u64)> {
+    None
+}
+
 /// Encodes the minimal PERSON body the bootstrap writes.
 pub(crate) fn encode_embedded_owner_actor_body() -> Result<Vec<u8>> {
     let value = rmpv::Value::Map(vec![(
@@ -107,6 +125,21 @@ impl Vault {
         let canonical = path.as_ref().canonicalize()?;
         let lease = VaultWriterLease::acquire_after_owner_act(&canonical)?;
         Self::open_leased(&canonical, config, lease)
+    }
+
+    /// This vault's own directory on this host, as it was opened
+    /// (canonical). A folder read uses it to pass over the vault itself
+    /// (FIX 10249).
+    pub fn path(&self) -> &Path {
+        self.store.env.path()
+    }
+
+    /// This vault's own directory identity, retained at open while its path
+    /// was fresh: a folder read excludes the vault by identity, so a rename
+    /// after open cannot defeat the exclusion (REVIEW-4381 P1). None where
+    /// the host cannot name it; path-string checks still apply there.
+    pub fn dir_identity(&self) -> Option<(u64, u64)> {
+        self.dir_identity
     }
 
     /// [`Self::open_owned`] on `directory`, a vault root the caller already
@@ -535,6 +568,13 @@ impl Vault {
         // One spent set per environment in this process (FIX 12023 W0, P2),
         // taken before `store` moves into the handle.
         let spent_nonces = crate::authority::SpentNonces::shared_for(store.canonical_root());
+        // The vault directory's identity from the descriptor the open
+        // bound, never a fresh pathname lookup: a rename after open (even
+        // during the open itself) cannot redirect it. Falls back to the
+        // path only where the open retained no descriptor (REVIEW-4381 P1).
+        let dir_identity = store
+            .bound_root_identity()
+            .or_else(|| directory_identity(store.env.path()));
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
             vault_id: super::VaultId::resolve_at_open(
@@ -547,6 +587,7 @@ impl Vault {
             retrieval_trace_key: super::retrieval_trace_key::RetrievalTraceKey::resolve_at_open(
                 &store,
             )?,
+            dir_identity,
             store,
             vector_evidence: std::sync::RwLock::new(super::vector_evidence::NoMatchFloors::new(
                 config.vector_evidence,
