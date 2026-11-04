@@ -142,6 +142,10 @@ const ROWS: &[Row] = &[
         [pin(&["records"], records)],
     ),
     always!(
+        "vault.legal_holds.withdraw_erase",
+        [pin(&["records"], records)],
+    ),
+    always!(
         "vault.records.erase_confirm",
         [
             pin(&["record"], typed),

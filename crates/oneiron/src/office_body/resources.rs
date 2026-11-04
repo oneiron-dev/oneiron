@@ -73,6 +73,20 @@ pub(crate) fn document_refused(refusal: ResourceRefusal) -> crate::error::Error 
     }
 }
 
+/// A non-deck operation's machine-memory refusal, named by its resource
+/// rather than as a live deck (FIX 12231, Engine 11:4x). The reserve/take
+/// condition and detail are unchanged; a deadline keeps today's timed-out read.
+pub(crate) fn machine_memory_refused(refusal: ResourceRefusal) -> crate::error::Error {
+    match refusal {
+        ResourceRefusal::MemoryFloor { .. } => {
+            crate::error::Error::Artifact(crate::error::ArtifactError::MemoryFloorRefused {
+                detail: refusal.to_string(),
+            })
+        }
+        ResourceRefusal::Deadline => document_refused(refusal),
+    }
+}
+
 /// A DOCX read's or projection's failure as the engine's error: a resource
 /// refusal as itself ([`document_refused`]), a ceiling the package passed as
 /// a refusal naming it (FIX 5354), any other one invalid under `message`.
