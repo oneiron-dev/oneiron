@@ -5,6 +5,8 @@ pub use credential_filter::{
     write_door_refuses_claim,
 };
 pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
+pub(crate) mod agent_knowledge_format;
+pub(crate) mod agent_knowledge_selection;
 mod archive_index;
 mod archive_project;
 mod archive_read;
@@ -92,3 +94,5 @@ pub(crate) use receipt_sources::{receipt_sources_for_body, task_receipt_refs};
 
 #[cfg(test)]
 mod receipt_source_tests;
+
+pub(crate) mod secret_supplement_record;

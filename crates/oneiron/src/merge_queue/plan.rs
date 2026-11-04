@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::build_cache::DeclaredOutputPath;
-use crate::contract_oracle::ContractSpec;
 use crate::memory::code_view_doors::CodeBuildSpec;
+use crate::store::contract_oracle::ContractSpec;
 
 /// Where a repository keeps its check plan, relative to its root.
 pub const REPO_CHECK_PLAN_PATH: &str = ".oneiron/checks.json";

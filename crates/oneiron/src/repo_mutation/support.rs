@@ -12,34 +12,11 @@ use crate::error::{Error, Result};
 use super::types::RepoForkHash;
 use crate::error::CodeError;
 
-const MAX_REPO_MUTATION_FAILURE_BYTES: usize = 4096;
+pub(super) use crate::git_wire::mutation_commands::truncate_failure;
 
-pub(super) fn truncate_failure(message: &str) -> String {
-    if message.len() <= MAX_REPO_MUTATION_FAILURE_BYTES {
-        return message.to_owned();
-    }
-    let mut end = MAX_REPO_MUTATION_FAILURE_BYTES;
-    while !message.is_char_boundary(end) {
-        end -= 1;
-    }
-    let mut out = message[..end].to_owned();
-    out.push_str("...");
-    out
-}
+pub(super) use crate::git_wire::mutation_commands::path_arg;
 
-pub(super) fn path_arg(path: &Path) -> Result<String> {
-    path.to_str()
-        .map(str::to_owned)
-        .ok_or(Error::Code(CodeError::InvalidRepoMutationRecord(
-            "path must be UTF-8",
-        )))
-}
-
-pub(super) fn utf8_trimmed(bytes: Vec<u8>, context: &'static str) -> Result<String> {
-    let text = String::from_utf8(bytes)
-        .map_err(|_| Error::Code(CodeError::InvalidRepoMutationRecord(context)))?;
-    Ok(text.trim_end_matches(['\r', '\n']).to_owned())
-}
+pub(super) use crate::git_wire::mutation_commands::utf8_trimmed;
 
 pub(super) fn sha256_bytes(bytes: &[u8]) -> RepoForkHash {
     let digest = Sha256::digest(bytes);

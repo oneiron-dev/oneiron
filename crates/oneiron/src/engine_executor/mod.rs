@@ -8,7 +8,7 @@
 
 mod attempt_cancels;
 mod board_frames;
-mod cancel;
+use oneiron_base::step_cancellation as cancel;
 mod capture;
 pub mod checkpoint_read;
 mod code_check;
