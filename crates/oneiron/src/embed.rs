@@ -92,8 +92,8 @@ pub use crate::store::embedding::{
 };
 pub use crate::store::embedding::{
     EMBED_PRIORITY_BACKFILL, EMBED_PRIORITY_DEVICE, EMBED_PRIORITY_SERVER,
-    EMBED_PRIORITY_SURFACED_HOT, EgressDecision, EgressPredicate, Embedder, EmbedderLocality,
-    PendingEmbeddingInput, PendingEmbeddingPayload,
+    EMBED_PRIORITY_SURFACED_HOT, EgressDecision, EgressPredicate, EmbeddedVector, Embedder,
+    EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload,
 };
 
 /// Canonical rung-2 INT8-transport receipt: `codes[i] as f32 * scale`.
@@ -193,6 +193,7 @@ struct LeasedPendingEmbedding {
     input: PendingEmbeddingInput,
     lease: PendingEmbeddingLease,
     route: EmbedRoute,
+    entity_type: u8,
 }
 
 #[cfg(feature = "sync")]
@@ -204,6 +205,19 @@ struct LeaseBatch {
     egress_denied: usize,
     egress_no_verdict: usize,
     device_local: usize,
+}
+
+/// One actually-filled measured item: the leased source it filled, with the actual
+/// encoder input-token count, for the operational `EmbedTokens` meter.
+/// Unmeasured fills (remote/unknown) have no entry, never a zero.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MeasuredEmbedFill {
+    pub entity_type: u8,
+    pub entity_id: EntityId,
+    pub source_version: Vec<u8>,
+    pub input_tokens: u64,
+    pub occurred_at: u64,
 }
 
 /// Summary from one reconciler pass.
@@ -223,6 +237,10 @@ pub struct PendingEmbeddingReconcileReport {
     /// Rows a device-local world keeps (DEC-0005): embedded on device, or
     /// left pending unsent while no embedder on this device takes them.
     pub device_local: usize,
+    /// Actually-filled measured items, in fill order, for the operational
+    /// `EmbedTokens` meter. Stale/deferred/reused/skipped/failed fills and
+    /// unmeasured remote fills have no entry.
+    pub measured_fills: Vec<MeasuredEmbedFill>,
 }
 
 /// Per-vault pending-embedding reconciler.
@@ -372,7 +390,7 @@ impl PendingEmbeddingReconciler {
                 .embed_on(rung.embedder.as_ref(), &inputs, &rung_endpoint)
                 .and_then(|vectors| {
                     if vectors.len() == remote_work.len()
-                        && vectors.iter().all(|(vector, _)| vector.len() == dimensions)
+                        && vectors.iter().all(|entry| entry.vector.len() == dimensions)
                     {
                         Ok(vectors)
                     } else {
@@ -444,7 +462,8 @@ impl PendingEmbeddingReconciler {
     }
 
     /// `embedder`'s vectors for `inputs`, each marked with the device and
-    /// runtime that computed it. One off this device sends each request only
+    /// runtime that computed it, and the actual input-token count when the
+    /// embedder measures it. One off this device sends each request only
     /// once the vault releases its rows toward `destination`: none of them is
     /// one a device-local world keeps from it (DEC-0005), whatever the host's
     /// egress list says. A refusal fails the embed and sends nothing.
@@ -453,11 +472,11 @@ impl PendingEmbeddingReconciler {
         embedder: &dyn Embedder,
         inputs: &[PendingEmbeddingInput],
         destination: &crate::settings::ReadDestination,
-    ) -> Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
+    ) -> Result<Vec<EmbeddedVector>> {
         if embedder.locality() == EmbedderLocality::OnDevice {
-            return embedder.embed_marked(inputs);
+            return embedder.embed_marked_measured(inputs);
         }
-        embedder.embed_released(inputs, &|rows| {
+        embedder.embed_released_measured(inputs, &|rows| {
             if self.vault.rows_may_leave_for(rows, destination)? {
                 Ok(())
             } else {
@@ -470,17 +489,28 @@ impl PendingEmbeddingReconciler {
     }
 
     /// Fills each leased row with its vector, marked with the device and
-    /// runtime that computed that vector.
+    /// runtime that computed that vector. An actually-filled measured item
+    /// joins the report's measured list for the operational meter; any other
+    /// fill (stale or unmeasured) counts only in the counters.
     fn fill_batch(
         &self,
         work: &[LeasedPendingEmbedding],
-        vectors: &[(Vec<f32>, EmbeddingProvenance)],
+        vectors: &[EmbeddedVector],
         locality: EmbedderLocality,
         report: &mut PendingEmbeddingReconcileReport,
     ) -> Result<()> {
-        for (item, (vector, provenance)) in work.iter().zip(vectors.iter()) {
-            if self.complete_leased_work(item, vector, locality, provenance)? {
+        for (item, entry) in work.iter().zip(vectors.iter()) {
+            if self.complete_leased_work(item, &entry.vector, locality, &entry.provenance)? {
                 report.filled += 1;
+                if let Some(input_tokens) = entry.input_tokens {
+                    report.measured_fills.push(MeasuredEmbedFill {
+                        entity_type: item.entity_type,
+                        entity_id: item.input.entity_id,
+                        source_version: item.input.pending_embedding_token.clone(),
+                        input_tokens,
+                        occurred_at: unix_millis_now() / 1000,
+                    });
+                }
             } else {
                 report.stale_fills += 1;
             }
@@ -555,7 +585,9 @@ impl PendingEmbeddingReconciler {
                 if batch.work.len() >= self.batch_size {
                     break;
                 }
-                let Some(input) = pending_input_in_txn(&self.vault, wtxn, &job.entity_id)? else {
+                let Some((input, entity_type)) =
+                    pending_input_in_txn(&self.vault, wtxn, &job.entity_id)?
+                else {
                     crate::sync::queue::delete_embed_job_in_txn(
                         &self.vault.store,
                         wtxn,
@@ -627,6 +659,7 @@ impl PendingEmbeddingReconciler {
                     input,
                     lease,
                     route,
+                    entity_type,
                 });
             }
             Ok(())
@@ -759,7 +792,7 @@ fn pending_input_in_txn(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-) -> Result<Option<PendingEmbeddingInput>> {
+) -> Result<Option<(PendingEmbeddingInput, u8)>> {
     let Some(token) = vault.store.pending_embedding_token_in_txn(wtxn, id)? else {
         return Ok(None);
     };
@@ -781,11 +814,14 @@ fn pending_input_in_txn(
         let token = vault
             .store
             .mark_pending_embedding(wtxn, id, text.as_bytes())?;
-        return Ok(Some(PendingEmbeddingInput {
-            entity_id: *id,
-            payload: PendingEmbeddingPayload::TurnText(text),
-            pending_embedding_token: token,
-        }));
+        return Ok(Some((
+            PendingEmbeddingInput {
+                entity_id: *id,
+                payload: PendingEmbeddingPayload::TurnText(text),
+                pending_embedding_token: token,
+            },
+            raw.entity_type,
+        )));
     }
 
     // RT-05 (ONE-1687): the epoch-summary keyframe is embeddable alongside
@@ -800,11 +836,14 @@ fn pending_input_in_txn(
     else {
         return Ok(None);
     };
-    Ok(Some(PendingEmbeddingInput {
-        entity_id: *id,
-        payload,
-        pending_embedding_token: token,
-    }))
+    Ok(Some((
+        PendingEmbeddingInput {
+            entity_id: *id,
+            payload,
+            pending_embedding_token: token,
+        },
+        raw.entity_type,
+    )))
 }
 
 /// Drops the pending marker of a stored record the shared rule never embeds.
