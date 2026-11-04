@@ -49,6 +49,20 @@ pub enum DeliverableReview {
     Acceptance,
 }
 
+/// The producer's membership in the team when its output was submitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProducerMembership {
+    /// The producer is the team's leader.
+    Leader,
+    /// The producer is a member of the team.
+    Member,
+    /// The producer is outside the team.
+    Other,
+    /// The output has no proven host-producer attempt.
+    Unknown,
+}
+
 /// One review of a team's deliverable. Host-only: never guest input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +80,8 @@ pub struct TeamDeliverableBinding {
     pub fingerprint: String,
     pub review: DeliverableReview,
     pub at: u64,
+    /// The producer's membership at submit; replay keeps the first value.
+    pub producer_membership: ProducerMembership,
 }
 
 impl TeamDeliverableBinding {
@@ -82,6 +98,7 @@ impl TeamDeliverableBinding {
         claim: EntityId,
         reviewed: &ClaimBody,
         at: u64,
+        producer_membership: ProducerMembership,
     ) -> Result<Self> {
         Ok(Self {
             team_ref: team_ref.into(),
@@ -92,6 +109,7 @@ impl TeamDeliverableBinding {
             fingerprint: bytes_to_hex_lower(&crate::inbox::inbox_claim_hash(reviewed)?),
             review: DeliverableReview::Acceptance,
             at,
+            producer_membership,
         })
     }
 }
@@ -149,10 +167,18 @@ pub fn bind_team_deliverable_in_txn(
     row.root_task = leader.task_ref;
     let key = *binding.claim.as_bytes();
     match TEAM_DELIVERABLE.get(&vault.store, txn, &key)? {
-        Some(existing) if existing == row => Ok(()),
-        Some(_) => Err(Error::InvalidClaimBody(
-            "a reviewed claim keeps the deliverable it was bound to",
-        )),
+        Some(existing) => {
+            // Membership changes must not rewrite a submitted output's
+            // historical record or stop an otherwise identical replay.
+            row.producer_membership = existing.producer_membership;
+            if existing == row {
+                Ok(())
+            } else {
+                Err(Error::InvalidClaimBody(
+                    "a reviewed claim keeps the deliverable it was bound to",
+                ))
+            }
+        }
         None => TEAM_DELIVERABLE.put(&vault.store, txn, &key, &row),
     }
 }
