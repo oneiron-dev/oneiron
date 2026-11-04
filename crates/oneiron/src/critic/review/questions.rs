@@ -80,7 +80,8 @@ pub struct ReviewNote {
 }
 
 /// Generation beside a typed review: evidence refs and a suggested edit per finding, from the
-/// host's own model transport. The answers are already decided; a note cannot change them.
+/// host's own model transport. Each call receives exactly one finding, never sibling
+/// verdicts. The answers are already decided; a note cannot change them.
 pub trait ReviewNotes {
     fn notes(&self, findings: &[ReviewFinding]) -> Result<Vec<ReviewNote>>;
 }
@@ -199,14 +200,20 @@ impl ReviewDecisions<'_> {
             });
         }
         let notes = match self.notes {
-            Some(notes) => notes.notes(&findings)?,
+            Some(notes) => findings
+                .iter()
+                .map(|finding| {
+                    let mut note = notes.notes(std::slice::from_ref(finding))?;
+                    if note.len() != 1 {
+                        return Err(invalid_critic_config(
+                            "review notes must cover every finding",
+                        ));
+                    }
+                    Ok(note.remove(0))
+                })
+                .collect::<Result<Vec<_>>>()?,
             None => vec![ReviewNote::default(); findings.len()],
         };
-        if notes.len() != findings.len() {
-            return Err(invalid_critic_config(
-                "review notes must cover every finding",
-            ));
-        }
         let mut artifacts = Vec::with_capacity(inputs.len());
         for ((finding, note), (id, provenance)) in findings.into_iter().zip(notes).zip(meta) {
             let input = finding.input;

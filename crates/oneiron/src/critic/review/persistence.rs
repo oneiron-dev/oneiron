@@ -4,6 +4,7 @@ use crate::batch::secret_scan::{admitted_from, named_tree};
 use crate::side_table::{self, Named, Raw, SideTable};
 
 mod dissent_rows;
+pub(super) use dissent_rows::save_dissent_in_txn;
 mod erased_claims;
 pub(super) use dissent_rows::{
     claim_dissent, dissent_state, release_dissent_claim, reviews_with_dissent,
