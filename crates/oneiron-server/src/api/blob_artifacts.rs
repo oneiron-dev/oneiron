@@ -137,6 +137,9 @@ pub(super) struct ProposeDeck {
     /// The envelope Keep gives the version, with the task or ask it answers.
     #[serde(default)]
     made_by: Option<MadeBy>,
+    /// The delta receipt id this rework answers (FIX 11967).
+    #[serde(default)]
+    delta_receipt: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -150,6 +153,9 @@ pub(super) struct ProposeOutput {
     report: Value,
     #[serde(default)]
     made_by: Option<MadeBy>,
+    /// The delta receipt id this rework answers (FIX 11967).
+    #[serde(default)]
+    delta_receipt: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -786,7 +792,7 @@ pub(super) async fn propose_deck(
                         reader,
                         actor,
                         now,
-                        None,
+                        request.delta_receipt.as_deref(),
                     )
                     .map(|pending| Ok(json!(pending)))
                     .map_err(failed)
@@ -840,11 +846,19 @@ pub(super) async fn propose_output(
         report: request.report,
         made_by: request.made_by,
     };
+    let delta_receipt = request.delta_receipt;
     let pending = blocking_read(move || {
         let vault = server.vault();
         let reader = made_by_reader(vault, &auth, output.made_by.as_ref())?;
         vault
-            .propose_native_output(&id, &output, reader, actor, vault.now_recorded_at(), None)
+            .propose_native_output(
+                &id,
+                &output,
+                reader,
+                actor,
+                vault.now_recorded_at(),
+                delta_receipt.as_deref(),
+            )
             .map_err(|error| core_engine_error("native output proposal failed", error))
     })
     .await?;
