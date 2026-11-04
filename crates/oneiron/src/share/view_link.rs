@@ -55,3 +55,75 @@ pub(crate) fn authorize_share_link_in_txn(
     live_share_for_holder_in_txn(vault, txn, share_id, &share.recipient_ref, now)?
         .ok_or_else(refused)
 }
+
+/// A bound view's non-claim prompt sources, judged under the current share's
+/// maximum before their ordinary native read. The brief carrier is not a
+/// prompt source read, so this never narrows its base-world NOTE lane.
+pub(crate) fn share_prompt_sources(
+    vault: &Vault,
+    read: &crate::claim::ScopedRead<'_>,
+    share_id: &EntityId,
+    viewer: &EntityId,
+    narrowing: Option<&super::ShareViewerScope>,
+    sources: &[EntityId],
+) -> Result<Option<std::collections::BTreeSet<EntityId>>> {
+    use crate::ports::EntityStoreRead;
+    use oneiron_authority::federation::ScopeAxis;
+
+    let txn = vault.store.env.read_txn()?;
+    if read.actor_key().share_view_ref() != Some(*share_id)
+        || read.actor_key().actor_ref() != viewer.to_hex()
+        || !read.proof_live_in(&txn)?
+    {
+        return Ok(None);
+    }
+    let now = vault.instant_in_txn(&txn)?.secs();
+    let Some(share) = live_share_for_holder_in_txn(vault, &txn, share_id, viewer, now)? else {
+        return Ok(None);
+    };
+    let mut maximum = super::ShareViewerScope {
+        world_refs: share.world_refs,
+        facet_refs: share.facet_refs,
+        include_unscoped: share.include_unscoped,
+    };
+    if let Some(narrowing) = narrowing {
+        maximum
+            .world_refs
+            .retain(|id| narrowing.world_refs.contains(id));
+        maximum
+            .facet_refs
+            .retain(|id| narrowing.facet_refs.contains(id));
+        maximum.include_unscoped &= narrowing.include_unscoped;
+    }
+    let store = read.store_read();
+    let mut permitted = std::collections::BTreeSet::new();
+    for source in sources {
+        let Some(row) = store.port_entity_record(&txn, source)? else {
+            continue;
+        };
+        let Some(scope) =
+            crate::federation::record_scope::scope_for_blob(&store, &txn, *source, &row.encode())?
+        else {
+            continue;
+        };
+        let world = match &scope.worlds {
+            ScopeAxis::Some(worlds) => worlds.iter().any(|world| {
+                maximum.world_refs.contains(&world.0)
+                    || (maximum.include_unscoped && world.0 == crate::claim::base_world_id())
+            }),
+            ScopeAxis::All => maximum.include_unscoped,
+            ScopeAxis::Bottom => false,
+        };
+        let facet = match &scope.facets {
+            ScopeAxis::Some(facets) if !facets.is_empty() => facets
+                .iter()
+                .any(|facet| maximum.facet_refs.contains(&facet.0)),
+            ScopeAxis::All => maximum.include_unscoped,
+            ScopeAxis::Bottom | ScopeAxis::Some(_) => false,
+        };
+        if world && facet {
+            permitted.insert(*source);
+        }
+    }
+    Ok(Some(permitted))
+}

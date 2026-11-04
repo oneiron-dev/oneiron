@@ -48,7 +48,9 @@ pub use actor_erase::{ACTOR_ERASE_SHARE_ADMISSION, ShareAdmissionErase};
 pub(crate) use admission_refs::share_gate_decision_refs_in_txn;
 pub use history::{ACTOR_ERASE_SHARE_RECIPIENT, ShareRecipientErase};
 pub(crate) use history::{ShareView, read_share_history_in_txn};
-pub(crate) use view_link::{authorize_share_link_in_txn, live_share_for_holder_in_txn};
+pub(crate) use view_link::{
+    authorize_share_link_in_txn, live_share_for_holder_in_txn, share_prompt_sources,
+};
 
 /// A typed AccessGrant. Only the opaque brief handle and redaction maximum are stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
