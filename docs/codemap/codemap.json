@@ -108473,7 +108473,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/mod.rs",
@@ -120748,7 +120748,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DecisionReadDoor"
@@ -121150,7 +121150,7 @@
      "path": "src/models/media/jobs.rs",
      "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -121181,7 +121181,7 @@
      "path": "src/models/media/replay.rs",
      "purpose": "A job's submit kept before it goes out, and keyed replays (FIX 2248, FIX 2962, FIX 465)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -121564,7 +121564,8 @@
       "SeatStatus",
       "SnapshotReceipt",
       "SnapshotSkips",
-      "SnapshotStatus"
+      "SnapshotStatus",
+      "TaggerStatus"
      ],
      "path": "src/models/status.rs",
      "purpose": "What the model runtime built, for the owner-facing status route",
@@ -121572,7 +121573,7 @@
       "crate-vis": 8,
       "enum": 2,
       "fn": 1,
-      "struct": 15
+      "struct": 16
      }
     },
     {
@@ -125386,7 +125387,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 36,
+   "over_bar": 37,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1497,
    "test_files": 182
