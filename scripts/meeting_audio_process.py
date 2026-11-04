@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import signal
 import subprocess
 import time
 import uuid
@@ -189,6 +190,10 @@ def _relay_exchange(command, request, idle, error, environment, progress, units,
                 def relay_unit():
                     """Runs inside the parent gate once the host admitted this
                     unit: admits the worker, then consumes its lines to its end."""
+                    nonlocal last_output
+                    # The host admission wait is not worker silence: restart the
+                    # idle clock before waiting for the admitted unit's output.
+                    last_output = time.monotonic()
                     try:
                         answer_worker(True)
                     except BrokenPipeError:
