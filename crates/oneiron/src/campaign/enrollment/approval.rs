@@ -76,6 +76,8 @@ fn outbound_payload_digest(outbound: &CampaignProgramOutbound) -> [u8; 32] {
 /// `consequence_id`'s call, read against the request retained for it. With
 /// `retain`, a request none retained yet is retained now, before the
 /// chokepoint asks for it; without, it reads and records nothing.
+/// A request the erase retired is not retained again: the fence in `keep`
+/// skips it, and the call goes on from its live rows.
 pub(super) fn leg_ask(
     vault: &Vault,
     event: &CampaignEnrollmentEvent,
@@ -201,8 +203,9 @@ fn decode(
 }
 
 /// Retains `facts` (with its sender and the event row it is asked under)
-/// under `key`, in a writer of its own. `false` when it did not write: that
-/// is logged and the call goes on.
+/// under `key`, in a writer of its own. `false` when it did not write (the
+/// erase fence skipped it, or the write failed): that is logged and the call
+/// goes on.
 fn keep(
     vault: &Vault,
     key: &([u8; 16], u64, [u8; 32]),
@@ -229,8 +232,36 @@ fn keep(
         value[at..at + part.len()].copy_from_slice(part);
         at += part.len();
     }
-    match vault.try_with_write_txn(|wtxn| RETAINED.put(&vault.store, wtxn, key, &value)) {
-        Ok(()) => true,
+    let kept = vault.try_with_write_txn(|wtxn| {
+        // FIX 6835 P1: this writer opens after the leg prepared its rows, so
+        // an erase of the call or of any id the retained request names may
+        // have committed in between and already dropped it. Fence the put:
+        // an erased ledger call leaves its erased row behind the attempt
+        // index, and an erased id leaves a hard-delete marker. Skip the
+        // retention when either shows; the call goes on from its live rows.
+        let attempt_id = AttemptId::from_bytes(&key.0)?;
+        if crate::outbound_intent_ledger::call_row_erased_in_txn(vault, wtxn, attempt_id, key.1)? {
+            return Ok(false);
+        }
+        for id in [
+            &facts.query_ref,
+            &facts.campaign_ref,
+            &facts.entity_ref,
+            &facts.program_ref,
+            &facts.step_ref,
+            &sender_ref,
+            &event_ref,
+        ] {
+            if vault.local_hard_delete_marker_exists_in_txn(wtxn, id)? {
+                return Ok(false);
+            }
+        }
+        RETAINED.put(&vault.store, wtxn, key, &value)?;
+        Ok(true)
+    });
+    match kept {
+        Ok(true) => true,
+        Ok(false) => false,
         Err(error) => {
             tracing::warn!(
                 reason = "campaign_enrollment_request_not_retained",
