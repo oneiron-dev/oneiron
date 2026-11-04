@@ -508,6 +508,10 @@ side_tables! {
     /// of the actor drops it. Key: id16 (actor); value: id16 (token).
     PROVENANCE_ACTOR_STAMP_TOKEN: VaultMeta b"provenance:actor_stamp_token:v1:" Raw
         => crate::provenance::erase_actor_stamp_cache_in_txn;
+    /// Which records' documents name a stamp token (FIX 11965), so an actor erase's hold check
+    /// finds a held record's tokens without a history walk; a record's erase drops its rows.
+    /// Key: id16 (record) + id16 (token); value: empty.
+    PROVENANCE_ACTOR_STAMP_TOKEN_USE: VaultMeta b"provenance:actor_stamp_token_use:v1:" Raw;
     /// Born-from index over row births (Rule A trigger). Key: id16 (trigger ref) + id16 (born row).
     PROVENANCE_BIRTH_BY_TRIGGER: VaultMeta b"provenance:birth_by_trigger:v1:" Raw;
     /// Body descriptor: owner, occurrence, complete/incomplete state. Key: id16 (owner) + id16
@@ -609,6 +613,15 @@ side_tables! {
     /// made from one (FIX 7608 S3F): pending, or ready with its source proof. Node-local cache, no
     /// secret value. Key: u8 (owner kind) + id16.
     REPO_DERIVED_INDEX_COPY: VaultMeta b"repo_index:derived_copy:v1:" Named;
+    /// FIX 6870: the portable repo id that stands for one CODE entity (value = 32 bytes). Key:
+    /// id16 (CODE entity).
+    REPO_MANIFEST_BY_CODE: VaultMeta b"repo_manifest:by_code:v1:" Raw;
+    /// FIX 6870: a portable repo id this machine minted, the refs writer while no origin
+    /// authority is held; empty value. Key: 32 bytes (portable id).
+    REPO_MANIFEST_MINTED: VaultMeta b"repo_manifest:minted:v1:" Raw;
+    /// FIX 6870: one repo's portable manifest: its CODE entity, visible refs, LFS pointers and
+    /// origin epoch. Key: 32 bytes (portable id).
+    REPO_MANIFEST: VaultMeta b"repo_manifest:v1:" Named;
     /// Durable per-operation oplog entry (prepared/committed/failed mutation record), keyed by (repo
     /// key hash, seq as 16 lowercase hex chars). Key: hex64 ":" hex16.
     REPO_MUTATION_OPLOG: VaultMeta b"repo_mutation:oplog:v1:" Named

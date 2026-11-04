@@ -451,4 +451,6 @@ impl VoiceMatchPolicy {
     }
 }
 
-pub use crate::conversation::voice_roster::{VoiceAttributionEvidence, VoiceResolvedSegment, VoiceSessionRosterV1};
+pub use crate::conversation::voice_roster::{
+    VoiceAttributionEvidence, VoiceResolvedSegment, VoiceSessionRosterV1,
+};

@@ -1,7 +1,7 @@
 //! The recall door: when a recall's clock starts, what it answers when its
 //! door stops waiting, and how it serves high, xhigh and max.
-use crate::memory::RecallRequest;
 use super::sdk::VAULT_RECALL_LIMIT_DEFAULT;
+use crate::memory::RecallRequest;
 use crate::memory::{Memory, MemoryResult};
 use crate::retrieval_depth::RecallQueryVectors;
 
@@ -119,6 +119,9 @@ pub fn recall_at_door_seeded(
     embed: impl FnOnce(&str) -> MemoryResult<RecallQueryVectors>,
     door: &RecallDoor<'_>,
 ) -> MemoryResult<crate::memory::MemoryPack> {
+    // Every stage of this recall shares the deletion states it reads in one
+    // committed snapshot (L15 recall speed).
+    let _deletion_memo = crate::ports::deletion_memo_scope();
     let (limit, clamped) =
         crate::memory::caps::clamp_search_limit(input.limit.unwrap_or(VAULT_RECALL_LIMIT_DEFAULT));
     if !clamped {

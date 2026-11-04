@@ -1,10 +1,10 @@
 //! Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` + `TextIndexOptions` + `Bm25RankProfile`.
 
-pub mod tagging;
 pub(crate) mod bm25;
 pub mod community_graph;
 pub mod context_spec;
 pub mod retrieval_affect;
+pub mod tagging;
 pub use oneiron_base::config::failure_signals;
 
 use std::path::PathBuf;
@@ -283,7 +283,9 @@ impl Bm25RankProfile {
     /// Validates the profile and lowers it onto the internal scoring
     /// config. Fail-closed: any invalid parameter is a typed
     /// [`StoreError::InvalidRankProfile`], never a clamp or a silent skip.
-    pub(crate) fn to_bm25_config(&self) -> Result<crate::config::bm25::Bm25Config, crate::error::Error> {
+    pub(crate) fn to_bm25_config(
+        &self,
+    ) -> Result<crate::config::bm25::Bm25Config, crate::error::Error> {
         use crate::analyzer::AnalyzerChannel;
         use crate::config::bm25::{Bm25Config, Bm25Formula};
         use crate::error::Error;
@@ -382,7 +384,8 @@ impl VaultConfig {
             limits: crate::limit_ask::EngineLimits::default(),
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
             page_seal: None,
-            checkpoint_host_holds: crate::store::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
+            checkpoint_host_holds:
+                crate::store::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
         }
     }
 
@@ -418,7 +421,8 @@ impl VaultConfig {
             limits: crate::limit_ask::EngineLimits::default(),
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
             page_seal: None,
-            checkpoint_host_holds: crate::store::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
+            checkpoint_host_holds:
+                crate::store::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
         }
     }
 

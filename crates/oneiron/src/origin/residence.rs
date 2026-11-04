@@ -7,8 +7,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo, lock_repository};
-use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, Raw, SideTable};
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -53,6 +53,11 @@ pub struct OriginAuthorityLease {
     repo_id: EntityId,
     epoch: u64,
     writer: String,
+}
+impl OriginAuthorityLease {
+    pub(in crate::origin) fn epoch(&self) -> u64 {
+        self.epoch
+    }
 }
 /// What one host holds of a served repository's origin authority, read from
 /// trusted host configuration and the authority row, never from the pusher.

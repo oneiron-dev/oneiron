@@ -26,7 +26,8 @@ pub(super) const MEMOS: SideTable<[u8; 32], SummaryMemo, Raw> =
     SideTable::new(&side_table::CODE_RUN_SUMMARY_MEMO);
 
 pub(crate) use crate::store::reader_fold_receipt::{
-    OccurrenceRef, ReceiptSource, ReceiptFinding, ReceiptPartial, ReceiptTree, ReaderSubstrateRef, ReaderFoldReceipt, SummaryMemo,
+    OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
+    ReceiptSource, ReceiptTree, SummaryMemo,
 };
 
 impl Vault {

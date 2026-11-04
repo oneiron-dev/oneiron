@@ -28,7 +28,7 @@ use crate::{EntityId, Vault};
 pub(crate) mod tree;
 
 pub(crate) use crate::store::repo_proposal_record::{
-    ReceivedFilesProposalInput, received_proposal_id, received_file_operation,
+    ReceivedFilesProposalInput, received_file_operation, received_proposal_id,
 };
 
 impl Vault {
@@ -93,6 +93,7 @@ impl Vault {
             policy_critiques: Vec::new(),
             queue_review: None,
             status: RepoProposalStatus::Proposed,
+            resolves: None,
             settlement: None,
             operation_seq: None,
             created_at: input.created_at,

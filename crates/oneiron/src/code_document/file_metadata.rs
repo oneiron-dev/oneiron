@@ -17,7 +17,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::write_envelope::WriteActor;
 
-pub use crate::store::code_document_values::{CodeFilePresence, CodeFileMetadataEdit};
+pub use crate::store::code_document_values::{CodeFileMetadataEdit, CodeFilePresence};
 
 /// The metadata `meta` asserts, or `None` for a document that never
 /// asserted any. Both keys are written together; one alone is corruption.

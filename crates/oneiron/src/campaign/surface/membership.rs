@@ -16,14 +16,14 @@ use self::manual::manual_membership_row;
 
 mod manual;
 
+pub use crate::memory::campaign_records::MANUAL_MEMBERSHIP_EPOCH_POLICY;
 pub use crate::memory::campaign_records::MEMBERSHIP_PAGE_DEFAULT_LIMIT;
 pub use crate::memory::campaign_records::MEMBERSHIP_PAGE_MAX_LIMIT;
-pub use crate::memory::campaign_records::MembershipReadRequest;
-pub use crate::memory::campaign_records::MembershipRowSource;
 pub use crate::memory::campaign_records::ManualEpochPolicy;
-pub use crate::memory::campaign_records::MANUAL_MEMBERSHIP_EPOCH_POLICY;
-pub use crate::memory::campaign_records::MembershipRow;
 pub use crate::memory::campaign_records::MembershipPage;
+pub use crate::memory::campaign_records::MembershipReadRequest;
+pub use crate::memory::campaign_records::MembershipRow;
+pub use crate::memory::campaign_records::MembershipRowSource;
 
 /// Pages a campaign's cohort under the caller's read.
 ///

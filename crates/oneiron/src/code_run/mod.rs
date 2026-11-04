@@ -24,6 +24,7 @@ mod consent_wait;
 mod contribution;
 mod coordination_codec;
 mod dispatcher;
+pub mod model_call;
 mod payload;
 mod read_set;
 mod reader;
@@ -100,6 +101,7 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
+pub(crate) use self::model_call::erase_model_call_actor_in_txn;
 pub(crate) use self::payload::agent_verb_observations_of;
 pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
@@ -123,6 +125,7 @@ pub(crate) use self::result_read::{
     Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card, read_result_in,
     refusal as result_refusal, resolve as resolve_result, result_cards_in, unknown_handle,
 };
+pub use self::storage::ReadWorldUnknown;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
@@ -149,8 +152,7 @@ pub(crate) use self::storage::{
     program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
 };
 pub(crate) use self::storage::{
-    ReadWorldSeal, ReadWorldSnapshot, ReadWorldUnknown, captured_step_read_scopes_in_txn,
-    read_world_snapshot_in_txn,
+    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
 pub(crate) use self::storage::{
     StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
@@ -292,12 +294,17 @@ pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
 pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
 pub(crate) use self::storage::code_run_wait_delivery_accepts_masked;
 
-pub use self::dispatcher::{ConnectorAnswerRequest, ConnectorQuestionAnswer, ConnectorAnswerAction};
+pub use self::dispatcher::{
+    ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorQuestionAnswer,
+};
 
-pub use self::consent_wait::{ConnectorCallReply, ConnectorToolResult, CONNECTOR_RESULT_NOT_RETAINED, CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED, CONNECTOR_QUESTIONS_NOT_RETAINED};
 pub(crate) use self::consent_wait::source as connector_result_source;
+pub use self::consent_wait::{
+    CONNECTOR_QUESTIONS_NOT_RETAINED, CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED,
+    CONNECTOR_RESULT_NOT_RETAINED, ConnectorCallReply, ConnectorToolResult,
+};
 
-pub use self::dispatcher::{SecretUseStatus, SecretUseAnswer, SecretUseRecord, kept_reveal_answer};
 pub(crate) use self::dispatcher::kept_reveal_lease;
+pub use self::dispatcher::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
 
 pub use self::dispatcher::workflow_operations;

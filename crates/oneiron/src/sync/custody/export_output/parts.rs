@@ -9,11 +9,11 @@
 //! meets. The runs cut the copy's frame with no witness.
 //!
 //! - Bounded: a part count is at least two and at most
-//!   [`MAX_EXPORT_OUTPUT_PARTS`], an index is below it, and a run is at most
-//!   one carrier part, every run but the last a full one, so a part row is
-//!   within one row's bound and a receiver holds at most
-//!   [`MAX_EXPORT_OUTPUT_PART_BYTES`] of runs for one request. It reads at
-//!   most the count's rows and stops at the first one missing.
+//!   [`MAX_EXPORT_OUTPUT_PARTS`], the `u32` count's codec bound, an index is
+//!   below it, and a run is at most one carrier part, every run but the last
+//!   a full one, so the row bounds the part, never the copy (FIX 5445,
+//!   12295). The join is memory-gated and waits past the host's room. It
+//!   reads at most the count's rows and stops at the first one missing.
 //! - Agreed: every part must name the request, the sealing second, the
 //!   count and the witness the first part names, at its own place. Any
 //!   disagreement drops the whole set, logged by its key alone. A part whose
@@ -43,22 +43,17 @@ use crate::error::Result;
 use crate::secret_custody::holder_export::{
     KeptExportOutput, kept_export_output_sealed_at_in_txn, witnessed_output,
 };
-use crate::sync::carrier_parts::{PART_BYTES, Parts, join_parts, part_key, split_parts};
+use crate::sync::carrier_parts::{PART_BYTES, Parts, assembly_fits, join_parts, part_key, split_parts};
 use crate::sync::loro_support::{map_get_bytes, map_insert_bytes};
 use crate::sync::types::WindowKey;
 
 /// The label every part of a relayed copy starts with.
 const PART_LABEL: &[u8] = b"oneiron/export-secret-output-part/v1\0";
 
-/// The most bytes of a copy that ride in parts, and so the most a receiver
-/// holds of one request's runs: 64 MiB. No seal bounds a copy's size (FIX
-/// 5445), so this is the relay's own bound; a longer copy stays with the
-/// installs that keep it and is read from them.
-const MAX_EXPORT_OUTPUT_PART_BYTES: usize = 64 << 20;
-
-/// The most parts one copy rides in: [`MAX_EXPORT_OUTPUT_PART_BYTES`] of
-/// carrier parts.
-const MAX_EXPORT_OUTPUT_PARTS: u32 = (MAX_EXPORT_OUTPUT_PART_BYTES / PART_BYTES) as u32;
+/// The most parts one copy rides in: the `u32` part count's codec bound. The
+/// row bounds the part, never the copy (FIX 5445, 12295): no seal bounds a
+/// copy's size, so any copy rides in as many numbered parts as it needs.
+const MAX_EXPORT_OUTPUT_PARTS: u32 = u32::MAX;
 
 /// The root of the scratch document a copy's runs are joined in.
 const SCRATCH_MAP: &str = "export_output_parts";
@@ -78,10 +73,10 @@ struct OutputPart {
 impl OutputPart {
     /// Decodes a part strictly; `None` without its label, for a short head,
     /// a zero request, a count outside two to [`MAX_EXPORT_OUTPUT_PARTS`],
-    /// an index not below it, or a run that is empty, past one carrier part,
-    /// or short of one before the last part. A witness past its bound
-    /// decodes and is judged unnamed ([`head_named`]), never a refused
-    /// update (L03 06:5x).
+    /// the `u32` codec bound, an index not below it, or a run that is empty,
+    /// past one carrier part, or short of one before the last part. A
+    /// witness past its bound decodes and is judged unnamed ([`head_named`]),
+    /// never a refused update (L03 06:5x).
     fn decode(bytes: &[u8]) -> Option<Self> {
         let rest = bytes.strip_prefix(PART_LABEL)?;
         let (sealed_at, rest) = rest.split_first_chunk::<8>()?;
@@ -169,6 +164,24 @@ pub(super) fn filed(row_key: &str, value: &[u8]) -> bool {
     OutputPart::decode(value).is_some_and(|part| part_suffix(&part.request, part.index) == row_key)
 }
 
+/// Whether an export-part row's payload may be collected for reapply: a
+/// part's head count bounds its whole set's peak before any payload is
+/// copied (review P1 on #4467). Non-part bytes collect as today. A gated-out
+/// set stays in its window for a later tick; `join`'s own gate stays the
+/// backstop.
+pub(crate) fn part_row_collection_admitted(bytes: &[u8]) -> bool {
+    let Some(part) = OutputPart::decode(bytes) else {
+        return true;
+    };
+    let Some(peak_upper) = u64::from(part.count)
+        .checked_mul(PART_BYTES as u64)
+        .and_then(|frame| frame.checked_mul(3))
+    else {
+        return false;
+    };
+    assembly_fits(peak_upper)
+}
+
 /// Admits one part under `row_key`, the map key after its prefix: one that
 /// decodes, filed under its own request and place, in its sealing month's
 /// base window. When no signed result names its head ([`head_named`]: the
@@ -235,8 +248,8 @@ fn admit_part_head(
 /// (`KeptExportOutput::copy_frame`), into `doc`'s custody map as its parts,
 /// each carrying `output`'s witness, each row that differs committed on its
 /// own.
-/// A copy past [`MAX_EXPORT_OUTPUT_PARTS`] stays with its keepers. Returns
-/// whether it wrote any.
+/// Only a copy past [`MAX_EXPORT_OUTPUT_PARTS`], the `u32` codec bound,
+/// stays with its keepers. Returns whether it wrote any.
 ///
 /// # Errors
 /// Storage errors writing a row.
@@ -293,6 +306,21 @@ fn join(map: &LoroMap, request: &[u8; 32]) -> Joined {
     else {
         return Joined::Disagrees;
     };
+    // The frame holds at most one carrier part per count, so this upper
+    // bound only ever waits, never over-admits (FIX 12295). Budget the peak
+    // live bytes, not just the frame: the staged scratch runs, the frame
+    // join_parts allocates, and the sealed payload KeptExportOutput::decode
+    // clones are all live together (review P1 on #4467). Unprovable size
+    // waits, fail-closed.
+    let Some(peak_upper) = u64::from(first.count)
+        .checked_mul(PART_BYTES as u64)
+        .and_then(|frame| frame.checked_mul(3))
+    else {
+        return Joined::Waiting;
+    };
+    if !assembly_fits(peak_upper) {
+        return Joined::Waiting;
+    }
     let scratch = LoroDoc::new();
     let runs = scratch.get_map(SCRATCH_MAP);
     let mut digests = Vec::new();
