@@ -58,6 +58,18 @@ pub struct SnapshotMergePlan {
 }
 
 impl OverlaySnapshot {
+    /// A live value staged in this snapshot alone, borrowed without copying
+    /// its bytes. A tombstone or a base-only key has no overlay value.
+    pub fn staged_value(&self, keyspace: OverlayKeyspace, key: &[u8]) -> Option<&[u8]> {
+        match self.state.keyspaces[keyspace.slot()].as_ref() {
+            KeyspaceState::Single { rows, .. } => match rows.get(key) {
+                Some(OverlayValue::Present(value)) => Some(value.as_slice()),
+                _ => None,
+            },
+            KeyspaceState::DupSort { .. } => None,
+        }
+    }
+
     pub fn lookup_single(&self, keyspace: OverlayKeyspace, key: &[u8]) -> SnapshotLookup {
         match self.state.keyspaces[keyspace.slot()].as_ref() {
             KeyspaceState::Single { clear_base, rows } => match rows.get(key) {
