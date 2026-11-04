@@ -127275,6 +127275,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EsignRateThresholds"
+     ],
+     "path": "src/esign_rate_thresholds.rs",
+     "purpose": "The e-sign send-rate thresholds a policy manifest resolves to",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "KeySpan",
       "MemberStep",
       "SecretSight"
@@ -127331,7 +127343,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 35
+      "mod": 36
      }
     },
     {
@@ -129172,6 +129184,13 @@
      "layout": "file",
      "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…"
     },
+    "esign_rate_thresholds": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The e-sign send-rate thresholds a policy manifest resolves to"
+    },
     "file_secret_marks": {
      "files": 1,
      "impl_vault": false,
@@ -129343,7 +129362,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 149,
+   "source_files": 150,
    "test_files": 4
   },
   "oneiron-uniffi": {
