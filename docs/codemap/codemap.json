@@ -2802,6 +2802,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/attempt_queue/payload_erase/connector_reply.rs",
+     "purpose": "Event-scoped kept-body reach for a participant's hard erase",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/attempt_queue/payload_erase/model_step.rs",
      "purpose": "A public model step's failure text, out of its queue row (FIX 10460)",
      "surface": {
@@ -8403,7 +8413,7 @@
      "path": "src/blob_artifact/born_from.rs",
      "purpose": "Born-from (ARCH-0078 section 4): every artifact answers \"born from what\" the same way",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -9493,7 +9503,7 @@
      "path": "src/blob_artifact/versions/reads.rs",
      "purpose": "The version chain's reads: the head, the version tree, one version's metadata and its bytes",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 9,
       "struct": 1
      }
@@ -30851,7 +30861,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 3,
-      "fn": 17,
+      "fn": 18,
       "struct": 2
      }
     },
@@ -30866,7 +30876,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 2,
-      "fn": 10,
+      "fn": 11,
       "re-export": 1,
       "struct": 1
      }
@@ -33859,6 +33869,16 @@
      "purpose": "Thread-scoped warning capture for embedding tests",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_delete_guards.rs",
+     "purpose": "The engine's implementation of the store layer's delete guards: each method forwards to the engine function…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -40089,7 +40109,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/hnsw/tests.rs",
@@ -42692,7 +42712,7 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "mod": 206,
       "re-export": 98
      }
@@ -54834,6 +54854,7 @@
      "purpose": "The body of an agent's reply to a connector event (OF-519)",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "fn": 3,
       "struct": 1
      }
@@ -54850,7 +54871,7 @@
      "purpose": "The durable connector reply job (FIX 2405)",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -70866,6 +70887,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "StoreDeleteGuards"
+     ],
+     "path": "src/store/delete_guards.rs",
+     "purpose": "The delete guards the store layer's delete paths run, supplied by the engine when a store opens",
+     "surface": {
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DerivationBindError",
       "DerivationKey",
       "DerivationKind",
@@ -72238,7 +72271,7 @@
      "surface": {
       "crate-vis": 64,
       "mod": 74,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -89765,7 +89798,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90267,6 +90300,13 @@
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "—"
+    },
+    "engine_delete_guards": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine's implementation of the store layer's delete guards: each method forwards to the engine function…"
     },
     "engine_executor": {
      "files": 49,
@@ -91039,7 +91079,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 324,
+     "files": 325,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91293,7 +91333,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6312,
+   "source_files": 6315,
    "test_files": 898
   },
   "oneiron-android": {
@@ -101211,7 +101251,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AdmissionSnapshot",
@@ -101231,7 +101271,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 3,
-      "fn": 22,
+      "fn": 23,
       "re-export": 1,
       "struct": 8,
       "type": 2
@@ -101283,7 +101323,7 @@
      "path": "src/supervisor/inference_admission/ticket.rs",
      "purpose": "Ticket waits and cancellation for the parent device queue",
      "surface": {
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -101668,7 +101708,7 @@
      "purpose": "Bounded, per-item delivery of durable wave TASKs to a host dispatcher"
     }
    },
-   "over_bar": 1,
+   "over_bar": 2,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
    "source_files": 34,
    "test_files": 10
@@ -104784,7 +104824,7 @@
      "surface": {
       "const": 3,
       "enum": 5,
-      "fn": 9,
+      "fn": 13,
       "struct": 9,
       "type": 1
      }
@@ -108734,7 +108774,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/dreamer_thing/profile.rs",
