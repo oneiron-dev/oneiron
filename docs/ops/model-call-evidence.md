@@ -31,6 +31,8 @@ The Big-rung caller context is one thread-local scope on the blocking decision
 thread. It restores the entire previous context on return or panic. It is not
 authority, a payer, or an async context propagated to another thread. Generative
 eval arms, the Coach distill and code-fix drafts pass their recording principal directly.
+Router and Decision eval reads scope the same registered judge principal around
+their existing run-aware ladder call, without changing the question or scoring.
 
 ## Native house reads
 
@@ -146,8 +148,8 @@ is resolved by that existing session check; no room id is invented.
 The evidence-only initiator is added to a clone of the run after the provider
 returns. It does not change the live run, admission, route, meter, payer, reply,
 or typed decision. A failed evidence write is logged and never fails the answer.
-An unbound call records as usual; a call outside every capture scope is not
-assigned a guessed actor.
+A call without a bound session can still record when an actual caller context
+is present; a call outside every capture scope is not assigned a guessed actor.
 
 Each captured raw, Big, generative-eval, Coach-distill/draft, Local-vision, house or caller-System-One
 evidence row takes a distinct record
@@ -171,6 +173,7 @@ at that position. It does not assign that signature to an earlier part or
 replace an earlier signature. Neither change requests thinking or rewrites the
 provider's bytes.
 
-Signature-only streamed terminals also need the shared terminal-acceptance fix;
-retaining a provider field alone does not prove every path accepts the terminal.
-MESSAGE custody, replay permission and issuing-login identity remain separate.
+The shared terminal predicates also accept signature-only parts (the separate
+terminal-acceptance fix). Retaining a provider field does not prove that the
+provider emits that shape in every call. MESSAGE custody, replay permission and
+issuing-login identity remain separate.
