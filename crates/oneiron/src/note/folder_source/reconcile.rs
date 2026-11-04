@@ -184,6 +184,7 @@ impl Vault {
         if !links.is_empty() {
             let landed = self.with_write_txn(|txn| {
                 let owner_actor = owner.revalidate_in_txn(self, txn)?;
+                let landable = self.landable_links_in_txn(txn, landing.folder, &links)?;
                 let landed = self.land_imported_notes_in_txn(
                     txn,
                     owner_actor,
@@ -192,9 +193,14 @@ impl Vault {
                     &[],
                     Vec::new(),
                     &[],
-                    &links,
+                    &landable,
                 )?;
-                self.record_landed_links_in_txn(txn, landing.folder, &landing.namespace, &links)?;
+                self.record_landed_links_in_txn(
+                    txn,
+                    landing.folder,
+                    &landing.namespace,
+                    &landable,
+                )?;
                 Ok(landed)
             });
             match landed {
@@ -230,6 +236,9 @@ impl Vault {
         self.with_write_txn(|txn| {
             let owner_actor = owner.revalidate_in_txn(self, txn)?;
             scan_titles(&self.store, txn, batch)?;
+            // Links from a file whose proposal is still open land only
+            // through the gated present-file reconciler (REVIEW-4381 P1).
+            let landable = self.landable_links_in_txn(txn, landing.folder, &batch.links)?;
             let links = self.land_imported_notes_in_txn(
                 txn,
                 owner_actor,
@@ -238,7 +247,7 @@ impl Vault {
                 &batch.notes,
                 kinds,
                 &ids,
-                &batch.links,
+                &landable,
             )?;
             let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             for (note, id) in batch.notes.iter().zip(&ids) {
@@ -277,9 +286,32 @@ impl Vault {
                 };
                 FILES.put(&self.store, txn, &key, &row)?;
             }
-            self.record_landed_links_in_txn(txn, landing.folder, &batch.folder, &batch.links)?;
+            self.record_landed_links_in_txn(txn, landing.folder, &batch.folder, &landable)?;
             Ok(links)
         })
+    }
+
+    /// Links a batch may land now: never from a file whose proposal is
+    /// still open — those reconcile only through the gated present-file
+    /// path, so rejected text lands no edge and claims none landed
+    /// (REVIEW-4381 P1). A from-file with no row is new: it lands.
+    fn landable_links_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        folder: &str,
+        links: &[ImportedNoteLink],
+    ) -> Result<Vec<ImportedNoteLink>> {
+        let mut kept = Vec::with_capacity(links.len());
+        for link in links {
+            let key = file_key(folder, &link.from);
+            let proposed = FILES
+                .get(&self.store, txn, &key)?
+                .is_some_and(|row| matches!(row.state, FolderFileState::Proposed { .. }));
+            if !proposed {
+                kept.push(link.clone());
+            }
+        }
+        Ok(kept)
     }
 
     /// Records `links` on their from-files' ledger rows: the mentions
