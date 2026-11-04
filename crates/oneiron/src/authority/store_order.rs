@@ -11,17 +11,16 @@
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
+use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-use crate::EntityId;
 
 /// Sequence -> the stored row's entity id.
-const STORE_ORDER: SideTable<u64, [u8; 16], Raw> =
-    SideTable::new(&side_table::AUTHLOG_STORE_ORDER);
+const STORE_ORDER: SideTable<u64, [u8; 16], Raw> = SideTable::new(&side_table::AUTHLOG_STORE_ORDER);
 /// The index's state as 9 raw bytes: whether the one-shot backfill (or a
 /// checkpoint rebuild) has sequenced every row stored before the index
 /// existed, then the next free sequence as u64be.
@@ -46,12 +45,7 @@ fn read_state(store: &Store, txn: &heed::RoTxn<'_>) -> Result<(bool, u64)> {
     })
 }
 
-fn write_state(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    complete: bool,
-    next: u64,
-) -> Result<()> {
+fn write_state(store: &Store, txn: &mut heed::RwTxn<'_>, complete: bool, next: u64) -> Result<()> {
     let mut bytes = [0u8; 9];
     bytes[0] = u8::from(complete);
     bytes[1..].copy_from_slice(&next.to_be_bytes());
@@ -110,7 +104,8 @@ pub(super) fn tail_ids_in_txn(
         return Ok(None);
     };
     let mut ids = Vec::new();
-    for row in STORE_ORDER.iter_range(store, txn, Bound::Excluded(&after), Bound::Excluded(&next))?
+    for row in
+        STORE_ORDER.iter_range(store, txn, Bound::Excluded(&after), Bound::Excluded(&next))?
     {
         let Ok((seq, bytes)) = row else {
             return Ok(None);
@@ -180,8 +175,8 @@ pub(crate) fn rebuild_in_txn(
     STORE_ORDER.delete_from(store, txn, &[])?;
     let mut ids = BTreeSet::new();
     for (id, raw) in rows {
-        let header = EntityMetadataHeader::parse(raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
             ids.insert(*id);
         }

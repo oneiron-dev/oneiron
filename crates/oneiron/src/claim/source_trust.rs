@@ -15,10 +15,11 @@ pub use crate::write_envelope::claim_body::{
 
 #[cfg(feature = "sync")]
 const CLAIM_SCOPE_PRE_RESTAMP_SCOPE_KEY: &str = "pre_restamp_scope";
-pub(crate) use crate::store::claim_lineage::{
-    claim_initial_claim_of_weight, claim_evidence_taint, claim_source_widens_beyond, validate_claim_source_lineage, claim_generated_origin, claim_value_index_text,
-};
 use crate::store::claim_lineage::evidence_taint_blocks_consolidation;
+pub(crate) use crate::store::claim_lineage::{
+    claim_evidence_taint, claim_generated_origin, claim_initial_claim_of_weight,
+    claim_source_widens_beyond, claim_value_index_text, validate_claim_source_lineage,
+};
 
 /// Exact-store claims have their own actor/class-bound reader. Even the owner
 /// must use that reader, not generic retrieval, hydration, or history projection.

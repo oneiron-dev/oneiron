@@ -296,8 +296,10 @@ impl ResponseFamily {
                     MediaKey::Part { .. } => Self::MediaPart,
                 })
             }
-            ResponseDb::Attempts => crate::attempt_queue::attempt_payload_family(key, value)
-                .then_some(Self::AttemptPayload),
+            ResponseDb::Attempts => {
+                crate::store::attempt_payload_route::attempt_payload_family(key, value)
+                    .then_some(Self::AttemptPayload)
+            }
         }
     }
 

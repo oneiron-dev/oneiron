@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use oneiron_base::machine_destination::PeerMachine;
 use crate::settings::ReadDestination;
 use oneiron_base::config::VectorEvidenceFloors;
+use oneiron_base::machine_destination::PeerMachine;
 
 /// Longest declared space id.
 pub const EMBEDDING_SPACE_ID_MAX_LEN: usize = 256;

@@ -9,12 +9,12 @@ use super::doors::{
     standing_composition_in_txn, validate_landing_in_txn,
 };
 use super::purpose::SummaryPurpose;
-use crate::store::attempt_id::AttemptId;
 use crate::conversation_dag::{actor_in_txn, prove_branch_span, selected_thread_in_txn};
 use crate::dreamer_consolidation::{ScopeSummaryEvidence, scope_summary_evidence_in_txn};
 use crate::dreamer_runner::DreamerAttemptPayload;
 use crate::error::{Error, Result};
 use crate::memory::Memory;
+use crate::store::attempt_id::AttemptId;
 use crate::store::consolidation_scope::DreamerConsolidationScope;
 use crate::store::conversation_record::AppendFailure;
 use crate::store::conversation_record::{ScopePath, ScopeSelector};

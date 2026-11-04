@@ -48,7 +48,8 @@ pub(crate) fn quote_birth_admits_in(
     };
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE
-        || crate::store::witness_message_body::validate_canonical_witness_message_body(body).is_err()
+        || crate::store::witness_message_body::validate_canonical_witness_message_body(body)
+            .is_err()
     {
         return Ok(false);
     }

@@ -25,12 +25,12 @@ use super::source::{BoundQueueSource, NO_SOURCE, queue_source_root, served_store
 use super::source_types::{PreparedQueueInit, QUEUE_SOURCE_DIR, ServedQueueSource};
 use super::types::{EffectIntent, QueueRecord};
 use crate::consent::AuthenticatedOwner;
-use crate::store::contract_oracle::invalid;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo, lock_repository};
 use crate::repo_mutation::RepoMutationStatus;
 use crate::store::code_import_manifest::CodeImportManifest;
 use crate::store::code_snapshot::RepoRef;
+use crate::store::contract_oracle::invalid;
 use crate::{EntityId, Vault};
 
 /// A queue source path that holds something other than its worktree.

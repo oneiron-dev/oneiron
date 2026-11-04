@@ -588,7 +588,7 @@ impl<'a> EngineNativeExecutor<'a> {
         // A flaky commit converts to success on one identical retry (FIX
         // 1443); a first commit that actually landed fails the retry closed
         // on its generation mismatch instead.
-        match self.storage.put_program_entry_replay_record(
+        let _ = match self.storage.put_program_entry_replay_record(
             &record,
             expected,
             &host.receipts,
