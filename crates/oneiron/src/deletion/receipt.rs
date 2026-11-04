@@ -452,16 +452,20 @@ impl Vault {
                 take_staged_sweep_refs_in_txn(self, wtxn, &holder, &mut sweep_extras)?;
             }
             ids.insert(holder);
-            ids.extend(crate::skill_hub::source_carriers_for_holder_in_txn(
-                &self.store,
-                wtxn,
-                &holder,
-            )?);
-            ids.extend(crate::agent_def::birth_carriers_for_erased_entity_in_txn(
-                &self.store,
-                wtxn,
-                &holder,
-            )?);
+            ids.extend(
+                crate::store::skill_source_custody::source_carriers_for_holder_in_txn(
+                    &self.store,
+                    wtxn,
+                    &holder,
+                )?,
+            );
+            ids.extend(
+                crate::store::agent_birth_custody::birth_carriers_for_erased_entity_in_txn(
+                    &self.store,
+                    wtxn,
+                    &holder,
+                )?,
+            );
             ids.extend(crate::receipt::receipt_archives_for_holder(
                 &self.store,
                 wtxn,

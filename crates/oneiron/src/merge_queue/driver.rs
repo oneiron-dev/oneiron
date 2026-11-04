@@ -19,10 +19,10 @@ use super::{
     BatchState, CheckPhase, MergeBatch, MergeQueue, QUEUE_CHECK_CANDIDATE_PREFIX, QueueDriveHold,
     QueueDriveHoldReason, QueueDriveOutcome, QueueDrivePass, QueueStageOverlap, QueueWork,
 };
-use crate::contract_oracle::{ContractOracle, invalid};
 use crate::error::Result;
 use crate::federation::QueueReconciliationAdmission;
 use crate::git_wire::{GitWire, lock_repository};
+use crate::store::contract_oracle::{ContractOracle, invalid};
 
 impl MergeQueue<'_> {
     /// What the driver does next on this queue, in priority order. A queue

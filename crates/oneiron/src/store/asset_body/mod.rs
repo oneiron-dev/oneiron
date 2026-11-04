@@ -52,10 +52,11 @@ use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::{ASSET_BODY_FILE, ASSET_BODY_HELD};
 use crate::error::{Error, Result};
 use crate::provenance::body::{
-    owned_body_in_txn, publish_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn,
+    publish_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn,
 };
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody};
+use crate::store::owned_body::owned_body_in_txn;
 
 /// FIX 3677 (CALLS "ASSET inline body bound"): an opaque ASSET body longer
 /// than this lives in a body file; a body this long or shorter, and every

@@ -48,7 +48,8 @@ pub struct SettingFit {
     pub at: u64,
 }
 
-/// The claim value: the estimate, its cell and the derived UNTESTED mark.
+/// The claim value: the estimate, its cell, the derived UNTESTED mark and
+/// the as-projected donor tally a borrower lends.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct StoredEstimateClaim {
     pub(crate) kind: String,
@@ -56,18 +57,24 @@ pub(crate) struct StoredEstimateClaim {
     pub(crate) cell: LearningCell,
     pub(crate) estimate: Estimate,
     pub(crate) untested: bool,
+    pub(crate) donor_tally: Option<(f64, f64)>,
 }
 
 const VALUE_KIND: &str = "estimate";
 
 impl StoredEstimateClaim {
-    fn new(cell: &LearningCell, estimate: &Estimate) -> Self {
+    fn new(cell: &LearningCell, estimate: &Estimate, tally: &OwnTally) -> Self {
+        let donor_tally = match tally {
+            OwnTally::Beta { wins, losses } => Some((*wins, *losses)),
+            OwnTally::Mean { .. } | OwnTally::Counts { .. } => None,
+        };
         Self {
             kind: VALUE_KIND.to_owned(),
             form: estimate.form(),
             cell: cell.clone(),
             estimate: estimate.clone(),
             untested: estimate.untested(),
+            donor_tally,
         }
     }
 
@@ -137,7 +144,7 @@ pub(crate) fn fold_cell_in_txn(
     row: &CellRow,
     digest: &[u8; 32],
     now: u64,
-) -> Result<(Estimate, Vec<String>)> {
+) -> Result<(Estimate, OwnTally, Vec<String>)> {
     let prior = cell_prior_in_txn(vault, txn, row, digest)?;
     let window = window_in_txn(vault, txn)?;
     let folded = fold_evidence_in_txn(vault, txn, row, digest, window, now)?;
@@ -152,22 +159,9 @@ pub(crate) fn fold_cell_in_txn(
             window,
             ver: ESTIMATOR_VERSION,
         },
+        folded.tally,
         folded.cited,
     ))
-}
-
-/// The windowed own tally a cell's evidence folds to under `window` at
-/// `now`, the measured mass alone, with no prior: what the projector adds
-/// to the prior when it writes a head at `now`. Nothing is written.
-pub(super) fn measured_tally_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    row: &CellRow,
-    digest: &[u8; 32],
-    window: Window,
-    now: u64,
-) -> Result<OwnTally> {
-    Ok(fold_evidence_in_txn(vault, txn, row, digest, window, now)?.tally)
 }
 
 /// One cell's evidence, folded: the own tally, its effective runs, the
@@ -366,7 +360,7 @@ pub(crate) fn project_cell_in_txn(
     let row = CELL
         .get(&vault.store, wtxn, digest)?
         .ok_or(Error::CorruptedIndex("learning cell"))?;
-    let (estimate, cited) = fold_cell_in_txn(vault, wtxn, &row, digest, now)?;
+    let (estimate, tally, cited) = fold_cell_in_txn(vault, wtxn, &row, digest, now)?;
     let heads = active_heads_in_txn(vault, wtxn, &row.cell)?;
 
     if estimate.runs <= 0.0 {
@@ -375,7 +369,7 @@ pub(crate) fn project_cell_in_txn(
         return Ok(None);
     }
 
-    let stored = StoredEstimateClaim::new(&row.cell, &estimate);
+    let stored = StoredEstimateClaim::new(&row.cell, &estimate, &tally);
     let value = stored.to_value()?;
     let evidence = rmpv::Value::Array(
         cited
@@ -445,22 +439,32 @@ pub fn reproject_all_cells(vault: &Vault, now: u64) -> Result<usize> {
 }
 
 /// Re-projects every cell fitting the setting `key`, after its seed moved.
+/// A cell whose subject is gone passes over, and the write that carries it
+/// goes on: re-ensuring would resurrect what the owner erased.
 pub(crate) fn reproject_setting_cells_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     key: &str,
     now: u64,
 ) -> Result<()> {
-    let digests: Vec<[u8; 32]> = CELL
+    let cells: Vec<([u8; 32], EntityId)> = CELL
         .scan(&vault.store, wtxn)?
         .into_iter()
         .filter(|(_, row)| {
             row.cell.predicate == LearningPredicate::Setting
                 && row.cell.setting_key.as_deref() == Some(key)
         })
-        .map(|(digest, _)| digest)
+        .map(|(digest, row)| (digest, row.cell.subject))
         .collect();
-    for digest in &digests {
+    for (digest, subject) in &cells {
+        if vault.store.port_entity_record(wtxn, subject)?.is_none() {
+            tracing::warn!(
+                key,
+                subject = %subject.to_hex(),
+                "a setting cell was not reprojected: its subject is gone"
+            );
+            continue;
+        }
         project_cell_in_txn(vault, wtxn, digest, now)?;
     }
     Ok(())

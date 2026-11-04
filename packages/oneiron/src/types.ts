@@ -137,6 +137,8 @@ export type CheckpointPinBinding = {
   slhdsa: string
   /** The crypto epoch the key signs at. */
   epoch: number
+  /** What keeps the install's checkpoint signing seed at rest, as the owner is told it. */
+  assurance: "hardware" | "platform" | "software" | "process"
   signature: CheckpointPinSignature
 }
 

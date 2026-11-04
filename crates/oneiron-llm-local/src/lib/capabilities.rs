@@ -108,36 +108,48 @@ pub(crate) enum CapabilityProbe {
     Voice,
 }
 
-/// Deepest metadata nesting the capability scans descend into. The scans
-/// recurse, so this bounds stack use on hostile loaded-model metadata. A
-/// capability declared deeper than this reads as not declared; nothing is
-/// refused, and the model loads with every capability found above the bound.
-const MAX_CAPABILITY_SCAN_DEPTH: usize = 64;
-
 pub(crate) fn metadata_declares_tool_calling(metadata: &BTreeMap<String, JsonValue>) -> bool {
     metadata.iter().any(|(key, value)| {
         key_declares_tool_calling(key, value)
-            || capability_list_contains(value, "tool_calling", 0)
-            || value_declares_tool_calling(value, 0)
+            || capability_list_contains(value, "tool_calling")
+            || value.as_str().is_some_and(template_has_tool_calling)
+            || value_declares_tool_calling(value)
     })
 }
 
-fn value_declares_tool_calling(value: &JsonValue, depth: usize) -> bool {
-    if depth >= MAX_CAPABILITY_SCAN_DEPTH {
-        return false;
+// Iterative walk over already-loaded references; each node is visited once,
+// so the cost is linear in the loaded input with no depth cutoff.
+fn value_declares_tool_calling(value: &JsonValue) -> bool {
+    let mut stack = vec![value];
+    while let Some(current) = stack.pop() {
+        match current {
+            JsonValue::Object(map) => {
+                for (key, child) in map.iter() {
+                    if key_declares_tool_calling(key, child)
+                        || capability_list_contains(child, "tool_calling")
+                        || child.as_str().is_some_and(template_has_tool_calling)
+                    {
+                        return true;
+                    }
+                    if matches!(child, JsonValue::Object(_) | JsonValue::Array(_)) {
+                        stack.push(child);
+                    }
+                }
+            }
+            JsonValue::Array(values) => {
+                for child in values.iter() {
+                    if child.as_str().is_some_and(template_has_tool_calling) {
+                        return true;
+                    }
+                    if matches!(child, JsonValue::Object(_) | JsonValue::Array(_)) {
+                        stack.push(child);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
-    match value {
-        JsonValue::Object(map) => map.iter().any(|(key, value)| {
-            key_declares_tool_calling(key, value)
-                || capability_list_contains(value, "tool_calling", depth + 1)
-                || value_declares_tool_calling(value, depth + 1)
-        }),
-        JsonValue::Array(values) => values
-            .iter()
-            .any(|value| value_declares_tool_calling(value, depth + 1)),
-        JsonValue::String(value) => template_has_tool_calling(value),
-        _ => false,
-    }
+    false
 }
 
 fn key_declares_tool_calling(key: &str, value: &JsonValue) -> bool {
@@ -159,36 +171,44 @@ pub(crate) fn metadata_declares_capability(
     metadata: &BTreeMap<String, JsonValue>,
     probe: CapabilityProbe,
 ) -> bool {
-    metadata
-        .iter()
-        .any(|(key, value)| key_declares_capability(key, value, probe, 0))
+    metadata.iter().any(|(key, value)| {
+        key_declares_capability(key, value, probe) || value_declares_capability(value, probe)
+    })
 }
 
-// Each child is scanned once, through `key_declares_capability`, which itself
-// descends into the child; scanning it here a second time doubled the work at
-// every object level (exponential in nesting depth).
-fn value_declares_capability(value: &JsonValue, probe: CapabilityProbe, depth: usize) -> bool {
-    if depth >= MAX_CAPABILITY_SCAN_DEPTH {
-        return false;
+// Each child is scanned once, through `key_declares_capability`, which checks
+// that entry only; the explicit stack below descends without scanning a
+// child's subtree a second time (exponential in nesting depth). Each node is
+// visited once, so the cost is linear in the loaded input with no depth cutoff.
+fn value_declares_capability(value: &JsonValue, probe: CapabilityProbe) -> bool {
+    let mut stack = vec![value];
+    while let Some(current) = stack.pop() {
+        match current {
+            JsonValue::Object(map) => {
+                for (key, child) in map.iter() {
+                    if key_declares_capability(key, child, probe) {
+                        return true;
+                    }
+                    if matches!(child, JsonValue::Object(_) | JsonValue::Array(_)) {
+                        stack.push(child);
+                    }
+                }
+            }
+            JsonValue::Array(values) => {
+                for child in values.iter() {
+                    if matches!(child, JsonValue::Object(_) | JsonValue::Array(_)) {
+                        stack.push(child);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
-    match value {
-        JsonValue::Object(map) => map
-            .iter()
-            .any(|(key, value)| key_declares_capability(key, value, probe, depth + 1)),
-        JsonValue::Array(values) => values
-            .iter()
-            .any(|value| value_declares_capability(value, probe, depth + 1)),
-        _ => false,
-    }
+    false
 }
 
-fn key_declares_capability(
-    key: &str,
-    value: &JsonValue,
-    probe: CapabilityProbe,
-    depth: usize,
-) -> bool {
-    if capability_list_contains(value, probe.capability_name(), depth) {
+fn key_declares_capability(key: &str, value: &JsonValue, probe: CapabilityProbe) -> bool {
+    if capability_list_contains(value, probe.capability_name()) {
         return true;
     }
 
@@ -197,7 +217,6 @@ fn key_declares_capability(
         .key_aliases()
         .iter()
         .any(|alias| normalized == *alias && truthy(value))
-        || value_declares_capability(value, probe, depth)
 }
 
 impl CapabilityProbe {
@@ -220,10 +239,11 @@ impl CapabilityProbe {
     }
 }
 
-fn capability_list_contains(value: &JsonValue, capability: &str, depth: usize) -> bool {
-    if depth >= MAX_CAPABILITY_SCAN_DEPTH {
-        return false;
-    }
+// List check only: a keyed string equal to the capability, or a keyed array
+// holding the capability as a direct string entry. Nested `capabilities`
+// objects need no chain walk here; the outer traversal visits every nested
+// keyed value, so the nested entry itself reports the match.
+fn capability_list_contains(value: &JsonValue, capability: &str) -> bool {
     match value {
         JsonValue::Array(values) => values.iter().any(|value| {
             value
@@ -231,10 +251,6 @@ fn capability_list_contains(value: &JsonValue, capability: &str, depth: usize) -
                 .is_some_and(|entry| normalize_key(entry) == capability)
         }),
         JsonValue::String(value) => normalize_key(value) == capability,
-        JsonValue::Object(map) => map.iter().any(|(key, value)| {
-            normalize_key(key) == "capabilities"
-                && capability_list_contains(value, capability, depth + 1)
-        }),
         _ => false,
     }
 }

@@ -156,9 +156,9 @@ pub(crate) fn deindex_entity(
     crate::agent_def::remove_birth_custody_in_txn(store, wtxn, id)?;
     crate::receipt::remove_receipt_archive_custody(store, wtxn, id)?;
     crate::skill_hub::remove_hub_package_in_txn(store, wtxn, id)?;
-    crate::skill_hub::erase_claim_refinement_in_txn(store, wtxn, id)?;
+    crate::store::claim_refinement_control::erase_claim_refinement_in_txn(store, wtxn, id)?;
     crate::skill_hub::erase_refinement_custody_in_txn(store, wtxn, id)?;
-    crate::skill_hub::remove_refinement_carrier_in_txn(store, wtxn, id)?;
+    crate::store::skill_refinement_custody::remove_refinement_carrier_in_txn(store, wtxn, id)?;
     // OF-272: the write unit re-keys the identity a deleted head leaves.
     crate::channel_identity::note_claim_delete_for_rekey(store, wtxn, id, None)?;
     let (mut had_vector, mut had_graph_mutation, mut neighbors) =
@@ -232,6 +232,8 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
     // A tear keeps body keys: an erase stages its retirements before it
     // reaches here (KS-2A).
+    // Canonical blob reference must release while current body descriptor is still present.
+    crate::memory::release_asset_blob_in_txn(store, wtxn, id)?;
     crate::provenance::erase_row_provenance_in_txn(store, wtxn, id, false)?;
     // Saved tags find a message's turn through its PartOf edge, so they go
     // before the edges do, and the sieve and projection rows of the same
@@ -365,7 +367,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, id)?;
     TRUSTED_MANIFEST_ORIGIN.delete(store, wtxn, &HexId(*id))?;
     SEEDED_MANIFEST_CONFIDENCE.delete(store, wtxn, &HexId(*id))?;
-    crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
+    crate::store::claim_projection::remove_claim_projection_index(store, wtxn, *id)?;
     store.port_remove_entity_row(wtxn, id)?;
     crate::ports::audit_mutation_in_txn(
         store,

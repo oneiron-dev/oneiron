@@ -177,7 +177,7 @@ pub(crate) fn erase_bodies_for_owner_in_txn(
         // Every instance the digest was bound under, so an inline/file
         // switch or a release leaves no older image's copy behind (FIX 6023).
         let instances = digest_instances_in_txn(store, wtxn, digest)?;
-        if crate::provenance::body::digest_is_held_in_txn(store, wtxn, digest)? {
+        if crate::store::owned_body::digest_is_held_in_txn(store, wtxn, digest)? {
             for instance in &instances {
                 ERASE_PENDING.put(store, wtxn, instance, digest)?;
                 notes.note(store, wtxn, erase_owner, instance)?;
@@ -322,7 +322,7 @@ fn drop_inline_result_in_txn<D: ManifestDbs + SideTableDbs>(
     let handle = inline_handle(digest);
     if RAW_OUTPUT_ROWS
         .get(dbs, wtxn, &handle)?
-        .is_some_and(|raw| crate::code_run::code_run_row_inline(&raw))
+        .is_some_and(|raw| crate::store::result_body_rows::code_run_row_inline(&raw))
     {
         RAW_OUTPUT_ROWS.delete(dbs, wtxn, &handle)?;
         if BODY_KEYS

@@ -1,9 +1,11 @@
 //! The house models the deploy scripts serve today, pinned file by file
-//! (`deploy/house-model/`, `deploy/voxcpm2/`): the EXL3 27B target and its
-//! DFlash2 draft, the llama.cpp GGUF target and its draft, and VoxCPM2.
+//! (`deploy/house-model/`, `deploy/voxcpm2/`, `deploy/asr/`): the EXL3 27B
+//! target and its DFlash2 draft, the llama.cpp GGUF target and its draft,
+//! VoxCPM2, and Whisper large-v3 for the local ASR worker.
 //!
-//! Each revision is the commit the deployed branch named on 2026-10-22 (the
-//! EXL3 target's `4.00bpw` branch, every other repository's `main`). An LFS
+//! Each revision is the commit the deployed branch named when pinned
+//! (2026-10-22 for the first five: the EXL3 target's `4.00bpw` branch,
+//! every other repository's `main`; 2026-11-04 for Whisper, its `main`). An LFS
 //! file's digest is its Hugging Face LFS object id at that commit; every
 //! other file was fetched at that commit and measured the same day, its git
 //! blob id checked against the tree. Only the files a worker loads are
@@ -16,7 +18,7 @@ use super::licence::LicenceTerms;
 use super::manifest::{ArtifactClass, ArtifactFile, ArtifactFormat, ArtifactManifest};
 
 /// Every house model, in no order the supervisor depends on.
-pub(crate) static HOUSE_ARTIFACTS: [ArtifactManifest; 5] = [
+pub(crate) static HOUSE_ARTIFACTS: [ArtifactManifest; 6] = [
     ArtifactManifest {
         id: Cow::Borrowed("qwen3.8-27b-exl3-4bpw"),
         repo: Cow::Borrowed("turboderp/Qwen3.8-27B-exl3"),
@@ -72,6 +74,17 @@ pub(crate) static HOUSE_ARTIFACTS: [ArtifactManifest; 5] = [
         quant: Cow::Borrowed("bf16"),
         base_models: Cow::Borrowed(ORIGINAL),
         files: Cow::Borrowed(VOXCPM2_FILES),
+        licence: apache("README.md"),
+    },
+    ArtifactManifest {
+        id: Cow::Borrowed("whisper-large-v3"),
+        repo: Cow::Borrowed("openai/whisper-large-v3"),
+        revision: Cow::Borrowed("06f233fe06e710322aca913c1bc4249a0d71fce1"),
+        class: ArtifactClass::Asr,
+        format: ArtifactFormat::Safetensors,
+        quant: Cow::Borrowed("fp16"),
+        base_models: Cow::Borrowed(ORIGINAL),
+        files: Cow::Borrowed(WHISPER_LARGE_V3_FILES),
         licence: apache("README.md"),
     },
 ];
@@ -233,6 +246,76 @@ const VOXCPM2_FILES: &[ArtifactFile] = &[
         "model.safetensors",
         "f7f964cfa9da23653baec6e6f7750719977ad944ed9f95fe52fe3a620506891d",
         4_580_080_592,
+    ),
+];
+
+/// What the local ASR worker loads through transformers
+/// (`WhisperProcessor` + `WhisperForConditionalGeneration.from_pretrained`
+/// with `local_files_only`, `use_safetensors` and no remote code): the model
+/// and preprocessing configs, the tokenizer files and the single fp16
+/// weights file. The fp32 shards, `pytorch_model.bin*` and
+/// `flax_model.msgpack` are never opened and are not pinned; the card
+/// carries the licence.
+const WHISPER_LARGE_V3_FILES: &[ArtifactFile] = &[
+    file(
+        "README.md",
+        "b05416eb578e9fc65ce137f3401bafdf3bc2feac7448e7dd180dcd367b8cfb52",
+        21_829,
+    ),
+    file(
+        "preprocessor_config.json",
+        "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711",
+        340,
+    ),
+    file(
+        "config.json",
+        "ad0e8d1e46f4d01f7861a21509e5d0f977d6cc1f367a370603c92541d819807b",
+        1_272,
+    ),
+    file(
+        "special_tokens_map.json",
+        "1c70773c078cb2ca96e0fcff113102f1d3e2b1504272c3bb63b035d4a6700d87",
+        2_072,
+    ),
+    file(
+        "generation_config.json",
+        "fbdfa70135de9b1d31553393f14e80aaeb1936ea36576b2ba864055943c09d23",
+        3_903,
+    ),
+    file(
+        "added_tokens.json",
+        "3c51f66c4c21f9e126970078f11ae77a78c74aee8df606ee9daba86e467108e0",
+        34_648,
+    ),
+    file(
+        "normalizer.json",
+        "bf1c507dc8724ca9cf9903640dacfb69dae2f00edee4f21ceba106a7392f26dd",
+        52_666,
+    ),
+    file(
+        "tokenizer_config.json",
+        "844b642c73a91359722f47b35705f7174686df33d252695d8572cf9ac03a6389",
+        282_843,
+    ),
+    file(
+        "merges.txt",
+        "2df2990a395e35e8dfbc7511e08c12d56018d8d04691e0133e5d63b21e154dc6",
+        493_869,
+    ),
+    file(
+        "vocab.json",
+        "e2aa043ef015641d363d8288e7c241c85e36a5c761fb303598e0710233344387",
+        1_036_558,
+    ),
+    file(
+        "tokenizer.json",
+        "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca",
+        2_480_617,
+    ),
+    file(
+        "model.safetensors",
+        "a8e94b85976e5864ba3e9525c7e6c83b2a1eca42d4b797a0c7c24d778e40fd95",
+        3_087_130_976,
     ),
 ];
 

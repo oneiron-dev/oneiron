@@ -398,6 +398,16 @@ impl Vault {
         } else {
             None
         };
+        // The replaced receipt's source, independent of whether its catalog
+        // bytes still parse (FIX 10865): retention reads the receipt identity.
+        let prior_source = if model_catalog {
+            prior
+                .as_ref()
+                .map(|old| EntityId::from_hex(&old.source_id))
+                .transpose()?
+        } else {
+            None
+        };
         if let Some(old) = &prior {
             for predicate in &old.predicates {
                 PACK_PREDICATE.delete(&self.store, txn, predicate)?;
@@ -409,7 +419,11 @@ impl Vault {
         PACK_CANDIDATE.delete(&self.store, txn, &candidate_key(&source))?;
         PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
         if model_catalog {
-            self.activate_installed_model_catalog_in_txn(txn, prior_catalog.as_ref())?;
+            self.activate_installed_model_catalog_in_txn(
+                txn,
+                prior_catalog.as_ref(),
+                prior_source,
+            )?;
         }
         if let Some(old) = prior
             && old.content_hash != receipt.content_hash

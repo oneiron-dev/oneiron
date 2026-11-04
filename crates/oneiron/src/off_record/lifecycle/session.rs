@@ -1043,8 +1043,13 @@ impl OffRecordSession<'_> {
     /// K10 flip-back: returns the session to `OffRecord`, rearming the overlay
     /// so new writes stage there again. Pre-flip turns stay base-invisible.
     pub fn flip_off_record(&self) -> Result<()> {
-        self.vault
-            .set_off_record_session_mode(&self.session_ref, OffRecordMode::OffRecord)?;
+        let mut state = session_entry_state(&self.entry)?;
+        super::vault_api::set_entry_mode(
+            &self.entry,
+            &mut state,
+            &self.session_ref,
+            OffRecordMode::OffRecord,
+        )?;
         Ok(())
     }
 

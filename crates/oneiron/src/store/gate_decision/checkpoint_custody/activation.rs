@@ -266,7 +266,7 @@ impl Store {
             self.side_vault_meta().put(wtxn, key, value)?;
         }
         for digest in &prune.files {
-            crate::provenance::body::queue_pruned_file_in_txn(self, wtxn, digest)?;
+            crate::store::owned_body::queue_pruned_file_in_txn(self, wtxn, digest)?;
         }
         if !prune.assets.is_empty() {
             let at = crate::ports::recorded_at_in_txn(self, wtxn)?;

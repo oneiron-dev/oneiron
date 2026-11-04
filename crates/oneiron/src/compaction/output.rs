@@ -381,13 +381,15 @@ pub fn restore_output_window(vault: &Vault, source: OutputRef, cap: usize) -> Re
         return restore_output(vault, source);
     }
     if !output_clean(vault, source)? {
-        return Ok(crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
-            .as_bytes()
-            .to_vec());
+        return Ok(
+            crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+                .as_bytes()
+                .to_vec(),
+        );
     }
     // A ranged read checks the manifest it is given: this one names the
     // path every context output's does.
-    let mut output = crate::code_run::CodeRunRawOutput::of_ref(source);
+    let mut output = crate::store::result_manifest::CodeRunRawOutput::of_ref(source);
     output.path = CONTEXT_OUTPUT_PATH.to_owned();
     let mut head = vault
         .read_code_run_raw_output_range(&output, 0, cap)?

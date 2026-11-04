@@ -12,8 +12,9 @@ use super::shape::{
 use super::{CoreBatchCommit, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt};
 use crate::Vault;
 use crate::batch::BatchBuilder;
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::memory::Memory;
+use crate::ports::ClaimReadStatus;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// The lane a core write's caller is held to (OF-063; FIX 1223, 6068,

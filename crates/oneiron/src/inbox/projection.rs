@@ -9,7 +9,7 @@ use crate::context_board::PREDICATE_PLUGIN_SECTION_INSTALL;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::gate::GateReasonCode;
+use crate::store::gate_reason::GateReasonCode;
 use crate::store::{GateDecisionRecord, PendingGateConsentRecord};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::write_envelope::claim_predicate::PREDICATE_CONFLICT_OPEN;

@@ -200,10 +200,7 @@ impl Vault {
         use crate::store::window_rows::CarrierRemoval;
         use crate::sync::bridge::with_deletion_tombstone_observer_a_suppressed;
         use crate::sync::schema::create_window_doc;
-        use crate::sync::window::{
-            apply_tombstone_to_window_doc, load_window_from_state, mark_removed_carriers_first,
-            merge_persisted_state_into_doc,
-        };
+        use crate::sync::window::{load_window_from_state, merge_persisted_state_into_doc};
         use crate::window_key::WindowKey;
         use loro::CommitOptions;
 
@@ -258,7 +255,7 @@ impl Vault {
                 // Marked before the publish txn opens, which LMDB cannot nest:
                 // a failed publish keeps the mutated live doc, and a later
                 // persist would make its removal durable without the mark.
-                mark_removed_carriers_first(
+                self.store.sync_hooks.mark_removed_carriers_first(
                     self,
                     CarrierRemoval::LocalPublication,
                     &entity_carriers(&window.doc, &[*id]),
@@ -276,7 +273,11 @@ impl Vault {
                 let (delete_update, (snapshot, owes_compaction), vv) =
                     with_deletion_tombstone_observer_a_suppressed(|| -> Result<_> {
                         *doc_mutated = true;
-                        apply_tombstone_to_window_doc(&window.doc, id, &value.encode())?;
+                        self.store.sync_hooks.apply_tombstone_to_window_doc(
+                            &window.doc,
+                            id,
+                            &value.encode(),
+                        )?;
                         window
                             .doc
                             .commit_with(CommitOptions::new().origin(DELETION_TOMBSTONE_ORIGIN));
@@ -338,7 +339,7 @@ impl Vault {
             gate_decision.map(|decision| decision.decision_id),
         );
         super::tombstone_scope::capture_deleted_scope(self, id, value);
-        mark_removed_carriers_first(
+        self.store.sync_hooks.mark_removed_carriers_first(
             self,
             CarrierRemoval::LocalPublication,
             &entity_carriers(&doc, &[*id]),
@@ -356,7 +357,9 @@ impl Vault {
             due,
         )?;
         let vv_before = doc.oplog_vv();
-        apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
+        self.store
+            .sync_hooks
+            .apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
         doc.commit();
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
@@ -646,7 +649,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     fn window_update_keys(&self, window_key: &crate::window_key::WindowKey) -> Result<Vec<String>> {
         let rtxn = self.store.env.read_txn()?;
-        let mut count = crate::scan_check::ScanCount::start_at(
+        let mut count = crate::store::scan_count::ScanCount::start_at(
             crate::store::EngineScan::SyncPrefixRows,
             window_key.as_str().as_bytes(),
             crate::vault::MAX_SYNC_STATE_KEYS as u64,
@@ -687,7 +690,7 @@ impl Vault {
             || doc.is_shallow()
             || super::window_document_format::is_native(doc);
         if history_free {
-            crate::sync::window::merge_window_heads(doc)?;
+            self.store.sync_hooks.merge_window_heads(doc)?;
         }
         Ok(history_free)
     }
@@ -834,7 +837,9 @@ impl Vault {
             // over-drop; delete-bearing rows are preserved inside the
             // scrub). The `u:w:` rows the snapshot just subsumed are
             // active payload carriers too.
-            crate::sync::queue::scrub_window_updates_in_txn(self, wtxn, window_key.as_str())?;
+            self.store
+                .sync_hooks
+                .scrub_window_updates_in_txn(self, wtxn, window_key.as_str())?;
             crate::sync::window::prune_subsumed_window_updates_in_txn(
                 self,
                 wtxn,
@@ -857,13 +862,13 @@ impl Vault {
             // publish txn. Authority recovery was durably staged before the
             // live mutation, so restart replay cannot observe an
             // authority-required tombstone without that requirement.
-            crate::sync::bridge::persist_window_update_in_txn(
+            self.store.sync_hooks.persist_window_update_in_txn(
                 self,
                 wtxn,
                 window_key.as_str(),
                 update.as_bytes(),
             )?;
-            crate::sync::queue::push_delete_bearing_in_txn(
+            self.store.sync_hooks.push_delete_bearing_in_txn(
                 self,
                 wtxn,
                 window_key.as_str(),

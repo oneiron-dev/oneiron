@@ -307,7 +307,7 @@ impl Vault {
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
         let mut count = {
             let txn = self.store.env.read_txn()?;
-            crate::scan_check::ScanCount::start(
+            crate::store::scan_count::ScanCount::start(
                 &self.store,
                 &txn,
                 crate::store::EngineScan::TimelineRecords,

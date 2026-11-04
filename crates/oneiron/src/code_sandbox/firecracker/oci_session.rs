@@ -104,6 +104,7 @@ pub(super) fn start(
         )
         .with_image_ref(&spec.image),
         &image_release::NoVerifierConfigured,
+        image_release::LaunchBackend::MicroVm,
     );
     let scratch = tempfile::tempdir()?;
     let vm = MicroVmHandle::new(

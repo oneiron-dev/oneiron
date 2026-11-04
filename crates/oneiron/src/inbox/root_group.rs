@@ -10,7 +10,9 @@ use crate::Vault;
 use crate::attempt_queue::AttemptQueue;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
-use crate::receipt::{ReceiptView, gate_decision_receipt, hex_lower};
+use crate::store::gate_receipt::gate_decision_receipt;
+use crate::store::receipt_row::ReceiptView;
+use crate::store::receipt_row::hex_lower;
 
 use super::model::{
     InboxGroup, InboxGroupCursor, InboxGroupMember, InboxPointerRow, InboxReviewDial,

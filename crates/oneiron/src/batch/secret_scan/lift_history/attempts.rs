@@ -17,8 +17,8 @@ use super::super::write_payload_hit;
 use super::{Done, LiftCause, Page, hex};
 use crate::Vault;
 use crate::store::attempt_record_codec::decode_record;
-use crate::store::attempt_id::AttemptId;
 use crate::error::Result;
+use crate::store::attempt_id::AttemptId;
 
 /// The attempt rows after `after` (an attempt id; empty at the start), up to
 /// `limit`.

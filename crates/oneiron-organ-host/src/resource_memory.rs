@@ -148,7 +148,7 @@ impl AskHandler for MemoryGrow {
 
 /// A `memory.grow` ask's value, as the wire names its fields.
 fn decode(value: &Value) -> Result<MemoryAsk, AskRefusal> {
-    oneiron_organ_protocol::from_value(value)
+    MemoryAsk::from_value(value)
         .map_err(|err| AskRefusal::new(AskCode::BadRequest, format!("not a memory ask: {err}")))
 }
 

@@ -34,9 +34,10 @@ other than `$root`; it does not add a WASI adapter to make such an import work.
 
 The build emits:
 
-- `quickjs-first-party.wasm`: all 15 typed imports;
+- `quickjs-first-party.wasm`: all 16 typed imports;
 
-- `quickjs-foreign.wasm`: only the six non-write imports;
+- `quickjs-foreign.wasm`: only the seven non-write imports and the three
+  proposal imports;
 - `quickjs-hook.wasm`: the hook guest (below), world `oneiron:hook/hook@1.0.0`
   from `crates/oneiron/wit/hook/hook.wit`, with its own three imports;
 - `manifest.json`: source, WIT, toolchain and artifact pins.
@@ -69,13 +70,14 @@ completed step, and a later call replaces its answer.
 `writeOutput('/mnt/outputs/name', bytes)` appends to an output file, so a large
 file is written in pieces. None of them holds a result whole or charges a size
 budget: each streams to the host as it is written, through the hidden
-`output-text` and `output-bytes` imports, in frames of at most one 1 MiB
+`output-text`, `output-bytes` and `store-bytes` imports, in frames of at most one 1 MiB
 message (text cut at a UTF-16 boundary, a lone surrogate sent as U+FFFD). The
 host keeps each body in the vault's result store and gives the model a handle
 and a preview.
 First-party code also gets `store(value, name?)`, which streams a value the
-same way (a string as given, anything else as its JSON) through the `store`
-target and binds it under `name` or the next free `r<n>`; it answers the
+same way (a string as given, a byte value as its bytes through the
+`store-bytes` import, anything else as its JSON) through the `store` sink
+and binds it under `name` or the next free `r<n>`; it answers the
 result's card. `describe(r)`, given a name, a handle or a card, answers that
 card again from the manifest: name, size, lines, completion, taint and a
 preview a tainted body withholds. The names live in the run's replay record,
@@ -108,8 +110,10 @@ by the ranges they cite, staged `summarize` groups) and stores the fold as
 `rf_<key>` with its receipt. It runs in phases kept in `rf_<key>_state`: call
 it again with the same arguments until `done`. `diff(a, b, {by?, from?,
 name?})` (`diff.js`) states its algorithm: by lines, Myers' O(ND) inside
-lockstep 4096-line windows, by bytes 64 KiB blocks; hunk text past 1 MiB is
-stored as a result made from both sides. Every default, bound and end
+4096-line windows with 3 context lines a change (a window pair past one
+pass split and diffed in halves), by bytes 64 KiB blocks naming their first
+differing runs; a step cut short answers a per-side resume offset. Hunk
+text past 1 MiB is stored as a result made from both sides. Every default, bound and end
 condition either helper keeps is one named top-level const or policy
 function in its file.
 Foreign guests have no `self` object. Their `propose.file(...)` and

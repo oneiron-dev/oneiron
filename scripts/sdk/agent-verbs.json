@@ -4994,6 +4994,7 @@
       "call": "crate::task_verb::sdk::mesh_path_receipts_as_owner(memory, &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -5069,6 +5070,7 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.dial\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "openapi": true,
       "scope": "Write",
       "admission": {
@@ -5658,6 +5660,7 @@
       "call": "crate::task_verb::sdk::federation_burst_baseline_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.baseline\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -5673,6 +5676,7 @@
       "call": "crate::task_verb::sdk::federation_burst_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.policy\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -5688,6 +5692,7 @@
       "call": "crate::task_verb::sdk::set_federation_burst_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.policy.set\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -5703,6 +5708,7 @@
       "call": "crate::task_verb::sdk::federation_burst_host_only(memory, \"vault.federation.burst.ingress\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -5718,6 +5724,7 @@
       "call": "crate::task_verb::sdk::federation_burst_host_only(memory, \"vault.federation.burst.disposition\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -5733,6 +5740,7 @@
       "call": "crate::task_verb::sdk::federation_burst_reviews_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.review\")?)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -5749,6 +5757,7 @@
       "call": "crate::task_verb::sdk::release_federation_burst_review_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.review.release\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -5764,6 +5773,7 @@
       "call": "crate::task_verb::sdk::reject_federation_burst_review_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.review.reject\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -5779,6 +5789,7 @@
       "call": "crate::task_verb::sdk::federation_burst_host_only(memory, \"vault.federation.burst.replay\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -6376,6 +6387,7 @@
       "call": "crate::task_verb::sdk::residence_directives(memory, &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
@@ -11474,10 +11486,11 @@
       "description": "The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing.",
       "input": "crate::task_verb::sdk::ConnectorWitnessReadGrantRequest",
       "output": "crate::task_verb::sdk::ConnectorWitnessReadGranted",
-      "call": "crate::task_verb::sdk::grant_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.grant\")?, input)?",
+      "call": "crate::task_verb::sdk::grant_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.grant\")?, crate::authority::ActSurface::ThisInstall, input)?",
       "host_door": true,
       "host_door_precheck": false,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -11490,10 +11503,11 @@
       "description": "The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing.",
       "input": "crate::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest",
       "output": "crate::task_verb::sdk::ConnectorWitnessReadGrantRevoked",
-      "call": "crate::task_verb::sdk::revoke_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.revoke\")?, input)?",
+      "call": "crate::task_verb::sdk::revoke_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.revoke\")?, crate::authority::ActSurface::ThisInstall, input)?",
       "host_door": true,
       "host_door_precheck": false,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

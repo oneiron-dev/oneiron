@@ -57,7 +57,7 @@ impl Vault {
         let mut scrubbed = Vec::new();
         for target in targets {
             scrubbed.push(target);
-            scrubbed.extend(crate::identity_topology::redact_author_attribution_in_txn(
+            scrubbed.extend(self.store.record_hooks.redact_author_attribution_in_txn(
                 self,
                 wtxn,
                 target,
@@ -74,7 +74,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()> {
-        crate::identity_topology::redact_actor_in_txn(
+        self.store.record_hooks.redact_actor_in_txn(
             self,
             wtxn,
             *actor,

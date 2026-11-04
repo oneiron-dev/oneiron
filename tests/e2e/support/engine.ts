@@ -166,8 +166,8 @@ export class EngineFixture {
   async awaitReceipt(ref:string,timeoutMs:number=LIMITS.requestMs):Promise<unknown> {
     if(ref.startsWith("call:")) return awaitPublic(()=>this.client.call("vault.receipts.get",{receipt_ref:ref}),value=>value!==null,
       {timeoutMs,label:`receipt ${ref}`});
-    return awaitPublic(()=>this.client.call("vault.receipts",{limit:1000}),rows=>rows.some(row=>row.receipt_ref===ref),
-      {timeoutMs,label:`receipt ${ref}`}).then(rows=>rows.find(row=>row.receipt_ref===ref));
+    return awaitPublic(()=>this.client.call("vault.receipts",{limit:1000}),page=>page.receipts.some(row=>row.receipt_ref===ref),
+      {timeoutMs,label:`receipt ${ref}`}).then(page=>page.receipts.find(row=>row.receipt_ref===ref));
   }
   async websocket(actor:PairedActor=this.pairedActor):Promise<WsClient> {return WsClient.connect(this.url,actor.credential)}
   /** Requires an existing typed door; never maps a missing canon verb to a generic endpoint. */
@@ -192,4 +192,4 @@ export class EngineFixture {
   }
 }
 export type PublicReceiptInput=FacadeInput<"vault.receipts">;
-export type PublicReceipt=FacadeResult<"vault.receipts">[number];
+export type PublicReceipt=FacadeResult<"vault.receipts">["receipts"][number];

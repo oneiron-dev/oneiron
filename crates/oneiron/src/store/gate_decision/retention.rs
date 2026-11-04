@@ -489,9 +489,11 @@ impl Vault {
         operational_refs.extend(crate::artifact_hosting::artifact_publish_gate_refs_in_txn(
             self, &txn,
         )?);
-        operational_refs.extend(crate::workspace_roster::project_mint_gate_refs_in_txn(
-            self, &txn,
-        )?);
+        operational_refs.extend(
+            self.store
+                .project_writes
+                .project_mint_gate_refs_in_txn(self, &txn)?,
+        );
         operational_refs.extend(crate::memory::claim_conflict_ruling_gate_refs_in_txn(
             &self.store,
             &txn,

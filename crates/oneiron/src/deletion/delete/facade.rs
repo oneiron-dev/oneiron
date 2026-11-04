@@ -142,7 +142,7 @@ impl Vault {
         let context = DeletionGateContext::new(
             owner,
             EdgeActorClass::Human,
-            crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            crate::store::policy_record::POLICY_SCHEMA_VERSION.to_owned(),
             policy.read_frontier_hash()?,
         );
         Ok(Some((context, owner)))

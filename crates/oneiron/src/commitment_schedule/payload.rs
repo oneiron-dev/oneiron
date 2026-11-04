@@ -19,8 +19,8 @@ use rmpv::Value;
 
 use super::{
     COMMITMENT_SCHEDULE_PAYLOAD_SCHEMA_VERSION, COMMITMENT_SCHEDULE_STRING_MAX_BYTES,
-    CommitmentOccurrence, CommitmentSchedulePayload, QuotaWindow, Schedule, ScheduleError,
-    ScheduleResult, validate_quota_count,
+    CommitmentOccurrence, CommitmentOccurrenceSchedule, CommitmentSchedulePayload, QuotaWindow,
+    Schedule, ScheduleError, ScheduleResult, validate_quota_count,
 };
 use crate::entity_id::EntityId;
 use crate::temporal::TimeRange;

@@ -163,7 +163,12 @@ impl FirecrackerBackend {
                     pins,
                 ),
             };
-            release::observe_bound_release(selected, &observed, &release::NoVerifierConfigured)
+            release::observe_bound_release(
+                selected,
+                &observed,
+                &release::NoVerifierConfigured,
+                release::LaunchBackend::MicroVm,
+            )
         };
         {
             let mut states = self

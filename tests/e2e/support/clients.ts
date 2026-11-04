@@ -4,8 +4,8 @@ import { createPrivateKey, sign } from "node:crypto";
 import { blake3 } from "@noble/hashes/blake3";
 import { encode, decode } from "@msgpack/msgpack";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
-import type { ClaimInput, WitnessTurn, RecallOptions } from "oneiron";
-import { LIMITS, redactor, runProcess, withDeadline, secretHex, ownResource } from "./run.ts";
+import type { WitnessTurn, RecallOptions } from "oneiron";
+import { BlockedDoor, LIMITS, redactor, runProcess, withDeadline, secretHex, ownResource } from "./run.ts";
 import type { Artifacts, ProcessResult } from "./run.ts";
 import { requireAsset } from "./fixtures.ts";
 import type { BuildManifest } from "./fixtures.ts";
@@ -227,16 +227,19 @@ export class CliError extends Error {
 }
 export type SdkOperation =
   | { readonly verb:"witness";readonly input:WitnessTurn }
-  | { readonly verb:"claimUpsert";readonly input:ClaimInput }
+  | { readonly verb:"claimUpsert";readonly input:FacadeInput<"vault.claims.upsert"> }
   | { readonly verb:"recall";readonly query:string;readonly options?:RecallOptions }
-  | { readonly verb:"receipts";readonly limit?:number };
+  | { readonly verb:"receipts";readonly limit?:number }
+  | { readonly verb:"selfActor" }
+  | { readonly verb:"neighbors";readonly input:FacadeInput<"vault.neighbors"> }
+  | { readonly verb:"get";readonly input:FacadeInput<"vault.get"> };
 export interface PythonWitnessTurn {
   readonly conversation_ref:string;readonly turn_ref?:string;readonly occurred_at?:number;
   readonly messages:readonly {readonly id?:string;readonly author:"user"|"companion"|"system";readonly message_type:string;readonly content:string;readonly order:number}[];
 }
 export type PythonSdkOperation =
   | {readonly verb:"witness";readonly input:PythonWitnessTurn}
-  | {readonly verb:"claimUpsert";readonly input:{readonly predicate:string;readonly subject_ref:string;readonly value:unknown;readonly confidence:number;readonly source:string;readonly world_ref?:string;readonly scope?:unknown}}
+  | {readonly verb:"claimUpsert";readonly input:FacadeInput<"vault.claims.upsert">}
   | {readonly verb:"recall";readonly query:string;readonly options?:{readonly effort?:string;readonly scope?:unknown;readonly limit?:number;readonly as_of?:number}}
   | {readonly verb:"receipts";readonly limit?:number};
 export type SdkTarget = {readonly mode:"remote";readonly url:string;readonly credential:string} |
@@ -255,7 +258,9 @@ try {
   const results=p.operations.map(o=>{try {
    let value;
    switch(o.verb){case 'witness':value=m.vault.witness(o.input);break;case 'claimUpsert':value=m.vault.claims.upsert(o.input);break;
-    case 'recall':value=m.vault.recall(o.query,o.options);break;case 'receipts':value=m.vault.receipts(o.limit);break;default:throw new Error('Unknown SDK operation')}
+    case 'recall':value=m.vault.recall(o.query,o.options);break;case 'receipts':value=m.vault.receipts(o.limit);break;
+    case 'selfActor':value=m.self.actor({});break;case 'neighbors':value=m.vault.neighbors(o.input);break;
+    case 'get':value=m.vault.get(o.input);break;default:throw new Error('Unknown SDK operation')}
    return {ok:true,value};
   }catch(e){return {ok:false,error:error(e)}}});
   process.stdout.write(JSON.stringify(results));
@@ -299,6 +304,8 @@ export class SdkProcessDriver {
   async run(language:"typescript"|"napi",target:SdkTarget,operations:readonly SdkOperation[]):Promise<SdkDriverResult>;
   async run(language:"python",target:SdkTarget,operations:readonly PythonSdkOperation[]):Promise<SdkDriverResult>;
   async run(language:"typescript"|"python"|"napi",target:SdkTarget,operations:readonly SdkOperation[] | readonly PythonSdkOperation[]):Promise<SdkDriverResult> {
+    if (language === "python") for (const id of ["python","python-wheel"])
+      if (!this.build.assets[id]) throw new BlockedDoor(`waits on pinned build asset ${id}`);
     if(target.mode==="embedded"&&(!isAbsolute(target.path)||resolve(target.path)===resolve(this.cwd,"vault")))
       throw new TypeError("Embedded SDK requires its own absolute vault path, never the served vault");
     if(target.mode==="remote") credentialParts(target.credential);

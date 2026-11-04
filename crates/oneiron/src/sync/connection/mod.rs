@@ -97,6 +97,15 @@ pub struct SyncConnection {
     left: tokio::sync::watch::Sender<bool>,
     /// Whether the run loop is going; a leave waits for it to stop.
     running: tokio::sync::watch::Sender<bool>,
+    /// Valid run-buffer updates an explicit leave discarded unqueued (OF-158):
+    /// published by the leave arms after their single try and before any
+    /// `Close`/cleanup await, consumed once in the first-confirm receipt txn.
+    /// Additive and un-reset, never cleared; re-confirm ignores it. 0 when
+    /// every flush was admitted.
+    leave_unqueued: std::sync::atomic::AtomicU64,
+    /// The one verified notice whose receipt owns the discarded run-buffer
+    /// count. Bound after quiescence; never reset on failure/retry.
+    leave_unqueued_receipt: std::sync::OnceLock<String>,
     /// The host asked before each batch the loop applies or sends (FIX
     /// 12036); `None` admits every batch at once.
     batch_admission: Option<Arc<dyn SyncBatchAdmission>>,
@@ -168,6 +177,8 @@ impl SyncConnection {
             home_handoff_wake: Arc::default(),
             left: tokio::sync::watch::channel(left).0,
             running: tokio::sync::watch::channel(false).0,
+            leave_unqueued: std::sync::atomic::AtomicU64::new(0),
+            leave_unqueued_receipt: std::sync::OnceLock::new(),
             batch_admission: None,
             _home_search: home_search,
         })
@@ -184,6 +195,28 @@ impl SyncConnection {
         crate::sync::SyncClient::new(Arc::clone(&self.manager), self.client_config())
             .map(|(client, _events)| client)
             .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
+    }
+
+    /// Publishes the count of valid run-buffer updates an explicit leave arm
+    /// discards unqueued (OF-158), then clears that buffer as the explicit
+    /// owner discard. Runs AFTER the arm's single-try `queue_on_exit`:
+    /// remaining valid-key entries never landed in `q:` (a Pause writes
+    /// nothing), so the durable discard cannot recount them; an admitted
+    /// flush drained the buffer, so this adds 0 and only the durable count
+    /// stands. Additive (`fetch_add`, never a storing overwrite) plus the
+    /// synchronous clear means a later arm seeing the emptied buffer adds 0
+    /// without touching the earlier publication. Non-waiting; runs BEFORE any
+    /// `Close`/cleanup await. Leave arms only; non-leave shutdown never
+    /// calls it.
+    fn publish_leave_unqueued(&self, buffer: &mut Vec<LocalUpdate>) {
+        let unqueued = buffer
+            .iter()
+            .filter(|update| parse_window_key_str(&update.window_key).is_some())
+            .count();
+        let unqueued = u64::try_from(unqueued).unwrap_or(u64::MAX);
+        self.leave_unqueued
+            .fetch_add(unqueued, std::sync::atomic::Ordering::Release);
+        buffer.clear();
     }
 
     /// Ends this lane for good before a leave discards its queue, once its
@@ -316,9 +349,31 @@ impl SyncConnection {
             return Ok(None);
         };
         self.stop_for_leave().await;
-        crate::sync::shared_leave::confirm_verified_shared_leave(self.manager.vault(), &notice)
-            .map(Some)
-            .map_err(|e| TransportError::Storage(e.to_string()))
+        // Bind after the wait, with no await before confirmation: cancellation
+        // while waiting must not strand this count on an unconfirmed notice.
+        // Keep this owner on a failed transaction so its retry keeps the count.
+        let owns_unqueued = self
+            .leave_unqueued_receipt
+            .get_or_init(|| notice.outcome().receipt_id.clone())
+            == &notice.outcome().receipt_id;
+        // Published before `running=false` when the wait succeeded: the leave
+        // arms publish before any `Close`/cleanup await, and the final slot
+        // before `running=false`. 0 when every flush was admitted. When the
+        // 10s wait expired before publish, the count is missed and the receipt
+        // undercounts (FIX 12816, NOT fixed here).
+        let unqueued = if owns_unqueued {
+            self.leave_unqueued
+                .load(std::sync::atomic::Ordering::Acquire)
+        } else {
+            0
+        };
+        crate::sync::shared_leave::confirm_verified_shared_leave(
+            self.manager.vault(),
+            &notice,
+            unqueued,
+        )
+        .map(Some)
+        .map_err(|e| TransportError::Storage(e.to_string()))
     }
 
     /// The residence mode this machine runs now.
