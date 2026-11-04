@@ -166,7 +166,12 @@ impl NativeSealEngine {
                 });
             }
             1 => {}
-            _ => pdf::admit_prior_revisions(&prepared.bytes, &facts.ends(limits)?, &limits)?,
+            _ => {
+                let ends = facts
+                    .ends(&limits)
+                    .map_err(|refusal| refusal.seal_error(SealStage::InputValidation))?;
+                pdf::admit_prior_revisions(&prepared.bytes, &ends, &limits)?;
+            }
         }
         let ctx = profile::SealContext {
             config: &self.config,

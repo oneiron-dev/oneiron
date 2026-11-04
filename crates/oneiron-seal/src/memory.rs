@@ -509,6 +509,8 @@ impl AdmittedBytes {
         Ok(Self {
             bytes: Vec::new(),
             _lease: Some(memory.lease(SHARED_CONTROL_BYTES)?),
+            of: None,
+            _beside: None,
         })
     }
 
@@ -517,6 +519,8 @@ impl AdmittedBytes {
         Self {
             bytes: Vec::new(),
             _lease: Some(lease),
+            of: None,
+            _beside: None,
         }
     }
 
@@ -663,6 +667,8 @@ impl<'de> serde::Deserialize<'de> for AdmittedBytes {
         Ok(Self {
             bytes: Vec::<u8>::deserialize(deserializer)?,
             _lease: None,
+            of: None,
+            _beside: None,
         })
     }
 }
