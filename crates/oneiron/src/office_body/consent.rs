@@ -47,6 +47,7 @@ use crate::write_envelope::WriteActor;
 
 mod live_edit;
 pub(crate) use live_edit::LiveEditAdmission;
+pub(super) use live_edit::revoke_office_edit_grants_naming_in_txn;
 pub(super) use live_edit::{
     admit_live_edit_in_txn, covering_live_grant, identical_live_edit_grant_active_in_txn,
     live_edit_admission_in_txn, live_edit_effect, mint_live_edit_grant_in_txn, office_bound,
@@ -281,13 +282,20 @@ impl Vault {
             let Some(mut record) = PROPOSALS.get(&self.store, wtxn, proposal)? else {
                 return Ok(());
             };
-            if record.settlement.is_some() || record.asks.iter().any(|held| held.ask == ask.ask) {
+            if record.settlement.is_some() {
                 return Ok(());
             }
+            let repeated = record.asks.iter().any(|held| held.ask == ask.ask);
+            let refused = record.ask_refused.len();
             record
                 .ask_refused
                 .retain(|held| held.artifact != ask.artifact);
-            record.asks.push(ask);
+            if repeated && record.ask_refused.len() == refused {
+                return Ok(());
+            }
+            if !repeated {
+                record.asks.push(ask);
+            }
             PROPOSALS.put(&self.store, wtxn, proposal, &record)
         })
     }

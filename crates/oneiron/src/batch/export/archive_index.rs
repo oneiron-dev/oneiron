@@ -125,6 +125,8 @@ pub(crate) enum Tag {
     Released,
     /// Result body digest → (): its first occurrence was checked.
     Staged,
+    /// Run id → (): one archived run row.
+    Run,
 }
 
 /// The import's disk index: one LMDB database in the scratch environment,
