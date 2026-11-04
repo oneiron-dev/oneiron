@@ -294,7 +294,7 @@ impl Replay<'_> {
                     );
                     asked = asked.saturating_add(1);
                     let answer = ask_verdict(self.binding, self.verdict, &trusted, request);
-                    self.heard(answer.evidence.as_deref());
+                    self.heard(&answer.evidence);
                     answer.reply
                 };
                 context.body_starts();

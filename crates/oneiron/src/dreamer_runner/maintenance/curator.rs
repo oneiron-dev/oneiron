@@ -34,12 +34,16 @@ use std::collections::BTreeSet;
 
 pub(super) mod approved;
 
-/// The curator's finding predicate.
-pub(crate) const PROPOSAL_PREDICATE: &str = "dreamer.curator.proposal";
+pub(crate) use crate::gate::curator_proposal::PROPOSAL_PREDICATE;
 
 /// Owner-set rubric dial for the memory-curator maintenance pass.
 const RUBRIC: SideTable<(), CuratorRubric, LegacyJson> =
     SideTable::new(&side_table::DREAMER_CURATOR_RUBRIC);
+/// Whether a masked copy of a `DREAMER_CURATOR_RUBRIC` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dreamer_curator_rubric_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CuratorRubric, LegacyJson>(bytes)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CuratorTrigger {
@@ -343,6 +347,8 @@ pub(super) struct CuratorInverse {
     rung: Rung,
     prior_revision: [u8; 32],
     prior_confidence: f32,
+    /// The prior band and basis, restored with the number (FIX 11036).
+    prior_confidence_details: crate::claim::ConfidenceDetails,
     prior_stale: bool,
     prior_valid_to: Option<u64>,
     prior_claim_of_weight: Option<f32>,
@@ -444,6 +450,7 @@ fn apply_in_txn(
         rung,
         prior_revision: *hash.as_bytes(),
         prior_confidence: body.confidence,
+        prior_confidence_details: body.confidence_details(),
         prior_stale: body.stale,
         prior_valid_to: body.valid_to,
         prior_claim_of_weight: weight,
@@ -600,6 +607,7 @@ fn stand_copy_in_txn(
             body.value.clone(),
             inverse.prior_confidence,
         )
+        .with_confidence_details(inverse.prior_confidence_details)
         .with_validity(body.valid_from, inverse.prior_valid_to),
         &body,
     )

@@ -148,6 +148,16 @@ pub(super) fn run(
             });
         }
         HousekeepingSweep::FoundKeyNotices => return found_key_notices(vault, deadline),
+        HousekeepingSweep::AnnotationBodyAnchors => {
+            let (moved, failed, cursor) =
+                vault.sweep_annotation_body_anchors(cursor, || deadline.passed())?;
+            return Ok(Run {
+                work: SweepWork::AnnotationBodyAnchors { moved, failed },
+                complete: cursor.is_none(),
+                cursor,
+                covered_until: None,
+            });
+        }
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune
@@ -362,6 +372,8 @@ fn hard_erase(vault: &Vault, owner_asked: bool) -> Result<HardEraseWork> {
     } else {
         crate::sweep::run_scheduled_hard_erase_sweep(vault)?
     };
+    // Views of a source this sweep erased, or a pass that failed (FIX 9722).
+    crate::code_view::collect_after_sweep(vault, run.jobs_processed > 0);
     Ok(HardEraseWork {
         jobs_processed: run.jobs_processed,
         jobs_deferred: run.jobs_deferred,

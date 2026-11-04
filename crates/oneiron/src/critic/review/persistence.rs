@@ -3,6 +3,13 @@ use super::*;
 use crate::batch::secret_scan::{admitted_from, named_tree};
 use crate::side_table::{self, Named, Raw, SideTable};
 
+mod dissent_rows;
+mod erased_claims;
+pub(super) use dissent_rows::{
+    claim_dissent, dissent_state, release_dissent_claim, reviews_with_dissent,
+    reviews_with_unkept_dissent, save_dissent,
+};
+
 /// Cached review verdict/triage/artifacts for a review request, keyed by a hash of the request's
 /// identity tuple. Key: hash32.
 const RESULT: SideTable<[u8; 32], StoredReview, Named> =
@@ -18,6 +25,11 @@ const RESULT_ID: SideTable<EntityId, Vec<u8>, Raw> =
 /// producer. Key: id16.
 const CLAIM_TRUST: SideTable<EntityId, [u8; 32], Raw> =
     SideTable::new(&side_table::CRITIC_REVIEW_CLAIM_TRUST);
+
+/// Stored-review keys already reported unreadable (FIX 5251): each unreadable
+/// review is named once. Presence-only.
+const UNREADABLE_REPORTED: SideTable<Vec<u8>, (), Raw> =
+    SideTable::new(&side_table::CRITIC_UNREADABLE_REPORTED);
 
 pub(super) fn persist_review(
     vault: &Vault,
@@ -100,7 +112,10 @@ pub(super) fn persist_review(
         let stored = StoredReview {
             principal: request.actor.entity_ref(),
             principal_class: Some(request.actor.actor_class() as u8),
+            principal_run_attempt: request.actor.run_attempt(),
+            principal_authority_frontier: request.actor.authority_frontier(),
             dissent: BTreeMap::new(),
+            dissent_claims: BTreeMap::new(),
             verdict: id.to_hex(),
             triage: triage.clone(),
             artifacts,
@@ -192,7 +207,16 @@ struct StoredReview {
     /// question it keeps (FIX 1588). None on a review stored before it was kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     principal_class: Option<u8>,
+    /// The run attempt the review's actor wrote under, when its host bound
+    /// one (FIX 12188).
+    principal_run_attempt: Option<[u8; 16]>,
+    /// The authority state the review's actor observed, when it carried one
+    /// (FIX 12188).
+    principal_authority_frontier: Option<crate::authority::AuthorityEntryHash>,
     dissent: BTreeMap<String, ReviewDissent>,
+    /// Each critique whose dissent a caller is authoring now, with the process
+    /// run that claimed it (FIX 12161).
+    dissent_claims: BTreeMap<String, EntityId>,
     verdict: String,
     triage: CritiqueTriage,
     artifacts: Vec<CritiqueArtifact>,
@@ -305,15 +329,31 @@ pub(crate) fn declared_critiques_in_txn(
 ) -> Result<(BTreeMap<EntityId, Vec<DeclaredCritique>>, Vec<String>)> {
     let mut found: BTreeMap<EntityId, Vec<DeclaredCritique>> = BTreeMap::new();
     let mut unread = Vec::new();
+    // Reviews already reported unreadable stay silent (FIX 5251): the marks
+    // persist across calls, so each unreadable review is named once. A mark
+    // whose row reads again, or is gone, heals below.
+    let mut reported: BTreeSet<Vec<u8>> = UNREADABLE_REPORTED
+        .scan_keys(&vault.store, txn, &[])?
+        .into_iter()
+        .collect();
+    let mut encountered = BTreeSet::new();
+    let mut to_mark = Vec::new();
+    let mut to_unmark = Vec::new();
     for row in RESULT.iter_raw_from(&vault.store, txn, &[])? {
         let (key, value) = row?;
+        encountered.insert(key.clone());
         let stored = match RESULT.decode_value(&value) {
             Ok(stored) => stored,
             Err(error) => {
-                let key = crate::entity_id::bytes_to_hex_lower(&key);
+                if reported.contains(&key) {
+                    continue;
+                }
+                let hex = crate::entity_id::bytes_to_hex_lower(&key);
                 unread.push(format!(
-                    "stored review {key} does not read, so the run it was declared for is unknown: {error}"
+                    "stored review {hex} does not read, so the run it was declared for is unknown: {error}"
                 ));
+                reported.insert(key.clone());
+                to_mark.push(key);
                 continue;
             }
         };
@@ -321,8 +361,9 @@ pub(crate) fn declared_critiques_in_txn(
             continue;
         };
         let verdict_ref = EntityId::from_hex(&stored.verdict).ok();
+        let mut row_unread = Vec::new();
         if verdict_ref.is_none() {
-            unread.push(format!(
+            row_unread.push(format!(
                 "review {} declared for run {} keeps a verdict ref that does not read",
                 stored.verdict,
                 run.to_hex()
@@ -337,7 +378,7 @@ pub(crate) fn declared_critiques_in_txn(
                     verdict_ref,
                     artifact,
                 }),
-                Err(error) => unread.push(format!(
+                Err(error) => row_unread.push(format!(
                     "critique {} of review {} declared for run {} does not read: {error}",
                     artifact.artifact_id,
                     stored.verdict,
@@ -345,22 +386,52 @@ pub(crate) fn declared_critiques_in_txn(
                 )),
             }
         }
+        if row_unread.is_empty() {
+            if reported.remove(&key) {
+                to_unmark.push(key);
+            }
+        } else if reported.contains(&key) {
+            continue;
+        } else {
+            unread.extend(row_unread);
+            reported.insert(key.clone());
+            to_mark.push(key);
+        }
+    }
+    for key in reported.difference(&encountered) {
+        to_unmark.push(key.clone());
+    }
+    if !(to_mark.is_empty() && to_unmark.is_empty())
+        && let Err(error) = vault.with_write_txn_grouped(|wtxn| {
+            for key in &to_mark {
+                UNREADABLE_REPORTED.put(&vault.store, wtxn, key, &())?;
+            }
+            for key in &to_unmark {
+                UNREADABLE_REPORTED.delete(&vault.store, wtxn, key)?;
+            }
+            Ok(())
+        })
+    {
+        tracing::warn!(%error, "the unreadable-review marks did not persist: the reviews report again");
     }
     Ok((found, unread))
 }
 
-/// The verdict claim of the stored review holding each in-scope critique,
-/// keyed by the critique's branch and artifact id, read in the caller's
-/// snapshot (FIX 6380): the way back from a critique found on its branch to
-/// the review that wrote it. A critique two reviews hold names the first in
-/// stored order. One line names each review whose verdict ref does not read;
-/// a review that does not decode is skipped here, as
-/// [`declared_critiques_in_txn`] names it. A storage fault fails the pass.
+/// The verdict claim and declared run of every stored review holding each
+/// in-scope critique, keyed by the critique's branch and artifact id, read in
+/// the caller's snapshot (FIX 6380, FIX 9078): the way back from a critique
+/// found on its branch to the reviews that wrote it, in stored order. The
+/// caller picks the review declared for its run. One line names each review
+/// whose verdict ref does not read; a review that does not decode is skipped
+/// here, as [`declared_critiques_in_txn`] names it. A storage fault fails the pass.
 pub(crate) fn critique_review_refs_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-) -> Result<(BTreeMap<([u8; 16], String), EntityId>, Vec<String>)> {
-    let mut refs = BTreeMap::new();
+) -> Result<(
+    BTreeMap<([u8; 16], String), Vec<(EntityId, Option<EntityId>)>>,
+    Vec<String>,
+)> {
+    let mut refs: BTreeMap<([u8; 16], String), Vec<(EntityId, Option<EntityId>)>> = BTreeMap::new();
     let mut unread = Vec::new();
     for row in RESULT.iter_raw_from(&vault.store, txn, &[])? {
         let (_, value) = row?;
@@ -377,7 +448,8 @@ pub(crate) fn critique_review_refs_in_txn(
         for artifact in stored.artifacts {
             if !artifact.out_of_scope {
                 refs.entry((*artifact.branch_attempt.as_bytes(), artifact.artifact_id))
-                    .or_insert(verdict);
+                    .or_default()
+                    .push((verdict, stored.spawn_attempt));
             }
         }
     }
@@ -385,6 +457,9 @@ pub(crate) fn critique_review_refs_in_txn(
 }
 /// Calibration is node-local derived state, like the private critic artifacts it folds.
 /// A synced or raw claim is not a calibration event and cannot train this projector.
+/// The stamp is the body as the write gate landed it. The gate's own approval of a
+/// held write changes only its approval, so a body that is the stamped one with its
+/// approval moved from proposed or auto to approved or auto stays trusted (FIX 12189).
 pub(super) fn trusted_claim(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -394,7 +469,26 @@ pub(super) fn trusted_claim(
     let Some(held) = CLAIM_TRUST.get(&vault.store, txn, id)? else {
         return Ok(false);
     };
-    Ok(held == *blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
+    let stamps = |body: &ClaimBody| -> Result<bool> {
+        Ok(held == *blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
+    };
+    if stamps(body)? {
+        return Ok(true);
+    }
+    if !matches!(
+        body.approval,
+        ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+    ) {
+        return Ok(false);
+    }
+    for landed in [ClaimApprovalStatus::Proposed, ClaimApprovalStatus::Auto] {
+        let mut stamped = body.clone();
+        stamped.approval = landed;
+        if stamped.approval != body.approval && stamps(&stamped)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(super) fn persisted_artifact(
@@ -403,15 +497,25 @@ pub(super) fn persisted_artifact(
     artifact_id: &str,
 ) -> Result<CritiqueArtifact> {
     let txn = vault.store.env.read_txn()?;
+    persisted_artifact_in_txn(vault, &txn, verdict, artifact_id)
+}
+
+/// [`persisted_artifact`] in the caller's snapshot.
+pub(super) fn persisted_artifact_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    verdict: &EntityId,
+    artifact_id: &str,
+) -> Result<CritiqueArtifact> {
     let pointer = RESULT_ID
-        .get(&vault.store, &txn, verdict)?
+        .get(&vault.store, txn, verdict)?
         .ok_or(Error::EntityNotFound)?;
     let hash: [u8; 32] = pointer
         .strip_prefix(RESULT.decl().prefix)
         .and_then(|hash| hash.try_into().ok())
         .ok_or(Error::EntityNotFound)?;
     let stored = RESULT
-        .get(&vault.store, &txn, &hash)?
+        .get(&vault.store, txn, &hash)?
         .ok_or(Error::EntityNotFound)?;
     if stored.verdict != verdict.to_hex() {
         return Err(Error::CorruptedIndex("review result identity"));
@@ -423,59 +527,31 @@ pub(super) fn persisted_artifact(
         .ok_or_else(|| invalid_critic_config("artifact is not a finding in this persisted review"))
 }
 
-/// Resume partial dissent retention without creating a second note or question: the
-/// review's principal, the class it authenticated as when the review kept one, the
-/// dissent so far and the triage verdict.
-pub(super) fn dissent_state(
+/// The actor that wrote `verdict`'s review: its principal, as the class it
+/// authenticated as, with the run attempt and authority frontier it carried
+/// (FIX 12188). It writes the outcome an anchored settlement no owner
+/// decided gives a critique of that review (FIX 12106).
+pub(super) fn review_actor_in_txn(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     verdict: &EntityId,
-    artifact: &str,
-) -> Result<(
-    EntityId,
-    Option<crate::EdgeActorClass>,
-    ReviewDissent,
-    CritiqueVerdict,
-)> {
-    let txn = vault.store.env.read_txn()?;
-    let body = vault
-        .get_claim_in_txn(&txn, verdict)?
-        .ok_or(Error::EntityNotFound)?;
-    if !trusted_claim(vault, &txn, verdict, &body)? {
-        return Err(invalid_critic_config(
-            "dissent requires a producer-bound review",
-        ));
-    }
-    let hash = result_hash(vault, &txn, verdict)?;
+) -> Result<WriteActor> {
+    let hash = result_hash(vault, txn, verdict)?;
     let stored = RESULT
-        .get(&vault.store, &txn, &hash)?
+        .get(&vault.store, txn, &hash)?
         .ok_or(Error::EntityNotFound)?;
-    let state = stored
-        .dissent
-        .get(artifact)
-        .cloned()
-        .unwrap_or_else(|| ReviewDissent {
-            artifact_id: artifact.to_owned(),
-            note: None,
-            question: None,
-            settled_fact: None,
-        });
     let class = stored
         .principal_class
-        .and_then(crate::EdgeActorClass::try_from_u8);
-    Ok((stored.principal, class, state, stored.triage.verdict))
-}
-
-pub(super) fn save_dissent(vault: &Vault, verdict: &EntityId, state: &ReviewDissent) -> Result<()> {
-    vault.with_write_txn_grouped(|txn| {
-        let hash = result_hash(vault, txn, verdict)?;
-        let mut stored = RESULT
-            .get(&vault.store, txn, &hash)?
-            .ok_or(Error::EntityNotFound)?;
-        stored
-            .dissent
-            .insert(state.artifact_id.clone(), state.clone());
-        RESULT.put(vault, txn, &hash, &stored)
-    })
+        .and_then(crate::EdgeActorClass::try_from_u8)
+        .ok_or_else(|| invalid_critic_config("review keeps no principal class"))?;
+    let mut actor = WriteActor::new(stored.principal, class);
+    if let Some(attempt) = stored.principal_run_attempt {
+        actor = actor.with_run_attempt(attempt);
+    }
+    if let Some(frontier) = stored.principal_authority_frontier {
+        actor = actor.with_authority_frontier(frontier);
+    }
+    Ok(actor)
 }
 
 fn result_hash(vault: &Vault, txn: &heed::RoTxn<'_>, verdict: &EntityId) -> Result<[u8; 32]> {
@@ -488,27 +564,14 @@ fn result_hash(vault: &Vault, txn: &heed::RoTxn<'_>, verdict: &EntityId) -> Resu
         .ok_or(Error::CorruptedIndex("review result identity"))
 }
 
-pub(super) fn reviews_with_dissent(vault: &Vault) -> Result<Vec<ReviewResult>> {
-    let txn = vault.store.env.read_txn()?;
-    RESULT
-        .scan_from(&vault.store, &txn, &[])?
-        .into_iter()
-        .filter(|(_, stored)| {
-            stored
-                .dissent
-                .values()
-                .any(|state| state.question.is_some())
-        })
-        .map(|(_, stored)| {
-            Ok(ReviewResult {
-                verdict_claim: EntityId::from_hex(&stored.verdict)?,
-                triage: stored.triage,
-                artifacts: stored.artifacts,
-                receipts: stored.receipts,
-                spawn_attempt: stored.spawn_attempt,
-            })
-        })
-        .collect()
+fn stored_result(stored: StoredReview) -> Result<ReviewResult> {
+    Ok(ReviewResult {
+        verdict_claim: EntityId::from_hex(&stored.verdict)?,
+        triage: stored.triage,
+        artifacts: stored.artifacts,
+        receipts: stored.receipts,
+        spawn_attempt: stored.spawn_attempt,
+    })
 }
 
 /// The persisted review `verdict` of `target`, read back through its
@@ -558,4 +621,131 @@ pub(crate) fn trusted_review_in_txn(
         receipts: stored.receipts,
         spawn_attempt: stored.spawn_attempt,
     }))
+}
+
+/// Tears every review claim about erased `entity` first (FIX 12073): its verdicts, their
+/// automatic outcomes and outcomes, and the outcomes of its session. Then re-keys the session
+/// tag of every review verdict and automatic outcome still naming `entity` to one fresh opaque
+/// id (FIX 11363), its trust stamp with it. Gives back the verdicts it re-keyed, for their
+/// cached rows' move.
+pub(crate) fn erase_review_session_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<Vec<EntityId>> {
+    erased_claims::erase_review_claims_in_txn(vault, wtxn, entity)?;
+    let named = entity.to_hex();
+    let mut opaque = None;
+    let mut verdicts = Vec::new();
+    for predicate in [
+        "review.verdict",
+        "review.automatic_outcome",
+        "review.outcome",
+    ] {
+        let mut ids = Vec::new();
+        vault.for_each_claim_with_predicate_in_txn(wtxn, predicate, |id, body| {
+            if body.session_tag.as_deref() == Some(named.as_str()) {
+                ids.push(id);
+            }
+            Ok(())
+        })?;
+        for id in ids {
+            let Some(mut body) = vault.get_claim_in_txn(wtxn, &id)? else {
+                continue;
+            };
+            let opaque_id = match opaque {
+                Some(opaque) => opaque,
+                None => {
+                    let id = vault.store.clock.entity_id()?;
+                    opaque = Some(id);
+                    id
+                }
+            };
+            body.session_tag = Some(opaque_id.to_hex());
+            rewrite_review_claim_in_txn(vault, wtxn, &id, &body)?;
+            if predicate == "review.verdict" {
+                verdicts.push(id);
+            }
+        }
+    }
+    Ok(verdicts)
+}
+
+/// Applies the erase's artifact rename map to every review verdict's findings (FIX
+/// 11368): the claim value names each finding's artifact ids.
+pub(crate) fn rewrite_verdict_artifact_ids_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    renamed: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    let mut ids = Vec::new();
+    vault.for_each_claim_with_predicate_in_txn(wtxn, "review.verdict", |id, _| {
+        ids.push(id);
+        Ok(())
+    })?;
+    for id in ids {
+        let Some(mut body) = vault.get_claim_in_txn(wtxn, &id)? else {
+            continue;
+        };
+        let mut value = body.value.clone();
+        rename_value_strings(&mut value, renamed);
+        if value == body.value {
+            continue;
+        }
+        body.value = value;
+        rewrite_review_claim_in_txn(vault, wtxn, &id, &body)?;
+    }
+    Ok(())
+}
+
+/// Writes `body` over claim `id` in place, its header times kept, its trust stamp
+/// re-hashed over the rewritten bytes.
+fn rewrite_review_claim_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    body: &crate::claim::ClaimBody,
+) -> Result<()> {
+    let raw = vault.get_raw_in(wtxn, id)?.ok_or(Error::EntityNotFound)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("review claim header"))?;
+    vault.put_reserved_claim_in_txn(
+        wtxn,
+        id,
+        body,
+        crate::temporal::TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        },
+        header.learned_at,
+    )?;
+    let digest = blake3::hash(&crate::claim::encode_claim_body(body)?);
+    CLAIM_TRUST.put(&vault.store, wtxn, id, digest.as_bytes())?;
+    Ok(())
+}
+
+/// Replaces every string in `value`, map keys included, that `renamed` maps.
+fn rename_value_strings(
+    value: &mut rmpv::Value,
+    renamed: &std::collections::BTreeMap<String, String>,
+) {
+    match value {
+        rmpv::Value::String(text) => {
+            if let Some(new) = text.as_str().and_then(|text| renamed.get(text)) {
+                *value = rmpv::Value::from(new.as_str());
+            }
+        }
+        rmpv::Value::Array(items) => {
+            for item in items {
+                rename_value_strings(item, renamed);
+            }
+        }
+        rmpv::Value::Map(entries) => {
+            for (key, item) in entries {
+                rename_value_strings(key, renamed);
+                rename_value_strings(item, renamed);
+            }
+        }
+        _ => {}
+    }
 }

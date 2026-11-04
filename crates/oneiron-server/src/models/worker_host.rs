@@ -36,13 +36,13 @@ mod probe;
 mod process;
 mod session;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use oneiron::llm::run_admission::WorkContext;
+use oneiron::llm::run_admission::{WorkContext, record_work_parent};
 use oneiron::llm::{
     CallSchedule, InferenceCallReceipt, SchedulingCapability, WorkClass, WorkerKind, WorkerMode,
     WorkerStatus,
@@ -50,10 +50,11 @@ use oneiron::llm::{
 use oneiron_driver::{
     AdmissionStop, DeclaredEnvelope, DeviceAdmission, DeviceGrant, DeviceLedger,
     ExecutorRegistration, InferenceWorker, PressureDecision, UnloadOutcome, WorkEnvelope,
-    WorkRequest, WorkTicket, WorkerPolicy, WorkerProbe, WorkerSpec,
+    WorkRequest, WorkTicket, WorkerActivity, WorkerPolicy, WorkerProbe, WorkerSpec,
 };
 
 use crate::config::models::{ProviderConfig, WorkerConfig, WorkerEnvelope};
+use futures_util::future::select_all;
 use launch_manifest::LaunchSlot;
 use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
@@ -63,7 +64,7 @@ use serde_json::Value as JsonValue;
 pub(super) use session::open_turn;
 pub(crate) use session::{
     AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
-    reply_committed, turn_admitted,
+    reply_committed, rung_admitted, turn_admitted,
 };
 
 /// The process's one worker host, made when the first worker is configured
@@ -168,22 +169,107 @@ impl BoundWork {
             self.armed = false;
             return Ok(None);
         };
-        let grant = match ticket.resolve_pressure() {
-            PressureDecision::Grant(grant) => {
-                self.armed = false;
-                return Ok(Some(grant));
+        let mut tried = BTreeSet::new();
+        let mut victim_changes = Vec::new();
+        loop {
+            match ticket.resolve_pressure_excluding(&tried) {
+                PressureDecision::Grant(grant) => {
+                    self.armed = false;
+                    return Ok(Some(grant));
+                }
+                PressureDecision::Stop(stop) => return Err(stop),
+                PressureDecision::UnloadIdle(worker) => {
+                    if let Some(victim) = hosted_worker(&worker) {
+                        victim_changes.push(victim.subscribe_changed());
+                    }
+                    let unload = unload_idle_worker(&worker);
+                    tokio::pin!(unload);
+                    let stop = loop {
+                        let changed = ticket.pressure_change();
+                        tokio::pin!(changed);
+                        changed.as_mut().enable();
+                        let cancel_changed = ticket.cancel_change();
+                        tokio::pin!(cancel_changed);
+                        cancel_changed.as_mut().enable();
+                        if let Some(stop) = ticket.stop() {
+                            break Some(stop);
+                        }
+                        let deadline = ticket.deadline();
+                        tokio::select! {
+                            _ = unload.as_mut() => break None,
+                            () = changed.as_mut() => continue,
+                            () = cancel_changed.as_mut() => continue,
+                            () = async {
+                                if let Some(deadline) = deadline {
+                                    tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+                                } else {
+                                    std::future::pending::<()>().await;
+                                }
+                            } => {
+                                ticket.cancel();
+                                return Err(AdmissionStop::Deadline);
+                            }
+                        }
+                    };
+                    if let Some(stop) = stop {
+                        return Err(stop);
+                    }
+                    tried.insert(worker.clone());
+                    continue;
+                }
+                PressureDecision::ApprovedSmallerProfile(_) | PressureDecision::Wait => {}
             }
-            PressureDecision::Stop(stop) => return Err(stop),
-            PressureDecision::UnloadIdle(worker) => {
-                let _ = unload_idle_worker(&worker).await;
-                ticket.wait_execution_grant().await?
+
+            // Arm every wake before the final no-room check. A deferred
+            // victim whose own demand drops is heard through its worker watch;
+            // admission hears grants, releases, loads and fresh idle rows.
+            let changed = ticket.pressure_change();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            let cancel_changed = ticket.cancel_change();
+            tokio::pin!(cancel_changed);
+            cancel_changed.as_mut().enable();
+            match ticket.resolve_pressure_excluding(&tried) {
+                PressureDecision::Grant(grant) => {
+                    self.armed = false;
+                    return Ok(Some(grant));
+                }
+                PressureDecision::Stop(stop) => return Err(stop),
+                PressureDecision::UnloadIdle(_) => continue,
+                PressureDecision::ApprovedSmallerProfile(_) | PressureDecision::Wait => {}
             }
-            PressureDecision::ApprovedSmallerProfile(_) | PressureDecision::Wait => {
-                ticket.wait_execution_grant().await?
+            let victim_wake = async move {
+                if victim_changes.is_empty() {
+                    std::future::pending::<()>().await;
+                } else {
+                    select_all(victim_changes.into_iter().map(|mut receiver| {
+                        Box::pin(async move {
+                            let _ = receiver.changed().await;
+                        })
+                    }))
+                    .await;
+                }
+            };
+            tokio::pin!(victim_wake);
+            let deadline = ticket.deadline();
+            tokio::select! {
+                () = changed.as_mut() => {},
+                () = cancel_changed.as_mut() => {},
+                _ = victim_wake => {},
+                () = async {
+                    if let Some(deadline) = deadline {
+                        tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    ticket.cancel();
+                    return Err(AdmissionStop::Deadline);
+                }
             }
-        };
-        self.armed = false;
-        Ok(Some(grant))
+            tried.clear();
+            victim_changes = Vec::new();
+        }
     }
 
     #[must_use]
@@ -255,6 +341,31 @@ pub(super) fn snapshot_policy(policy: &crate::config::models::snapshots::Snapsho
     let _ = policy;
 }
 
+/// Stops and removes a replaced worker's old device queue only when no hosted
+/// row still binds that device. The shared ledger stays for cross-runtime use.
+fn stop_device_admission_if_unused(host: &WorkerHost, device: &str) {
+    let workers = host.lock();
+    let still_bound = workers.values().any(|hosted| {
+        hosted
+            .row
+            .launch
+            .as_ref()
+            .and_then(|launch| launch.device.as_deref())
+            == Some(device)
+    });
+    if still_bound {
+        return;
+    }
+    let admission = host
+        .admissions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(device);
+    if let Some(admission) = admission {
+        admission.stop();
+    }
+}
+
 /// The device ledger of the device managed worker `worker_id` launches on,
 /// when its launch names one: what a snapshot transfer may take there.
 #[cfg(unix)]
@@ -288,6 +399,16 @@ async fn unload_idle_worker(worker_id: &str) -> UnloadOutcome {
     }
 }
 
+/// Returns one hosted supervisor by id: a victim-watch subscription, or a
+/// released-body stats report naming its worker (FIX 9297).
+pub(super) fn hosted_worker(worker_id: &str) -> Option<InferenceWorker> {
+    HOST.get().and_then(|host| {
+        host.lock()
+            .get(worker_id)
+            .map(|hosted| hosted.worker.clone())
+    })
+}
+
 /// Takes a device ticket for one bound call before its worker acquire. No
 /// device means the route keeps its existing unmediated path. `envelope` is
 /// the call's incremental charge beyond the worker's steady declaration.
@@ -308,11 +429,24 @@ pub(super) fn admit_bound_work(
         );
         request.envelope = envelope;
         request.class = context.class;
+        request.physical = context.physical;
         request.priority = context.priority;
         request.deadline = context.deadline;
-        request.parent = context.parent;
+        // A parent resolves only against the admission its ticket was
+        // taken on (FIX 11960): the same number on another admission is
+        // unrelated work, and parents nothing.
+        request.parent = context
+            .parent
+            .filter(|_| context.parent_admission == Some(admission.admission_id()));
         request.cancel = context.cancel.shared();
-        Some(admission.enqueue(request))
+        request.cancel_changed = context.cancel.shared_notify();
+        let ticket = admission.enqueue(request);
+        // The run or attempt behind this context parents its retries and
+        // scoped children on this ticket (FIX 11960).
+        if let Some(entity) = context.entity {
+            record_work_parent(entity, ticket.admission_id(), ticket.ticket);
+        }
+        Some(ticket)
     });
     BoundWork {
         ticket,
@@ -351,6 +485,13 @@ pub(super) fn register_device_executor(worker_id: &str, idle: bool) {
             external,
             idle,
         });
+}
+
+/// Publishes one worker-reported activity snapshot to both admission and
+/// the supervisor without deriving either side from the other.
+pub(super) fn report_device_activity(worker: &InferenceWorker, activity: WorkerActivity) {
+    register_device_executor(&worker.spec().worker_id, activity.is_idle());
+    worker.report(activity);
 }
 
 /// Cross-checks a worker's own device capacity report with the pre-load
@@ -438,7 +579,14 @@ pub(super) fn configure(
                         slot,
                     };
                     match workers.insert(row.id.clone(), hosted) {
-                        Some(old) => replaced.push((old.worker, worker.clone())),
+                        Some(old) => {
+                            let old_device = old
+                                .row
+                                .launch
+                                .as_ref()
+                                .and_then(|launch| launch.device.clone());
+                            replaced.push((old.worker, worker.clone(), old_device));
+                        }
                         None => started.push(worker.clone()),
                     }
                     worker
@@ -451,9 +599,12 @@ pub(super) fn configure(
         host.begin(&worker);
     }
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        for (old, new) in replaced {
+        for (old, new, old_device) in replaced {
             runtime.spawn(async move {
                 old.retire().await;
+                if let Some(device) = old_device {
+                    stop_device_admission_if_unused(host, &device);
+                }
                 host.begin(&new);
             });
         }

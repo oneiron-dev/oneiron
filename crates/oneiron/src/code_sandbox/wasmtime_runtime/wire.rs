@@ -390,14 +390,14 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 }));
             }
             if verb == AgentVerb::Ask {
-                let request: crate::task_verb::sdk::TaskAskRequest = decode(args.input)?;
+                let request: crate::task_verb::TaskAskRequest = decode(args.input)?;
                 let spec = request
                     .into_spec()
                     .map_err(|_| failure("invalid ask input"))?;
                 return Ok(SelfCall::TasksAsk(Box::new(spec)));
             }
             if verb == AgentVerb::Wait {
-                let request: crate::task_verb::sdk::TaskWaitRequest = decode(args.input)?;
+                let request: crate::task_verb::TaskWaitRequest = decode(args.input)?;
                 return Ok(SelfCall::TasksWait(request.handle));
             }
             // A reader child's finding names one of its own results, which
@@ -408,7 +408,7 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                     .get("resultRef")
                     .is_some_and(|result| !result.is_null())
             {
-                let request: crate::task_verb::sdk::TaskUpdateRequest = decode(args.input)?;
+                let request: crate::task_verb::TaskUpdateRequest = decode(args.input)?;
                 // A typed report sent beside the result would be dropped
                 // here, so the call is refused instead.
                 if request.report.is_some()

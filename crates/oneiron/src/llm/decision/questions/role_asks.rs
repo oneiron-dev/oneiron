@@ -33,7 +33,7 @@ use crate::{
 const QUESTION_UNIT_ASK_DOMAIN: &[u8] = b"oneiron:question-unit-ask:v1";
 
 /// Every graph or artifact unit's person ask, keyed by its arrival number.
-const UNIT_ASKS: SideTable<u64, QuestionUnitAsk, Named> =
+pub(super) const UNIT_ASKS: SideTable<u64, QuestionUnitAsk, Named> =
     SideTable::new(&side_table::TYPED_QUESTION_UNIT_ASK);
 
 /// One unit's person ask: the unit (an artifact unit's artifact), the declined decision it

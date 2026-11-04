@@ -9,23 +9,28 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatchTarget, SpawnPlanReceipt,
-    decode_agent_dispatch_input, load_team_type_tree_in_txn, team_pattern,
-};
+use crate::agent_dispatch::AgentDispatchInput;
+use crate::agent_dispatch::SpawnPlanReceipt;
+use crate::agent_dispatch::decode_agent_dispatch_input;
+use crate::agent_dispatch::load_team_type_tree_in_txn;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestKind};
+use crate::claim::dispatch_target::AgentDispatchTarget;
+use crate::claim::learning_evidence::Anchor;
 use crate::critic::review::{
     DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn,
 };
 use crate::critic::{CritiqueArtifact, CritiqueArtifactStore, CritiqueVerdict};
-use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
+use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::error::{Error, Result};
+use crate::learning::LearningCell;
 use crate::learning::evidence::evidence_in_txn;
 use crate::learning::read::read_learning_in_txn;
-use crate::learning::{Anchor, LearningCell};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::task_type::TypeTree;
+use crate::team::team_shape::team_pattern;
 use crate::{EntityId, Vault};
 
 use super::doors::{
@@ -606,7 +611,18 @@ fn critiques(
                 *artifact.branch_attempt.as_bytes(),
                 artifact.artifact_id.clone(),
             );
-            let verdict_ref = declared_ref.or_else(|| reviewed.get(&key).copied());
+            // The review declared for this run names the critique (FIX 9078);
+            // a critique no review declares for it keeps the first in stored
+            // order, as before.
+            let verdict_ref = declared_ref.or_else(|| {
+                reviewed.get(&key).and_then(|reviews| {
+                    reviews
+                        .iter()
+                        .find(|(_, run)| *run == Some(member.attempt_ref))
+                        .map(|(verdict, _)| *verdict)
+                        .or_else(|| reviews.first().map(|(verdict, _)| *verdict))
+                })
+            });
             if let Some(listed) = seen.get(&key) {
                 // Listed under its first association; a later declared one
                 // still names the review the caller declared for the run.
@@ -625,15 +641,15 @@ fn critiques(
     Ok(critics)
 }
 
-/// The verdict claim of the stored review holding each critique (FIX 6380),
-/// from one pass over the stored reviews. A verdict ref that does not read
-/// is an issue, and so is a pass that fails: the critiques are listed
-/// still, naming no review.
+/// The verdict claim and declared run of every stored review holding each
+/// critique (FIX 6380, FIX 9078), from one pass over the stored reviews. A
+/// verdict ref that does not read is an issue, and so is a pass that fails:
+/// the critiques are listed still, naming no review.
 fn critique_reviews(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     issues: &mut Vec<ObservationIssue>,
-) -> BTreeMap<([u8; 16], String), EntityId> {
+) -> BTreeMap<([u8; 16], String), Vec<(EntityId, Option<EntityId>)>> {
     match critique_review_refs_in_txn(vault, txn) {
         Ok((refs, unread)) => {
             for reason in unread {

@@ -7,7 +7,8 @@
 //! the server's browser readiness, as every browser guest start does.
 //! `native_mail.jmap` connects to the `[native_mail]` server with the stored
 //! credential, as the native mail host does, and reads its domain; it sends
-//! no mail and changes no DNS.
+//! no mail and changes no DNS. The built-in channels' isolated probes
+//! (FIX 710) rerun these checks on fresh transports ([`super::probes`]).
 
 use std::io;
 use std::net::{SocketAddr, TcpStream};
@@ -18,6 +19,7 @@ use oneiron::channel_identity_provider::stalwart::StalwartClient;
 use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_sandbox::egress::EgressConfig;
 use oneiron::code_sandbox::microvm::select_backend_for_session;
+use oneiron::connector_key::qualification::QualificationConnector;
 use oneiron::connector_key::{
     BROWSER_SESSION_CHECK, NATIVE_MAIL_JMAP_CHECK, PackConnectionCheck, PackConnectionEvidence,
     PackConnectionVerifier, ProviderConnectionChecks,
@@ -84,13 +86,24 @@ impl PackConnectionVerifier for HostConnectionChecks {
             _ => self.provider.verify(vault, check),
         }
     }
+
+    /// Slack, LINE, Telegram and, with a `[native_mail]` server, native
+    /// mail: each channel's own check call, read on fresh transports.
+    fn builtin_probe<'a>(
+        &'a self,
+        vault: &'a Vault,
+        check: PackConnectionCheck<'a>,
+    ) -> Option<Box<dyn QualificationConnector + 'a>> {
+        super::probes::BuiltinChannelProbe::for_check(vault, check, self.native_mail.as_ref())
+            .map(|probe| Box::new(probe) as Box<dyn QualificationConnector + 'a>)
+    }
 }
 
 /// Connects to the host's mail server with the connection's first credential
 /// and reads its domain, through the engine's Stalwart client. The stored
 /// value is the whole `Authorization` header (`Basic ...` or `Bearer ...`)
 /// or a bare bearer token; it never leaves the credential door's closure.
-fn native_mail_ready(
+pub(super) fn native_mail_ready(
     vault: &Vault,
     check: &PackConnectionCheck<'_>,
     server: &NativeMailConfig,
@@ -105,21 +118,7 @@ fn native_mail_ready(
     let mut connected = None;
     vault
         .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
-            let value = std::str::from_utf8(value)
-                .map_err(|_| {
-                    oneiron::Error::InvalidConfig("the stored credential is not text".to_owned())
-                })?
-                .trim();
-            let header = if value.starts_with("Basic ") || value.starts_with("Bearer ") {
-                value.to_owned()
-            } else {
-                format!("Bearer {value}")
-            };
-            let header = reqwest::header::HeaderValue::from_str(&header).map_err(|_| {
-                oneiron::Error::InvalidConfig(
-                    "the stored credential is not a header value".to_owned(),
-                )
-            })?;
+            let header = native_mail_authorization(value)?;
             connected = Some(
                 StalwartClient::connect(placement.clone(), header)
                     .map(|_| ())
@@ -138,6 +137,25 @@ fn native_mail_ready(
         provider_account: Some(placement.domain().to_owned()),
         scopes: Vec::new(),
         evidence: blake3::hash(proof.as_bytes()).to_hex().to_string(),
+    })
+}
+
+/// The stored mail server credential as the `Authorization` header the
+/// Stalwart client presents: the whole header (`Basic ...` or `Bearer ...`),
+/// or a bare bearer token.
+pub(super) fn native_mail_authorization(
+    value: &[u8],
+) -> oneiron::Result<reqwest::header::HeaderValue> {
+    let value = std::str::from_utf8(value)
+        .map_err(|_| oneiron::Error::InvalidConfig("the stored credential is not text".to_owned()))?
+        .trim();
+    let header = if value.starts_with("Basic ") || value.starts_with("Bearer ") {
+        value.to_owned()
+    } else {
+        format!("Bearer {value}")
+    };
+    reqwest::header::HeaderValue::from_str(&header).map_err(|_| {
+        oneiron::Error::InvalidConfig("the stored credential is not a header value".to_owned())
     })
 }
 

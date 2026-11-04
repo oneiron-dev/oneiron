@@ -22,19 +22,22 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::entity_id::EntityId;
-use crate::skill::SkillRecord;
 use crate::skill_hub::osv::{OsvDevClient, OsvQuery};
 use crate::skill_hub::{
-    CallerPermissions, HubRef, MarketplaceFit, RefFetch, RuleSkillFit, SkillFitSetting,
-    pinned_tracking,
+    CallerPermissions, MarketplaceFit, RefFetch, RuleSkillFit, SkillFitSetting, pinned_tracking,
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
+use crate::write_envelope::skill_record::SkillRecord;
+use crate::write_envelope::skill_source::HubRef;
 use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteProvenance};
 use rmpv::Value;
 
 mod receipt_erase;
 pub(crate) use receipt_erase::erase_section_fit_receipts_in_txn;
+pub(crate) use receipt_erase::{
+    scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
+};
 
 /// The engine-owned receipt a fitted install leaves on its skill. `skill.*`
 /// is a reserved namespace: no generic claim door can write one, so only

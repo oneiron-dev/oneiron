@@ -5,12 +5,12 @@ use std::collections::BTreeSet;
 
 use crate::claim::{ClaimBody, claim_sensitivity_band};
 use crate::error::{Error, Result};
-use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
+use oneiron_model::llm::{BudgetExhaustionPolicy, BudgetGuard};
 
 use super::manifest_types::{AuthoredMin, ConnectorClassPrecedence};
 use super::manifest_types::{
@@ -25,8 +25,9 @@ use crate::gate::decode::{DecodedManifestCarrier, decode_policy_manifest};
 
 mod doors;
 mod fold;
+mod snapshot_cache;
 
-pub(crate) use self::fold::resolve_policy_manifest;
+pub(crate) use self::snapshot_cache::resolve_policy_manifest;
 
 /// The vault ceiling on any project's depth row: the resolved manifest row,
 /// a holder-authored value in place of the shipped fallback (C1). A loaded

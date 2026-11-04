@@ -4,9 +4,9 @@ use std::ops::Bound;
 use serde::{Deserialize, Serialize};
 
 use super::field_set::{
-    FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, append_pack_attribution_fields,
-    append_pack_manifest_fields, append_pack_source_rows_fields, append_task_project_field,
-    append_task_type_fields, append_team_receipt_fields,
+    FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEASE_GENERATION,
+    append_pack_attribution_fields, append_pack_manifest_fields, append_pack_source_rows_fields,
+    append_task_project_field, append_task_type_fields, append_team_receipt_fields,
 };
 use super::kernel::{
     FIELD_AUDIT_REGISTER, FIELD_CARE_REGISTER, FIELD_ENGINE_REGISTER, FIELD_INTENT_REF,
@@ -20,8 +20,9 @@ use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound::OutboundIntent;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::EngineScan;
 use crate::store::{SEND_RECEIPT_RECORD_VERSION, Store};
 
 /// `vault_meta` keyspace of the attempt PACK RECEIPT ledger. The suffix is the
@@ -125,7 +126,7 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         if record
             .manifest()
             .iter()
-            .any(|entry| entry.kind == crate::attempt_queue::ManifestKind::Skill)
+            .any(|entry| entry.kind == crate::store::attempt_manifest::ManifestKind::Skill)
             && record.executor_model.is_none()
         {
             return Err(Error::InvalidClaimBody(
@@ -176,6 +177,12 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     if let Some(team) = &team {
         append_team_receipt_fields(&mut receipt.fields, team);
     }
+    // FIX 8259: the lease generation it settled under. Additive; the receipt
+    // id is unchanged and old rows decode without it.
+    receipt.fields.insert(
+        FIELD_LEASE_GENERATION.to_owned(),
+        record.attempt_count.to_string(),
+    );
     PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, &receipt)?;
     Ok(())
 }
@@ -354,18 +361,45 @@ pub(super) fn decode_durable_send_receipt(
 
 /// This projector reads its entire existing audit source; it has no source cap.
 pub(super) fn scan_durable_send_receipts(vault: &Vault) -> Result<ReceiptScan> {
-    durable_send_receipts(vault).map(ReceiptScan::from_complete_records)
+    durable_send_receipts(vault).map(|(records, undecodable)| {
+        let mut scan = ReceiptScan::from_complete_records(records);
+        scan.undecodable = u32::try_from(undecodable.len()).unwrap_or(u32::MAX);
+        scan
+    })
 }
 
-pub(crate) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
-    vault
-        .store
-        .send_receipt_rows()?
-        .into_iter()
-        .map(|(task_id, raw)| {
-            decode_durable_send_receipt(&task_id, &raw).map(|durable| durable.receipt)
-        })
-        .collect()
+/// The send receipt rows that decode, beside the hex task refs of the rows
+/// that do not (FIX 11952): one undecodable row no longer fails the whole
+/// read. A read error of the table itself still fails.
+pub(crate) fn durable_send_receipts(vault: &Vault) -> Result<(Vec<ReceiptRecord>, Vec<String>)> {
+    let mut records = Vec::new();
+    let mut undecodable = Vec::new();
+    for (task_id, raw) in vault.store.send_receipt_rows()? {
+        match decode_durable_send_receipt(&task_id, &raw) {
+            Ok(durable) => records.push(durable.receipt),
+            Err(_) => undecodable.push(crate::entity_id::bytes_to_hex_lower(&task_id)),
+        }
+    }
+    Ok((records, undecodable))
+}
+
+/// Every durable send receipt that decodes, each with its TASK id, and the
+/// TASK id of each row that does not, so one bad row never hides the
+/// receipts beside it. Only a store failure fails the scan.
+pub(crate) fn durable_send_receipts_lenient(
+    vault: &Vault,
+) -> Result<(Vec<(EntityId, ReceiptRecord)>, Vec<EntityId>)> {
+    let mut receipts = Vec::new();
+    let mut undecodable = Vec::new();
+    for (task_id, raw) in vault.store.send_receipt_rows()? {
+        // The row's key is the TASK id the ledger stored it under.
+        let task_ref = EntityId::from_bytes_unchecked(task_id);
+        match decode_durable_send_receipt(&task_id, &raw) {
+            Ok(durable) => receipts.push((task_ref, durable.receipt)),
+            Err(_) => undecodable.push(task_ref),
+        }
+    }
+    Ok((receipts, undecodable))
 }
 
 /// Builds an outbound receipt row from the OF-327 intent spine.

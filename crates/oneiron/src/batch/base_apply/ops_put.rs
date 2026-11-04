@@ -28,6 +28,8 @@ pub(super) fn apply_put_arm(
     mut put_options: PutOptions,
     origin: BaseWriteOrigin<'_>,
     text_index_trusted: bool,
+    authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
+    own_device: Option<&VerifiedOwnDeviceLane>,
 ) -> Result<()> {
     let mut data = Zeroizing::new(data);
     entity_type = validate_put_type(
@@ -64,7 +66,7 @@ pub(super) fn apply_put_arm(
     )? {
         let owner = crate::vault::embedded_owner_actor_id()?;
         if state.birth_mask.is_none()
-            && facet == crate::claim::substrate_facet_id(owner)?
+            && facet == crate::write_envelope::claim_body::substrate_facet_id(owner)?
             && stored_entity_type(store, wtxn, &owner)?.is_none()
         {
             apply_ops_with_origin(
@@ -105,7 +107,7 @@ pub(super) fn apply_put_arm(
             facet,
             1.0,
             learned_at,
-            crate::affect::Vad::NEUTRAL,
+            oneiron_contracts::affect::Vad::NEUTRAL,
             None,
         )?;
         ppr::invalidate_ppr_for_edge(store, wtxn, &id, &facet)?;
@@ -124,6 +126,7 @@ pub(super) fn apply_put_arm(
     put_options.consent.can_resolve_pending =
         state.pending_gate_consent_at_batch_start.contains(&id);
     put_options.decision.preflight = preflight_decision_id;
+    let pending_prompt = super::pending_prompt_for(&state.births, &id);
     // A TURN or MESSAGE written again may change its words under a
     // temporal key the sieve has passed: its turn is owed a new
     // sieve read in this commit. A new TURN is owed its first
@@ -135,7 +138,7 @@ pub(super) fn apply_put_arm(
     );
     let rewritten = text_row && stored_entity_type(store, wtxn, &id)?.is_some();
     let born_turn = entity_type == crate::registry::ENTITY_TYPE_TURN && !rewritten;
-    let applied = apply_put(
+    let applied = apply_put_beside(
         store,
         wtxn,
         PutRequest {
@@ -159,8 +162,11 @@ pub(super) fn apply_put_arm(
                 transition: transition.as_ref(),
                 posture: config.privacy.posture,
                 owner_authored: None,
+                pending_prompt: pending_prompt.as_deref(),
             },
         },
+        authority_beside,
+        own_device,
     )?;
     consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
     if rewritten {
@@ -230,9 +236,9 @@ pub(super) fn apply_put_arm(
         .extend(applied.evicted_shell_sources);
     #[cfg(feature = "sync")]
     let pending_embedding_priority = if allow_maintenance && allow_reserved_predicate {
-        crate::embed::EMBED_PRIORITY_SERVER
+        crate::store::embedding::EMBED_PRIORITY_SERVER
     } else {
-        crate::embed::EMBED_PRIORITY_DEVICE
+        crate::store::embedding::EMBED_PRIORITY_DEVICE
     };
     if let Some(token) = applied.pending_embedding_token {
         state.pending_embedding_tokens_written.insert(id, token);

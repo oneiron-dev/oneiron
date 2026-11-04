@@ -270,8 +270,9 @@ pub enum JsResultRef {
 }
 
 /// A result reference, and the byte range of its body it is narrowed to:
-/// `<name-or-handle>#<start>-<end>`, as a chunk names one. A range persists
-/// nothing; every read of it is a read of its parent, checked as one.
+/// `<name-or-handle-or-occurrence>#<start>-<end>`, as a chunk names one. A
+/// range persists nothing; every read of it is a read of its parent, checked
+/// as one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsResultTarget {
     pub reference: JsResultRef,
@@ -378,6 +379,12 @@ pub trait JsCodeModeHost {
     /// as the call ends, however it ends. Nothing waits on it and nothing is
     /// refused for it. A host with no run to keep it by checks nothing.
     fn start_callable_check(&mut self, _seq: u64, _program: CallableProgram<'_>) {}
+
+    /// The actor this host's run writes as: who a callable skill's call is
+    /// made for. A host with no such actor answers `None`.
+    fn caller_entity(&self) -> Option<EntityId> {
+        None
+    }
 
     /// [`Self::dispatch_self_nested`] for a caller whose step `cancel` may
     /// stop (FIX 600). A host that runs the nested step overrides it and

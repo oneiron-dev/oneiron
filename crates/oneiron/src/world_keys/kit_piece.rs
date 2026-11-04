@@ -1,0 +1,226 @@
+//! This machine's own kit pieces on the vault handle (FIX 1957, 2063). Issue keeps
+//! the piece of a [`PieceHome::ThisMachine`] home in this install's device-only key
+//! slots and hands out the other homes' pieces; a restore here reads it back, so the
+//! owner gives only the pieces still needed. The slots are named by the store's
+//! vault id and this install's machine id: a restore that makes a new machine never
+//! reads the piece of the install it was copied from. A world kit's draw keeps its
+//! piece in that kit's own pending pair, and the piece moves to the current pair
+//! once the kit is current (FIX 11977, 12046): each drawn kit keeps its own until
+//! its confirm. The kit module's settle makes that move, one settle per install
+//! at a time (FIX 12136).
+
+use crate::Vault;
+use crate::error::Result;
+use crate::{
+    recovery::KitPieceStore,
+    recovery::{join_kept_piece, restore_kit},
+    store::recovery_kit::{KitError, KitId, KitManifest, KitPassphrase, KitPiece, KitPiecePair},
+    store::recovery_kit::{KitSecretKind, PieceHome, RestoredKitSecret},
+};
+
+use super::keystore_error;
+use super::kit::{UNLISTED_KITS, kit_key};
+
+impl Vault {
+    /// Where a kit issued over `homes` keeps this machine's piece: `None` with no
+    /// `ThisMachine` home, the keystore untouched. With one, this install's slots,
+    /// its machine id minted when it has none, as every slot's name needs it.
+    /// Refused `KeystoreUnavailable` while the host installed no keystore, before
+    /// any kit is drawn.
+    pub(super) fn this_machine_piece_store(
+        &self,
+        homes: &[PieceHome; 3],
+    ) -> Result<Option<KitPieceStore>> {
+        if !homes.contains(&PieceHome::ThisMachine) {
+            return Ok(None);
+        }
+        let keystore = self.device_keystore()?;
+        let install = self.prepare_install_signing()?;
+        Ok(Some(KitPieceStore::new(
+            keystore,
+            *self.vault_id().as_bytes(),
+            *install.as_bytes(),
+        )))
+    }
+
+    /// This install's kit-piece slots as they stand: `None` with no keystore or
+    /// no machine id yet. Nothing is minted.
+    pub(super) fn kit_piece_store_here(&self) -> Result<Option<KitPieceStore>> {
+        let Ok(keystore) = self.device_keystore() else {
+            return Ok(None);
+        };
+        let install = {
+            let txn = self.store.env.read_txn()?;
+            crate::identity::read_machine_id_in_txn(self, &txn)?
+        };
+        let Some(install) = install else {
+            return Ok(None);
+        };
+        Ok(Some(KitPieceStore::new(
+            keystore,
+            *self.vault_id().as_bytes(),
+            *install.as_bytes(),
+        )))
+    }
+
+    /// This machine's piece in `pair`, as a restore here reads it: `None` with
+    /// no keystore, no machine id yet or empty slots. Nothing is minted.
+    fn kept_kit_piece(&self, pair: KitPiecePair) -> Result<Option<KitPiece>> {
+        let Some(store) = self.kit_piece_store_here()? else {
+            return Ok(None);
+        };
+        store.get(pair).map_err(keystore_error)
+    }
+
+    /// Whether this machine keeps its own piece of a kit of `kind` (FIX 2063), so
+    /// a restore here asks the owner for one piece fewer. A piece its slots cannot
+    /// give back counts as none: the owner is then asked for every piece.
+    pub fn keeps_kit_piece(&self, kind: KitSecretKind) -> bool {
+        matches!(
+            self.kept_kit_piece(KitPiecePair::Current(kind)),
+            Ok(Some(_))
+        )
+    }
+
+    /// Whether this machine keeps a piece of the exact kit `kit` of `kind`
+    /// that a restore here would join: its current piece, or for a
+    /// recovery-root kit, that kit's pending piece, as
+    /// [`Vault::restore_kit_here`] joins it (FIX 12399). Another kit's piece
+    /// never counts toward this kit's passphrase choice.
+    pub fn keeps_kit_piece_for(&self, kind: KitSecretKind, kit: KitId) -> bool {
+        matches!(
+            self.kept_kit_piece(KitPiecePair::Current(kind)),
+            Ok(Some(piece)) if piece.kit_id() == kit
+        ) || (kind == KitSecretKind::RecoveryRoot
+            && matches!(self.kept_kit_piece(KitPiecePair::Pending(kit)), Ok(Some(_))))
+    }
+
+    /// Rebuilds a kit's secret on this machine (FIX 2063): [`restore_kit`] over
+    /// `given` and this machine's own piece of the same kit when it keeps one, so
+    /// the owner gives only the pieces still needed. A kept piece of another kit
+    /// stays out. A piece the slots hold but cannot give back is logged and left
+    /// out; when the pieces given then fall short, the refusal says so
+    /// ([`KitError::KeptPieceUnreadable`]), not only that two pieces are needed.
+    /// A world-kit restore the current pair's piece does not finish is tried
+    /// once more with the pending piece of the kit `given` names, by kit id, or
+    /// with none given, of the current world kit, when that kit is not the
+    /// current pair's: a drawn kit keeps its piece in its own pending pair until
+    /// its confirm moves it (FIX 11977, 12046). A refusal is the first attempt's.
+    pub fn restore_kit_here(
+        &self,
+        vault_id: [u8; 32],
+        kind: KitSecretKind,
+        given: &[&KitPiece],
+        passphrase: Option<&KitPassphrase>,
+    ) -> std::result::Result<RestoredKitSecret, KitError> {
+        let current = self.kept_kit_piece(KitPiecePair::Current(kind));
+        let restored = match &current {
+            Ok(kept) => restore_kit(
+                vault_id,
+                kind,
+                &join_kept_piece(kept.as_ref(), given),
+                passphrase,
+            ),
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "this machine's kit piece did not read; restoring from the pieces given"
+                );
+                restore_kit(vault_id, kind, given, passphrase).map_err(|error| match error {
+                    KitError::NeedTwoPieces => KitError::KeptPieceUnreadable,
+                    error => error,
+                })
+            }
+        };
+        if restored.is_ok() || kind != KitSecretKind::RecoveryRoot {
+            return restored;
+        }
+        let Some(kit) = self.pending_kit_named(given) else {
+            return restored;
+        };
+        if matches!(&current, Ok(Some(kept)) if kept.kit_id() == kit) {
+            return restored;
+        }
+        let Ok(Some(pending)) = self.kept_kit_piece(KitPiecePair::Pending(kit)) else {
+            return restored;
+        };
+        let pieces = join_kept_piece(Some(&pending), given);
+        restore_kit(vault_id, kind, &pieces, passphrase).or(restored)
+    }
+
+    /// The world kit whose pending piece a restore here reads (FIX 12046): the
+    /// one kit every given piece names, or with none given, the current world
+    /// kit as this install's inventory reads it. Pieces of two kits name none.
+    fn pending_kit_named(&self, given: &[&KitPiece]) -> Option<KitId> {
+        let Some(first) = given.first() else {
+            return self.current_world_kit().ok().flatten();
+        };
+        let kit = first.kit_id();
+        given
+            .iter()
+            .all(|piece| piece.kit_id() == kit)
+            .then_some(kit)
+    }
+
+    /// A drawn world kit whose pending row did not commit (FIX 12046): no
+    /// confirm can take it, so the piece its `ThisMachine` home kept pending
+    /// goes.
+    pub(super) fn drop_unlisted_kit_piece(&self, manifest: &KitManifest) {
+        if manifest.homes.contains(&PieceHome::ThisMachine) {
+            self.drop_pending_kit_piece(manifest.kit_id);
+        }
+    }
+
+    /// Deletes this install's pending piece of the world kit `kit` (FIX 12046),
+    /// best-effort: a delete that fails is logged, and the piece stays, named
+    /// in [`UNLISTED_KITS`] so a later settle's sweep retries the delete
+    /// (FIX 12202): no committed row names this kit.
+    fn drop_pending_kit_piece(&self, kit: KitId) {
+        let dropped = self.kit_piece_store_here().and_then(|store| match store {
+            Some(store) => store
+                .delete(KitPiecePair::Pending(kit))
+                .map_err(keystore_error),
+            None => Ok(()),
+        });
+        if let Err(error) = dropped {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a world kit that can no longer be confirmed keeps its pending kit-piece slots"
+            );
+            let named =
+                self.with_write_txn(|txn| UNLISTED_KITS.put(&self.store, txn, &kit_key(kit), &kit));
+            if let Err(error) = named {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "the unlisted kit could not be named for a later sweep either"
+                );
+            }
+        }
+    }
+}
+
+/// Issue's last step (FIX 2063): the `ThisMachine` piece goes to `pair` of `store`,
+/// replacing the piece kept there, and the other homes' pieces are what the owner
+/// is handed. A world kit's draw keeps it in that kit's own pending pair until its
+/// confirm; a data-key kit, which has no confirm, keeps it in its kind's current
+/// pair (FIX 11977, 12046).
+/// With no `store` the kit has no `ThisMachine` home, and the pieces pass as they
+/// are.
+pub(super) fn keep_this_machine_piece(
+    store: Option<&KitPieceStore>,
+    pair: KitPiecePair,
+    pieces: Vec<KitPiece>,
+) -> Result<Vec<KitPiece>> {
+    let Some(store) = store else {
+        return Ok(pieces);
+    };
+    let mut handed = Vec::with_capacity(pieces.len());
+    for piece in pieces {
+        if piece.home() == Some(&PieceHome::ThisMachine) {
+            store.put(&piece, pair).map_err(keystore_error)?;
+        } else {
+            handed.push(piece);
+        }
+    }
+    Ok(handed)
+}

@@ -134,6 +134,9 @@ impl<'a> GitCommandSpec<'a> {
             "merge-tree" | "add" | "commit" | "checkout" | "checkout-index" | "reset"
             | "restore" | "switch" | "merge" | "rebase" | "cherry-pick" | "am" | "apply"
             | "read-tree" | "update-index" => GitExecutionEffect::AttributeWrite,
+            // A received bundle's removal, staged in a speculative checkout
+            // or a commit's worktree: only the fixed one-path forms (FIX 8839).
+            "rm" if fixed_rm_form(&raw_args[index + 1..]) => GitExecutionEffect::AttributeWrite,
             _ => return Err(invalid("unsupported bridged Git verb")),
         };
         let worktree_target = if effect.creates_worktree() {
@@ -250,4 +253,17 @@ impl<'a> GitCommandSpec<'a> {
     pub(super) const fn hold(&self) -> Option<&'a Path> {
         self.hold
     }
+}
+
+/// `rm -q -f -- <path>` or `rm -q --cached -- <path>`: one quiet removal of
+/// one path, from the checkout and index or from the index alone.
+fn fixed_rm_form(tail: &[String]) -> bool {
+    matches!(
+        tail,
+        [quiet, mode, separator, path]
+            if quiet == "-q"
+                && (mode == "-f" || mode == "--cached")
+                && separator == "--"
+                && !path.is_empty()
+    )
 }

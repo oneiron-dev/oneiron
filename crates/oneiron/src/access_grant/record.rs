@@ -275,7 +275,7 @@ impl AccessGrantStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AccessGrant {
     /// Canonical grant authority. Resource fields below are narrowing presets.
-    pub authority_scope: crate::federation::Scope,
+    pub authority_scope: oneiron_authority::federation::Scope,
     /// Principal receiving access.
     pub principal_ref: EntityId,
     /// Exact resource scope.
@@ -306,7 +306,7 @@ impl AccessGrant {
         created_at: u64,
     ) -> Self {
         Self {
-            authority_scope: crate::federation::scope_codec::read_preset(),
+            authority_scope: oneiron_authority::federation::scope_codec::read_preset(),
             principal_ref,
             scope: AccessGrantScope::companion_profile(person_ref, facet_ref),
             capability: AccessGrantCapability::CompanionProfileRead,
@@ -330,7 +330,7 @@ impl AccessGrant {
         created_at: u64,
     ) -> Self {
         Self {
-            authority_scope: crate::federation::scope_codec::read_preset(),
+            authority_scope: oneiron_authority::federation::scope_codec::read_preset(),
             principal_ref,
             scope: AccessGrantScope::calendar(calendar_ref, rung),
             capability: AccessGrantCapability::CalendarDisclosureRead,
@@ -362,7 +362,7 @@ impl AccessGrant {
         principal: EntityId,
         space: EntityId,
         capability: AccessGrantCapability,
-        record: &crate::federation::Scope,
+        record: &oneiron_authority::federation::Scope,
         now: u64,
     ) -> bool {
         let scoped = match self.scope {
@@ -372,7 +372,7 @@ impl AccessGrant {
             _ => false,
         };
         self.authority_scope
-            .admits("read", record, &crate::federation::Scope::top())
+            .admits("read", record, &oneiron_authority::federation::Scope::top())
             && self.validate().is_ok()
             && self.effective_status_at(now) == AccessGrantStatus::Active
             && self.principal_ref == principal
@@ -386,7 +386,7 @@ impl AccessGrant {
         &self,
         principal: EntityId,
         conversation: EntityId,
-        record: &crate::federation::Scope,
+        record: &oneiron_authority::federation::Scope,
         now: u64,
     ) -> bool {
         let scoped = matches!(
@@ -395,9 +395,11 @@ impl AccessGrant {
                 if conversation_ref == conversation
         );
         scoped
-            && self
-                .authority_scope
-                .admits("read", record, &crate::federation::Scope::top())
+            && self.authority_scope.admits(
+                "read",
+                record,
+                &oneiron_authority::federation::Scope::top(),
+            )
             && self.validate().is_ok()
             && self.effective_status_at(now) == AccessGrantStatus::Active
             && self.principal_ref == principal

@@ -7,12 +7,11 @@ use crate::attempt_queue::encoding::{
 };
 use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState, attempt_record_order};
 use crate::attempt_queue::validate::validate_optional_run_id;
-use crate::dreamer_runner::{
-    DREAMER_RUNNER_ATTEMPT_KIND, DreamerAttemptPayload, decode_dreamer_attempt_payload,
-};
+use crate::dreamer_runner::{DreamerAttemptPayload, decode_dreamer_attempt_payload};
 use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 
 use super::AttemptQueue;
 use super::ERR_DEDUPE_ACTOR_MISMATCH;
@@ -369,6 +368,27 @@ impl AttemptQueue<'_> {
         self.working_rows_in_txn(txn, ids)
     }
 
+    /// [`Self::ready_rows_in_txn`] in its own snapshot, for a host that reads
+    /// the ready tries without decoding the whole ledger (FIX 11940).
+    pub fn ready_rows(&self) -> Result<Vec<AttemptRecord>> {
+        let txn = self.store.env.read_txn()?;
+        self.ready_rows_in_txn(&txn)
+    }
+
+    /// The working-set rows of `kind` through the kind index, creation order:
+    /// the rows [`Self::list`] keeps with that kind, without decoding the
+    /// rest of the ledger (FIX 11940).
+    pub(crate) fn kind_working_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &str,
+    ) -> Result<Vec<AttemptRecord>> {
+        let ids = crate::attempt_queue::index::kind_ids_in_txn(self.store, txn, kind)?;
+        let mut records = self.working_rows_in_txn(txn, ids)?;
+        records.retain(|record| record.kind == kind);
+        Ok(records)
+    }
+
     /// The ids the ready index holds, each once; a value that is no id is passed over.
     fn ready_ids_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<BTreeSet<AttemptId>> {
         let mut ids = BTreeSet::new();
@@ -384,13 +404,11 @@ impl AttemptQueue<'_> {
 
     /// Complete kind view for a projection that must not silently truncate.
     ///
-    /// The view reads its kind's whole side of the owner-retained boundary
-    /// ([`crate::attempt_queue::OWNER_RETAINED_ID_PREFIX`]), so a tagging
-    /// backlog of any size never costs another kind's view a row, and sorts
-    /// it oldest-ready first. No row count refuses it (Rule 5, FIX 9576):
-    /// every row read, before the kind filter, counts on the
-    /// `attempt_kind_rows` scan row, and past `max_scanned` the finished read
-    /// asks whether everything is okay.
+    /// The view reads its kind's rows through the kind index (FIX 11940), so
+    /// no other kind's backlog costs it a row, and sorts them oldest-ready
+    /// first. No row count refuses it (Rule 5, FIX 9576): every row read
+    /// counts on the `attempt_kind_rows` scan row, and past `max_scanned` the
+    /// finished read asks whether everything is okay.
     pub(crate) fn list_kind_bounded(
         &self,
         kind: &str,
@@ -407,30 +425,20 @@ impl AttemptQueue<'_> {
         kind: &str,
         max_scanned: usize,
     ) -> Result<Vec<AttemptRecord>> {
-        use std::ops::Bound;
         let mut count = ScanCount::start_at(
             EngineScan::AttemptKindRows,
             kind.as_bytes(),
             u64::try_from(max_scanned).unwrap_or(u64::MAX),
         );
-        let boundary = &crate::attempt_queue::OWNER_RETAINED_RANGE_START[..];
-        let retained = crate::attempt_queue::owner_retained_kind(kind);
-        let range: (Bound<&[u8]>, Bound<&[u8]>) = if retained {
-            (Bound::Included(boundary), Bound::Unbounded)
-        } else {
-            (Bound::Unbounded, Bound::Excluded(boundary))
-        };
-        let mut records = Vec::new();
-        for row in self.store.attempt_records.range(txn, &range)? {
-            count.row();
-            let (key, raw) = row?;
-            let record = decode_record(&raw, AttemptId::from_bytes(&key)?)?;
-            if record.kind == kind {
-                records.push(record);
-            }
-        }
+        let ids = crate::attempt_queue::index::kind_ids_in_txn(self.store, txn, kind)?;
+        count.rows(ids.len());
+        let records = self.indexed_rows_in_txn(
+            txn,
+            ids,
+            |record| record.kind == kind,
+            "list_kind_bounded_in_txn",
+        )?;
         count.defer(self.store);
-        records.sort_by(attempt_record_order);
         Ok(records)
     }
 
@@ -664,7 +672,7 @@ pub(super) fn retries_the_same_attempt(child: &AttemptRecord, parent: &AttemptRe
 /// 6755), the marker both tries name.
 fn retries_the_same_payload(child: &AttemptRecord, parent: &AttemptRecord) -> bool {
     child.payload == parent.payload
-        || (child.kind == crate::tagging::TAGGING_MARKER_KIND
+        || (child.kind == crate::config::tagging::TAGGING_MARKER_KIND
             && crate::tagging::same_marker_identity(&child.payload, &parent.payload))
 }
 /// Resolves the OF-193 Dreamer root for one stamped run id using the durable

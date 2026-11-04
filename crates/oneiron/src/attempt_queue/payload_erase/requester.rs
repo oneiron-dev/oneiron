@@ -16,9 +16,9 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 
 use crate::agent_dispatch::{
-    AGENT_DISPATCH_INPUT_KEYS, RequesterStanding, decode_agent_dispatch_input,
-    record_dispatch_input,
+    RequesterStanding, decode_agent_dispatch_input, record_dispatch_input,
 };
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_INPUT_KEYS;
 use crate::dreamer_runner::{decode_dreamer_attempt_payload, encode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
 use crate::error::Result;

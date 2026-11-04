@@ -1,16 +1,19 @@
 //! Crash-idempotent push-to-document lowering under the origin single-writer lock.
 use super::document_candidate_types::{ReceivedRefIngress, ReceivedRefSource};
 use super::smart_http::{ReceivePackAttribution, RefUpdate};
-use crate::code_document::{CodeEditReceipt, CodeFileEdit, CodeFileIngress};
-use crate::codebase::entity_id_from_hash_material;
+use crate::code_document::{CodeEditReceipt, CodeFileIngress};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo};
-use crate::receipt::ERASED_CALL_IDENTITY;
-use crate::side_table::{self, LegacyCompact, SideKey, SideTable};
+use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
+use crate::store::EngineScan;
+use crate::store::code_document_values::CodeFileEdit;
+use crate::store::code_snapshot::entity_id_from_hash_material;
+use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
+use crate::store::scan_count::ScanCount;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// One push operation, including non-text blobs and mode-only changes.
 /// Git objects remain pinned by the hash-keyed origin change claim.
@@ -37,6 +40,35 @@ pub struct ReceivedFileOperation {
 /// NUL, exactly the shape this row has always spelled.
 pub(super) const CODE_OPERATIONS: SideTable<ProvenanceRefKey, ReceivedRefIngress, LegacyCompact> =
     SideTable::new(&side_table::ORIGIN_CODE_OPERATIONS);
+
+/// Each received ref update by its exact (store, ref, old, new) and then the push that
+/// carried it, written with that push's [`CODE_OPERATIONS`] row (FIX 7595).
+pub(super) const RECEIVED_UPDATES: SideTable<([u8; 32], EntityId), (), Raw> =
+    SideTable::new(&side_table::ORIGIN_RECEIVED_UPDATE);
+
+/// The [`RECEIVED_UPDATES`] key prefix of one exact ref update in the object store `store`.
+pub(super) fn received_update_hash(
+    store: &str,
+    ref_name: &str,
+    old: Option<&str>,
+    new: Option<&str>,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron:received-update:v1");
+    for part in [Some(store), Some(ref_name), old, new] {
+        match part {
+            Some(part) => {
+                hasher.update(&[1]);
+                hasher.update(&(part.len() as u64).to_be_bytes());
+                hasher.update(part.as_bytes());
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
+    }
+    *hasher.finalize().as_bytes()
+}
 
 pub(super) struct ProvenanceRefKey {
     pub(super) provenance: EntityId,
@@ -106,6 +138,16 @@ impl Vault {
             Some(crate::registry::ENTITY_TYPE_SESSION) => (),
             Some(_) => return Err(Error::CorruptedIndex("push session identity occupied")),
         }
+        // The pusher writes as its own class, a person or an agent; any
+        // other principal writes as the system (FIX 7131).
+        let actor = WriteActor::new(
+            attribution.actor_id,
+            match self.get_entity_type(&attribution.actor_id)? {
+                Some(crate::registry::ENTITY_TYPE_PERSON) => EdgeActorClass::Human,
+                Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => EdgeActorClass::Agent,
+                _ => EdgeActorClass::System,
+            },
+        );
         let mut operations = Vec::new();
         let mut ingress = Vec::new();
         {
@@ -122,7 +164,22 @@ impl Vault {
                 .transpose()?
                 .unwrap_or_default();
             let paths: BTreeSet<_> = old.keys().chain(new.keys()).cloned().collect();
-            let scope = format!("origin:{}:{}", repo.identity().as_hex(), update.name);
+            // The repository's own scope, as every local writer spells it:
+            // one document per path whatever ref a push moves (FIX 12199).
+            let scope =
+                crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
+            // A file the push renamed keeps its document, as a local rename
+            // does, so its symbols and notes keep their ids (FIX 12199).
+            let mut renames = received_renames(
+                self,
+                &scope,
+                &old,
+                &new,
+                update,
+                (attribution.provenance_claim_id, actor),
+                session,
+            )?;
+            let renamed: BTreeSet<String> = renames.values().map(|(to, _)| to.clone()).collect();
             for path in paths {
                 let before = bytes(&old, &path);
                 let after = bytes(&new, &path);
@@ -133,19 +190,23 @@ impl Vault {
                 }
                 let before_hash = *blake3::hash(before).as_bytes();
                 let after_hash = *blake3::hash(after).as_bytes();
-                let operation = entity_id_from_hash_material(
-                    b"oneiron:push-file-operation:v1",
-                    &[
-                        attribution.provenance_claim_id.as_bytes(),
-                        update.name.as_bytes(),
-                        path.as_bytes(),
-                        &before_hash,
-                        &after_hash,
-                        &old_mode.unwrap_or(0).to_be_bytes(),
-                        &new_mode.unwrap_or(0).to_be_bytes(),
-                    ],
+                let operation = file_operation_id(
+                    attribution.provenance_claim_id,
+                    &update.name,
+                    &path,
+                    &before_hash,
+                    &after_hash,
+                    old_mode,
+                    new_mode,
                 )?;
-                let document_edit = if before != after
+                let document_edit = if let Some((_, rename)) = renames.remove(&path) {
+                    // The removed side lands the one rename of the pair.
+                    ingress.push(rename);
+                    true
+                } else if renamed.contains(&path) {
+                    // The added side: the renamed document now lives here.
+                    false
+                } else if before != after
                     && old_mode != Some(0o160000)
                     && new_mode != Some(0o160000)
                 {
@@ -153,15 +214,27 @@ impl Vault {
                         (std::str::from_utf8(before), std::str::from_utf8(after))
                     {
                         let document = self.open_code_document(&scope, &path, before, session)?;
-                        ingress.push(CodeFileIngress {
-                            operation,
-                            session: document,
-                            edit: CodeFileEdit::between(&path, before, after),
-                            metadata_edit: None,
-                            actor: WriteActor::new(attribution.actor_id, EdgeActorClass::System),
-                            expected_text: before.to_owned(),
-                        });
-                        true
+                        // Another ref's push may have moved the document off
+                        // this push's base: the pushed text lands as one
+                        // version over its current text, never a refused
+                        // push. A replay lowers the edit it landed.
+                        let base = match self.code_file_edit_receipt(operation)? {
+                            Some(landed) => self.code_document_at(&landed.before)?,
+                            None => document.text(),
+                        };
+                        if base == after {
+                            false
+                        } else {
+                            ingress.push(CodeFileIngress {
+                                operation,
+                                session: document,
+                                edit: CodeFileEdit::between(&path, &base, after),
+                                metadata_edit: None,
+                                actor,
+                                expected_text: base,
+                            });
+                            true
+                        }
                     } else {
                         false
                     }
@@ -217,11 +290,25 @@ impl Vault {
             // Both receipt layers commit together or the entire ref aborts.
             self.apply_code_file_ingress_exact_in_txn(txn, &mut ingress)?;
             // A replay keeps the first receipt time and any attached candidate.
-            CODE_OPERATIONS.put(
-                &self.store,
+            let stored = held.as_ref().unwrap_or(&fresh);
+            CODE_OPERATIONS.put(&self.store, txn, &receipt_key, stored)?;
+            super::document_candidates::pending_index::index_received_row_in_txn(
+                self,
                 txn,
                 &receipt_key,
-                held.as_ref().unwrap_or(&fresh),
+                stored,
+            )?;
+            let update = received_update_hash(
+                &fresh.source.object_store,
+                &fresh.source.ref_name,
+                fresh.source.old_oid.as_deref(),
+                fresh.source.new_oid.as_deref(),
+            );
+            RECEIVED_UPDATES.put(
+                &self.store,
+                txn,
+                &(update, attribution.provenance_claim_id),
+                &(),
             )?;
             Ok(())
         })
@@ -304,17 +391,162 @@ fn bytes<'a>(files: &'a BTreeMap<String, super::tree::OriginTreeFile>, path: &st
     files.get(path).map_or(b"", |file| file.content.as_slice())
 }
 
+/// The id of `path`'s operation in the ref `ref_name` of the push
+/// `provenance`: a replay of the same push derives the same id.
+fn file_operation_id(
+    provenance: EntityId,
+    ref_name: &str,
+    path: &str,
+    before_hash: &[u8; 32],
+    after_hash: &[u8; 32],
+    old_mode: Option<u32>,
+    new_mode: Option<u32>,
+) -> Result<EntityId> {
+    entity_id_from_hash_material(
+        b"oneiron:push-file-operation:v1",
+        &[
+            provenance.as_bytes(),
+            ref_name.as_bytes(),
+            path.as_bytes(),
+            before_hash,
+            after_hash,
+            &old_mode.unwrap_or(0).to_be_bytes(),
+            &new_mode.unwrap_or(0).to_be_bytes(),
+        ],
+    )
+}
+
+/// Git's exact renames in one pushed ref (FIX 12199), keyed by removed
+/// path: each removed text file paired, in path order, with an added path
+/// of the same bytes and mode, and the one `CodeFileEdit::rename` that
+/// moves its document there under the removed path's operation. A pair
+/// whose added path already has a live document, or whose document another
+/// ref moved off the pushed base, is left out and lowers as a removal and
+/// an add. A replay lowers each pair as its first landing did. `pusher`
+/// is the push's provenance and the actor its edits land as.
+fn received_renames(
+    vault: &Vault,
+    scope: &str,
+    old: &BTreeMap<String, super::tree::OriginTreeFile>,
+    new: &BTreeMap<String, super::tree::OriginTreeFile>,
+    update: &RefUpdate,
+    pusher: (EntityId, WriteActor),
+    session: EntityId,
+) -> Result<BTreeMap<String, (String, CodeFileIngress)>> {
+    let mut removed: BTreeMap<(u32, &str), VecDeque<&str>> = BTreeMap::new();
+    for (path, file) in old {
+        if !new.contains_key(path)
+            && let Some(text) = document_text(file)
+        {
+            removed
+                .entry((file.mode, text))
+                .or_default()
+                .push_back(path.as_str());
+        }
+    }
+    let (provenance, actor) = pusher;
+    let empty = *blake3::hash(b"").as_bytes();
+    let mut renames = BTreeMap::new();
+    for (to, file) in new {
+        if old.contains_key(to) {
+            continue;
+        }
+        let Some(text) = document_text(file) else {
+            continue;
+        };
+        let Some(from) = removed
+            .get_mut(&(file.mode, text))
+            .and_then(VecDeque::pop_front)
+        else {
+            continue;
+        };
+        let content = *blake3::hash(text.as_bytes()).as_bytes();
+        let mode = Some(file.mode);
+        let operation =
+            file_operation_id(provenance, &update.name, from, &content, &empty, mode, None)?;
+        let edit = CodeFileEdit::rename(from, to);
+        let (document, expected_text) = match vault.code_file_edit_receipt(operation)? {
+            Some(landed) if landed.edit == edit => (
+                vault.open_code_document_at(&landed.before, session)?,
+                vault.code_document_at(&landed.before)?,
+            ),
+            // The first landing lowered this pair as a removal and an add.
+            Some(_) => continue,
+            None => {
+                let added =
+                    file_operation_id(provenance, &update.name, to, &empty, &content, None, mode)?;
+                if vault.code_file_edit_receipt(added)?.is_some()
+                    || vault.code_document_frontier(scope, to)?.is_some()
+                {
+                    continue;
+                }
+                let document = vault.open_code_document(scope, from, text, session)?;
+                if document.text() != text {
+                    continue;
+                }
+                (document, text.to_owned())
+            }
+        };
+        renames.insert(
+            from.to_owned(),
+            (
+                to.clone(),
+                CodeFileIngress {
+                    operation,
+                    session: document,
+                    edit,
+                    metadata_edit: None,
+                    actor,
+                    expected_text,
+                },
+            ),
+        );
+    }
+    Ok(renames)
+}
+
+/// The text of a file that lowers to a document: non-empty UTF-8, no submodule.
+fn document_text(file: &super::tree::OriginTreeFile) -> Option<&str> {
+    std::str::from_utf8(&file.content)
+        .ok()
+        .filter(|text| file.mode != 0o160000 && !text.is_empty())
+}
+
+/// The files `oid` names, a valid annotated-tag chain peeled to its end
+/// however long (rule 5, FIX 9999): past its scan row the peel raises a check
+/// and reads on. A malformed or looping chain still fails.
 fn read_files(
     wire: &GitWire<'_>,
     repo: &GitWireRepo,
     oid: &crate::git_wire::GitOid,
 ) -> Result<BTreeMap<String, super::tree::OriginTreeFile>> {
+    let mut count = {
+        let vault = wire.vault();
+        let rtxn = vault.store.env.read_txn()?;
+        ScanCount::start(
+            &vault.store,
+            &rtxn,
+            EngineScan::OriginTagPeelSteps,
+            repo.identity().as_hex().as_bytes(),
+        )?
+    };
+    let mut seen = BTreeSet::new();
     let mut tip = oid.clone();
-    for _ in 0..64 {
+    loop {
+        count.row();
+        if !seen.insert(tip.clone()) {
+            return Err(Error::CorruptedIndex("tag object chain loops"));
+        }
         let kinds = wire.object_info(repo, std::slice::from_ref(&tip))?;
         match kinds.get(&tip).map(String::as_str) {
-            Some("blob") => return Ok(BTreeMap::new()),
-            Some("commit" | "tree") => return super::tree::read_tree_files(wire, repo, &tip),
+            Some("blob") => {
+                count.finish(wire.vault());
+                return Ok(BTreeMap::new());
+            }
+            Some("commit" | "tree") => {
+                count.finish(wire.vault());
+                return super::tree::read_tree_files(wire, repo, &tip);
+            }
             Some("tag") => {
                 let raw = wire.read_object(repo, &tip)?;
                 let first = raw
@@ -330,5 +562,4 @@ fn read_files(
             _ => return Err(Error::EntityNotFound),
         }
     }
-    Err(Error::IndexOverflow("nested origin tags"))
 }

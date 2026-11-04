@@ -14,13 +14,16 @@ use super::side_keys::HexPair;
 use super::{EntityDoc, ForkStatus, SettleVerb, storage};
 use crate::error::{ArtifactError, Error};
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
-use crate::recovery::{
-    CanonicalDocumentFork, CanonicalDocumentPin, CanonicalDocumentPurge, CanonicalDocumentReceipt,
-    CanonicalEntityDocument, CanonicalEntityDocumentHistory, CanonicalForkStatus,
-    CanonicalSettleVerb,
-};
 use crate::side_table::HexId;
 use crate::store::Store;
+use crate::store::canonical_document::CanonicalDocumentFork;
+use crate::store::canonical_document::CanonicalDocumentPin;
+use crate::store::canonical_document::CanonicalDocumentPurge;
+use crate::store::canonical_document::CanonicalDocumentReceipt;
+use crate::store::canonical_document::CanonicalEntityDocument;
+use crate::store::canonical_document::CanonicalEntityDocumentHistory;
+use crate::store::canonical_document::CanonicalForkStatus;
+use crate::store::canonical_document::CanonicalSettleVerb;
 use crate::{EntityId, Result, Vault};
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, Frontiers, UpdateOptions, VersionVector};
@@ -84,6 +87,7 @@ pub(crate) fn capture(
         metadata: doc.metadata_bytes()?,
         summary_meta: summary_meta::bytes(&doc.doc),
         record_fields: doc.record_fields()?,
+        // The stored stamp token, carried as it stands (FIX 11964).
         birth_actor: raw_actor(doc.birth().actor),
         birth_at: doc.birth().at,
         history: history(&vault.store, txn, &entity, &doc)?,
@@ -430,7 +434,7 @@ pub(crate) fn restore(
             EntityDoc::replace_metadata(&doc.doc, &row.metadata)?;
             summary_meta::write(&doc.doc, &row.summary_meta)?;
             EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
-            doc.doc.commit();
+            super::document::restate_birth(&doc.doc);
             storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
             store.port_document_rows_delete(txn, slot, &[DocumentRow::ShallowSince])?;
         }
@@ -505,6 +509,7 @@ fn refuse_loss(
 /// Replays the carried versions into fresh history: an empty birth commit,
 /// then each version as one commit on its parents, so the replayed causal
 /// order is the carried one. A purged document is cut at version 0 again.
+/// Each replayed commit restates the row's birth (FIX 10929).
 fn replay(
     entity: EntityId,
     row: &CanonicalEntityDocument,
@@ -513,7 +518,7 @@ fn replay(
     let texts = history.texts()?;
     let doc = EntityDoc::rebuild_value(entity, "", doc_actor(row.birth_actor)?, row.birth_at)?;
     EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
-    doc.doc.commit();
+    super::document::restate_birth(&doc.doc);
     let root = doc.doc.oplog_frontiers();
     let mut frontiers: Vec<Frontiers> = Vec::with_capacity(texts.len());
     for (index, (version, text)) in history.versions.iter().zip(&texts).enumerate() {
@@ -550,7 +555,7 @@ fn replay(
                 i64::try_from(index).map_err(|_| invalid("entity document version count"))?,
             )
             .map_err(|_| invalid("entity document version replay"))?;
-        branch.commit();
+        super::document::restate_birth(&branch);
         let known = doc.doc.oplog_vv();
         let updates = branch
             .export(ExportMode::updates(&known))

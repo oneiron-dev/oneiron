@@ -15,10 +15,11 @@ use crate::dreamer_promotion::{
     DreamerRunContext, EvidenceRef, PromotionEvidenceReason, evidence_ref_refusal_in_txn,
     promote_consolidated_claims_with_checker, public_evidence_refs, public_evidence_value,
 };
-use crate::dreamer_runner::{DreamerConsolidationScope, DreamerRunnerStore};
+use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::ForeignWorldId;
 use crate::llm::BoundedAutoChecker;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
+use crate::store::consolidation_scope::DreamerConsolidationScope;
 use crate::write_envelope::ClaimCandidate;
 use crate::{EdgeActorClass, EntityId, Error, TimeRange};
 use serde::{Deserialize, Serialize};
@@ -424,16 +425,14 @@ impl Memory<'_> {
                     rmpv::Value::from(band),
                 )]));
             }
-            match &input.scope.scope_relationship_id {
-                super::ClaimRelationships::All(super::AllRelationships::All) => {}
-                super::ClaimRelationships::Relationships(refs) if refs.len() == 1 => {
-                    candidate = candidate.with_relationship(self.resolve_ref(&refs[0])?);
-                }
-                _ => {
-                    return Err(MemoryError::bad_request(
-                        "a claim relationship position is all or exactly one relationship",
-                    ));
-                }
+            if let super::ClaimRelationships::Relationships(refs) =
+                &input.scope.scope_relationship_id
+            {
+                candidate = candidate.with_relationships(Some(
+                    refs.iter()
+                        .map(|r| self.resolve_ref(r))
+                        .collect::<MemoryResult<std::collections::BTreeSet<_>>>()?,
+                ));
             }
             candidate = candidate.with_evidence(rmpv::Value::Map(vec![(
                 rmpv::Value::from("evidence_refs"),

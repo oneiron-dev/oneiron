@@ -21,13 +21,15 @@ use serde::{Deserialize, Serialize};
 use super::items::FreeTimeItemBinding;
 use super::policy::{FreeTimePolicy, FreeTimeSchedule, FreeTimeSplit, effective_policy};
 use super::{CLOCK, CYCLE, FreeTimeClock, FreeTimeKind, ITEM, POLICY};
-use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScopeId};
+use crate::agent_dispatch::AgentDispatcher;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND, DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
     DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
-use crate::llm::run_admission::{DeclaredMaximum, LeaseUnit, MaximumShown};
+use crate::run_budget::{DeclaredMaximum, LeaseUnit, MaximumShown};
+use crate::workspace_roster::spend_scope::ChildSpend;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::{EntityId, Error, Result, Vault};
 
 /// How many local dates a boundary search walks: a skipped date (a gap)
@@ -359,7 +361,7 @@ fn open_cycle_in_txn(
     close_open_cycle_in_txn(vault, txn, agent, now)?;
     let dreams = match vault.read_agent_definition_in_txn(txn, &agent) {
         Ok(definition) if definition.enabled => {
-            Some(definition.dreaming_mode() != crate::agent_def::DreamingMode::Off)
+            Some(definition.dreaming_mode() != crate::store::agent_record::DreamingMode::Off)
         }
         Ok(_) | Err(Error::EntityNotFound) => None,
         Err(error) => return Err(error),

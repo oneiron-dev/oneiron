@@ -7,8 +7,8 @@ use super::resources::BranchResources;
 use super::support::invalid_consolidation;
 use super::turn_text::MessageSpan;
 use crate::claim::ClaimSource;
-use crate::llm::ScopeResource;
 use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::ScopeResource;
 use rmpv::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -495,6 +495,11 @@ pub(crate) struct VerifiedCandidate {
     /// The rows of the extraction call that produced it (FIX 11526), kept
     /// through verification for the verdict reads; `None` when not known.
     pub(crate) sources: Option<Vec<EntityId>>,
+    /// Whether the conflict loop resolved it from a conflicting set (FIX
+    /// 12084): an accumulated member or a merged head. False for a candidate
+    /// no conflict named. Set only on the tournament strategy; the sink
+    /// ignores it, and the tournament gate reads it as its evidence state.
+    pub(crate) contested: bool,
 }
 impl std::ops::Deref for VerifiedCandidate {
     type Target = PromotionCandidate;
@@ -517,6 +522,7 @@ impl VerifiedCandidate {
             evidence,
             answers: Vec::new(),
             sources,
+            contested: false,
         })
     }
 }

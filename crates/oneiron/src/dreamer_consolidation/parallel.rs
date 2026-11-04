@@ -8,22 +8,66 @@ use std::time::Instant;
 
 use rmpv::Value;
 
+use super::assembly::tournament_claim_of_verified;
+use super::branch::BranchAxes;
+use super::evidence::VerifiedCandidate;
 use super::executor::{ConsolidationExecutor, PartitionRun, extraction};
 use super::extracted_people::MintNamespace;
 use super::failure_rules::{self, Stage};
 use super::partition::decode_partition_payload;
-use super::resources::{BranchResources, FallbackOutputPin};
+use super::resources::{BranchResources, ExtractionSlice, FallbackOutputPin};
 use super::roles::DREAMER_EXTRACTION_ROLE;
 use super::sieve_ports::{NeighbourhoodExtraction, SliceCall, SliceStep};
 use super::stage_log::{PartitionStages, ms_since};
-use super::step_charge::StepChargeTally;
+use super::step_charge::{SliceFate, StepChargeTally, tally_slice_outcome};
 use super::thing_agent::{ThingPass, ThingPassEnd};
 use crate::attempt_queue::{AttemptId, ReadSetProducer};
-use crate::dreamer_runner::DreamerRunnerStore;
-use crate::dreamer_wake::WakeAttemptContext;
-use crate::llm::{
-    DurableStepContext, DurableStepError, DurableStepResult, StepEffectBinding, StepOutcome,
+use crate::autoreason_campaign::authoring::{ClaimAuthoringChoice, authoring_campaign};
+use crate::autoreason_campaign::beam_promotion::default_strategy;
+use crate::autoreason_campaign::research::bound_research_roots;
+use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::dreamer_runner::{
+    DreamerClaimAuthoringBatchTier, DreamerClaimAuthoringGateDecision,
+    DreamerClaimAuthoringStrategy, DreamerRunnerStore,
 };
+use crate::dreamer_tournament::{
+    DreamerTournamentAuthorFork, DreamerTournamentBordaBallot, DreamerTournamentBranch,
+    DreamerTournamentCandidate, DreamerTournamentJudgeClaim, DreamerTournamentRound,
+    DreamerTournamentRun, DreamerTournamentSynthesisArtifact, run_dreamer_claim_tournament,
+};
+use crate::dreamer_wake::{BoundClaimAuthoringSelector, WakeAttemptContext};
+use crate::entity_id::bytes_to_hex_lower;
+use crate::learning::{LearningCell, LearningPredicate, TypeRef};
+use crate::model_step_context::DurableStepContext;
+use crate::model_step_effect::StepEffectBinding;
+use crate::model_step_error::{DurableStepError, DurableStepResult};
+use crate::temporal::TimeRange;
+use crate::write_envelope::{WriteEnvelope, WriteProvenance};
+use crate::{Result, Vault};
+use crate::{
+    critic::{CritiqueArtifact, CritiqueProvenance, CritiqueSeverity, CritiqueVerdict},
+    store::critic_lens::LensCatalog,
+};
+
+/// Where a partition's extraction prefix stopped: already finished (a
+/// checkpoint or a thing branch's own run), or extracted and waiting for
+/// its serial finish.
+pub(super) enum PartitionPrefix {
+    Done(PartitionRun),
+    Extracted(Box<ExtractedPartition>),
+}
+
+/// One partition's extracted replies, carried from its prefix into its
+/// serial finish: the slices as cut, the port's step per slice, and the
+/// mint namespace, branch axes and step subject the finish reads.
+pub(super) struct ExtractedPartition {
+    slices: Vec<ExtractionSlice>,
+    pub(super) steps: Vec<SliceStep>,
+    namespace: MintNamespace,
+    axes: BranchAxes,
+    subject: crate::EntityId,
+    run_id: Option<String>,
+}
 
 impl ConsolidationExecutor<'_> {
     /// The partition's model work; `stages` takes the wall ms of its
@@ -42,12 +86,39 @@ impl ConsolidationExecutor<'_> {
         charges: &mut StepChargeTally,
         stages: &mut PartitionStages,
     ) -> DurableStepResult<PartitionRun> {
+        match self
+            .extract_partition_prefix(payload_input, resources, ctx, attempt_id, run_id, charges)
+            .await?
+        {
+            PartitionPrefix::Done(run) => Ok(run),
+            PartitionPrefix::Extracted(extracted) => {
+                self.finish_partition_run(*extracted, resources, ctx, attempt_id, charges, stages)
+                    .await
+            }
+        }
+    }
+
+    /// The prefix a wake pass may run side by side across partitions
+    /// (FIX 12487): pin the neighbourhood, cut the slices, record the
+    /// read set and run the extraction port. Everything it writes is
+    /// scoped to this attempt (its memoized steps, its pin, its read
+    /// set); the first read of state another partition's commit could
+    /// change is in the serial finish.
+    pub(super) async fn extract_partition_prefix(
+        &self,
+        payload_input: &Value,
+        resources: &BranchResources<'_>,
+        ctx: &WakeAttemptContext<'_>,
+        attempt_id: AttemptId,
+        run_id: Option<String>,
+        charges: &mut StepChargeTally,
+    ) -> DurableStepResult<PartitionPrefix> {
         // A drain's pause parks the attempt before its preparation burns
         // more of the pass: its checkpoint exit resumes it. Only the pause
         // parks here: an expired deadline still runs its memoized steps
         // below, so a finished partition can land in its grace (FIX 11570).
         if ctx.cancel_requested() {
-            return Ok(PartitionRun::Checkpoint);
+            return Ok(PartitionPrefix::Done(PartitionRun::Checkpoint));
         }
         let branch = decode_partition_payload(payload_input)?;
         let turn_ids = branch.turn_ids();
@@ -62,7 +133,11 @@ impl ConsolidationExecutor<'_> {
         };
         resources.require_output(resources.scope())?;
         resources.require_signals(resources.scope())?;
-        super::neighbourhood::pin(ctx.vault, attempt_id, resources.known())?;
+        super::neighbourhood::pin(
+            ctx.vault,
+            super::neighbourhood::ListingPin::attempt(attempt_id),
+            resources.known(),
+        )?;
         let config = ctx.vault.consolidation_selection()?;
         let (slices, low_trust) =
             resources.extraction_slices(&turn_ids, config.extraction_turns_per_child)?;
@@ -112,14 +187,18 @@ impl ConsolidationExecutor<'_> {
             parent,
             axes.world_ref,
             axes.facet_ref,
-            resources.scope().relationship,
+            resources.scope().relationship.clone(),
         );
         // Each child's reply check reads the citations its candidates would
         // carry into verification against the branch's own pinned text: a
         // range verification refuses the whole partition over refuses the
         // reply here, never memoized (FIX 7274).
         let citations = Arc::new(extraction::CitationCheck::new(
-            resources, axes, attempt_id, ctx.now_ms, namespace,
+            resources,
+            axes,
+            attempt_id,
+            ctx.now_ms,
+            namespace.clone(),
         ));
         // A thing's branch runs as one scoped code-mode agent first (FIX
         // 7508): each slice it extracts is the very durable step below, so
@@ -131,13 +210,13 @@ impl ConsolidationExecutor<'_> {
                 resources,
                 slices: &slices,
                 step: &step_ctx,
-                namespace,
+                namespace: namespace.clone(),
                 rules: rules.as_ref(),
                 citations: &citations,
                 attempt_id,
             };
             if let ThingPassEnd::Run(run) = self.thing_agent_pass(&pass, charges).await? {
-                return Ok(run);
+                return Ok(PartitionPrefix::Done(run));
             }
         }
         let steps = self
@@ -157,7 +236,7 @@ impl ConsolidationExecutor<'_> {
                         sources: &slice.sources,
                     })
                     .collect(),
-                namespace,
+                namespace: namespace.clone(),
                 rules: rules.as_ref(),
                 citations,
                 width,
@@ -171,6 +250,38 @@ impl ConsolidationExecutor<'_> {
             )
             .into());
         }
+        Ok(PartitionPrefix::Extracted(Box::new(ExtractedPartition {
+            slices,
+            steps,
+            namespace,
+            axes,
+            subject,
+            run_id,
+        })))
+    }
+
+    /// The serial finish of one extracted partition: account the steps,
+    /// parse and mint, read corrections, build and resolve candidates.
+    /// `resources` is the branch as this finish opens it, so its live
+    /// reads (admitted priors, candidate signals) see exactly what a
+    /// serial run in this position would see.
+    pub(super) async fn finish_partition_run(
+        &mut self,
+        extracted: ExtractedPartition,
+        resources: &BranchResources<'_>,
+        ctx: &WakeAttemptContext<'_>,
+        attempt_id: AttemptId,
+        charges: &mut StepChargeTally,
+        stages: &mut PartitionStages,
+    ) -> DurableStepResult<PartitionRun> {
+        let ExtractedPartition {
+            slices,
+            steps,
+            namespace,
+            axes,
+            subject,
+            run_id,
+        } = extracted;
 
         // Account for ALL terminal siblings before examining any failure.
         // Successful replies are durable memos, so a failed slot can resume
@@ -180,31 +291,15 @@ impl ConsolidationExecutor<'_> {
         let mut trapped = false;
         let mut checkpoint = false;
         for (slice, SliceStep { step_hash, outcome }) in slices.iter().zip(steps) {
-            match outcome {
-                Ok(StepOutcome::Finished {
+            match tally_slice_outcome(ctx.vault, attempt_id, step_hash, outcome, charges)? {
+                SliceFate::Finished {
                     response,
                     failure_policy,
-                    ..
-                }) => {
-                    charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
-                    replies.push((slice, step_hash, response, failure_policy));
-                }
-                Ok(StepOutcome::Trapped { .. }) => trapped = true,
-                Err(DurableStepError::SpentFinalizeRefused { usage }) => {
-                    charges.record_usage(&usage);
-                    checkpoint = true;
-                }
-                Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
-                    charges.record_usage(&usage);
-                    refused.get_or_insert_with(|| {
-                        format!("extraction reply refused: {}", errors.join("; "))
-                    });
-                }
-                Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
-                    checkpoint = true
-                }
-                Err(error) => {
-                    refused.get_or_insert_with(|| error.to_string());
+                } => replies.push((slice, step_hash, response, failure_policy)),
+                SliceFate::Trapped => trapped = true,
+                SliceFate::Checkpoint => checkpoint = true,
+                SliceFate::Refused(reason) => {
+                    refused.get_or_insert(reason);
                 }
             }
         }
@@ -294,6 +389,15 @@ impl ConsolidationExecutor<'_> {
         }
         // Which listed claim each candidate corrects is decided beside the
         // extraction, as one typed pack over every child's candidates.
+        let step_ctx = DurableStepContext {
+            vault: ctx.vault,
+            attempt_id,
+            run_id: run_id.clone(),
+            envelope_actor: self.actor,
+            subject,
+            deadline: Some(ctx.deadline),
+            now_ms: ctx.now_ms,
+        };
         let corrections_started = Instant::now();
         let decided = self
             .decide_corrections(&step_ctx, ctx.deadline, &parsed, resources, charges)
@@ -342,6 +446,13 @@ impl ConsolidationExecutor<'_> {
             .await;
         stages.resolve_ms = ms_since(resolve_started).saturating_sub(stages.gap_ms);
         let run = run?;
+        // The tournament arm (FIX 9009) refines survivors only when the
+        // executor's strategy names it; single-pass returns unchanged.
+        let run = if matches!(self.strategy, DreamerClaimAuthoringStrategy::Tournament) {
+            self.tournament_refine_run(run, ctx.vault, ctx.now_ms, attempt_id)
+        } else {
+            run
+        };
         // A candidate whose correction waits on a role's answer is read again
         // when the attempt comes back; what the pass took is kept.
         Ok(if waiting {
@@ -350,4 +461,262 @@ impl ConsolidationExecutor<'_> {
             run
         })
     }
+
+    /// The tournament arm's survivor refinement (FIX 9008, FIX 9009): every
+    /// survivor's per-claim tournament admission, and one deterministic
+    /// single-round tournament among the admitted string-valued claims,
+    /// written through `run_dreamer_claim_tournament`. The winner lands
+    /// there; losers and the inadmissible stay for the sink. Any failure
+    /// falls back to the survivors unchanged, never failing the partition.
+    fn tournament_refine_run(
+        &self,
+        run: PartitionRun,
+        vault: &Vault,
+        now_ms: u64,
+        attempt_id: AttemptId,
+    ) -> PartitionRun {
+        match run {
+            PartitionRun::Completed { candidates } => PartitionRun::Completed {
+                candidates: self
+                    .tournament_refine_candidates(candidates, vault, now_ms, attempt_id),
+            },
+            PartitionRun::Held {
+                candidates,
+                retry_at_ms,
+            } => PartitionRun::Held {
+                candidates: self
+                    .tournament_refine_candidates(candidates, vault, now_ms, attempt_id),
+                retry_at_ms,
+            },
+            run => run,
+        }
+    }
+
+    /// The survivors with the tournament winner removed, or unchanged when
+    /// no tournament ran (fewer than two admitted claims, no bound campaign,
+    /// or any build or run failure).
+    fn tournament_refine_candidates(
+        &self,
+        candidates: Vec<VerifiedCandidate>,
+        vault: &Vault,
+        now_ms: u64,
+        attempt_id: AttemptId,
+    ) -> Vec<VerifiedCandidate> {
+        if candidates.len() < 2 {
+            return candidates;
+        }
+        let selector = match tournament_selector(vault) {
+            Ok(Some(selector)) => selector,
+            Ok(None) => return candidates,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "tournament survivors stay single-pass; the bound campaign was not read"
+                );
+                return candidates;
+            }
+        };
+        let mut eligible = Vec::new();
+        for candidate in &candidates {
+            if let Some(confidence) = self.tournament_admitted(vault, &selector, candidate) {
+                eligible.push((candidate, confidence));
+            }
+        }
+        if eligible.len() < 2 {
+            return candidates;
+        }
+        let run = match self.tournament_run_of_eligible(&eligible, attempt_id, now_ms) {
+            Ok(run) => run,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "tournament survivors stay single-pass; the tournament run did not build"
+                );
+                return candidates;
+            }
+        };
+        let result = match run_dreamer_claim_tournament(vault, run) {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "tournament survivors stay single-pass; the tournament run did not land"
+                );
+                return candidates;
+            }
+        };
+        let Some(winner) = result.winner else {
+            return candidates;
+        };
+        tracing::info!(
+            claim_id = %winner.claim_id.to_hex(),
+            "tournament winner landed through the tournament gate"
+        );
+        candidates
+            .into_iter()
+            .filter(|candidate| candidate.claim_id != winner.claim_id)
+            .collect()
+    }
+
+    /// The incumbent confidence when `candidate` is admitted to the
+    /// tournament and carries a string value the judges can read; `None`
+    /// when it stays single-pass. Contested is the conflict loop's outcome
+    /// (FIX 12084), never invented: an accumulated member or a merged head.
+    fn tournament_admitted(
+        &self,
+        vault: &Vault,
+        selector: &BoundClaimAuthoringSelector,
+        candidate: &VerifiedCandidate,
+    ) -> Option<f32> {
+        let claim = tournament_claim_of_verified(candidate, candidate.contested).ok()?;
+        let admission = selector
+            .claim_admission(vault, ClaimAuthoringChoice::Tournament, &claim)
+            .ok()?;
+        let gate = admission
+            .gate_decision(DreamerClaimAuthoringBatchTier::batch())
+            .ok()?;
+        if !matches!(gate, DreamerClaimAuthoringGateDecision::Tournament(_)) {
+            return None;
+        }
+        let text = candidate.candidate.value_str()?;
+        if text.is_empty() || text.len() > 8192 {
+            return None;
+        }
+        Some(claim.incumbent_confidence)
+    }
+
+    /// One deterministic single-round tournament over the admitted survivors
+    /// (FIX 9009): each survivor authors one branch, four deterministic
+    /// carryover critiques accept it, and one confidence-ordered blind
+    /// ballot ranks them. Model-driven critiques and ballots are future
+    /// work; the provenance names the deterministic carryover.
+    fn tournament_run_of_eligible(
+        &self,
+        eligible: &[(&VerifiedCandidate, f32)],
+        attempt_id: AttemptId,
+        now_ms: u64,
+    ) -> Result<DreamerTournamentRun> {
+        let catalog = LensCatalog::of366_seed()?;
+        let run_id = format!("tournament-{}", bytes_to_hex_lower(attempt_id.as_bytes()));
+        let at = now_ms / 1_000;
+        let mut branches = Vec::with_capacity(eligible.len());
+        let mut branch_attempts = Vec::with_capacity(eligible.len());
+        for (candidate, _) in eligible {
+            let branch_attempt = AttemptId::from_bytes(candidate.claim_id.as_bytes())?;
+            let judge_refs = candidate
+                .evidence
+                .refs()
+                .into_iter()
+                .take(64)
+                .map(|id| id.to_hex())
+                .collect::<Vec<_>>();
+            let judge_text = candidate.candidate.value_str().ok_or_else(|| {
+                crate::error::Error::InvalidClaimBody("tournament candidate has no judge text")
+            })?;
+            let author = DreamerTournamentCandidate::new(
+                candidate.claim_id.to_hex(),
+                branch_attempt,
+                candidate.claim_id,
+                candidate.candidate.clone(),
+                DreamerTournamentJudgeClaim::new(judge_text, judge_refs.clone())?,
+                self.strategy.as_str(),
+                1,
+            )?;
+            let provenance = CritiqueProvenance::new(
+                self.actor,
+                "deterministic-tournament-carryover-v1",
+                Some("v1".to_owned()),
+            )?;
+            let executor = provenance.executor()?;
+            let mut critiques = Vec::with_capacity(4);
+            for (lens_id, domain) in [
+                ("groundedness", "claim_authoring"),
+                ("overreach", "claim_authoring"),
+                ("temporal", "claim_authoring"),
+                ("redundancy", "claim_authoring"),
+            ] {
+                let lens = catalog.lens(lens_id, domain).ok_or_else(|| {
+                    crate::error::Error::InvalidConfig("OF-366 seed catalog lost a lens".into())
+                })?;
+                critiques.push(CritiqueArtifact::new(
+                    format!("t_{}_{}", candidate.claim_id.to_hex(), lens.id),
+                    run_id.clone(),
+                    branch_attempt,
+                    author.candidate_ref.clone(),
+                    lens,
+                    provenance.clone(),
+                    LearningCell::new(LearningPredicate::Reliability, candidate.claim_id)
+                        .executor(executor.clone())
+                        .type_ref(TypeRef {
+                            node_id: "claim_authoring".to_owned(),
+                            tree_version: 1,
+                        })
+                        .axis("quality"),
+                    CritiqueVerdict::Accept,
+                    CritiqueSeverity::Info,
+                    lens.hard_check.then_some(true),
+                    judge_refs.clone(),
+                    None,
+                    at,
+                )?);
+            }
+            let synthesis = DreamerTournamentSynthesisArtifact::survivor(
+                format!("t_{}_synthesis", candidate.claim_id.to_hex()),
+                &author,
+            )?;
+            branch_attempts.push(branch_attempt);
+            branches.push(DreamerTournamentBranch::new(author, critiques, synthesis)?);
+        }
+        let mut ranking: Vec<usize> = (0..eligible.len()).collect();
+        ranking.sort_by(|&left, &right| {
+            eligible[right]
+                .1
+                .total_cmp(&eligible[left].1)
+                .then_with(|| left.cmp(&right))
+        });
+        let round = DreamerTournamentRound::new(
+            branches,
+            None,
+            vec![DreamerTournamentBordaBallot::new(
+                "deterministic-confidence-order",
+                ranking,
+            )?],
+        )?;
+        let fork = DreamerTournamentAuthorFork::new(run_id.clone(), attempt_id, branch_attempts)?;
+        DreamerTournamentRun::new(
+            run_id,
+            fork,
+            eligible.len() as u16,
+            1,
+            vec![round],
+            Vec::new(),
+            WriteEnvelope::new(
+                self.actor,
+                ClaimSource::Generated,
+                WriteProvenance::new(Value::from("dreamer-tournament-carryover-v1"))?,
+                ClaimApprovalStatus::Proposed,
+            ),
+            TimeRange { start: at, end: at },
+            at,
+        )
+    }
+}
+
+/// The single bound claim-authoring campaign pinning the promoted default,
+/// if exactly one does (FIX 9008): `None` while no default is promoted,
+/// none is bound, or several bind (ambiguous campaigns stay single-pass).
+fn tournament_selector(vault: &Vault) -> Result<Option<BoundClaimAuthoringSelector>> {
+    let Some(default) = default_strategy(vault)? else {
+        return Ok(None);
+    };
+    let mut bound = Vec::new();
+    for root in bound_research_roots(vault)? {
+        if authoring_campaign(vault, root)?.is_some_and(|campaign| campaign.strategy == default) {
+            bound.push(root);
+        }
+    }
+    Ok(match bound.as_slice() {
+        [root] => Some(BoundClaimAuthoringSelector::new(*root)),
+        _ => None,
+    })
 }

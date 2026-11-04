@@ -13,8 +13,8 @@ use crate::EntityId;
 /// states, before any restrictive fact, and what settlement decided.
 pub(super) struct Settled<'a> {
     pub(super) merged: Option<FoldState>,
-    pub(super) valid_entries: BTreeSet<AuthorityEntryHash>,
-    pub(super) by_hash: &'a BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    pub(super) valid_entries: ValidEntries,
+    pub(super) by_hash: &'a dyn RowsReadWhole,
     /// Already filtered to the settled branches.
     pub(super) revoke_facts: &'a RevokeFacts,
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
@@ -24,13 +24,26 @@ pub(super) struct Settled<'a> {
     pub(super) issues: Vec<AuthorityFoldIssue>,
 }
 
+/// The rows a projection reads whole, by hash: the world-key records whose
+/// envelopes a folded key carries. A fold's own map of its rows, or the
+/// persistent one a resumed fold's base shares (FIX 12308).
+pub(super) trait RowsReadWhole {
+    fn get(&self, hash: &AuthorityEntryHash) -> Option<&AuthorityLogEntry>;
+}
+
+impl RowsReadWhole for BTreeMap<AuthorityEntryHash, AuthorityLogEntry> {
+    fn get(&self, hash: &AuthorityEntryHash) -> Option<&AuthorityLogEntry> {
+        BTreeMap::get(self, hash)
+    }
+}
+
 /// What the projection reads of each surviving row's own state beside the
 /// merge, given the final merged state.
 pub(super) trait RowStates {
     fn accepted_roster_marks(
         &self,
         merged: &FoldState,
-        valid: &BTreeSet<AuthorityEntryHash>,
+        valid: &ValidEntries,
     ) -> BTreeSet<AuthorityEntryHash>;
     fn revocation_affected_writers(&self, merged: &FoldState) -> BTreeSet<(EntityId, String)>;
     fn actor_write_frontiers(
@@ -50,7 +63,7 @@ impl RowStates for AllStates<'_> {
     fn accepted_roster_marks(
         &self,
         merged: &FoldState,
-        valid: &BTreeSet<AuthorityEntryHash>,
+        valid: &ValidEntries,
     ) -> BTreeSet<AuthorityEntryHash> {
         super::stale_roster::accepted_roster_marks(merged, self.by_hash, self.states, valid)
     }
@@ -174,6 +187,9 @@ pub(super) fn project_once(
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.roster.clone()),
         retired_keys,
+        host_custody: merged
+            .as_ref()
+            .map_or_else(BTreeSet::new, super::machine_profile::host_custody_closure),
         closed_handoffs,
         genesis_fragile: merged.as_ref().is_some_and(|state| {
             state.genesis_recovery_dismissed && !state.recovery_redundancy_established

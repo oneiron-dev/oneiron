@@ -5,32 +5,25 @@ use super::{
     policy_risk::outbound_dispatch_policy_risk,
 };
 use crate::attempt_queue::AttemptId;
-use crate::campaign::send_hygiene::inject_campaign_email_hygiene_headers;
 use crate::counterparty_contact::normalize_channel_class;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, OffRecordError};
 use crate::gate::ExternalEffectPolicyRisk;
-use crate::linkedin_connector::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
 use crate::outbound::capability::{
     OutboundReplaySafety, OutboundVerbContract, normalize_key, outbound_verb_contract,
 };
 use crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id;
 use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchRequest};
+use crate::outbound::linkedin_policy::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
+use crate::outbound_intent_ledger::email_headers::inject_campaign_email_hygiene_headers;
 use crate::outbound_intent_ledger::{
     IntentLedgerError, IntentLedgerRecord, IntentState, read_intent_for_attempt_in_txn,
 };
 use crate::ports::TombstoneStore;
 use crate::{EntityId, Vault};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Exact effect binding. The full frozen bytes, not a connector-local field list,
-/// are the only replay identity. Receipt id/time are separate per-try evidence.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct FrozenDispatchIdentity {
-    pub(crate) attempt_ref: String,
-    pub(crate) payload: Vec<u8>,
-}
+pub(crate) use crate::receipt::dispatch_identity::FrozenDispatchIdentity;
 
 pub(super) struct PreparedOutboundDispatch {
     pub(super) request: OutboundDispatchRequest,
@@ -43,7 +36,7 @@ pub(super) struct PreparedOutboundDispatch {
     pub(super) verified_actor: Option<(EntityId, EdgeActorClass)>,
     /// The owner whose approval the effect carries; admission rechecks it.
     pub(super) owner_proof: Option<crate::consent::AuthenticatedOwner>,
-    pub(super) step_binding: Option<crate::llm::StepEffectBinding>,
+    pub(super) step_binding: Option<crate::model_step_effect::StepEffectBinding>,
     pub(super) payload: Option<Vec<u8>>,
     pub(super) native_mail_recipient: bool,
     /// A second actor the mutation speaks for, admitted beside the primary
@@ -55,7 +48,7 @@ impl PreparedOutboundDispatch {
         vault: &Vault,
         mut request: OutboundDispatchRequest,
         verified_actor: Option<(EntityId, EdgeActorClass)>,
-        step_binding: Option<crate::llm::StepEffectBinding>,
+        step_binding: Option<crate::model_step_effect::StepEffectBinding>,
     ) -> Result<Self, OutboundDispatchError> {
         crate::dreamer_runner::maintenance::representation::validate_dispatch(vault, &request)?;
         if !crate::task_verb::validate_ask_soft_confirm_dispatch(vault, &request)? {
@@ -140,7 +133,11 @@ impl PreparedOutboundDispatch {
         if let Some(record) = replay.as_ref().filter(|_| completed.is_some()) {
             idempotency_supported = record.idempotency_supported;
         }
-        (request.channel_identity_ref, request.facet_ref) = resolve_dispatch_sender(
+        (
+            request.channel_identity_ref,
+            request.facet_ref,
+            request.sender_posture_fallback,
+        ) = resolve_dispatch_sender(
             vault,
             &request,
             replay
@@ -265,7 +262,7 @@ impl PreparedOutboundDispatch {
             hygiene_headers,
             dreamer_step: self
                 .step_binding
-                .map(crate::llm::StepEffectBinding::frozen_value),
+                .map(crate::model_step_effect::StepEffectBinding::frozen_value),
             calendar_invite: request.calendar_invite.as_ref(),
             space_posting: self.space_posting.as_ref(),
             actor_class: &request.actor.actor_class,
@@ -406,14 +403,17 @@ pub(super) fn invalid_replay() -> OutboundDispatchError {
     ))
 }
 
-/// The sender identity and facet a send goes out as. A replay reads both
-/// from its frozen binding; a new send on a reply thread wears the thread's
-/// pin (OF-272); any other new send enriches by connector and actor.
+/// The sender identity and facet a send goes out as, and whether the
+/// sender's send runs under the posture the default manifest ships. A
+/// replay reads both from its frozen binding; a new send on a reply thread
+/// wears the thread's pin (OF-272); an unpinned send whose host named the
+/// faces of its actor's identities selects by the vault's selection law
+/// (FIX 1906); any other new send enriches by connector and actor.
 fn resolve_dispatch_sender(
     vault: &Vault,
     request: &OutboundDispatchRequest,
     replay_payload: Option<&[u8]>,
-) -> std::result::Result<(Option<EntityId>, Option<EntityId>), OutboundDispatchError> {
+) -> std::result::Result<(Option<EntityId>, Option<EntityId>, bool), OutboundDispatchError> {
     if let Some(payload) = replay_payload {
         let frozen: serde_json::Value =
             serde_json::from_slice(payload).map_err(|_| invalid_replay())?;
@@ -424,7 +424,7 @@ fn resolve_dispatch_sender(
         {
             return Err(invalid_replay());
         }
-        return Ok((sender, facet));
+        return Ok((sender, facet, false));
     }
     let (requested, facet) = match request.reply_thread_ref.as_deref() {
         Some(thread_ref) => match reply_thread_pin(vault, request, thread_ref)? {
@@ -434,6 +434,10 @@ fn resolve_dispatch_sender(
         None => (request.channel_identity_ref, request.facet_ref),
     };
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    let requested = match (requested, request.send_autonomy.as_ref()) {
+        (None, Some(autonomy)) => select_dispatch_sender_in_txn(vault, &txn, request, autonomy)?,
+        (requested, _) => requested,
+    };
     let sender = enrich_dispatch_channel_identity(
         &vault.store,
         &txn,
@@ -441,7 +445,69 @@ fn resolve_dispatch_sender(
         request.actor.actor_entity_ref.as_ref(),
         requested,
     )?;
-    Ok((sender, facet))
+    let shipped_posture = match sender {
+        Some(id) => crate::channel_identity::outbound_send_runs_under_shipped_posture_in_txn(
+            &vault.store,
+            &txn,
+            &id,
+        )?,
+        None => false,
+    };
+    Ok((sender, facet, shipped_posture))
+}
+
+/// The sender the vault's selection law picks for an unpinned send, from the
+/// actor's identities on the send's channel and the faces the host gave
+/// them, in `txn`. `None` when the host gave no faces or the send names no
+/// actor, and when the law picks no candidate: that send keeps the
+/// connector's unique identity, with the reason logged.
+fn select_dispatch_sender_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    request: &OutboundDispatchRequest,
+    autonomy: &crate::channel_identity_autonomy::SendAutonomyContext,
+) -> std::result::Result<Option<EntityId>, OutboundDispatchError> {
+    use crate::channel_identity_selection::{
+        ChannelIdentitySelectionError, ChannelIdentitySelectionQuery,
+        channel_identity_selection_rules_in_txn, resolve_channel_identity_selection,
+    };
+    let Some(actor) = request.actor.actor_entity_ref else {
+        return Ok(None);
+    };
+    if autonomy.identity_faces.is_empty() {
+        return Ok(None);
+    }
+    let candidates = crate::channel_identity::channel_identity_selection_candidates_in_txn(
+        &vault.store,
+        txn,
+        &request.intent.channel,
+        &actor,
+        &mut |id, _| Ok(autonomy.identity_faces.get(id).copied()),
+    )?;
+    let decision = channel_identity_selection_rules_in_txn(&vault.store, txn).and_then(|rules| {
+        resolve_channel_identity_selection(
+            &rules,
+            ChannelIdentitySelectionQuery {
+                relationship: autonomy.relationship,
+                applicable_scopes: &autonomy.applicable_scopes,
+                candidates: &candidates,
+                thread_pin: None,
+            },
+        )
+    });
+    match decision {
+        Ok(decision) => Ok(Some(decision.identity_ref)),
+        Err(ChannelIdentitySelectionError::Storage(error)) => Err(error.into()),
+        Err(error) => {
+            tracing::warn!(
+                actor = %actor.to_hex(),
+                %error,
+                "sender selection picked no identity for this send; it takes the connector's \
+                 unique identity"
+            );
+            Ok(None)
+        }
+    }
 }
 
 /// One frozen entity ref: a hex string, or null where `nullable` (the
@@ -467,11 +533,16 @@ fn reply_thread_pin(
     vault: &Vault,
     request: &OutboundDispatchRequest,
     thread_ref: &str,
-) -> std::result::Result<Option<crate::thread_passport::ThreadMask>, OutboundDispatchError> {
+) -> std::result::Result<
+    Option<crate::write_envelope::thread_claim::ThreadMask>,
+    OutboundDispatchError,
+> {
     let pin = match vault.sticky_thread_mask(thread_ref, None)? {
-        crate::thread_passport::StickyMaskDecision::Keep(pin)
-        | crate::thread_passport::StickyMaskDecision::Conflict { pinned: pin, .. } => pin,
-        crate::thread_passport::StickyMaskDecision::Unset => return Ok(None),
+        crate::write_envelope::thread_claim::StickyMaskDecision::Keep(pin)
+        | crate::write_envelope::thread_claim::StickyMaskDecision::Conflict {
+            pinned: pin, ..
+        } => pin,
+        crate::write_envelope::thread_claim::StickyMaskDecision::Unset => return Ok(None),
     };
     if request.actor.actor_entity_ref != Some(pin.actor_ref)
         || request

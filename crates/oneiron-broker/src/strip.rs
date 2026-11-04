@@ -15,7 +15,8 @@
 //! that could spell a form, holding a backslash or a `%`, is also read
 //! through every chain of up to [`DEPTH`] such decodings, and every form is
 //! searched in every reading. A run also crosses literal whitespace between
-//! its escapes (FIX 8560), so whitespace among them never splits it. Only
+//! its escapes (FIX 8560), or past a trailing escape to raw base64 (FIX
+//! 11564), so whitespace among them never splits it. Only
 //! the source bytes of each match become [`MARKER`]. A run that some chain
 //! of [`DEPTH`] decodings leaves still decodable could hide a form deeper
 //! than that, so the whole run becomes
@@ -335,11 +336,13 @@ fn strip_encoded_runs(
 
 /// Where the run starting at `at` ends: it takes bytes that can spell a form
 /// of the key or an escape of one, each JSON escape and each `%XX` whole,
-/// and literal whitespace that sits between escapes (FIX 8560), so a base64
-/// form spelled in escapes with whitespace among them stays one run: each
-/// reading decodes the escapes and passes the whitespace through, and the
-/// wrapped base64 search skips it. Whitespace beside no escape still ends
-/// the run, so words around an encoded echo stay out of it.
+/// and literal whitespace that sits between escapes (FIX 8560) or past a
+/// trailing escape before raw base64 (FIX 11564), so a base64 form spelled
+/// in escapes, or mixed raw and escaped, stays one run: each reading
+/// decodes the escapes and passes the whitespace through, and the wrapped
+/// base64 search skips it. Whitespace beside no escape still ends the run,
+/// so words around an encoded echo stay out of it, but for the one raw
+/// stretch a trailing escape joins.
 fn run_end(key: &[u8], bytes: &[u8], mut at: usize) -> usize {
     let start = at;
     let mut last_was_escape = false;
@@ -379,8 +382,10 @@ fn starts_json_escape(rest: &[u8]) -> bool {
 
 /// Whether the whitespace at `at` joins the run from `start` (FIX 8560): an
 /// escape sequence starts past it and the run already holds one, or the run
-/// ends with one and the next stretch holds one. Either way the whitespace
-/// sits between escapes, and the run's readings decode what it joins.
+/// ends with one and the next stretch holds one, or is raw base64 (FIX
+/// 11564), the raw part of a mixed form. An escape always stands beside the
+/// whitespace; the run's readings decode what it joins, and the wrapped
+/// base64 search skips it.
 fn ws_bridges_escapes(
     key: &[u8],
     bytes: &[u8],
@@ -413,7 +418,11 @@ fn ws_bridges_escapes(
             break;
         }
     }
-    memchr::memchr2(b'\\', b'%', &bytes[next..end]).is_some()
+    let stretch = &bytes[next..end];
+    // The raw part of a mixed form: past a trailing escape, a raw base64
+    // stretch joins the run as an escape does (FIX 11564).
+    memchr::memchr2(b'\\', b'%', stretch).is_some()
+        || (!stretch.is_empty() && stretch.iter().all(|byte| is_base64_byte(*byte)))
 }
 
 /// A decoding of a reading: the decoded bytes, and for each where in the

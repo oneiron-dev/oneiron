@@ -7,17 +7,22 @@
 
 mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
-pub(crate) use fingerprint::{invalidate_blob_fingerprint, prepare_blob_artifact_birth};
+pub(crate) use fingerprint::{
+    invalidate_blob_fingerprint, prepare_binary_blob_artifact_birth, prepare_blob_artifact_birth,
+};
 mod docs;
 mod docs_deep;
 mod docs_import;
 mod summary_ladder;
 pub use docs::{
-    DOCS_EXPORT_SOURCE_ID, DocsExport, DocsExportSource, DocsPage, DocsSegment, docs_extraction_id,
-    docs_semantic_segments,
+    DOCS_EXPORT_SOURCE_ID, DOCS_SEGMENT_MAX_BYTES, DocsExport, DocsExportSource, DocsPage,
+    DocsSegment, docs_extraction_id, docs_semantic_segments,
 };
 pub(crate) use docs_deep::invalidate_docs_source_before_put;
-pub use docs_deep::{DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepTrigger};
+pub use docs_deep::{
+    DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepReview, DocsDeepReviewClaim,
+    DocsDeepTrigger,
+};
 pub use docs_import::{
     DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier,
     DocsSummaryModel,
@@ -42,9 +47,10 @@ pub use image::{
     parse_exif_evidence, register_image_caption_recognizer, register_image_text_recognizer,
 };
 
+pub(crate) use self::admission::json_to_msgpack_value;
 pub use self::admission::{
-    ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, admit_imported_entity,
-    admit_imported_evidence_claim, admit_imported_evidence_claim_typed,
+    ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, ImportedEvidenceScreen,
+    admit_imported_entity, admit_imported_evidence_claim, admit_imported_evidence_claim_typed,
     admit_imported_mention_claim,
 };
 pub(crate) use self::admission::{
@@ -114,3 +120,7 @@ mod parsed;
 pub use parsed::{ParsedImport, ParsedMessage};
 mod pdf;
 pub use pdf::{PdfText, PdfTextError, pdf_text};
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::history::ingest_history_ledger_accepts_masked;

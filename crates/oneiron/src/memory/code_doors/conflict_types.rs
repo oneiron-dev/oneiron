@@ -6,8 +6,8 @@ use super::CodeProposalSubmitRequest;
 use crate::EntityId;
 use crate::critic::{CritiqueSeverity, CritiqueVerdict};
 use crate::learning::LearningCell;
-use crate::repo_mutation::proposal::RepoProposalStatus;
 use crate::repo_mutation::proposal::settlement::{RepoProposalDecision, RepoProposalSettlement};
+use crate::store::repo_proposal_record::RepoProposalStatus;
 use serde::{Deserialize, Serialize};
 
 /// The engine stages both stored proposals at their shared retained base
@@ -41,7 +41,12 @@ pub struct CodeConflictView {
     pub paths: Vec<String>,
     /// Original proposal refs, in left/right order. Empty for an admin conflict.
     pub proposals: Vec<EntityId>,
-    pub task: EntityId,
+    /// The reconciliation TASK; `None` while the conflict is held.
+    pub task: Option<EntityId>,
+    /// Why the open conflict's reconciliation waits, when no TASK was
+    /// minted: its creator's ceiling is below Auto (FIX 8830).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

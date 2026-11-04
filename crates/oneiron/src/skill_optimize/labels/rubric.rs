@@ -4,15 +4,12 @@
 
 use super::*;
 
-/// The judge's rubric: from the bootstrap `judge` skill, through admitted
+/// The judge head: from the bootstrap `judge` skill, through admitted
 /// succession (`Supersedes`, new to old) to its newest revision, when that
-/// revision is live, shared, active and approved. The text is its stored
-/// package's SKILL.md, or a native revision's own instructions. `None` when no
-/// such revision or text exists.
-pub(crate) fn judge_rubric_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<Option<JudgeRubric>> {
+/// revision is live. The walk alone, without the rubric's skill gates, so a
+/// judge imported under another id still has a head (FIX 9076). `None` when
+/// no live head exists.
+pub(crate) fn judge_head_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<EntityId>> {
     let mut head = EntityId::derive(
         crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
         &[JUDGE_SKILL_ID.as_bytes()],
@@ -36,6 +33,21 @@ pub(crate) fn judge_rubric_in_txn(
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &head)?.is_live() {
         return Ok(None);
     }
+    Ok(Some(head))
+}
+
+/// The judge's rubric: from the bootstrap `judge` skill, through admitted
+/// succession (`Supersedes`, new to old) to its newest revision, when that
+/// revision is live, shared, active and approved. The text is its stored
+/// package's SKILL.md, or a native revision's own instructions. `None` when no
+/// such revision or text exists.
+pub(crate) fn judge_rubric_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<JudgeRubric>> {
+    let Some(head) = judge_head_in_txn(vault, txn)? else {
+        return Ok(None);
+    };
     let record = match vault.read_skill_record_in_txn(txn, &head) {
         Ok(record) => record,
         Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return Ok(None),
@@ -164,6 +176,11 @@ pub enum JudgeLabelFit {
 pub struct JudgeLabelRecheckRequest<'a> {
     pub label: &'a JudgeLabel,
     pub rubric: &'a JudgeRubric,
+    /// The rows the pick and rubric were read from (FIX 7102), for the
+    /// checker's call to carry: the label's own row (FIX 12088) and the judge
+    /// skill revision the rubric text was read from. `None` is unknown; calls
+    /// never refuse for it.
+    pub sources: Option<&'a [EntityId]>,
 }
 
 /// The host's side of a re-check: one model call per pending pick, made
@@ -184,6 +201,13 @@ pub struct JudgeLabelRecheckReport {
     pub waiting: u32,
     /// Picks left pending: past the pass's limit, unasked, or moved meanwhile.
     pub pending: u32,
+}
+
+/// The rows a re-check was read from (FIX 12088): the label's own row and
+/// the judge skill revision the rubric text was read from. The checker's call
+/// carries them; capture only, never a refusal.
+fn recheck_source_rows(label: &JudgeLabel, rubric: &JudgeRubric) -> [EntityId; 2] {
+    [label.row_id, rubric.skill]
 }
 
 /// The Coach's re-check pass: re-pin the judge on its rubric's current text,
@@ -229,9 +253,11 @@ pub(crate) fn recheck_judge_labels(
             report.pending += 1;
             continue;
         }
+        let sources = recheck_source_rows(&label, &rubric);
         let fit = checker.check(&JudgeLabelRecheckRequest {
             label: &label,
             rubric: &rubric,
+            sources: Some(&sources),
         })?;
         if fit == JudgeLabelFit::Unavailable {
             report.pending += 1;

@@ -1,4 +1,5 @@
 //! PERSON handles use the reveal consent machine, not custody or a T1 lease.
+//! A delivered PERSON reveal keeps its own lease on its row (FIX 11683).
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 

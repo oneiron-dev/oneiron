@@ -156,8 +156,9 @@ pub struct RecoveryKitIssueArgs {
     /// Where one piece lives, given three times in point order: `paper`,
     /// `password-manager`, `own-email`, `file-elsewhere`, `file-here`,
     /// `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
-    /// `security-key` or `passphrase`. `this-machine` waits for device-piece
-    /// custody.
+    /// `security-key`, `passphrase` or `this-machine`: this install's keystore
+    /// keeps that piece, and a restore here reads it back (refused while the
+    /// keystore is off).
     #[arg(long = "home", value_name = "HOME", required = true)]
     pub homes: Vec<String>,
 
@@ -185,12 +186,14 @@ pub struct RecoveryKitIssueArgs {
 #[derive(Args, Clone, Debug)]
 pub struct KitPieceArgs {
     /// A piece file: a recovery code as text, or a piece export. Give two, or
-    /// one and the passphrase.
-    #[arg(long = "piece", value_name = "FILE", required = true)]
+    /// one and the passphrase. A plain-vault restore on an install that keeps
+    /// a piece may give none and use that piece; pre-open restores need them.
+    #[arg(long = "piece", value_name = "FILE")]
     pub pieces: Vec<PathBuf>,
 
-    /// Read the kit passphrase from this owner-only file. With one piece and
-    /// no file, it is read from stdin.
+    /// Read the kit passphrase from this owner-only file. With only one
+    /// available piece, including this install's kept piece, and no file, it
+    /// is read from stdin.
     #[arg(long, value_name = "FILE")]
     pub secret_file: Option<PathBuf>,
 }

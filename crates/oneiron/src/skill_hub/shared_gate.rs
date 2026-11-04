@@ -5,15 +5,17 @@ use super::refinement_admission::{
 };
 use super::refinement_custody::RefinementReceipt;
 use super::{HubPackage, SharedSkillDelta, package_codec::invalid};
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung, PairedReading,
+    Reversibility,
+};
 use crate::{
     Vault,
     consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectDigest, EffectFacts},
     entity_id::EntityId,
     error::{ArtifactError, Error, Result},
-    llm::decision::{
-        AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
-        PairedReading, Reversibility, TypedDecision,
-    },
+    limit_ask::EngineLimit,
+    llm::decision::TypedDecision,
     skill::{SkillLifecycle, SkillRecord},
     skill_optimize::{HeldOutReplayCase, HeldOutReplayNotes},
     temporal::TimeRange,
@@ -484,6 +486,13 @@ impl Vault {
         }
         Ok(receipt)
     }
+    /// Whether a merge of `candidate` waits on the owner's answer, as
+    /// [`Self::merge_shared_skill_delta`] reads it now.
+    pub fn shared_skill_merge_needs_owner(&self, candidate: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let snapshot = self.shared_merge_snapshot(&txn, candidate)?;
+        self.merge_needs_owner_in_txn(&txn, &snapshot)
+    }
     /// The owner answers a merge only where a review is required. A widening
     /// is any capability the candidate declares beyond the base's admitted
     /// surface; a base with no admitted surface admits none, so every declared
@@ -578,9 +587,10 @@ impl Vault {
             .into_iter()
             .filter(|r| crate::skill_optimize::receipt_is_held_out(&base_id, r))
             .collect::<Vec<_>>();
-        if evidence.is_empty() || evidence.len() > 4096 {
-            return Err(invalid("no bounded held-out reserve for shared base"));
+        if evidence.is_empty() {
+            return Err(invalid("no held-out reserve for shared base"));
         }
+        let _ = self.measure_limit(EngineLimit::SharedMergeEvidenceRows, evidence.len() as u64);
         let scan = crate::skill_scan::scan_gate_for_activation_in_txn(
             &self.store,
             txn,

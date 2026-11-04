@@ -103,8 +103,6 @@ pub(super) fn verify_rows(proposal: &EditProposal, carried: bool) -> Result<()> 
                     && !row.media.iter().any(|entry| {
                         entry.served == MediaServed::Full && entry.reference.evidence() == version
                     })
-                    // A row from before media entries pinned its image by its hash.
-                    && (!row.media.is_empty() || version.body_hash != row.render_hash)
             })
             || row
                 .media
@@ -146,8 +144,10 @@ pub(super) fn verify_rows(proposal: &EditProposal, carried: bool) -> Result<()> 
 /// is pinned, rung over rung, and the last answered: rungs that abstained
 /// before it passed the question on. Then the first answer stands (clear,
 /// or taken at the cut outside its band), or a stronger rung read it again
-/// for its cause, past any rung that abstained on the way. Which earlier
-/// pin abstained is not on the receipt, so none is assumed.
+/// for its cause, past any rung that abstained on the way. An enforced
+/// in-band answer stands with no step only from the dial's ceiling rung,
+/// which the row records (FIX 10745). Which earlier pin abstained is not on
+/// the receipt, so none is assumed.
 pub(super) fn ladder_route(row: &SlideJudgment, probability: f64) -> bool {
     let decision = &row.decision;
     let receipt = &decision.receipt;
@@ -165,7 +165,7 @@ pub(super) fn ladder_route(row: &SlideJudgment, probability: f64) -> bool {
         Reasoning::NotNeeded => {
             time.stop == StopCause::Done
                 && decision.in_band == receipt.band.contains(probability)
-                && !enforced_margin
+                && (!enforced_margin || last.rung == row.ceiling)
         }
         Reasoning::Skipped(_) | Reasoning::Cut(_) => {
             time.stop == StopCause::Deadline

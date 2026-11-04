@@ -11,6 +11,7 @@ pub(super) mod extraction;
 mod failure;
 mod merge_resolution;
 mod partition_run;
+mod partition_window;
 
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
@@ -46,14 +47,16 @@ use crate::dreamer_runner::{DreamerClaimAuthoringStrategy, DreamerParkCause, dre
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepError, DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome,
-    TierPrecedence, call_as_step,
-};
+use crate::inference_context::HostInferenceContext;
+use crate::llm::call_as_step;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::{DurableStepError, DurableStepResult};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
+use oneiron_model::llm::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
+};
 
 // ---------------------------------------------------------------------------
 // Phase 3 executor — bucket attempts over the step layer
@@ -82,7 +85,7 @@ pub struct ConsolidationExecutor<'a> {
     /// Trusted caller's exact branch scope, in addition to actor authority.
     /// A queued scope is its upper bound. None inherits that scope, or admits
     /// only the queued partition's resources when no caller bound was queued.
-    pub scope: Option<crate::llm::Scope>,
+    pub scope: Option<oneiron_model::llm::Scope>,
     /// The host's ladder for the typed questions: how a conflict resolves,
     /// and which listed claim a candidate corrects.
     pub decisions: ConsolidationDecisions,
@@ -222,6 +225,12 @@ impl ConsolidationExecutor<'_> {
             .map(|(index, mut candidate)| {
                 if let Some(decisions) = kept_by.get(&index) {
                     join_decisions(&mut candidate.proposal.decisions, decisions);
+                    // FIX 12084: an accumulated member resolved its conflict;
+                    // the tournament gate reads it as contested. Single-pass
+                    // never sets it.
+                    if matches!(self.strategy, DreamerClaimAuthoringStrategy::Tournament) {
+                        candidate.contested = true;
+                    }
                 }
                 if let Some(bound) = answered.remove(&index) {
                     candidate.answers.extend(bound);
@@ -248,7 +257,7 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// Where `role`'s calls go in this executor.
-    pub(super) fn role(&self, role: crate::llm::manifest::ModelRole) -> RoleCall<'_> {
+    pub(super) fn role(&self, role: crate::model_binding::ModelRole) -> RoleCall<'_> {
         RoleCall::resolve(
             &self.roles,
             role,
@@ -367,7 +376,7 @@ fn merged_candidate(
         &value,
         conflict.identity.world,
         conflict.identity.facet,
-        conflict.identity.rel,
+        conflict.identity.rel.as_ref(),
         conflict.identity.project,
         conflict.identity.topic.as_deref(),
     )?;
@@ -377,9 +386,7 @@ fn merged_candidate(
         value,
         confidence,
     );
-    if let Some(rel) = conflict.identity.rel {
-        candidate = candidate.with_relationship(rel);
-    }
+    candidate = candidate.with_relationships(conflict.identity.rel.clone());
     if let Some(world) = conflict.identity.world {
         candidate = candidate.with_world(world);
     }
@@ -410,6 +417,8 @@ fn merged_candidate(
         evidence: combined,
         answers: Vec::new(),
         sources,
+        // Set by the caller on the tournament strategy (FIX 12084).
+        contested: false,
     })
 }
 
@@ -598,8 +607,13 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         if attempt.status.payload.attempt_type == DREAMER_GAP_SCAN_ATTEMPT_TYPE {
             // Gap-scan child attempt: deterministic detectors + queue upsert.
             let turn_ids = decode_partition_payload(&attempt.status.payload.input)?.turn_ids();
+            let excluded = ctx.vault.dreamer_excluded_conversations()?;
             let mut working_set = Vec::new();
             for turn_id in &turn_ids {
+                let conversation = conversation_of(ctx.vault, turn_id)?;
+                if conversation.is_some_and(|conversation| excluded.contains(&conversation)) {
+                    continue;
+                }
                 let facts = read_turn_facts(ctx.vault, turn_id)?;
                 let role = dreamer_turn_role(
                     facts.speaker.as_deref(),
@@ -610,7 +624,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                     role,
                     learned_at: 0,
                     carrier: None,
-                    conversation: conversation_of(ctx.vault, turn_id)?,
+                    conversation,
                 });
             }
             return super::gap::run_gap_scan(ctx.vault, &working_set, ctx.now_ms);
@@ -680,27 +694,18 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 };
             }
         };
-        if plan.attempt_id() != attempt.status.attempt.id
-            || !plan.matches_queued(&attempt.status.payload.input)
-            || (ctx.prepared_wake.is_some()
-                && self.scope.as_ref().is_some()
-                && self.scope.as_ref() != plan.scope())
-        {
-            return Err(invalid_consolidation(
-                "executor scope/identity differs from prepared attempt",
-            ));
-        }
-        let branch_scope = super::branch_scope::pin_execution_scope(
-            ctx.vault,
-            attempt.status.attempt.id,
-            plan.scope(),
-        )?;
-        if branch_scope.as_ref() != plan.scope() {
-            return Err(invalid_consolidation(
-                "prepared branch scope changed after the wake pin",
-            ));
-        }
+        self.pin_prepared_partition(attempt, ctx, plan)?;
         self.execute_prepared_partition(attempt, ctx, plan, wake)
             .await
+    }
+
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(
+            &'w crate::dreamer_runner::DreamerAdmittedAttempt,
+            WakeAttemptContext<'w>,
+        )],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        self.run_partition_window(window).await
     }
 }

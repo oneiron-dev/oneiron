@@ -12,94 +12,32 @@ use super::parse::{
 use super::{campaign_record_to_json, saved_query_record_to_json};
 use crate::memory::{MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 
-/// `self.*` verb: create a CAMPAIGN owned by the authenticated principal.
-pub const SELF_CAMPAIGN_CREATE: &str = "self.campaign.create";
-
-/// `self.*` verb: read one CAMPAIGN the principal owns.
-pub const SELF_CAMPAIGN_READ: &str = "self.campaign.read";
-
-/// `self.*` verb: replace a CAMPAIGN's definition under a version CAS.
-pub const SELF_CAMPAIGN_UPDATE: &str = "self.campaign.update";
-
-/// `self.*` verb: archive a CAMPAIGN — a lifecycle transition, never a delete.
-pub const SELF_CAMPAIGN_ARCHIVE: &str = "self.campaign.archive";
-
-/// `self.*` verb: page a CAMPAIGN's cohort, read-only.
-pub const SELF_CAMPAIGN_MEMBERS: &str = "self.campaign.members";
-
-/// `self.*` verb: create a SAVED_QUERY owned by the authenticated principal.
-pub const SELF_SAVED_QUERY_CREATE: &str = "self.saved_query.create";
-
-/// `self.*` verb: read one SAVED_QUERY the principal owns.
-pub const SELF_SAVED_QUERY_READ: &str = "self.saved_query.read";
-
-/// `self.*` verb: replace a SAVED_QUERY's definition under a version CAS.
-pub const SELF_SAVED_QUERY_UPDATE: &str = "self.saved_query.update";
-
-/// `self.*` verb: archive a SAVED_QUERY — a lifecycle transition.
-pub const SELF_SAVED_QUERY_ARCHIVE: &str = "self.saved_query.archive";
-
-/// `self.*` verb: page a SAVED_QUERY's derived membership, read-only.
-pub const SELF_SAVED_QUERY_MEMBERS: &str = "self.saved_query.members";
-
-/// `self.*` verb: evaluate a SAVED_QUERY manually now, with one receipt per
-/// visited entity (verdict, evidence hash, memo hit, judge run).
-///
-/// An SDK row like the program verbs, not a verb of this sync dispatch: a
-/// rubric judge runs on the server's own model seats, so the server's host
-/// door answers it and an embedded vault refuses it as host-only. It is
-/// therefore not in [`CAMPAIGN_SELF_VERBS`].
-pub const SELF_SAVED_QUERY_EVALUATE: &str = "self.saved_query.evaluate";
-
-/// `vault.*` verb: create a campaign program under a campaign the caller owns.
-pub const VAULT_CAMPAIGN_PROGRAM_CREATE: &str = "vault.campaign.program.create";
-
-/// `vault.*` verb: read one campaign program under a campaign the caller owns.
-pub const VAULT_CAMPAIGN_PROGRAM_READ: &str = "vault.campaign.program.read";
-
-/// `vault.*` verb: replace a campaign program's definition whole, under a CAS.
-pub const VAULT_CAMPAIGN_PROGRAM_UPDATE: &str = "vault.campaign.program.update";
-
-/// `vault.*` verb: archive a campaign program; a lifecycle transition, never a
-/// delete.
-pub const VAULT_CAMPAIGN_PROGRAM_ARCHIVE: &str = "vault.campaign.program.archive";
-
-/// The campaign program verbs, in dispatch order.
-///
-/// They are SDK rows (`scripts/sdk/agent-verbs.json`), so the verb table
-/// lists them to MCP, code mode and discovery; this door serves them to the
-/// resource routes. They are not in [`CAMPAIGN_SELF_VERBS`], which discovery
-/// advertises as bare code-mode tokens.
-pub const CAMPAIGN_PROGRAM_VERBS: &[&str] = &[
-    VAULT_CAMPAIGN_PROGRAM_CREATE,
-    VAULT_CAMPAIGN_PROGRAM_READ,
-    VAULT_CAMPAIGN_PROGRAM_UPDATE,
-    VAULT_CAMPAIGN_PROGRAM_ARCHIVE,
-];
-
-/// The whole surface vocabulary, in dispatch order.
-///
-/// Discovery advertises exactly this slice, and [`CampaignSurfaceVerb::parse`]
-/// admits exactly these strings, so a verb that exists is discoverable and a
-/// verb that is discoverable is callable.
-pub const CAMPAIGN_SELF_VERBS: &[&str] = &[
-    SELF_CAMPAIGN_CREATE,
-    SELF_CAMPAIGN_READ,
-    SELF_CAMPAIGN_UPDATE,
-    SELF_CAMPAIGN_ARCHIVE,
-    SELF_CAMPAIGN_MEMBERS,
-    SELF_SAVED_QUERY_CREATE,
-    SELF_SAVED_QUERY_READ,
-    SELF_SAVED_QUERY_UPDATE,
-    SELF_SAVED_QUERY_ARCHIVE,
-    SELF_SAVED_QUERY_MEMBERS,
-];
+pub use crate::memory::campaign_records::verb_names::CAMPAIGN_PROGRAM_VERBS;
+pub use crate::memory::campaign_records::verb_names::CAMPAIGN_SELF_VERBS;
+pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_ARCHIVE;
+pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_CREATE;
+pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_LAUNCH;
+pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_MEMBERS;
+pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_READ;
+pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_UPDATE;
+pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_ARCHIVE;
+pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_CREATE;
+pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_EVALUATE;
+pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_MEMBERS;
+pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_READ;
+pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_UPDATE;
+pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_ARCHIVE;
+pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_CREATE;
+pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_READ;
+pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_UPDATE;
 
 /// A parsed surface verb.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CampaignSurfaceVerb {
     /// [`SELF_CAMPAIGN_CREATE`].
     CampaignCreate,
+    /// [`SELF_CAMPAIGN_LAUNCH`].
+    CampaignLaunch,
     /// [`SELF_CAMPAIGN_READ`].
     CampaignRead,
     /// [`SELF_CAMPAIGN_UPDATE`].
@@ -130,8 +68,9 @@ pub enum CampaignSurfaceVerb {
 
 impl CampaignSurfaceVerb {
     /// Every verb, in the order [`CAMPAIGN_SELF_VERBS`] advertises them.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::CampaignCreate,
+        Self::CampaignLaunch,
         Self::CampaignRead,
         Self::CampaignUpdate,
         Self::CampaignArchive,
@@ -169,6 +108,7 @@ impl CampaignSurfaceVerb {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::CampaignCreate => SELF_CAMPAIGN_CREATE,
+            Self::CampaignLaunch => SELF_CAMPAIGN_LAUNCH,
             Self::CampaignRead => SELF_CAMPAIGN_READ,
             Self::CampaignUpdate => SELF_CAMPAIGN_UPDATE,
             Self::CampaignArchive => SELF_CAMPAIGN_ARCHIVE,
@@ -194,6 +134,7 @@ impl CampaignSurfaceVerb {
         matches!(
             self,
             Self::CampaignCreate
+                | Self::CampaignLaunch
                 | Self::CampaignUpdate
                 | Self::CampaignArchive
                 | Self::SavedQueryCreate
@@ -254,6 +195,11 @@ pub fn invoke_campaign_surface(
         CampaignSurfaceVerb::CampaignCreate => {
             let request = parse_create_campaign_request(&body)?;
             campaign_record_to_json(&facade.campaign_create(&request, now)?)
+        }
+        CampaignSurfaceVerb::CampaignLaunch => {
+            let campaign_ref = required_entity_ref(&body, "campaign_ref")?;
+            let expected = required_u64(&body, "expected_definition_version")?;
+            campaign_record_to_json(&facade.campaign_launch(campaign_ref, expected, now)?)
         }
         CampaignSurfaceVerb::CampaignRead => {
             let campaign_ref = required_entity_ref(&body, "campaign_ref")?;

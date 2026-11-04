@@ -31,13 +31,13 @@ use super::read_projection::RepoGitBackend;
 use super::recipient_serve::RepoGitReadContext;
 use super::serve_cmd::{IncomingQuarantines, ServeChild, ServeCommand, ServeRequest};
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::git_push::GitPushStamp;
 use crate::git_wire::{lock_repository, lock_repository_within, try_lock_repository};
 use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
+use crate::store::code_snapshot::RepoRef;
 
 /// Where a serve invocation writes its response.
 ///
@@ -749,22 +749,24 @@ fn pump_request_body(body: &mut (dyn Read + Send), mut stdin: ChildStdin) -> Res
 
 /// Drains the backend's diagnostics for the failure message, and only for
 /// that. A diagnostic that cannot be read is not a request failure, so this
-/// reports what it got rather than an error.
+/// reports what it got rather than an error. The last
+/// [`SERVE_MAX_STDERR_BYTES`] are kept, so a long push's heartbeat lines
+/// never crowd out the backend's final words (FIX 8366).
 fn drain_stderr(mut stderr: ChildStderr) -> String {
-    let mut captured = Vec::new();
+    let mut captured = std::collections::VecDeque::<u8>::with_capacity(SERVE_MAX_STDERR_BYTES);
     let mut buffer = vec![0_u8; SERVE_STREAM_CHUNK_BYTES];
     loop {
         match stderr.read(&mut buffer) {
             Ok(0) => break,
             Ok(read) => {
-                if captured.len() < SERVE_MAX_STDERR_BYTES {
-                    let room = SERVE_MAX_STDERR_BYTES - captured.len();
-                    captured.extend_from_slice(&buffer[..read.min(room)]);
-                }
+                let chunk = &buffer[read.saturating_sub(SERVE_MAX_STDERR_BYTES)..read];
+                let over = (captured.len() + chunk.len()).saturating_sub(SERVE_MAX_STDERR_BYTES);
+                captured.drain(..over);
+                captured.extend(chunk);
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
     }
-    String::from_utf8_lossy(&captured).into_owned()
+    String::from_utf8_lossy(captured.make_contiguous()).into_owned()
 }

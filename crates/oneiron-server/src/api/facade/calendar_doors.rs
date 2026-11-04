@@ -244,11 +244,11 @@ pub(crate) async fn calendar_imip_get(
     .await
 }
 
+use oneiron::calendar::ingest::CustodyDoorIcsFeedFetcher;
 use oneiron::calendar::ingest::feed_door::{
     self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedRegistration,
     CalendarIcsFeedRequest, CalendarIcsFeedStatus, CalendarIcsPollCompletion,
 };
-use oneiron::calendar::ingest::{CustodyDoorIcsFeedFetcher, run_ics_feed_poll};
 
 pub(crate) async fn calendar_ics_configure(
     server: &Arc<SyncServer>,
@@ -298,11 +298,14 @@ pub(crate) async fn calendar_ics_poll(
             .map_err(MemoryError::bad_request)?;
             let fetcher =
                 CustodyDoorIcsFeedFetcher::new(server.vault(), "calendar.ics.poll", transport);
-            let poll_ref = oneiron::EntityId::now().to_hex();
-            let now = server.vault().now_recorded_at();
-            let outcome = run_ics_feed_poll(server.vault(), &fetcher, &row.config, now, now)
-                .map_err(|error| MemoryError::bad_request(error.to_string()))?;
-            feed::observe_poll(&memory, &owner, &row.config, poll_ref, outcome)
+            feed::run_installed_poll(
+                &memory,
+                &owner,
+                &fetcher,
+                crate::calendar_host::calendar_body_screener(),
+                &row.config,
+                oneiron::EntityId::now().to_hex(),
+            )
         },
     )
     .await
@@ -313,6 +316,7 @@ use oneiron::calendar::meeting::{
     CalendarMeetingRequest, CalendarOutcomePolicy,
 };
 use oneiron::claim::ScopedReadResult;
+use oneiron::policy_manifest_doors;
 
 pub(crate) async fn vault_calendar_outcome_policy_get(
     server: &Arc<SyncServer>,
@@ -323,7 +327,14 @@ pub(crate) async fn vault_calendar_outcome_policy_get(
         server,
         auth,
         "vault.calendar.outcome_policy.get",
-        move |_, memory, owner| meeting::outcome_policy_get(&memory, &owner),
+        move |server, _, owner| {
+            Ok(CalendarOutcomePolicy {
+                grace_secs: policy_manifest_doors::calendar_outcome_grace_as_owner(
+                    server.vault(),
+                    &owner,
+                )?,
+            })
+        },
     )
     .await
 }
@@ -337,7 +348,15 @@ pub(crate) async fn vault_calendar_outcome_policy_set(
         server,
         auth,
         "vault.calendar.outcome_policy.set",
-        move |_, memory, owner| meeting::outcome_policy_set(&memory, &owner, &input),
+        move |server, _, owner| {
+            Ok(CalendarOutcomePolicy {
+                grace_secs: policy_manifest_doors::set_calendar_outcome_grace_as_owner(
+                    server.vault(),
+                    &owner,
+                    input.grace_secs,
+                )?,
+            })
+        },
     )
     .await
 }

@@ -175,6 +175,7 @@ impl Drop for MadeDestination {
         {
             tracing::warn!("a refused restore left the page-seal mirror it wrote in place");
         }
+        crate::world_keys::discard_creation_record(&self.destination);
     }
 }
 

@@ -11,8 +11,8 @@ use crate::error::{Error, Result};
 use super::keys::{code_symbol_entity_id, derive_symbol_fingerprint, repo_identity_key};
 use super::text_diff::subtract_line_range;
 use super::types::{
-    CODE_SYMBOL_MANIFEST_MAX_SYMBOLS, CODE_SYMBOL_NAME_MAX_BYTES, CodeChunk, CodeEmbeddingInput,
-    CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
+    CODE_SYMBOL_NAME_MAX_BYTES, CodeChunk, CodeEmbeddingInput, CodeSymbolGraph,
+    CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
 };
 use super::validate::{validate_manifest_path, validate_text};
 use crate::error::CodeError;
@@ -81,21 +81,17 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
             tree.root_node(),
             source.path,
             source.text,
+            source.document,
             &mut chunks,
             &mut extracted,
             &mut source_symbol_indexes,
         )?;
         parsed_sources.push(ParsedRustSource {
+            path: source.path,
             text: source.text,
             tree,
             symbol_indexes: source_symbol_indexes,
         });
-    }
-
-    if extracted.len() > CODE_SYMBOL_MANIFEST_MAX_SYMBOLS {
-        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-            "tree-sitter symbol extraction exceeded manifest symbol cap",
-        )));
     }
 
     let mut symbols_by_name = HashMap::<String, Vec<usize>>::new();
@@ -146,6 +142,67 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
 }
 
 impl PreparedCodeSymbolGraph<'_> {
+    /// Fills each symbol's producing-operation chain from its file document,
+    /// read in `txn` (FIX 342): the operations that wrote surviving text of
+    /// the symbol's lines, in sequence order, when the document's head holds
+    /// exactly the text the symbol was parsed from. A symbol whose document
+    /// holds another text, or none, keeps an empty chain, and an operation
+    /// with no recorded turn, activity or intent is left out of it.
+    ///
+    /// # Errors
+    /// A corrupt document head or a store failure.
+    pub(crate) fn fill_producing_operations_in_txn(
+        &mut self,
+        store: &crate::store::Store,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
+        let mut by_document = BTreeMap::<[u8; 32], Vec<usize>>::new();
+        for (index, symbol) in self.manifest.symbols.iter().enumerate() {
+            if let Some(document) = symbol.document {
+                by_document.entry(document).or_default().push(index);
+            }
+        }
+        for (document, indexes) in by_document {
+            let path = self.manifest.symbols[indexes[0]].path.as_str();
+            let Some(source) = self
+                .parsed_sources
+                .iter()
+                .find(|source| source.path == path)
+            else {
+                continue;
+            };
+            let ranges: Vec<(u32, u32)> = indexes
+                .iter()
+                .map(|&index| {
+                    let chunks = self.manifest.symbols[index]
+                        .chunk_indexes
+                        .iter()
+                        .filter_map(|&chunk| self.manifest.chunks.get(chunk as usize));
+                    chunks.fold((u32::MAX, 0), |(start, end), chunk| {
+                        (start.min(chunk.start_line), end.max(chunk.end_line))
+                    })
+                })
+                .collect();
+            let Some(writers) = crate::code_document::code_document_line_writers_in_txn(
+                store,
+                txn,
+                &document,
+                source.text,
+                &ranges,
+            )?
+            else {
+                continue;
+            };
+            for (index, operations) in indexes.into_iter().zip(writers) {
+                self.manifest.symbols[index].producing_operations = operations
+                    .iter()
+                    .filter_map(crate::code_document::CodeOpAttribution::producing_operation)
+                    .collect();
+            }
+        }
+        Ok(())
+    }
+
     /// Hands `sink` every Mentions edge, a symbol to each other symbol named
     /// in its body: names repeat once per source symbol, and nothing outside
     /// one symbol's own reference list is kept.
@@ -209,6 +266,7 @@ struct RustDefinitionChunk<'a> {
 }
 
 struct ParsedRustSource<'a> {
+    path: &'a str,
     text: &'a str,
     tree: tree_sitter::Tree,
     symbol_indexes: Vec<usize>,
@@ -236,6 +294,7 @@ fn parse_rust_source(source: &str) -> Result<tree_sitter::Tree> {
 pub(super) fn rust_code_embedding_inputs(
     repo_ref: &RepoRef,
     path: &str,
+    document: Option<[u8; 32]>,
     source: &str,
     changed_ranges: &[Range<usize>],
 ) -> Result<Vec<CodeEmbeddingInput>> {
@@ -244,7 +303,7 @@ pub(super) fn rust_code_embedding_inputs(
     collect_changed_rust_embedding_inputs(
         tree.root_node(),
         repo_ref,
-        path,
+        (path, document),
         source,
         changed_ranges,
         &mut inputs,
@@ -274,14 +333,18 @@ fn push_children<'tree>(node: tree_sitter::Node<'tree>, stack: &mut Vec<tree_sit
 fn collect_changed_rust_embedding_inputs(
     node: tree_sitter::Node<'_>,
     repo_ref: &RepoRef,
-    path: &str,
+    (path, document): (&str, Option<[u8; 32]>),
     source: &str,
     changed_ranges: &[Range<usize>],
     inputs: &mut Vec<CodeEmbeddingInput>,
 ) -> Result<()> {
     let mut stack = vec![node];
+    let mut ordinals = HashMap::new();
     while let Some(node) = stack.pop() {
         if let Some((name, kind)) = rust_definition_identity(node, source)? {
+            // Every definition counts toward its ordinal, changed or not, as
+            // the manifest's walk counts it.
+            let ordinal = next_ordinal(&mut ordinals, &name, kind);
             let definition = rust_definition_chunk(path, source, node)?;
             if definition_has_uncovered_changed_lines(
                 node,
@@ -304,7 +367,8 @@ fn collect_changed_rust_embedding_inputs(
                     vec![0],
                     None,
                     None,
-                );
+                )
+                .on_document(document, ordinal);
                 let entity_id = code_symbol_entity_id(repo_ref, &revision)?;
                 inputs.push(CodeEmbeddingInput::new(
                     entity_id,
@@ -323,18 +387,34 @@ fn collect_changed_rust_embedding_inputs(
     Ok(())
 }
 
+/// The ordinal the next definition named `name` of `kind` in one file takes:
+/// how many of the same name and kind its walk met before (FIX 7809).
+fn next_ordinal(
+    seen: &mut HashMap<(String, &'static str), u32>,
+    name: &str,
+    kind: &'static str,
+) -> u32 {
+    let count = seen.entry((name.to_owned(), kind)).or_insert(0);
+    let ordinal = *count;
+    *count = count.saturating_add(1);
+    ordinal
+}
+
 fn collect_rust_definitions(
     node: tree_sitter::Node<'_>,
     path: &str,
     source: &str,
+    document: Option<[u8; 32]>,
     chunks: &mut Vec<CodeChunk>,
     symbols: &mut Vec<ExtractedCodeSymbol>,
     source_symbol_indexes: &mut Vec<usize>,
 ) -> Result<()> {
     let mut stack = vec![node];
+    let mut ordinals = HashMap::new();
     while let Some(node) = stack.pop() {
         if let Some((name, kind)) = rust_definition_identity(node, source)? {
             validate_text(&name, CODE_SYMBOL_NAME_MAX_BYTES, "symbol name")?;
+            let ordinal = next_ordinal(&mut ordinals, &name, kind);
             let definition = rust_definition_chunk(path, source, node)?;
             let chunk = definition.chunk;
             let chunk_index = u32::try_from(chunks.len()).map_err(|_| {
@@ -359,7 +439,8 @@ fn collect_rust_definitions(
                     vec![chunk_index],
                     None,
                     None,
-                ),
+                )
+                .on_document(document, ordinal),
                 start_byte: byte_range.start,
                 end_byte: byte_range.end,
                 name_start_byte: name_range.start,

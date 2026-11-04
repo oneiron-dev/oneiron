@@ -74,10 +74,11 @@ impl AttemptQueue<'_> {
         let record = self
             .get_in_write_txn(wtxn, input.id)?
             .ok_or_else(|| invalid_transition("fail", "missing"))?;
-        if record.kind == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
+        if record.kind == crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND
             && crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).is_ok_and(
                 |payload| {
-                    payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+                    payload.attempt_type
+                        == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
                 },
             )
         {
@@ -118,6 +119,7 @@ impl AttemptQueue<'_> {
                 record.backoff_until = None;
                 record.last_error = Some(input.reason);
                 record.updated_at = input.now;
+                record.settled_at = Some(input.now);
                 self.delete_dedupe_entry_for_record(wtxn, &record)?;
                 let encoded = self.encode_in_txn(wtxn, &mut record)?;
                 self.store

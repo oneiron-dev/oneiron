@@ -1,4 +1,6 @@
 //! A read-only lookup of an attempt's verified coarse milestone (FIX 8715).
+//! The attempt's milestone claims are found by their attempt index (FIX
+//! 10766), every one the attempt's own, bound or not.
 //!
 //! The durable milestone index admits only a milestone bound to a local
 //! queue row, because that index decides this device's resume point; a
@@ -16,15 +18,14 @@ use crate::authority::AuthorityFold;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
-use crate::ports::EntityStoreRead;
+use crate::ports::{BodyStale, EntityStoreRead, body_readable_in_txn};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE};
 use crate::store::Store;
 
-use super::super::constants::DREAMER_MILESTONE_PREDICATE;
 use super::super::store::DreamerRunnerStore;
 use super::super::types::DreamerDurableMilestone;
 use super::{
-    decode_milestone_value, dreamer_milestone_from_claim_body, milestone_claim_agent_attribution,
+    dreamer_milestone_from_claim_body, milestone_claim_agent_attribution,
     milestone_claim_envelope_writer_kind,
 };
 
@@ -43,19 +44,20 @@ impl DreamerRunnerStore<'_> {
     ) -> Result<Option<DreamerDurableMilestone>> {
         let vault = self.vault;
         let rtxn = vault.store.env.read_txn()?;
+        // The claims naming the attempt, by their index (FIX 10766), each
+        // still readable here.
         let mut candidates = Vec::new();
-        vault.for_each_readable_claim_with_predicate_in_txn(
-            &rtxn,
-            DREAMER_MILESTONE_PREDICATE,
-            |id, body| {
-                if decode_milestone_value(&body.value)
-                    .is_ok_and(|(named, _, _)| named == attempt_id)
-                {
-                    candidates.push(id);
-                }
-                Ok(())
-            },
-        )?;
+        for id in super::claim_index::milestone_claims_in_txn(&vault.store, &rtxn, attempt_id)? {
+            let Some(raw) = vault.store.port_entity_record(&rtxn, &id)? else {
+                continue;
+            };
+            let stale = BodyStale::ClaimStatus;
+            if raw.entity_type == ENTITY_TYPE_CLAIM
+                && body_readable_in_txn(&vault.store, &rtxn, &id, &raw.body, stale)?
+            {
+                candidates.push(id);
+            }
+        }
         if candidates.is_empty() {
             return Ok(None);
         }

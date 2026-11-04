@@ -35,7 +35,10 @@ use oneiron::llm::decision::{
     ModelDecisionProvider, PersonThreshold, ProviderCapability, ProviderDecision, ProviderPin,
     RemoteDecisionSeat, SeatPhase, SeatRequest, ThinkThreshold,
 };
-use oneiron::llm::run_admission::{CallOutcome, HostAccount, PaidConnector, RunReceiptSink};
+use oneiron::llm::run_admission::{
+    CallOutcome, HostAccount, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer,
+    RunReceiptSink,
+};
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
 use oneiron::llm::{
     AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, BoundedAutoChecker, LabelReadModel,
@@ -266,12 +269,16 @@ impl DecisionHost {
         self.person_start = None;
         self.think_start = None;
         let Some((door, meter)) = read else {
+            // No house read: the ladder's paired is none, and the bound
+            // big model tracks it (FIX 11466).
+            self.update_big_paired(None);
             return self;
         };
         let Some(probe) = door.probe() else {
             tracing::warn!(
                 "the decision read's recipe names no paired question; the escalation rung stays empty"
             );
+            self.update_big_paired(None);
             return self;
         };
         // Q2: the house read asks it jointly; a generated read asks the
@@ -319,6 +326,9 @@ impl DecisionHost {
             }
         }
         self.ladder.paired.clone_from(&paired);
+        // The bound big model reads the rebuilt paired question jointly
+        // (FIX 1557); a rebuild binds it to the new one, or none (FIX 11466).
+        self.update_big_paired(paired.clone());
         let Some(paired) = paired else {
             return self;
         };
@@ -341,6 +351,15 @@ impl DecisionHost {
             }
         }
         self
+    }
+
+    /// The bound big model reads `paired` jointly from now on: a house-read
+    /// rebuild reaches the rung `with_big` bound, which keeps no copy of its
+    /// own (FIX 11466). Nothing bound, nothing to update.
+    fn update_big_paired(&self, paired: Option<DecisionQuestion>) {
+        if let Some(big) = self.big_model.as_ref() {
+            big.set_paired(paired);
+        }
     }
 
     /// The Local-vision seat on the Local rung, when
@@ -669,6 +688,10 @@ impl HouseRead {
 struct SystemOneRung {
     seat: Arc<oneiron_llm_systemone::SystemOneSeat>,
     guard: BudgetGuard,
+    /// A call that carries its caller's run admits its measurement on that run as this
+    /// paid connector (FIX 10443): the seat's key is the customer's own, and its usage
+    /// reports tokens, one unit each.
+    connector: PaidConnector,
     posture: HostingPrivacyPosture,
     remote_opt_in: bool,
     runtime: tokio::runtime::Handle,
@@ -705,6 +728,25 @@ impl SystemOneRung {
             (None, None) => anyhow::bail!("it names no key_env or key_secret"),
         }
         .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?;
+        // A bearer held from bind sits in this process's memory; a broker key stays
+        // behind the vault's custody door.
+        let custody = if settings.key_env.is_some() {
+            KeyCustody::T1
+        } else {
+            KeyCustody::T0
+        };
+        let connector = PaidConnector {
+            connector: "system-one".to_owned(),
+            route: OfferRoute::new("system-one", "system-one")?,
+            locality: ModelLocality::ThirdParty,
+            payer: Payer::CustomerKey,
+            credential_binding: None,
+            catalog_revision: None,
+            custody,
+            unit_cost: 1,
+            cost_unit: LeaseUnit::tokens(),
+            rates: Vec::new(),
+        };
         Ok(Self {
             seat: Arc::new(seat),
             guard: BudgetGuard::new(
@@ -712,6 +754,7 @@ impl SystemOneRung {
                 settings.budget_units.unwrap_or(default_units),
                 BudgetExhaustionPolicy::Suspend,
             ),
+            connector,
             posture,
             remote_opt_in: settings.remote_opt_in,
             runtime,

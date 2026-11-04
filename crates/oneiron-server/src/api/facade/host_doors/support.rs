@@ -12,7 +12,7 @@ use oneiron::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
     ProducerRows,
 };
-use oneiron::skill_attribution::RunWriteToken;
+use oneiron::skill_attribution::{RunWriteToken, run_write_token_of_origin};
 use oneiron::task_verb::sdk::AiAnswer;
 use oneiron::{EdgeActorClass, EntityId, FatalLlmError, LlmError, RetryableLlmError};
 
@@ -295,7 +295,7 @@ pub(crate) async fn with_calling_origin<F: std::future::Future>(
     origin: oneiron::memory::HostWriteOrigin,
     call: F,
 ) -> F::Output {
-    let run_writes = RunWriteToken::of_origin(&origin);
+    let run_writes = run_write_token_of_origin(&origin);
     CALLING_ORIGIN
         .scope(origin, CALLING_RUN_WRITES.scope(run_writes, call))
         .await
@@ -446,7 +446,9 @@ pub(super) fn failure(operation: AiOperation, error: &LlmError) -> MemoryError {
             MEMORY_CODE_BUDGET_SPENT,
             "A usage window or prepaid credit is spent: answer the quota question in GET /v1/ai/status at POST /v1/ai/quota/{question}.",
         ),
-        LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::EmptyResponse)
+        LlmError::Fatal(
+            FatalLlmError::Auth | FatalLlmError::EmptyResponse | FatalLlmError::JobLost,
+        )
         | LlmError::Retryable(_) => (
             MEMORY_CODE_MODEL_UNAVAILABLE,
             "Retry later, or name another row ai.options lists.",

@@ -26,7 +26,11 @@ pub enum FormulaError {
     UnsupportedWorkbook(Cow<'static, str>),
     /// The retained OPC boundary refused the archive or an edit.
     #[error(transparent)]
-    Package(#[from] oneiron_docedit::retained_opc::Error),
+    Package(oneiron_docedit::retained_opc::Error),
+    /// The work's memory was refused at the machine's floor, or its wait or
+    /// deadline ran out (FIX 10588): never malformed workbook content.
+    #[error(transparent)]
+    Resource(#[from] oneiron_docedit::resource::ResourceRefusal),
     /// The corpus file itself is unreadable or fails its pinned hashes.
     #[error("invalid corpus: {0}")]
     InvalidCorpus(&'static str),
@@ -43,15 +47,32 @@ impl FormulaError {
             Self::InvalidWorkbook(_) => "invalid-workbook",
             Self::UnsupportedWorkbook(_) => "unsupported-workbook",
             Self::Package(_) => "invalid-package",
+            Self::Resource(_) => "resource-refused",
             Self::InvalidCorpus(_) => "invalid-corpus",
         }
     }
 }
 
-/// A part the namespace-aware reader refuses is malformed workbook content.
+/// A part the namespace-aware reader refuses is malformed workbook content,
+/// unless memory or a deadline stopped the read (FIX 10588).
 impl From<oneiron_docedit::ooxml::XmlError> for FormulaError {
     fn from(error: oneiron_docedit::ooxml::XmlError) -> Self {
+        if let Some(refusal) = error.resource() {
+            return Self::Resource(refusal);
+        }
         Self::InvalidWorkbook(error.reason())
+    }
+}
+
+/// A refused package keeps its typed cause: a memory or deadline refusal is
+/// the refusal itself, and a ceiling stays in `Package` for the port
+/// (FIX 10588, 10652).
+impl From<oneiron_docedit::retained_opc::Error> for FormulaError {
+    fn from(error: oneiron_docedit::retained_opc::Error) -> Self {
+        if let Some(refusal) = error.resource() {
+            return Self::Resource(refusal);
+        }
+        Self::Package(error)
     }
 }
 

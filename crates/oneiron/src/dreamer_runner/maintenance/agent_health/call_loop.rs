@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use super::call_evidence::CallStream;
 use super::{AgentHealthCounter, Attempts, DialBook, Dispatches, Finding, same_inputs};
 use crate::receipt::CallOutcome;
-use crate::self_heal::AgentHealthSignal;
+use crate::store::diagnostic_record::AgentHealthSignal;
 
 /// `loop`: one stream's identical `(verb, request_digest)` calls in a row,
 /// with no other call of that stream between them and no new input: two
@@ -62,6 +62,7 @@ pub(super) fn loop_findings(
                 signal: AgentHealthSignal::Loop,
                 task,
                 attempt,
+                generation: stream.witness.map(|witness| witness.generation),
                 evidence: run.iter().map(|(id, _)| *id).collect(),
                 window: (run[0].1.at, run[run.len() - 1].1.at),
                 actual: count,

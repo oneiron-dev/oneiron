@@ -13,8 +13,10 @@ use crate::write_envelope::WriteActor;
 
 use super::{
     ArtifactPin, CheckpointFileKind, CheckpointFilePin, CheckpointUpload, PinnedCheckpoint,
-    SourcePin, hash_json, invalid,
+    SourcePin, TrainingOwner, TrainingState, hash_json, invalid, run_in_txn,
 };
+
+pub(super) mod stream;
 
 impl SourcePin {
     pub(super) fn validate(&self) -> Result<()> {
@@ -83,6 +85,50 @@ pub(super) fn keep_bytes(
     })
 }
 
+/// [`keep_bytes`] of the bytes `body` yields (FIX 12091): staged as they
+/// stream, and filed under an instance of `mint`, minted before `txn`
+/// opened, once the asset plane files them. What the staged body leaves to
+/// hold comes back with the pin, its bytes already dropped: hold it until
+/// `txn` has committed or aborted.
+pub(super) fn keep_reader(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    run: EntityId,
+    name: &str,
+    body: &mut dyn std::io::Read,
+    mint: Option<&crate::store::BodyMint>,
+) -> Result<(ArtifactPin, crate::store::StagedHold)> {
+    let artifact = vault.store.clock.entity_id()?;
+    let at = vault.store.clock.now_recorded_at();
+    let occurred = TimeRange { start: at, end: at };
+    let record =
+        encode_blob_artifact_body(&BlobArtifactBody::new(name, "application/octet-stream"))?;
+    vault
+        .batch_in()
+        .put(&artifact, ENTITY_TYPE_BLOB_ARTIFACT, occurred, at, &record)
+        .apply(txn)?;
+    let (version, staged) = vault.append_blob_artifact_version_from_reader_in_txn(
+        txn,
+        &artifact,
+        body,
+        mint,
+        &BlobVersionProvenance::AgentRun {
+            run_ref: format!("training_pack:{}", run.to_hex()),
+        },
+        WriteActor::new(actor, EdgeActorClass::Human),
+        occurred,
+        at,
+    )?;
+    let pin = ArtifactPin {
+        artifact,
+        version: version.version,
+        blake3: version.content_hash,
+        bytes: staged.facts().len,
+    };
+    Ok((pin, staged.into_hold()))
+}
+
 pub(super) fn read_pin(vault: &Vault, txn: &heed::RoTxn<'_>, pin: &ArtifactPin) -> Result<Vec<u8>> {
     let metadata = vault
         .blob_artifact_version_metadata_in_txn(txn, &pin.artifact, pin.version)?
@@ -99,6 +145,41 @@ pub(super) fn read_pin(vault: &Vault, txn: &heed::RoTxn<'_>, pin: &ArtifactPin) 
         return Err(invalid("training artifact content hash or length mismatch"));
     }
     Ok(bytes)
+}
+
+/// [`read_pin`] without the bytes: the pin against its stored version, then
+/// the length against the bytes as they stream. The blob reader checks the
+/// hash as the bytes stream, so no check here holds the file; a custody
+/// re-read on a large shard stays out of the transaction's memory.
+pub(super) fn verify_pin(vault: &Vault, txn: &heed::RoTxn<'_>, pin: &ArtifactPin) -> Result<()> {
+    let metadata = vault
+        .blob_artifact_version_metadata_in_txn(txn, &pin.artifact, pin.version)?
+        .ok_or(Error::EntityNotFound)?;
+    if metadata.content_hash != pin.blake3 {
+        return Err(invalid(
+            "training artifact pin differs from its stored version",
+        ));
+    }
+    if !vault.blob_artifact_bytes_readable_in_txn(txn, &pin.artifact)? {
+        return Err(Error::EntityNotFound);
+    }
+    let mut bytes = 0u64;
+    let found = crate::ports::BlobStore::port_blob_reader(
+        vault,
+        txn,
+        &pin.blake3,
+        &mut |reader: &mut dyn std::io::Read| {
+            bytes += std::io::copy(reader, &mut std::io::sink())?;
+            Ok(())
+        },
+    )?;
+    if !found {
+        return Err(Error::EntityNotFound);
+    }
+    if bytes != pin.bytes {
+        return Err(invalid("training artifact content hash or length mismatch"));
+    }
+    Ok(())
 }
 
 pub(super) fn keep_checkpoint(
@@ -178,7 +259,7 @@ impl PinnedCheckpoint {
             if !names.insert(&file.name) {
                 return Err(invalid("checkpoint contains duplicate files"));
             }
-            read_pin(vault, txn, &file.content)?;
+            verify_pin(vault, txn, &file.content)?;
         }
         Ok(())
     }
@@ -218,6 +299,31 @@ impl Vault {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let id = self.store.clock.entity_id()?;
             keep_bytes(self, txn, actor, id, name, bytes)
+        })
+    }
+
+    /// Retain one background evaluator's verifier log under the run's already-authorized
+    /// owner and run id. The held-out door has opened its exposure; no second live owner
+    /// proof is needed for this run-bound trusted-host write.
+    pub fn keep_training_verifier_log_for_run(
+        &self,
+        id: &EntityId,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<ArtifactPin> {
+        self.with_write_txn_grouped(|txn| {
+            let run = run_in_txn(self, txn, id)?;
+            if run.state != TrainingState::Returned || run.eval_exposure.is_none() {
+                return Err(invalid(
+                    "training verifier logs need a returned run with a held-out exposure",
+                ));
+            }
+            let TrainingOwner::Actor(actor) = run.owner else {
+                return Err(invalid(
+                    "the training run's owner was erased; its verifier log is not kept",
+                ));
+            };
+            keep_bytes(self, txn, actor, *id, name, bytes)
         })
     }
 

@@ -20,7 +20,7 @@ pub(in crate::dreamer_consolidation) use wire::{
     contract_reply, decode_ref, disagreeing_child_hashes, extraction_reply, reply_json,
     resolve_subject,
 };
-use wire::{entity_id_from_hex, parse_candidate};
+use wire::{authored_fallback, entity_id_from_hex, parse_candidate};
 
 impl ConsolidationExecutor<'_> {
     /// The extraction request over one child's `transcript`, rendered with
@@ -30,7 +30,7 @@ impl ConsolidationExecutor<'_> {
         call: &RoleCall<'_>,
         transcript: &str,
         labels: &CallLabelMap,
-        scope: &crate::llm::Scope,
+        scope: &oneiron_model::llm::Scope,
         namespace: &MintNamespace,
     ) -> Result<LlmRequest> {
         let mut request = Self::request_over(call, None, transcript.to_owned(), scope)?;
@@ -44,7 +44,7 @@ impl ConsolidationExecutor<'_> {
         call: &RoleCall<'_>,
         source_rule: Option<String>,
         source: String,
-        scope: &crate::llm::Scope,
+        scope: &oneiron_model::llm::Scope,
     ) -> Result<LlmRequest> {
         let locality = call.inference.selected_locality().ok_or_else(|| {
             crate::Error::InvalidConfig("consolidation host binding needs locality".into())
@@ -72,7 +72,7 @@ impl ConsolidationExecutor<'_> {
                 scope: scope.clone(),
                 purpose: CallPurpose::Extraction,
                 class: CallClass::Durable {
-                    fallback: crate::llm::DeterministicFallback {
+                    fallback: oneiron_model::llm::DeterministicFallback {
                         name: "json_rules_v1".into(),
                         config: Some(
                             serde_json::json!({"version":1,"rows":[{"failure":"fatal","value":{"candidates":[],"persons":[],"fallback":"model_unavailable"}}]}),
@@ -108,7 +108,7 @@ impl ConsolidationExecutor<'_> {
     pub(in crate::dreamer_consolidation) fn parse_candidates<'s>(
         response: &LlmResponse,
         resources: &BranchResources<'_>,
-        scope: &'s crate::llm::Scope,
+        scope: &'s oneiron_model::llm::Scope,
         ctx: ReplyContext<'_>,
         sources: &[EntityId],
     ) -> Result<(Vec<ParsedCandidate<'s>>, usize)> {
@@ -125,10 +125,11 @@ impl ConsolidationExecutor<'_> {
                 "child evidence hash disagrees with the ledger"
             );
         }
+        let authored = authored_fallback(response);
         let mut parsed = Vec::new();
         let mut skipped = 0_usize;
         for item in items {
-            match parse_candidate(item, ctx, scope) {
+            match parse_candidate(item, ctx, scope, authored) {
                 Ok(mut candidate) => {
                     candidate.sources = sources.to_vec();
                     parsed.push(candidate);
@@ -195,7 +196,7 @@ impl ConsolidationExecutor<'_> {
 /// One extracted candidate as the reply states it, its evidence checked
 /// against its child's scope.
 pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
-    scope: &'s crate::llm::Scope,
+    scope: &'s oneiron_model::llm::Scope,
     subject: EntityId,
     /// Its own predicate, when that meets the claim grammar.
     predicate: Option<String>,
@@ -305,19 +306,23 @@ fn resolve_proposal(
     };
     let value = json_to_rmpv(&parsed.value);
     let rel = match (corrects, parsed.rel) {
-        (Some(prior), _) => prior.body.rel,
-        (None, None) => scope.relationship,
+        (Some(prior), _) => prior.body.rel.clone(),
+        (None, None) => scope.relationship.clone(),
         // A relationship the call listed, by its label (FIX 7575).
-        (None, Some(CandidateRel::Listed(rel))) => Some(rel),
+        (None, Some(CandidateRel::Listed(rel))) => crate::claim::relationship_scope_of(Some(rel)),
         // A value that is no listed label is read as before.
-        (None, Some(CandidateRel::Unlisted(value))) => Some(
+        (None, Some(CandidateRel::Unlisted(value))) => crate::claim::relationship_scope_of(Some(
             value
                 .as_str()
                 .and_then(entity_id_from_hex)
                 .ok_or_else(|| invalid_consolidation("invalid relationship ref"))?,
-        ),
+        )),
     };
-    if scope.relationship.is_some_and(|bound| rel != Some(bound)) {
+    // A bound branch writes inside its relationship set: the whole set or a
+    // narrower one, never a relationship outside it or `all`.
+    if let Some(bound) = &scope.relationship
+        && !rel.as_ref().is_some_and(|rel| rel.is_subset(bound))
+    {
         return Err(invalid_consolidation(
             "extraction relationship crossed branch scope",
         ));
@@ -329,9 +334,7 @@ fn resolve_proposal(
         parsed.confidence,
     )
     .with_lexical_hints(parsed.prospective_queries);
-    if let Some(rel) = rel {
-        candidate = candidate.with_relationship(rel);
-    }
+    candidate = candidate.with_relationships(rel.clone());
     if let Some(world) = partition.world_ref {
         candidate = candidate.with_world(world);
     }
@@ -366,7 +369,7 @@ fn resolve_proposal(
         &facts.value,
         partition.world_ref,
         partition.facet_ref,
-        rel,
+        rel.as_ref(),
         facts.project,
         facts.topic.as_deref(),
     )?;

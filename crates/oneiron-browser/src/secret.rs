@@ -39,6 +39,15 @@ pub trait SecretCustody: Send + Sync {
         let _ = operation;
         self.with_value(handle, use_)
     }
+
+    /// Whether this run holds `handle` for its own type and expect now
+    /// (FIX 10424): asked of the custody's admission alone, it lends no
+    /// bytes and records no use. The default holds every handle, so a
+    /// host that answers no more checks a handle's form alone.
+    fn holds(&self, handle: &str) -> Result<bool, BrowserError> {
+        let _ = handle;
+        Ok(true)
+    }
 }
 
 /// What a session asks a secret's bytes for (FIX 8342): a type sends them
@@ -242,6 +251,16 @@ mod held {
                 ))
             })?;
             custody.with_value_as(handle, operation, use_)
+        }
+
+        /// Whether the host's custody holds `named` (a handle, bare or as a
+        /// row shows it) for this run, asked without its bytes (FIX 10424).
+        /// A session whose host keeps no secrets holds none.
+        pub(crate) fn holds_handle(&self, named: &str) -> Result<bool, BrowserError> {
+            match self.custody() {
+                Some(custody) => custody.holds(bare_handle(named)),
+                None => Ok(false),
+            }
         }
 
         /// The secrets earlier reads of this session took that `text` shows

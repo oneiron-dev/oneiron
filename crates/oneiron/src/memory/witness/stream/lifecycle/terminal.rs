@@ -29,12 +29,17 @@ fn admit_terminal(gate: TerminalGate<'_>, txn: &heed::RwTxn<'_>) -> MemoryResult
 /// before it, and lands its TURN, or its room regeneration permit, with its
 /// MESSAGE; a Retry that no longer stands lands nothing and is retired
 /// ([`retire_refused_retry`]), so `state` reads terminal.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the terminal commit joins its outcome, parts, assertions and gates"
+)]
 pub(super) fn commit_terminal(
     vault: &Vault,
     state: &mut State,
     (finality, reason): (StreamFinality, StreamFinalityReason),
     finish_reason: Option<FinishReason>,
     assertions: &WitnessAssertions,
+    parts: Option<Vec<crate::ContentPart>>,
     recovered: bool,
     gate: TerminalGate<'_>,
 ) -> MessageStreamResult<MessageStreamReceipt> {
@@ -46,6 +51,7 @@ pub(super) fn commit_terminal(
         (finality, reason),
         finish_reason,
         assertions,
+        parts,
         recovered,
         gate,
         &refused,
@@ -87,6 +93,7 @@ fn terminal_write(
     (finality, reason): (StreamFinality, StreamFinalityReason),
     finish_reason: Option<FinishReason>,
     assertions: &WitnessAssertions,
+    parts: Option<Vec<crate::ContentPart>>,
     recovered: bool,
     gate: TerminalGate<'_>,
     refused: &std::cell::Cell<bool>,
@@ -118,15 +125,19 @@ fn terminal_write(
         None
     };
     let unread = std::cell::Cell::new(None);
+    // The created records the judged set does not prove, receipted once
+    // the terminal lands (FIX 11034).
+    let unproven = std::cell::Cell::new(Vec::new());
     let written: MessageStreamResult<()> = if seed.continuation {
         write_continuation_terminal(
             vault,
             state,
+            parts.as_deref(),
             assertions,
             gate,
             callback,
-            lane.as_ref(),
-            &unread,
+            (lane.as_ref(), &memory),
+            (&unread, &unproven),
             &mut receipt,
         )
     } else {
@@ -135,7 +146,9 @@ fn terminal_write(
         receipt.bytes = text.len() as u64;
         // The reply's assertions ride the turn its terminal witnesses, and
         // its metadata keeps them; the seed stays as it was (FIX 3416).
-        let turn = reply_assertions::terminal_turn(seed, text, assertions)?;
+        // The terminal's ordered output parts ride the MESSAGE the same way:
+        // birth facts, never the seed, the receipt or the checkpoint.
+        let turn = reply_assertions::terminal_turn_with_parts(seed, text, parts, assertions)?;
         write_new_message_terminal(
             vault,
             seed,
@@ -156,5 +169,6 @@ fn terminal_write(
         return Err(error);
     }
     crate::gate::record_references::receipt_landed_prose(&memory, &unlinked_prose);
+    reply_assertions::receipt_unproven(&memory, &unproven);
     Ok(receipt)
 }

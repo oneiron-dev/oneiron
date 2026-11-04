@@ -9,7 +9,7 @@
 //! typed is document content and lands as typed.
 //!
 //! A copy leaving the vault reads each token it carries through the export
-//! rows: the actor's hex while the actor stands, [`ERASED_CALL_IDENTITY`]
+//! and per-group author rows: the actor's hex while the actor stands, [`ERASED_CALL_IDENTITY`]
 //! once its erase forgot it. Only `word/document.xml` is read, as XML: a
 //! token is read only as the whole value of a tracked revision's `w:author`
 //! (FIX 9993), and only that value's quoted source is rewritten; text,
@@ -20,17 +20,20 @@
 //!
 //! [`ERASED_CALL_IDENTITY`]: crate::receipt::ERASED_CALL_IDENTITY
 
+mod carrier;
+
 use std::collections::BTreeMap;
 use std::ops::Range;
 
 use heed::RoTxn;
-use oneiron_docedit::ooxml::{XmlError, XmlTree};
+use oneiron_docedit::ooxml::{Node, XmlError, XmlTree};
 use oneiron_docedit::resource::Resources;
 use oneiron_docedit::retained_opc::Package;
 
-use super::{EXPORTS, OfficeBodyExportRequest, OfficeBodyKind};
+use super::{EXPORT_AUTHORS, EXPORTS, OfficeBodyExportRequest, OfficeBodyKind};
 use crate::Vault;
 use crate::error::Result;
+use crate::receipt::ERASED_CALL_IDENTITY;
 
 /// What a default author's token starts with; a new id's 32 hex characters
 /// follow. It is no actor's id and no other marker's (FIX 4513).
@@ -159,11 +162,17 @@ impl Vault {
         };
         // Every row, by token: an undo, a restore or a fork copies a
         // version's bytes into another version, so the version is no key.
-        let authors: BTreeMap<Vec<u8>, String> = EXPORTS
+        let mut authors: BTreeMap<Vec<u8>, String> = EXPORTS
             .scan(&self.store, txn)?
             .into_iter()
             .filter_map(|(_, record)| Some((record.token?.into_bytes(), record.actor.to_hex())))
             .collect();
+        for (_, record) in EXPORT_AUTHORS.scan(&self.store, txn)? {
+            let shown = record
+                .actor
+                .map_or_else(|| ERASED_CALL_IDENTITY.to_owned(), |actor| actor.to_hex());
+            authors.insert(record.token.into_bytes(), shown);
+        }
         // With no row naming a token, the copy holds none of ours. A token is
         // matched decoded, so no raw-byte scan stands in for this one.
         if authors.is_empty() {
@@ -201,13 +210,7 @@ fn swap_tokens(
     let tree = XmlTree::parse(document, resources)?;
     let mut splices: Vec<(Range<usize>, &str)> = Vec::new();
     for node in &tree.nodes {
-        if node.namespace != W_MAIN || !REVISION_ELEMENTS.contains(&node.name.as_str()) {
-            continue;
-        }
-        let Some(value) = node
-            .attr_ns(W_MAIN, "author")
-            .filter(|value| is_token(value))
-        else {
+        let Some(value) = revision_token(node) else {
             continue;
         };
         let Some(author) = authors.get(value.as_bytes()) else {
@@ -248,6 +251,16 @@ fn swap_tokens(
     }
     out.extend_from_slice(document.get(at..).unwrap_or_default());
     Ok(Some(out))
+}
+
+/// The whole token a tracked revision carries as its `w:author`, or none.
+/// Both the resolver and the byte-bound carrier use this one XML predicate.
+fn revision_token(node: &Node) -> Option<&str> {
+    if node.namespace != W_MAIN || !REVISION_ELEMENTS.contains(&node.name.as_str()) {
+        return None;
+    }
+    node.attr_ns(W_MAIN, "author")
+        .filter(|value| is_token(value))
 }
 
 /// Whether `value` is a whole default author's token: the marker, then a

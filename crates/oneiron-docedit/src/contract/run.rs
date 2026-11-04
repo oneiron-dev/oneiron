@@ -97,11 +97,16 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
             Ok(Done::reply(Reply::XlsxBook { book }))
         }
         Op::XlsxProject(args) => {
+            let location = args
+                .location
+                .as_ref()
+                .map(|location| format!("{}{}", location.directory, location.file_name));
             let projection = project_xlsx(
                 input(inputs, args.source)?,
                 &args.changes,
                 args.limits.package(),
                 resources,
+                location.as_deref(),
             )
             .map_err(xlsx)?;
             Ok(Done::with(
@@ -568,11 +573,10 @@ fn deck_error(error: DeckError) -> ContractError {
     if let Some(refusal) = error.resource() {
         return ContractError::resource(refusal);
     }
-    if let Some(capacity) = package_capacity(match &error {
-        DeckError::Package(error) => Some(error),
-        _ => None,
-    }) {
-        return capacity;
+    // Its own ceiling, a package's or a graphic's, keeps its dimension
+    // (FIX 10654).
+    if let Some(hit) = error.capacity() {
+        return ContractError::capacity(hit);
     }
     ContractError::new(ErrorCode::InvalidDocument, error.to_string())
 }
@@ -599,11 +603,10 @@ fn transaction_error(error: TransactionError) -> ContractError {
     if let Some(refusal) = error.resource() {
         return ContractError::resource(refusal);
     }
-    if let Some(capacity) = package_capacity(match &error {
-        TransactionError::Package(error) => Some(error),
-        _ => None,
-    }) {
-        return capacity;
+    // Its own ceiling, a package's or a graphic's, keeps its dimension
+    // (FIX 10654).
+    if let Some(hit) = error.capacity() {
+        return ContractError::capacity(hit);
     }
     let code = match &error {
         TransactionError::Invalid(_) => ErrorCode::BadRequest,
@@ -636,11 +639,10 @@ fn emit_error(error: EmitError) -> ContractError {
     if let Some(refusal) = error.resource() {
         return ContractError::resource(refusal);
     }
-    if let Some(capacity) = package_capacity(match &error {
-        EmitError::Package(error) => Some(error),
-        _ => None,
-    }) {
-        return capacity;
+    // Its own ceiling, a package's or a graphic's, keeps its dimension
+    // (FIX 10654).
+    if let Some(hit) = error.capacity() {
+        return ContractError::capacity(hit);
     }
     let code = match &error {
         EmitError::Plan(error) => return compile(error.clone()),

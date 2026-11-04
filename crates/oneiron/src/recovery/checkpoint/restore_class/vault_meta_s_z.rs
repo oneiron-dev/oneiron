@@ -25,6 +25,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SCOPE_SUMMARY_RESULT, CONTENT),
     // An erased credential's fence stands with the custody it closes (KS-6 part 2).
     (&t::SECRET_CUSTODY_ERASE, LIVE),
+    // An export secret supplement's sealed copy stands as a custody input does (FIX 11843).
+    (&t::SECRET_CUSTODY_EXPORT_OUTPUT, LIVE),
     (&t::SECRET_CUSTODY_INPUT, LIVE),
     (&t::SECRET_CUSTODY_NAME_INDEX, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
@@ -38,6 +40,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_EXHAUST_TAINT, CONTENT),
     (&t::SECRET_FOUND_KEY, LIVE),
     (&t::SECRET_FOUND_KEY_DUE, LIVE),
+    (&t::SECRET_HANDLE_LABEL, LIVE),
     // Known-value history references (KS-3) stand with the custody they name.
     (&t::SECRET_KNOWN_HISTORY, LIVE),
     (&t::SECRET_KNOWN_INDEX, LIVE),
@@ -86,6 +89,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MODEL_OWNER_FALLBACK, LIVE),
     (&t::MODEL_OWNER_RESPONSES_STORE, LIVE),
     (&t::POLICY_SETTING_ACT, LIVE),
+    (&t::ACCESS_GRANT_OWNER_ACT, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_ENABLED, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_INSTALL_DEFAULT, LIVE),
     (&t::ROOM_THREADS_ADMIN_DELETE, LIVE),
@@ -128,6 +132,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHORT_ID_ALIAS, CONTENT),
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),
     (&t::SHORT_ID_COUNTER, CONTENT),
+    (&t::SKILL_CALLABLE_CASE, CONTENT),
+    (&t::SKILL_CALLABLE_CASE_INDEX, CONTENT),
     (&t::SKILL_CALLABLE_GATE, CONTENT),
     // A restore cannot refund a spent exploration slice or re-open a trial's
     // exposure: trials, their routed runs and the slice ledger stand as the
@@ -144,6 +150,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_ATTRIBUTION_CONTRIBUTION_CHECK, CONTENT),
     (&t::SKILL_ATTRIBUTION_CREDIT_ADJUSTMENT, CONTENT),
     (&t::SKILL_ATTRIBUTION_CURSOR, CONTENT),
+    (&t::SKILL_ATTRIBUTION_DECISION_RECEIPTS, CONTENT),
     (&t::SKILL_ATTRIBUTION_DERIVATION_WITNESS, CONTENT),
     (&t::SKILL_ATTRIBUTION_DISPLACED_JUDGE, CONTENT),
     (&t::SKILL_ATTRIBUTION_DISPLACED_REVISION, CONTENT),
@@ -354,6 +361,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // The owner's digest settings and their change history are his content,
     // as the digest schedule is (FIX 5495).
     (&t::WEAVE_DIGEST_BEHAVIOUR, CONTENT),
+    (&t::WEAVE_DIGEST_CHANNEL_OVERRIDE, CONTENT),
     (&t::WEAVE_DIGEST_SETTING_CHANGE, CONTENT),
     (&t::WEAVE_DIGEST_SETTINGS, CONTENT),
     (&t::WEAVE_DIGEST_SOURCE, CONTENT),

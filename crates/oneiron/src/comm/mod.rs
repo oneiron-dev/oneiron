@@ -3,11 +3,14 @@
 //! Directory module. `claims` holds the `comm.*` claim family; `records` the
 //! COMM_RECORD storage and codec; `parties` the party identity doors;
 //! `stop_hold` the send hold of a STOP, standing or not projected here yet;
-//! `projector` the ordered projector pass; `projection_writes` the
+//! `projector` the ordered projector pass; `receipt_import` its import of
+//! delivered connector send receipts; `projection_writes` the
 //! deterministic claim writes; `consent` the human gates, send overrides and
 //! standing opt-out folds; `opt_out_slots` the opt-out slot and clear-gate
 //! reads the human clear takes across a party's redirect shells;
 //! `descriptor` the synced ARCH-0057 claim-class descriptors;
+//! `generic_put_routing` the generic claim door's and batch builder's
+//! routing of the projector-only classes through the projector;
 //! `thread_membership` the alias-aware membership reads. This file keeps the seam (module declarations and the re-exports
 //! that preserve every `crate::comm::` path), the projector's pass index,
 //! and the test-only scan counters.
@@ -15,10 +18,13 @@
 mod claims;
 mod consent;
 mod descriptor;
+mod generic_put_routing;
+mod inbound_events;
 mod opt_out_slots;
 mod parties;
 mod projection_writes;
 mod projector;
+mod receipt_import;
 mod records;
 mod stop_hold;
 mod thread_membership;
@@ -50,19 +56,30 @@ pub use self::descriptor::{
     encode_claim_class_descriptor,
 };
 pub(crate) use self::descriptor::{
+    check_claim_against_compiled_descriptor, is_compiled_generic_claim_predicate,
+};
+pub(crate) use self::descriptor::{
     check_claim_against_descriptor_in_txn, is_restrictive_comm_predicate,
     seed_claim_class_descriptors,
 };
+pub use self::generic_put_routing::route_projector_only_comm_put_in_txn;
+pub(crate) use self::generic_put_routing::{
+    route_projector_only_batch_puts_in_txn, take_projector_only_batch_puts_in_txn,
+};
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
-    CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn,
+    CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn, person_party_key_in_txn,
     resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn,
 };
-pub(crate) use self::projector::record_comm_actor_send_receipt_in_txn;
+pub(crate) use self::projector::{
+    record_comm_actor_send_receipt_in_txn, record_comm_inbound_reply_in_txn,
+    record_comm_inbound_stop_in_txn, run_comm_projector_housekeeping_step,
+};
 pub use self::projector::{
     record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,
     record_comm_thread_event, run_comm_projector,
 };
+pub(crate) use self::receipt_import::erase_skipped_send_receipt_in_txn;
 pub(crate) use self::records::{
     validate_comm_record_body_bytes, validate_key_string as validate_comm_party_key,
 };
@@ -71,7 +88,7 @@ pub(crate) use self::stop_hold::{
 };
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use self::projector::ProjectorAction;
 use self::records::{CommEventKind, CommRecord, read_comm_record_in_txn};
@@ -376,12 +393,36 @@ impl CommProjectorIndex {
     }
 }
 
-/// Index changes one committed event authorizes. Empty for events that mutate
-/// no indexed row.
+/// Index changes one committed event authorizes, and the comm heads its rule
+/// wrote. Empty for events that mutate no indexed row and write no head.
 #[derive(Debug, Default)]
 struct ProjectorIndexDelta {
     consumed_gate_ids: Vec<(PartyChannelKey, EntityId)>,
     projected_thread_transition: Option<(PartyThreadKey, (u64, bool))>,
+    /// The heads the rule minted, superseded or retracted. The index reads
+    /// none of them; an in-write projection reports them to its writer.
+    heads: Vec<EntityId>,
+    /// The contacts whose type-132 rows a STOP re-derived. The index reads
+    /// none of them; they go to the live-window mirror with the heads.
+    contacts: Vec<EntityId>,
+    /// Whether the step stamped its source event `projected`, a write of the
+    /// event's own row.
+    source_stamped: bool,
+}
+
+impl ProjectorIndexDelta {
+    /// The rows the step for `event_id` wrote: the source event when it was
+    /// stamped, the heads, the contact rows it re-derived, and the gates it
+    /// consumed.
+    fn written_rows(&self, event_id: EntityId) -> BTreeSet<EntityId> {
+        self.source_stamped
+            .then_some(event_id)
+            .into_iter()
+            .chain(self.heads.iter().copied())
+            .chain(self.contacts.iter().copied())
+            .chain(self.consumed_gate_ids.iter().map(|(_, gate_id)| *gate_id))
+            .collect()
+    }
 }
 
 /// One source COMM_RECORD event, resolved to the projector rule it fires.

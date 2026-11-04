@@ -41,7 +41,12 @@
 //! prior commitments ahead of threads and dossier delta, spends a 250-word
 //! ceiling top-down, and answers nothing at all when the evidence is empty.
 //! Like [`outcome`] it owns no clock — it hands the host an exact wake and a
-//! small home-node job payload, and persists no prep artifact of any kind.
+//! small home-node job payload, and itself persists no prep artifact.
+//!
+//! [`inbox_card`] delivers both cards to the owners' INBOX (FIX 12004): the
+//! host's home-node pass fires each due prep wake and check-in, keeps the
+//! lens the owners were shown, and asks an unanswered check-in once more on
+//! the owner's next local morning.
 //!
 //! CAL-04 adds [`invite`]: the outbound iMIP adapter. It registers ONE verb
 //! (`calendar.invite`) on the existing OF-327 spine, freezes C7's exact
@@ -59,6 +64,7 @@ pub mod door;
 pub mod freebusy;
 pub mod google_internal;
 pub mod ics;
+pub mod inbox_card;
 pub mod ingest;
 pub mod invite;
 pub mod meeting;
@@ -67,7 +73,7 @@ pub mod outcome;
 pub mod passport;
 pub mod prep;
 pub mod query;
-pub mod safeguard;
+pub use oneiron_base::calendar_body_screen as safeguard;
 pub mod series;
 pub mod transcript;
 pub mod tz;
@@ -104,8 +110,7 @@ pub enum CalendarError {
         /// The offending timestamp.
         utc: u64,
     },
-    /// The recurrence text is not RFC 5545 the engine can expand, or expanding
-    /// it over the requested window costs more than the supported walk. Never
+    /// The recurrence text is not RFC 5545 the engine can expand. Never
     /// answered with a short or empty series.
     #[error("invalid or unsupported recurrence rule: {rule}")]
     InvalidRecurrenceRule {
@@ -216,6 +221,11 @@ pub use ics::{
     IMIP_EVENT_TZID_PROPERTY, IMIP_PRODUCT_ID, ImipEmitRequest, ParsedIcsFeed, ParsedVEvent,
     emit_imip_ics, parse_ics_feed, persist_imip_blob,
 };
+pub use inbox_card::{
+    CHECK_IN_CATCH_UP_SECS, CalendarCardCopy, CalendarCardKind, CalendarCardPass,
+    CalendarInboxCard, CheckInReAsk, run_calendar_card_pass,
+};
+pub(crate) use inbox_card::{calendar_inbox_card_lens, calendar_inbox_items};
 pub use ingest::{
     CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, IcsFeedCursorSnapshot, IcsFeedFetcher,
     IcsFeedPauseException, IcsFeedPollConfig, IcsFeedPollPayload, IcsFeedSource, IcsFetchResponse,
@@ -232,23 +242,24 @@ pub use invite::{
     read_calendar_invite_ics,
 };
 pub use outcome::{
-    CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DEFAULT_OUTCOME_GRACE_SECS,
-    DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue,
-    MachineOutcomeEvidence, MeetingClassSignals, OUTCOME_CHECK_IN_REASON_TAG, OutcomeCheckInWake,
+    CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DueOutcomeCheckIn,
+    EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue, MachineOutcomeEvidence,
+    MeetingClassSignals, OUTCOME_CHECK_IN_REASON_TAG, OutcomeCheckInWake,
     PREDICATE_CALENDAR_EVENT_OUTCOME, accept_check_in_recording, build_check_in_lens,
     check_in_is_still_due, check_in_recording_artifact_id, is_meeting_class,
-    outcome_from_machine_evidence, plan_outcome_check_in, project_event_outcome,
-    read_event_outcome, record_event_outcome, resolve_owner_check_in,
+    outcome_from_machine_evidence, outcome_grace_secs, plan_outcome_check_in,
+    project_event_outcome, read_event_outcome, record_event_outcome, resolve_owner_check_in,
 };
 pub use passport::{
     PassportDecision, all_live_inbound_passports_absent, classify_passport, index_passport_uid,
     live_passport_for, live_passports_for_event, resolve_event_by_uid, supersede_calendar_passport,
 };
 pub use prep::{
-    DEFAULT_PREP_LEAD_SECS, DEFAULT_PREP_MAX_WORDS, PREP_WAKE_REASON_TAG, PREP_WAKE_SCHEDULE_KIND,
-    PrepBuildRequest, PrepEvent, PrepHomeNodeJob, PrepItem, PrepLensCopy, PrepPack, PrepPolicy,
-    PrepSection, PrepSectionKind, PrepWake, build_prep_pack, plan_prep_wake, prep_is_eligible,
-    prep_wake_id, render_prep_lens, run_due_home_node_prep,
+    CHECK_IN_RE_ASK_LOCAL_HOUR, DEFAULT_PREP_LEAD_SECS, DEFAULT_PREP_MAX_WORDS,
+    PREP_WAKE_REASON_TAG, PREP_WAKE_SCHEDULE_KIND, PrepBuildRequest, PrepEvent, PrepHomeNodeJob,
+    PrepItem, PrepLensCopy, PrepPack, PrepPolicy, PrepSection, PrepSectionKind, PrepWake,
+    build_prep_pack, plan_check_in_re_ask, plan_prep_wake, prep_is_eligible, prep_wake_id,
+    render_prep_lens, run_due_home_node_prep,
 };
 pub use query::{
     CalendarEventView, CalendarRangeDto, CalendarRead, CalendarReadRequest, CalendarSearchRequest,
@@ -260,8 +271,8 @@ pub use safeguard::{
     CalendarBodyScreener, CalendarInboundBody, CalendarScreenVerdict, Screened, screen_then_claim,
 };
 pub use series::{
-    SeriesDtStart, SeriesExceptionKey, exception_identity, expand_master_window, expand_window,
-    mask_master_exceptions,
+    ExpansionCursor, ExpansionPage, SeriesDtStart, SeriesExceptionKey, exception_identity,
+    expand_master_window, expand_window, expand_window_page, mask_master_exceptions,
 };
 pub use tz::{WallTime, utc_to_wall, wall_to_utc};
 

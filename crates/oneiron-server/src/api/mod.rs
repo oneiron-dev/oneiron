@@ -98,16 +98,13 @@ mod entity;
 mod error_map;
 mod esign;
 pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbox;
-pub(crate) use self::esign::hold_worker::spawn as spawn_esign_hold_worker;
 pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
 pub(crate) use self::esign::notice_worker::dispatch_due_notices as dispatch_esign_due_notices;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
-pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
-#[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
-mod off_record_rooms;
+pub(crate) mod off_record_rooms;
 mod org_admin;
 mod pairing;
 // FIX 922: the kit door to the sealed cloud bundle.
@@ -128,13 +125,15 @@ pub(crate) mod host_action;
 // the invocation a call names as the HTTP facade does (FIX 2059).
 pub(crate) use self::facade::{
     AsrSessions, DoorClaim, ExportTransfers, FacadeApiError, FacadeCall, INVOCATION_CONFLICT,
-    INVOCATION_IN_FLIGHT, ModelStreams, admission_observer, ai_speech_for_run,
-    call_verb as facade_call_verb, claim_door_invocation, connector_answer_as,
+    INVOCATION_IN_FLIGHT, INVOCATION_RESPONSE_ERASED, ModelStreams, admission_observer,
+    ai_speech_for_run, call_verb as facade_call_verb, claim_door_invocation, connector_answer_as,
     connector_call_listing_as, connector_call_listing_on, invocation_body, self_use_as,
 };
 // FIX 11190, FIX 11201: the binding door's decision on a call over a damaged
 // authority clock floor.
 pub(crate) use self::facade::clock_ingress;
+// FIX 12323: a facade route's caller, as its receipt layer resolved it.
+pub(crate) use self::facade::resolved_facade_caller;
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
@@ -150,6 +149,7 @@ mod linear_push;
 mod llm;
 #[cfg(feature = "mesh")]
 pub(crate) use llm::MeshLlm;
+pub(crate) use llm::record_raw_response;
 mod mcp_gateway;
 mod memory;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
@@ -323,9 +323,9 @@ pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
                 "service": "oneiron-server",
                 "modes": ["flash", "thinking", "pro", "ultra"],
                 "capabilities": {
-                    "total": 2228,
+                    "total": 2229,
                     "digest": "blake3:5f0c8a1d2e3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5",
-                    "counts": {"booking": 5, "core": 14, "mcp.endpoint.primary": 2, "mcp.endpoint.tool_first": 1091, "mcp.tool": 15, "mcp.tool.vault": 920, "search": 3, "self": 10}
+                    "counts": {"booking": 6, "core": 14, "mcp.endpoint.primary": 2, "mcp.endpoint.tool_first": 1091, "mcp.tool": 15, "mcp.tool.vault": 920, "search": 3, "self": 10}
                 },
                 "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
                 "rate_limit": {

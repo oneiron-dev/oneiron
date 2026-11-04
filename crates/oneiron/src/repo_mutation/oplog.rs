@@ -136,7 +136,7 @@ impl Vault {
         self.repo_mutation_oplog_for_canonical(&canonical)
     }
 
-    pub(super) fn repo_mutation_oplog_for_canonical(
+    pub(crate) fn repo_mutation_oplog_for_canonical(
         &self,
         repo_ref: &RepoRef,
     ) -> Result<Vec<RepoMutationOplogEntry>> {
@@ -442,6 +442,7 @@ pub(super) fn public_oplog_entry(
         finished_at_ms: stored.finished_at_ms,
         pre_action_fork_hash: stored.pre_action_fork_hash,
         expected_post_action_fork_hash: stored.expected_post_action_fork_hash,
+        post_commit: stored.prepared_commit.map(|commit| commit.new_head),
         status: RepoMutationStatus::parse(&stored.status)?,
         failure: stored.failure,
     })
@@ -493,12 +494,7 @@ pub(super) fn same_repository(left: &RepoRef, right: &RepoRef) -> bool {
     repo_mutation_repo_key(left) == repo_mutation_repo_key(right)
 }
 
-pub(super) fn repo_mutation_repo_key(repo_ref: &RepoRef) -> String {
-    match repo_ref {
-        RepoRef::LocalFolder { path, .. } => format!("local:{path}"),
-        RepoRef::GitHubAtCommit { .. } => repo_ref.canonical(),
-    }
-}
+pub(super) use crate::git_wire::mutation_commands::repo_mutation_repo_key;
 
 /// The [`SNAPSHOT`] key for one content-addressed snapshot.
 pub(super) fn repo_mutation_snapshot_key(fork_hash: RepoForkHash) -> String {

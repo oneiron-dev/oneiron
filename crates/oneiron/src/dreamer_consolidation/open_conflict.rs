@@ -127,9 +127,7 @@ pub(super) fn park_open_conflict(
     if let Some(world) = conflict.identity.world {
         candidate = candidate.with_world(world);
     }
-    if let Some(rel) = conflict.identity.rel {
-        candidate = candidate.with_relationship(rel);
-    }
+    candidate = candidate.with_relationships(conflict.identity.rel.clone());
     candidate = candidate
         .with_scope(super::persistence::identity_scope(&conflict.identity)?)
         .with_evidence_taint(meet)?;

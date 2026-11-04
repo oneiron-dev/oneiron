@@ -8,17 +8,18 @@ use super::{
     AgentHealthCounter, Attempts, DialBook, Dispatched, Dispatches, Finding, Traps, WAIT_PERSON,
     brief, dup_cost_unit, duplicate, entity, settled, task_of,
 };
-use crate::agent_dispatch::{AgentDispatcher, SpendScope, SpendState};
+use crate::agent_dispatch::{AgentDispatcher, SpendScope};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::edge::EdgeKind;
 use crate::learning::{
     DuplicateLabeller, DuplicateWorkKind, TeamEvent, project_run_coordination,
     team_events_from_attempts,
 };
-use crate::llm::DreamerTrapKind;
-use crate::llm::run_admission::LeaseUnit;
+use crate::model_step_record::DreamerTrapKind;
 use crate::ports::EdgeDirection;
-use crate::self_heal::AgentHealthSignal;
+use crate::run_budget::LeaseUnit;
+use crate::store::diagnostic_record::AgentHealthSignal;
+use crate::workspace_roster::spend_scope::SpendState;
 use crate::{EntityId, Result, Vault};
 
 /// `long_wait`: an attempt that spent more than the dial's share of its life
@@ -93,6 +94,7 @@ pub(super) fn long_wait_findings(
             signal: AgentHealthSignal::LongWait,
             task: task_of(record),
             attempt: Some(record.id),
+            generation: Some(record.attempt_count),
             evidence,
             window: (record.created_at, end),
             // A live share moves on every review; the DIAGNOSTIC carries it in
@@ -226,6 +228,7 @@ pub(super) fn cost_spike_findings(
             signal: AgentHealthSignal::CostSpike,
             task: task_of(record),
             attempt: Some(record.id),
+            generation: Some(record.attempt_count),
             evidence: vec![attempt],
             window: (
                 record.created_at,
@@ -421,6 +424,7 @@ fn dup_finding(record: &AttemptRecord, dispatch: &Dispatched, evidence: Vec<Enti
         signal: AgentHealthSignal::DuplicateWork,
         task: task_of(record),
         attempt: Some(record.id),
+        generation: Some(record.attempt_count),
         evidence,
         window: (record.created_at, record.updated_at),
         actual: 1,
@@ -489,6 +493,7 @@ pub(super) fn misalignment_findings(
             signal: AgentHealthSignal::Misalignment,
             task: task_of(record),
             attempt: Some(record.id),
+            generation: Some(record.attempt_count),
             evidence,
             window: (sealed.sealed_at, checked_at),
             actual: count,
@@ -535,6 +540,7 @@ pub(super) fn widen_denial_findings(
             signal: AgentHealthSignal::Misalignment,
             task: task_of(record),
             attempt: Some(record.id),
+            generation: Some(record.attempt_count),
             evidence: vec![attempt],
             window: (
                 record.claimed_at.unwrap_or(record.created_at),
@@ -595,6 +601,7 @@ pub(super) fn unsupported_done_findings(
             signal: AgentHealthSignal::UnsupportedDone,
             task: Some(task),
             attempt: Some(record.id),
+            generation: Some(record.attempt_count),
             evidence: vec![attempt, task],
             window: (
                 record.claimed_at.unwrap_or(record.created_at),

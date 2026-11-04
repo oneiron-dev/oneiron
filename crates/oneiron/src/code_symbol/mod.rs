@@ -33,8 +33,7 @@ pub use self::text_diff::{
     embed_code_chunks,
 };
 pub use self::types::{
-    CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES, CODE_SYMBOL_MANIFEST_MAX_CHUNKS,
-    CODE_SYMBOL_MANIFEST_MAX_SYMBOLS, CODE_SYMBOL_NAME_MAX_BYTES,
+    CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES, CODE_SYMBOL_NAME_MAX_BYTES,
     CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES, CODE_SYMBOL_TEXT_HASH_LEN, CodeChunk, CodeEmbeddingInput,
     CodeEmbeddingVector, CodeProducingOperation, CodeSymbolBlame, CodeSymbolDefinition,
     CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
@@ -42,6 +41,7 @@ pub use self::types::{
 
 pub(crate) use self::actor_erase::erase_manifest_actor_in_txn;
 pub(crate) use self::codec::code_symbol_entity_path;
+pub(crate) use self::keys::code_symbol_document_in_txn;
 pub(crate) use self::rust_source::prepare_code_symbol_graph;
 pub(crate) use self::secret_projection::masked_repo_symbol_texts_in_txn;
 pub(crate) use self::storage::delete_code_symbol_manifest_in_txn;

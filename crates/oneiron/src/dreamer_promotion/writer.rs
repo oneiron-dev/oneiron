@@ -1,19 +1,38 @@
 //! The one-candidate promotion writer and its landed re-read. A refusal
 //! keeps the reason text its outcome has always carried, and the kind of
 //! the engine error behind it when one refused it (FIX 7271), so the scoped
-//! sink logs a kind and never the text.
+//! sink logs a kind and never the text. A gate's refusal also keeps the
+//! gate's own outcome and reason codes (FIX 10355), so the sink's one error
+//! and the log name why the gate refused.
 
 use super::*;
 use crate::dreamer_consolidation::evidence::ResolvedConflictOutput;
-use crate::error::ErrorKind;
+use crate::error::{ErrorKind, GateError};
 
-/// Why one candidate was not written: the reason its outcome keeps, and the
-/// kind of the engine error that refused it. A structural guard's refusal
-/// has no kind; none is read back out of text.
+/// A gate refusal's outcome and reason codes, as the gate wrote them: static
+/// codes, never the candidate's text (FIX 10355).
+pub(super) type GateCodes = (&'static str, Vec<&'static str>);
+
+/// The outcome and reason codes of `error` when the gate refused the write.
+pub(super) fn gate_codes(error: &Error) -> Option<GateCodes> {
+    match error {
+        Error::Gate(GateError::GateWriteRejected {
+            outcome,
+            reason_codes,
+        }) => Some((*outcome, reason_codes.clone())),
+        _ => None,
+    }
+}
+
+/// Why one candidate was not written: the reason its outcome keeps, the
+/// kind of the engine error that refused it, and the gate's codes when the
+/// gate refused it. A structural guard's refusal has no kind; none is read
+/// back out of text.
 #[derive(Debug)]
 pub(super) struct PromotionRejection {
     pub(super) reason: String,
     pub(super) kind: Option<ErrorKind>,
+    pub(super) gate: Option<GateCodes>,
 }
 
 impl PromotionRejection {
@@ -22,13 +41,15 @@ impl PromotionRejection {
         Self {
             reason: reason.into(),
             kind: None,
+            gate: None,
         }
     }
 
     /// An engine error's refusal, its text as the outcome carried it.
-    fn engine(error: Error) -> Self {
+    pub(super) fn engine(error: Error) -> Self {
         Self {
             kind: Some(error.kind()),
+            gate: gate_codes(&error),
             reason: error.to_string(),
         }
     }
@@ -37,6 +58,7 @@ impl PromotionRejection {
     fn engine_in(context: &str, error: Error) -> Self {
         Self {
             kind: Some(error.kind()),
+            gate: gate_codes(&error),
             reason: format!("{context}: {error}"),
         }
     }
@@ -48,7 +70,22 @@ impl PromotionRejection {
         Self {
             reason,
             kind: Some(Error::from(error).kind()),
+            gate: None,
         }
+    }
+
+    /// Records this refusal of `id` in `outcome`: its kind and gate codes
+    /// when it carries them, then its reason.
+    pub(super) fn record(self, id: EntityId, outcome: &mut PromotionOutcome) {
+        if let Some(kind) = self.kind {
+            outcome.rejected_kinds.push((id, kind));
+        }
+        if let Some((gate_outcome, reason_codes)) = self.gate {
+            outcome
+                .rejected_gates
+                .push((id, gate_outcome, reason_codes));
+        }
+        outcome.rejected.push((id, self.reason));
     }
 }
 
@@ -435,7 +472,7 @@ pub(super) fn promote_one_answering(
             crate::own_rate::count_in_txn(
                 &vault.store,
                 wtxn,
-                crate::own_rate::OwnRateKind::AutoWrite,
+                crate::store::own_rate_record::OwnRateKind::AutoWrite,
                 run.agent_actor.entity_ref(),
                 vault.store.clock.now_recorded_at(),
                 auto_write_rate,
@@ -520,10 +557,16 @@ pub(super) fn promote_one_answering(
                 &hints,
             )
             .text(&candidate.claim_id, &[("val", birth_text.as_str())])
-            .commit_with_checker_guard_and_then(checker, read_prior, finish_promotion)
+            .commit_with_checker_guard_and_then(
+                checker,
+                read_prior,
+                finish_promotion,
+                Some("promotion"),
+            )
     } else {
         // Preserve the original single-pass transaction for every None caller.
         vault.with_write_txn_grouped(|wtxn| {
+            let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("promotion");
             read_prior(wtxn)?;
             vault
                 .batch_in()

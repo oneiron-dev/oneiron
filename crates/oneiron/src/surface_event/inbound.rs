@@ -100,6 +100,9 @@ pub enum SurfaceInteractionKind {
     CardCompletion,
     Dwell,
     Tap,
+    /// The counterparty asked for no more messages on this channel (a STOP
+    /// reply, or the provider's own opt-out signal).
+    OptOut,
 }
 
 /// The provider facts of one reaction interaction. The generation is the
@@ -582,12 +585,22 @@ pub(crate) fn route_inbound_surface_event_admitting_in_txn(
     // authority: a relayed message cannot declare itself the owner's.
     input.foreign_inbound = true;
     let claims_not_instructions = true;
-    let found = vault
-        .channel_identity_by_assignment_in_txn(
+    // An address no assignment holds may be an identity's alias: routing
+    // data onto that identity (ARCH-0063 R6). The receipt keeps the address
+    // the event named.
+    let held = match vault.channel_identity_by_assignment_in_txn(
+        txn,
+        &input.channel,
+        &input.receiving_address_or_handle,
+    )? {
+        Some(held) => Some(held),
+        None => vault.channel_identity_by_alias_in_txn(
             txn,
             &input.channel,
             &input.receiving_address_or_handle,
-        )?
+        )?,
+    };
+    let found = held
         .map(|(identity_ref, identity)| {
             Ok::<_, Error>((admit(&identity_ref)?, identity_ref, identity))
         })

@@ -74,10 +74,12 @@ pub(crate) use step::{
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
     erase_step_state_owner_in_txn, owner_gone_in_txn, retire_step_claim_in_rows,
-    retire_step_claim_in_txn, step_claim_carriage, step_state_carriage, step_state_owners,
+    retire_step_claim_in_txn, step_state_carriage, step_state_owners,
 };
 // FIX 9929: a public model-step submission's kept copies.
-pub(crate) use step::{erase_submissions_in_txn, submission_carriage, submission_owners};
+pub(crate) use step::{
+    erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,
+};
 // FIX 6225: an oversize step response's exact-version pins.
 pub(crate) use step::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
@@ -140,7 +142,8 @@ pub use oneiron_model::llm::{
 pub use oneiron_model::llm::{
     AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
     SCHEDULING_SCHEMA_MINOR, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate,
-    SchedulingCapability, SchedulingReceipt, WorkClass, WorkPriority,
+    SchedulingCapability, SchedulingReceipt, WorkCancel, WorkClass, WorkContext, WorkId,
+    WorkPhysical, WorkPriority,
 };
 // FIX 3416: the typed records a reply cited or created, which its host alone fills.
 pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
@@ -156,19 +159,19 @@ pub(crate) use self::step::{
     CallerSettledStep, ExecutedModelWitness, committed_steps_in_txn, settled_step_for_caller,
     settled_step_usage_in_txn, terminal_step_identity,
 };
-pub(crate) use oneiron_model::llm::canonical_json_bytes;
+pub use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;
 pub use oneiron_model::llm::{
     BrokerIsolation, BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback,
-    FatalLlmError, FinishReason, ImageContent, IncompleteReason, LlmBackend, LlmCapability,
-    LlmCatalogCost, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
-    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmRole, LlmStream,
-    LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError, ModelLocality,
-    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM,
-    ReasoningEffort, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
-    SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
-    UnsupportedCapability,
+    DispatchRelease, FatalLlmError, FinishReason, ImageContent, IncompleteReason, LlmBackend,
+    LlmCallMetadata, LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmEndpointFlavor, LlmError,
+    LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
+    LlmResponse, LlmResult, LlmRole, LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec,
+    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, PinnedConfigViolation,
+    PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort, ReasoningPartKind, ResponseFormat,
+    RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError, SingleRouteBackend,
+    SingleSend, SpentKind, TierPrecedence, UnsupportedCapability,
 };
 
 #[cfg(test)]
@@ -192,7 +195,6 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
-pub(crate) use budget::erase_resident_share_actor_in_txn;
 pub use budget::rsi_doors;
 pub use budget::{
     ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,
@@ -202,3 +204,7 @@ pub use budget::{
 pub use step::heal_sent_markers;
 pub(crate) use step::{OpenTrapWait, open_trap_waits};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::routing::llm_routed_seat_accepts_masked;

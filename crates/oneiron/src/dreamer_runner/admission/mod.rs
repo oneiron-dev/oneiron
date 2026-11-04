@@ -17,6 +17,7 @@ use crate::attempt_queue::{
     AttemptId, AttemptInterventionKind, AttemptRecord, ClaimAttempt, ClaimOutcome,
     DialLandingReserve, InterveneAttempt,
 };
+use crate::entity_id::EntityId;
 
 /// A routed runner line's total (FIX 1152): the line is accounting only, so
 /// its row never refuses a reserve or a settlement.
@@ -55,8 +56,9 @@ pub(super) const BUDGET_RESERVATION: SideTable<
     DreamerBudgetReservation,
     Raw,
 > = SideTable::new(&side_table::DREAMER_BUDGET_RESERVATION);
-/// Exact attempt/step memo charged by one wake checkpoint.
-const BUDGET_STEP_CHARGE: SideTable<(AttemptId, [u8; 32]), [u8; 1], Raw> =
+/// Exact attempt/step memo charged by one wake checkpoint, holding the
+/// terminal claim the charge paid for (FIX 7489).
+const BUDGET_STEP_CHARGE: SideTable<(AttemptId, [u8; 32]), EntityId, Raw> =
     SideTable::new(&side_table::DREAMER_BUDGET_STEP_CHARGE);
 
 /// `dreamer:budget_reservation:` row key: a big-endian u16 length, the budget

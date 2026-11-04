@@ -8,9 +8,12 @@
 //! A fact is journaled (it moves the log on, so every member's head is
 //! sealed again), then kept beside the vault in
 //! `<compartment>/.erase-evidence/<credential hex>`, one byte, the larger
-//! fact winning. A fence that comes before any key is in custody pins the
-//! binding first. A landing writes the head's facts into the custody it
-//! lands, where [`crate::store::CredentialFences`] reads them as fences.
+//! fact winning. An erase hands its fence's fact over once its writer
+//! commits (FIX 11211), and the finisher hands every fact over again: a
+//! fact kept already, or a smaller one, is never journaled twice. A fence
+//! that comes before any key is in custody pins the binding first. A
+//! landing writes the head's facts into the custody it lands, where
+//! [`crate::store::CredentialFences`] reads them as fences.
 //! Only an erase makes a fact: a soft delete, a rotation or a revoke never
 //! does, and an image's own fence rows never count.
 
@@ -141,6 +144,18 @@ impl LocalCustody<'_> {
         Ok(facts)
     }
 
+    /// The fact this custody keeps of `credential`, if any; a file custody
+    /// would not write is damaged.
+    fn kept_erase_evidence(&self, credential: &EntityId) -> Result<Option<FenceFact>> {
+        match read_whole(&self.evidence_dir()?.join(credential.to_hex()))?.as_deref() {
+            Some([code]) => FenceFact::from_code(*code)
+                .map(Some)
+                .ok_or_else(evidence_corrupt),
+            Some(_) => Err(evidence_corrupt()),
+            None => Ok(None),
+        }
+    }
+
     /// Keeps `fact`, synced, unless a larger one is kept already.
     pub(super) fn put_erase_evidence(&self, fact: &CredentialFenceFact) -> Result<()> {
         self.open_compartment()?;
@@ -185,6 +200,22 @@ impl Store {
             }
             self.credential_fence_facts_in_txn(&txn)?
         };
+        self.journal_credential_fence_facts(&facts)
+    }
+
+    /// Journals each of `facts` custody keeps no equal or larger fact of,
+    /// then keeps it beside the vault: an erase's own hand-off (FIX 11211)
+    /// and the finisher's both come here, so a fact goes into the journal
+    /// once, and again only once it grows. A fence before any key is in
+    /// custody pins the binding first. Called with no writer open on this
+    /// thread; the caller rules out an archived vault.
+    ///
+    /// # Errors
+    /// Storage and custody faults: the next finisher pass retries.
+    pub(crate) fn journal_credential_fence_facts(
+        &self,
+        facts: &[CredentialFenceFact],
+    ) -> Result<()> {
         if facts.is_empty() {
             return Ok(());
         }
@@ -196,16 +227,15 @@ impl Store {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(());
         };
-        let kept = custody.erase_evidence()?;
         for fact in facts {
-            if kept
-                .get(&fact.credential)
-                .is_some_and(|held| *held >= fact.fact)
+            if custody
+                .kept_erase_evidence(&fact.credential)?
+                .is_some_and(|held| held >= fact.fact)
             {
                 continue;
             }
-            custody.journal_entry(&LogEntry::EraseEvidence(fact))?;
-            custody.put_erase_evidence(&fact)?;
+            custody.journal_entry(&LogEntry::EraseEvidence(*fact))?;
+            custody.put_erase_evidence(fact)?;
         }
         Ok(())
     }

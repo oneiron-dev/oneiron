@@ -36,7 +36,7 @@ pub struct ConsolidationBucketKey {
     pub predicate_root: String,
     pub world: Option<EntityId>,
     pub facet: Option<EntityId>,
-    pub rel: Option<EntityId>,
+    pub rel: crate::claim::RelationshipScope,
     /// The claim's `scopeProjectId`; the vault default project when unstamped.
     pub project: EntityId,
 }
@@ -54,7 +54,9 @@ impl ConsolidationBucketKey {
         hasher.update(self.predicate_root.as_bytes());
         hash_optional_entity(&mut hasher, self.world.as_ref());
         hash_optional_entity(&mut hasher, self.facet.as_ref());
-        hash_optional_entity(&mut hasher, self.rel.as_ref());
+        hasher.update(&crate::claim::relationship_scope_transcript(
+            self.rel.as_ref(),
+        ));
         hasher.update(self.project.as_bytes());
         *hasher.finalize().as_bytes()
     }
@@ -75,7 +77,7 @@ pub(super) struct CandidateFacts {
     pub(super) value: Value,
     pub(super) world: Option<EntityId>,
     pub(super) facet: Option<EntityId>,
-    pub(super) rel: Option<EntityId>,
+    pub(super) rel: crate::claim::RelationshipScope,
     pub(super) project: EntityId,
     pub(super) topic: Option<Vec<u8>>,
 }
@@ -283,7 +285,10 @@ pub(super) fn verify_swarm_evidence_bytes(
         Some(claim)
             if claim == entry.source_id
                 && entry.byte_range.is_none()
-                && kind == crate::registry::ENTITY_TYPE_CLAIM => {}
+                && matches!(
+                    kind,
+                    crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
+                ) => {}
         None if kind == crate::registry::ENTITY_TYPE_TURN => {}
         _ => {
             return Err(invalid_consolidation(
@@ -356,7 +361,7 @@ pub struct ConflictIdentity {
     pub predicate: String,
     pub world: Option<EntityId>,
     pub facet: Option<EntityId>,
-    pub rel: Option<EntityId>,
+    pub rel: crate::claim::RelationshipScope,
     pub project: EntityId,
     /// Canonical question key supplied by the per-predicate extractor.
     pub topic: Option<Vec<u8>>,
@@ -454,7 +459,7 @@ pub fn conflict_open_marker_id(
         ]),
         conflict.identity.world,
         conflict.identity.facet,
-        conflict.identity.rel,
+        conflict.identity.rel.as_ref(),
         conflict.identity.project,
         conflict.identity.topic.as_deref(),
     )
@@ -505,7 +510,7 @@ pub(super) fn deterministic_claim_id(
     value: &Value,
     world: Option<EntityId>,
     facet: Option<EntityId>,
-    rel: Option<EntityId>,
+    rel: Option<&std::collections::BTreeSet<EntityId>>,
     project: EntityId,
     topic: Option<&[u8]>,
 ) -> Result<EntityId> {
@@ -513,7 +518,7 @@ pub(super) fn deterministic_claim_id(
     let optional = |part: Option<&[u8]>| part.map(|bytes| [&[1][..], bytes].concat());
     let world = optional(world.as_ref().map(|id| &id.as_bytes()[..]));
     let facet = optional(facet.as_ref().map(|id| &id.as_bytes()[..]));
-    let rel = optional(rel.as_ref().map(|id| &id.as_bytes()[..]));
+    let rel = crate::claim::relationship_scope_transcript(rel);
     let topic = optional(topic);
     let mut parts: Vec<&[u8]> = vec![
         attempt_id.as_bytes(),
@@ -522,7 +527,7 @@ pub(super) fn deterministic_claim_id(
         &value_bytes,
         world.as_deref().unwrap_or_default(),
         facet.as_deref().unwrap_or_default(),
-        rel.as_deref().unwrap_or_default(),
+        &rel,
         topic.as_deref().unwrap_or_default(),
     ];
     if project != crate::claim::default_project_id() {

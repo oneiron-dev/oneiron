@@ -2,30 +2,33 @@
 //! uid only. The same-user child takes each connection from its parent over
 //! the channel it inherited instead ([`serve_channel`]).
 
+use std::future::Future;
 use std::io::{self, IoSliceMut};
 use std::mem::MaybeUninit;
 use std::os::fd::OwnedFd;
 use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use rustix::io::Errno;
-use rustix::net::{RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, recvmsg};
+use rustix::net::{
+    RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, recv, recvmsg,
+};
 use tokio::io::Interest;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use zeroize::Zeroizing;
 
-use crate::frame::{read_call, write_reply};
-use crate::send::{SendPolicy, Sender};
-use crate::{Outcome, PROTOCOL_VERSION, ReplyHeader};
+use crate::deadline::{CallDeadline, within};
+use crate::frame::{read_call, skip_call, write_reply};
+use crate::send::{SendPolicy, Sender, answer};
+use crate::{Failure, Outcome, PROTOCOL_VERSION, ReplyHeader};
 
-/// Calls in flight at once; the next connection waits for a slot.
+/// Calls in flight at once; the next call waits for a slot, until its send's
+/// limit (FIX 8559).
 const MAX_CONCURRENT: usize = 64;
-
-/// How long a peer has to deliver its frame, and to take the reply.
-const FRAME_DEADLINE: Duration = Duration::from_secs(10);
 
 /// How long a connect to a socket already at the path may take before the
 /// listener behind it counts as live.
@@ -107,15 +110,9 @@ pub async fn serve(config: ServeConfig) -> io::Result<()> {
         if stream.peer_cred().ok().map(|cred| cred.uid()) != Some(config.client_uid) {
             continue;
         }
-        let permit = Arc::clone(&permits)
-            .acquire_owned()
-            .await
-            .map_err(io::Error::other)?;
-        let sender = Arc::clone(&sender);
-        tokio::spawn(async move {
-            handle(stream, &sender).await;
-            drop(permit);
-        });
+        // The call waits for its slot in a task of its own, so its deadline
+        // runs from here and the next call is taken at once.
+        spawn_call(stream, &sender, &permits);
     }
 }
 
@@ -161,15 +158,62 @@ pub(crate) async fn serve_channel(
         };
         // Taken at once, so the channel never fills while calls wait for a
         // slot.
-        let permits = Arc::clone(&permits);
-        let sender = Arc::clone(&sender);
-        tokio::spawn(async move {
-            let Ok(_permit) = permits.acquire_owned().await else {
-                return;
-            };
-            handle(stream, &sender).await;
-        });
+        spawn_call(stream, &sender, &permits);
     }
+}
+
+/// Serves one call accepted now, from a task of its own. Its deadline starts
+/// here (FIX 8559). It waits for a slot until its send's limit and is then
+/// served; a call still waiting then is answered as timed out, and never
+/// sent.
+fn spawn_call(stream: UnixStream, sender: &Arc<Sender>, permits: &Arc<Semaphore>) {
+    let deadline = sender.deadline();
+    let slot = queue(Arc::clone(permits));
+    let sender = Arc::clone(sender);
+    tokio::spawn(async move {
+        match tokio::time::timeout_at(deadline.send_by(), slot).await {
+            Ok(Some(permit)) => {
+                handle(stream, &sender, deadline).await;
+                drop(permit);
+            }
+            // The semaphore is never closed.
+            Ok(None) => {}
+            Err(_) => expire(stream, deadline).await,
+        }
+    });
+}
+
+/// Enters the call in the slot queue now, so calls take their slots in the
+/// order they came, as the semaphore serves its waiters first come, first
+/// served. The call's own task finishes the wait.
+fn queue(
+    permits: Arc<Semaphore>,
+) -> impl Future<Output = Option<OwnedSemaphorePermit>> + Send + 'static {
+    let mut wait = Box::pin(permits.acquire_owned());
+    // This poll puts the waiter in the queue; the task's own polls after it
+    // carry the task's waker.
+    let first = wait.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+    async move {
+        match first {
+            Poll::Ready(permit) => permit.ok(),
+            Poll::Pending => wait.await.ok(),
+        }
+    }
+}
+
+/// Answers a call whose time ran out before it had a slot: its frame is
+/// read with its body passed over and its key wiped, nothing is sent, and it
+/// is answered as timed out, within the frame allowance its deadline keeps
+/// for this. The daemon keeps its reservation, as for any timeout.
+async fn expire(mut stream: UnixStream, deadline: CallDeadline) {
+    let Ok(Ok(call)) = tokio::time::timeout_at(deadline.frame_by(), skip_call(&mut stream)).await
+    else {
+        return;
+    };
+    let timed_out = Outcome::Failed {
+        reason: Failure::Timeout,
+    };
+    let _ = answer(&mut stream, &call, timed_out, deadline).await;
 }
 
 /// The descriptors that came with the channel's next byte, or `None` once
@@ -203,12 +247,28 @@ fn receive(channel: &UnixStream) -> io::Result<Option<Vec<OwnedFd>>> {
     Ok(Some(fds))
 }
 
-/// Serves one call. A frame that cannot be read gets no reply: the daemon
-/// counts the call as lost.
-async fn handle(mut stream: UnixStream, sender: &Sender) {
-    let Ok(Ok(call)) = tokio::time::timeout(FRAME_DEADLINE, read_call(&mut stream)).await else {
+/// Whether the daemon has closed its end of the call's socket: a peek that
+/// waits for nothing reads the end of the stream.
+fn hung_up(stream: &UnixStream) -> bool {
+    let mut byte = [0; 1];
+    matches!(
+        recv(stream, &mut byte[..], RecvFlags::PEEK | RecvFlags::DONTWAIT),
+        Ok((0, _))
+    )
+}
+
+/// Serves one call within its `deadline`. A frame that cannot be read gets
+/// no reply: the daemon counts the call as lost.
+async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline) {
+    let Ok(Ok(call)) = tokio::time::timeout_at(deadline.frame_by(), read_call(&mut stream)).await
+    else {
         return;
     };
+    // A daemon that hung up while the call waited has stopped waiting for
+    // it, so it is never sent (FIX 8559).
+    if hung_up(&stream) {
+        return;
+    }
     if call.header.shape.streams() {
         // The reply is checked as it streams, so the key is wiped only after
         // its last chunk.
@@ -217,10 +277,10 @@ async fn handle(mut stream: UnixStream, sender: &Sender) {
             .stream(
                 &call.header,
                 checked,
-                &call.body,
+                call.body,
                 &call.secret,
                 &mut stream,
-                FRAME_DEADLINE,
+                deadline,
             )
             .await;
         return;
@@ -228,7 +288,7 @@ async fn handle(mut stream: UnixStream, sender: &Sender) {
     let (outcome, body) = match call.header.check(&call.body) {
         Ok(url) => {
             sender
-                .send(&call.header, url, &call.body, &call.secret)
+                .send(&call.header, url, call.body, &call.secret, deadline)
                 .await
         }
         Err(reason) => (Outcome::Refused { reason }, Zeroizing::new(Vec::new())),
@@ -243,7 +303,7 @@ async fn handle(mut stream: UnixStream, sender: &Sender) {
         digest,
         outcome,
     };
-    let _ = tokio::time::timeout(FRAME_DEADLINE, write_reply(&mut stream, &reply, &body)).await;
+    let _ = within(deadline, write_reply(&mut stream, &reply, &body)).await;
 }
 
 #[cfg(all(test, feature = "test-support"))]

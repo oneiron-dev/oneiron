@@ -11,11 +11,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::claim::learning_evidence::Anchor;
 use crate::error::Result;
-use crate::learning::{Anchor, TypeRef};
-use crate::learning_setting::{
-    ATTRIBUTION_UNCLEAR_FLOOR, SettingCheck, global_setting_subject, record_setting_check_in_txn,
-};
+use crate::learning_setting::{SettingCheck, global_setting_subject, record_setting_check_in_txn};
+use crate::receipt::task_type_ref::TypeRef;
+use crate::store::setting_seed::ATTRIBUTION_UNCLEAR_FLOOR;
 
 use super::judge::JudgeTrace;
 use super::split::held_reason;
@@ -63,6 +63,14 @@ pub struct AuditCase {
     /// `model@version` of the one provider that gave every answer; `None`
     /// when they differ or none was asked.
     pub revision: Option<String>,
+    /// The answering model's identity behind `judge`, kept as the judge
+    /// trace gave it (FIX 11515).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// The receipt of each decision that gave `answers`, in order; empty
+    /// when no ladder was asked (FIX 11515).
+    #[serde(default)]
+    pub receipts: Vec<crate::llm::decision::DecisionReceipt>,
 }
 
 impl AuditCase {
@@ -77,6 +85,8 @@ impl AuditCase {
             source: trace.source,
             answers: trace.answers,
             revision: trace.revision,
+            model: trace.model,
+            receipts: trace.receipts,
         }
     }
 }

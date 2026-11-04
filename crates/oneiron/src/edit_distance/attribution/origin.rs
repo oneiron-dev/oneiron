@@ -114,12 +114,14 @@ fn birth_executor(vault: &Vault, proposal: ProposalArtifactRef) -> Result<Option
     let Ok(document) = retained.document() else {
         return Ok(None);
     };
-    Ok(crate::edit_distance::proposal_text::birth_process(document)
-        .filter(|process| process.class == crate::provenance::made_by::MadeByClass::Concluded)
-        .map(|process| format!("{}@{}", process.identity, process.version))
-        .filter(|stamp| {
-            stamp.len() <= MAX_EXECUTOR_BYTES && stamp.parse::<crate::llm::ModelId>().is_ok()
-        }))
+    Ok(
+        crate::edit_distance::proposal_text::birth_process(vault, document)?
+            .filter(|process| process.class == crate::provenance::made_by::MadeByClass::Concluded)
+            .map(|process| format!("{}@{}", process.identity, process.version))
+            .filter(|stamp| {
+                stamp.len() <= MAX_EXECUTOR_BYTES && stamp.parse::<crate::llm::ModelId>().is_ok()
+            }),
+    )
 }
 
 /// No proposal text is retained without the `sync` feature.

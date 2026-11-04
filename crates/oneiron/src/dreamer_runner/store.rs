@@ -36,6 +36,11 @@ pub(super) const RUN_TREE: SideTable<AttemptId, DreamerRunTreeRecord, Raw> =
 /// Private paused-attempt row, keyed by attempt id.
 pub(super) const PARKED: SideTable<AttemptId, DreamerParkedAttemptRecord, Raw> =
     SideTable::new(&side_table::DREAMER_PARKED);
+/// Whether a masked copy of a `DREAMER_PARKED` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dreamer_parked_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<DreamerParkedAttemptRecord, Raw>(bytes)
+}
 
 /// Private Dreamer runner store over an already-open vault.
 pub struct DreamerRunnerStore<'a> {
@@ -601,6 +606,10 @@ impl<'a> DreamerRunnerStore<'a> {
         }
     }
 
+    /// Defers a leased try to `retry_at` as the SAME row (FIX 3863): its
+    /// spend settles, the deferral joins the row's history and the row waits
+    /// scheduled, so a window demoted for months keeps one row, one stamp
+    /// and one scope however often it waits, and its paid steps replay free.
     pub(crate) fn defer_selection(
         &self,
         admitted: &super::DreamerAdmittedAttempt,
@@ -613,33 +622,24 @@ impl<'a> DreamerRunnerStore<'a> {
             return Err(invalid_dreamer_runner("invalid selection retry"));
         }
         self.vault.with_write_txn_grouped(|txn| {
-            self.settle_budget_and_step_receipts_in_txn(txn, budget.clone(), step_hashes)?;
-            let crate::attempt_queue::RetryOutcome::Retried(record) = self.attempts.retry_in_txn(
+            let unpinned =
+                super::deferral::unpinned_step_hashes_in_txn(self, txn, source.id, step_hashes)?;
+            self.settle_budget_and_step_receipts_in_txn(txn, budget.clone(), &unpinned)?;
+            self.attempts.requeue_in_txn(
                 txn,
-                crate::attempt_queue::RetryAttempt {
+                crate::attempt_queue::RequeueAttempt {
                     id: source.id,
                     lease_owner: source
                         .lease_owner
                         .clone()
                         .ok_or_else(|| invalid_dreamer_runner("selection retry missing lease"))?,
                     attempt_count: source.attempt_count,
-                    backoff_until: retry_at,
-                    last_error: Some("consolidation selection deferred".into()),
-                    now: budget.now,
+                    reason: super::SELECTION_DEFERRED_REASON.into(),
+                    due_at: retry_at,
                 },
             )?;
-            super::authority::stamp_attempt(
-                self.vault,
-                txn,
-                &record,
-                &admitted.status.payload.attempt_type,
-            )?;
-            crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
-                self.vault, txn, source.id, record.id,
-            )?;
-            // The source never runs again; its retry lists afresh.
+            // Its next run lists afresh.
             crate::dreamer_consolidation::unpin_neighbourhood_in_txn(self.vault, txn, source.id)?;
-            ensure_run_tree_record_in_txn(self.vault, txn, &record)?;
             Ok(())
         })
     }
@@ -725,7 +725,8 @@ impl<'a> DreamerRunnerStore<'a> {
             // lease gets its successor in the commit that settles the run.
             self.redrive_coach_issues_in_txn(wtxn, record, input.now)?;
             if decode_dreamer_attempt_payload(&record.payload).is_ok_and(|payload| {
-                payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+                payload.attempt_type
+                    == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
             }) {
                 crate::agent_dispatch::AgentDispatcher::new(self.vault).settle_child_in_txn(
                     wtxn,
@@ -800,7 +801,9 @@ impl<'a> DreamerRunnerStore<'a> {
                 .get_in_write_txn(txn, input.id)?
                 .ok_or(invalid_dreamer_runner("agent retry source must exist"))?;
             let payload = decode_dreamer_attempt_payload(&source.payload)?;
-            if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+            if payload.attempt_type
+                != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
+            {
                 return Err(invalid_dreamer_runner(
                     "agent retry requires a dispatch attempt",
                 ));
@@ -822,6 +825,9 @@ impl<'a> DreamerRunnerStore<'a> {
             crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
                 self.vault, txn, source.id, record.id,
             )?;
+            crate::dreamer_consolidation::pin_lineage_origin_in_txn(
+                self.vault, txn, source.id, record.id,
+            )?;
             ensure_run_tree_record_in_txn(self.vault, txn, &record)?;
             self.cleanup_step_receipts_in_txn(txn, source.id)?;
             Ok(record)
@@ -841,7 +847,9 @@ impl<'a> DreamerRunnerStore<'a> {
                     invalid_dreamer_runner("dreamer terminal transition attempt must exist"),
                 )?;
                 let payload = decode_dreamer_attempt_payload(&record.payload)?;
-                if payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+                if payload.attempt_type
+                    == crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE
+                {
                     return Err(invalid_dreamer_runner(
                         "agent dispatch failures require typed detector evidence",
                     ));
@@ -1025,9 +1033,11 @@ impl<'a> DreamerRunnerStore<'a> {
         }
         if let Some(existing) = &existing {
             super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, existing)?;
+            super::program::unindex_program_hold_in_txn(self.vault, wtxn, existing)?;
         }
         PARKED.put(self.vault, wtxn, &record.attempt_id, &record)?;
         super::outage_due::index_outage_due_in_txn(self.vault, wtxn, &record)?;
+        super::program::index_program_hold_in_txn(self.vault, wtxn, &record)?;
         crate::dreamer_wake::record_checkpoint_in_txn(self.vault, wtxn, &record);
         Ok(record)
     }
@@ -1082,6 +1092,7 @@ impl<'a> DreamerRunnerStore<'a> {
             .status_with_park_in_txn(wtxn, attempt_id)?
             .ok_or(invalid_dreamer_runner("dreamer resumed attempt must exist"))?;
         super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, &record)?;
+        super::program::unindex_program_hold_in_txn(self.vault, wtxn, &record)?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
         if let Some(lease_owner) = status.attempt.lease_owner.as_deref() {
             // Callers pass their own clock (the trap layer's counts
@@ -1155,6 +1166,15 @@ impl<'a> DreamerRunnerStore<'a> {
             .collect())
     }
 
+    /// The working attempts that hold a parked row, in creation order, each
+    /// read by its key on one snapshot, so a reader of parks decodes no
+    /// other attempt (FIX 12253).
+    pub fn parked_working_rows(&self) -> Result<Vec<AttemptRecord>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let ids = PARKED.scan_keys(&self.vault.store, &rtxn, &[])?;
+        self.attempts.working_rows_in_txn(&rtxn, ids)
+    }
+
     /// Pure proposal step. This method performs no LMDB write and enqueues no
     /// attempt.
     ///
@@ -1166,10 +1186,10 @@ impl<'a> DreamerRunnerStore<'a> {
     /// for any of those.
     pub fn propose_claim_cohorts(
         &self,
-        claims: &[crate::cluster::ClusterClaim],
-        options: crate::cluster::ClusterOptions,
-    ) -> Result<crate::cluster::ClusterAssignments> {
-        crate::cluster::cluster_claims(claims, options)
+        claims: &[crate::memory::claim_cluster::ClusterClaim],
+        options: crate::memory::claim_cluster::ClusterOptions,
+    ) -> Result<crate::memory::claim_cluster::ClusterAssignments> {
+        crate::memory::claim_cluster::cluster_claims(claims, options)
     }
 }
 
@@ -1200,7 +1220,7 @@ pub(super) fn decode_dreamer_attempt_status(record: AttemptRecord) -> Result<Dre
 }
 
 fn is_dreamer_queue_kind(kind: &str) -> bool {
-    kind == crate::llm::model_step::MODEL_STEP_ATTEMPT_KIND
+    kind == crate::model_step_record::MODEL_STEP_ATTEMPT_KIND
         || kind == super::connector_event::CONNECTOR_EVENT_QUEUE_KIND
         || kind == super::maintenance::MAINTENANCE_QUEUE_KIND
         || kind == DREAMER_RUNNER_ATTEMPT_KIND

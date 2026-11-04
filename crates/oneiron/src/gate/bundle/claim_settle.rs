@@ -146,7 +146,7 @@ impl Vault {
                     true,
                     Some(actor),
                 )?;
-                self.complete_deferred_claim_in_txn(wtxn, &id, false, now)?;
+                self.complete_deferred_claim_in_txn(wtxn, &id, false, now, Some(actor))?;
                 // An approved task proposal lands its TASK in this txn.
                 crate::task_verb::settle_task_proposal_in_txn(self, wtxn, id, Some(actor), now)?;
                 // An approved curator finding applies with it (FIX 5423).
@@ -254,18 +254,18 @@ impl Vault {
         crate::runtime_hooks::record_settlement_in_txn(
             self,
             wtxn,
-            crate::runtime_hooks::SettledFact {
+            crate::consent::settlement_fact::SettledFact {
                 proposal: id,
                 outcome: match action {
                     GateConsentBundleAction::Approve => {
-                        crate::runtime_hooks::SettledOutcome::Approved
+                        crate::consent::settlement_fact::SettledOutcome::Approved
                     }
                     GateConsentBundleAction::Decline => {
-                        crate::runtime_hooks::SettledOutcome::Declined
+                        crate::consent::settlement_fact::SettledOutcome::Declined
                     }
                 },
                 settled_by: actor.entity_ref(),
-                kind: crate::runtime_hooks::SettlementKind::ClaimSettlement,
+                kind: crate::consent::settlement_fact::SettlementKind::ClaimSettlement,
             },
         )?;
         Ok(SettledProposal {

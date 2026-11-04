@@ -27,7 +27,7 @@ impl ScopedRead<'_> {
         id: &EntityId,
         bytes: &[u8],
         policy: &crate::gate::PolicyManifestResolution,
-        grant: Option<&crate::federation::Scope>,
+        grant: Option<&oneiron_authority::federation::Scope>,
     ) -> Result<bool> {
         // A migrated NOTE retains author metadata but stores markdown on its
         // document plane. Apply the same privacy rule to that logical body,
@@ -59,7 +59,7 @@ impl ScopedRead<'_> {
         // as does a reader no policy read Grant names.
         if grant.is_none()
             && matches!(&worlds, note_world::NoteWorlds::In(set)
-                if !set.contains(&crate::federation::ScopeId(crate::claim::base_world_id())))
+                if !set.contains(&oneiron_authority::federation::ScopeId(crate::claim::base_world_id())))
             && !self
                 .actor_key
                 .facets_owner_exempt_in(self.vault, txn)

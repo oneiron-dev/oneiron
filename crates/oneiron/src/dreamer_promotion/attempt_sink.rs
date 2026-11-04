@@ -125,7 +125,8 @@ impl AttemptPromotionSink {
         } else {
             // Each rejected candidate's code was logged where the door
             // rejected it (FIX 7271); the write's one error carries the
-            // typed kind its door refused with (FIX 9429).
+            // typed kind its door refused with (FIX 9429) and, when the
+            // gate refused it, the gate's codes (FIX 10355).
             tracing::warn!(
                 attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
                 rejected = outcome.rejected.len(),
@@ -134,7 +135,10 @@ impl AttemptPromotionSink {
                 held = outcome.held.len(),
                 "scoped consolidation write refused"
             );
-            Err(write_refusal(&outcome.rejected_kinds))
+            Err(write_refusal(
+                &outcome.rejected_kinds,
+                &outcome.rejected_gates,
+            ))
         }
     }
 }
@@ -145,11 +149,15 @@ const WRITE_REFUSED: &str = "scoped consolidation write refused";
 /// A refused sealed write's one error (FIX 9429): the typed kind of its
 /// first rejection whose kind waits on an owner act, else of its first
 /// typed rejection, so the driver's existing park rules read the kind the
-/// promotion door refused with. A door's own fields beyond its kind stay in
-/// its logged code and its gate record. A write no typed rejection refused
-/// stays `InvalidClaimBody`, as before.
-pub(super) fn write_refusal(kinds: &[(EntityId, ErrorKind)]) -> Error {
-    let typed = |kind: ErrorKind| -> Option<Error> {
+/// promotion door refused with. A gate refusal carries the gate's own
+/// outcome and reason codes for that candidate (FIX 10355); a door's other
+/// fields stay in its logged code and its gate record. A write no typed
+/// rejection refused stays `InvalidClaimBody`, as before.
+pub(super) fn write_refusal(
+    kinds: &[(EntityId, ErrorKind)],
+    gates: &[(EntityId, &'static str, Vec<&'static str>)],
+) -> Error {
+    let typed = |id: EntityId, kind: ErrorKind| -> Option<Error> {
         match kind {
             ErrorKind::ActorLacksClaimAuthority => Some(
                 ClaimError::ActorLacksClaimAuthority {
@@ -157,13 +165,21 @@ pub(super) fn write_refusal(kinds: &[(EntityId, ErrorKind)]) -> Error {
                 }
                 .into(),
             ),
-            ErrorKind::GateWriteRejected => Some(
-                GateError::GateWriteRejected {
-                    outcome: "deny",
-                    reason_codes: Vec::new(),
-                }
-                .into(),
-            ),
+            ErrorKind::GateWriteRejected => {
+                let (outcome, reason_codes) = gates
+                    .iter()
+                    .find(|(gated, _, _)| *gated == id)
+                    .map_or(("deny", Vec::new()), |(_, outcome, codes)| {
+                        (*outcome, codes.clone())
+                    });
+                Some(
+                    GateError::GateWriteRejected {
+                        outcome,
+                        reason_codes,
+                    }
+                    .into(),
+                )
+            }
             ErrorKind::EntityNotFound => Some(Error::EntityNotFound),
             _ => None,
         }
@@ -172,6 +188,6 @@ pub(super) fn write_refusal(kinds: &[(EntityId, ErrorKind)]) -> Error {
         .iter()
         .filter(|(_, kind)| crate::dreamer_wake::waits_on_owner_act(*kind))
         .chain(kinds)
-        .find_map(|(_, kind)| typed(*kind))
+        .find_map(|(id, kind)| typed(*id, *kind))
         .unwrap_or(Error::InvalidClaimBody(WRITE_REFUSED))
 }

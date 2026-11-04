@@ -8,10 +8,7 @@ use zeroize::Zeroizing;
 use crate::authority::invalid_authority;
 use crate::error::Result;
 
-/// Length of a vault's independent host-issuer seed.
-pub const HOST_ISSUER_SEED_BYTES: usize = 32;
-/// BLAKE3 context for the host issuer's Ed25519 signing subkey.
-pub const HOST_ISSUER_SIGNING_CONTEXT: &str = "oneiron/vault-host-authority-signing/v1";
+pub use crate::store::host_issuer_seed::{HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT};
 
 /// A dedicated host signing key. It signs with a subkey of its vault's own
 /// independent 32-byte seed, never auth_secret, the DEK or vault_id.
@@ -26,7 +23,8 @@ impl HostSlipIssuer {
         if seed == &[0u8; HOST_ISSUER_SEED_BYTES] {
             return Err(invalid_authority());
         }
-        let subkey = Zeroizing::new(blake3::derive_key(HOST_ISSUER_SIGNING_CONTEXT, seed));
+        // FIX 6669: derive straight into the guard.
+        let subkey = crate::world_keys::derive_guarded(HOST_ISSUER_SIGNING_CONTEXT, &[&seed[..]]);
         Ok(Self {
             secret: Zeroizing::new(seed.to_vec()),
             signing: SigningKey::from_bytes(&subkey),
@@ -39,10 +37,9 @@ impl HostSlipIssuer {
         if secret.is_empty() {
             return Err(invalid_authority());
         }
-        let seed = Zeroizing::new(blake3::derive_key(
-            "oneiron/host-authority-signing/v2",
-            secret,
-        ));
+        // FIX 6669: derive straight into the guard.
+        let seed =
+            crate::world_keys::derive_guarded("oneiron/host-authority-signing/v2", &[secret]);
         Ok(Self {
             secret: Zeroizing::new(secret.to_vec()),
             signing: SigningKey::from_bytes(&seed),

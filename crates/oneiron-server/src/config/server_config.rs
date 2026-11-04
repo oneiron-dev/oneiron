@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
 use super::backup::BackupConfig;
+use super::channel_endpoints::ChannelEndpointsConfig;
 use super::embedder::EmbedderConfig;
 use super::failure_signals::FailureSignalsConfig;
 use super::feedback::{FeedbackConfig, FeedbackInboxConfig};
@@ -151,6 +152,9 @@ pub struct SyncServerConfig {
     /// `[line]`: the plan of the LINE Official Account the built-in LINE
     /// pack serves, and the pushes it includes each month.
     pub line: LineConfig,
+    /// `[channel_endpoints]`: where the served sinks reach each provider's
+    /// API; the public APIs unless the file names others.
+    pub channel_endpoints: ChannelEndpointsConfig,
     /// `[linear]`: the Linear mirror this server runs and its webhook's
     /// tracker mapping, nonsecret. A plain serve with no section reads its
     /// `ONEIRON_LINEAR_*` environment into this before the server starts
@@ -167,11 +171,12 @@ pub struct SyncServerConfig {
     /// init passes from its config drive's list (FIX 7889). Listing a digest is
     /// the operator's statement that the build is reviewed first-party code
     /// (ARCH-0075: first party means reviewed repo code). A pack organ build not
-    /// listed here installs as third party, which the organ host refuses to start
-    /// until filesystem confinement for organs lands. No config file, settings
-    /// file or environment sets it, and nothing a pack carries (manifest, facet,
-    /// receipt, publisher, hub or name) adds to it. Empty: every pack organ build
-    /// is third party; a seal organ program the host names stays first party.
+    /// listed here installs as third party, which the organ host starts only
+    /// inside a filesystem fence (Landlock ABI 3 on Linux, Seatbelt on macOS) and
+    /// refuses on a host with none. No config file, settings file or environment
+    /// sets it, and nothing a pack carries (manifest, facet, receipt, publisher,
+    /// hub or name) adds to it. Empty: every pack organ build is third party; a
+    /// seal organ program the host names stays first party.
     pub trusted_organ_builds: std::collections::BTreeSet<String>,
     /// The private origins a managed node's egress guard admits, from
     /// `--hosted-private-origin` in managed boot alone (FIX 7657); empty
@@ -232,6 +237,7 @@ impl Default for SyncServerConfig {
             runtime: RuntimeConfig::default(),
             skills: SkillsConfig::default(),
             line: LineConfig::default(),
+            channel_endpoints: ChannelEndpointsConfig::default(),
             linear: None,
             ingress: IngressAuth::Configured,
             merge_queue: None,
@@ -390,6 +396,9 @@ pub struct ServeConfig {
     /// The `[line]` section: the LINE Official Account's plan, a free
     /// account unless the config file names one.
     pub line: LineConfig,
+    /// The `[channel_endpoints]` section: the provider APIs the served sinks
+    /// reach, the public ones unless the config file names others.
+    pub channel_endpoints: ChannelEndpointsConfig,
     /// The `[linear]` section: the Linear mirror and its webhook's tracker
     /// mapping, absent until the config file names it.
     pub linear: Option<LinearConfig>,
@@ -511,6 +520,7 @@ impl Default for ServeConfig {
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
             line: server.line,
+            channel_endpoints: server.channel_endpoints.clone(),
             linear: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
@@ -575,6 +585,7 @@ impl ServeConfig {
             runtime: self.runtime.clone(),
             skills: self.skills.clone(),
             line: self.line,
+            channel_endpoints: self.channel_endpoints.clone(),
             linear: self.linear.clone(),
             // A plain serve's own auth config; a managed vault declares its
             // supervisor's.

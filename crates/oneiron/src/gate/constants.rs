@@ -2,7 +2,7 @@ use crate::entity_id::ENTITY_ID_LEN;
 
 pub(super) const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 /// Schema 1.2 stores six-axis Scope; schema 1.1 is migration input only.
-pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.2";
+pub(crate) use crate::store::policy_record::POLICY_SCHEMA_VERSION;
 pub(super) const LEGACY_POLICY_SCOPE_SCHEMA_VERSION: &str = "1.1";
 pub(super) const POLICY_PACK_ID_KEY: &str = "pack_id";
 pub(super) const POLICY_PACK_VERSION_KEY: &str = "pack_version";
@@ -74,15 +74,10 @@ pub(crate) const POLICY_SHARED_ACT_POLICIES_KEY: &str = "shared_act_policies";
 /// { actor: "<canonical-actor-ref>", floor: 50_000, cap: 150_000 }
 /// ```
 /// Attribution admission/work budgets are policy data, not evidence codec law.
-/// Multiple trusted packs narrow these rows; holder rows can only narrow the
-/// vault's reason limit, never raise it.
+/// Multiple trusted packs narrow these rows.
 pub(super) const POLICY_ATTRIBUTION_LIMITS_KEY: &str = "attribution_limits";
 pub(super) const ATTRIBUTION_PRECEDENCE_KEY: &str = "precedence";
-pub(super) const ATTRIBUTION_REASON_MAX_BYTES_KEY: &str = "reason_max_bytes";
 pub(super) const ATTRIBUTION_RECEIPTS_PER_PASS_KEY: &str = "receipts_per_pass";
-pub(super) const ATTRIBUTION_HOLDER_REASON_BYTES_KEY: &str = "holder_reason_bytes";
-pub(super) const ATTRIBUTION_HOLDER_ACTOR_KEY: &str = "actor_ref";
-pub(super) const ATTRIBUTION_HOLDER_MAX_BYTES_KEY: &str = "max_bytes";
 /// Vault-resident extraction-teacher quality floor, in F1 millionths.
 /// The seeded default is data in `default_policy_manifest`; nested holder
 /// floors only narrow it, and independent trusted packs compose by max.
@@ -212,7 +207,7 @@ pub(super) const GRANT_SCOPE_KEY: &str = "scope";
 pub(super) const GRANT_SELECTORS_KEY: &str = "selectors";
 pub(super) const GRANT_BUDGET_KEY: &str = "budget";
 pub(super) const GRANT_RECEIPT_REQUIRED_KEY: &str = "receipt_required";
-pub(crate) const SCOPED_READ_EFFECTOR_CORE_READ: &str = "core:read";
+pub(crate) use crate::store::policy_record::SCOPED_READ_EFFECTOR_CORE_READ;
 pub(super) const SCOPED_READ_EFFECTOR_ONEIRON_READ: &str = "oneiron.read";
 pub(super) const EXTERNAL_EFFECT_EFFECTOR_PREFIX: &str = "external:";
 pub(super) const EXTERNAL_EFFECT_EFFECTOR_LONG_PREFIX: &str = "external_effect:";

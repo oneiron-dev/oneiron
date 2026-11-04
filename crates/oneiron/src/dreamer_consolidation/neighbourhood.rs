@@ -36,13 +36,12 @@ use crate::claim::{
     PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED, ScopedRead, claim_sensitivity_band,
     decode_claim_body, is_reserved_predicate,
 };
-use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
-use crate::side_table::{self, LegacyJson, SideTable};
+use crate::settings::ReadDestination;
+use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::{Scope, ScopeResource};
 
-/// A label is cut here.
-const LABEL_BYTES: usize = 64;
 /// Names of up to four words ("Mary Ann van Dyke").
 const SPAN_WORDS: usize = 4;
 /// Kinds a passage names by an identity hint.
@@ -57,16 +56,68 @@ pub(super) type ListedRows = Vec<(EntityId, Row)>;
 /// The ids one attempt listed: each entity with its listed claims, in order.
 type Pins = Vec<(EntityId, Vec<EntityId>)>;
 
-/// Per attempt, the entity and claim ids its extraction listed. A replay
-/// after a kill lists the same ones, so its request matches the one an
-/// earlier run memoized: the people it named and the claims it wrote since
-/// never enter what it shows its model or the scope it asks under, and it
-/// never pays for the call twice. A listed claim it closed itself drops out
-/// of the listing, so that replay calls once more; its content-addressed
-/// candidate ids then meet its own landed correction, which applies nothing
-/// twice. Ids only; the text is read again at each wake.
-const PINS: SideTable<[u8; 16], Pins, LegacyJson> =
+/// Per attempt, the entity and claim ids its extraction listed; per NOTE a
+/// review attempt reads, that NOTE's (FIX 7578). A replay after a kill lists
+/// the same ones, so its request matches the one an earlier run memoized:
+/// the people it named, the identities that changed and the claims it wrote
+/// since never enter what it shows its model or the scope it asks under,
+/// and it never pays for the call twice. A listed claim it closed itself
+/// drops out of the listing, so that replay calls once more; its
+/// content-addressed candidate ids then meet its own landed correction,
+/// which applies nothing twice. Ids only; the text is read again at each
+/// wake.
+const PINS: SideTable<ListingPin, Pins, LegacyJson> =
     SideTable::new(&side_table::DREAMER_NEIGHBOURHOOD);
+
+/// Whose listing one pin keeps: an extraction attempt's, or one NOTE's
+/// within a NOTE review attempt, which lists each NOTE apart (FIX 7578). A
+/// NOTE's pin keys under its attempt, so the attempt's unpin drops it too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ListingPin {
+    attempt: AttemptId,
+    note: Option<EntityId>,
+}
+
+impl ListingPin {
+    /// An extraction attempt's listing.
+    pub(super) const fn attempt(attempt: AttemptId) -> Self {
+        Self {
+            attempt,
+            note: None,
+        }
+    }
+
+    /// The listing of `note` within the NOTE review `attempt`.
+    pub(super) const fn note(attempt: AttemptId, note: EntityId) -> Self {
+        Self {
+            attempt,
+            note: Some(note),
+        }
+    }
+}
+
+/// The attempt's id, then the NOTE's when it names one: an attempt's own
+/// pin keeps the key it always had.
+impl SideKey for ListingPin {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.attempt.as_bytes());
+        if let Some(note) = self.note {
+            out.extend_from_slice(note.as_bytes());
+        }
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (attempt, note) = bytes.split_at_checked(16)?;
+        let note = match note {
+            [] => None,
+            note => Some(EntityId::from_bytes(note.try_into().ok()?).ok()?),
+        };
+        Some(Self {
+            attempt: AttemptId::from_bytes(attempt).ok()?,
+            note,
+        })
+    }
+}
 
 /// The whole listing one branch shows its extraction model, in pages, and
 /// the heads it may hold as priors.
@@ -99,8 +150,9 @@ struct KnownClaim {
     version: ScopeResource,
     predicate: String,
     value: String,
-    /// The relationship the head holds within, when it names one (FIX 7575).
-    rel: Option<EntityId>,
+    /// The relationships the head holds within, when it names a set (FIX
+    /// 7575).
+    rel: crate::claim::RelationshipScope,
 }
 
 impl Neighbourhood {
@@ -191,14 +243,14 @@ impl Neighbourhood {
     }
 }
 
-/// Pins what `attempt` lists, unless an earlier run of it already did.
+/// Pins what `key` lists, unless an earlier run of it already did.
 /// Called before its extraction call goes out. A pinned id the rebuild found
 /// gone leaves the pin for good, so no later replay reads it again; a request
 /// without it may miss its memo, at the cost of one call.
-pub(super) fn pin(vault: &Vault, attempt: AttemptId, listed: &Neighbourhood) -> Result<()> {
+pub(super) fn pin(vault: &Vault, key: ListingPin, listed: &Neighbourhood) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
-        match PINS.get(&vault.store, txn, attempt.as_bytes())? {
-            None => PINS.put(&vault.store, txn, attempt.as_bytes(), &listed.pins())?,
+        match PINS.get(&vault.store, txn, &key)? {
+            None => PINS.put(&vault.store, txn, &key, &listed.pins())?,
             Some(pins) if !listed.gone.is_empty() => {
                 let kept: Pins = pins
                     .into_iter()
@@ -211,7 +263,7 @@ pub(super) fn pin(vault: &Vault, attempt: AttemptId, listed: &Neighbourhood) -> 
                         (id, claims)
                     })
                     .collect();
-                PINS.put(&vault.store, txn, attempt.as_bytes(), &kept)?;
+                PINS.put(&vault.store, txn, &key, &kept)?;
             }
             Some(_) => {}
         }
@@ -219,36 +271,60 @@ pub(super) fn pin(vault: &Vault, attempt: AttemptId, listed: &Neighbourhood) -> 
     })
 }
 
-/// Drops what `attempt` listed. Called in the transaction that settles or
-/// abandons it, once it can no longer replay.
+/// Drops what `attempt` listed, each NOTE's listing under it included.
+/// Called in the transaction that settles or abandons it, once it can no
+/// longer replay.
 pub(crate) fn unpin_neighbourhood_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     attempt: AttemptId,
 ) -> Result<()> {
-    PINS.delete(&vault.store, txn, attempt.as_bytes())?;
+    PINS.delete_from(&vault.store, txn, attempt.as_bytes())?;
+    Ok(())
+}
+
+/// Drops one NOTE's listing pin, in the write that lands its review record:
+/// that attempt never reads the NOTE again (FIX 7578).
+pub(super) fn unpin_note_listing_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    note: EntityId,
+) -> Result<()> {
+    PINS.delete(&vault.store, txn, &ListingPin::note(attempt, note))?;
     Ok(())
 }
 
 /// What one branch reads around its passage. `turns` holds each TURN's stored body and frozen
 /// text; `axes` the branch's world, facet, relationship and project, or `None` to list no
-/// claims; `bound` a supplied scope; `thing` the entity a nightly child is cut for (FIX 7497).
+/// claims; `bound` a supplied scope; `thing` the entity a nightly child is cut for (FIX 7497);
+/// `destination` where the listing's rows go (FIX 5588 S1).
 pub(super) struct Passage<'p> {
     pub(super) turns: &'p [(&'p [u8], Option<&'p str>)],
     pub(super) axes: Option<&'p Scope>,
     pub(super) bound: Option<&'p Scope>,
     pub(super) thing: Option<EntityId>,
+    pub(super) destination: ReadDestination,
+}
+
+/// The destination a neighbourhood listing is read for (FIX 5588 S1,
+/// Unknown-always): both plan points resolve through here, so the later
+/// FIX 12712 flip is one value. Today it is a destination nobody proved,
+/// which judges exactly as the bare off-device locality did (C2); it reads
+/// no role table, so the direct and driver paths cannot diverge (C8).
+pub(super) fn listing_destination() -> ReadDestination {
+    ReadDestination::toward(crate::machine_destination::PeerMachine::Unknown)
 }
 
 /// One branch's neighbourhood at the wake's snapshot, with the claim rows it
-/// names for the wake to pin as sources. An attempt an earlier run pinned
-/// lists what it listed then, as those rows read now; the heads the passage
-/// names now are held beside it, unlisted.
+/// names for the wake to pin as sources. A listing `key` an earlier run
+/// pinned lists what it listed then, as those rows read now; the heads the
+/// passage names now are held beside it, unlisted.
 pub(super) fn discover_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,
-    attempt: AttemptId,
+    key: ListingPin,
     passage: &Passage<'_>,
 ) -> Result<(Neighbourhood, ListedRows)> {
     let mut mentions = BTreeMap::new();
@@ -259,7 +335,7 @@ pub(super) fn discover_in(
         );
     }
     let (fresh, mut rows) = fresh_in(vault, txn, read, passage)?;
-    let Some(pins) = PINS.get(&vault.store, txn, attempt.as_bytes())? else {
+    let Some(pins) = PINS.get(&vault.store, txn, &key)? else {
         let thing = listed_thing(&fresh, passage.thing);
         return Ok((
             Neighbourhood {
@@ -272,11 +348,7 @@ pub(super) fn discover_in(
         ));
     };
     #[cfg(feature = "sync")]
-    let device_only = crate::settings::device_local_worlds_at(
-        vault,
-        txn,
-        crate::claim::CallerLocality::OffDevice,
-    )?;
+    let device_only = crate::settings::device_local_worlds_for(vault, txn, &passage.destination)?;
     #[cfg(not(feature = "sync"))]
     let device_only = BTreeSet::new();
     let ids: Vec<_> = pins.iter().map(|(id, _)| *id).collect();
@@ -379,7 +451,15 @@ fn fresh_in(
             claims: Vec::new(),
         };
         let claims = match passage.axes {
-            Some(axes) => newest_claims(vault, txn, read, id, axes, passage.bound)?,
+            Some(axes) => newest_claims(
+                vault,
+                txn,
+                read,
+                id,
+                axes,
+                passage.bound,
+                &passage.destination,
+            )?,
             None => Vec::new(),
         };
         for (claim, row) in claims {
@@ -467,6 +547,7 @@ fn newest_claims(
     subject: EntityId,
     axes: &Scope,
     bound: Option<&Scope>,
+    destination: &ReadDestination,
 ) -> Result<Vec<(KnownClaim, (EntityId, Row))>> {
     // A subject of any fan-in lists its newest claims (Rule 5): the subject
     // read raises its own scan check past its row and reads on.
@@ -486,13 +567,12 @@ fn newest_claims(
     let ids: Vec<_> = ordered.into_iter().map(|(_, id)| id).collect();
     // The worlds this device keeps to itself; none without sync.
     #[cfg(feature = "sync")]
-    let device_only = crate::settings::device_local_worlds_at(
-        vault,
-        txn,
-        crate::claim::CallerLocality::OffDevice,
-    )?;
+    let device_only = crate::settings::device_local_worlds_for(vault, txn, destination)?;
     #[cfg(not(feature = "sync"))]
-    let device_only = BTreeSet::new();
+    let device_only = {
+        let _ = destination;
+        BTreeSet::new()
+    };
     let rows = read.get_entities_parts_in_txn(txn, &ids)?;
     let mut claims = Vec::new();
     for (id, row) in ids.into_iter().zip(rows) {
@@ -555,7 +635,7 @@ fn listable(
         version,
         predicate: prior.body.predicate.clone(),
         value: rmpv_to_json(&prior.body.value).to_string(),
-        rel: prior.body.rel,
+        rel: prior.body.rel.clone(),
     })
 }
 
@@ -568,19 +648,9 @@ fn label(body: &[u8]) -> Option<String> {
         .as_str()?
         .trim()
         .to_owned();
-    (!name.is_empty()).then(|| cut(&name, LABEL_BYTES))
-}
-
-/// `text` cut to at most `limit` bytes on a character boundary, marked.
-fn cut(text: &str, limit: usize) -> String {
-    if text.len() <= limit {
-        return text.to_owned();
-    }
-    let mut end = limit;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &text[..end])
+    // The name rides whole (Rule 5, FIX 10518): a wide one widens its line,
+    // and a line wider than a page has a page of its own.
+    (!name.is_empty()).then_some(name)
 }
 
 impl Vault {
@@ -594,11 +664,18 @@ impl Vault {
         let actor = crate::claim::ScopedReadActorKey::new(principal.to_hex())
             .ok_or(crate::Error::InvariantViolation("reader fixture actor"))?;
         let read = self.scoped_read(actor);
-        Ok(
-            newest_claims(self, &txn, &read, subject, &Scope::default(), None)?
-                .into_iter()
-                .map(|(known, _)| known.id)
-                .collect(),
-        )
+        let destination = listing_destination();
+        Ok(newest_claims(
+            self,
+            &txn,
+            &read,
+            subject,
+            &Scope::default(),
+            None,
+            &destination,
+        )?
+        .into_iter()
+        .map(|(known, _)| known.id)
+        .collect())
     }
 }

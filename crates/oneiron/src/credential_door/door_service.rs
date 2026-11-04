@@ -11,8 +11,8 @@ use super::door_types::{
     DOOR_VERB_RECEIVE_PACK, DoorDenyReason, DoorResult, DoorScanVerdict, PushedBlob, UNUSABLE_PATH,
     custody, repo_record,
 };
-use crate::codebase::RepoRef;
 use crate::secret_lease::VaultInstant;
+use crate::store::code_snapshot::RepoRef;
 use crate::vault::Vault;
 
 #[cfg(test)]
@@ -93,7 +93,9 @@ impl CredentialDoorService {
     /// through: the lifetime check, the remaining-validity ceiling, the
     /// absolute lease bound, and the stamped `granted_at` are then all one
     /// observation. Reading twice would reintroduce, inside this module, the
-    /// very gap removing the caller's `now` closed.
+    /// very gap removing the caller's `now` closed. A receive-pack reads it
+    /// under its authorizing writer instead ([`Self::admit_scope_in_txn`]).
+    #[cfg(test)]
     pub(super) fn door_instant(&self) -> DoorResult<VaultInstant> {
         let rtxn = self.vault.store.env.read_txn().map_err(custody)?;
         self.vault.instant_in_txn(&rtxn).map_err(custody)
@@ -127,14 +129,11 @@ impl CredentialDoorService {
                 reason: DoorDenyReason::CredentialAbsent,
             });
         };
-        let now = self.door_instant()?;
-        let admitted = self.admit_scope(DOOR_RECEIVE_PACK_EFFECTOR, now)?;
-        self.authorize(
+        self.authorize_in_writer(
             credential,
             DOOR_VERB_RECEIVE_PACK,
             &repo_record(repo),
-            admitted.effector().as_str(),
-            admitted.instant(),
+            DOOR_RECEIVE_PACK_EFFECTOR,
         )
     }
 
@@ -170,13 +169,17 @@ impl CredentialDoorService {
     /// ceiling, the absolute bound, and the re-admission the stamping
     /// transaction takes. The `()` this used to return left the dial, the
     /// effector and the instant lying around as three separate values that
-    /// nothing tied together — which is how they came apart.
-    pub(super) fn admit_scope(
+    /// nothing tied together — which is how they came apart. The dial and
+    /// the instant both read `txn`, the writer the admitted effect commits
+    /// under, so a holder change that shut the door before it is never
+    /// missed (FIX 9776).
+    pub(super) fn admit_scope_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         effector: &str,
-        at: VaultInstant,
     ) -> DoorResult<AdmittedScope> {
-        AdmittedScope::admit(self.door_policy()?, effector, at)
+        let at = self.vault.instant_in_txn(txn).map_err(custody)?;
+        AdmittedScope::admit(DoorPolicy::resolve(&self.vault.store, txn)?, effector, at)
     }
 }
 
@@ -208,19 +211,19 @@ fn scan_one_blob(blob: &PushedBlob) -> DoorResult<Option<ReceiveScanHit>> {
 /// a hit under the dotenv reason, which the one disposition admits and
 /// marks. A blob whose every value is blank, or no dotenv file's, is none.
 fn dotenv_hit(blob: &PushedBlob) -> Option<ReceiveScanHit> {
-    crate::repo_mutation::repo_env_file(&blob.path)?;
-    let lifts = crate::repo_mutation::repo_env_entries(&blob.content)
+    crate::store::repo_environment::repo_env_file(&blob.path)?;
+    let lifts = crate::store::repo_environment::repo_env_entries(&blob.content)
         .iter()
         .any(|entry| {
             blob.content
                 .get(entry.value.clone())
-                .is_some_and(crate::repo_mutation::dotenv_value_lifts)
+                .is_some_and(crate::store::repo_environment::dotenv_value_lifts)
         });
     let text = !blob.content.contains(&0) && std::str::from_utf8(&blob.content).is_ok();
     lifts.then(|| ReceiveScanHit {
         path: blob.path.clone(),
         oid: blob.oid.clone(),
-        reason: crate::repo_mutation::REPO_ENV_VALUE_REASON,
+        reason: crate::store::repo_environment::REPO_ENV_VALUE_REASON,
         content_kind: if text {
             ReceiveBlobKind::Text
         } else {

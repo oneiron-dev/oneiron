@@ -54,6 +54,38 @@ pub struct Row {
     pub secret: Option<RowSecret>,
 }
 
+/// The protocol-level recipient a `mailto:`/`tel:` link row's href names
+/// (FIX 12395): its scheme in lowercase with its recipient as written,
+/// before any `?query` or `#fragment`. Any other href (none, `http(s)`,
+/// `javascript:`, `data:`, another scheme), an empty recipient, or a
+/// normalized form over 512 bytes, which no grant can name, yields none,
+/// and the send reports the page origin instead.
+pub(crate) fn href_recipient(row: &Row) -> Option<String> {
+    let href = row.href.as_deref()?;
+    let (scheme, rest) = if href
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mailto:"))
+    {
+        ("mailto:", &href[7..])
+    } else if href
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("tel:"))
+    {
+        ("tel:", &href[4..])
+    } else {
+        return None;
+    };
+    let recipient = rest.split(|c| c == '?' || c == '#').next().unwrap_or("");
+    if recipient.is_empty() {
+        return None;
+    }
+    let audience = format!("{scheme}{recipient}");
+    if audience.len() > 512 {
+        return None;
+    }
+    Some(audience)
+}
+
 /// A row field its read could not fill, and why.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RowFieldGap {

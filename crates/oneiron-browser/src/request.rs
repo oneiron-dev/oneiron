@@ -19,6 +19,8 @@ use crate::BrowserError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "driver")]
+use std::io::{Cursor, Read};
+#[cfg(feature = "driver")]
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// A request's destination the host refused by its own rule, in the host's
@@ -36,6 +38,29 @@ impl std::fmt::Display for DestinationRefusal {
     }
 }
 
+/// A response body a handler can return without holding its complete
+/// decoded bytes in memory. Its length is the complete decoded length before
+/// any read.
+#[cfg(feature = "driver")]
+pub trait BrowserBody: Read + Send {
+    fn len(&self) -> u64;
+}
+
+#[cfg(feature = "driver")]
+impl BrowserBody for Cursor<Vec<u8>> {
+    fn len(&self) -> u64 {
+        self.get_ref().len() as u64
+    }
+}
+
+/// A handler's response whose body can be read in pieces.
+#[cfg(feature = "driver")]
+pub struct SpooledResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Box<dyn BrowserBody>,
+}
+
 /// The host's custody of a session's requests: it performs each one.
 #[cfg(feature = "driver")]
 pub trait BrowserRequestHandler: Send + Sync {
@@ -48,6 +73,24 @@ pub trait BrowserRequestHandler: Send + Sync {
         &self,
         request: oneiron_container::HttpRequest,
     ) -> Result<oneiron_container::HttpResponse, BrowserError>;
+
+    /// Performs one request with a piece-readable answer. The default keeps
+    /// today's whole-body behavior for an existing handler.
+    fn fetch_spooled(
+        &self,
+        request: oneiron_container::HttpRequest,
+    ) -> Result<SpooledResponse, BrowserError> {
+        self.fetch(request).map(|response| SpooledResponse {
+            status: response.status,
+            headers: response.headers,
+            body: Box::new(Cursor::new(response.body)),
+        })
+    }
+
+    /// Whether the paused-request path should use [`Self::fetch_spooled`].
+    fn provides_spooled(&self) -> bool {
+        false
+    }
 }
 
 /// The page in front as the session renders it now.

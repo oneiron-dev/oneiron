@@ -12,66 +12,21 @@ use crate::claim::{ClaimSource, claim_evidence_taint};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
+
+mod verified_citations;
+pub(crate) use verified_citations::{decode_verified_citations, decode_verified_locators};
 
 // ---------------------------------------------------------------------------
 // Promotion candidate (D7 shape) — DEFINED here (the producer);
 // dreamer_promotion (ONE-1290) re-exports it.
 // ---------------------------------------------------------------------------
 
-/// One typed hop of a consolidation provenance chain (ONE-1710).
-///
-/// The kinds are ADDRESSING roles, not trust classes: a chain says which
-/// stored entities a candidate descends from, and `evidence_chain_source`
-/// separately folds those into the D10 meet. `EntityId` carries no
-/// `Serialize`/`Deserialize` (entity_id.rs), so the chain rides the crate's
-/// hand-rolled rmpv codec below rather than serde derives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConsolidationProvenanceHopKind {
-    /// The stored peer-answer TURN.
-    AnswerTurn,
-    /// The synced consult TASK that elicited the answer.
-    ConsultTask,
-    /// The answering peer CONNECTION actor (never the vendor/harness label).
-    PeerActor,
-    /// An optional durable result artifact carried by the answer.
-    ResultArtifact,
-}
+pub use crate::authority::consolidation_evidence::ConsolidationProvenanceHopKind;
 
-impl ConsolidationProvenanceHopKind {
-    /// The pinned on-disk string for this hop kind.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::AnswerTurn => "answer_turn",
-            Self::ConsultTask => "consult_task",
-            Self::PeerActor => "peer_actor",
-            Self::ResultArtifact => "result_artifact",
-        }
-    }
-
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "answer_turn" => Some(Self::AnswerTurn),
-            "consult_task" => Some(Self::ConsultTask),
-            "peer_actor" => Some(Self::PeerActor),
-            "result_artifact" => Some(Self::ResultArtifact),
-            _ => None,
-        }
-    }
-}
-
-/// One hop: what it is, which entity it names, and (optionally) the actor
-/// behind it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ConsolidationProvenanceHop {
-    pub kind: ConsolidationProvenanceHopKind,
-    pub entity_ref: EntityId,
-    pub actor_ref: Option<EntityId>,
-}
+pub use crate::authority::consolidation_evidence::ConsolidationProvenanceHop;
 
 /// The refs a peer answer binds together, as the caller knows them BEFORE
 /// [`peer_answer_provenance_chain`] validates and orders them.
@@ -116,7 +71,7 @@ pub struct PromotionCandidate {
 /// One typed question's decision as a consolidation write keeps it: the
 /// ladder's whole decision (all three answers, its pins, evidence versions,
 /// principal and clock) and, when it went up the role chain, that ask.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KeptDecision {
     pub decision: crate::llm::decision::TypedDecision,
@@ -130,7 +85,7 @@ impl KeptDecision {
     /// The answer the Dreamer acts on: the holder's when the decision went up
     /// the role chain, the ladder's otherwise. None while the ask waits.
     #[must_use]
-    pub fn answer(&self) -> Option<&crate::llm::decision::DecisionAnswer> {
+    pub fn answer(&self) -> Option<&crate::model_decision::DecisionAnswer> {
         match &self.ask {
             Some(ask) => ask.answer.as_ref().map(|answer| &answer.answer),
             None => Some(&self.decision.answer),
@@ -170,15 +125,7 @@ pub(crate) fn kept_decisions_value(decisions: &[KeptDecision]) -> Result<Value> 
         .map_err(|_| invalid_consolidation("kept decisions do not decode"))
 }
 
-/// The structured evidence payload a promoted consolidation claim stores:
-/// the post-admission refs, the typed chain, and the computed meet — all
-/// machine-readable after promotion, never a display string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConsolidationEvidenceEnvelope {
-    pub refs: Vec<EntityId>,
-    pub chain: Vec<ConsolidationProvenanceHop>,
-    pub source_meet: ClaimSource,
-}
+pub use crate::authority::consolidation_evidence::ConsolidationEvidenceEnvelope;
 
 const EVIDENCE_ENVELOPE_REFS_KEY: &str = "refs";
 const EVIDENCE_ENVELOPE_CHAIN_KEY: &str = "chain";
@@ -346,177 +293,6 @@ fn encode_message_span(span: &MessageSpan) -> Value {
     Value::Map(row)
 }
 
-fn decode_offset(value: &Value) -> Result<usize> {
-    usize::try_from(
-        value
-            .as_u64()
-            .ok_or_else(|| invalid_consolidation("invalid locator offset"))?,
-    )
-    .map_err(|_| invalid_consolidation("locator offset overflow"))
-}
-
-fn decode_message_spans(value: &Value) -> Result<Vec<MessageSpan>> {
-    let Value::Array(rows) = value else {
-        return Err(invalid_consolidation("locator messages must be an array"));
-    };
-    if rows.is_empty() {
-        return Err(invalid_consolidation("locator messages are empty"));
-    }
-    rows.iter()
-        .map(|row| {
-            let Value::Map(fields) = row else {
-                return Err(invalid_consolidation("locator message must be a map"));
-            };
-            let (mut message, mut span, mut revision, mut frontier) = (None, None, None, None);
-            for (key, value) in fields {
-                match (key.as_str(), value) {
-                    (Some("message"), value) if message.is_none() => {
-                        message = Some(
-                            entity_ref_from_value(value)
-                                .ok_or_else(|| invalid_consolidation("invalid locator message"))?,
-                        );
-                    }
-                    (Some("span"), Value::Array(pair)) if span.is_none() => {
-                        let [start, end] = pair.as_slice() else {
-                            return Err(invalid_consolidation("invalid locator message span"));
-                        };
-                        span = Some((decode_offset(start)?, decode_offset(end)?));
-                    }
-                    (Some("revision"), Value::Binary(bytes)) if revision.is_none() => {
-                        revision = Some(<[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
-                            invalid_consolidation("locator message revision must have 32 bytes")
-                        })?);
-                    }
-                    (Some("frontier"), Value::Binary(bytes)) if frontier.is_none() => {
-                        frontier = Some(bytes.clone());
-                    }
-                    _ => {
-                        return Err(invalid_consolidation(
-                            "unknown, duplicate or mistyped locator message key",
-                        ));
-                    }
-                }
-            }
-            let (start, end) =
-                span.ok_or_else(|| invalid_consolidation("missing locator message span"))?;
-            if start >= end {
-                return Err(invalid_consolidation("empty locator message span"));
-            }
-            Ok(MessageSpan {
-                message: message.ok_or_else(|| invalid_consolidation("missing locator message"))?,
-                start,
-                end,
-                revision: revision
-                    .ok_or_else(|| invalid_consolidation("missing locator message revision"))?,
-                frontier,
-            })
-        })
-        .collect()
-}
-
-/// [`decode_verified_citations`] without the MESSAGE slices.
-pub(crate) fn decode_verified_locators(
-    evidence: &Value,
-) -> Result<Vec<(super::SwarmEvidenceRef, [u8; 32])>> {
-    Ok(decode_verified_citations(evidence)?
-        .into_iter()
-        .map(|(locator, hash, _)| (locator, hash))
-        .collect())
-}
-
-/// Strictly decodes the parent-verified locator set on an attachment. The
-/// ordinary evidence-envelope decoder ignores this additive key for readers.
-pub(crate) fn decode_verified_citations(evidence: &Value) -> Result<Vec<VerifiedLocator>> {
-    let Value::Map(fields) = evidence else {
-        return Err(invalid_consolidation("verified evidence must be a map"));
-    };
-    let Value::Array(items) = fields
-        .iter()
-        .find(|(key, _)| key.as_str() == Some("locators"))
-        .map(|(_, value)| value)
-        .ok_or_else(|| invalid_consolidation("attachment locators are missing"))?
-    else {
-        return Err(invalid_consolidation(
-            "attachment locators must be an array",
-        ));
-    };
-    if items.is_empty() {
-        return Err(invalid_consolidation("attachment locators are empty"));
-    }
-    items
-        .iter()
-        .map(|row| {
-            let Value::Map(fields) = row else {
-                return Err(invalid_consolidation("attachment locator must be a map"));
-            };
-            let mut source_id = None;
-            let mut claim_id = None;
-            let mut byte_range = None;
-            let mut hash = None;
-            let mut messages = None;
-            for (key, value) in fields {
-                match key.as_str() {
-                    Some("source_id") if source_id.is_none() => {
-                        source_id = Some(
-                            entity_ref_from_value(value)
-                                .ok_or_else(|| invalid_consolidation("invalid locator source"))?,
-                        );
-                    }
-                    Some("claim_id") if claim_id.is_none() => {
-                        claim_id = Some(
-                            entity_ref_from_value(value)
-                                .ok_or_else(|| invalid_consolidation("invalid locator claim"))?,
-                        );
-                    }
-                    Some("byte_range") if byte_range.is_none() => {
-                        let Value::Array(pair) = value else {
-                            return Err(invalid_consolidation("invalid locator range"));
-                        };
-                        let [start, end] = pair.as_slice() else {
-                            return Err(invalid_consolidation("invalid locator range"));
-                        };
-                        byte_range = Some((
-                            usize::try_from(
-                                start.as_u64().ok_or_else(|| {
-                                    invalid_consolidation("invalid locator start")
-                                })?,
-                            )
-                            .map_err(|_| invalid_consolidation("locator start overflow"))?,
-                            usize::try_from(
-                                end.as_u64()
-                                    .ok_or_else(|| invalid_consolidation("invalid locator end"))?,
-                            )
-                            .map_err(|_| invalid_consolidation("locator end overflow"))?,
-                        ));
-                    }
-                    Some(LOCATOR_MESSAGES_KEY) if messages.is_none() => {
-                        messages = Some(decode_message_spans(value)?);
-                    }
-                    Some("content_hash") if hash.is_none() => {
-                        let Value::Binary(bytes) = value else {
-                            return Err(invalid_consolidation("invalid locator hash"));
-                        };
-                        hash = Some(bytes.as_slice().try_into().map_err(|_| {
-                            invalid_consolidation("locator hash must have 32 bytes")
-                        })?);
-                    }
-                    _ => return Err(invalid_consolidation("unknown or duplicate locator key")),
-                }
-            }
-            Ok((
-                super::SwarmEvidenceRef {
-                    source_id: source_id
-                        .ok_or_else(|| invalid_consolidation("missing locator source"))?,
-                    claim_id,
-                    byte_range,
-                },
-                hash.ok_or_else(|| invalid_consolidation("missing locator hash"))?,
-                messages.unwrap_or_default(),
-            ))
-        })
-        .collect()
-}
-
 /// Reads back a stored consolidation evidence envelope. `Ok(None)` when the
 /// payload is not one (a legacy bare-array evidence stamp, say); a structural
 /// break inside a well-keyed envelope is a typed error, never a silent drop.
@@ -607,7 +383,7 @@ pub fn peer_answer_provenance_chain(
     let (disposition, result_ref) =
         crate::task_verb::settled_task_result_binding(vault, lineage.consult_task_ref)?
             .ok_or_else(|| invalid_consolidation("consult task carries no settled result"))?;
-    if disposition != crate::task_verb::TaskTerminalDisposition::Completed {
+    if disposition != crate::failure_ladder::task_terminal::TaskTerminalDisposition::Completed {
         return Err(invalid_consolidation("consult task did not complete"));
     }
     if result_ref != lineage.answer_turn_ref && Some(result_ref) != lineage.result_artifact_ref {
@@ -670,6 +446,29 @@ pub(crate) fn evidence_source_from_row(entity_type: u8, data: &[u8]) -> Result<C
         ClaimSource::Generated,
         evidence_source_from_claim(&body),
     ))
+}
+
+/// The one-row trust answer with NOTE import lookup: a folder-imported NOTE
+/// carries its import MACHINE's source; any other row falls back to
+/// [`evidence_source_from_row`].
+pub(crate) fn evidence_source_from_row_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity_type: u8,
+    data: &[u8],
+) -> Result<ClaimSource> {
+    if entity_type == ENTITY_TYPE_NOTE {
+        if let Ok(body) = crate::note::decode_note_body_in_txn(&vault.store, txn, data) {
+            if let Some(author) = body.author_ref.id() {
+                if let Some(source) =
+                    crate::note::imported_note_source_in_txn(&vault.store, txn, &author)?
+                {
+                    return Ok(source);
+                }
+            }
+        }
+    }
+    evidence_source_from_row(entity_type, data)
 }
 
 pub(super) fn evidence_source_from_claim(body: &crate::claim::ClaimBody) -> ClaimSource {

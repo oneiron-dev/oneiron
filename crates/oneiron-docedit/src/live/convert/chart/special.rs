@@ -3,9 +3,11 @@
 //! price takes drawn as a line on the stock plot's axes (Engine ruling
 //! 10-22: nothing dropped, no count refused, a price no series draws left
 //! empty on a receipt); surface series aligned on one category set by point
-//! identity, a height a series lacks missing; an of-pie plot's custom split
-//! kept to the points its first series still draws.
+//! identity, a height a series lacks missing; an of-pie plot drawn once per
+//! placement its series' sets give its custom split, and its split kept to
+//! the points its series still draw.
 
+use super::place_ordinals;
 use crate::live::conversion::Conversion;
 use crate::live::pptx::{
     ChartCategories, ChartCategory, ChartKind, ChartPlot, ChartSeries, NodeId, StockRoles,
@@ -224,9 +226,82 @@ pub(super) fn align_surfaces(
     }
 }
 
-/// Each of-pie plot's custom split kept to the points the set its first
-/// series draws still holds (`line_targets`, the plot each of `lines` is
-/// drawn in, among `targets`); the points it drops are named on a receipt.
+/// Each of-pie plot whose series' sets place its custom split at different
+/// indices (series drawing sets of their own) drawn as one of-pie plot per
+/// placement, in the order its series first take them (FIX 9375, the
+/// recheck's option): one native split names the same point indices in
+/// every series' set. The first stays; each other is a new of-pie plot
+/// after every plot ([`place_ordinals`]) holding a copy of its settings,
+/// which it then keeps as its own. Each plot drawn so is named on a receipt
+/// with the number of plots it became.
+pub(super) fn split_views(
+    settings: &mut Vec<ChartPlot>,
+    categories: &ChartCategories,
+    series: &[ChartSeries],
+    resolved: &[ChartKind],
+    (targets, assign): (&mut Vec<PlotTarget>, &mut Vec<usize>),
+    done: &mut Vec<Conversion>,
+) {
+    let of_pies: Vec<usize> = (0..targets.len())
+        .filter(|&at| targets[at].kind == ChartKind::OfPie)
+        .collect();
+    let mut wanted: Vec<Option<u32>> = vec![None; series.len()];
+    let mut copies: Vec<ChartPlot> = Vec::new();
+    let mut next = u32::try_from(of_pies.len()).unwrap_or(u32::MAX);
+    for (nth, &at) in of_pies.iter().enumerate() {
+        let nth = u32::try_from(nth).unwrap_or(u32::MAX);
+        let Some(plot) = settings.iter().find(|plot| plot.is(ChartKind::OfPie, nth)) else {
+            continue;
+        };
+        let Some(split) = &plot.custom_split else {
+            continue;
+        };
+        let mut views: Vec<Vec<usize>> = Vec::new();
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        for index in (0..series.len()).filter(|&index| assign.get(index) == Some(&at)) {
+            let set = effective_categories(categories, &series[index]);
+            let mut view: Vec<usize> = split.iter().filter_map(|id| set.position(*id)).collect();
+            view.sort_unstable();
+            view.dedup();
+            match views.iter().position(|held| *held == view) {
+                Some(group) => groups[group].push(index),
+                None => {
+                    views.push(view);
+                    groups.push(vec![index]);
+                }
+            }
+        }
+        if groups.len() < 2 {
+            continue;
+        }
+        done.push(Conversion::OfPieSplitViews {
+            nth,
+            count: groups.len(),
+        });
+        for group in &groups[1..] {
+            for &index in group {
+                wanted[index] = Some(next);
+            }
+            copies.push(ChartPlot {
+                nth: next,
+                ..plot.clone()
+            });
+            next = next.saturating_add(1);
+        }
+    }
+    if copies.is_empty() {
+        return;
+    }
+    place_ordinals(targets, assign, resolved, &wanted);
+    for copy in copies {
+        settings.retain(|held| !held.is(copy.family, copy.nth));
+        settings.push(copy);
+    }
+}
+
+/// Each of-pie plot's custom split kept to the points the sets its series
+/// draw still hold (`line_targets`, the plot each of `lines` is drawn in,
+/// among `targets`); the points it drops are named on a receipt.
 pub(super) fn settle_splits(
     settings: &mut [ChartPlot],
     categories: &ChartCategories,
@@ -247,14 +322,15 @@ pub(super) fn settle_splits(
         let Some(split) = &mut plot.custom_split else {
             continue;
         };
-        let first = usize::try_from(plot.nth)
+        let target = usize::try_from(plot.nth)
             .ok()
             .and_then(|nth| of_pies.get(nth))
-            .and_then(|&target| line_targets.iter().position(|&at| at == target));
-        let ids: BTreeSet<NodeId> = first
-            .map(|at| effective_categories(categories, &lines[at]).ids())
-            .into_iter()
-            .flatten()
+            .copied();
+        let ids: BTreeSet<NodeId> = lines
+            .iter()
+            .zip(line_targets)
+            .filter(|&(_, &at)| Some(at) == target)
+            .flat_map(|(line, _)| effective_categories(categories, line).ids())
             .collect();
         let before = split.len();
         let mut seen = BTreeSet::new();

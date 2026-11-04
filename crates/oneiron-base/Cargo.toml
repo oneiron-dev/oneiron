@@ -1,0 +1,36 @@
+[package]
+name = "oneiron-base"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Base layer of the oneiron engine: the error and id vocabulary, retrieval kernels, the context-pack tokenizer and the panic report"
+repository.workspace = true
+
+[lib]
+# No doc-comment code fences in this crate.
+doctest = false
+
+[features]
+# Forwarded by `oneiron/sync`: compiles the sync error vocabulary in `error`.
+sync = ["oneiron-contracts/sync"]
+# Forwarded by `oneiron/test-support`: test-only doors core's tests call
+# (`LiveLine::waiting`). No production effect.
+test-support = []
+
+[dependencies]
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
+oneiron-retrieval = { version = "0.1.0", path = "../oneiron-retrieval" }
+rand = "0.8"
+rand_distr = "0.4"
+schemars = "=0.8.22"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tiktoken-rs = "0.12.0"
+tokio = { version = "1", features = ["net", "sync", "time"] }
+tracing = { version = "0.1" }
+
+[lints]
+workspace = true

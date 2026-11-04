@@ -8,12 +8,12 @@ use crate::claim::{
     ScopedReadActorKey, claim_evidence_taint,
 };
 use crate::dreamer_consolidation::{
-    ConsolidationEvidenceEnvelope, encode_consolidation_evidence, evidence_source_from_row,
+    ConsolidationEvidenceEnvelope, encode_consolidation_evidence, evidence_source_from_row_in_txn,
 };
 use crate::dreamer_runner::{
     DREAMER_WEAVE_RECIPE_ATTEMPT_KIND, DreamerAdmittedAttempt, WeaveRecipePin,
 };
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{ClaimCandidate, EdgeActorClass, EntityId, Error, Result, TimeRange, Vault};
@@ -135,7 +135,8 @@ fn cited(pin: &WeaveRecipePin, source: ClaimSource) -> Value {
 }
 fn claim_hash(body: &ClaimBody) -> Result<[u8; 32]> {
     // The owner may approve or decline a held output, and revert an applied
-    // one, without changing it.
+    // one, without changing it; an owner act that rewrites more of the body
+    // is accepted on replay without this hash (FIX 9295).
     let mut original = body.clone();
     original.approval = ClaimApprovalStatus::Proposed;
     original.lifecycle = ClaimLifecycleStatus::Active;
@@ -166,16 +167,27 @@ fn cached_result(
                 provenance(pin, attempt, result.evidence_hash)?,
                 ClaimApprovalStatus::Proposed,
             );
+            // An owner's act since the commit (FIX 9295, L07-A 02:15): an
+            // output reverted, or a held one approved or declined. The
+            // Dreamer makes none of these. The owner's door may rewrite more
+            // of the body than its lifecycle, validity and approval, so its
+            // content is not compared again: the result row, the id derived
+            // from this attempt, the subject and the source still bind it.
+            let owner_act = body.lifecycle == ClaimLifecycleStatus::Retracted
+                || matches!(
+                    body.approval,
+                    ClaimApprovalStatus::Approved | ClaimApprovalStatus::Rejected
+                );
             if result.version != 1
                 || result.pin_hash != pin.binding_hash()
                 || result.actor != actor.entity_ref().to_hex()
                 || body.subject != ClaimSubject::Entity(pin.subject)
                 || body.source != Some(source)
-                // An applied output the owner reverted is retracted, and is
-                // still this attempt's committed output.
+                // An output the owner reverted is retracted, and is still
+                // this attempt's committed output.
                 || !matches!(
-                    (body.lifecycle, result.applied),
-                    (ClaimLifecycleStatus::Active, _) | (ClaimLifecycleStatus::Retracted, true)
+                    body.lifecycle,
+                    ClaimLifecycleStatus::Active | ClaimLifecycleStatus::Retracted
                 )
                 // The owner may have decided a held proposal since; a declined
                 // one is still this attempt's committed output.
@@ -186,14 +198,16 @@ fn cached_result(
                         | ClaimApprovalStatus::Approved
                         | ClaimApprovalStatus::Rejected
                 )
-                || claim_evidence_taint(&body) != Some(source)
-                // The Dreamer's MACHINE signature binds these same bytes.
-                || crate::authority::evidence_without_machine_signature(&body)
-                    != Some(crate::write_envelope::write_envelope_evidence(
-                        &stamped,
-                        Some(cited(pin, source)),
-                    ))
-                || result.claim_hash != claim_hash(&body)?
+                || (!owner_act
+                    && (claim_evidence_taint(&body) != Some(source)
+                        // The Dreamer's MACHINE signature binds these same
+                        // bytes.
+                        || crate::authority::evidence_without_machine_signature(&body)
+                            != Some(crate::write_envelope::write_envelope_evidence(
+                                &stamped,
+                                Some(cited(pin, source)),
+                            ))
+                        || result.claim_hash != claim_hash(&body)?))
             {
                 return Err(invalid());
             }
@@ -234,13 +248,15 @@ fn read_evidence(
         .entity_raw_live_in(txn, &id)?
         .ok_or_else(invalid)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
-    if !matches!(header.entity_type, ENTITY_TYPE_TURN | ENTITY_TYPE_CLAIM)
-        || raw.len() == ENTITY_METADATA_HEADER_LEN
+    if !matches!(
+        header.entity_type,
+        ENTITY_TYPE_TURN | ENTITY_TYPE_CLAIM | ENTITY_TYPE_NOTE
+    ) || raw.len() == ENTITY_METADATA_HEADER_LEN
     {
         return Err(invalid());
     }
     let bytes = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-    let source = evidence_source_from_row(header.entity_type, &bytes)?;
+    let source = evidence_source_from_row_in_txn(vault, txn, header.entity_type, &bytes)?;
     let project = crate::dreamer_consolidation::resources::stored_project(
         &vault.store,
         txn,
@@ -267,6 +283,13 @@ pub struct WeaveRecipeExecutor<E, R> {
 impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
     for WeaveRecipeExecutor<E, R>
 {
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        self.inner.execute_partition_window(window).await
+    }
+
     async fn execute(
         &mut self,
         attempt: &DreamerAdmittedAttempt,
@@ -364,6 +387,17 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
                 attempt = ?attempt.status.attempt.id,
                 "a recipe's evidence sits in no single project; its output keeps the default project"
             );
+        }
+        // The recipe's pack closes attributed (FIX 1875), bound while its
+        // lease holds; a bind that fails leaves the receipt unattributed and
+        // the recipe runs on.
+        if let Err(error) = crate::skill_attribution::bind_dreamer_weave_attribution(
+            vault,
+            attempt.status.attempt.id,
+            lease_owner,
+            evidence.project,
+        ) {
+            tracing::warn!(kind = ?error.kind(), "a weave recipe's pack attribution did not bind");
         }
         let draft = self.runtime.draft(text, &evidence.bytes)?;
         let candidate = ClaimCandidate::new(

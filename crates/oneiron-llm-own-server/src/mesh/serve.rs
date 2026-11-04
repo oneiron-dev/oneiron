@@ -83,6 +83,9 @@ type Running = Arc<tokio::sync::Mutex<LlmStream<'static>>>;
 /// One running stream, its entry booked.
 struct Held {
     running: Running,
+    /// When it started, or its last pull ended: a stopping connection
+    /// cancels one its asker no longer pulls (FIX 11165).
+    pulled: Instant,
     _entry: Booking,
 }
 
@@ -140,10 +143,11 @@ impl LlmMeshService {
         let mut tasks = JoinSet::new();
         let mut stop = Stop::new(self.stop.clone());
         loop {
+            let recheck = stop.cancel_unpulled(&session);
             if stop.ends(tasks.is_empty() && lock(&session.streams).is_empty()) {
                 break;
             }
-            let stream = match shutdown::next(&*conn, &mut tasks, &mut stop).await {
+            let stream = match shutdown::next(&*conn, &mut tasks, &mut stop, recheck).await {
                 Next::Stream(Ok(stream)) => stream,
                 Next::Stream(Err(_)) => break,
                 Next::Again => continue,
@@ -240,6 +244,7 @@ impl LlmMeshService {
                         let entry = session.staging.budget.charged(STREAM_ENTRY);
                         let held = Held {
                             running: Arc::new(tokio::sync::Mutex::new(running)),
+                            pulled: Instant::now(),
                             _entry: entry,
                         };
                         lock(&session.streams).insert(id, held);
@@ -417,8 +422,13 @@ async fn pull(session: &Session, id: u64) -> (Reply, Option<Booking>) {
         }
     }
     drop(running);
-    if end {
-        lock(&session.streams).remove(&id);
+    {
+        let mut streams = lock(&session.streams);
+        if end {
+            streams.remove(&id);
+        } else if let Some(held) = streams.get_mut(&id) {
+            held.pulled = Instant::now();
+        }
     }
     match encode(&Batch { events }) {
         Ok(batch) => {

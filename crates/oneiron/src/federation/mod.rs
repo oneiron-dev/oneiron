@@ -16,9 +16,13 @@ pub(crate) use agent_grant::{
 // Who may delete one record the cleanup archived (OF-449 L4).
 mod archive_delete;
 pub(crate) use archive_delete::{
-    ArchiveDeleteAuthority, ArchiveDeleteCaller, ArchiveDeleteRefusal, ArchiveDeleteRole,
+    ArchiveDeleteAuthority, ArchiveDeleteCaller, ArchiveDeleteRefusal,
     require_archive_delete_in_txn,
 };
+// The old path of the role the deletion gate now names at
+// `deletion::archive_role`; kept for callers of the federation path.
+#[allow(unused_imports)]
+pub(crate) use archive_delete::ArchiveDeleteRole;
 mod connect_grant;
 pub use connect_grant::ConnectGrantMinted;
 pub(crate) use connect_grant::{
@@ -75,10 +79,11 @@ pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_act::{
     DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind, EraseAskStatus,
     NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS,
-    RemovalExportCopy, RemovalExportDelivery, RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN,
-    SHARED_INVITATION_TTL_SECS, SharedActExecution, SharedActExecutionReceipt, SharedActExport,
-    SharedActKind, SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState,
-    SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
+    ReceivedRemovalArchive, ReceivedRemovalArchiveState, RemovalExportCopy, RemovalExportDelivery,
+    RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN, SHARED_INVITATION_TTL_SECS,
+    SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind,
+    SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState, SharedVaultChange,
+    SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
     shared_act_outcome_transcript,
 };
 pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;
@@ -108,10 +113,12 @@ pub(crate) use stale::world_registered_to_pact_in;
 
 pub use self::coreference::{
     COREFERENCE_LINK_WEIGHT, CoreferenceStatus, coreference_share_consent,
-    coreference_shared_for_pact, put_coreference_link, unlink_coreference_link,
+    coreference_shared_for_pact, put_coreference_link, unlink_consolidated_same_as,
+    unlink_coreference_link,
 };
 pub(crate) use self::coreference::{
-    coreference_share_consent_as_owner, put_coreference_link_as_owner,
+    ConsolidatedSameAs, check_consolidated_same_as, coreference_share_consent_as_owner,
+    put_consolidated_same_as_in_txn, put_coreference_link_as_owner,
 };
 pub use self::grant::{
     FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION, FederationGrant,

@@ -67,6 +67,16 @@ impl Vault {
         if !row.record_critique(critique, &policy)? {
             return Ok(row);
         }
+        // Every vote on its own catalog is kept; past the threshold row the
+        // host is asked whether everything is okay (rule 5, FIX 8837).
+        let mut count = crate::scan_check::ScanCount::start(
+            &self.store,
+            &txn,
+            crate::scan_check::EngineScan::RepoProposalCritiques,
+            id.as_bytes(),
+        )?;
+        count.rows(row.critiques.len());
+        count.defer(&self.store);
         store(self, &mut txn, &row)?;
         txn.commit()?;
         Ok(row)

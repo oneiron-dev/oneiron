@@ -23,7 +23,9 @@ use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::world_keys::{HybridPublicKey, RecoveryRootId, WorldKeyId, WrapRecipient};
+use oneiron_authority::authority::RecoveryRootId;
+use oneiron_authority::authority::{WorldKeyId, WrapRecipient};
+use oneiron_crypto::HybridPublicKey;
 
 use super::super::identity::{CustodyKind, CustodySubject};
 use super::super::log::{AEAD, CRYPTO_EPOCH, CustodyPosition, open_sym, seal_refused, seal_sym};
@@ -441,11 +443,13 @@ pub(crate) fn seal_world_pad_compartment(
         recipients: Vec::new(),
         history: Vec::new(),
         // A world's pad capsule carries no erase evidence (FIX 10584 item
-        // 3): that rides the head's host-readable compartments.
+        // 3) or holder debt (FIX 11206): those ride the head's host-readable
+        // compartments.
         evidence: Vec::new(),
+        holders: Vec::new(),
     };
     let mut key = Zeroizing::new([0u8; 32]);
-    crate::world_keys::os_fill(&mut key[..])?;
+    crate::key_material::os_fill(&mut key[..])?;
     let plain = Zeroizing::new(rmp_serde::to_vec_named(&body).map_err(|_| pads_corrupt())?);
     let sealed = seal_sym(
         Purpose::CustodyCompartment,
@@ -514,7 +518,7 @@ pub(crate) fn open_world_pad_compartment(
     }
     let key_id = capsule_key_id(&position, &world, &wire.keys, &recipients);
     let key = unwrap_for(&position, &key_id, &wire.wraps, recipient, secret).ok_or_else(|| {
-        crate::world_keys::refused("the world's pads do not open with this machine or root")
+        crate::key_material::refused("the world's pads do not open with this machine or root")
     })?;
     let plain = open_sym(
         Purpose::CustodyCompartment,
@@ -530,6 +534,7 @@ pub(crate) fn open_world_pad_compartment(
         || !body.recipients.is_empty()
         || !body.history.is_empty()
         || !body.evidence.is_empty()
+        || !body.holders.is_empty()
     {
         return Err(pads_corrupt());
     }

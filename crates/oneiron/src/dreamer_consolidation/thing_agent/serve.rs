@@ -46,10 +46,9 @@ use crate::dreamer_consolidation::step_charge::StepChargeTally;
 use crate::dreamer_wake::WakeAttemptContext;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::llm::{
-    DreamerFailureDecision, DurableStepContext, DurableStepError, DurableStepResult, LlmResponse,
-    StepOutcome,
-};
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::{DurableStepError, DurableStepResult};
+use oneiron_model::llm::{DreamerFailureDecision, LlmResponse};
 
 /// What a thing branch's pass is handed by its partition attempt: the wake,
 /// the branch's resources and every slice (each saying whether it is
@@ -325,7 +324,7 @@ impl ConsolidationExecutor<'_> {
                     scope: &slice.scope,
                     sources: &slice.sources,
                 }],
-                namespace: pass.namespace,
+                namespace: pass.namespace.clone(),
                 rules: pass.rules,
                 citations: Arc::clone(pass.citations),
                 width: 1,

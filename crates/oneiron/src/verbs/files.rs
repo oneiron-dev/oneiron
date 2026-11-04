@@ -30,7 +30,9 @@ pub struct FilesSourceAttachRequest {
     /// What the host never opens, matched against each entry's name and its
     /// path under the folder. Absent keeps the default list (hidden entries,
     /// version control, dependency and build folders, credential stores and
-    /// key files); a list, even an empty one, replaces it.
+    /// key files); a list, even an empty one, replaces it. The `oneiron
+    /// files attach` command's `--exclude` adds to the default list instead,
+    /// and its `--no-default-exclude` drops the defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclude: Option<Vec<String>>,
     /// The note kind a file lands as when its frontmatter names none;
@@ -88,7 +90,8 @@ pub struct FilesRescanCounts {
     pub restored: u64,
     pub removed: u64,
     pub name_only: u64,
-    /// Files the write door refused; a later rescan tries them again.
+    /// Files the write door refused and folders that would not open (FIX
+    /// 10246); a later rescan tries them again.
     pub failed: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_error: Option<String>,
@@ -338,6 +341,12 @@ fn files_file_view(source: EntityId, file: FolderSourceFile) -> FilesFileView {
         FileReadiness::NameOnly { .. } => None,
     };
     let meta = file.meta;
+    // The row keeps when it first saw the file; ledgers written before it
+    // still carry it on the meta (REVIEW-4381 P1).
+    let first_seen_at = match file.first_seen_at {
+        0 => meta.map(|meta| meta.first_seen_at),
+        seen => Some(seen),
+    };
     FilesFileView {
         handle: FileHandle {
             source,
@@ -350,7 +359,7 @@ fn files_file_view(source: EntityId, file: FolderSourceFile) -> FilesFileView {
         revision,
         bytes: meta.map(|meta| meta.bytes),
         modified_at: meta.map(|meta| meta.modified_at),
-        first_seen_at: meta.map(|meta| meta.first_seen_at),
+        first_seen_at,
         indexed_at: meta.and_then(|meta| meta.indexed_at),
     }
 }

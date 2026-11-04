@@ -13,9 +13,9 @@ impl Vault {
     /// stores it faithfully — it simply does not index it, and every reader in
     /// this module treats that stored-but-unindexed claim as ordinary data.
     ///
-    /// An rrule series is committed as a claim and nothing else: no due row, no
-    /// deadline, and the outcome names [`CAL_RRULE_ROUTE`] rather than
-    /// pretending v1 can expand it.
+    /// An rrule series is expanded through [`CAL_RRULE_ROUTE`] from its own
+    /// valid-time start; one whose rule names no start from now on is
+    /// committed as a claim and nothing else.
     ///
     /// # Errors
     ///
@@ -153,14 +153,16 @@ impl Vault {
     /// by calling it again.
     ///
     /// Returns the successor instances this close produced — one for an
-    /// interval, a whole window for a quota that rolled over past its window
-    /// end, none for anything else.
+    /// interval or an rrule that has a next start, a quota's window (its
+    /// first pass of slots) for a quota that rolled over past its window end,
+    /// none for anything else.
     ///
     /// # Errors
     ///
     /// [`ScheduleError::Invalid`] when the named claim is a SERIES or is still
     /// open, or when its terminal status does not match `outcome`.
-    /// [`ScheduleError::RruleNotImplemented`] for an rrule instance.
+    /// [`ScheduleError::Calendar`] when an rrule series' rule cannot be
+    /// expanded.
     /// [`ScheduleError::ArithmeticOverflow`] when the interval successor would
     /// leave the `u64` time model.
     pub fn on_instance_closed(
@@ -191,6 +193,16 @@ impl Vault {
         };
         self.store
             .commitment_due_clear_instance_phases_in_txn(wtxn, instance_ref)?;
+        // A caller holding a status successor's id still closes the rows the
+        // deterministic instance id carries.
+        let minted = commitment_instance_id(&closed.series_ref, &closed.occurrence)?;
+        if minted != *instance_ref {
+            self.store
+                .commitment_due_clear_instance_phases_in_txn(wtxn, &minted)?;
+        }
+        let closed_at = closed
+            .learned_at
+            .map_or(closed_at, |learned| learned.max(closed_at));
         self.commitment_successors_in_txn(wtxn, &closed, envelope, closed_at)
     }
 }

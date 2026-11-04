@@ -476,8 +476,8 @@ pub fn hub_hooks_qualify_as_owner(
 
 /// [`hub_hooks_qualify_as_owner`], beside the rows its answer is read from
 /// ([`Vault::qualify_pack_hooks_listing`]): the pack source and every row
-/// each hook's listing replay lists, `None` when a replay's evidence is not
-/// listed, never an empty list standing in for it.
+/// each hook's listing replay lists. Every listed row is named; an empty
+/// list means no rows.
 ///
 /// # Errors
 /// As [`hub_hooks_qualify_as_owner`].
@@ -486,7 +486,7 @@ pub fn hub_hooks_qualify_as_owner_listing(
     owner: &AuthenticatedOwner,
     runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
     input: &HubHookQualifyRequest,
-) -> MemoryResult<(HubHookQualificationReceipt, Option<Vec<EntityId>>)> {
+) -> MemoryResult<(HubHookQualificationReceipt, Vec<EntityId>)> {
     let (qualified, rows) = vault.qualify_pack_hooks_listing(owner, runtime, input.source)?;
     Ok((qualification_receipt(qualified), rows))
 }

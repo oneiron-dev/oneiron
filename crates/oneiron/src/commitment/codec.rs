@@ -157,9 +157,7 @@ pub(super) fn commitment_claim_candidate_from_body(
         .with_confidence_details(body.confidence_details())
         .with_validity(body.valid_from, body.valid_to)
         .with_scope_stamps(body.scope_facet, body.scope_project);
-    if let Some(relationship) = body.rel {
-        candidate = candidate.with_relationship(relationship);
-    }
+    candidate = candidate.with_relationships(body.rel.clone());
     if let Some(salience) = body.salience {
         candidate = candidate.with_salience(salience);
     }

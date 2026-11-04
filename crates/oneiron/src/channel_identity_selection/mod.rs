@@ -39,11 +39,14 @@
 //! selected face" is likewise a typed unresolved decision for the caller to
 //! surface — never a licence to reach for a more valuable owner identity.
 
+mod thread_mask;
+pub use thread_mask::ThreadMaskSelectionExt;
+
 mod selection_codec;
 mod selection_resolution;
 mod selection_rules;
 mod selection_storage;
-mod selection_vocabulary;
+use oneiron_authority::channel_selection_vocabulary as selection_vocabulary;
 
 pub use self::selection_resolution::{
     ChannelIdentityCandidate, ChannelIdentitySelectionDecision, ChannelIdentitySelectionError,
@@ -59,7 +62,9 @@ pub use self::selection_vocabulary::{
     RelationshipContext, SelectionRuleWriterKind,
 };
 
-pub(crate) use self::selection_storage::erase_rule_actor_in_txn;
+pub(crate) use self::selection_storage::{
+    channel_identity_selection_rules_in_txn, erase_rule_actor_in_txn,
+};
 
 #[cfg(test)]
 mod tests;

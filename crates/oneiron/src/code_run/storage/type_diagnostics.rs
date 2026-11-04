@@ -34,6 +34,11 @@ pub(crate) type StepKey = (EntityId, u64, u64);
 /// Step feedback rows.
 const ROWS: SideTable<StepKey, StoredStepFeedback, Named> =
     SideTable::new(&side_table::CODE_RUN_TYPE_DIAGNOSTICS);
+/// Whether a masked copy of a `CODE_RUN_TYPE_DIAGNOSTICS` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn code_run_type_diagnostics_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StoredStepFeedback, Named>(bytes)
+}
 
 /// A step's check as a row keeps it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -420,6 +425,13 @@ pub(crate) fn erase_type_diagnostics_actor_in_txn(
             RAW_OUTPUT_SECRETS.delete(&vault.store, wtxn, &marks)?;
             release_body_in_txn(&vault.store, wtxn, &run, &occurrence.id())?;
         }
+        // FIX 12085: the deleted row's lifted custody goes with it.
+        let place = format!("side:{}", ROWS.decl().name);
+        let origin = crate::batch::secret_scan::side_row_origin(
+            &place,
+            &ROWS.key_bytes(&(run, program_seq, invocation)),
+        )?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
         ROWS.delete(&vault.store, wtxn, &(run, program_seq, invocation))?;
     }
     Ok(())

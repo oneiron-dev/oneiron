@@ -20,7 +20,8 @@ use super::{codebase_asset_entity_id, codebase_snapshot_entity_id};
 use crate::Vault;
 use crate::code_artifact::CodeArtifactBody;
 use crate::code_symbol::{
-    CodeSymbolSource, masked_repo_symbol_texts_in_txn, prepare_code_symbol_graph,
+    CodeSymbolSource, code_symbol_document_in_txn, masked_repo_symbol_texts_in_txn,
+    prepare_code_symbol_graph,
 };
 use crate::error::{CodeError, Error, Result};
 use crate::origin::secret_projection::index::RepoIndexMarks;
@@ -268,7 +269,7 @@ impl Vault {
         contents: &dyn Fn(&str) -> Option<Vec<u8>>,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
-        self.with_write_txn_grouped(|wtxn| {
+        let written = self.with_write_txn_grouped(|wtxn| {
             // A run's admission is judged again in this final writer, before
             // any row is put; a refusal writes nothing.
             if let Err(refused) = admit(wtxn)? {
@@ -366,16 +367,26 @@ impl Vault {
                     .filter(|blob| retained_paths.contains(blob.path.as_str()))
                     .map(|blob| (blob.path.as_str(), blob.data.as_slice())),
             )?;
+            // Each source names the file document its symbols are spans on,
+            // as this writer reads it (FIX 7809).
+            let read: &RoTxn<'_> = wtxn;
             let symbol_sources = symbol_texts
                 .iter()
-                .map(|(path, text)| CodeSymbolSource::new(path, text))
-                .collect::<Vec<_>>();
+                .map(|(path, text)| {
+                    Ok(CodeSymbolSource::new(path, text).with_document(
+                        code_symbol_document_in_txn(&self.store, read, repo_ref, path)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
             // Symbol rows first, then every edge a working batch at a time.
-            let symbol_graph = prepare_code_symbol_graph(
+            let mut symbol_graph = prepare_code_symbol_graph(
                 repo_ref.clone(),
                 Some(commit_hash.to_owned()),
                 symbol_sources,
             )?;
+            // Each symbol names the operations that wrote it, read from its
+            // file document when that holds these exact bytes (FIX 342).
+            symbol_graph.fill_producing_operations_in_txn(&self.store, read)?;
             self.put_prepared_code_symbol_graph_in_txn(
                 wtxn,
                 &code_artifact_id,
@@ -387,6 +398,12 @@ impl Vault {
                 code_artifact_id,
                 snapshot: filtered_snapshot,
             }))
-        })
+        })?;
+        // A file custody now withholds leaves the queue's source copies at
+        // once, after the commit; a failure only warns (FIX 7708).
+        if let Err(error) = self.erase_withheld_queue_sources() {
+            tracing::warn!(%error, "withheld queue sources were not erased after an ingest");
+        }
+        Ok(written)
     }
 }

@@ -2,14 +2,16 @@
 use super::*;
 use crate::EntityId;
 use crate::batch::secret_scan::LiftedKeys;
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::consent::AuthenticatedOwner;
 use crate::edit_roundtrip::deck_create::{
     DeckCreateError, DeckCreateOutcome, DeckCreateRequest, DirectionOutcome,
 };
-use crate::memory::{Memory, MemoryError, MemoryResult, resolve_entity_ref};
-use crate::secret_custody::SecretSight;
+use crate::file_secret_marks::SecretSight;
+use crate::memory::{Memory, resolve_entity_ref};
+use crate::ports::ClaimReadStatus;
 use crate::typed_body::LiftedSources;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use oneiron_docedit::design_plan::Brief;
 use oneiron_docedit::emit::Names;
 use serde::de::DeserializeOwned;
@@ -311,7 +313,7 @@ impl Memory<'_> {
     ) -> MemoryResult<()> {
         if owner.revalidate_in_txn(self.vault(), txn)? != self.actor() {
             return Err(MemoryError::new(
-                crate::memory::MEMORY_CODE_FORBIDDEN,
+                oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
                 "owner proof names another actor",
                 &[],
             ));
@@ -504,19 +506,20 @@ impl Memory<'_> {
                 .read_blob_artifact_version_in_txn(txn, &at.artifact, at.version)?
                 .ok_or_else(|| MemoryError::not_found("deck input version not found"))?;
             let sight = if lane.actor_key().reads_as_vault_owner() {
-                crate::secret_custody::SecretSight::Owner
+                crate::file_secret_marks::SecretSight::Owner
             } else {
-                crate::secret_custody::SecretSight::Masked
+                crate::file_secret_marks::SecretSight::Masked
             };
-            let sighted = crate::secret_custody::sighted_bytes_in_txn(
+            let sighted = crate::store::file_key_masks::sighted_bytes_in_txn(
                 &self.vault().store,
                 txn,
                 bytes,
+                Some(&metadata.content_hash),
                 sight,
             )?;
             if *blake3::hash(&sighted).as_bytes() != metadata.content_hash {
                 return Err(MemoryError::new(
-                    crate::memory::MEMORY_CODE_FORBIDDEN,
+                    oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
                     "a masked input cannot be copied into a new deck",
                     &[],
                 ));

@@ -8,6 +8,25 @@ use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 
+// The proof the sync ingest door gives a replicated MESSAGE put that one of
+// the owner's own machines sent its row's exact bytes (FIX 9600). The batch
+// carries it to the witness check and mints none.
+#[cfg(feature = "sync")]
+pub(in crate::batch) use crate::sync::VerifiedOwnDeviceLane;
+
+/// Without sync no import lands a replicated row, so no put carries an
+/// own-device lane (FIX 9600): the type has no value.
+#[cfg(not(feature = "sync"))]
+pub(in crate::batch) enum VerifiedOwnDeviceLane {}
+
+#[cfg(not(feature = "sync"))]
+impl VerifiedOwnDeviceLane {
+    /// Never answers: there is no lane to ask.
+    pub(in crate::batch) fn machine_for(&self, _id: &EntityId, _data: &[u8]) -> Option<EntityId> {
+        match *self {}
+    }
+}
+
 /// One entity put through the `apply_put` chokepoint.
 pub(in crate::batch) struct PutRequest<'a> {
     pub(in crate::batch) row: PutRow<'a>,
@@ -158,8 +177,8 @@ impl PutOptions {
     }
 
     /// The claim-gate write mode these options select.
-    pub(super) fn gate_write_mode(&self) -> crate::gate::GateWriteMode {
-        crate::gate::GateWriteMode {
+    pub(super) fn gate_write_mode(&self) -> crate::store::GateWriteMode {
+        crate::store::GateWriteMode {
             record_decision: self.decision.record,
             persist_pending_consent: self.consent.persist_pending,
             resolve_pending: true,
@@ -191,6 +210,9 @@ pub(in crate::batch) struct PutContext<'a> {
     pub(in crate::batch) posture: crate::HostingPrivacyPosture,
     /// The vault owner's in-person authorship of a claim candidate's put.
     pub(in crate::batch) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
+    /// Pending-birth prompt sources for FIX 11000 anchors: `Some` proven
+    /// from batch state (possibly empty), `None` unknown (incomplete).
+    pub(in crate::batch) pending_prompt: Option<&'a [EntityId]>,
 }
 
 /// One claim candidate through `apply_claim_candidate`: the candidate and its
@@ -208,4 +230,7 @@ pub(in crate::batch) struct ClaimCandidateRequest<'a> {
     pub(in crate::batch) indexing: TextIndexing,
     pub(in crate::batch) write_policy: Option<&'a crate::gate::PolicyManifestResolution>,
     pub(in crate::batch) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
+    /// Pending-birth prompt sources for FIX 11000 anchors, owned from batch
+    /// state: `Some` proven (possibly empty), `None` unknown (incomplete).
+    pub(in crate::batch) pending_prompt: Option<Vec<EntityId>>,
 }

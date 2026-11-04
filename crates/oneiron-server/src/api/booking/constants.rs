@@ -79,3 +79,9 @@ pub(super) const MAX_INTAKE_ANSWERS: usize = 32;
 /// Bound on a caller-supplied idempotency key. The lifecycle applies its own
 /// bound too; this one fails the request before a verb is ever built.
 pub(super) const MAX_IDEMPOTENCY_KEY_BYTES: usize = 128;
+
+/// The intake field key of the public booking form's hidden honeypot input.
+/// A person never sees the field, so an anonymous confirm whose answer under
+/// this key is non-empty was filled by a program. The key is removed from the
+/// intake before the confirm reaches the writer, so it is never stored.
+pub(super) const PUBLIC_FORM_HONEYPOT_FIELD_KEY: &str = "form_honeypot";

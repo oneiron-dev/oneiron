@@ -13,9 +13,10 @@
 //!
 //! A PDF's note is the text of its pages, read from its bytes: no frontmatter
 //! and no links out, though a note's link can name it. A PDF with no text
-//! layer (a scan) holds no text, and one that is encrypted or does not parse
-//! reads none: both are held by name, with the bytes the walk read (FIX
-//! 11276).
+//! layer (a scan) reads its page images through the ingest station's OCR; a
+//! scan with no OCR to read it holds no text, and one that is encrypted or
+//! does not parse reads none: both are held by name, with the bytes the walk
+//! read (FIX 11276).
 //!
 //! A file of any size is read (rule 5). Text past the note bound lands in
 //! parts: the file's own note holds the first, and each next part is a note of
@@ -26,7 +27,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::ops::Range;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::ingest::{PdfText, pdf_text};
@@ -71,7 +72,7 @@ pub(crate) struct Note {
     /// The frontmatter as it decodes, for the secret scan; each part of a
     /// file carries its file's.
     pub(crate) decoded: String,
-    links: Vec<Link>,
+    pub(super) links: Vec<Link>,
     /// For a continuation part, its file's path: the first part's note.
     pub(crate) part_of: Option<String>,
     /// The file's bytes as the walk opened them, kept as its original (FIX
@@ -205,9 +206,60 @@ pub(crate) fn read_folder(
     folder: &Path,
     counts: &mut NoteCounts,
 ) -> anyhow::Result<(Vec<Note>, Vec<NameOnlyFile>)> {
+    let (notes, name_only, _, _) = read_folder_inner(folder, counts, None, None)?;
+    Ok((notes, name_only))
+}
+
+/// [`read_folder`] for a rescan (FIX 1365): a file whose size and mtime both
+/// match `prior`'s record is not read, and its path is skipped. Beside the
+/// notes, the facts of every file read, by path, the paths skipped and the
+/// folders that would not open, whose earlier notes stay (FIX 10246).
+pub(crate) fn read_folder_rescan(
+    folder: &Path,
+    counts: &mut NoteCounts,
+    prior: Option<&HashMap<String, FileFacts>>,
+) -> anyhow::Result<(
+    Vec<Note>,
+    Vec<NameOnlyFile>,
+    HashMap<String, FileFacts>,
+    Vec<String>,
+    Vec<String>,
+)> {
+    let mut unopened_paths = Vec::new();
+    let (notes, name_only, facts, skipped) =
+        read_folder_inner(folder, counts, prior, Some(&mut unopened_paths))?;
+    let unopened_dirs = unopened_paths
+        .iter()
+        .filter_map(|shown| match relative(folder, shown) {
+            Some(path) => Some(path),
+            None => {
+                counts.unreadable_name += 1;
+                None
+            }
+        })
+        .collect();
+    Ok((notes, name_only, facts, skipped, unopened_dirs))
+}
+
+/// [`read_folder`], skipping what `prior` records when it does: a file whose
+/// size and mtime both match its record keeps what the ledger holds of it,
+/// so neither its read nor its hash runs.
+fn read_folder_inner(
+    folder: &Path,
+    counts: &mut NoteCounts,
+    prior: Option<&HashMap<String, FileFacts>>,
+    unopened_dirs: Option<&mut Vec<PathBuf>>,
+) -> anyhow::Result<(
+    Vec<Note>,
+    Vec<NameOnlyFile>,
+    HashMap<String, FileFacts>,
+    Vec<String>,
+)> {
     let mut notes = Vec::new();
     let mut name_only = Vec::new();
-    super::walk_notes(folder, &mut |shown, file| {
+    let mut facts = HashMap::new();
+    let mut skipped = Vec::new();
+    let mut visit = |shown: &Path, file: std::fs::File| {
         let Some(path) = relative(folder, shown) else {
             counts.unreadable_name += 1;
             return Ok(());
@@ -219,6 +271,15 @@ pub(crate) fn read_folder(
             counts.hard_linked += 1;
             return Ok(());
         }
+        let read = FileFacts {
+            bytes: metadata.len(),
+            modified_at: written_at(&metadata),
+        };
+        if prior.is_some_and(|prior| prior.get(&path) == Some(&read)) {
+            skipped.push(path);
+            return Ok(());
+        }
+        facts.insert(path.clone(), read);
         let kind = if Path::new(&path)
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
@@ -233,7 +294,7 @@ pub(crate) fn read_folder(
         if let Some((why, original)) = read_text(
             (path.clone(), PART_MARK),
             bytes,
-            written_at(&metadata),
+            read.modified_at,
             kind,
             counts,
             &mut notes,
@@ -241,16 +302,22 @@ pub(crate) fn read_folder(
             name_only.push(NameOnlyFile {
                 path,
                 why,
-                facts: FileFacts {
-                    bytes: metadata.len(),
-                    modified_at: written_at(&metadata),
-                },
+                facts: read,
                 original: Some(original),
             });
         }
         Ok(())
-    })?;
-    Ok((notes, name_only))
+    };
+    if let Some(unopened_dirs) = unopened_dirs {
+        super::walk_notes_rescan(
+            folder,
+            &mut |shown| unopened_dirs.push(shown.to_path_buf()),
+            &mut visit,
+        )?;
+    } else {
+        super::walk_notes(folder, &mut visit)?;
+    }
+    Ok((notes, name_only, facts, skipped))
 }
 
 /// How a file's bytes hold its text.
@@ -551,8 +618,10 @@ fn without_extension(path: &str) -> &str {
 /// note: a link an earlier import resolved keeps its note. What resolved
 /// before is judged from the notes the folder still holds, a changed one by
 /// the title it landed with, so a note whose file left the folder no longer
-/// holds its name. A changed note's links wait with its text. A continuation
-/// part links to its file's first part, which it continues.
+/// holds its name. A changed note's links land with its text through the
+/// present-links resolver; one that lands as a fork for review waits with
+/// its text. A continuation part links to its file's first part, which it
+/// continues.
 pub(crate) fn resolve_links(
     notes: &[Note],
     standings: &[ImportedNoteStanding],
@@ -659,14 +728,14 @@ pub(crate) fn resolve_links(
 
 /// The notes a link can name: by path, title or file name, ignoring case and
 /// a `.md` ending; the first in path order wins a tie.
-struct Index {
+pub(super) struct Index {
     by_path: HashMap<String, usize>,
     by_title: HashMap<String, usize>,
     by_stem: HashMap<String, usize>,
 }
 
 impl Index {
-    fn new<'a>(
+    pub(super) fn new<'a>(
         notes: &'a [Note],
         include: impl Fn(usize) -> bool,
         title: impl Fn(usize) -> Option<&'a str>,
@@ -687,7 +756,7 @@ impl Index {
         index
     }
 
-    fn resolve(&self, target: &str) -> Option<usize> {
+    pub(super) fn resolve(&self, target: &str) -> Option<usize> {
         let wanted = key(target);
         [&self.by_path, &self.by_title, &self.by_stem]
             .into_iter()

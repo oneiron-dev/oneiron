@@ -12,11 +12,12 @@ use super::kernel::{
 // gated so the name is in scope for rustdoc without being an unused import.
 #[cfg(doc)]
 use super::kernel::ReceiptKind;
-use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::context_board::MemoriesSection;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
-use crate::prompt::PromptRecompileStamp;
+use crate::receipt::prompt_stamp::PromptRecompileStamp;
+use crate::store::attempt_manifest::ManifestEntry;
+use crate::store::attempt_manifest::ManifestKind;
 
 const FIELD_MANIFEST_ENTRIES: &str = "manifest.entries";
 const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";
@@ -29,6 +30,10 @@ pub const FIELD_EXECUTOR_SEAT: &str = "executor_seat";
 /// OF-578: the functional role the attempt's executor ran as, frozen with
 /// `model` and `executor_seat`; its value is the role's serde token.
 pub const FIELD_EXECUTOR_ROLE: &str = "executor_role";
+/// FIX 8259: the lease generation (`AttemptRecord.attempt_count`) the attempt
+/// settled under, frozen at the terminal seal. Absent on receipts sealed
+/// before the stamp existed.
+pub const FIELD_LEASE_GENERATION: &str = "lease_generation";
 /// OF-540: the exact `TeamReceipt.team_ref` of the attempt's team run.
 pub const FIELD_LEARNING_TEAM_REF: &str = "learning.team_ref";
 /// OF-540: the run's pattern token (`ceo_decides|committee|vote|market|rotation`).
@@ -455,6 +460,14 @@ impl ReceiptRecord {
         self.fields.get(FIELD_MODEL).map(String::as_str)
     }
 
+    /// The lease generation the attempt settled under (FIX 8259), read from
+    /// the recorded field alone. `None` on receipts that predate the stamp,
+    /// or whose stamp does not parse.
+    #[must_use]
+    pub fn lease_generation(&self) -> Option<u32> {
+        self.fields.get(FIELD_LEASE_GENERATION)?.parse().ok()
+    }
+
     /// The spawn/task receipt law: a missing `typeRef` is invalid, never
     /// untyped. Returns the stamp, or refuses the receipt.
     pub fn require_task_type_ref(&self) -> Result<crate::task_type::TaskTypeRef> {
@@ -484,7 +497,7 @@ impl ReceiptRecord {
 
     /// The OF-578 functional role the attempt's executor ran as, read from the
     /// recorded field alone. `None` when no role ran the attempt.
-    pub fn executor_role(&self) -> Result<Option<crate::llm::manifest::ModelRole>> {
+    pub fn executor_role(&self) -> Result<Option<crate::model_binding::ModelRole>> {
         self.fields
             .get(FIELD_EXECUTOR_ROLE)
             .map(|token| {

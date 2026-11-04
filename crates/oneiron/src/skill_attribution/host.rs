@@ -32,22 +32,24 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use crate::Vault;
-use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, decode_agent_dispatch_input,
-};
+use crate::agent_dispatch::decode_agent_dispatch_input;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
+use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, derived_domains};
 use crate::error::Result;
-use crate::learning::TypeRef;
-use crate::learning_setting::{
-    CREDIT_CHECK_EVERY_HOP, CREDIT_DEPTH_CAP, CREDIT_ENABLED, SettingSpec, setting_value_scoped,
-};
+use crate::learning_setting::setting_value_scoped;
 use crate::limit_ask::EngineLimit;
 use crate::ports::{EdgeDirection, EdgeStore};
+use crate::receipt::task_type_ref::TypeRef;
 use crate::receipt::{CreditOptions, PackAttributionFields, UsedProvenanceEdge};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::store::setting_seed::CREDIT_CHECK_EVERY_HOP;
+use crate::store::setting_seed::CREDIT_DEPTH_CAP;
+use crate::store::setting_seed::CREDIT_ENABLED;
+use crate::store::setting_seed::SettingSpec;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The role a run outside any team plays.
@@ -122,6 +124,76 @@ pub fn bind_agent_run_attribution(
         team_shape: vec![role.to_owned()],
         decider,
         project: input.project_ref,
+        output: None,
+        contributions: Vec::new(),
+        used_edges: Vec::new(),
+        credit,
+    };
+    super::derivation_witness::drain(&vault.store, attempt, record.attempt_count, &mut fields);
+    AttemptQueue::new(vault).set_pack_attribution(
+        attempt,
+        lease_owner,
+        record.attempt_count,
+        &fields,
+    )?;
+    Ok(true)
+}
+
+/// The Dreamer attempts that load a skill pack and bind its attribution:
+/// the weave lens's render and an owner-admitted weave recipe.
+const DREAMER_WEAVE_ATTEMPT_TYPES: [&str; 2] = [
+    crate::store::dreamer_attempt_kind::DREAMER_WEAVE_LENS_ATTEMPT_KIND,
+    crate::store::dreamer_attempt_kind::DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+];
+
+/// Binds the execution context of the leased Dreamer weave `attempt` (a
+/// weave lens render or a weave recipe), once, so the receipt of the pack it
+/// loaded closes attributed (FIX 1875). The run is solo and the Dreamer
+/// decides; it has no agent definition, sits in `project` (a recipe's
+/// evidence project, else none) and places at the vault type tree's root.
+/// Returns whether it bound one now: another attempt kind, a run no longer
+/// leased to `lease_owner`, one already bound, or one with no executor binds
+/// nothing.
+///
+/// # Errors
+///
+/// Storage errors and the attribution door's own refusals.
+pub fn bind_dreamer_weave_attribution(
+    vault: &Vault,
+    attempt: AttemptId,
+    lease_owner: &str,
+    project: Option<EntityId>,
+) -> Result<bool> {
+    let Some(status) = DreamerRunnerStore::new(vault).status(attempt)? else {
+        return Ok(false);
+    };
+    let record = &status.attempt;
+    if !DREAMER_WEAVE_ATTEMPT_TYPES.contains(&status.payload.attempt_type.as_str())
+        || !matches!(record.state, AttemptState::Leased | AttemptState::Landing)
+        || record.lease_owner.as_deref() != Some(lease_owner)
+    {
+        return Ok(false);
+    }
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        if crate::receipt::has_attempt_pack_attribution_in_txn(&vault.store, &rtxn, attempt)? {
+            return Ok(false);
+        }
+    }
+    let Some(executor) = run_executor_model(vault, record)? else {
+        return Ok(false);
+    };
+    let type_ref = crate::task_type::type_tree(vault, None)?.root();
+    let credit = credit_options(vault, project, &type_ref)?;
+    let mut fields = PackAttributionFields {
+        type_ref,
+        executor,
+        agent_definition: None,
+        judge: None,
+        pattern: pattern_context(SOLO_ROLE)?,
+        team_shape: vec![SOLO_ROLE.to_owned()],
+        decider: vault.dreamer_actor_for_attempt(attempt)?.entity_ref(),
+        project,
         output: None,
         contributions: Vec::new(),
         used_edges: Vec::new(),

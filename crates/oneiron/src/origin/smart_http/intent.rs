@@ -13,7 +13,6 @@ use super::landing::ReceivePackLanding;
 use super::paths::ORIGIN_REF_UPDATE_BATCH;
 use super::retained_reasons::RetainedReasons;
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, ErrorKind, Result};
 use crate::federation::git_push::GitPushStamp;
@@ -23,9 +22,11 @@ use crate::origin::lfs::{
 };
 use crate::origin::publication::{OriginPublicationStatus, obligations_beyond_owner};
 use crate::origin::residence::OriginAuthorityStamp;
-use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::store::EngineScan;
 use crate::store::Store;
+use crate::store::code_snapshot::RepoRef;
+use crate::store::scan_count::ScanCount;
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
@@ -179,7 +180,7 @@ pub(super) struct ReceivePackIntent {
     pub(super) refs: Vec<ReceivePackIntentRef>,
     pointers: Vec<(String, String, u64)>,
     #[serde(default)]
-    push: Option<GitPushStamp>,
+    pub(super) push: Option<GitPushStamp>,
     // What the scan came to, written with the push's marks (FIX 8032): the
     // only source its outcomes' `scan` reads.
     scan: ReceivePackScanSummary,

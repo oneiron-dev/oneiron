@@ -273,7 +273,7 @@ pub(super) fn ops_touch_watched_units(
         let (BatchOp::Put { id, .. } | BatchOp::Delete { id }) = op else {
             continue;
         };
-        if crate::llm::decision::questions::unit_watched_in_txn(&vault.store, txn, id)? {
+        if crate::store::decision_question_watches::unit_watched_in_txn(&vault.store, txn, id)? {
             return Ok(true);
         }
     }
@@ -294,9 +294,10 @@ pub(super) fn pending_dreamer_vad_approvals(
                 data,
                 allow_reserved_predicate: false,
                 ..
-            } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM => {
-                (*id, crate::claim::decode_claim_body(data, false)?.approval)
-            }
+            } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM => (
+                *id,
+                crate::write_envelope::claim_body::decode_claim_body(data, false)?.approval,
+            ),
             BatchOp::ClaimCandidate { id, envelope, .. } => (*id, envelope.approval()),
             _ => continue,
         };

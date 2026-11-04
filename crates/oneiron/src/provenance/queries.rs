@@ -13,7 +13,8 @@ use crate::error::{ClaimError, Error, Result};
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
 use crate::store::Store;
 use std::ops::ControlFlow;
 
@@ -268,7 +269,15 @@ pub(super) fn walk_edge_provenance_cohort_in_txn(
             // coexist with a stale subject-edge stamp.
             continue;
         }
-        let wrapper = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        // A classified corrupt CLAIM is no survivor, as a bodiless shell is
+        // not: its marker binds this exact header (FIX 9387).
+        let decoded = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true);
+        if decoded.is_err()
+            && crate::deletion::classified_corrupt_claim_in_txn(store, txn, &claim_id, &raw)?
+        {
+            continue;
+        }
+        let wrapper = decoded?;
         if wrapper.predicate != PREDICATE_EDGE_PROVENANCE {
             continue;
         }

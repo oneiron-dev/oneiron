@@ -15,11 +15,12 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ScopedReadActorKey;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result, StoreError};
-use crate::outbound_intent_ledger::IntentId;
 use crate::ports::EntityStoreRead;
+use crate::receipt::intent_id::IntentId;
 use crate::registry::ENTITY_TYPE_RECEIPT_RECORD;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{self, Named, Raw, SideTable};
+use crate::store::EngineScan;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
@@ -444,7 +445,7 @@ pub(super) fn put_reference_refusal_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     facts: &ReferenceRefusalFacts,
-    reason: crate::memory::RefusalReason,
+    reason: crate::receipt::RefusalReason,
     at: u64,
 ) -> Result<()> {
     if vault.store.port_entity_record(txn, &id)?.is_some() {
@@ -575,7 +576,8 @@ pub(super) fn served_form_receipts(
 
 /// The reference-refusal receipts (OF-063) `query` matches, newest first up
 /// to its limit, read from every RECEIPT_RECORD in the type index under
-/// `txn`, the way [`served_form_receipts`] reads its own kind.
+/// `txn`, the way [`served_form_receipts`] reads its own kind. Each names
+/// the actor its stamp token resolves to, or `erased` (FIX 11040).
 pub(super) fn reference_refusal_receipts(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -600,7 +602,12 @@ pub(super) fn reference_refusal_receipts(
             .filter(|row| row.entity_type == ENTITY_TYPE_RECEIPT_RECORD)
             .ok_or(Error::CorruptedIndex("reference refusal record type index"))?;
         let receipt = decode(id, &stored.body)?.receipt;
-        if receipt.receipt_kind == ReceiptKind::ReferenceRefusal && query.matches(&receipt) {
+        if receipt.receipt_kind != ReceiptKind::ReferenceRefusal {
+            continue;
+        }
+        // Its stamp token read as its actor, or as erased (FIX 11040).
+        let receipt = reference_refusal::resolved_receipt(vault, txn, receipt)?;
+        if query.matches(&receipt) {
             retain_newest_receipt(&mut receipts, receipt, query.limit);
         }
     }

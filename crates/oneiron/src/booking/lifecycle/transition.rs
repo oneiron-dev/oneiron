@@ -9,8 +9,8 @@ use super::occurrence::{confirm_solve_window, inclusive_occurrence, offers_slot}
 use super::passport::{mint_booking_uid, supersede_outbound_passport, write_outbound_passport};
 use super::public_authority::booking_writer_with_publication;
 use super::storage::{
-    HOLD, calendar_wrap, confirm_receipt_key, encode_claim_value, engine_failure, read_receipt,
-    refused, revision_receipt_key, write_receipt,
+    HOLD, calendar_wrap, claims_for_subject, confirm_receipt_key, encode_claim_value,
+    engine_failure, read_receipt, refused, revision_receipt_key, write_receipt,
 };
 use super::token::{
     HoldLeaseSpec, OpaqueLifecycleToken, SessionKey, hold_digest, lease_digest, mint_raw_token,
@@ -23,7 +23,10 @@ use super::types::{
     MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec, RevisionReceipt, SoftHoldRow,
 };
 use super::{BookingContent, CHECKOUT_LEASE, CheckoutLeaseRow, LifecycleReceiptRow};
-use crate::booking::invite_grant::dispatch_confirm_booking_invite_outcome;
+use crate::booking::invite_grant::{
+    dispatch_booking_cancel_invite_outcome, dispatch_booking_revision_invite_outcome,
+    dispatch_confirm_booking_invite_outcome,
+};
 use crate::booking::{BookingError, RankedSlot, SlotOracle, SolveRequest};
 use crate::calendar::claims::{CalendarStatus, PREDICATE_CALENDAR_STATUS};
 use crate::calendar::passport::index_passport_uid;
@@ -62,17 +65,48 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
             invite_sink,
             attempt.public_authority.as_ref(),
         ),
-        BookingVerbRequest::Reschedule(spec) => execute_reschedule(
-            vault,
-            oracle,
-            spec,
-            now_utc,
-            attempt.public_authority.as_ref(),
-        )
-        .map(BookingVerbReceipt::Rescheduled),
+        BookingVerbRequest::Reschedule(spec) => {
+            let receipt = execute_reschedule(
+                vault,
+                oracle,
+                spec,
+                now_utc,
+                attempt.public_authority.as_ref(),
+            )?;
+            // The move carries its `REQUEST` under the bumped SEQUENCE through
+            // the same grant, gate and intent ledger as the confirm's (FIX
+            // 7850). As there, the writer has returned, and a dispatch failure
+            // never fails a move that is already committed.
+            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink)
+                && let Err(error) = dispatch_booking_revision_invite_outcome(
+                    vault,
+                    actor,
+                    &receipt.calendar,
+                    sink,
+                    now_utc,
+                )
+            {
+                tracing::debug!(%error, "booking move sent no revised invite");
+            }
+            Ok(BookingVerbReceipt::Rescheduled(receipt))
+        }
         BookingVerbRequest::Cancel(spec) => {
-            execute_cancel(vault, spec, now_utc, attempt.public_authority.as_ref())
-                .map(BookingVerbReceipt::Cancelled)
+            let receipt = execute_cancel(vault, spec, now_utc, attempt.public_authority.as_ref())?;
+            // The cancel carries its `CANCEL` to the booker under the bumped
+            // SEQUENCE (FIX 7850), on the grant that covered the booking, and
+            // a dispatch failure never fails the committed cancel.
+            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink)
+                && let Err(error) = dispatch_booking_cancel_invite_outcome(
+                    vault,
+                    actor,
+                    &receipt.calendar,
+                    sink,
+                    now_utc,
+                )
+            {
+                tracing::debug!(%error, "booking cancel sent no cancel invite");
+            }
+            Ok(BookingVerbReceipt::Cancelled(receipt))
         }
     }
 }
@@ -250,9 +284,7 @@ fn confirm_in_writer(
     wtxn: &mut heed::RwTxn<'_>,
     now_utc: u64,
 ) -> Result<ConfirmOutcome, BookingError> {
-    if spec.intake.len() > 32 {
-        return Err(refused("booking confirm carries too many intake answers"));
-    }
+    // Every answer is kept; only each one's shape is checked.
     let mut intake_keys = std::collections::BTreeSet::new();
     for answer in &spec.intake {
         if answer.field_key.trim().is_empty()
@@ -276,6 +308,7 @@ fn confirm_in_writer(
         if recorded.session_hash != Some(session_hash) {
             return Err(refused("recorded booking belongs to another session"));
         }
+        let (calendar, reads) = recorded.into_revision_and_reads();
         // The recorded receipt pins the EVENT, the UID, and the sequence, and
         // the revision credentials are DERIVED from the hold token this retry
         // just presented — so the caller is handed back the very pair the first
@@ -283,10 +316,11 @@ fn confirm_in_writer(
         // minted a second cancel token would hand out a second, independent
         // authority over one booking, and two authorities cancel twice.
         return Ok(ConfirmOutcome::Booked(ConfirmReceipt {
-            calendar: recorded.into_revision(),
+            calendar,
             reschedule_token: revision_token(&spec.hold_token, LifecycleTokenScope::Reschedule),
             cancel_token: revision_token(&spec.hold_token, LifecycleTokenScope::Cancel),
             approval_digest: None,
+            reads,
         }));
     }
 
@@ -311,20 +345,35 @@ fn confirm_in_writer(
     }
 
     // (3) Fresh availability, read while we hold the writer.
-    let solved = oracle.solve(&SolveRequest {
-        event_type: hold.event_type.clone(),
-        window: confirm_solve_window(hold.slot)?,
-        constraint: hold.constraint.clone(),
-        visitor_tz: hold.visitor_tz.clone(),
-    })?;
+    let solve_over = |window: crate::temporal::TimeRange| {
+        oracle.solve(&SolveRequest {
+            event_type: hold.event_type.clone(),
+            window,
+            constraint: hold.constraint.clone(),
+            visitor_tz: hold.visitor_tz.clone(),
+        })
+    };
+    let solved = solve_over(confirm_solve_window(hold.slot)?)?;
+    // The wide solve carries the alternatives, and the oracle offers the flex
+    // pool only where no ordinary slot exists in its window: a held flex
+    // slot is hidden there whenever an ordinary one is near. So a held slot
+    // the wide solve does not offer is asked again over exactly its own
+    // interval, under the same ordinary-before-flex rule.
+    let offered = offers_slot(&solved.slots, hold.slot)
+        || offers_slot(
+            &solve_over(inclusive_occurrence(hold.slot)?)?.slots,
+            hold.slot,
+        );
     // (4) Someone else took it. No EVENT, no claim, no passport.
-    if !offers_slot(&solved.slots, hold.slot) {
+    if !offered {
         return Ok(ConfirmOutcome::Taken {
             alternatives: solved.slots,
         });
     }
 
-    // (5) One atomic commit.
+    // (5) One atomic commit. The re-solves' rows are the confirm's read set:
+    // beside them it reads only this node's hold and receipt rows.
+    let reads = oracle.take_read_rows();
     let event_ref = vault
         .store
         .clock
@@ -383,6 +432,7 @@ fn confirm_in_writer(
             session_hash: Some(session_hash),
             confirmation: Some(context),
             invite_identity: None,
+            reads: reads.clone(),
         },
     )?;
     HOLD.delete(&vault.store, wtxn, &digest)
@@ -392,7 +442,20 @@ fn confirm_in_writer(
         reschedule_token,
         cancel_token,
         approval_digest: None,
+        reads,
     }))
+}
+
+/// The rows a reschedule or cancel writer reads of one booking: its EVENT
+/// and every claim on it, read in the writer's own transaction.
+pub(super) fn booking_read_rows(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<Vec<EntityId>, BookingError> {
+    let mut rows = vec![*event_ref];
+    rows.extend(claims_for_subject(vault, rtxn, event_ref)?);
+    Ok(rows)
 }
 
 /// Moves a booking to `spec.new_slot`, keeping its EVENT and UID.
@@ -443,9 +506,8 @@ pub(crate) fn execute_reschedule(
             if booking.slot == spec.new_slot
                 && let Some(recorded) = read_receipt(vault, &*wtxn, &receipt_key)?
             {
-                return Ok(RevisionReceipt {
-                    calendar: recorded.into_revision(),
-                });
+                let (calendar, reads) = recorded.into_revision_and_reads();
+                return Ok(RevisionReceipt { calendar, reads });
             }
 
             let context = booking
@@ -465,6 +527,8 @@ pub(crate) fn execute_reschedule(
             if !offers_slot(&solved.slots, spec.new_slot) {
                 return Err(refused("the requested slot is no longer available"));
             }
+            let mut reads = booking_read_rows(vault, &*wtxn, &event_ref)?;
+            reads.extend(oracle.take_read_rows());
 
             // The EVENT's structural row carries the occurrence, so moving the
             // booking is a re-put of the same id at the new interval — the shape
@@ -504,9 +568,13 @@ pub(crate) fn execute_reschedule(
                     session_hash: None,
                     confirmation: None,
                     invite_identity: None,
+                    reads: reads.clone(),
                 },
             )?;
-            Ok(RevisionReceipt { calendar: revision })
+            Ok(RevisionReceipt {
+                calendar: revision,
+                reads,
+            })
         },
     )
 }
@@ -542,11 +610,11 @@ pub(crate) fn execute_cancel(
             // cancel tokens exist.
             let receipt_key = revision_receipt_key(&event_ref, None);
             if let Some(recorded) = read_receipt(vault, &*wtxn, &receipt_key)? {
-                return Ok(RevisionReceipt {
-                    calendar: recorded.into_revision(),
-                });
+                let (calendar, reads) = recorded.into_revision_and_reads();
+                return Ok(RevisionReceipt { calendar, reads });
             }
             let booking = read_booking_facts_to_cancel(vault, &*wtxn, &event_ref)?;
+            let reads = booking_read_rows(vault, &*wtxn, &event_ref)?;
 
             supersede_exact_claim(
                 vault,
@@ -591,9 +659,13 @@ pub(crate) fn execute_cancel(
                     session_hash: None,
                     confirmation: None,
                     invite_identity: None,
+                    reads: reads.clone(),
                 },
             )?;
-            Ok(RevisionReceipt { calendar: revision })
+            Ok(RevisionReceipt {
+                calendar: revision,
+                reads,
+            })
         },
     )
 }

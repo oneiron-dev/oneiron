@@ -206,14 +206,9 @@ fn comment_limits(package: &Package) -> PptxCommentLimits {
     let limits = package.limits();
     PptxCommentLimits {
         max_archive_bytes: limits.archive_bytes,
-        max_entries: limits.entries,
         max_part_bytes: limits.part_bytes,
         max_expanded_bytes: limits.expanded_bytes,
         max_xml_bytes: limits.part_bytes,
-        max_xml_attributes: limits.xml.max_nodes,
-        max_xml_namespaces: limits.xml.max_nodes,
-        max_xml_depth: limits.xml.max_depth,
-        max_xml_nodes: limits.xml.max_nodes,
     }
 }
 

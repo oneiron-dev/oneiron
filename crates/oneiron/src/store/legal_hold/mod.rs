@@ -27,8 +27,8 @@ pub(crate) use events::{host_events_in_txn, log_in_txn, owner_events_in_txn};
 pub(crate) use notice::law_notice;
 pub(crate) use pending::{
     PendingErase, PendingEraseKind, drop_pending_erase_in_txn, due_erases_in_txn,
-    pending_erase_in_txn, put_pending_erase_in_txn, set_pending_veto_act_in_txn,
-    use_limit_pending_privacy_in_txn,
+    erases_without_act_in_txn, pending_erase_in_txn, put_pending_erase_in_txn,
+    set_pending_veto_act_in_txn, use_limit_pending_privacy_in_txn, withdraw_pending_erase_in_txn,
 };
 pub(crate) use settlement::RefusalBatch;
 #[cfg(feature = "sync")]
@@ -419,9 +419,10 @@ fn hosts_bytes(store: &Store) -> bool {
 /// the held record for that legal reason only: where Oneiron hosts the bytes
 /// it gets a use limit under every standing hold, a customer hold or a host
 /// order whatever its own terms say (C5, C6, WILL-PLAN L01 row 03, FIX
-/// 8849). Returns how many were written.
+/// 8849), and the PEOPLE `about` lines of a fact it kept hide (FIX 3196).
+/// Returns how many were written.
 pub(crate) fn flush_refusals_in_txn(
-    dbs: &impl SideTableDbs,
+    store: &Store,
     txn: &mut RwTxn<'_>,
     notes: &[RefusalNote],
     hosted: bool,
@@ -429,7 +430,7 @@ pub(crate) fn flush_refusals_in_txn(
     let mut written = 0_u64;
     for note in notes {
         // A hold its retention already dropped has no log left.
-        let Some(hold) = hold_in_txn(dbs, txn, &note.hold)? else {
+        let Some(hold) = hold_in_txn(store, txn, &note.hold)? else {
             continue;
         };
         let reason = if note.actor.privacy_erase {
@@ -438,7 +439,7 @@ pub(crate) fn flush_refusals_in_txn(
             LegalHoldReason::HeldRecord
         };
         log_in_txn(
-            dbs,
+            store,
             txn,
             &hold,
             LegalHoldEventKind::DeleteRefused,
@@ -453,7 +454,7 @@ pub(crate) fn flush_refusals_in_txn(
             && hosted
             && notice::restricts_use(&hold)
         {
-            keep_use_limited_in_txn(dbs, txn, record, note.at)?;
+            keep_use_limited_in_txn(store, txn, record, note.at)?;
         }
         written = written.saturating_add(1);
     }
@@ -461,16 +462,18 @@ pub(crate) fn flush_refusals_in_txn(
 }
 
 fn keep_use_limited_in_txn(
-    dbs: &impl SideTableDbs,
+    store: &Store,
     txn: &mut RwTxn<'_>,
     record: EntityId,
     at: u64,
 ) -> Result<()> {
-    if USE_LIMITS.contains(dbs, txn, &record)? {
+    if USE_LIMITS.contains(store, txn, &record)? {
         return Ok(());
     }
+    // A use-limited fact no longer reads: its `about` lines hide (FIX 3196).
+    crate::dreamer_consolidation::mark_person_about_dropped_in_txn(store, txn, &record)?;
     USE_LIMITS.put(
-        dbs,
+        store,
         txn,
         &record,
         &LegalHoldUseLimit {
@@ -554,6 +557,28 @@ pub(crate) fn link_erase_in_txn(
         links.put(dbs, txn, record, &link)?;
     }
     Ok(())
+}
+
+/// Drops the links `record`'s coming erase holds to the holds its confirm
+/// met, once the owner withdrew that erase (FIX 10401): no erase of it is
+/// coming, so none of them is owed an "erase completed" event. Returns those
+/// holds, customer then host-order, for their logs.
+pub(crate) fn unlink_erase_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    record: &EntityId,
+) -> Result<Vec<LegalHold>> {
+    let mut holds = Vec::new();
+    for links in [ERASE_LINKS, HOST_ERASE_LINKS] {
+        let Some(link) = links.get(dbs, txn, record)? else {
+            continue;
+        };
+        for id in &link.holds {
+            holds.extend(hold_in_txn(dbs, txn, id)?);
+        }
+        links.delete(dbs, txn, record)?;
+    }
+    Ok(holds)
 }
 
 /// "Erase completed" (C4): the erase over `records` is now complete, its

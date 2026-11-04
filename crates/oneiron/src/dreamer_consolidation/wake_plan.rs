@@ -4,9 +4,9 @@ use super::support::invalid_consolidation;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_wake::{WakeCancellation, WakePassDeadline};
-use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::{Scope, ScopeResource};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod chunk_identity;
@@ -157,6 +157,9 @@ pub struct PreparedWake {
     read_receipt: Option<ScopedReadReceipt>,
     /// Wall ms the preparation took, for each partition's stage line.
     prepared_ms: u64,
+    /// The material this pass's admitted `host.wake` pre-hooks added, in
+    /// order (FIX 8722, 10665): every extraction of the wake reads it.
+    hook_material: Vec<String>,
 }
 
 impl PreparedWake {
@@ -382,6 +385,7 @@ impl PreparedWake {
                 preparations,
                 read_receipt: Some(read_receipt),
                 prepared_ms: 0,
+                hook_material: Vec::new(),
             },
             owed,
         ))
@@ -390,6 +394,20 @@ impl PreparedWake {
     /// Wall ms this wake's frozen preparation took.
     pub(crate) fn prepared_ms(&self) -> u64 {
         self.prepared_ms
+    }
+
+    /// This wake with the material its pass's admitted `host.wake`
+    /// pre-hooks added (FIX 10665).
+    #[must_use]
+    pub(crate) fn with_hook_material(mut self, material: Vec<String>) -> Self {
+        self.hook_material = material;
+        self
+    }
+
+    /// The material this wake's `host.wake` pre-hooks added, in order; empty
+    /// when none did.
+    pub(crate) fn hook_material(&self) -> &[String] {
+        &self.hook_material
     }
 
     /// Only work known at the wake's single revision may execute on it.
@@ -475,17 +493,29 @@ fn neighbourhood_in(
     let axes = project.map(|project| Scope {
         world: plan.branch.world_ref,
         facet: plan.branch.facet_ref,
-        relationship: bound.and_then(|scope| scope.relationship),
+        relationship: bound.and_then(|scope| scope.relationship.clone()),
         project: Some(project),
         ..Scope::default()
     });
+    // FIX 5588 S1 (Unknown-always, C3/C8): the listing is read through a
+    // fork of the wake's read bound to the plan destination; the shared read
+    // still feeds sources/texts/receipts and is never narrowed.
+    let destination = super::neighbourhood::listing_destination();
+    let listing = vault.scoped_read(read.actor_key().clone().for_destination(&destination));
     let passage = super::neighbourhood::Passage {
         turns: &turns,
         axes: axes.as_ref(),
         bound,
         thing: plan.thing,
+        destination,
     };
-    super::neighbourhood::discover_in(vault, txn, read, plan.attempt_id, &passage)
+    super::neighbourhood::discover_in(
+        vault,
+        txn,
+        &listing,
+        super::neighbourhood::ListingPin::attempt(plan.attempt_id),
+        &passage,
+    )
 }
 
 /// An attempt no pass runs before a later write, which a later wake

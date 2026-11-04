@@ -7,9 +7,9 @@ use serde_json::json;
 use super::{
     ASKS, Answer, IdentityAsk, IdentityAskReason, IdentityAskView, IdentityCardCopy,
     IdentityDecisions, IdentityRuling, IdentitySettled, RETRY_SECS, SOMEONE_NEW, admission,
-    ask_answer_id, card, dreamer_seal, escalate_in_txn, evidence, invalid, keep_separate_in_txn,
-    key_hex, listed_candidates, notify_in_txn, options_in_txn, parse_choice, parse_key,
-    settle_ask_in_txn, settle_undo, view_in_txn,
+    ask_answer_id, card, dreamer_seal, escalate_in_txn, evidence, index, invalid,
+    keep_separate_in_txn, key_hex, listed_candidates, notify_in_txn, options_in_txn, parse_choice,
+    parse_key, settle_ask_in_txn, settle_undo, view_in_txn,
 };
 use crate::authority::{ActAuthority, ActSurface};
 use crate::claim::{ClaimSource, ScopedRead};
@@ -17,8 +17,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::identity_topology::TopologySeal;
 use crate::lens::GeneratedUiCard;
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::catalogue::IDENTITY_SETTLE;
-use crate::llm::decision::{AnswerContract, DecisionAnswer, Reversibility};
+use crate::model_decision::catalogue::IDENTITY_SETTLE;
+use crate::model_decision::{AnswerContract, DecisionAnswer, Reversibility};
 use crate::{Result, Vault};
 
 impl Vault {
@@ -209,6 +209,8 @@ impl Vault {
                 self.with_write_txn_grouped(|txn| {
                     if let Some(mut row) = ASKS.get(&self.store, txn, &key)? {
                         row.retry_at = now.saturating_add(RETRY_SECS);
+                        // No membership sync (FIX 10376): a retry stamps
+                        // `retry_at` only, which the ask's erase never reads.
                         ASKS.put(&self.store, txn, &key, &row)?;
                     }
                     Ok(())
@@ -240,6 +242,7 @@ impl Vault {
                         now,
                     )?;
                     ASKS.delete(&self.store, txn, &key)?;
+                    index::sync_ask_membership(&self.store, txn, &key, Some(&current), None)?;
                     Ok(IdentityRuling::Settled(entity))
                 }
                 None if current.reason == IdentityAskReason::Unsettled => {
@@ -299,8 +302,10 @@ impl Vault {
                 if current.surfaced_turn.is_some_and(|turn| turn >= newest) {
                     return Ok(false);
                 }
+                let old = current.clone();
                 current.surfaced_turn = Some(newest);
                 ASKS.put(&self.store, txn, &key, &current)?;
+                index::sync_ask_membership(&self.store, txn, &key, Some(&old), Some(&current))?;
                 notify_in_txn(self, txn, &key, &newest, now)?;
                 Ok(true)
             })?;

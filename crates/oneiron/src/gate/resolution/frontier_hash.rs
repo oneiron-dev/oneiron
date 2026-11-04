@@ -3,10 +3,11 @@
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
+use crate::booking::anti_abuse::{BookingAntiAbuseRule, BookingAntiAbuseRuleRow};
 use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, BudgetPolicyTable};
+use oneiron_model::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, BudgetPolicyTable};
 
 use super::manifest_types::{
     PolicyManifestDiagnostics, PolicyManifestResolution, ResidenceOperationBudgetLimits,
@@ -145,7 +146,8 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "failure_signal_policy");
         hash_len(hasher, resolution.failure_signal_policy.len());
         for row in &resolution.failure_signal_policy {
-            use crate::failure_signals::policy::{Precedence, Scope};
+            use crate::gate::failure_signal_policy::Precedence;
+            use crate::gate::failure_signal_policy::Scope;
             match row.scope {
                 Scope::Default => hash_str(hasher, "default"),
                 Scope::Vault => hash_str(hasher, "vault"),
@@ -191,8 +193,7 @@ pub(super) fn hash_policy_frontier_v0(
     if let Some(defaults) = resolution.voice_ref_defaults.as_ref() {
         hash_voice_ref_policy(hasher, "voice_ref_defaults", defaults);
     }
-    if resolution.voice_ref_limits
-        != crate::voice_identity::ref_limits::VoiceRefLimitPolicy::default()
+    if resolution.voice_ref_limits != crate::gate::voice_ref_limits::VoiceRefLimitPolicy::default()
     {
         hash_voice_ref_policy(
             hasher,
@@ -207,15 +208,7 @@ pub(super) fn hash_policy_frontier_v0(
     }
     if let Some(limits) = resolution.pptx_comment_limits {
         hash_str(hasher, "pptx_comment_limits:nested_narrowing");
-        for value in [
-            limits.max_xml_bytes,
-            limits.max_xml_attributes,
-            limits.max_xml_namespaces,
-            limits.max_xml_depth,
-            limits.max_xml_nodes,
-        ] {
-            hash_u64(hasher, value as u64);
-        }
+        hash_u64(hasher, limits.max_xml_bytes as u64);
     }
     // Behavior-deciding archive policy moves the frontier when vault or exact
     // holder bounds change. Hash declared rows, not only a selected caller.
@@ -271,7 +264,7 @@ pub(super) fn hash_policy_frontier_v0(
     // The shipped row and an absent legacy row resolve identically. Only a
     // behavior change contributes a new domain tag, preserving existing
     // no-review-policy consent bindings.
-    if resolution.slide_review_policy != crate::llm::decision::SlideReviewPolicy::default() {
+    if resolution.slide_review_policy != crate::model_decision::SlideReviewPolicy::default() {
         let mut slide_policy = Vec::new();
         rmpv::encode::write_value(&mut slide_policy, &resolution.slide_review_policy.rows())
             .map_err(|_| Error::InvariantViolation("slide review policy frontier encoding"))?;
@@ -279,7 +272,8 @@ pub(super) fn hash_policy_frontier_v0(
         hash_bytes(hasher, &slide_policy);
     }
     // Absent and explicit shipped baseline resolve identically. A stricter
-    // trusted row changes the frontier; its six ceilings are hashed together.
+    // trusted row changes the frontier; its three ceilings are hashed
+    // together (FIX 10590).
     if let Some(bounds) = resolution.docedit_resource_policy {
         let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();
         if bounds != baseline {
@@ -616,9 +610,11 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "authority_scope");
         hash_opt_value(
             hasher,
-            Some(&crate::federation::scope_codec::encode_scope_value(
-                &grant.authority_scope,
-            )?),
+            Some(
+                &oneiron_authority::federation::scope_codec::encode_scope_value(
+                    &grant.authority_scope,
+                )?,
+            ),
         )?;
         hash_opt_value(hasher, grant.scope.as_ref())?;
         hash_opt_value(hasher, grant.budget.as_ref())?;
@@ -669,6 +665,7 @@ pub(super) fn hash_policy_frontier_v0(
         hash_opt_str(hasher, signature.key_id.as_deref());
         hash_str(hasher, &signature.sig);
     }
+    hash_booking_anti_abuse_rows(hasher, &resolution.booking_anti_abuse_rows);
 
     Ok(())
 }
@@ -854,7 +851,7 @@ fn hash_len(hasher: &mut Sha256, value: usize) {
 fn hash_voice_ref_policy(
     hasher: &mut Sha256,
     tag: &str,
-    policy: &crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
+    policy: &crate::gate::voice_ref_limits::VoiceRefLimitPolicy,
 ) {
     hash_str(hasher, tag);
     hash_str(
@@ -941,6 +938,90 @@ fn hash_class_policy_tables(hasher: &mut Sha256, resolution: &PolicyManifestReso
             hash_str(hasher, row.posture.as_str());
             hash_str(hasher, row.precedence.as_str());
         }
+    }
+}
+
+fn hash_booking_anti_abuse_rows(hasher: &mut Sha256, rows: &[BookingAntiAbuseRuleRow]) {
+    hash_str(hasher, "booking_anti_abuse_rules");
+    hash_len(hasher, rows.len());
+    for row in rows {
+        hash_str(hasher, &row.row_id);
+        hash_bytes(hasher, row.scope.page_ref.as_bytes());
+        hash_opt_str(
+            hasher,
+            row.scope.event_type.as_ref().map(|key| key.0.as_str()),
+        );
+        match &row.rule {
+            BookingAntiAbuseRule::RequiredIntake { min_chars } => {
+                hash_str(hasher, "required-intake");
+                hash_u64(hasher, u64::from(min_chars.get()));
+            }
+            BookingAntiAbuseRule::MinimumNotice {
+                normal_secs,
+                high_value_secs,
+            } => {
+                hash_str(hasher, "minimum-notice");
+                hash_u64(hasher, normal_secs.get());
+                hash_u64(hasher, high_value_secs.get());
+            }
+            BookingAntiAbuseRule::HoneypotAndSubmitFloor { min_submit_millis } => {
+                hash_str(hasher, "honeypot-submit-floor");
+                hash_u64(hasher, min_submit_millis.get());
+            }
+            BookingAntiAbuseRule::SlotListRate {
+                per_minute_per_ip,
+                cache_ttl_secs,
+            } => {
+                hash_str(hasher, "slot-list-rate");
+                hash_u64(hasher, u64::from(per_minute_per_ip.get()));
+                hash_u64(hasher, cache_ttl_secs.get());
+            }
+            BookingAntiAbuseRule::BookRate {
+                per_minute_per_ip,
+                max_active_future_per_email,
+            } => {
+                hash_str(hasher, "book-rate");
+                hash_u64(hasher, u64::from(per_minute_per_ip.get()));
+                hash_u64(hasher, u64::from(*max_active_future_per_email));
+            }
+            BookingAntiAbuseRule::HoldRate {
+                max_active_per_session,
+                per_minute_per_ip,
+            } => {
+                hash_str(hasher, "hold-rate");
+                hash_u64(hasher, u64::from(*max_active_per_session));
+                hash_u64(hasher, u64::from(per_minute_per_ip.get()));
+            }
+            BookingAntiAbuseRule::EmailPromptToCorrect {
+                check_syntax,
+                check_mx,
+                check_disposable_domain,
+            } => {
+                hash_str(hasher, "email-prompt-to-correct");
+                hash_bool(hasher, *check_syntax);
+                hash_bool(hasher, *check_mx);
+                hash_bool(hasher, *check_disposable_domain);
+            }
+            BookingAntiAbuseRule::QuarantineBorderline => {
+                hash_str(hasher, "quarantine-borderline");
+            }
+            BookingAntiAbuseRule::EmailOtpReserve { enabled } => {
+                hash_str(hasher, "email-otp-reserve");
+                hash_bool(hasher, *enabled);
+            }
+            BookingAntiAbuseRule::TentativeConfirmLinkReserve {
+                enabled,
+                expires_after_secs,
+            } => {
+                hash_str(hasher, "tentative-confirm-link-reserve");
+                hash_bool(hasher, *enabled);
+                hash_u64(hasher, expires_after_secs.get());
+            }
+        }
+        hash_u64(hasher, row.version);
+        hash_u64(hasher, row.amended_at);
+        hash_bytes(hasher, row.amended_by.as_bytes());
+        hash_opt_entity(hasher, row.owner_stamp_ref);
     }
 }
 

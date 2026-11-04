@@ -5,7 +5,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::llm::decision::{DecisionQuestion, TypedDecision};
+use crate::llm::decision::TypedDecision;
+use crate::model_decision::DecisionQuestion;
 use crate::skill_optimize::{
     GoalAxisKind, GoalAxisScore, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes,
     HonestyReplay, SkillOptimizeDecisions, SkillReplayResponses,
@@ -225,6 +226,10 @@ impl HeldOutReplayNotes for CoverageFloorScorer<'_> {
 
     fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
         self.inner.replay_responses(receipts)
+    }
+
+    fn rubric(&self) -> Result<Option<crate::skill_optimize::JudgeRubric>> {
+        self.inner.rubric()
     }
 
     fn record_decision(

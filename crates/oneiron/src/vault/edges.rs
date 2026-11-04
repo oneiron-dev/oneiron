@@ -1,7 +1,7 @@
 //! Vault edge writes, adjacency queries and graph traversal.
 
 use super::Vault;
-use crate::affect::Vad;
+use oneiron_contracts::affect::Vad;
 
 use crate::edge::{EdgeInfo, EdgeKind};
 #[cfg(test)]
@@ -11,7 +11,8 @@ use crate::error::Result;
 use crate::ports::EdgeDirection;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::EngineScan;
+use crate::store::scan_count::ScanCount;
 
 /// Length of the edge-kind prefix: `entity_id (16) | kind (1)`.
 #[cfg(test)]
@@ -34,7 +35,8 @@ pub(crate) const SUPERSEDES_DEFAULT_WEIGHT: f32 = match EdgeKind::Supersedes.def
     None => panic!("contract pins a non-null pprWeight for supersedes"),
 };
 
-/// Cap for `targets`/`sources` to prevent unbounded allocation.
+/// The most peers one edge page returns, whatever limit it is asked for;
+/// several callers also bound their own edge walks by it.
 pub(crate) const MAX_EDGE_QUERY_RESULTS: usize = 100_000;
 
 /// Edge rows one page of [`Vault::sources_page`] reads at most, kept or
@@ -425,9 +427,8 @@ impl Vault {
     /// after `limit` matches.
     ///
     /// Unlike [`Self::edges_out`]/[`Self::edges_in`] (which materialize every
-    /// edge and error with [`Error::IndexOverflow`] past
-    /// `MAX_EDGE_QUERY_RESULTS`), this walks only until `limit` matches accrue,
-    /// so a high-degree node never allocates its full edge set. When `kind` is
+    /// edge), this walks only until `limit` matches accrue, so a high-degree
+    /// node never allocates its full edge set. When `kind` is
     /// set the walk is further narrowed to the `[id | kind]` key span. It
     /// reads in the caller's transaction, so a walk inside a writer reads the
     /// writer's own view and opens no snapshot beside it.

@@ -3,6 +3,7 @@
 //! Checks never mutate the live repository. Landing needs a host gate adapter and
 //! a queue-issued permit under the existing repository single-writer lock. The
 //! queue verifies the durable mutation receipt and the complete landed tree.
+mod batch_index;
 mod candidate_intake;
 mod check_execute;
 mod check_inputs;
@@ -19,6 +20,7 @@ mod initialize;
 mod landing;
 mod mirror_green;
 mod plan;
+mod receipt_index;
 mod received_enqueue;
 mod review_policy;
 mod reviewed;
@@ -39,9 +41,9 @@ mod types;
 
 use crate::{
     Vault,
-    codebase::RepoRef,
     error::Result,
     git_wire::{GitWire, GitWireRepo},
+    store::code_snapshot::RepoRef,
 };
 // The pinned-plan checker (FIX 6868).
 pub use check_inputs::{
@@ -65,8 +67,8 @@ pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
 // The vault's opt-in review policy (FIX 8268).
 pub(crate) use review_policy::{
     ActiveQueueReviewPolicy, DEFAULT_QUEUE_REVIEW_CRITICS, DEFAULT_QUEUE_REVIEW_VOTES,
-    QueueReviewRequirement, StoredQueueReviewPolicy, queue_review_requirement_in_txn,
-    review_policy_unreadable_hold,
+    QueueReviewRequirement, StoredQueueReviewPolicy, erase_review_policy_actor_in_txn,
+    queue_review_requirement_in_txn, review_policy_unreadable_hold,
 };
 pub use review_policy::{
     QueueReviewDefault, QueueReviewPolicy, QueueReviewThresholds, REVIEW_POLICY_DEFAULT,
@@ -74,7 +76,9 @@ pub use review_policy::{
 };
 pub use reviewed::ReviewedProposalLanding;
 pub use run::{RepoQueueOrder, RepoQueuePredecessor};
-// The served import's queue source (FIX 6869).
+// The served import's queue source (FIX 6869); its root, for GitWire's
+// crash settlement (FIX 7706).
+pub(crate) use source::queue_source_root;
 pub use source_types::ServedQueueSource;
 // The tested-revision seal at green (FIX 6868, G2 PR3).
 pub(crate) use tested_types::QueueRevisionSeal;
@@ -86,7 +90,8 @@ pub use tested_types::{
 };
 pub use types::{
     BatchState, CheckInvocation, CheckPhase, CheckReport, LandingPermit, MergeBatch, MergeFile,
-    MergeLanding, MergeProposal, MergeQueuePointers, Quarantine, SpeculativePath, TestedBatch,
+    MergeFileExpected, MergeLanding, MergeProposal, MergeQueuePointers, Quarantine,
+    SpeculativePath, TestedBatch,
 };
 
 pub struct MergeQueue<'a> {
@@ -99,7 +104,7 @@ impl<'a> MergeQueue<'a> {
     /// green baseline; reopening never overwrites existing pointers.
     pub fn open(vault: &'a Vault, repo_ref: RepoRef) -> Result<Self> {
         let RepoRef::LocalFolder { path, .. } = &repo_ref else {
-            return Err(crate::contract_oracle::invalid(
+            return Err(crate::store::contract_oracle::invalid(
                 "merge queue needs a local repository",
             ));
         };
@@ -108,3 +113,10 @@ impl<'a> MergeQueue<'a> {
         Ok(Self { vault, repo })
     }
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::check_store::merge_queue_check_config_accepts_masked;
+pub(crate) use self::check_store::merge_queue_check_work_accepts_masked;
+pub(crate) use self::review_policy::merge_queue_review_policy_accepts_masked;
+pub(crate) use self::storage::merge_queue_batch_accepts_masked;

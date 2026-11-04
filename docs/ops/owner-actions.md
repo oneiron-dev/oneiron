@@ -150,6 +150,18 @@ touched.
 oneiron restore FILE
 ```
 
+On a new host, where no vault is yet, a world-kit restore reads the vault's key custody from
+its residence home instead of the folder beside the backup:
+
+```sh
+oneiron restore BACKUP --unlock kit --vault-id HEX --piece piece-1.txt --piece piece-2.txt --trust signer.json --custody-home https://home.example
+```
+
+The request is signed with the kit. The home answers only to the root it pins for the vault.
+A home that holds no custody head of this backup, or refuses it, fails the restore. The restore
+never falls back to the folder. `--custody-home` needs `--unlock kit`. A restore over an
+existing vault or a rehearsal ignores it. A backup with no custody asks the home nothing.
+
 A restore brings back your **content** as it stood at the backup: notes, claims,
 conversations, tasks, files and receipts. It keeps the vault's **current authority, consent and
 policy** (ARCH-0038, RD-20). Every kind of stored row has one restore class in the engine, and
@@ -727,6 +739,31 @@ a restore (LIVE), so a restore never revives a spent push; one whose commit the 
 refused at dispatch (`objects_missing`). Erasing an actor scrubs it from every request it acted
 on.
 
+## Attach a folder as Files
+
+`oneiron files attach <folder>` reads a folder of this host into this install's Files
+world: every file lands as a note, a file past the note bound as its parts, and a file
+the host cannot read by name only. The attach is your standing act — from then on
+`oneiron serve` rescans the folder with the others, and `oneiron files rescan` (no path
+rescans every attached Files folder) does it now. Symbolic links under the folder are
+never followed, and nothing is written to it. The Files world is read on this install
+only; no sealed copy travels. A file that is gone is retracted on the next rescan; a
+folder inside that will not open is counted in the report (the first is named) and
+left alone until a later rescan.
+
+`--include <pattern>` keeps only matching files (`*` within a name, `**` across
+folders, `?` one character). `--exclude <pattern>` also passes over what matches, added
+to the default exclusions (hidden entries, version control, dependency and build
+folders, credential stores and key files); `--no-default-exclude` drops the defaults so
+only `--exclude` is passed over. The same surface on a running server is
+`vault.files.sources.attach` — there `exclude` works the other way: absent keeps the
+default list, and a list, even an empty one, replaces it.
+
+`oneiron files list` shows the attached folders, `oneiron files files <folder>` the
+files one holds, and `oneiron files detach <folder>` stops every rescan from reading
+it again (a folder that is gone is detached by the name it was attached by; its notes
+stay).
+
 ## Approve an import in one act
 
 To bring your ChatGPT, Claude, Claude Code or Codex history itself in, use
@@ -1162,7 +1199,9 @@ destination = "collector"     # ONEIRON_FEEDBACK_DESTINATION: cloud, collector o
 endpoint = "https://…"        # ONEIRON_FEEDBACK_ENDPOINT; HTTPS, or HTTP on loopback
 ```
 
-The destination's token, if any, comes from `ONEIRON_FEEDBACK_TOKEN`. `POST
+The destination's token, if any, comes from the vault secret `[feedback] key_secret` names
+(bind it to the effector `feedback:send` with `POST /v1/owner/secrets/bind`), on a managed host
+too; with no `key_secret`, a self-hosted server reads `ONEIRON_FEEDBACK_TOKEN`. `POST
 /v1/owner/feedback/preview` with `{"category": "bug"}` (or `papercut`, `confusion`,
 `feature-wish`) returns the bundle exactly as it would leave, its `digest`, the `approval` that
 names this bundle going to this destination on your approval, and `previewed_at`.
@@ -1394,7 +1433,9 @@ failure case's heal route (`case`), or a blocked report's when the agent's run h
 (`blocked_report`), its class, the invented example's verdict and each candidate's fixed or
 not-fixed result. It holds no text of the failure.
 
-The endpoint's token, if any, comes from `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
+The endpoint's token, if any, comes from the vault secret `[failure_signals] key_secret` names
+(effector `failure-signals:send`), on a managed host too; with no `key_secret`, a self-hosted
+server reads `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
 `https://oneiron.dev/failure-signals` unless told otherwise; a self-hosted server with no endpoint
 sends nothing, and sealed records wait in the vault. Each send is one JSON batch, `POST`ed as an
 ordinary outbound effect on `failure_signals/send` with its recorded receipt. While the deployment
@@ -1501,6 +1542,37 @@ on its receipt. Either answer closes the run's other open questions.
 
 No trained-weight loader exists yet: a swapped role is bound, and `serving` reads `unavailable`,
 with the custody pin a loader would load.
+
+## Train a head for one detector question
+
+You can train a head for one exact detector question on your own labelled targets, with no
+Coach offer. First upload your rows as one artifact (`POST /v1/core/artifacts`). Each line is one
+JSON object: `{"row", "question_id", "question_version", "corpus_revision", "feature_schema",
+"label_schema", "source", "consent": {"basis", "receipt"}, "label": {"answer": "no" | "yes",
+"unit": "target", "adjudication"}, "input": {"target", "context": [...]}}`. The pins must match
+the plan's question, and `source` is a record that you already assigned to one of the seat's eval
+families (`vault.evals.families.assign`).
+
+`POST /v1/owner/coach/training-runs/prepare` with `{"draft", "corpus": {"rows": <artifact pin>},
+"connector"}` prepares the run. Rows of a training family become the training file, and rows
+of a sealed family in the draft's cohort become the held-out file. Rows of any other family are
+left out and counted under `family_outside_split`. The run pins a split receipt and a consent
+receipt, and the trainer echoes both. Nothing runs yet. `POST
+/v1/owner/coach/training-runs/authorize` with `{"run", "spec"}` is your yes on the spec you saw,
+and the host's Coach queues the run. The same door authorizes any prepared run, including an
+offer's run. A returned head binds no role and is not served yet.
+
+The draft's `plan.starting_checkpoint` must be a checkpoint that is already in custody. To keep
+one of any size, send `PUT /v1/owner/coach/training-checkpoints`. The body is the checkpoint's
+files as raw bytes, one after another (`Content-Type: application/octet-stream`). The
+`x-oneiron-checkpoint` header gives their manifest as JSON: `{"model": "provider/name@revision",
+"files": [{"name", "kind", "source": {"repository", "revision"}, "blake3", "bytes"}]}`, with the
+files in body order. Each `blake3` is 64 hex, and `kind` is `weights` (a `.safetensors` shard),
+`tokenizer`, `config`, `template` or `adapter_config`. The server spools the body to the
+vault's disk as it arrives. Its length is never refused, but the server stops at the disk's
+free-space reserve (`limits.disk_reserve_bytes`). The server keeps every file or none. It
+refuses a body that ends early or runs past its files, and a file whose hash differs from its
+`blake3`. The answer is the pinned checkpoint, which you put in the draft as it is.
 
 ## Answer the decision ladder's asks
 
@@ -1708,7 +1780,8 @@ sealed, so a restore elsewhere unlocks the pages with either.
 
 The world kit carries your recovery root: the key every private world's key is also wrapped to.
 It is a fixed 2 of 3: any two pieces open it, and one piece alone, or the passphrase alone, opens
-nothing. No piece ever lives on the host. Run these on a stopped vault:
+nothing. A `this-machine` home keeps its piece in the install's keystore; the other homes leave it
+with you. Run these on a stopped vault:
 
 ```sh
 oneiron recovery-kit issue --home paper --home password-manager --home passphrase --out /Volumes/KEY/kit
@@ -1719,7 +1792,8 @@ oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt
 
 `issue` takes one `--home` per piece, in order: `paper`, `password-manager`, `own-email`,
 `file-elsewhere`, `file-here`, `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
-`security-key` or `passphrase`. Each stored piece is written to `--out` as `piece-<x>.txt`, its
+`security-key`, `passphrase` or `this-machine`. Each stored piece is written to `--out` as
+`piece-<x>.txt`, its
 recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`.
 `file-on:<machine>` with this machine's own id counts as `file-here`, and `other-machine:<machine>`
 with it is refused. Nothing is published yet: the kit is pending. Put each piece where its home
@@ -1728,8 +1802,9 @@ you saved them. Confirm makes the kit's root live on this machine and marks ever
 replaced. When the vault has a key, confirm also seals it to the root as the escrow wrap
 `world-kit`, replacing the earlier kit's. It opens the key with this machine's keystore, and a key
 that stays locked refuses the confirm before anything changes. A replaced kit's pieces still open
-their own old root; replacing a kit does not revoke it. `this-machine` is refused until a keystore
-slot can hold a piece.
+their own old root; replacing a kit does not revoke it. `this-machine` keeps its piece in the
+install's keystore, and a restore on that install counts it as one of the two. It is refused when
+the keystore cannot hold the piece.
 
 `issue-vault-key` takes the same `--home`, `--out` and `--secret-file` flags and writes a kit of
 the vault data key: a 2-of-3 copy of the key for you to keep, at today's passphrase cost. It runs on any vault, hosted ones too. Its key is unlocked with this machine's
@@ -1854,7 +1929,9 @@ refusal shows the root its pieces rebuild. Pass `--fingerprint <root>`, read on 
 machines that pins it, or go ahead with `--confirm-root <root>`, the root the refusal showed. The
 go-ahead holds for that root alone: pieces that rebuild another root are refused with the root
 they do rebuild, so you confirm again in one step. A kit this vault still lists as pending is
-refused: `confirm` it instead.
+refused: `confirm` it instead. On an install that keeps a piece, `restore` counts it: give one
+fewer `--piece`, down to no `--piece` when the kept piece and the passphrase open the kit. A
+`confirm` still re-reads the pieces you saved and never counts the kept piece.
 
 On a new host, the kit also opens a backup through the `world-kit` wrap, and a sealed vault's
 pages through the same wrap in its mirror. `--vault-id` is the id `status` prints, the id the kit
@@ -1866,7 +1943,10 @@ oneiron vault-key add-device --unlock kit --vault-id <hex> --piece piece-1.txt -
 ```
 
 With `--unlock kit`, add-device refuses `--credential`, `--label`, `--box-dir` and `--box-command`;
-with any other unlock, it refuses `--piece` and `--vault-id`.
+with any other unlock, it refuses `--piece` and `--vault-id`. On an already-open plain vault,
+add-device counts this install's kept piece of the same kit id for either kit kind and asks for a
+passphrase only when the available pieces need one. Fresh restores and sealed opens keep their
+existing pre-open piece and passphrase rules.
 
 ### Publish the sealed bundle to a home
 
@@ -1882,8 +1962,9 @@ is named beside the receipt; that note decides nothing.
 
 On an install that holds no copy of the vault yet, the world kit alone restores it from its sealed
 cloud bundle. Run it on a stopped install, with the world kit's pieces, not the vault-key kit's:
-two `--piece` files, or one and the passphrase from stdin or `--secret-file`. `--vault-id` is the
-64-hex id the kit is bound to, as `status` prints it on one of your machines. Name one source:
+two `--piece` files, or one and the passphrase from stdin or `--secret-file`. No kept piece joins
+this pre-open restore; it uses only the pieces given. `--vault-id` is the 64-hex id the kit is
+bound to, as `status` prints it on one of your machines. Name one source:
 
 ```sh
 oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt --vault-id <hex> --sealed-bundle bundle --sealed-pads pads
@@ -2209,6 +2290,14 @@ same under the owner's credential. Where Oneiron hosts the bytes, a legal order 
 can also hold records. You cannot lift it, and an erase you confirm waits until it ends. You see
 the order whole, with its reference and terms, unless the order itself requires silence; then you
 see nothing of it until that silence ends, and an erase it keeps reads only `completion_pending`.
+
+An erase that still waits, on such an order or on a shared vault's veto window, is yours to
+withdraw: the SDK verb `vault.legal_holds.withdraw_erase` with `{"records": ["<hex>", ...]}`
+answers each record `withdrawn`, `not_waiting`, `confirmed_by_another_owner` (only the Owner who
+confirmed it withdraws it; yours is the objection to its `erase` act), or `under_way` when its
+delete has already begun and runs to its end. A withdrawn erase erases nothing, its `erase` act
+goes, a hold the confirm lifted stays lifted, and each hold the confirm met logs
+`erase_withdrawn`.
 
 ## Erase a text's history
 

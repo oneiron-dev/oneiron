@@ -2,7 +2,7 @@
 //! calls: fixed code, no model call.
 use super::{
     Alone, COST_TOLERANCE, DAY_SECS, DreamerAdmittedAttempt, Error, MONTH_SECS, OfferCheckInput,
-    OfferIntent, Sources, SyncServer, TrainingState, Unverifiable, WINDOW_SECS,
+    OfferCheckOutcome, OfferIntent, Sources, SyncServer, TrainingState, Unverifiable, WINDOW_SECS,
     coach_offer_check_target, offer_training_handoff, role_key, seat_model_role, training_offer,
     training_offer_checks, training_offers,
 };
@@ -112,6 +112,15 @@ pub(in crate::ai_host) fn check(
         Some(true) if offer.evidence.card.is_none() => Some(true),
         _ => None,
     };
+    // The typed outcome beside `held`: an unreadable window keeps its reason
+    // here, not just at the head of the note (FIX 6315).
+    let outcome = match cost_held {
+        Some(false) => OfferCheckOutcome::Broken,
+        Some(true) if offer.evidence.card.is_none() => OfferCheckOutcome::Held,
+        Some(true) => OfferCheckOutcome::PromisedScoreUnknown,
+        None if !comparable => OfferCheckOutcome::CurrencyMismatch,
+        None => OfferCheckOutcome::PromisedCostUnknown,
+    };
     let note = format!(
         "{} calls on {approved} over the {} days to the check, all priced{}; promised {} {} a \
          month, within {}%.",
@@ -140,6 +149,7 @@ pub(in crate::ai_host) fn check(
             observed_monthly_cost: observed,
             observed_score: None,
             held,
+            outcome,
             note: Some(note),
             source_rows: sources.rows(),
         },

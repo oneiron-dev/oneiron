@@ -8,7 +8,7 @@ mod inbox;
 mod reputation;
 mod send;
 
-pub use inbox::{StalwartInboxCursor, StalwartInboxOutcome, StalwartQuarantine};
+pub use inbox::{StalwartInboxCursor, StalwartInboxOutcome, StalwartInboxStop, StalwartQuarantine};
 pub use reputation::{
     NativeMailReputationReport, NativeMailReputationUpdate, NativeMailSignalSource,
     NativeMailWarmupPolicy,
@@ -16,7 +16,7 @@ pub use reputation::{
 pub use send::{NATIVE_MAIL_MAX_MESSAGE_BYTES, NativeMailMessage, StalwartSendSink};
 
 use std::collections::BTreeMap;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::sync::Arc;
 
 use reqwest::blocking::{Client, Response};
@@ -24,7 +24,7 @@ use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde_json::{Value, json};
 
 use super::EmailProviderInbound;
-use super::native_mail::{NativeMailHost, NativeMailRunMode};
+use super::native_mail::{NativeMailHost, NativeMailRunMode, mailbox_local_part};
 use super::shared_validate::{normalize_domain, validate_provision_intent};
 use crate::channel_identity::ChannelIdentityFulfillment;
 use crate::channel_identity_lifecycle::ProvisionIntent;
@@ -36,7 +36,11 @@ const CORE: &str = "urn:ietf:params:jmap:core";
 const MAIL: &str = "urn:ietf:params:jmap:mail";
 const SUBMISSION: &str = "urn:ietf:params:jmap:submission";
 const STALWART: &str = "urn:stalwart:jmap";
+/// Bytes of one JMAP JSON response, parsed in memory. Message blobs stream
+/// to disk instead and have no cap here.
 const MAX_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
+/// Matches the production Gmail send wire's whole-request bound.
+const STALWART_REQUEST_TIMEOUT_SECS: u64 = 30;
 
 /// Placement of one already-configured, per-owner MTA instance. Pooled and
 /// customer-BYO domains both arrive as an exact domain and its registry id.
@@ -138,13 +142,16 @@ impl StalwartClient {
         authorization.set_sensitive(true);
         let http = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(
+                STALWART_REQUEST_TIMEOUT_SECS,
+            ))
             .build()
             .map_err(|_| invalid("could not create Stalwart HTTP client"))?;
         let response = http
             .get(config.session_url.clone())
             .header(AUTHORIZATION, authorization.clone())
             .send()
-            .map_err(|_| invalid("Stalwart session request failed"))?;
+            .map_err(|_| transport("Stalwart session request failed"))?;
         let session: Value = serde_json::from_slice(&read_response(response)?)
             .map_err(|_| invalid("invalid Stalwart JMAP session"))?;
         for capability in [CORE, MAIL, SUBMISSION, STALWART] {
@@ -185,16 +192,10 @@ impl StalwartClient {
         self
     }
 
+    /// The derived `mail-<id>` mailbox of an identity on this instance's
+    /// domain. A named mailbox (`eiri@`) is the identity's own address.
     pub fn address_for_identity(&self, identity_ref: EntityId) -> String {
-        format!(
-            "{}@{}",
-            Self::account_name(identity_ref),
-            self.config.domain
-        )
-    }
-
-    fn account_name(identity_ref: EntityId) -> String {
-        format!("mail-{}", identity_ref.to_hex())
+        format!("mail-{}@{}", identity_ref.to_hex(), self.config.domain)
     }
 
     /// A read-only readiness check; it sends no message and changes no DNS.
@@ -224,9 +225,11 @@ impl StalwartClient {
         Ok(())
     }
 
-    pub(super) fn mailbox(&self, identity_ref: EntityId) -> Result<StalwartMailbox> {
-        let address = self.address_for_identity(identity_ref);
-        let name = Self::account_name(identity_ref);
+    /// The account behind `identity_ref`'s mailbox at `address`, derived or
+    /// named. Stalwart names the account by the address's local part.
+    pub(super) fn mailbox(&self, identity_ref: EntityId, address: &str) -> Result<StalwartMailbox> {
+        let name = mailbox_local_part(&self.config.domain, identity_ref, address)?;
+        let address = format!("{name}@{}", self.config.domain);
         let query = self.call("x:Account/query", json!({
             "accountId": "0", "filter": {"name": &name, "domainId": &self.config.domain_id}, "limit": 2
         }))?;
@@ -266,10 +269,10 @@ impl StalwartClient {
         })
     }
 
-    fn provision_mailbox(&self, identity_ref: EntityId) -> Result<StalwartMailbox> {
+    fn provision_mailbox(&self, identity_ref: EntityId, address: &str) -> Result<StalwartMailbox> {
         self.check_domain()?;
         // Stalwart stores the local part in name and the domain separately.
-        let name = Self::account_name(identity_ref);
+        let name = mailbox_local_part(&self.config.domain, identity_ref, address)?;
         let query = self.call("x:Account/query", json!({
             "accountId": "0", "filter": {"name": &name, "domainId": &self.config.domain_id}, "limit": 2
         }))?;
@@ -292,7 +295,7 @@ impl StalwartClient {
                 return Err(invalid("Stalwart refused native mailbox provisioning"));
             }
         }
-        self.mailbox(identity_ref)
+        self.mailbox(identity_ref, address)
     }
 
     pub(super) fn raw_call(&self, method: &str, arguments: Value) -> Result<Value> {
@@ -305,7 +308,7 @@ impl StalwartClient {
                 "methodCalls": [[method, arguments, "mail"]]
             }))
             .send()
-            .map_err(|_| invalid("Stalwart JMAP request failed"))?;
+            .map_err(|_| transport("Stalwart JMAP request failed"))?;
         serde_json::from_slice(&read_response(response)?)
             .map_err(|_| invalid("invalid Stalwart JMAP response"))
     }
@@ -314,7 +317,15 @@ impl StalwartClient {
         method_result(&self.raw_call(method, arguments)?, method).cloned()
     }
 
-    pub(super) fn download_blob(&self, account_id: &str, blob_id: &str) -> Result<Vec<u8>> {
+    /// Streams one blob into `out` as the server sends it. No byte cap
+    /// applies: the copy buffer is all the memory it holds, and the caller's
+    /// writer decides where the bytes land. Returns the bytes written.
+    pub(super) fn download_blob_into(
+        &self,
+        account_id: &str,
+        blob_id: &str,
+        out: &mut impl Write,
+    ) -> Result<u64> {
         let encode = |value: &str| -> String {
             value.bytes().fold(String::new(), |mut encoded, byte| {
                 if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
@@ -337,13 +348,16 @@ impl StalwartClient {
             .join(&path)
             .map_err(|_| invalid("invalid Stalwart download URL"))?;
         require_same_origin(&self.config.session_url, &url)?;
-        let response = self
+        let mut response = self
             .http
             .get(url)
             .header(AUTHORIZATION, self.authorization.clone())
             .send()
-            .map_err(|_| invalid("Stalwart message download failed"))?;
-        read_response(response)
+            .map_err(|_| transport("Stalwart message download failed"))?;
+        if !response.status().is_success() {
+            return Err(refused(response.status()));
+        }
+        Ok(std::io::copy(&mut response, out)?)
     }
 
     pub(super) fn mailboxes(&self, mailbox: &StalwartMailbox) -> Result<Vec<Value>> {
@@ -364,13 +378,11 @@ impl NativeMailHost for StalwartClient {
                 "native mail run mode differs from the Stalwart instance",
             ));
         }
-        validate_provision_intent(
-            intent,
-            "email",
-            &self.address_for_identity(intent.identity_id),
-            ChannelIdentityFulfillment::Api,
-        )?;
-        let mailbox = self.provision_mailbox(intent.identity_id)?;
+        // The identity's own address, derived or named, is the mailbox.
+        let address = intent.identity.address_or_handle();
+        mailbox_local_part(&self.config.domain, intent.identity_id, address)?;
+        validate_provision_intent(intent, "email", address, ChannelIdentityFulfillment::Api)?;
+        let mailbox = self.provision_mailbox(intent.identity_id, address)?;
         Ok(format!(
             "stalwart:{}:{}",
             self.config.instance_ref, mailbox.account_id
@@ -437,7 +449,7 @@ fn require_same_origin(base: &reqwest::Url, url: &reqwest::Url) -> Result<()> {
 
 fn read_response(response: Response) -> Result<Vec<u8>> {
     if !response.status().is_success() {
-        return Err(invalid("Stalwart HTTP request was refused"));
+        return Err(refused(response.status()));
     }
     let mut bytes = Vec::new();
     response
@@ -453,4 +465,21 @@ fn read_response(response: Response) -> Result<Vec<u8>> {
 
 pub(super) fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
+}
+
+/// The server could not be reached, or its reply could not be read: an I/O
+/// failure a later call may not meet, kept apart from an invalid reply.
+fn transport(reason: &str) -> Error {
+    Error::Io(std::io::Error::other(reason.to_owned()))
+}
+
+/// A reply whose status is not a success. A server error or a rate limit
+/// is the server's passing state, a transport failure; any other status
+/// refused the request.
+fn refused(status: reqwest::StatusCode) -> Error {
+    if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        transport("Stalwart is unavailable")
+    } else {
+        invalid("Stalwart HTTP request was refused")
+    }
 }

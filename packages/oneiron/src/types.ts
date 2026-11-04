@@ -22,6 +22,13 @@ export type OpenOptions = {
    * `"phone"`. Never read off the operating system.
    */
   deviceClass?: "computer" | "phone"
+  /**
+   * Holds this install's host root as the vault's checkpoint signer for the
+   * handle's life (FIX 5343): the device sync's steady pass attests with it
+   * the images its home writes. Only {@link Oneiron.openWithHostRoot} reads
+   * it; omitted is `false`. A secret that went unused is never held.
+   */
+  holdCheckpointRootSigner?: boolean
 }
 
 /**
@@ -130,6 +137,8 @@ export type CheckpointPinBinding = {
   slhdsa: string
   /** The crypto epoch the key signs at. */
   epoch: number
+  /** What keeps the install's checkpoint signing seed at rest, as the owner is told it. */
+  assurance: "hardware" | "platform" | "software" | "process"
   signature: CheckpointPinSignature
 }
 
@@ -240,6 +249,8 @@ export type ClaimInput = {
   /** One of `user_stated`, `observed`, `inferred`, `imported`, `tool_output`, `generated`. */
   source: string
   worldRef?: string
+  /** RELATIONSHIP refs: omitted means all relationships, `[]` the explicit empty set. */
+  relationshipRef?: string[]
   scope?: unknown
   /** Unix seconds. */
   validFrom?: number
@@ -277,6 +288,10 @@ export type RecallScope = {
   kinds?: string[]
   /** Project audience ids to select from. Unset or empty adds no narrowing to what the caller may read. */
   projectRefs?: string[]
+  /** Conversation entity refs. Empty adds no narrowing; with `personRef`, only conversations selected by both axes remain. */
+  conversationRefs?: string[]
+  /** PERSON entity ref; selects conversations where they authored at least one live MESSAGE, never conversations that merely mention them. */
+  personRef?: string
 }
 
 /** A recall's media query (OF-370): bytes the server embeds into one declared space, searched as that space's list beside the query's. An embedded client returns `MODEL_UNAVAILABLE`. */

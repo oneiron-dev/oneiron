@@ -117,34 +117,9 @@ pub struct DirtySolvedGroup {
     pub processed: u64,
 }
 
-/// A program whose library runs failed, live or retired (CUA E8a): its
-/// own record's lifetime count, never a successor's.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProgramFailureRef {
-    pub id: EntityId,
-    pub failures: u64,
-    pub retired: bool,
-    pub retire_reason: Option<String>,
-    pub refs: FailureLineage,
-}
-
-/// Where a failed program sits in its lineage.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FailureLineage {
-    pub site: String,
-    pub supersedes: Option<EntityId>,
-    /// The program that repaired it, when a retire names one.
-    pub successor: Option<EntityId>,
-}
-
-/// A candidate program the Coach proposed (CUA E8): its finding, its
-/// admission job once one is queued, and the generation it read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProgramSeen {
-    pub finding: EntityId,
-    pub job: Option<EntityId>,
-    pub generation: u64,
-}
+pub use crate::dreamer_runner::maintenance::browser_candidate::{
+    FailureLineage, ProgramFailureRef, ProgramSeen,
+};
 
 fn cursor_bytes<const N: usize>(cursor: &PageCursor) -> Result<[u8; N]> {
     <[u8; N]>::try_from(cursor.0.as_slice()).map_err(|_| Error::InvalidClaimBody("page cursor"))
@@ -488,6 +463,10 @@ pub(crate) fn erase_dirty_actor_in_txn(
         }
     }
     for digest in taken {
+        // FIX 12085: the deleted row's lifted custody goes with it.
+        let place = format!("side:{}", DIRTY.decl().name);
+        let origin = crate::batch::secret_scan::side_row_origin(&place, &DIRTY.key_bytes(&digest))?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
         DIRTY.delete(&vault.store, wtxn, &digest)?;
     }
     Ok(())

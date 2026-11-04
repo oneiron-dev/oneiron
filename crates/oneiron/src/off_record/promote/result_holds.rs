@@ -55,15 +55,15 @@ impl FloorWrites<'_> {
     /// `plans` holds that the room spilled to a file comes into the vault's
     /// `bodies/`, unnamed until that transaction commits, and every such
     /// body is pinned, so the caller holds the pins across the commit. A
-    /// MESSAGE the save then leaves in the room leaves its copy to the
-    /// collector.
+    /// copy the save then leaves unnamed, refused or skipping its MESSAGE,
+    /// goes through [`Vault::discard_unnamed_promoted_bodies`] (FIX 3633).
     #[cfg(unix)]
     pub(crate) fn import_result_bodies(
         &self,
         vault: &Vault,
         session_ref: &str,
         plans: &[PromotePlan],
-    ) -> Result<Vec<crate::result_body::ResultBodyPin>> {
+    ) -> Result<Vec<crate::store::result_body_pins::ResultBodyPin>> {
         let results: Vec<_> = plans
             .iter()
             .flat_map(|plan| message_results(&plan.ops))
@@ -74,13 +74,8 @@ impl FloorWrites<'_> {
         let room = self.store.session_view(self.room()?)?;
         results
             .iter()
-            .map(|(message, attachment)| {
-                vault.promote_off_record_message_result_body(
-                    session_ref,
-                    &room,
-                    *message,
-                    attachment,
-                )
+            .map(|(_, attachment)| {
+                vault.promote_off_record_message_result_body(session_ref, &room, attachment)
             })
             .collect()
     }

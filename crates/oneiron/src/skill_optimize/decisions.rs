@@ -3,17 +3,20 @@
 
 use std::collections::BTreeMap;
 
-use crate::llm::decision::catalogue::SKILL_OPTIMIZE_JUDGMENT;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    DecisionQuestion, Reversibility, StateCut, TypedDecision, cut_text, fit_reserve_state,
+use crate::entity_id::bytes_to_hex_lower;
+use crate::llm::decision::{DecisionLadder, TypedDecision};
+use crate::llm::run_admission::RunAdmission;
+use crate::model_decision::catalogue::SKILL_OPTIMIZE_JUDGMENT;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionQuestion,
+    Reversibility, StateCut, cut_text, fit_reserve_state, fit_state,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result};
 use serde_json::{Value, json};
 
 use super::{
-    BlindPreference, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplayObservation,
+    BlindPreference, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplayObservation, JudgeRubric,
     PreferredResponse,
 };
 
@@ -110,6 +113,47 @@ impl SkillOptimizeDecisions<'_> {
         )?;
         Ok((question, decision))
     }
+
+    /// [`Self::decide`] metered on the caller's run (FIX 10443): identical but for
+    /// [`DecisionLadder::run_with_run`], so the judgment spends on `run` instead of a
+    /// run of the providers' own.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the caller's run joins decide's revision, kind, evidence, state, contract and dial"
+    )]
+    pub(crate) fn decide_with_run(
+        &self,
+        revision: &str,
+        kind: &str,
+        evidence: &[EntityId],
+        state: &Value,
+        contract: AnswerContract,
+        dial: Option<DecisionDial>,
+        run: &RunAdmission,
+    ) -> Result<(DecisionQuestion, TypedDecision)> {
+        let text = self
+            .wording
+            .get(kind)
+            .filter(|text| !text.trim().is_empty())
+            .ok_or_else(|| invalid("missing skill judgment wording"))?;
+        let question = SKILL_OPTIMIZE_JUDGMENT.question(
+            &[revision.as_bytes(), kind.as_bytes()],
+            text.clone(),
+            contract,
+        )?;
+        let decision = self.ladder.run_with_run(
+            &question,
+            self.principal,
+            evidence,
+            state,
+            dial.unwrap_or(self.dial),
+            &self.bands,
+            Reversibility::ReversibleRead,
+            self.deadline,
+            run,
+        )?;
+        Ok((question, decision))
+    }
 }
 
 fn ask<S: HeldOutReplayNotes + ?Sized>(
@@ -188,6 +232,21 @@ fn score_cut<S: HeldOutReplayNotes + ?Sized>(
     )?;
     decided_score(&decision)
         .ok_or_else(|| invalid("skill judgment abstained or requested escalation"))
+}
+
+/// Puts the common judge rubric on a judgment's `state`: its text, cut to
+/// `cut` bytes when the caller fits the state to the ladder's bound (the cut
+/// named), and its pin (its skill, version and digest).
+fn put_rubric(state: &mut Value, rubric: &JudgeRubric, cut: Option<usize>) {
+    state["judge_rubric"] = json!(cut_text(&rubric.text, cut));
+    state["judge_rubric_pin"] = json!({
+        "skill": rubric.skill.to_hex(),
+        "version": rubric.version,
+        "digest": bytes_to_hex_lower(&rubric.digest),
+    });
+    if let Some(bytes) = cut {
+        state["judge_rubric_cut_at_bytes"] = json!(bytes);
+    }
 }
 
 fn case_state<S: HeldOutReplayNotes + ?Sized>(
@@ -463,10 +522,10 @@ impl dyn HeldOutReplayNotes + '_ {
     pub(crate) fn tradeoff_decision(
         &self,
         question: &super::SkillTradeoffQuestion,
-        band: crate::llm::decision::DecisionBand,
+        band: crate::model_decision::DecisionBand,
     ) -> Result<Option<TypedDecision>> {
         let decisions = self.decisions();
-        if decisions.dial.first == crate::llm::decision::DecisionRung::Human {
+        if decisions.dial.first == crate::model_decision::DecisionRung::Human {
             return Ok(None);
         }
         // This job owns the durable role ask. The shared ladder supplies the
@@ -475,11 +534,25 @@ impl dyn HeldOutReplayNotes + '_ {
             ceiling: decisions
                 .dial
                 .ceiling
-                .min(crate::llm::decision::DecisionRung::Big),
+                .min(crate::model_decision::DecisionRung::Big),
             band,
             ..decisions.dial
         };
-        let state = json!({"question": question, "digest": question.digest()?});
+        // The tradeoff weighs an edit, so it reads the common rubric and its
+        // pin beside the question (FIX 3584); the blind preference stays
+        // rubric-free. Past the ladder's bound only the rubric text is cut.
+        let rubric = self.rubric()?;
+        let digest = question.digest()?;
+        let state = fit_state(
+            rubric.as_ref().map_or(0, |rubric| rubric.text.len()),
+            |cut| {
+                let mut state = json!({"question": question, "digest": digest});
+                if let Some(rubric) = &rubric {
+                    put_rubric(&mut state, rubric, cut);
+                }
+                state
+            },
+        );
         let (typed, decision) = decisions.decide(
             self.judge_revision(),
             "tradeoff",

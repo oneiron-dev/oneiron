@@ -9,7 +9,7 @@ use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::memory::codebase_doors::{CodeSnapshotDefinition, CodeSnapshotFile};
 use crate::merge_queue::BatchState;
-use crate::repo_mutation::proposal::RepoProposalStatus;
+use crate::store::repo_proposal_record::RepoProposalStatus;
 
 /// `self.code.snapshots.get`: the manifest of one snapshot of the admitted
 /// repo, at the commit its full ref names now.
@@ -241,6 +241,11 @@ pub struct RepoWorkFile {
     pub path: String,
     /// The BLAKE3 hash of the file's bytes, 64 lower-hex characters.
     pub content_hash_blake3: String,
+    /// How the work's copy differs from the stored blob it stands in for,
+    /// as the snapshot doors name it (FIX 8965): absent for the stored
+    /// bytes, and for every unmarked file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection: Option<crate::memory::codebase_doors::RepoFileProjectionView>,
 }
 
 /// `self.code.work.open`'s answer.

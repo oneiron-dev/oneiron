@@ -16,16 +16,18 @@ use super::actions::NotificationAction;
 use super::notification::{
     NotificationBody, NotificationKind, NotificationSource, decode_notification_body,
 };
-use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::context_board::{
+use crate::claim::ScopedRead;
+use crate::entity_id::EntityId;
+use crate::inbox::notification_recipient::{
     NotificationRecipientScope, notification_body_json, notification_recipient_scope,
     notification_scoped_to_caller,
 };
-use crate::entity_id::EntityId;
-use crate::memory::{Memory, MemoryError, MemoryResult, verify_actor_binding_in_txn};
+use crate::memory::{Memory, verify_actor_binding_in_txn};
+use crate::ports::ClaimReadStatus;
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
 use crate::store::Callback;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// Rows a page serves when its caller names no limit.
 pub const INBOX_PAGE_DEFAULT: usize = 100;
@@ -188,7 +190,11 @@ impl InboxMarkWriteScope {
                 if !own {
                     return Ok(false);
                 }
-                if crate::federation::record_scope::has_stored_position(&vault.store, txn, id)? {
+                if vault
+                    .store
+                    .scope_stamps
+                    .has_stored_position(&vault.store, txn, id)?
+                {
                     vault.authorize_shared_content_write_in_txn(txn, id, &memory.write_actor())?;
                 }
                 Ok(true)

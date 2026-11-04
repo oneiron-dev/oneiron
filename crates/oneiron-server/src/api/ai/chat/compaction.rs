@@ -317,6 +317,14 @@ pub(super) fn open_stream(
     }
     match admitted.ladder.stream(run, admitted.request, None) {
         Ok(stream) => Ok(first_or_today(stream, run.clone(), today, live)),
+        Err(error)
+            if matches!(
+                &error,
+                oneiron::LlmError::Retryable(oneiron::RetryableLlmError::DeviceAdmissionStopped)
+            ) =>
+        {
+            Err(error)
+        }
         Err(_) => {
             live.store(false, Ordering::Release);
             today.ladder.stream(run, today.request, None)
@@ -386,6 +394,16 @@ fn first_or_today(
                 } = *first;
                 match live.next().await {
                     Some(Ok(event)) => Some((Ok::<LlmStreamEvent, _>(event), Leg::Rest(live))),
+                    Some(Err(error))
+                        if matches!(
+                            &error,
+                            oneiron::LlmError::Retryable(
+                                oneiron::RetryableLlmError::DeviceAdmissionStopped
+                            )
+                        ) =>
+                    {
+                        Some((Err(error), Leg::Done))
+                    }
                     _ => {
                         used.store(false, Ordering::Release);
                         drop(live);
@@ -601,4 +619,81 @@ fn digest_hex(text: &str) -> String {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+impl AnswerBreakpoint {
+    /// The captured action's original request and log, re-read under its
+    /// live action proof. Only the source rows the breakpoint already names
+    /// form its old prefix; Continue's saved reply is borrowed separately.
+    pub(super) fn action_chat(
+        &self,
+        ai: &AiHandle,
+        vault: &Vault,
+        reader: &Memory<'_>,
+        action: &TurnActionAttempt,
+    ) -> Option<(SelfChat, Vec<EntityId>, Vec<LlmMessage>)> {
+        let seed = self.source.as_ref()?;
+        let request = seed.captured_request()?;
+        let mut chat = self_chat(
+            ai,
+            vault,
+            reader,
+            seed.agent,
+            &action.conversation.to_hex(),
+            usize::MAX,
+        )?;
+        if !chat.log.pinned
+            || !seed
+                .sources
+                .iter()
+                .all(|source| chat.log.sources.contains(source))
+            || !seed
+                .summaries
+                .iter()
+                .all(|summary| chat.log.summaries.contains(summary))
+        {
+            return None;
+        }
+        let user = chat
+            .log
+            .sources
+            .iter()
+            .find(|span| span.turn == action.user_turn)?;
+        let mut borrowed = vec![user.turn];
+        borrowed.extend_from_slice(&user.messages);
+        if action.action == TurnAction::Continue {
+            borrowed.push(action.assistant_turn);
+            borrowed.push(action.message);
+        }
+        let messages: std::collections::BTreeSet<_> = seed
+            .sources
+            .iter()
+            .flat_map(|span| span.messages.iter().copied())
+            .collect();
+        let mut lines = Vec::new();
+        let mut ids = Vec::new();
+        for (line, id) in chat.log.lines.into_iter().zip(chat.log.message_ids) {
+            let retained = match &line {
+                ChatLogLine::Summary { summary, .. } => seed.summaries.contains(summary),
+                ChatLogLine::Message { .. } => id.is_some_and(|id| messages.contains(&id)),
+            };
+            if retained {
+                lines.push(line);
+                ids.push(id);
+            }
+        }
+        chat.log.lines = lines;
+        chat.log.message_ids = ids;
+        chat.log
+            .sources
+            .retain(|source| seed.sources.contains(source));
+        chat.log
+            .summaries
+            .retain(|summary| seed.summaries.contains(summary));
+        Some((chat, borrowed, request.messages))
+    }
+
+    pub(super) fn agent(&self) -> Option<EntityId> {
+        self.source.as_ref().map(|seed| seed.agent)
+    }
 }

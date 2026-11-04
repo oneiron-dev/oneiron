@@ -2,9 +2,8 @@
 use super::export_input::{ExportPromotion, VerifiedEngineExport, export_message};
 use super::publication::{OriginPublicationReceipt, OriginPublicationRequest};
 use super::residence::OriginAuthorityLease;
-use super::tree::OriginTreeFile;
+use super::tree::{OriginTreeFile, start_tree_count};
 use crate::Vault;
-use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
@@ -12,6 +11,7 @@ use crate::git_wire::{
     lock_repository,
 };
 use crate::side_table::{self, Raw, SideKey, SideTable};
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
 use std::collections::BTreeMap;
 
@@ -100,6 +100,41 @@ impl Vault {
         request: &EngineCommitExport,
         authority: Option<&OriginAuthorityLease>,
     ) -> Result<OriginPublicationReceipt> {
+        match self.export_engine_commit_judged(git, repo, request, authority, |_| {
+            Ok(Ok::<(), std::convert::Infallible>(()))
+        })? {
+            Ok(receipt) => Ok(receipt),
+            Err(never) => match never {},
+        }
+    }
+
+    /// [`Self::export_engine_commit`], with `judge` deciding the exact ref
+    /// move once its Git projection is known and before anything records
+    /// or publishes it (FIX 8800): a refusal there exports nothing.
+    pub(crate) fn export_engine_commit_judged<R>(
+        &self,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        request: &EngineCommitExport,
+        authority: Option<&OriginAuthorityLease>,
+        judge: impl FnOnce(&GitOid) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<OriginPublicationReceipt, R>> {
+        self.export_engine_commit_checked(git, repo, request, authority, judge, |_| Ok(Ok(())))
+    }
+
+    /// [`Self::export_engine_commit_judged`], with `check` judged again as
+    /// the first act of each writer the export makes before its publication,
+    /// the projection's and the publication intent's (FIX 7179): a refusal
+    /// there records and publishes nothing.
+    pub(crate) fn export_engine_commit_checked<R>(
+        &self,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        request: &EngineCommitExport,
+        authority: Option<&OriginAuthorityLease>,
+        judge: impl FnOnce(&GitOid) -> Result<std::result::Result<(), R>>,
+        check: impl Fn(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<OriginPublicationReceipt, R>> {
         let _guard = lock_repository(repo.common_dir())?;
         // The shared eligibility (G4 PR3): the stored promotion is judged
         // again before any Git object is created, at its original point.
@@ -120,7 +155,9 @@ impl Vault {
             None => self.document_files(repo, &revision, metadata)?,
         };
         // An import-bound tested revision keeps its original ancestry (CALL
-        // G, G4 PR1); every other revision its immediate exported parent.
+        // G, G4 PR1), and a push its seal consumed completely is a parent on
+        // any chain (FIX 7540); every other revision its immediate exported
+        // parent.
         let parents = match self.resolve_import_export_parents(git, repo, &revision)? {
             Some(parents) => parents,
             None => revision
@@ -144,14 +181,16 @@ impl Vault {
             ));
         }
         let message = export_message(metadata, provenance)?;
+        // An author erased before the seal holds the export (FIX 7348).
+        let author = metadata.author.ok_or(Error::EntityNotFound)?;
         let oid = write_commit(
             git,
             repo,
             GitCommitRequest {
                 tree,
                 parents,
-                author_name: metadata.author.to_hex(),
-                author_email: format!("{}@actor.invalid", metadata.author.to_hex()),
+                author_name: author.to_hex(),
+                author_email: format!("{}@actor.invalid", author.to_hex()),
                 authored_at: i64::try_from(revision.finalized_at)
                     .map_err(|_| Error::ArithmeticOverflow("export timestamp"))?,
                 message: message.into_bytes(),
@@ -159,7 +198,13 @@ impl Vault {
             },
             revision.finalized_at,
         )?;
-        self.with_write_txn_grouped(|txn| {
+        if let Err(refused) = judge(&oid)? {
+            return Ok(Err(refused));
+        }
+        let projected = self.with_write_txn_grouped(|txn| {
+            if let Err(refused) = check(txn)? {
+                return Ok(Err(refused));
+            }
             let key = export_key(repo, revision.revision_id);
             if let Some(old) = ENGINE_EXPORTS.get(&self.store, txn, &key)? {
                 if old != oid.as_str() {
@@ -170,8 +215,11 @@ impl Vault {
             } else {
                 ENGINE_EXPORTS.put(&self.store, txn, &key, &oid.as_str().to_owned())?;
             }
-            Ok(())
+            Ok(Ok(()))
         })?;
+        if let Err(refused) = projected {
+            return Ok(Err(refused));
+        }
         let repo_id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
         let intent = entity_id_from_hash_material(
             b"oneiron:engine-export-intent:v1",
@@ -196,18 +244,21 @@ impl Vault {
             required_objects: vec![oid],
             required_lfs_oids: Vec::new(),
             provenance_claim_id: intent,
-            actor_id: metadata.author,
+            actor_id: author,
             occurred: TimeRange {
                 start: revision.finalized_at,
                 end: revision.finalized_at,
             },
             learned_at: revision.finalized_at,
         };
-        self.put_origin_publication_intent(&publication)?;
-        match authority {
+        if let Err(refused) = self.put_origin_publication_intent_checked(&publication, &check)? {
+            return Ok(Err(refused));
+        }
+        let receipt = match authority {
             Some(lease) => self.publish_origin_ref_authorized(git, publication, lease),
             None => self.publish_origin_ref(git, publication),
-        }
+        }?;
+        Ok(Ok(receipt))
     }
 }
 
@@ -217,8 +268,8 @@ impl Vault {
     fn document_files(
         &self,
         repo: &GitWireRepo,
-        revision: &crate::code_revision::CodeRevision,
-        metadata: &crate::code_revision::CodeCommitMetadata,
+        revision: &crate::store::code_revision_record::CodeRevision,
+        metadata: &crate::store::code_commit_metadata::CodeCommitMetadata,
     ) -> Result<BTreeMap<String, OriginTreeFile>> {
         if revision.file_frontiers.is_empty() {
             return Err(Error::InvariantViolation(
@@ -226,7 +277,8 @@ impl Vault {
             ));
         }
         let mut files = BTreeMap::new();
-        let target_scope = crate::repo_mutation::canonical_mutation_scope(repo.repo_root())?;
+        let target_scope =
+            crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
         for frontier in revision.file_frontiers.values() {
             if frontier.repo != target_scope {
                 return Err(Error::InvariantViolation(
@@ -242,7 +294,7 @@ impl Vault {
                             .file_modes
                             .get(&frontier.document_id)
                             .copied()
-                            .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE),
+                            .unwrap_or(crate::store::code_snapshot::DEFAULT_CODE_FILE_MODE),
                         content,
                     },
                 )
@@ -257,32 +309,32 @@ impl Vault {
     }
 }
 
-/// Writes a complete byte-preserving tree without moving a public ref.
+/// Writes a complete byte-preserving tree without moving a public ref. It
+/// writes every file and directory however many (rule 5, FIX 9998): past
+/// its scan row it raises a check; the byte floor and the mode stay.
 pub(in crate::origin) fn write_tree_files(
     git: &GitWire<'_>,
     repo: &GitWireRepo,
     files: &BTreeMap<String, OriginTreeFile>,
     now: u64,
 ) -> Result<GitOid> {
+    let mut count = start_tree_count(git, repo)?;
     let mut directories: BTreeMap<String, Vec<GitTreeEntry>> = BTreeMap::new();
     directories.insert(String::new(), Vec::new());
     let mut total = 0_usize;
     for (path, file) in files {
+        count.row();
         let parts: Vec<_> = path.split('/').collect();
-        if parts.len() > 128
-            || parts.iter().any(|p| {
-                p.is_empty() || matches!(*p, "." | ".." | ".git") || p.as_bytes().contains(&0)
-            })
+        if parts
+            .iter()
+            .any(|p| p.is_empty() || matches!(*p, "." | ".." | ".git") || p.as_bytes().contains(&0))
         {
             return Err(Error::InvariantViolation("unsafe exported file path"));
         }
         total = total
             .checked_add(file.content.len())
             .ok_or(Error::ArithmeticOverflow("export bytes"))?;
-        if files.len() > 100_000
-            || total > 128 * 1024 * 1024
-            || !matches!(file.mode, 0o100644 | 0o100755 | 0o120000)
-        {
+        if total > 128 * 1024 * 1024 || !matches!(file.mode, 0o100644 | 0o100755 | 0o120000) {
             return Err(Error::IndexOverflow("export file bounds or mode"));
         }
         let mut plan = GitWirePlan::new();
@@ -307,6 +359,7 @@ pub(in crate::origin) fn write_tree_files(
     paths.retain(|p| !p.is_empty());
     paths.push(String::new());
     for path in paths {
+        count.row();
         let mut entries = directories
             .remove(&path)
             .ok_or(Error::InvariantViolation("export directory missing"))?;
@@ -320,6 +373,7 @@ pub(in crate::origin) fn write_tree_files(
         plan.write_tree(entries)?;
         let oid = write_one(git, repo, &plan, now)?;
         if path.is_empty() {
+            count.finish(git.vault());
             return Ok(oid);
         }
         let (parent, name) = path.rsplit_once('/').unwrap_or(("", &path));

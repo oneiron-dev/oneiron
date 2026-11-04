@@ -25,8 +25,9 @@ use super::receipt::{
     FreeTimeItemOutcome, FreeTimeItemReceipt, close_cycle_if_done_in_txn, record_receipt_in_txn,
 };
 use super::{CYCLE, FreeTimeKind, ITEM, LONG_RETRY_LINEAGE, RECEIPT};
-use crate::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use crate::agent_dispatch::AgentDispatcher;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::{ClaimInput, ClaimSource, EdgeActorClass, EntityId, Error, Result, Vault};
 
 /// The predicate an agent's free-time suggestion for its human lands under.

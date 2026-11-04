@@ -7,20 +7,21 @@ use crate::channel_identity::{
     ChannelIdentityBinding, InboundDisposition, channel_identity_facts_in_txn,
 };
 use crate::error::Result;
-use crate::ports::EntityStore;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 
 use super::SLACK_CHANNEL;
 
 impl Vault {
     /// The actor-bound Slack personas of one workspace that take inbound
-    /// now, earliest first: every `{workspace_ref}:persona:{persona}`
+    /// now, earliest created first (by identity id, which no rewrite moves):
+    /// every `{workspace_ref}:persona:{persona}`
     /// identity whose live facts, read on its row's custody, deliver
     /// ([`InboundDisposition::Deliver`] or
     /// [`InboundDisposition::DeliverRetiring`]). A rotating, released or
     /// quarantined persona keeps its inbound; the routing door stamps the
     /// retiring ones. An identity whose live facts do not read is passed
-    /// over with a warning, so it never stops another persona's delivery.
+    /// over, with a warning when its row names this workspace, so it never
+    /// stops another persona's delivery.
     /// `workspace_ref` is the stamp
     /// [`super::SlackSharedPresenceAdapter::workspace_ref`] makes.
     pub fn slack_workspace_personas(&self, workspace_ref: &str) -> Result<Vec<String>> {
@@ -32,22 +33,23 @@ impl Vault {
             let Some(identity) = self.get_channel_identity_in_txn(&txn, &id)? else {
                 continue;
             };
-            // Another channel's or workspace's identity is never read
-            // further: its facts cannot fail this workspace's delivery.
-            if identity.channel() != SLACK_CHANNEL
-                || !identity.address_or_handle().starts_with(&prefix)
-            {
-                continue;
-            }
+            // The channel and handle are the identity's facts (OF-272), so a
+            // persona corrected into or out of this workspace is read where
+            // its heads put it. Facts that do not read never fail another
+            // persona's delivery; only this workspace's row is warned about.
             let facts = match channel_identity_facts_in_txn(&self.store, &txn, &id) {
                 Ok(Some(facts)) => facts,
                 Ok(None) => continue,
                 Err(err) => {
-                    tracing::warn!(
-                        identity = %id.to_hex(),
-                        error = %err,
-                        "a Slack persona's live facts did not read; it takes no inbound"
-                    );
+                    if identity.channel() == SLACK_CHANNEL
+                        && identity.address_or_handle().starts_with(&prefix)
+                    {
+                        tracing::warn!(
+                            identity = %id.to_hex(),
+                            error = %err,
+                            "a Slack persona's live facts did not read; it takes no inbound"
+                        );
+                    }
                     continue;
                 }
             };
@@ -64,11 +66,10 @@ impl Vault {
             let Some(persona) = facts.address_or_handle.strip_prefix(&prefix) else {
                 continue;
             };
-            let since = self
-                .port_entity_get(&txn, &id)?
-                .map_or(u64::MAX, |record| record.learned_at);
-            personas.push((since, persona.to_owned()));
+            personas.push((id, persona.to_owned()));
         }
+        // Earliest by the identity's id, minted once when it was created: a
+        // rewrite of the identity's row never moves a persona in this order.
         personas.sort();
         Ok(personas.into_iter().map(|(_, persona)| persona).collect())
     }

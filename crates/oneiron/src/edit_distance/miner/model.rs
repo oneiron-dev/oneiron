@@ -1,6 +1,8 @@
 //! ED-04 miner domain and stored-row types.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -282,20 +284,38 @@ pub(super) struct AmendmentSource {
 
 /// The texts a Δ's refs name, read through the rows that retain them.
 pub(super) enum SourceEnds {
-    /// A recorded window: one artifact holds both ends and every change.
-    Recorded(RetainedProposal),
+    /// A recorded window: one artifact holds both ends and every change (the shared opened row).
+    Recorded(Arc<RetainedProposal>),
     /// Two endpoint texts, each read through its own row.
     Endpoints(String, String),
 }
 
 /// Every persisted proposal row (finalized windows and endpoint-only
-/// imports), unopened, by row id. Each row opens only when a judgment
-/// resolves it.
+/// imports), unopened, by row id. A row opens on the first judgment that
+/// resolves it and the opened row is kept for the rest of the pass (one
+/// snapshot-parse per artifact per pass).
 pub(super) struct ArtifactIndex {
     pub(super) records: BTreeMap<EntityId, StoredProposal>,
+    pub(super) opened: RefCell<BTreeMap<EntityId, Arc<RetainedProposal>>>,
 }
 
 impl ArtifactIndex {
+    fn opened(&self, artifact: &EntityId) -> Option<Arc<RetainedProposal>> {
+        if let Some(hit) = self.opened.borrow().get(artifact).cloned() {
+            return Some(hit);
+        }
+        let opened = Arc::new(
+            self.records
+                .get(artifact)
+                .cloned()
+                .map(RetainedProposal::open)?,
+        );
+        self.opened
+            .borrow_mut()
+            .insert(*artifact, Arc::clone(&opened));
+        Some(opened)
+    }
+
     /// The texts a Δ's refs name, through the lane it was measured on: a
     /// recorded-ops Δ's one artifact, or a reconstructed Δ's two ends. A
     /// field-diff Δ names no text.
@@ -306,11 +326,7 @@ impl ArtifactIndex {
                 if delta.final_ref.proposal_artifact() != Some(artifact) {
                     return None;
                 }
-                self.records
-                    .get(&artifact.entity_id())
-                    .cloned()
-                    .map(RetainedProposal::open)
-                    .map(SourceEnds::Recorded)
+                self.opened(&artifact.entity_id()).map(SourceEnds::Recorded)
             }
             DeltaSource::Reconstructed => Some(SourceEnds::Endpoints(
                 self.end_text(&delta.proposed_ref)?,
@@ -321,10 +337,7 @@ impl ArtifactIndex {
     }
 
     fn end_text(&self, end: &EndpointRef) -> Option<String> {
-        self.records
-            .get(&end.proposal_artifact()?.entity_id())
-            .cloned()
-            .map(RetainedProposal::open)?
+        self.opened(&end.proposal_artifact()?.entity_id())?
             .end_text(end)
             .into_text()
     }

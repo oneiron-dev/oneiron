@@ -24,7 +24,9 @@ mod finish;
 mod statistics;
 
 pub use self::doors::eval_seat_canary;
-pub(super) use self::doors::measurement_in_txn;
+pub(super) use self::doors::{
+    measurement_in_txn, measurements_in_txn, put_in_txn as put_measurement_in_txn,
+};
 pub use self::finish::{JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS};
 pub use self::statistics::{EstimateGap, EvalFamilySummary, MeasurementMethodPin};
 
@@ -34,16 +36,21 @@ pub use self::statistics::{EstimateGap, EvalFamilySummary, MeasurementMethodPin}
 pub struct EvalArmPin {
     pub model: String,
     pub revision: String,
-    /// For a skill comparison, the pinned skill content digest. This build
-    /// measures model arms only: an arm that names one reads unavailable.
+    /// For a skill comparison, the pinned skill content digest (hex): the
+    /// measuring host loads exactly that content through the pinned-pack
+    /// load and answers each leg under it (FIX 10677).
     pub skill_digest: Option<String>,
 }
 
 impl EvalArmPin {
-    /// `model@revision`, as exposures and retests name the arm.
+    /// `model@revision`, and `+skill:<digest>` for a skill arm, as exposures
+    /// and retests name the arm.
     #[must_use]
     pub fn label(&self) -> String {
-        format!("{}@{}", self.model, self.revision)
+        match &self.skill_digest {
+            Some(digest) => format!("{}@{}+skill:{digest}", self.model, self.revision),
+            None => format!("{}@{}", self.model, self.revision),
+        }
     }
 }
 
@@ -99,6 +106,9 @@ pub struct EvalMeasurementRequest {
     /// The seat's declared canary metric; `None` while none is declared.
     pub canary: Option<String>,
     pub method: MeasurementMethodPin,
+    /// The re-request generation: 0 for the first ask, N+1 to retry after N's
+    /// Partial with transient reasons (FIX 10442).
+    pub retry: u32,
 }
 
 /// Why a leg, a case or a whole measurement has no number.
@@ -117,8 +127,13 @@ pub enum MeasurementUnavailable {
     NoLabel,
     /// The seat names no served model role.
     NoModelRole,
-    /// An arm pins skill content; this build measures model arms only.
-    SkillArm,
+    /// No live skill carries an arm's pinned content any more.
+    SkillContentGone,
+    /// A live skill carries an arm's pinned content, and its pack does not
+    /// load for a measurement: a resident's own skill, one retired or
+    /// rejected, a revision that moved under the load, or a package with no
+    /// instructions.
+    SkillPackRefused,
     /// An arm's registered serving revision is not its pin.
     PinMoved,
     /// This host cannot serve an arm at its exact pin.
@@ -152,8 +167,10 @@ pub enum MeasurementState {
     Pending,
     /// Its exposures are counted and its legs are under way.
     Claimed,
-    /// It ended without a complete matched set: no card, and final for its
-    /// digest.
+    /// It ended without a complete matched set: no card. Final for its
+    /// digest everywhere but the helper gate, which measures it again on
+    /// the next request and replaces it when that measurement settles
+    /// ([`crate::Vault::remeasure_partial_eval_measurement`]).
     Partial {
         reasons: Vec<MeasurementUnavailable>,
     },

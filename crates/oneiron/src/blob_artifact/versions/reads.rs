@@ -6,12 +6,13 @@
 use heed::RoTxn;
 
 use crate::Vault;
-use crate::claim::ClaimSubject;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::file_secret_marks::SecretSight;
 use crate::ports::{BodyStale, EntityStoreRead as _, body_readable_in_txn};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
-use crate::secret_custody::{SecretSight, masked_file_in_txn, sighted_bytes_in_txn};
+use crate::store::file_key_masks::sighted_bytes_in_txn;
+use crate::write_envelope::claim_body::ClaimSubject;
 
 use super::super::body::decode_blob_artifact_body;
 use super::super::made_by::made_by_text;
@@ -39,8 +40,17 @@ impl Vault {
         artifact_id: &EntityId,
     ) -> Result<Vec<BlobArtifactVersion>> {
         let rtxn = self.store.env.read_txn()?;
+        self.blob_artifact_versions_in_txn(&rtxn, artifact_id)
+    }
+
+    /// The same validated version chain in the caller's snapshot.
+    pub(crate) fn blob_artifact_versions_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+    ) -> Result<Vec<BlobArtifactVersion>> {
         let mut versions: Vec<BlobArtifactVersion> = Vec::new();
-        for entry in VERSIONS.iter_from(&self.store, &rtxn, artifact_id.as_bytes())? {
+        for entry in VERSIONS.iter_from(&self.store, rtxn, artifact_id.as_bytes())? {
             let ((_, key_version), record) = entry?;
             if key_version != record.version
                 || versions
@@ -57,7 +67,7 @@ impl Vault {
             }
             versions.push(record);
         }
-        if let Some(head) = read_blob_artifact_head_in_txn(&self.store, &rtxn, artifact_id)? {
+        if let Some(head) = read_blob_artifact_head_in_txn(&self.store, rtxn, artifact_id)? {
             if versions.last() != Some(&head) {
                 return Err(Error::CorruptedIndex("blob artifact version head"));
             }
@@ -183,21 +193,22 @@ impl Vault {
 }
 
 impl Vault {
-    /// Lends one version's bytes to `lend` as `sight` reads them, without
-    /// copying stored bytes out of the store. The organ host uses it to fill
-    /// a shared region once per lent hash. Liveness (deletion, staleness) is
-    /// checked on every call. `lend` runs inside the read transaction and
-    /// must not open another one on this thread. A compaction step's
-    /// response whose words are withdrawn lends nothing.
+    /// Lends one version's bytes to `lend` as `sight` reads them. The organ
+    /// host uses it to fill a shared region once per lent hash. Liveness
+    /// (deletion, staleness) is checked on every call. `lend` runs inside the
+    /// read transaction and must not open another one on this thread. A
+    /// compaction step's response whose words are withdrawn lends nothing.
     ///
-    /// A masked reader of a body the secret mask marked is lent the masked
-    /// copy, made as the whole-body door makes it from the stored bytes,
-    /// verified first (FIX 6508): an inline body by `sighted_bytes_in_txn`,
-    /// one kept in its ASSET's file by `sighted_body_file_in_txn`. The owner, a
-    /// granted agent, and every reader of a body no mark covers are lent the
-    /// stored bytes, whose content hash is checked when `lend` asks for
-    /// them, so a caller that already holds them verified under this hash
-    /// skips both the hash and the copy.
+    /// A masked reader is lent the copy the whole-body door serves it, made
+    /// from the stored bytes, verified first (FIX 6508): an inline body by
+    /// `sighted_bytes_in_txn`, one kept in its ASSET's file by
+    /// `sighted_body_file_in_txn`. A body no mark covers yet is read the same
+    /// way (FIX 11552): a container's members and the bytes no reader shows
+    /// are read before any of it is lent, and the copy is held whole. The
+    /// owner and a granted agent are lent the stored bytes, never copied out
+    /// of the store for an inline body, whose content hash is checked when
+    /// `lend` asks for them, so a caller that already holds them verified
+    /// under this hash skips both the hash and the copy.
     pub fn lend_blob_artifact_version<R>(
         &self,
         artifact_id: &EntityId,
@@ -214,9 +225,7 @@ impl Vault {
         if !compaction_response_readable_in(self, &rtxn, artifact_id)? {
             return Ok(None);
         }
-        if sight == SecretSight::Masked
-            && masked_file_in_txn(&self.store, &rtxn, &record.content_hash)?.is_some()
-        {
+        if sight == SecretSight::Masked {
             let copy = self.masked_version_copy_in_txn(&rtxn, artifact_id, &record)?;
             return Ok(Some(lend(&record, BlobBytes::masked_copy(copy))));
         }
@@ -233,10 +242,11 @@ impl Vault {
         )))
     }
 
-    /// The masked copy of `record`'s body, which a mark covers: a body kept
-    /// in its ASSET's file is filled as the checked reader verifies it, and
-    /// an inline one is verified under the version's content hash before it
-    /// is masked. Every refusal is the whole-body door's.
+    /// `record`'s body as a masked reader reads it, a mark on it or none: a
+    /// body kept in its ASSET's file is filled as the checked reader
+    /// verifies it, and an inline one is verified under the version's
+    /// content hash before it is masked. Every refusal is the whole-body
+    /// door's.
     fn masked_version_copy_in_txn(
         &self,
         rtxn: &RoTxn<'_>,
@@ -258,7 +268,13 @@ impl Vault {
             masked: false,
         }
         .verified()?;
-        sighted_bytes_in_txn(&self.store, rtxn, stored.into_owned(), SecretSight::Masked)
+        sighted_bytes_in_txn(
+            &self.store,
+            rtxn,
+            stored.into_owned(),
+            Some(&record.content_hash),
+            SecretSight::Masked,
+        )
     }
 }
 

@@ -17,7 +17,7 @@ impl RunAdmission {
     #[must_use]
     pub fn gate(&self, inner: Arc<dyn SingleRouteBackend>, offer: &OfferBinding) -> GatedBackend {
         let offer = self.inner.bound(offer).dispatch_binding();
-        GatedBackend::new(Arc::clone(&self.inner), inner, offer)
+        GatedBackend::new(Arc::clone(&self.inner), inner, offer, self.work_context())
     }
 
     /// Admits one media call (`ai.image`, `ai.video`, `ai.speech`,

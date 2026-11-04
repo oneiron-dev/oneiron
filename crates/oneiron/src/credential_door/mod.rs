@@ -3,16 +3,17 @@
 //! Loopback is a network fact, never an identity. Checkout credentials are
 //! re-witnessed under the writer that authorizes a receive-pack operation.
 //!
-//! The dial NARROWS ONLY, it covers EVERY door effector including
+//! The dial NARROWS the effectors, it covers EVERY door effector including
 //! receive-pack itself, and it fails closed on any indexed declaration this
-//! door cannot read.
+//! door cannot read. The lease ceiling is the holder's row, with
+//! [`DOOR_MAX_LEASE_TTL_SECS`] as its default (FIX 9777).
 //!
 //! # Floors are constants, not dials
 //!
-//! [`DOOR_SCAN_ALWAYS_ON`], [`DOOR_MAX_LEASE_TTL_SECS`] and
-//! [`DOOR_ONE_SHOT_MAX_LIFETIME_SECS`] sit OUTSIDE the policy lattice. No
-//! policy row, verb, caveat, attenuation, or scope may name or disable one:
-//! naming a floor from inside the lattice is itself a fail-closed refusal
+//! [`DOOR_SCAN_ALWAYS_ON`] and [`DOOR_ONE_SHOT_MAX_LIFETIME_SECS`] sit
+//! OUTSIDE the policy lattice. No policy row, verb, caveat, attenuation, or
+//! scope may name or disable one: naming a floor from inside the lattice is
+//! itself a fail-closed refusal
 //! ([`CredentialDoorError::FloorNamed`]), because the only thing a "floor
 //! switch" can ever be is an off switch for a catastrophe guard.
 //!

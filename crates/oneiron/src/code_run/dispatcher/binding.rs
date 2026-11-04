@@ -108,6 +108,7 @@ impl<'a> HostSelfDispatcher<'a> {
             planner: None,
             slip_issuer: None,
             replay_exposures: Vec::new(),
+            assertions_created: RefCell::default(),
             model_provider: RefCell::new(None),
             run_request: RefCell::new(None),
             fold_log: fold_verbs::FoldLog::Site,
@@ -169,7 +170,7 @@ impl<'a> HostSelfDispatcher<'a> {
     pub(crate) fn run_write_token(&self) -> Option<crate::skill_attribution::RunWriteToken> {
         self.agent_lease
             .as_ref()
-            .map(crate::skill_attribution::RunWriteToken::from_lease)
+            .map(crate::skill_attribution::run_write_token_from_lease)
     }
 
     /// Binds a host-authenticated owner proof to one agent action dispatch.

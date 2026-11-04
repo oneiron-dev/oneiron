@@ -24,10 +24,11 @@ pub(crate) struct ApplyOpsGateMode {
     pub(super) text_births: HashMap<EntityId, Vec<EntityId>>,
     /// The Rule A birth envelope of each row this batch births, stamped
     /// after every op has applied.
-    pub(super) births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
+    pub(super) births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     /// BM25 analyses of this batch's text ops, done before the write
     /// transaction opened; consumed per id in op order.
-    pub(super) pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::bm25::AnalyzedText>>>,
+    pub(super) pre_analyzed_text:
+        HashMap<EntityId, VecDeque<Option<crate::store::text_index::AnalyzedText>>>,
     /// HNSW insert plans of this batch's vector ops, searched under a read
     /// snapshot before the write transaction opened; consumed per id in op
     /// order.
@@ -134,7 +135,7 @@ impl ApplyOpsGateMode {
     /// Stamps each row's Rule A birth envelope once the batch's ops apply.
     pub(crate) fn with_births(
         mut self,
-        births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
+        births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     ) -> Self {
         self.births = births;
         self

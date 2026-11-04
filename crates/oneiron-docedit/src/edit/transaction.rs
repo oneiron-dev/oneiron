@@ -313,6 +313,13 @@ pub enum DeckStep {
         sequence: StepSequence,
         values: Vec<StepCell>,
     },
+    /// Relationships of `slide` no element of it references (a
+    /// `set_picture`'s previous media, a deleted shape's), released with
+    /// each part nothing in the package references any more (FIX 10387).
+    ReleaseMedia {
+        slide: String,
+        relationships: Vec<String>,
+    },
 }
 
 impl DeckStep {
@@ -333,6 +340,7 @@ impl DeckStep {
             Self::ReorderSlides { .. } => "reorder_slides",
             Self::SetTableCell { .. } => "set_table_cell",
             Self::SetSeriesValues { .. } => "set_series_values",
+            Self::ReleaseMedia { .. } => "release_media",
         }
     }
 

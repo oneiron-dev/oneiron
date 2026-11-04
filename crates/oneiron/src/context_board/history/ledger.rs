@@ -185,7 +185,7 @@ impl Vault {
         turn: EntityId,
         owner: EntityId,
         memories: Option<&crate::context_board::MemoriesSection>,
-        worlds: Option<&crate::pipeline::ResolvedWorldAuthority>,
+        worlds: Option<&crate::claim::world_access::ResolvedWorldAuthority>,
         caller: &ScopedRead<'_>,
         accept: impl FnOnce(&BoardTurnReceipt) -> bool,
     ) -> Result<Option<BoardTurnReceipt>> {
@@ -203,7 +203,7 @@ impl Vault {
             }
         };
         if let Some(worlds) = worlds {
-            let readable = |set: &crate::pipeline::WorldAuthoritySet| {
+            let readable = |set: &crate::claim::world_access::WorldAuthoritySet| {
                 let mut kept = std::collections::BTreeSet::new();
                 for id in set.worlds() {
                     if caller.is_entity_readable(id)? {
@@ -602,6 +602,10 @@ impl Vault {
             {
                 return Err(BoardHistoryError::UnreadableDocument(*id));
             }
+            // Admitted on its stored row: a file-plane ASSET's live row then
+            // reconstructs its body, not its manifest; an older revision
+            // keeps the manifest it was stored as.
+            let raw = self.materialized_revision_in_txn(&txn, id, raw)?;
             documents.insert(*id, raw[ENTITY_METADATA_HEADER_LEN..].to_vec());
         }
         let read_receipt = scoped.read_receipt_in(&txn, None, 0)?;

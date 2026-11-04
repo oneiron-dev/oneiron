@@ -523,8 +523,9 @@ mod host {
                         },
                     };
                     // Its peer's bytes count in the check under the machine
-                    // the connection proved, until the stream closes.
-                    let (stream, credential) = self.floor.observe(stream);
+                    // the connection proved, and it holds its place, until
+                    // the stream closes, its upgraded socket's included.
+                    let (stream, credential) = self.floor.observe(stream, place);
                     let routes = TowerToHyperService::new(self.app.clone());
                     let body_idle = self.limits.body_idle_timeout;
                     let service =
@@ -538,9 +539,6 @@ mod host {
                     let header_read_timeout = self.limits.header_read_timeout;
                     let mut stop = winding.clone();
                     streams.spawn(pressure::keyed(credential, machine.0, async move {
-                        // The place is the stream's until it closes, upgrades
-                        // included.
-                        let _place = place;
                         let mut builder = hyper::server::conn::http1::Builder::new();
                         builder
                             .timer(TokioTimer::new())

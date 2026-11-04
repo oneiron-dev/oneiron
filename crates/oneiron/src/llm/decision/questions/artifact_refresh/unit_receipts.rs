@@ -11,6 +11,7 @@ use serde_json::Value;
 use super::super::store::secret_scan_before_put;
 use crate::edit_roundtrip::ArtifactAskRun;
 use crate::llm::decision::TypedDecision;
+use crate::office_body::LivePin;
 
 /// One unit an artifact ask left without an answer, as its log keeps it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -23,9 +24,18 @@ pub enum ArtifactUnitReceipt {
     Abstained {
         unit: Value,
         decision: Option<TypedDecision>,
+        /// The live body the ask read the unit on, when it read one (FIX
+        /// 12018).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        judged_live: Option<LivePin>,
     },
     /// Not read as given, and why.
-    Refused { unit: Value, reason: String },
+    Refused {
+        unit: Value,
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        judged_live: Option<LivePin>,
+    },
     /// A unit whose copy did not pass the secret scan: it was there, its
     /// content is left out.
     Omitted,
@@ -60,10 +70,12 @@ pub(crate) fn artifact_unit_receipts(run: &ArtifactAskRun) -> Vec<ArtifactUnitRe
         .map(|unit| ArtifactUnitReceipt::Abstained {
             unit: unit.unit.clone(),
             decision: unit.decision.clone(),
+            judged_live: unit.judged_live.clone(),
         });
     let refused = run.refused.iter().map(|unit| ArtifactUnitReceipt::Refused {
         unit: unit.unit.clone(),
         reason: unit.reason.clone(),
+        judged_live: unit.judged_live.clone(),
     });
     abstained
         .chain(refused)

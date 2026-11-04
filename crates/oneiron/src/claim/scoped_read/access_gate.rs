@@ -1,17 +1,19 @@
 //! Relationship access checks share the row read transaction with grant resolution.
-use super::ScopedRead;
+use super::access_class::ClassVerdicts;
 use super::agent_grants::{AskedFilter, HeldGrants};
+use super::{ScopedRead, ScopedReadActorKey};
 use crate::EntityId;
 use crate::access_grant::AccessContext;
-use crate::claim::{ClaimBody, decode_claim_body};
+use crate::claim::ClaimRecordScope;
+use crate::claim::{ClaimBody, RelationshipScope, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::error::Result;
-use crate::federation::Scope;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
     ENTITY_TYPE_TURN,
 };
 use crate::store::Store;
+use oneiron_authority::federation::Scope;
 use std::cell::RefCell;
 
 fn private_scope(scope: Option<&rmpv::Value>) -> bool {
@@ -31,10 +33,10 @@ fn private_scope(scope: Option<&rmpv::Value>) -> bool {
     private.unwrap_or(false)
 }
 
-/// The relationship a claim is scoped to and whether it is private, as
-/// relationship reads see them.
-pub(crate) fn claim_access_axes(body: &ClaimBody) -> (Option<EntityId>, bool) {
-    (body.rel, private_scope(body.scope.as_ref()))
+/// The relationship key a claim is scoped to (`all`, or its whole set) and
+/// whether it is private, as relationship reads see them.
+pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
+    (body.rel.clone(), private_scope(body.scope.as_ref()))
 }
 
 /// The relationship authority the row checks of one read share in its one
@@ -44,14 +46,17 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (Option<EntityId>, bool) {
 /// read asks on its own ([`Self::asking_use_of`]). The third holds, for the
 /// same serving txn, each reader's own live Grants once a row's own
 /// admission refuses it, and what the read asked of its rows (FIX 7462).
+/// The fourth holds, for the same serving txn, each reader's verdict on each
+/// CLAIM access class it judged (FIX 11915).
 #[derive(Default)]
 pub(super) struct HeldAuthority<'v>(
     RefCell<Option<AccessContext<'v>>>,
     Option<EntityId>,
     HeldGrants,
+    ClassVerdicts,
 );
 
-impl HeldAuthority<'_> {
+impl<'v> HeldAuthority<'v> {
     /// The row checks of one serving txn whose filter the read resolved from
     /// `requested` over its key's own floor (`None`: the floor alone).
     pub(super) fn for_request(requested: Option<&super::RetrievalFilter>) -> Self {
@@ -59,6 +64,7 @@ impl HeldAuthority<'_> {
             RefCell::default(),
             None,
             HeldGrants::fresh(AskedFilter::Known(requested.cloned())),
+            ClassVerdicts::default(),
         )
     }
 
@@ -66,19 +72,21 @@ impl HeldAuthority<'_> {
     /// conjunct on its own, after every other gate (FIX 5226): `id` is judged
     /// by every other gate as before, and every other row, each source `id`
     /// was written from included, keeps that conjunct. It shares this read's
-    /// Grants.
+    /// Grants and class verdicts.
     pub(super) fn asking_use_of(&self, id: EntityId) -> Self {
-        Self(RefCell::default(), Some(id), self.2.clone())
+        Self(RefCell::default(), Some(id), self.2.clone(), self.3.clone())
     }
 
     /// A peer's row checks in this read's serving txn: its own relationship
     /// authority and legal non-use conjunct, under its own floor alone, and
-    /// this read's Grants, where it reads its own actor's entry.
+    /// this read's Grants and class verdicts, where it reads its own actor's
+    /// entry and its own reader's verdicts.
     pub(super) fn for_peer(&self) -> Self {
         Self(
             RefCell::default(),
             None,
             self.2.shared_asking(AskedFilter::Known(None)),
+            self.3.clone(),
         )
     }
 
@@ -91,6 +99,58 @@ impl HeldAuthority<'_> {
     /// The Grants this serving txn holds, by reader.
     pub(super) fn grants(&self) -> &HeldGrants {
         &self.2
+    }
+
+    /// The CLAIM access class verdicts this serving txn holds, by reader.
+    pub(super) fn class_verdicts(&self) -> &ClassVerdicts {
+        &self.3
+    }
+
+    /// `judge` over the relationship authority of `principal` this serving
+    /// txn holds: loaded in `txn` at the first row that needs it, then
+    /// reused (FIX 11915). A load that fails holds nothing and is the
+    /// read's error.
+    pub(super) fn relationship_allows_in(
+        &self,
+        vault: &'v crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        principal: Option<EntityId>,
+        judge: impl FnOnce(&AccessContext<'v>) -> bool,
+    ) -> Result<bool> {
+        let mut held = self.0.borrow_mut();
+        let context = match held.take() {
+            Some(context) => context,
+            None => AccessContext::load(vault, txn, principal)?,
+        };
+        let allowed = judge(&context);
+        *held = Some(context);
+        Ok(allowed)
+    }
+}
+
+impl ScopedReadActorKey {
+    /// Whether a read under this key meets the relationship gate in `txn`. A
+    /// narrower credential of the owner's is exempt only while its holder
+    /// still exists and is the vault's owner in this snapshot (Astra
+    /// #1413-003, Sol R5-007).
+    pub(super) fn relationship_gated_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<bool> {
+        if !self.enforce_access_grants {
+            return Ok(false);
+        }
+        let Some(owner) = self.owner_exemption else {
+            return Ok(true);
+        };
+        crate::memory::owner_exemption_holds_in_txn(vault, txn, owner)
+            .map(|owner| !owner)
+            .map_err(|refusal| {
+                crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(
+                    Box::new(refusal),
+                ))
+            })
     }
 }
 
@@ -114,31 +174,22 @@ impl<'v> ScopedRead<'v> {
         Ok(self.vault.store.env.read_txn()?)
     }
 
-    /// Whether this read's relationship gate binds in `txn`. A narrower
-    /// credential of the owner's is exempt only while its holder still exists
-    /// and is the vault's owner in this snapshot (Astra #1413-003, Sol
-    /// R5-007).
+    /// Whether this read's relationship gate binds in `txn`; see
+    /// [`ScopedReadActorKey::relationship_gated_in`].
     pub(super) fn relationship_gated_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
-        if !self.actor_key.enforce_access_grants {
-            return Ok(false);
-        }
-        let Some(owner) = self.actor_key.owner_exemption else {
-            return Ok(true);
-        };
-        crate::memory::owner_exemption_holds_in_txn(self.vault, txn, owner)
-            .map(|owner| !owner)
-            .map_err(|refusal| {
-                crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(
-                    Box::new(refusal),
-                ))
-            })
+        self.actor_key.relationship_gated_in(self.vault, txn)
     }
 
+    /// Whether the relationship gate admits the claim `id` in `txn`, judged
+    /// by the reader's grants and memberships `authority` holds for this
+    /// serving txn: loaded at the first claim that needs them, then reused,
+    /// as [`Self::relationship_raw_allowed_in`] reuses them (FIX 11915).
     pub(super) fn relationship_claim_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         body: &ClaimBody,
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         if !self.relationship_gated_in(txn)? {
             return Ok(true);
@@ -147,8 +198,9 @@ impl<'v> ScopedRead<'v> {
         if self.support_disclosure_admits_in(txn, id, &read)? {
             return Ok(true);
         }
-        let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
-        Ok(read.allowed_by(&context))
+        authority.relationship_allows_in(self.vault, txn, self.actor_key.principal_ref, |context| {
+            read.allowed_by(context)
+        })
     }
 
     /// [`Self::relationship_claim_allowed_in`] for a claim that may never
@@ -158,7 +210,7 @@ impl<'v> ScopedRead<'v> {
     pub(super) fn relationship_axes_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        space: Option<EntityId>,
+        space: RelationshipScope,
         private: bool,
         record: &Scope,
     ) -> Result<bool> {
@@ -235,15 +287,10 @@ impl<'v> ScopedRead<'v> {
         if self.support_disclosure_admits_in(txn, id, &read)? {
             return Ok(true);
         }
-        let mut held = authority.0.borrow_mut();
-        let context = match held.take() {
-            Some(context) => context,
-            None => AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?,
-        };
-        let allowed = read.allowed_by(&context)
-            || self.conversation_message_granted_in(txn, id, &read, &context);
-        *held = Some(context);
-        Ok(allowed)
+        authority.relationship_allows_in(self.vault, txn, self.actor_key.principal_ref, |context| {
+            read.allowed_by(context)
+                || self.conversation_message_granted_in(txn, id, &read, context)
+        })
     }
 
     /// Whether `context` holds a live read grant over the conversation the
@@ -317,11 +364,12 @@ pub(crate) enum RelationshipRead {
     /// (`false`).
     Decided(bool),
     /// The reader's memberships and grants decide, from the row's kind, the
-    /// relationship it is scoped to, whether it is private, and its record
-    /// position.
+    /// relationships it is scoped to (`None` for none named or `all`; a
+    /// CLAIM's whole set, a MESSAGE's or SUMMARY's one), whether it is
+    /// private, and its record position.
     Gated {
         kind: u8,
-        space: Option<EntityId>,
+        space: RelationshipScope,
         private: bool,
         record: Scope,
     },
@@ -342,12 +390,22 @@ impl RelationshipRead {
     pub(crate) fn allowed_by(&self, context: &AccessContext<'_>) -> bool {
         match self {
             Self::Decided(allowed) => *allowed,
+            // A scoped row reads through any one relationship of its set the
+            // reader may read; the explicit empty set names none.
             Self::Gated {
                 kind,
-                space,
+                space: None,
                 private,
                 record,
-            } => context.allows_at_snapshot(*kind, *space, *private, record),
+            } => context.allows_at_snapshot(*kind, None, *private, record),
+            Self::Gated {
+                kind,
+                space: Some(ids),
+                private,
+                record,
+            } => ids
+                .iter()
+                .any(|id| context.allows_at_snapshot(*kind, Some(*id), *private, record)),
         }
     }
 }
@@ -461,7 +519,7 @@ where
     };
     Ok(RelationshipRead::Gated {
         kind,
-        space,
+        space: crate::claim::relationship_scope_of(space),
         private,
         record,
     })

@@ -33,7 +33,7 @@ pub use self::rubric::{
     JudgeLabelChecker, JudgeLabelFit, JudgeLabelRecheckReport, JudgeLabelRecheckRequest,
     JudgeLabelRegrade, judge_rubric, record_judge_label_regrade,
 };
-pub(crate) use self::rubric::{judge_rubric_in_txn, recheck_judge_labels};
+pub(crate) use self::rubric::{judge_head_in_txn, judge_rubric_in_txn, recheck_judge_labels};
 
 /// Proposed calibration asks, keyed by the ask id (the digest of its immutable question).
 const ASKS: SideTable<[u8; 32], JudgeAsk, LegacyJson> =
@@ -139,6 +139,11 @@ pub struct JudgeRegrade {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JudgeLabel {
+    /// The row's own id (FIX 12088), minted when the pick is recorded: the
+    /// witness a re-check names beside the rubric it checks against. Labels
+    /// are keyed by their ask id, a question digest, not an `EntityId`.
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub row_id: EntityId,
     pub ask: JudgeAsk,
     pub chosen: String,
     pub picked_at: u64,
@@ -596,6 +601,7 @@ fn pick_in_txn(
     // first, so the edit's stamp reaches only the picks made before it.
     repin_before_pick_in_txn(vault, txn, at)?;
     let label = JudgeLabel {
+        row_id: vault.store.clock.entity_id()?,
         ask,
         chosen,
         picked_at: at,

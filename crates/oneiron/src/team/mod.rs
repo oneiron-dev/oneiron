@@ -12,6 +12,9 @@
 //! before the work. Patterns are compared at equal budget, in Phase 2;
 //! nothing here adds a runtime task kind.
 
+pub mod spawn_need;
+pub mod team_shape;
+pub(crate) use crate::claim::dispatch_input as widen_record;
 mod choice_learning;
 mod door_reads;
 pub mod doors;
@@ -25,7 +28,9 @@ pub mod run;
 pub mod run_binding;
 pub mod solo;
 mod spawn_intent;
+pub mod spawn_override;
 pub mod stack;
+pub mod task_exposure;
 
 pub(crate) use choice_learning::{ChoiceLearning, LearnedChoice};
 pub use doors::{
@@ -53,8 +58,8 @@ pub use pattern::{
 };
 pub use payoff::{PatternCardEntry, PayoffRow, PlannerCard, payoff_table, planner_card};
 pub use receipt::{
-    Coverage, DecidedBy, PatternSkillRef, TeamOutcome, TeamReceipt, TeamShape, record_team_receipt,
-    settle_team_outcome, team_receipt, team_receipts,
+    Coverage, DecidedBy, PatternSkillRef, TeamCritic, TeamOutcome, TeamReceipt, TeamShape,
+    record_team_receipt, settle_team_outcome, team_receipt, team_receipts,
 };
 pub(crate) use receipt::{ReceiptScan, team_receipts_in_txn};
 pub use run::{

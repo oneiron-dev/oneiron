@@ -276,6 +276,7 @@ impl SyncServer {
             renderer_turns,
             wire_telemetry,
             mesh_pressure: crate::wire_telemetry::PoolPressure::mesh(),
+            invocation_claims: crate::invocation_claims::InvocationClaimStore::new(vault.clone()),
             vault,
             root_doc,
             ephemeral_store,
@@ -288,6 +289,7 @@ impl SyncServer {
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             lifecycle_in_flight: std::sync::Mutex::new(HashSet::new()),
             housekeeping_passes: Default::default(),
+            queue_driver_started: std::sync::atomic::AtomicBool::new(false),
             standing_block_cache: Mutex::new(
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),

@@ -22,8 +22,10 @@ use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_NOTE, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD,
 };
-use crate::secret_custody::{KeptValues, KnownValues, masked_file_in_txn};
+use crate::secret_custody::KeptValues;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::file_key_masks::masked_file_in_txn;
+use crate::store::known_value_index::KnownValues;
 use crate::{TimeRange, Vault};
 
 /// The text each record was indexed with, by field.
@@ -160,7 +162,7 @@ pub(super) fn remark(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<D
 /// beside its marks, past the owner's rulings in the record; `true` when
 /// one was added.
 fn remark_file(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId, bytes: &[u8]) -> Result<bool> {
-    let Some(known) = KnownValues::load_in_writer(&vault.store, txn)? else {
+    let Some(known) = KnownValues::shared_in_writer(&vault.store, txn)? else {
         return Ok(false);
     };
     let kept = KeptValues::for_records_in_txn(&vault.store, txn, [*id])?;
@@ -323,7 +325,7 @@ fn rewrite(
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
     let body_hit = write_payload_hit(body).is_some();
     let fields = index_inputs(vault, txn, id)?;
-    crate::bm25::deindex_text(&vault.store, txn, id)?;
+    crate::store::text_index::deindex_text(&vault.store, txn, id)?;
     let mut batch = vault.batch_in();
     if body_hit {
         crate::vault::entity_revision::drop_vector_state(vault, txn, id)?;
@@ -426,7 +428,7 @@ fn lift_file_text(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<(
         .iter()
         .any(|(_, text)| write_payload_hit(text.as_bytes()).is_some())
     {
-        crate::bm25::deindex_text(&vault.store, txn, id)?;
+        crate::store::text_index::deindex_text(&vault.store, txn, id)?;
         let fields = fields
             .iter()
             .map(|(name, text)| (name.as_str(), text.as_str()))

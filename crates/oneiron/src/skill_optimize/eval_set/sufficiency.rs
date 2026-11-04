@@ -217,7 +217,8 @@ fn ask_key(decision: &str, case: &EntityId) -> Vec<u8> {
     hash.update(decision.as_bytes());
     hash.update(b"\0");
     hash.update(case.as_bytes());
-    [LABEL_ASK_PREFIX, hash.finalize().as_slice()].concat()
+    let digest = hash.finalize();
+    [LABEL_ASK_PREFIX, &digest[..]].concat()
 }
 
 fn bounded(text: &str) -> bool {

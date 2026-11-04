@@ -16,6 +16,9 @@ pub use presentation::{
     FieldControl, FieldLayout, FieldMark, FieldPresentation, PageGeometry, layout_field,
     present_field,
 };
+mod admitted;
+pub use admitted::InspectionMemory;
+pub use lopdf::DecodeAdmissionError;
 mod evidence;
 mod fields;
 mod preflight;
@@ -105,6 +108,14 @@ pub enum PdfPreparationError {
     InvalidCanonicalUrl,
     #[error("PDF encoding failed")]
     Encoding,
+    /// The machine's memory floor refused the revision read: `needed` more
+    /// bytes past `available` at most (6274). Retryable, never malformed.
+    #[error("the machine's memory floor: {needed} bytes needed, {available} available")]
+    MemoryFloor { needed: u64, available: u64 },
+    /// The host's wait for memory ran out on the revision read (6274).
+    /// A caller may ask again. Never malformed.
+    #[error("the work's resource wait or deadline passed")]
+    Deadline,
 }
 impl From<lopdf::Error> for PdfPreparationError {
     fn from(error: lopdf::Error) -> Self {
@@ -203,7 +214,7 @@ pub fn prepare_esign_pdf_within(
         return Err(PdfPreparationError::MalformedPdf);
     }
     let bound = StreamBound::of(stream_decode_bytes);
-    let source = preflight::load(original, bound)?;
+    let source = preflight::load(original, bound, &admitted::Stage::UNADMITTED)?;
     reject_signatures(&source)?;
     let catalog = source.catalog()?;
     if [b"OCProperties".as_slice(), b"AlternatePresentations"]
@@ -255,7 +266,23 @@ pub fn prepare_esign_pdf_within(
         ids: BTreeMap::new(),
         active: BTreeSet::new(),
         bound,
+        copied_resources: BTreeMap::new(),
     };
+    // This item's fields by page, in document order: each page burns its own
+    // without reading every other page's (FIX 3810).
+    let mut page_fields: BTreeMap<u32, Vec<&EsignField>> = BTreeMap::new();
+    for field in request
+        .state
+        .document
+        .fields
+        .iter()
+        .filter(|f| f.item == request.item)
+    {
+        page_fields
+            .entry(field.geometry.page)
+            .or_default()
+            .push(field);
+    }
     let mut kids = Vec::new();
     let mut images = fields::BurnImages::default();
     let mut contents = PageContents::default();
@@ -291,7 +318,9 @@ pub fn prepare_esign_pdf_within(
             &mut out,
             &mut resources,
             geometry.display_box()?,
-            index as u32 + 1,
+            page_fields
+                .get(&(index as u32 + 1))
+                .map_or(&[][..], Vec::as_slice),
             &request,
             font,
             &mut images,
@@ -362,7 +391,28 @@ pub fn inspect_pdf_pages_within(
     bytes: &[u8],
     stream_decode_bytes: u64,
 ) -> Result<Vec<PageGeometry>> {
-    let source = preflight::load(bytes, StreamBound::of(stream_decode_bytes))?;
+    inspect_in(bytes, stream_decode_bytes, &admitted::Stage::UNADMITTED)
+}
+/// [`inspect_pdf_pages_within`] with its parse's memory admitted by its host
+/// before it is allocated (FIX 8065): lopdf's object tables, stream copies
+/// and decodes, and the preflight's xref tables, decodes and revision
+/// snapshots, each asked of `memory` first; a finished stage gives its
+/// memory back ([`InspectionMemory::release`]). A refused admission ends the
+/// inspection as a malformed PDF; the host reads its own refusal.
+pub fn inspect_pdf_pages_admitted(
+    bytes: &[u8],
+    stream_decode_bytes: u64,
+    memory: std::sync::Arc<dyn InspectionMemory>,
+) -> Result<Vec<PageGeometry>> {
+    inspect_in(bytes, stream_decode_bytes, &admitted::Stage::on(memory))
+}
+/// The inspection of `bytes` on `stage`, which outlives the parsed document.
+fn inspect_in(
+    bytes: &[u8],
+    stream_decode_bytes: u64,
+    stage: &admitted::Stage,
+) -> Result<Vec<PageGeometry>> {
+    let source = preflight::load(bytes, StreamBound::of(stream_decode_bytes), stage)?;
     reject_signatures(&source)?;
     let mut input = Vec::new();
     pages(

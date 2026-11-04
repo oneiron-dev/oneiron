@@ -1,6 +1,5 @@
 //! Row-backed wake admission. The host supplies liveness; the vault owns the decision.
 use crate::Vault;
-use crate::agent_def::{AgentDefinition, AgentWakeCadence};
 use crate::claim::{ClaimLifecycleStatus, ClaimSource, decode_claim_body};
 use crate::dreamer_runner::{
     DreamerRunnerStore, DreamerTurnRole, EnqueueDreamerAttemptOutcome, dreamer_turn_role,
@@ -9,10 +8,15 @@ use crate::error::{Error, Result};
 use crate::ports::{ChangeLogStoreRead, EntityStoreRead, TombstoneStore};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::{agent_def::AgentDefinition, store::agent_record::AgentWakeCadence};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
 
 mod observation;
+pub use crate::store::dreamer_wake_policy::{
+    AgentWakePolicy, AgentWakeRole, AgentWakeSignals, AgentWakeTriggers, CadencePrecedence,
+    DreamerWakePolicy, WeaveRecipePriority,
+};
 pub use observation::*;
 
 const POLICY: SideTable<(), DreamerWakePolicy, LegacyJson> =
@@ -26,90 +30,20 @@ fn invalid() -> Error {
     Error::InvalidConfig("invalid dreamer wake policy row".into())
 }
 
-/// Per-vault recipe dials. An owner may write a different v1 row; these are
-/// data, not compiled thresholds. `new_records` excludes Generated claims.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DreamerWakePolicy {
-    pub wake_grain_turns: u64,
-    /// Resident trigger table, missing-role rule and nested rate precedence.
-    pub agent_cadence: AgentWakePolicy,
-    /// New explicit CLAIMs plus user TURNs since the last weave.
-    pub new_records: u64,
-    pub longest_wait_secs: u64,
-    pub nightly_secs: u64,
-    /// Minimum inbound silence for any idle recipe to run.
-    pub idle_secs: u64,
-    /// Independent quiet-window trigger for Weave, even below accumulation.
-    pub quiet_weave_secs: u64,
-    /// Where the per-vault workflow skill competes with connector events.
-    /// Cleanup and maintenance retain their protected priority; consolidation
-    /// stays after these two lanes so its home-node stop cannot starve them.
-    pub weave_recipe_priority: WeaveRecipePriority,
-    /// The surprise floor, in thousandths (OF-138, ARCH-0036): a turn whose
-    /// re-tag moved at least this far beside the set it replaced is a
-    /// surprise signal for a resident's wake. The tagger measures the delta;
-    /// a role's trigger table decides whether surprise may wake it.
-    pub surprise_permille: u16,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WeaveRecipePriority {
-    BeforeConnectorEvent,
-    AfterConnectorEvent,
-}
-/// Which role a definition without an explicit cadence dial receives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentWakeRole {
-    Companion,
-    Leader,
-    Worker,
-}
-
-/// The owner-selected cadence precedence. The shipped default lets an
-/// agent's explicit interval override the vault grain (FIX 8727); an owner
-/// who wants no agent woken more often than the vault picks the vault floor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CadencePrecedence {
-    VaultFloor,
-    AgentOverride,
-}
-
-/// Which signal classes admit a wake for one role. Each bit is policy data,
-/// not a hardcoded role switch in the scheduler.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentWakeTriggers {
-    pub cadence: bool,
-    pub surprise: bool,
-    pub agency: bool,
-    pub event: bool,
-}
-
-/// Role table on the owner-editable wake-policy row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentWakePolicy {
-    pub absent_role: AgentWakeRole,
-    pub precedence: CadencePrecedence,
-    pub companion: AgentWakeTriggers,
-    pub leader: AgentWakeTriggers,
-    pub worker: AgentWakeTriggers,
-}
-
-/// Trigger facts supplied to the engine scheduler; the policy selects which
-/// facts a resident role may use. Cadence is derived, never caller asserted.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct AgentWakeSignals {
-    pub surprise: bool,
-    pub agency: bool,
-    pub event: bool,
-}
-
 impl AgentWakePolicy {
+    /// The role `definition` wakes as under this row: its own cadence dial,
+    /// else the row's absent role. This is the agent's recorded kind: a
+    /// `Companion` is a companion, any other role a work agent.
+    #[must_use]
+    pub fn role_of(self, definition: &AgentDefinition) -> AgentWakeRole {
+        match definition.wake_cadence {
+            Some(AgentWakeCadence::Companion { .. }) => AgentWakeRole::Companion,
+            Some(AgentWakeCadence::Leader { .. }) => AgentWakeRole::Leader,
+            Some(AgentWakeCadence::Worker) => AgentWakeRole::Worker,
+            None => self.absent_role,
+        }
+    }
+
     /// Resolve role, interval and trigger permissions under a single row.
     #[must_use]
     pub fn due(
@@ -119,7 +53,8 @@ impl AgentWakePolicy {
         ordinal: u64,
         signals: AgentWakeSignals,
     ) -> bool {
-        if !definition.enabled || definition.dreaming_mode() == crate::agent_def::DreamingMode::Off
+        if !definition.enabled
+            || definition.dreaming_mode() == crate::store::agent_record::DreamingMode::Off
         {
             return false;
         }
@@ -610,6 +545,16 @@ impl Vault {
     pub fn dreamer_wake_policy(&self) -> Result<DreamerWakePolicy> {
         let txn = self.store.env.read_txn()?;
         policy_in_txn(self, &txn)
+    }
+
+    /// The role `definition` wakes as under this vault's policy row, read in
+    /// `txn` ([`AgentWakePolicy::role_of`]).
+    pub(crate) fn agent_wake_role_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        definition: &AgentDefinition,
+    ) -> Result<AgentWakeRole> {
+        Ok(policy_in_txn(self, txn)?.agent_cadence.role_of(definition))
     }
     /// Read-only policy query. The due time is a one-shot sleep target, not a poll rate.
     pub fn evaluate_dreamer_wake(

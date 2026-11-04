@@ -512,7 +512,7 @@ impl SyncServer {
             Ok(vector) => Some(vector),
             // The model is still loading; the worker logs its own progress.
             Err(EmbedQueryRefusal::NotReady | EmbedQueryRefusal::NotConfigured) => None,
-            Err(EmbedQueryRefusal::Failed) => {
+            Err(EmbedQueryRefusal::Failed | EmbedQueryRefusal::BudgetDenied) => {
                 tracing::debug!("recall runs sparse: the query did not embed");
                 None
             }
@@ -615,6 +615,7 @@ fn recall_did_not_finish() -> MemoryError {
 /// runs. Not for use inside a `LocalSet`; [`crate::build_app`] asks hosts
 /// not to serve from one.
 pub(crate) fn blocking<R: Send>(work: impl FnOnce() -> R + Send) -> R {
+    let work = oneiron::store::carry_idempotency_intent(work);
     match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
         Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
         Ok(_) => std::thread::scope(|scope| {

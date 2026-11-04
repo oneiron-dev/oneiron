@@ -12,6 +12,7 @@
 //! send.
 
 mod counterparty;
+mod join;
 mod metadata;
 mod owner;
 mod packet_signature;
@@ -20,6 +21,7 @@ mod wire;
 
 use serde::{Deserialize, Serialize};
 
+use self::join::ReportImportJoin;
 pub use self::metadata::ReportPublisherMetadata;
 pub use self::owner::{
     ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
@@ -27,15 +29,21 @@ pub use self::owner::{
 };
 pub(crate) use self::wire::received_issue_signature;
 use self::wire::{SignatureSink, signature_request, wire_body};
+use super::store;
 use super::{ReportDisclosure, ReportIssue, ReportRoute, ReportRoutedPayload, ReportStatus};
+use crate::consent::StandingConsentGrant;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::edit_distance::publisher::{
     IssueSignature, PublisherActor, PublisherError, SignatureDeliveryOutcome,
     emit_issue_signature_in_txn, issue_signature, record_signature_delivery,
-    record_signature_delivery_in_txn, record_signature_hold_in_txn,
+    record_signature_delivery_in_txn, record_signature_hold_in_txn, record_signature_local_in_txn,
 };
 use crate::outbound::{
-    OutboundDispatchOutcome, OutboundExecutionOutcome, OutboundExecutionRequest, connector_actor_id,
+    OutboundDispatchError, OutboundDispatchOutcome, OutboundExecutionOutcome,
+    OutboundExecutionRequest, connector_actor_id, outbound_dispatch_attempt_id,
+};
+use crate::outbound_intent_ledger::{
+    IntentLedgerError, IntentResolution, read_intent_for_attempt_in_txn,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
@@ -45,8 +53,7 @@ use crate::{EntityId, Error, Result, Vault};
 pub const COACH_FEEDBACK_DELIVERY_FACET: &str = "coach.feedback_delivery";
 /// The one delivery lane built here: content-free signatures.
 pub const REPORT_SIGNATURE_LANE: &str = "signature";
-/// The outbound verb a signature leaves on, beside a bundle's `send`.
-pub const REPORT_SIGNATURE_VERB: &str = "signature";
+pub use crate::outbound::report_signature::REPORT_SIGNATURE_VERB;
 /// The schema token every signature body carries.
 pub const REPORT_SIGNATURE_SCHEMA: &str = "oneiron.issue_signature.v1";
 
@@ -312,13 +319,22 @@ impl Vault {
         self.require_coach_attempt(admitted, COACH_FEEDBACK_DELIVERY_FACET)?;
         self.keep_signature_participation(transport.destination().as_ref(), now)?;
         let mut pass = ReportDeliveryPass::default();
+        let join_cell: std::cell::RefCell<Option<ReportImportJoin>> = std::cell::RefCell::new(None);
         let mut after = None;
         loop {
-            let page = self.report_inbox(after, INBOX_PAGE)?;
+            // One grant load per page: the page and its sends share the set
+            // (FIX 9366). The set is pass-local, dropped at pass end.
+            let (page, grants) = self.report_inbox_page_and_grants(after, INBOX_PAGE)?;
             for issue in &page {
                 after = Some((issue.received_at, EntityId::from_hex(&issue.issue_ref)?));
                 pass.seen += 1;
-                match self.send_report_signature(&issue.issue_ref, transport, now) {
+                match self.send_report_signature_with_grants(
+                    &issue.issue_ref,
+                    transport,
+                    now,
+                    &join_cell,
+                    &grants,
+                ) {
                     Ok(Some(record)) => pass.count(&record),
                     Ok(None) => pass.not_routed += 1,
                     Err(error) => {
@@ -338,7 +354,9 @@ impl Vault {
     /// routed to a publisher. A finished lane answers its record and sends
     /// nothing. The gate admits the send on the participation grant that
     /// [`Self::run_coach_feedback_delivery`] keeps; without it the send is
-    /// held like any other.
+    /// held like any other. One merged issue read feeds both the routed
+    /// filter and the build (FIX 9366): one decode on one txn, one grant
+    /// scan at most.
     ///
     /// # Errors
     ///
@@ -349,15 +367,87 @@ impl Vault {
         transport: &mut T,
         now: u64,
     ) -> Result<Option<ReportDeliveryRecord>> {
+        let join_cell = std::cell::RefCell::new(None);
+        self.send_report_signature_with(issue_ref, transport, now, &join_cell)
+    }
+
+    /// [`Self::send_report_signature`] on the run's import join, built
+    /// lazily in `join_cell` on first need.
+    fn send_report_signature_with<T: ReportSignatureTransport + ?Sized>(
+        &self,
+        issue_ref: &str,
+        transport: &mut T,
+        now: u64,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
+    ) -> Result<Option<ReportDeliveryRecord>> {
         let id = EntityId::from_hex(issue_ref)?;
         // The content-free projection: this lane carries no text (FIX 8747).
-        let Some(payload) = self.report_signature_payload(&id)? else {
+        let txn = self.store.env.read_txn()?;
+        let Some(issue) = store::read(self, &txn, &id)? else {
+            drop(txn);
+            self.retire_unrouted_signature(None)?;
             return Ok(None);
         };
+        let Some(payload) = Self::routed_payload_from_issue(&issue, false) else {
+            // The issue no longer routes to a publisher: a lane it left behind
+            // keeps an unanswered signature no run will ever send, so it reads
+            // as no lane's (FIX 11631).
+            drop(txn);
+            self.resolve_unrouted_signature_delivered(&issue, now, join_cell)?;
+            self.retire_unrouted_signature(Some(&issue))?;
+            return Ok(None);
+        };
+        drop(txn);
+        self.deliver_report_signature(&issue, &payload, transport, now, join_cell)
+    }
+
+    /// Pass-local send (FIX 9366, one load per pass): same as
+    /// [`Self::send_report_signature`] but projects with the page's
+    /// already-loaded grants, so a delivery run does 0 fresh grant loads per
+    /// send. Output-identical: the content-free filter ignores the
+    /// `Approved`/`NeedsApproval` flip (persisted route, status and `Denied`
+    /// only), and the build reads only route and subject, never disclosure.
+    fn send_report_signature_with_grants<T: ReportSignatureTransport + ?Sized>(
+        &self,
+        issue_ref: &str,
+        transport: &mut T,
+        now: u64,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
+        grants: &[StandingConsentGrant],
+    ) -> Result<Option<ReportDeliveryRecord>> {
+        let id = EntityId::from_hex(issue_ref)?;
+        let txn = self.store.env.read_txn()?;
+        let Some(issue) = store::read_with_grants(self, &txn, &id, grants)? else {
+            drop(txn);
+            self.retire_unrouted_signature(None)?;
+            return Ok(None);
+        };
+        let Some(payload) = Self::routed_payload_from_issue(&issue, false) else {
+            // The issue no longer routes to a publisher: a lane it left behind
+            // keeps an unanswered signature no run will ever send, so it reads
+            // as no lane's (FIX 11631).
+            drop(txn);
+            self.resolve_unrouted_signature_delivered(&issue, now, join_cell)?;
+            self.retire_unrouted_signature(Some(&issue))?;
+            return Ok(None);
+        };
+        drop(txn);
+        self.deliver_report_signature(&issue, &payload, transport, now, join_cell)
+    }
+
+    /// The lane work after the merged read (FIX 9366): `issue` feeds the
+    /// build and `payload` the content-free filter, both from one snapshot.
+    /// Final-lane ledger resolution (FIX 11629), holds, freeze and dispatch
+    /// below are unchanged.
+    fn deliver_report_signature<T: ReportSignatureTransport + ?Sized>(
+        &self,
+        issue: &ReportIssue,
+        payload: &ReportRoutedPayload,
+        transport: &mut T,
+        now: u64,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
+    ) -> Result<Option<ReportDeliveryRecord>> {
         let ReportRoute::Publisher { publisher_ref } = &payload.route else {
-            return Ok(None);
-        };
-        let Some(issue) = self.report_issue(&id)? else {
             return Ok(None);
         };
         let key = ReportDeliveryKey::signature(&payload.signature.issue_ref, publisher_ref);
@@ -371,20 +461,55 @@ impl Vault {
             .as_ref()
             .is_some_and(ReportDeliveryOutcome::is_final)
         {
-            // A finished lane whose write-back never ran settles here; a
-            // settled one reads and writes nothing (FIX 7690).
-            if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
-                record_signature_delivery(self, signature, send_ref, outcome, |artifact| {
-                    self.report_publisher_actor(publisher_ref, artifact)
-                })
-                .map_err(engine_error)?;
+            // A send that was uncertain may have been confirmed since: its frozen
+            // send resolves against the outbound ledger without resending, and a
+            // confirmed delivery lands on the lane and its signature in one write
+            // (FIX 11629). Any other resolution replays the saved outcome.
+            if !matches!(record.outcome, Some(ReportDeliveryOutcome::Delivered))
+                && self.resolve_signature_send_delivered(&record)?
+            {
+                record.outcome = Some(ReportDeliveryOutcome::Delivered);
+                record.updated_at = now;
+                let publisher = self.delivered_publisher(&record, publisher_ref, join_cell)?;
+                self.with_write_txn_grouped(|txn| {
+                    DELIVERIES.put(&self.store, txn, &row, &record)?;
+                    if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
+                        record_signature_delivery_in_txn(
+                            self,
+                            txn,
+                            signature,
+                            send_ref,
+                            outcome,
+                            publisher.as_ref(),
+                        )
+                        .map_err(engine_error)?;
+                    }
+                    Ok(())
+                })?;
+            } else {
+                // A finished lane whose write-back never ran settles here; a
+                // settled one reads and writes nothing (FIX 7690).
+                if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
+                    record_signature_delivery(self, signature, send_ref, outcome, |artifact| {
+                        self.with_report_import_join(join_cell, |join| {
+                            self.report_publisher_actor_in(join, publisher_ref, artifact)
+                        })
+                    })
+                    .map_err(engine_error)?;
+                }
             }
             return Ok(Some(record));
         }
         record.updated_at = now;
         let mut built = None;
-        record.hold =
-            self.signature_hold(&mut record, &mut built, &issue, &payload, &*transport)?;
+        record.hold = self.signature_hold(
+            &mut record,
+            &mut built,
+            &issue,
+            &payload,
+            &*transport,
+            join_cell,
+        )?;
         // The frozen bytes and send are written before they can leave:
         // admission reads them under the outbound writer. A signature built
         // now is stored in that same write, so a crash leaves both or
@@ -414,7 +539,7 @@ impl Vault {
         })?;
         if record.hold.is_none() {
             self.dispatch_report_signature(&mut record, transport, now)?;
-            let publisher = self.delivered_publisher(&record, publisher_ref)?;
+            let publisher = self.delivered_publisher(&record, publisher_ref, join_cell)?;
             // The send's outcome lands on its ED-08 signature in the lane's
             // own write (FIX 7690), naming the publisher ACTOR (FIX 7829).
             self.with_write_txn_grouped(|txn| {
@@ -447,9 +572,10 @@ impl Vault {
         issue: &ReportIssue,
         payload: &ReportRoutedPayload,
         transport: &T,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
     ) -> Result<Option<ReportDeliveryHold>> {
         if record.signature.is_none() {
-            match self.build_report_signature(issue, payload)? {
+            match self.build_report_signature(issue, payload, join_cell)? {
                 Ok(signature) => *built = Some(signature),
                 Err(reason) => {
                     return Ok(Some(ReportDeliveryHold::MetadataUnresolved {
@@ -504,8 +630,9 @@ impl Vault {
         &self,
         issue: &ReportIssue,
         payload: &ReportRoutedPayload,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
     ) -> Result<std::result::Result<BuiltSignature, &'static str>> {
-        let metadata = match self.resolve_report_publisher_metadata(issue)? {
+        let metadata = match self.resolve_report_publisher_metadata_with(issue, join_cell)? {
             Ok(metadata) => metadata,
             Err(reason) => return Ok(Err(reason)),
         };
@@ -582,6 +709,7 @@ impl Vault {
         &self,
         record: &ReportDeliveryRecord,
         publisher_ref: &str,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
     ) -> Result<Option<PublisherActor>> {
         if !matches!(record.outcome, Some(ReportDeliveryOutcome::Delivered)) {
             return Ok(None);
@@ -590,9 +718,115 @@ impl Vault {
             return Ok(None);
         };
         match issue_signature(self, frozen.signature).map_err(engine_error)? {
-            Some(signature) => self.report_publisher_actor(publisher_ref, signature.artifact()),
+            Some(signature) => self.with_report_import_join(join_cell, |join| {
+                self.report_publisher_actor_in(join, publisher_ref, signature.artifact())
+            }),
             None => Ok(None),
         }
+    }
+
+    /// Whether the outbound ledger confirms the lane's frozen send as delivered
+    /// (FIX 11629): call 0 of its dispatch attempt, resolved without resending.
+    /// `false` for no row, any other resolution, or a row that does not read —
+    /// the replay then keeps the saved outcome. Only storage failures propagate.
+    fn resolve_signature_send_delivered(&self, record: &ReportDeliveryRecord) -> Result<bool> {
+        let Some(send) = &record.send else {
+            return Ok(false);
+        };
+        let attempt = match outbound_dispatch_attempt_id(&send.send_ref) {
+            Ok(attempt) => attempt,
+            Err(OutboundDispatchError::Engine(error)) => return Err(error),
+            Err(_) => return Ok(false),
+        };
+        let txn = self.store.env.read_txn()?;
+        let row = match read_intent_for_attempt_in_txn(self, &txn, attempt, 0) {
+            Ok(row) => row,
+            Err(IntentLedgerError::Engine(error)) => return Err(error),
+            Err(_) => return Ok(false),
+        };
+        Ok(matches!(
+            row.as_ref().map(IntentResolution::from_record),
+            Some(Ok(IntentResolution::Delivered))
+        ))
+    }
+
+    /// Confirms an unrouted lane's frozen send when the outbound ledger already
+    /// reconciled it as delivered (FIX 12381): an Uncertain lane, or a
+    /// NotDelivered lane whose dispatch is Deferred, resolves without resending.
+    /// A confirmed delivery lands on the lane and its signature in one write,
+    /// exactly like the routed resolve (FIX 11629). Any other outcome, a missing
+    /// row, or any other ledger resolution changes nothing.
+    fn resolve_unrouted_signature_delivered(
+        &self,
+        issue: &ReportIssue,
+        now: u64,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
+    ) -> Result<()> {
+        let ReportRoute::Publisher { publisher_ref } = &issue.route else {
+            return Ok(());
+        };
+        let key = ReportDeliveryKey::signature(&issue.issue_ref, publisher_ref);
+        let row = key.row()?;
+        let txn = self.store.env.read_txn()?;
+        let Some(mut record) = DELIVERIES.get(&self.store, &txn, &row)? else {
+            return Ok(());
+        };
+        drop(txn);
+        let eligible = matches!(record.outcome, Some(ReportDeliveryOutcome::Uncertain))
+            || matches!(
+                &record.outcome,
+                Some(ReportDeliveryOutcome::NotDelivered { dispatch })
+                    if dispatch == OutboundDispatchOutcome::Deferred.as_str()
+            );
+        if !eligible {
+            return Ok(());
+        }
+        if !self.resolve_signature_send_delivered(&record)? {
+            return Ok(());
+        }
+        record.outcome = Some(ReportDeliveryOutcome::Delivered);
+        record.updated_at = now;
+        let publisher = self.delivered_publisher(&record, publisher_ref, join_cell)?;
+        self.with_write_txn_grouped(|txn| {
+            DELIVERIES.put(&self.store, txn, &row, &record)?;
+            if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
+                record_signature_delivery_in_txn(
+                    self,
+                    txn,
+                    signature,
+                    send_ref,
+                    outcome,
+                    publisher.as_ref(),
+                )
+                .map_err(engine_error)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Marks the signature of `issue`'s lane Local when the issue no longer
+    /// routes to a publisher (FIX 11631): its send will never leave, so an
+    /// unanswered signature reads as no lane's. Only a lane still addressable
+    /// by the issue's publisher route is read; any other send state stands.
+    /// Takes the merged read's issue (FIX 9366): no re-read, no grant load.
+    fn retire_unrouted_signature(&self, issue: Option<&ReportIssue>) -> Result<()> {
+        let Some(issue) = issue else {
+            return Ok(());
+        };
+        let ReportRoute::Publisher { publisher_ref } = &issue.route else {
+            return Ok(());
+        };
+        let key = ReportDeliveryKey::signature(&issue.issue_ref, publisher_ref);
+        let signature = {
+            let txn = self.store.env.read_txn()?;
+            DELIVERIES
+                .get(&self.store, &txn, &key.row()?)?
+                .and_then(|record| record.signature.map(|frozen| frozen.signature))
+        };
+        let Some(signature) = signature else {
+            return Ok(());
+        };
+        self.with_write_txn_grouped(|txn| record_signature_local_in_txn(self, txn, signature))
     }
 }
 

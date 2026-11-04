@@ -192,6 +192,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Read,
     ),
     (
+        "seal-key-handle",
+        |args| args.seal_key_handle.is_some(),
+        ArgvUse::Read,
+    ),
+    (
         "seal-chain-file",
         |args| args.seal_chain_file.is_some(),
         ArgvUse::Read,
@@ -204,6 +209,16 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "seal-tsa-url",
         |args| args.seal_tsa_url.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "seal-crl-origins",
+        |args| args.seal_crl_origins.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "seal-ocsp-origins",
+        |args| args.seal_ocsp_origins.is_some(),
         ArgvUse::Read,
     ),
     (

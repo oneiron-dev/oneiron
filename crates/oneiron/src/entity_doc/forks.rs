@@ -6,15 +6,17 @@ use super::prose_admission::{LandedProse, PROPOSAL_ROW, admit_landed};
 use super::side_keys::HexPair;
 use super::verbs::{admitted_prose_in_txn, admitted_text_in_txn, apply};
 use super::{AnchoredEdit, EntityDoc, invalid, storage};
-use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
+use crate::consent::AuthenticatedOwner;
 use crate::error::{ArtifactError, Error, Result};
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
 use crate::side_table::{self, HexId, Named, Raw, SideTable};
 use crate::store::Store;
+use crate::store::consent_bound::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// Authorization is separate from attribution. Owner evidence is opaque;
 /// automated writes resolve a live DEC-0006 entity-bound action grant in-txn.
@@ -256,7 +258,7 @@ pub(super) fn validate_actor(vault: &Vault, txn: &RoTxn<'_>, actor: WriteActor) 
     crate::memory::verify_actor_binding_in_txn(vault, txn, actor.entity_ref(), actor.actor_class())
         .map_err(|_| invalid("document actor class does not match store truth"))?;
     if vault.entity_lifecycle_state_in_txn(txn, &actor.entity_ref())?
-        != crate::identity_topology::EntityLifecycleState::Active
+        != oneiron_contracts::identity_topology::EntityLifecycleState::Active
     {
         return Err(invalid("document actor is not active"));
     }
@@ -476,6 +478,8 @@ pub(super) fn open_proposal_in_txn(
         let live = storage::load(&vault.store, txn, &h)?;
         let mut fork = live.fork(&req.base)?;
         bind_actor(vault, txn, &fork, req.actor, at)?;
+        // The fork's commits name the actor's stamp token (FIX 10930).
+        let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, req.actor)?;
         // New text is admitted before the fork holds it, and a handle of a
         // key the live text's lift marked writes its value again (OF-067).
         let lifted =
@@ -483,7 +487,7 @@ pub(super) fn open_proposal_in_txn(
         if let Some(text) = &req.rewrite {
             let text = admitted_text_in_txn(vault, txn, req.entity, text, &lifted, &mut plan)?;
             let base = fork.text();
-            fork.edit_with(req.actor, at, sources, |body| {
+            fork.edit_with(stamp, at, sources, |body| {
                 body.delete(0, body.len_unicode())
                     .map_err(|_| invalid("fork rewrite delete"))?;
                 body.insert(0, &text.stored)
@@ -498,7 +502,9 @@ pub(super) fn open_proposal_in_txn(
             for (edit, op) in req.edits.iter().enumerate() {
                 let text = admitted_prose_in_txn(vault, txn, req.entity, op, &lifted, &mut plan)?;
                 let stored = &text.stored;
-                let place = apply(&mut fork, req.entity, op, stored, at, sources, &lifted)?;
+                let place = apply(
+                    &mut fork, req.entity, op, stamp, stored, at, sources, &lifted,
+                )?;
                 if let Some(place) = place {
                     let slot = format!("/requests/{index}/edits/{edit}/text");
                     let said = LandedProse::anchored(req.actor, slot, &fork, place, &text, &lifted);
@@ -588,6 +594,8 @@ pub(super) fn retain_fork(
         &id.to_hex(),
         &doc.shallow_snapshot(&req.base)?,
     )?;
+    // The tokens its own commits name, under its entity (FIX 11965).
+    super::token_uses::record_fork_uses_in_txn(&vault.store, txn, &req.entity, doc, &req.base)?;
     bundle.forks.push(record);
     super::proposal_lineage::freeze(&mut bundle, opener_lineage);
     ENTITY_DOC_PROPOSAL_BUNDLE.put(&vault.store, txn, &key, &bundle)?;
@@ -781,13 +789,21 @@ pub(super) fn all_forks(
 }
 
 pub(super) fn erase_forks(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
+    let mut proposals = BTreeSet::new();
     for fork in all_forks(store, txn, entity)? {
         ENTITY_DOC_FORK_SNAPSHOT.delete(store, txn, &fork.fork)?;
         ENTITY_DOC_FORK.delete(store, txn, &fork.fork)?;
-        let id = EntityId::from_hex(&fork.proposal)?;
+        proposals.insert(fork.proposal);
+    }
+    for proposal in proposals {
+        let id = EntityId::from_hex(&proposal)?;
         let mut bundle = read_bundle(store, txn, &id)?;
         bundle.forks.retain(|row| row.entity != entity.to_hex());
-        ENTITY_DOC_PROPOSAL_BUNDLE.put(store, txn, &id.to_hex(), &bundle)?;
+        if bundle.forks.is_empty() {
+            ENTITY_DOC_PROPOSAL_BUNDLE.delete(store, txn, &id.to_hex())?;
+        } else {
+            ENTITY_DOC_PROPOSAL_BUNDLE.put(store, txn, &id.to_hex(), &bundle)?;
+        }
     }
     Ok(())
 }

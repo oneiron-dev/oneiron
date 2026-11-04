@@ -9,10 +9,10 @@ use super::{
     QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest,
     QuestionOutcomeWindowsRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
     RenderRefusal, RunAdmission, SyncServer, TaskWaveRequest, Value, WriteActor, agent_lane,
-    closed_outcome_windows, create_question, decode, edit_question, encode, inside_host_dial,
-    internal, on_caller_payer, owners, pause_question, question_answers, read_question,
-    resume_held_wave, run_graph_ask_receipted, run_verdict, schedule_backfill,
-    select_graph_units_by_type, wave_plan, wave_receipt,
+    closed_outcome_windows_in_lane, create_question_with_lane, decode, edit_question_with_lane,
+    encode, inside_host_dial, internal, on_caller_payer, owners, pause_question,
+    question_answers_in_lane, read_question_in_lane, resume_held_wave, run_graph_ask_receipted,
+    run_verdict, schedule_backfill_in_lane, select_graph_units_by_type, wave_plan, wave_receipt,
 };
 
 /// One row the host serves, asked for the agent: never for a principal or
@@ -69,6 +69,7 @@ pub(super) fn host_row(
                 // It bills the payer the run's line binds (FIX 3574).
                 line.and_then(RunAdmission::payer),
                 evidence.get_or_insert_with(Vec::new),
+                None,
             )?)
         }
         AgentVerb::VaultGraphAsk => {
@@ -88,7 +89,7 @@ pub(super) fn host_row(
                 server.vault(),
                 request.unit_deadline_ms,
             )?;
-            let mut answerer = LadderGraphAnswerer::new(server, actor, dial, budget)?
+            let mut answerer = LadderGraphAnswerer::new(server, actor, dial, budget, None)?
                 .with_posture(request.posture)
                 .with_criteria(request.criteria.unwrap_or_default());
             // Its model rungs bill the payer the run's line binds (FIX 3574).
@@ -104,15 +105,22 @@ pub(super) fn host_row(
             let request: QuestionCreateRequest = decode(input)?;
             let mut definition = request.definition;
             definition.dial = inside_host_dial(server, definition.dial, verb)?;
-            encode(create_question(vault, actor, definition, now)?)
+            // Saved under the agent's own lane, as `vault.graph.ask` reads
+            // (OF-506, FIX 11828).
+            let lane = agent_lane(server, actor)?;
+            encode(create_question_with_lane(
+                vault, actor, &lane, definition, now,
+            )?)
         }
         AgentVerb::VaultQuestionsEdit => {
             let request: QuestionEditRequest = decode(input)?;
             let mut definition = request.definition;
             definition.dial = inside_host_dial(server, definition.dial, verb)?;
-            encode(edit_question(
+            let lane = agent_lane(server, actor)?;
+            encode(edit_question_with_lane(
                 vault,
                 actor,
+                &lane,
                 request.id,
                 request.expected_version,
                 definition,
@@ -129,8 +137,11 @@ pub(super) fn host_row(
         }
         AgentVerb::VaultQuestionsBackfill => {
             let request: QuestionBackfillRequest = decode(input)?;
-            encode(schedule_backfill(
+            // Its reply as the agent's own lane reads it (FIX 11827).
+            let lane = agent_lane(server, actor)?;
+            encode(schedule_backfill_in_lane(
                 vault,
+                &lane,
                 principal,
                 request.id,
                 request.expected_version,
@@ -140,8 +151,12 @@ pub(super) fn host_row(
         }
         AgentVerb::VaultQuestionsRead => {
             let request: QuestionReadRequest = decode(input)?;
-            encode(read_question(
+            // Each unit and artifact ask the agent's own lane reads (FIX
+            // 12060).
+            let lane = agent_lane(server, actor)?;
+            encode(read_question_in_lane(
                 vault,
+                &lane,
                 principal,
                 request.id,
                 request.version,
@@ -149,11 +164,16 @@ pub(super) fn host_row(
         }
         AgentVerb::VaultQuestionsOutcomeWindows => {
             let request: QuestionOutcomeWindowsRequest = decode(input)?;
-            encode(closed_outcome_windows(vault, principal, request.id)?)
+            let lane = agent_lane(server, actor)?;
+            encode(closed_outcome_windows_in_lane(
+                vault, &lane, principal, request.id,
+            )?)
         }
         AgentVerb::VaultQuestionsAnswers => {
             let request: QuestionAnswersRequest = decode(input)?;
-            encode(question_answers(vault, principal, &request)?)
+            // Each answer the agent's own lane reads (OF-506, FIX 11828).
+            let lane = agent_lane(server, actor)?;
+            encode(question_answers_in_lane(vault, &lane, principal, &request)?)
         }
         AgentVerb::VaultArtifactsReviewSlides => {
             let request: oneiron::blob_artifact::SlideReviewSubmit = decode(input)?;
@@ -163,7 +183,7 @@ pub(super) fn host_row(
             let renderer = AdmittedRenderer::at_render(server, Some(principal), Arc::default());
             encode(memory.artifacts_review_slides_through(
                 &request,
-                &HostUnitDecider::new(server, class, "vault.artifacts.review_slides"),
+                &HostUnitDecider::new(server, class, "vault.artifacts.review_slides", None),
                 host.dial(DecisionRung::Big),
                 &host.bands(),
                 renderer.as_ref().map(AdmittedRenderer::slides),
@@ -331,7 +351,7 @@ fn ai_options(
             )
         })
         .collect::<MemoryResult<BTreeSet<_>>>()?;
-    let left = line.map(|line| line.read().remaining_units);
+    let left = line.and_then(|line| line.read().capped_remaining_units());
     // Text is the raw routes', which a run never reaches; a run with no
     // line calls no granted row.
     let granted: BTreeSet<AiOperation> = server

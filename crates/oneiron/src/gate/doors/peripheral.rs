@@ -4,6 +4,7 @@ use super::consent::{claim_gate_input, enforce_gate_decision};
 use crate::claim::ClaimBody;
 #[cfg(feature = "sync")]
 use crate::claim::claim_sensitivity_band;
+use crate::claim_check::AUTO_CHECK_VALUE_PREVIEW_BYTES;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -16,20 +17,13 @@ use crate::gate::resolution::{
     PolicyManifestResolution, check_claim_source_trust, hash_bytes, hash_opt_str, hash_str,
 };
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
-use crate::llm::{AUTO_CHECK_VALUE_PREVIEW_BYTES, BoundedAutoChecker};
+use crate::llm::BoundedAutoChecker;
 use crate::store::Store;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct GateWriteMode {
-    pub(crate) record_decision: bool,
-    pub(crate) persist_pending_consent: bool,
-    pub(crate) resolve_pending: bool,
-    pub(crate) can_resolve_pending_consent: bool,
-    pub(crate) include_source_in_gate_input: bool,
-}
+pub(crate) use crate::store::GateWriteMode;
 
 pub(crate) struct ClaimGateWrite<'a> {
     pub(crate) body: &'a ClaimBody,
@@ -48,6 +42,11 @@ pub(crate) struct ClaimGateWrite<'a> {
     /// its transaction. Only a fresh write the owner made directly carries
     /// one; every other door passes `None`.
     pub(crate) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
+    /// Pending-birth prompt sources for FIX 11000 anchors: `Some` (possibly
+    /// empty) when the caller proved the claim's pending birth inputs from
+    /// its batch state, `None` when unknown. `None` captures incomplete
+    /// anchors; it never refuses the write.
+    pub(crate) pending_prompt: Option<&'a [EntityId]>,
 }
 
 impl<'a> ClaimGateWrite<'a> {
@@ -64,6 +63,7 @@ impl<'a> ClaimGateWrite<'a> {
             defer_metrics_until_commit: false,
             transition: None,
             owner_authored: None,
+            pending_prompt: None,
         }
     }
 
@@ -82,15 +82,14 @@ impl<'a> ClaimGateWrite<'a> {
         self.transition = transition;
         self
     }
-}
 
-pub(crate) fn validate_write_envelope(envelope: &WriteEnvelope) -> Result<()> {
-    if matches!(envelope.provenance().value(), &Value::Nil) {
-        return Err(Error::InvalidClaimBody("write envelope missing provenance"));
+    pub(crate) fn with_pending_prompt(mut self, pending_prompt: Option<&'a [EntityId]>) -> Self {
+        self.pending_prompt = pending_prompt;
+        self
     }
-
-    Ok(())
 }
+
+pub(crate) use crate::write_envelope::validate_write_envelope;
 
 /// The claim value an auto-check candidate carries (ONE-1296), or `None` when
 /// it does not fit the preview bound.

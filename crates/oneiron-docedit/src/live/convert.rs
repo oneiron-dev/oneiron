@@ -16,7 +16,7 @@
 
 mod chart;
 
-pub(super) use chart::settle_chart;
+pub(super) use chart::{place_ordinals, settle_chart};
 
 use super::LiveError;
 use super::chart_labels;

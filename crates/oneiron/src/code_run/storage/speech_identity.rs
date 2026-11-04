@@ -1,9 +1,18 @@
 //! Deterministic conversation, turn and message ids derived from a run's identity.
 
-use sha2::{Digest, Sha256};
-
-use crate::memory::{MessageResultAttachment, WitnessReceipt};
+use crate::code_run::dispatcher::HostSelfDispatcher;
+use crate::code_run::types::SelfDispatchOutcome;
+use crate::lens::RecordRef;
+use crate::memory::{CommitReceipt, MessageResultAttachment, WitnessAssertions, WitnessReceipt};
 use crate::off_record::ExecutorUtterance;
+use crate::registry::ENTITY_TYPE_CLAIM;
+pub(in crate::code_run) use crate::store::executor_speech_identity::{
+    derived_executor_id, executor_speech_turn_id,
+};
+pub(crate) use crate::store::executor_speech_identity::{
+    executor_compaction_session_id, executor_speech_turn_id_for_run,
+};
+use crate::task_verb::{TaskCreateReceipt, sdk::AgentVerb};
 use crate::{EntityId, Error, Result, Vault, WriteActor};
 
 /// A result MESSAGE's typed attachment (FIX 365), and the rows its run's
@@ -21,6 +30,105 @@ impl ResultSpeech<'_> {
     }
 }
 
+/// The committed-write refs a run's next speech bubble asserts (FIX 11456).
+/// `cited` stays empty: served/read rows are never citations.
+#[derive(Default)]
+pub(crate) struct RunAssertionCollector {
+    created: Vec<RecordRef>,
+}
+
+impl RunAssertionCollector {
+    fn note(&mut self, reference: RecordRef) {
+        if !self.created.contains(&reference) {
+            self.created.push(reference);
+        }
+    }
+
+    fn take(&mut self) -> WitnessAssertions {
+        WitnessAssertions {
+            cited: Vec::new(),
+            created: std::mem::take(&mut self.created),
+        }
+    }
+
+    fn restore(&mut self, assertions: WitnessAssertions) {
+        let pending = std::mem::take(&mut self.created);
+        for reference in assertions.created.into_iter().chain(pending) {
+            self.note(reference);
+        }
+    }
+}
+
+impl HostSelfDispatcher<'_> {
+    /// Notes created records from a successful committed write. Typed DTOs
+    /// only: no prose extraction and no served/read rows.
+    pub(crate) fn note_created_from_outcome(
+        &self,
+        verb: Option<AgentVerb>,
+        outcome: &SelfDispatchOutcome,
+    ) {
+        match outcome {
+            SelfDispatchOutcome::MemoryWrite(result) => {
+                self.note_created_ref(RecordRef::from_id(ENTITY_TYPE_CLAIM, &result.id, None));
+            }
+            SelfDispatchOutcome::MemoryEdgeWrite(_) => {
+                // FIX 12220: an edge write asserts nothing. The edge has no
+                // record id and both endpoints predate the run, so noting
+                // either as created would be false provenance.
+            }
+            SelfDispatchOutcome::AgentVerb(answer) => match verb {
+                Some(AgentVerb::TasksCreate) => {
+                    if let Ok(receipt) =
+                        serde_json::from_value::<TaskCreateReceipt>(answer.output.clone())
+                    {
+                        self.note_created_refs([receipt.task_record, receipt.proposal_record]);
+                    }
+                }
+                Some(AgentVerb::VaultClaimsUpsert | AgentVerb::VaultOffRecordClaimsUpsert) => {
+                    if let Ok(receipt) =
+                        serde_json::from_value::<CommitReceipt>(answer.output.clone())
+                    {
+                        let claim = receipt.claim.or_else(|| {
+                            receipt
+                                .receipt_ref
+                                .strip_prefix("claim:")
+                                .and_then(|hex| EntityId::from_hex(hex).ok())
+                                .map(|id| RecordRef::from_id(ENTITY_TYPE_CLAIM, &id, None))
+                        });
+                        // FIX 12221: only the new claim is created. The
+                        // superseded claim predates the run, so it is
+                        // dropped, not asserted.
+                        self.note_created_refs([claim]);
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    fn note_created_refs(&self, refs: impl IntoIterator<Item = Option<RecordRef>>) {
+        for reference in refs.into_iter().flatten() {
+            self.note_created_ref(reference);
+        }
+    }
+
+    fn note_created_ref(&self, reference: RecordRef) {
+        self.assertions_created.borrow_mut().note(reference);
+    }
+
+    /// Takes the refs for one witness attempt. On error the caller restores
+    /// them, so a retry asserts the same set.
+    pub(crate) fn take_run_assertions(&self) -> WitnessAssertions {
+        self.assertions_created.borrow_mut().take()
+    }
+
+    /// Restores a failed witness attempt's refs ahead of any later writes.
+    pub(crate) fn restore_run_assertions(&self, assertions: WitnessAssertions) {
+        self.assertions_created.borrow_mut().restore(assertions);
+    }
+}
+
 /// Domain tags for a canonical run's speech identities (ONE-1686).
 ///
 /// Executor-owned transcript identity is DERIVED, never minted. A durable
@@ -31,38 +139,7 @@ impl ResultSpeech<'_> {
 /// durable executor config.
 const EXECUTOR_SPEECH_CONVERSATION_DOMAIN: &[u8] = b"oneiron:executor-speech-conversation:v1";
 
-const EXECUTOR_SPEECH_TURN_DOMAIN: &[u8] = b"oneiron:executor-speech-turn:v1";
-
 const EXECUTOR_SPEECH_MESSAGE_DOMAIN: &[u8] = b"oneiron:executor-speech-message:v1";
-/// Domain tag for a run's compaction session.
-const EXECUTOR_COMPACTION_SESSION_DOMAIN: &[u8] = b"oneiron:executor-compaction-session:v1";
-
-/// Derives one deterministic entity id from a domain tag and length-prefixed
-/// material, re-salting past a reserved sentinel rather than truncating into
-/// one.
-pub(in crate::code_run) fn derived_executor_id(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
-    for salt in 0..=u8::MAX {
-        let mut hasher = Sha256::new();
-        hasher.update(domain);
-        hasher.update([salt]);
-        for part in parts {
-            let len = u64::try_from(part.len())
-                .map_err(|_| Error::ArithmeticOverflow("executor speech id material"))?;
-            hasher.update(len.to_le_bytes());
-            hasher.update(part);
-        }
-        let digest = hasher.finalize();
-        let mut bytes = [0_u8; 16];
-        bytes.copy_from_slice(&digest[..16]);
-        if let Ok(id) = EntityId::from_bytes(bytes) {
-            return Ok(id);
-        }
-    }
-    Err(Error::InvariantViolation(
-        "executor speech id derivation failed",
-    ))
-}
-
 /// The legacy standalone conversation identity. Runtime executor paths use
 /// [`canonical_speech_conversation_id_for_run`] with their durable run id.
 #[cfg(test)]
@@ -82,24 +159,6 @@ pub(crate) fn canonical_speech_conversation_id_for_run(
             &[run_ref.as_bytes(), run_id.as_bytes()],
         ),
         None => derived_executor_id(EXECUTOR_SPEECH_CONVERSATION_DOMAIN, &[run_ref.as_bytes()]),
-    }
-}
-
-/// The turn one run's speech appends to.
-///
-/// ONE turn per run, not one per utterance: a TURN is the maximal consecutive
-/// run of ONE speaker, and every bubble a run emits is the same Companion. The
-/// bubbles' own `order` values carry the interleaving.
-pub(in crate::code_run) fn executor_speech_turn_id(
-    run_ref: &str,
-    run_id: Option<EntityId>,
-) -> Result<EntityId> {
-    match run_id {
-        Some(run_id) => derived_executor_id(
-            EXECUTOR_SPEECH_TURN_DOMAIN,
-            &[run_ref.as_bytes(), run_id.as_bytes()],
-        ),
-        None => derived_executor_id(EXECUTOR_SPEECH_TURN_DOMAIN, &[run_ref.as_bytes()]),
     }
 }
 
@@ -163,7 +222,7 @@ pub(super) fn executor_speech_message_id_for_run(
     reason = "every parameter is a distinct axis the witness envelope binds; folding them into a \
               struct would hide which ones the host owns"
 )]
-pub(super) fn canonical_witness_executor_turn(
+pub(super) fn canonical_witness_executor_turn_sourced(
     vault: &Vault,
     run_ref: &str,
     run_id: Option<EntityId>,
@@ -174,6 +233,7 @@ pub(super) fn canonical_witness_executor_turn(
     order: u32,
     message_id: EntityId,
     actor: WriteActor,
+    assertions: WitnessAssertions,
 ) -> Result<WitnessReceipt> {
     let conversation_id = canonical_speech_conversation_id_for_run(run_ref, run_id)?;
     let turn_id = executor_speech_turn_id(run_ref, run_id)?;
@@ -189,13 +249,14 @@ pub(super) fn canonical_witness_executor_turn(
                     author: crate::memory::WitnessAuthor::Companion,
                     message_type: kind.as_message_type().to_owned(),
                     content: text.to_owned(),
+                    parts: None,
                     metadata: result.map(|result| result.metadata()).transpose()?,
                     is_visible: kind.is_visible(),
                     order,
                     quote: None,
                 }],
                 occurred_at,
-                assertions: Default::default(),
+                assertions,
             },
             None,
             |wtxn| {
@@ -217,24 +278,6 @@ pub(super) fn canonical_witness_executor_turn(
                     "executor witness door rejected the canonical turn",
                 ))
         })
-}
-
-/// The compaction session of one durable run (agent-runtime-v1 §d7).
-///
-/// A run's REPL window is its own session: one log, one epoch lineage, its
-/// steps as the turns. The ref is derived, never minted, so a resumed run
-/// (same run ref, same credential scope) re-enters its lineage and no other
-/// run can address it.
-pub(crate) fn executor_compaction_session_id(run_ref: &str, run_id: EntityId) -> Result<EntityId> {
-    derived_executor_id(
-        EXECUTOR_COMPACTION_SESSION_DOMAIN,
-        &[run_ref.as_bytes(), run_id.as_bytes()],
-    )
-}
-
-/// The speech TURN of a canonical durable run, whether or not it spoke yet.
-pub(crate) fn executor_speech_turn_id_for_run(run_ref: &str, run_id: EntityId) -> Result<EntityId> {
-    executor_speech_turn_id(run_ref, Some(run_id))
 }
 
 /// The MESSAGE id a canonical durable run's speech takes at bridge position

@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    EvalCaseMeasurement, EvalMeasurement, EvalMeasurementRequest, MeasurementMethodPin,
-    MeasurementState, MeasurementUnavailable,
+    EvalCaseMeasurement, EvalMeasurement, EvalMeasurementRequest, FloorSlicePolicy,
+    MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
 };
 use crate::Vault;
 use crate::dreamer_runner::maintenance::coach::enqueue_coach_eval_measurement_in_txn;
@@ -30,6 +30,10 @@ const EXPOSURE_LEGS: [&str; 3] = ["incumbent", "candidate", "retest"];
 /// declared in this build (CALL), so every measured card reads unknown with
 /// `NoCanary` until a ruling names one.
 const SEAT_CANARIES: &[(EvalSeat, &str)] = &[];
+
+/// The required floor slices a seat declares. None is declared in this
+/// build, so every request reads empty until a ruling names one (FIX 10446).
+const SEAT_FLOOR_SLICES: &[(EvalSeat, &str)] = &[];
 
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())
@@ -68,7 +72,15 @@ pub(in crate::skill_optimize::eval_set) fn measurement_in_txn(
     MEASUREMENTS.get(&vault.store, txn, digest)
 }
 
-pub(super) fn put_in_txn(
+/// Every measurement with its request digest, on the caller's snapshot.
+pub(in crate::skill_optimize::eval_set) fn measurements_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<([u8; 32], EvalMeasurement)>> {
+    MEASUREMENTS.scan(&vault.store, txn)
+}
+
+pub(in crate::skill_optimize::eval_set) fn put_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     digest: &[u8; 32],
@@ -136,6 +148,38 @@ fn pending(digest: &[u8; 32], request: &EvalMeasurementRequest, now: u64) -> Eva
 }
 
 impl Vault {
+    /// The floor-slice policy in force for an offer measurement on `seat`
+    /// (FIX 10446): the owner's minimums plus the seat's declared required
+    /// slices.
+    /// # Errors
+    /// Storage errors.
+    pub fn offer_floor_slices(&self, seat: &EvalSeat) -> Result<FloorSlicePolicy> {
+        let min_families = crate::learning_setting::setting_value_scoped(
+            self,
+            &crate::learning_setting::EVAL_FLOOR_MIN_FAMILIES,
+            None,
+            None,
+        )?
+        .max(0.0) as u32;
+        let min_families_per_slice = crate::learning_setting::setting_value_scoped(
+            self,
+            &crate::learning_setting::EVAL_FLOOR_MIN_FAMILIES_PER_SLICE,
+            None,
+            None,
+        )?
+        .max(0.0) as u32;
+        let required = SEAT_FLOOR_SLICES
+            .iter()
+            .filter(|(declared, _)| declared == seat)
+            .map(|(_, slice)| (*slice).to_owned())
+            .collect();
+        Ok(FloorSlicePolicy {
+            required,
+            min_families_per_slice,
+            min_families,
+        })
+    }
+
     /// [`Self::request_eval_measurement`] under the caller's writer.
     /// # Errors
     /// As [`Self::request_eval_measurement`].
@@ -146,6 +190,31 @@ impl Vault {
         now: u64,
     ) -> Result<[u8; 32]> {
         validate(request)?;
+        // A retry names its predecessor's Partial row with transient reasons
+        // only (FIX 10442): a moved cohort is a new question, not a retry.
+        if request.retry > 0 {
+            let mut predecessor = request.clone();
+            predecessor.retry -= 1;
+            let digest = request_digest(&predecessor)?;
+            let Some(row) = MEASUREMENTS.get(&self.store, &*txn, &digest)? else {
+                return Err(invalid("a retry names its predecessor's Partial row"));
+            };
+            let MeasurementState::Partial { reasons } = &row.state else {
+                return Err(invalid("a retry follows a Partial row"));
+            };
+            let transient = reasons.iter().all(|reason| {
+                matches!(
+                    reason,
+                    MeasurementUnavailable::GenerationFailed
+                        | MeasurementUnavailable::BudgetExhausted
+                        | MeasurementUnavailable::ClockExhausted
+                        | MeasurementUnavailable::UncertainLeg
+                )
+            });
+            if !transient {
+                return Err(invalid("a retry follows only transient failures"));
+            }
+        }
         let digest = request_digest(request)?;
         if let Some(row) = MEASUREMENTS.get(&self.store, &*txn, &digest)? {
             // An open measurement's job is queued again; the queue's dedupe
@@ -174,7 +243,8 @@ impl Vault {
     /// one's job is queued again. Nothing is counted or paid here.
     /// # Errors
     /// Unbounded or identical arms, another method, a cohort that is not the
-    /// seat's as the request froze it, or storage errors.
+    /// seat's as the request froze it, a retry without its predecessor's
+    /// transient Partial, or storage errors.
     pub fn request_eval_measurement(
         &self,
         request: &EvalMeasurementRequest,
@@ -321,5 +391,78 @@ impl Vault {
                 },
             )
             .collect())
+    }
+}
+
+/// The re-measure's digest domain (FIX 12175).
+const REMEASURE_DOMAIN: &[u8] = b"skill_optimize:eval_measurement:remeasure:v1\0";
+
+/// Where the request `digest` keys is measured again while its Partial
+/// `row` stands: one digest per Partial row, so each settled row opens a
+/// new one.
+fn remeasure_digest(digest: &[u8; 32], row: &EvalMeasurement) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(REMEASURE_DOMAIN);
+    hash.update(digest);
+    hash.update(&row.requested_at.to_be_bytes());
+    hash.update(&row.settled_at.unwrap_or_default().to_be_bytes());
+    *hash.finalize().as_bytes()
+}
+
+impl Vault {
+    /// Measures a Partial row's request again, for a reader that reads
+    /// Partial as not yet measured: the helper gate (FIX 12175). The
+    /// request is measured beside the row, under its own digest, and the
+    /// Partial row stays readable as it is until that measurement settles.
+    /// The next call then puts the settled row in the Partial's place,
+    /// under `digest`; one that settled Partial again is measured again.
+    /// An open re-measure's job is queued again; the queue's dedupe keeps
+    /// one. A Pending, Claimed or Final row, or a Partial whose cohort
+    /// moved since its request, is returned as it stands.
+    /// # Errors
+    /// A missing measurement or cohort, or storage errors.
+    pub fn remeasure_partial_eval_measurement(
+        &self,
+        digest: &[u8; 32],
+        now: u64,
+    ) -> Result<EvalMeasurement> {
+        self.with_write_txn_grouped(|txn| {
+            let mut row = MEASUREMENTS
+                .get(&self.store, &*txn, digest)?
+                .ok_or(Error::EntityNotFound)?;
+            if !matches!(row.state, MeasurementState::Partial { .. }) {
+                return Ok(row);
+            }
+            let mut again = remeasure_digest(digest, &row);
+            if let Some(mut remeasured) = MEASUREMENTS.get(&self.store, &*txn, &again)? {
+                if matches!(
+                    remeasured.state,
+                    MeasurementState::Pending | MeasurementState::Claimed
+                ) {
+                    enqueue_coach_eval_measurement_in_txn(self, txn, &again, now)?;
+                    return Ok(row);
+                }
+                MEASUREMENTS.delete(&self.store, txn, &again)?;
+                remeasured.digest = digest_hex(digest);
+                MEASUREMENTS.put(&self.store, txn, digest, &remeasured)?;
+                if !matches!(remeasured.state, MeasurementState::Partial { .. }) {
+                    return Ok(remeasured);
+                }
+                again = remeasure_digest(digest, &remeasured);
+                row = remeasured;
+            }
+            let cohort = cohort_in_txn(self, &*txn, &row.request.cohort)?;
+            if cohort.seat != row.request.seat || cohort_moved(&cohort, &row.request) {
+                return Ok(row);
+            }
+            MEASUREMENTS.put(
+                &self.store,
+                txn,
+                &again,
+                &pending(&again, &row.request, now),
+            )?;
+            enqueue_coach_eval_measurement_in_txn(self, txn, &again, now)?;
+            Ok(row)
+        })
     }
 }

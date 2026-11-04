@@ -114,13 +114,10 @@ impl VerdictPins {
         } = answer;
         self.heard = self.heard.saturating_add(1);
         self.calls.extend(calls);
-        match evidence.as_deref() {
-            Some(rows) => self.evidence.extend(rows.iter().copied()),
-            None => self.evidence_known = false,
-        }
+        self.evidence.extend(evidence.iter().copied());
         let (Ok(text) | Err(text)) = &reply;
         // Each evidence row pins as its 32-hex id.
-        let rows = evidence.as_ref().map_or(0, Vec::len).saturating_mul(32);
+        let rows = evidence.len().saturating_mul(32);
         let bytes = self
             .bytes
             .saturating_add(request.len())
@@ -134,7 +131,7 @@ impl VerdictPins {
         self.pins.push(HookVerdictPin {
             request_json: request.to_owned(),
             reply,
-            evidence,
+            evidence: Some(evidence),
         });
     }
 }

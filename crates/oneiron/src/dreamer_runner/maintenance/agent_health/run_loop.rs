@@ -11,7 +11,7 @@ use super::{
 };
 use crate::attempt_queue::AttemptState;
 use crate::code_run::SelfEffect;
-use crate::self_heal::AgentHealthSignal;
+use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::{Result, Vault};
 
 /// `loop`: identical `(effect, request)` bridge calls in a row in one
@@ -79,6 +79,7 @@ pub(super) fn run_loop_findings(
                 signal: AgentHealthSignal::Loop,
                 task: task_of(record),
                 attempt: Some(record.id),
+                generation: Some(record.attempt_count),
                 evidence: vec![attempt],
                 window: (
                     first.started_at_ms / 1000,

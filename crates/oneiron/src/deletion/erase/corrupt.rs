@@ -32,10 +32,10 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, WindowDeletionRows};
-use crate::provenance::EdgeRef;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::write_envelope::provenance::EdgeRef;
 
 /// Whether a SoftErase has scrubbed the classified body since.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +95,25 @@ impl CorruptCapture {
     pub(in crate::deletion) fn failure(&self) -> CaptureFailure {
         CaptureFailure::new(&self.id, &self.repair_receipt)
     }
+}
+
+/// Whether `id`, whose stored row is `raw`, is a classified corrupt CLAIM
+/// whose hard erase is owed: its marker binds this exact header. A walk that
+/// folds survivors passes over it, as it does a bodiless shell (FIX 9387).
+///
+/// # Errors
+///
+/// Storage faults, and a marker that does not decode.
+pub(crate) fn classified_corrupt_claim_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let Some(mark) = CORRUPT_CAPTURE.get(store, txn, id)? else {
+        return Ok(false);
+    };
+    Ok(raw.get(..ENTITY_METADATA_HEADER_LEN) == Some(mark.header.as_slice()))
 }
 
 /// The classification a hard erase's capture of `id`, whose stored row is
@@ -256,7 +275,7 @@ impl Vault {
         reason: DeleteReason,
     ) -> Result<Option<EntityId>> {
         let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-        let error = match crate::claim::decode_claim_body(body, true) {
+        let error = match crate::write_envelope::claim_body::decode_claim_body(body, true) {
             Ok(claim) => return Ok(claim.world),
             Err(error) => error,
         };
@@ -380,13 +399,16 @@ impl Vault {
         }
         #[cfg(feature = "sync")]
         {
-            let queued = crate::sync::queue::queued_window_labels_in_txn(self, wtxn)?;
+            let queued = self
+                .store
+                .sync_hooks
+                .queued_window_labels_in_txn(self, wtxn)?;
             windows.extend(
                 queued
                     .into_iter()
                     .filter(|label| label.starts_with(&prefix)),
             );
-            windows.extend(crate::sync::residence::indexed_windows_in_txn(
+            windows.extend(self.store.sync_hooks.indexed_windows_in_txn(
                 &self.store,
                 wtxn,
                 &prefix,

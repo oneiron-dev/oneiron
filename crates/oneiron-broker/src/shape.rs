@@ -26,10 +26,12 @@ pub enum Shape {
     /// `model`, `x-api-key: <key>`.
     AnthropicMessages,
     /// OpenAI-compatible image generation: `POST …/v1/images/generations`,
-    /// JSON, top-level body `model`, Bearer.
+    /// JSON, top-level body `model`, Bearer. The reply, images inline, is
+    /// streamed.
     OpenAiImages,
     /// OpenAI-compatible image edits: `POST …/v1/images/edits`, a multipart
-    /// form with one `model` field, Bearer.
+    /// form with one `model` field, Bearer. The reply, images inline, is
+    /// streamed.
     OpenAiImageEdits,
     /// OpenAI-compatible speech: `POST …/v1/audio/speech`, JSON, top-level
     /// body `model`, Bearer. The reply is audio bytes, streamed.
@@ -51,11 +53,12 @@ pub enum Shape {
     /// A video job's removal: `DELETE …/v1/videos/{id}`, no body, Bearer.
     OpenAiVideoDelete,
     /// Gemini generation: `POST …/v1beta/models/{model}:generateContent`,
-    /// JSON, the model in the path, `x-goog-api-key: <key>`.
+    /// JSON, the model in the path, `x-goog-api-key: <key>`. The reply,
+    /// media inline, is streamed.
     GeminiGenerate,
     /// A Gemini long job's start:
     /// `POST …/v1beta/models/{model}:predictLongRunning`, JSON, the model in
-    /// the path, `x-goog-api-key`.
+    /// the path, `x-goog-api-key`. The reply is streamed.
     GeminiPredict,
     /// A Gemini long job's state:
     /// `GET …/v1beta/models/{model}/operations/{id}`, no body, the model in
@@ -92,8 +95,10 @@ struct Row {
     model: Selector,
     auth_header: &'static str,
     auth_prefix: &'static str,
-    /// Whether the reply streams back in chunks, checked for the key and
-    /// never changed, instead of being buffered and stripped.
+    /// Whether the reply streams back in chunks, each form of the key
+    /// redacted as they pass, instead of being buffered and stripped: a
+    /// binary reply, or a media JSON one that can outgrow the buffer (FIX
+    /// 1896).
     streams: bool,
     /// The one redirect the shape follows: to this prefix before the call's
     /// own path and query, under the same origin, with the key.
@@ -192,7 +197,7 @@ const OPENAI_IMAGES: Row = openai(
     &["v1", "images", "generations"],
     Body::Json,
     Selector::Body,
-    false,
+    true,
 );
 
 const OPENAI_IMAGE_EDITS: Row = openai(
@@ -200,7 +205,7 @@ const OPENAI_IMAGE_EDITS: Row = openai(
     &["v1", "images", "edits"],
     Body::Form,
     Selector::Body,
-    false,
+    true,
 );
 
 const OPENAI_SPEECH: Row = openai(
@@ -259,19 +264,25 @@ const OPENAI_VIDEO_DELETE: Row = openai(
     false,
 );
 
-const GEMINI_GENERATE: Row = gemini(
-    "POST",
-    &["v1beta", "models", "{model}:generateContent"],
-    Body::Json,
-    Selector::Path,
-);
+const GEMINI_GENERATE: Row = Row {
+    streams: true,
+    ..gemini(
+        "POST",
+        &["v1beta", "models", "{model}:generateContent"],
+        Body::Json,
+        Selector::Path,
+    )
+};
 
-const GEMINI_PREDICT: Row = gemini(
-    "POST",
-    &["v1beta", "models", "{model}:predictLongRunning"],
-    Body::Json,
-    Selector::Path,
-);
+const GEMINI_PREDICT: Row = Row {
+    streams: true,
+    ..gemini(
+        "POST",
+        &["v1beta", "models", "{model}:predictLongRunning"],
+        Body::Json,
+        Selector::Path,
+    )
+};
 
 const GEMINI_OPERATION: Row = gemini(
     "GET",
@@ -362,8 +373,9 @@ impl Shape {
 
     /// Whether the reply streams back in chunks, up to [`crate::MAX_STREAM`]
     /// bytes, instead of one buffered body up to [`crate::MAX_BODY`]. A
-    /// streamed body is a binary one: each form of the key in it is redacted
-    /// at its bytes as the chunks pass, and it is never cut for one (FIX 6103).
+    /// streamed body is a binary one, or a media JSON one (FIX 1896): each
+    /// form of the key in it is redacted at its bytes as the chunks pass, and
+    /// it is never cut for one (FIX 6103).
     #[must_use]
     pub const fn streams(self) -> bool {
         self.row().streams

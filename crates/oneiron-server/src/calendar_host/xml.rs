@@ -14,6 +14,20 @@ pub(super) struct Node {
     children: Vec<Node>,
 }
 
+/// A provider controls how deep its multistatus nests, so a tree is torn
+/// down one node at a time, never one stack frame per level: the default drop
+/// would recurse through `children` and a deep enough document, well inside
+/// the byte limit, would overflow the stack. A parse that fails mid-document
+/// drops its open stack through the same path.
+impl Drop for Node {
+    fn drop(&mut self) {
+        let mut pending = std::mem::take(&mut self.children);
+        while let Some(mut node) = pending.pop() {
+            pending.append(&mut node.children);
+        }
+    }
+}
+
 impl Node {
     pub(super) fn child(&self, ns: &str, name: &str) -> Option<&Self> {
         self.children.iter().find(|n| n.ns == ns && n.name == name)
@@ -54,7 +68,8 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Node, &'static str> {
                 let node = Node {
                     ns,
                     name: local.as_ref().to_owned(),
-                    ..Default::default()
+                    text: String::new(),
+                    children: Vec::new(),
                 };
                 if empty {
                     stack

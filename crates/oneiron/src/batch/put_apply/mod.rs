@@ -13,9 +13,9 @@ use std::collections::BTreeSet;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::habit::TaskRole;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::store::Store;
+use crate::write_envelope::task_body::TaskRole;
 
 use self::put_entity_update::{validate_local_skill_create, validate_skill_body_overwrite};
 use self::put_staging::{stage_claim_projection, stage_optional_side_row};
@@ -27,16 +27,19 @@ use super::{
     evict_authority_log_store_key_squatter, index_thread_claim_subject,
     lexical_query_hint_claim_id, parse_entity_metadata, plan_short_id_update_hashed,
     reject_overlay_member_base_write, validate_immutable_task_record,
+    validate_replicated_authority_log_beside_for_local_vault,
     validate_replicated_authority_log_for_local_vault,
 };
 
-pub(super) use self::apply::apply_put;
+pub(super) use self::apply::{apply_put, apply_put_beside};
 pub(crate) use self::claim_admission::put_target_admitted_in;
 #[cfg(test)]
 pub(crate) use self::put_staging::wiped_rows;
 pub(crate) use self::put_staging::{delete_entity_index_rows, stage_entity_index_rows};
 pub(super) use self::put_staging::{stage_edge_rows, stage_entity_body_row};
-pub(super) use self::request::{ClaimCandidateRequest, PutContext, PutOptions, PutRequest, PutRow};
+pub(super) use self::request::{
+    ClaimCandidateRequest, PutContext, PutOptions, PutRequest, PutRow, VerifiedOwnDeviceLane,
+};
 
 /// The final `BatchOp::Put` this batch stages for one entity: where it lands
 /// in op order, its type byte, and — for a TASK only — the body its role is
@@ -99,12 +102,12 @@ fn validate_note_birth_put(
 fn decode_previous_skill_record(
     old_type: u8,
     old_record: &[u8],
-) -> Result<Option<crate::skill::SkillRecord>> {
+) -> Result<Option<crate::write_envelope::skill_record::SkillRecord>> {
     if old_type != ENTITY_TYPE_SKILL {
         return Ok(None);
     }
     let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
-    match crate::skill::decode_skill_record(prior_body) {
+    match crate::write_envelope::skill_record::decode_skill_record(prior_body) {
         Ok(record) => Ok(Some(record)),
         Err(error) => Err(error),
     }

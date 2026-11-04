@@ -190,6 +190,14 @@ pub struct EffectReceipt {
     /// absent on a page with no such origin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_origin: Option<String>,
+    /// The counterparty the effect's send reported (FIX 11907, 12395):
+    /// the origin of the page the send acted on, or for a mailto:/tel:
+    /// link its href's protocol-level recipient. A grant
+    /// covering the send names it among its `audience:` members. Absent
+    /// where the effect reported none: a `type`, `select` or `open`'s, an
+    /// engine switch's, a desktop window's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
     /// That page's title, as an observation shows it (FIX 8011): `url` and
     /// `title` name the page the act left, its result.
     #[serde(default, skip_serializing_if = "Option::is_none")]

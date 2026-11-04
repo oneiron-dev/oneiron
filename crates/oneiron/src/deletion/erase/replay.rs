@@ -51,6 +51,8 @@ impl Vault {
             Ok(outcome)
         });
         self.store.flush_legal_hold_refusals_settled();
+        // A fence its actor scrub committed reaches key custody now (FIX 11211).
+        self.store.journal_staged_fence_facts();
         let outcome = applied?;
         while self.collect_lfs_garbage(32)? != 0 {}
         #[cfg(unix)]
@@ -120,7 +122,7 @@ impl Vault {
             self.destroy_world_keys_for_delete_in_txn(
                 wtxn,
                 *id,
-                crate::world_keys::WorldKeyDestroyCause::ReplayedTombstone,
+                crate::key_material::WorldKeyDestroyCause::ReplayedTombstone,
                 decoded.request_id,
             )?;
             // A hard tombstone of one pad row retires that key's pad in
@@ -138,25 +140,39 @@ impl Vault {
 
         if !decoded.is_hard() {
             let had_refinement =
-                crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, wtxn, id)?;
+                crate::store::claim_refinement_control::claim_refinement_scope_exists_in_txn(
+                    &self.store,
+                    wtxn,
+                    id,
+                )?;
             let had_merge_receipt =
-                crate::skill_hub::refinement_custody_exists_in_txn(&self.store, wtxn, id)?;
-            let had_sources =
-                crate::skill_hub::source_custody_exists_in_txn(&self.store, wtxn, id)?;
+                crate::store::skill_refinement_custody::refinement_custody_exists_in_txn(
+                    &self.store,
+                    wtxn,
+                    id,
+                )?;
+            let had_sources = crate::store::skill_source_custody::source_custody_exists_in_txn(
+                &self.store,
+                wtxn,
+                id,
+            )?;
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
             crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
             let had_receipt_sources =
                 crate::receipt::receipt_archive_custody_exists(&self.store, wtxn, id)?;
-            let had_birth_sources =
-                crate::agent_def::birth_custody_exists_in_txn(&self.store, wtxn, id)?;
+            let had_birth_sources = crate::store::agent_birth_custody::birth_custody_exists_in_txn(
+                &self.store,
+                wtxn,
+                id,
+            )?;
             crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
             crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
             let had_body = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
             let (existed, had_vector, ledger_changed) =
-                self.soft_erase_active_store_in_txn(wtxn, id, false)?;
+                self.soft_erase_active_store_in_txn(wtxn, id, false, None)?;
             if had_vector {
-                crate::hnsw::increment_vector_version(&self.store, wtxn)?;
+                crate::store::vector_index::increment_vector_version(&self.store, wtxn)?;
             }
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.
@@ -172,7 +188,7 @@ impl Vault {
             // A peer deleted a world: its delete time bounds how long a pin
             // change here still rewraps the world's keys.
             if decoded.reason == Some(super::tombstone::TombstoneReason::UserDelete) {
-                crate::world_keys::note_world_deleted_in_txn(
+                crate::store::world_pad_rows::note_world_deleted_in_txn(
                     &self.store,
                     wtxn,
                     *id,
@@ -263,7 +279,12 @@ impl Vault {
             // Cleanup's rows that name it go, as the registry's tear takes
             // them on every other erase (FIX 7517).
             crate::vault_cleanup::erase_in_txn(&self.store, wtxn, id)?;
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id)?;
+            // A replayed erase holds no owner act here: the machine that made
+            // it carries its custody revokes (FIX 11883).
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
+                None,
+            )?;
             return Ok((
                 ReplayedTombstoneOutcome::HardPurged {
                     erased: false,
@@ -278,10 +299,23 @@ impl Vault {
         // of the erased head are cascaded here too — before the purge takes
         // the shell edges with it, in the caller's transaction.
         let (cascaded_shells, mut changed_documents) =
-            self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
-        let (_existed, citing) =
-            self.purge_entity_active_store_in_txn(wtxn, id, decoded.request_id.as_ref(), true)?;
+            self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id, None)?;
+        let (_existed, citing) = self.purge_entity_active_store_in_txn(
+            wtxn,
+            id,
+            decoded.request_id.as_ref(),
+            true,
+            None,
+        )?;
         changed_documents.extend(citing);
+        // The replay reserves no topology delete, so the purge kept the
+        // checkpoint payload leaves; the tombstone's own reason settles them.
+        crate::deletion::checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            decoded.reason,
+        )?;
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
@@ -391,10 +425,14 @@ impl Vault {
             ));
         }
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
-        crate::federation::reject_ruling_delete(&self.store, txn, id)?;
+        self.store
+            .delete_guards
+            .reject_ruling_delete(&self.store, txn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, txn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, txn, id)?;
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, txn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, txn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, txn, id)?;
         guard_topology_delete_request_in_txn(&self.store, txn, id, decoded)?;
         let settled = match decoded.request_id.as_ref() {
@@ -409,10 +447,10 @@ impl Vault {
             // A peer's tombstone proves no owner intent either: a credential
             // leaves only through the local revoke door.
             if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-                return Err(crate::secret_custody::reject_secret_custody_byte());
+                return Err(crate::secret_record::reject_secret_custody_byte());
             }
             if crate::registry::is_delete_protected_engine_record(header.entity_type)
-                || crate::workspace_roster::is_project_revision_type(
+                || crate::store::project_kind::is_project_revision_type(
                     &self.store,
                     header.entity_type,
                 )
@@ -434,8 +472,8 @@ impl Vault {
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(super) fn is_replayed_tombstone_refusal(error: &Error) -> bool {
         use crate::error::{ArtifactError, SecretError, SyncError};
-        use crate::identity_topology::IdentityTopologyRejection;
-        use crate::secret_custody::CUSTODY_SEAL_REASON;
+        use crate::secret_record::CUSTODY_SEAL_REASON;
+        use oneiron_contracts::identity_topology::IdentityTopologyRejection;
         matches!(
             error,
             Error::Registry(
@@ -456,7 +494,7 @@ impl Vault {
             ) | Error::Record(crate::error::RecordError::InvalidTaskBody(
                 "task authority facts are immutable"
             )) | Error::Record(crate::error::RecordError::ConversationState(
-                crate::workspace_roster::AUDIENCE_EDIT_BOUND
+                crate::store::conversation_body::AUDIENCE_EDIT_BOUND
             )) | Error::Secret(SecretError::InvalidSecretCustodyBody(CUSTODY_SEAL_REASON))
         )
     }

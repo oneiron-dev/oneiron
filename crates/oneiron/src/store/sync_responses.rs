@@ -350,6 +350,7 @@ pub(crate) fn erase_sync_response_owner_in_txn(
     for key in gone {
         rows.delete(wtxn, &key)?;
     }
+    crate::store::erase_invocation_claim_owner_in_txn(dbs, wtxn, owner)?;
     Ok(())
 }
 

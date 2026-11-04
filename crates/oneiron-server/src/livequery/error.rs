@@ -151,6 +151,30 @@ impl AppError {
             ["Name a fresh invocation for a different call."],
         )
     }
+
+    /// The first call's writes landed or its open intent expired, but its
+    /// reply was not kept. The call never runs again under this id.
+    pub(super) fn invocation_reply_not_kept(committed_writes: u32) -> Self {
+        Self::new(
+            crate::idempotency::REPLY_NOT_KEPT_STATE,
+            format!(
+                "the first request with this invocation committed {committed_writes} write(s) while it ran; its reply was not kept"
+            ),
+            [
+                "Read the resource's current state to see what landed.",
+                "Send the request with a new invocation to act again.",
+            ],
+        )
+    }
+
+    /// The first response was erased and never becomes a cache miss.
+    pub(super) fn invocation_response_erased() -> Self {
+        Self::new(
+            crate::api::INVOCATION_RESPONSE_ERASED,
+            "the first response with this invocation was erased",
+            ["Send the request with a new invocation to act again."],
+        )
+    }
 }
 
 impl From<ApiError> for AppError {

@@ -7,8 +7,8 @@
 use oneiron::EntityId;
 use oneiron::ModelId;
 use oneiron::feedback::{
-    FeedbackTriageInput, FeedbackTriageNodeInput, FeedbackTriagePin, FeedbackTriageSourceRef,
-    FeedbackTriageSpan, FeedbackTriageStep,
+    FeedbackTriageInput, FeedbackTriageNodeInput, FeedbackTriageParkOutcome, FeedbackTriagePin,
+    FeedbackTriageSourceRef, FeedbackTriageSpan, FeedbackTriageStep,
 };
 use oneiron::skill::LoadedSkillPack;
 use serde::Serialize;
@@ -19,6 +19,7 @@ use crate::server::SyncServer;
 
 /// The input one request may fill: the model's window less the output it
 /// reserves.
+#[derive(Clone)]
 pub(super) struct Window {
     /// The model whose window it is.
     pub(super) model: String,
@@ -43,16 +44,21 @@ const UNMEASURED_COUNT_FACTOR: u64 = 2;
 /// The reply frame that margin leaves, as compaction's.
 const REPLY_FRAME_TOKENS: u64 = 64;
 
-/// The smallest window any rung of the Coach seat may serve a call on
-/// (FIX 10303): each rung's catalog window less the output it reserves, in
-/// the engine's own count (FIX 10305), less the prompt the rung prepends;
-/// the seat model's own row when no rung's reads. `None` while no window is
-/// known, and the item then goes whole, as it always has.
+/// The smallest window any rung of the Coach seat or an owner-named fallback
+/// may serve a call on (FIX 10303, FIX 10916): each rung's catalog window
+/// less the output it reserves, in the engine's own count (FIX 10305), less
+/// the prompt the rung prepends; the seat model's own row when no rung's
+/// reads. `None` while no window is known, and the item then goes whole, as
+/// it always has.
 pub(super) fn window(server: &SyncServer, models: &HostModels<'_>) -> Option<Window> {
     let seat = server.ai.model_runtime().seat(models.coach())?;
     let vault = server.vault();
     let mut smallest: Option<Window> = None;
-    for (model, prompt) in seat.rung_models() {
+    for (model, prompt) in seat
+        .rung_models()
+        .into_iter()
+        .chain(seat.fallback_rung_models())
+    {
         let Some(input) = model_window(vault, &model) else {
             continue;
         };
@@ -271,14 +277,16 @@ pub(super) fn begin(
         model: window.model,
         input_tokens: window.input_tokens,
     };
-    run.server
-        .vault()
-        .park_coach_feedback_triage(
-            run.admitted,
-            FeedbackTriageStep::Generation { pin, spans },
-            run.now,
-        )
-        .map(drop)
+    match run.server.vault().park_coach_feedback_triage(
+        run.admitted,
+        FeedbackTriageStep::Generation { pin, spans },
+        run.now,
+    )? {
+        FeedbackTriageParkOutcome::Parked(_) => Ok(()),
+        FeedbackTriageParkOutcome::Ready(_) => Err(unavailable(
+            "feedback triage park outcome does not match its step",
+        )),
+    }
 }
 
 /// An unanswered part's span cut again for a changed window; `None` while

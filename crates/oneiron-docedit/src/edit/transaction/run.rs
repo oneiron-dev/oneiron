@@ -112,10 +112,18 @@ pub(super) fn native(
     op: &NativeEdit<'_>,
 ) -> Result<StepReport, StepRefusal> {
     let report = native_patch::native_patch(deck, op)?;
+    let mut effects = Vec::new();
+    // A table-cell write that cut fields whole (FIX 12227) names them, so
+    // the receipt says each dynamic field became static text.
+    if !report.cut_fields.is_empty() {
+        effects.push(Effect::TableFieldsCut {
+            fields: report.cut_fields,
+        });
+    }
     Ok(StepReport {
         verb: verb.to_owned(),
         changed_parts: report.changed_parts,
-        effects: Vec::new(),
+        effects,
         fit: None,
     })
 }
@@ -321,6 +329,19 @@ pub(super) fn apply(
                     values: &values,
                 },
             )?
+        }
+        DeckStep::ReleaseMedia {
+            slide,
+            relationships,
+        } => {
+            let (changed_parts, effects) =
+                crate::edit::media::release_media(deck, slide, relationships)?;
+            StepReport {
+                verb: verb.to_owned(),
+                changed_parts,
+                effects,
+                fit: None,
+            }
         }
     };
     // Every id a step minted moves its mark: a later step allocates above it.

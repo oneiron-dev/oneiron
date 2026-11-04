@@ -5,9 +5,9 @@
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
-use crate::skill_hub::HubFile;
 use crate::skill_hub::pack_catalog::PackInstallDisposition;
 use crate::store::GateDecisionId;
+use crate::write_envelope::skill_source::HubFile;
 
 impl Memory<'_> {
     /// The vault owner's proof for this handle. Only the constructor-owned

@@ -20,11 +20,11 @@ use crate::context_projection::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::habit::TaskRole;
 use crate::registry::{
     ArtifactFamilyKindId, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_TASK, artifact_family_kind_of,
 };
 use crate::temporal::TimeRange;
+use crate::write_envelope::task_body::TaskRole;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
 
 /// Weight for the `AssignedTo` / `Mentions` edge a brief writes.
@@ -68,6 +68,7 @@ impl Vault {
             state: ThreadState::Open,
             locator: anchor.locator.clone(),
             drift: None,
+            body: None,
         };
         let head_envelope = annotation_envelope(author, "open_thread")?;
         let comment_envelope = annotation_envelope(author, "comment")?;
@@ -205,6 +206,7 @@ impl Vault {
                 state,
                 locator: thread.anchor.locator.clone(),
                 drift: thread.drift,
+                body: thread.anchor.body.clone(),
             };
             let new_head_id = self.write_thread_head_in_txn(
                 wtxn,
@@ -727,6 +729,7 @@ pub(super) fn thread_from_head(
             artifact_id,
             version: head.anchor_version,
             locator: head.locator,
+            body: head.body,
         },
         origin_version: head.origin_version,
         state: head.state,

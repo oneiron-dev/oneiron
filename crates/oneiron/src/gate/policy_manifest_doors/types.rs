@@ -137,6 +137,10 @@ pub struct PolicyManifest {
     /// The host checker reference, as the existing manifest decoder stores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_checker: Option<String>,
+    /// The slide review's pacing and route rows (FIX 9336); absent, the
+    /// shipped rows hold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slide_review_policy: Option<Vec<crate::llm::decision::SlideReviewPolicyRow>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -192,16 +196,16 @@ pub struct PolicyManifestReceipt {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GateCheckerSet {
-    pub binding: crate::llm::manifest::VerdictBinding,
+    pub binding: crate::model_binding::VerdictBinding,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GateCheckerView {
-    pub binding: Option<crate::llm::manifest::VerdictBinding>,
+    pub binding: Option<crate::model_binding::VerdictBinding>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GateCheckerReceipt {
-    pub binding: crate::llm::manifest::VerdictBinding,
+    pub binding: crate::model_binding::VerdictBinding,
     pub receipt_ref: String,
 }

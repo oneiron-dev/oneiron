@@ -174,6 +174,20 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// revision to 3 at the floor. No `Ping` field is added and this version
 /// stays 3.
 ///
+/// VM kept-aside copy removal (FIX 11985): the guest's notice names what it
+/// tells the host
+/// ([`VmOutboxNoticeAction`](crate::vm_outbox::VmOutboxNoticeAction)), and
+/// the host answers a removal of its kept-aside copy
+/// ([`VmOutboxFrame::AsideRemoved`](crate::vm_outbox::VmOutboxFrame::AsideRemoved))
+/// and a keep of one with its move's result
+/// ([`VmOutboxFrame::AsideKept`](crate::vm_outbox::VmOutboxFrame::AsideKept), FIX 12010).
+/// It carries a build floor, at the engine revision it merged in: carrier
+/// revision 4, and each end refuses the other's revision 3 at the hello,
+/// with no reader of it kept. The host library, the guest image and its
+/// companion are all at or after the floor, and LC's image acceptance moves
+/// its outbox revision to 4 at the floor. No `Ping` field is added and this
+/// version stays 3.
+///
 /// VM custody anchor channels (FIX 6517): a vault VM's custody anchor
 /// exchange and proxy ([`vm_anchor`](crate::vm_anchor): vsock ports 1031 and
 /// 1033, their records and the credential payload, `serve`'s
@@ -411,19 +425,20 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// Catalog rate currency (FIX 9534): a model catalog cost (the engine's
 /// `llm::LlmCatalogCost`, on every facade, SDK and binding surface that
 /// carries a catalog entry, and in each stored registry row and mesh peer
-/// row) requires `currency`, the provider's three-letter code or `null` when
-/// it named none, and a usage rate snapshot (the host's `UsageCostRates`, on
-/// usage events posted and stored) now requires `currency` as a code or
-/// `null` in place of a code alone. An unpriced call gains the reason
-/// `unknown_currency`: rates with a `null` currency that are not zero
-/// throughout, kept with their snapshot, and no amount. Only the installed
-/// first-party model pack's rows, which have always quoted US dollars, read
-/// a missing `currency` as `USD`: at that pack's decode, and at the decode of
-/// a stored registry row whose source rows name that pack. It carries a
-/// build floor, at the engine revision it merged in, with no `Ping` field: a
-/// reader or writer of catalog rows or usage events runs at or after the
-/// floor, and no other missing-field default or reader of a row without it
-/// is kept. This version stays 3.
+/// row) carries `currency`, the provider's three-letter code or `null` when
+/// it named none (a missing key reads as `null`, FIX 11778), and a usage
+/// rate snapshot (the host's `UsageCostRates`, on usage events posted and
+/// stored) now requires `currency` as a code or `null` in place of a code
+/// alone. An unpriced call gains the reason `unknown_currency`: rates with
+/// a `null` currency that are not zero throughout, kept with their snapshot,
+/// and no amount. Only a legacy pre-9534 stored copy of the installed
+/// first-party model pack's row, which has always quoted US dollars, reads
+/// a missing `currency` key as `USD`: its source rows name that pack (FIX
+/// 11778 narrows the pack decode out; first-party bytes name their own
+/// currency). It carries a build floor, at the engine revision it merged
+/// in, with no `Ping` field: a reader or writer of catalog rows or usage
+/// events runs at or after the floor, and no other missing-field default or
+/// reader of a row without it is kept. This version stays 3.
 ///
 /// Wire health check revisions (FIX 9531): each kept call-volume question is
 /// a health check of its own on the owner's `/v1/owner/wire-health` read,
@@ -485,6 +500,27 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// only from installed engines at or after the floor, and as unknown from
 /// one before it. A block that does not read is unknown too, never a failed
 /// `Ping`. This version stays 3.
+///
+/// Live preview lease origins (FIX 1115,
+/// [`PreviewOrigin`](crate::artifact_origin::PreviewOrigin)): the
+/// `p-<lease>.<domain>` label, naming and host-reading codec carries a build
+/// floor, at the engine revision it merged in, proven by
+/// `preview_origin_revision` on `Ping`. A vault built before it sends none,
+/// which reads as unknown, never as revision 1; a value that is not a u32
+/// reads as unknown too. A supervisor opens lease-scoped preview ingress only
+/// after that proof. The standalone loopback preview authority is unchanged,
+/// and this version stays 3.
+///
+/// Managed widen body transcripts (FIX 5767,
+/// [`ManagedWidenTranscript`](crate::ManagedWidenTranscript)): a body spooled
+/// and counted first is hashed in its exact pieces under the widen action's
+/// own v1 domain, with the vault, holder and counted body length in the whole
+/// body's existing length-prefix order. Signing and verification require the
+/// exact counted length, and the MAC is byte-identical to the whole-body MAC;
+/// the action, header and wire shapes do not change. It carries a build floor,
+/// at the engine revision it merged in, with no `Ping` field: a supervisor and
+/// vault use streamed transcripts only with installed engines at or after the
+/// floor. Whole-body signing and verification stay, and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

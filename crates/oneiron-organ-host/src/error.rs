@@ -19,8 +19,8 @@ pub enum Unavailable {
     Quarantined,
     /// Its binary failed the handshake; the reason says how.
     Incompatible(String),
-    /// A third-party organ, and this platform has no filesystem confinement
-    /// for organs yet. Fail closed.
+    /// A third-party organ, and this host has no filesystem fence for organs
+    /// (Landlock ABI 3 on Linux, Seatbelt on macOS). Fail closed.
     ThirdPartyUnconfined,
 }
 
@@ -36,7 +36,7 @@ impl fmt::Display for Unavailable {
             }
             Self::Incompatible(reason) => write!(f, "its binary failed the handshake: {reason}"),
             Self::ThirdPartyUnconfined => f.write_str(
-                "third-party organ: this platform has no filesystem confinement for organs yet",
+                "third-party organ: this host has no filesystem fence for organs (Landlock ABI 3 on Linux, sandbox-exec on macOS)",
             ),
         }
     }
@@ -82,8 +82,6 @@ pub enum HostError {
     BudgetTimeout,
     #[error("the call asks more than the whole organ budget")]
     OverBudget,
-    #[error("a call carries at most 16 inputs")]
-    TooManyInputs,
     #[error("organ reply broke a protocol rule: {0}")]
     ReplyInvalid(String),
     #[error("input {artifact} v{version} not found")]

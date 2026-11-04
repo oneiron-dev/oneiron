@@ -6,10 +6,10 @@
 //! one request. The broker's shape for the exchange adds the auth: Bearer
 //! for the OpenAI-compatible paths, `x-goog-api-key` for the Gemini API's.
 //!
-//! JSON and form bodies are capped at the broker's 16 MiB. A speech, clip or
-//! file reply streams back in 1 MiB frames, checked for the key and never
-//! rewritten, up to 512 MiB, and must finish within the provider's
-//! `timeout_secs`.
+//! A JSON or form body over 16 MiB travels in the broker's chunked call
+//! form, up to `MAX_STREAM` (512 MiB) (FIX 1895). Media replies stream
+//! back in 1 MiB frames, checked for the key and never rewritten, up to
+//! 512 MiB, within the provider's `timeout_secs` (FIX 1896).
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,8 +27,10 @@ use oneiron_llm_openai::{
     OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
 };
 
-use super::broker::{BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, join};
-use super::http::charge_read;
+use super::broker::{
+    BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, call_with_key_released, join,
+};
+use super::http::{charge_read, is_cloud_node};
 use crate::config::models::{ProviderConfig, ProviderKind};
 
 const JSON: &str = "application/json";
@@ -162,6 +164,15 @@ impl BrokerMedia {
         exchange: Exchange,
         lease: &BudgetLease,
     ) -> LlmResult<(u16, BTreeMap<String, String>, Vec<u8>)> {
+        self.send_released(exchange, lease, None).await
+    }
+
+    async fn send_released(
+        &self,
+        exchange: Exchange,
+        lease: &BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'_>>,
+    ) -> LlmResult<(u16, BTreeMap<String, String>, Vec<u8>)> {
         let Exchange {
             shape,
             path,
@@ -184,16 +195,25 @@ impl BrokerMedia {
             path,
             headers,
             wire_model,
+            is_cloud_node(),
             &body,
         );
         header.check(&body).map_err(|_| invalid())?;
-        let mut reply =
-            call_with_key(&self.client, &self.keys, &self.secret, &header, &body).await?;
+        let mut reply = call_with_key_released(
+            &self.client,
+            &self.keys,
+            &self.secret,
+            &header,
+            &body,
+            release,
+            Some(lease),
+        )
+        .await?;
         let (status, headers) = answered(reply.outcome)?;
         let body = std::mem::take(&mut *reply.body);
         // The broker hands the reply over whole: its bytes are charged on the
         // media-reply line and held with the call it was read for (FIX 8615).
-        let _held = charge_read(body.capacity());
+        let _held = charge_read(body.len());
         Ok((
             status,
             headers
@@ -318,6 +338,24 @@ impl OpenAiMediaTransport for BrokerMedia {
     ) -> OpenAiMediaTransportFuture<'a> {
         Box::pin(async move {
             let (status, headers, body) = self.send(self.openai(request)?, lease).await?;
+            Ok(OpenAiMediaHttpResponse {
+                status,
+                headers,
+                body,
+            })
+        })
+    }
+
+    fn execute_released<'a>(
+        &'a self,
+        request: OpenAiMediaHttpRequest,
+        lease: &'a BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'a>>,
+    ) -> OpenAiMediaTransportFuture<'a> {
+        Box::pin(async move {
+            let (status, headers, body) = self
+                .send_released(self.openai(request)?, lease, release)
+                .await?;
             Ok(OpenAiMediaHttpResponse {
                 status,
                 headers,

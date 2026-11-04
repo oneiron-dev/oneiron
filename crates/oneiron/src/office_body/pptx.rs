@@ -41,8 +41,8 @@ mod peers;
 mod preview;
 mod verbs;
 
-pub(crate) use doc::deck_log_ops;
 pub(super) use doc::{birth, validate};
+pub(crate) use doc::{deck_json_values, deck_log_ops};
 pub use peers::merge_deck_peers;
 pub use preview::{DeckPreview, DeckPreviewRequest, DeckPreviewSlide};
 pub use verbs::{
@@ -164,6 +164,14 @@ pub(super) fn body_in_txn(
         deck: body.deck,
         log,
     })
+}
+
+/// The deck `doc` holds and the landed export it is bound to, `None` while
+/// it is bound to the imported source: what an anchored comment reads of a
+/// deck (FIX 12264).
+pub(super) fn deck_with_binding(doc: &LoroDoc) -> Result<(LiveDeck, Option<u64>)> {
+    let body = doc::read(doc)?;
+    Ok((body.deck, body.retained.map(|retained| retained.version)))
 }
 
 impl Vault {

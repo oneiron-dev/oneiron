@@ -39,6 +39,7 @@ pub(super) fn apply_claim_candidate_arm(
         .masked_claims
         .get_mut(&id)
         .and_then(VecDeque::pop_front);
+    let pending_prompt = super::pending_prompt_for(&state.births, &id);
     let applied = apply_claim_candidate(
         store,
         config,
@@ -55,6 +56,7 @@ pub(super) fn apply_claim_candidate_arm(
             indexing: put_options.indexing,
             write_policy: state.write_policy.as_ref(),
             owner_authored: gate_mode.owner_authored.as_ref(),
+            pending_prompt,
         },
         pre_mask,
     )?;
@@ -71,9 +73,9 @@ pub(super) fn apply_claim_candidate_arm(
             .pending_embedding_enqueue_priorities
             .entry(id)
             .and_modify(|priority| {
-                *priority = (*priority).min(crate::embed::EMBED_PRIORITY_DEVICE);
+                *priority = (*priority).min(crate::store::embedding::EMBED_PRIORITY_DEVICE);
             })
-            .or_insert(crate::embed::EMBED_PRIORITY_DEVICE);
+            .or_insert(crate::store::embedding::EMBED_PRIORITY_DEVICE);
     }
     if applied.cleared_pending_embedding {
         state.pending_embedding_tokens_written.remove(&id);

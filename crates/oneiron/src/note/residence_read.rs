@@ -4,9 +4,9 @@ use super::documents::{NoteDocument, invalid};
 use super::reads::read_view;
 use super::{NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView};
 use crate::authority::VerifiedSlip;
+use crate::memory::residence_item::{OpenedItem, ThinItem};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::settings::ReadDestination;
-use crate::sync::{OpenedItem, ThinItem};
 use crate::{Vault, WriteActor};
 
 /// The residence host has already checked the owner's own credential. It
@@ -86,23 +86,33 @@ fn thin_note_view(
     }
     let bytes = thin
         .document
-        .strip_prefix(&[crate::sync::transport::TAG_DOCUMENT])
+        .strip_prefix(&[crate::store::document_frame_tags::TAG_DOCUMENT])
         .ok_or_else(|| invalid("opened NOTE document frame"))?;
     let frame = crate::sync::transport::decode_document(bytes)
         .map_err(|_| invalid("opened NOTE document frame"))?;
     if frame.entity != thin.entity_id
-        || frame.kind != crate::sync::transport::document_sub_tags::STATE
+        || frame.kind != crate::store::document_frame_tags::document_sub_tags::STATE
     {
         return Err(invalid("opened NOTE requires its admitted state").into());
     }
-    // The state envelope names the head, its sequence and its seal before
-    // the document (FIX 2401).
-    let envelope = crate::sync::documents::note_state::NoteStateEnvelope::decode(
-        thin.entity_id,
-        frame.payload,
-    )
-    .map_err(|_| invalid("opened NOTE head"))?;
+    // The state envelope names the head, its sequence, its seal and the
+    // NOTE's own overrides before the document (FIX 2401, FIX 3819).
+    let envelope =
+        crate::note::frame_envelope::NoteStateEnvelope::decode(thin.entity_id, frame.payload)
+            .map_err(|_| invalid("opened NOTE head"))?;
     let (head, snapshot) = (envelope.head, envelope.document);
+    // The read ends here: the overrides below need a write.
+    drop(txn);
+    // A cached frame carries the NOTE's own overrides too (FIX 3819): they
+    // install beside a live NOTE row in their own write, or not at all.
+    vault.with_write_txn_grouped(|txn| {
+        super::overrides::install_frame_overrides_in_txn(
+            vault,
+            txn,
+            &thin.entity_id,
+            envelope.overrides,
+        )
+    })?;
     let canonical = super::document::NoteDocument::load(thin.entity_id, snapshot)?;
     Ok(Some(read_view(
         &NoteDocument {

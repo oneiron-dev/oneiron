@@ -12,8 +12,8 @@
 //! gate's evidence in place of a live report, so a regressing floor rejects
 //! before any live run is spent on it.
 use super::*;
-use crate::learning::honesty::HONESTY_AXIS;
 use crate::side_table::Named;
+use crate::skill::learning_judge::HONESTY_AXIS;
 use crate::skill_optimize::AxisScores;
 use crate::workspace_roster::GoalExplorationBudget;
 use serde::{Deserialize, Serialize};
@@ -166,6 +166,10 @@ fn preflight_with_owner(
     {
         return Ok(row.into());
     }
+    let current_instructions =
+        super::rule_policy::gate_instructions_in_txn(vault, &txn, &target, &current);
+    let staged_instructions =
+        super::rule_policy::gate_instructions_in_txn(vault, &txn, proposal, &staged);
     drop(txn);
     if held_out.is_empty() {
         return Err(invalid("an offline preflight requires held-out evidence"));
@@ -183,14 +187,14 @@ fn preflight_with_owner(
         skill: target,
         skill_id: &current.skill_id,
         version: &current.version,
-        instructions: &current.desc,
+        instructions: &current_instructions,
         held_out_receipts: &held_out,
     };
     let after = HeldOutReplayCase {
         skill: target,
         skill_id: &staged.skill_id,
         version: &staged.version,
-        instructions: &staged.desc,
+        instructions: &staged_instructions,
         held_out_receipts: &held_out,
     };
     let honesty = super::measurement::measure_honesty(scorer, &before, &after)?;

@@ -107,6 +107,7 @@ impl Vault {
     pub(super) fn report_artifact_route(&self, subject: &str) -> Result<Option<ReportRoute>> {
         let subject = subject.strip_prefix("skill:").unwrap_or(subject);
         let mut publishers = std::collections::BTreeSet::new();
+        let mut artifacts = std::collections::BTreeSet::new();
         let txn = self.store.env.read_txn()?;
         for row in IMPORTS.iter_from(&self.store, &txn, &[])? {
             let (_, receipt) = row?;
@@ -115,6 +116,7 @@ impl Vault {
                 || receipt.ref_string == subject
             {
                 publishers.extend(receipt.publisher);
+                artifacts.extend(EntityId::from_hex(&receipt.entity).ok());
             }
         }
         for pack in self.installed_packs()? {
@@ -124,14 +126,33 @@ impl Vault {
                 || pack.skills.iter().any(|skill| skill == subject)
             {
                 if pack.publisher != "vault" {
+                    artifacts.extend(
+                        pack.skills
+                            .iter()
+                            .filter_map(|skill| EntityId::from_hex(skill).ok()),
+                    );
                     publishers.insert(pack.publisher);
                 }
             }
         }
         // Multiple source aliases must not silently pick a different maker.
-        Ok((publishers.len() == 1).then(|| ReportRoute::Publisher {
-            publisher_ref: publishers.into_iter().next().expect("one publisher"),
-        }))
+        if publishers.len() != 1 {
+            return Ok(None);
+        }
+        let publisher_ref = publishers.into_iter().next().expect("one publisher");
+        // An owner-authored pack (`vault.packs.put`) names its holder as publisher
+        // but has no publisher ACTOR, so it routes to the owner inbox (ARCH-0056,
+        // FIX 11630). A publisher with an actor for a matched artifact routes as
+        // before; with no artifact to check, the route stands.
+        if artifacts.is_empty() {
+            return Ok(Some(ReportRoute::Publisher { publisher_ref }));
+        }
+        for artifact in artifacts {
+            if self.report_has_publisher_actor(&publisher_ref, artifact)? {
+                return Ok(Some(ReportRoute::Publisher { publisher_ref }));
+            }
+        }
+        Ok(None)
     }
 
     /// No transport runs here. The owner decides whether the report's exact
@@ -179,14 +200,37 @@ impl Vault {
         self.routed_payload(id, true)
     }
 
-    /// [`Self::report_routed_payload`] with no text: the content-free
-    /// signature lane's projection, which never carries a report's text and
-    /// spends no disclosure receipt.
-    pub(super) fn report_signature_payload(
-        &self,
-        id: &EntityId,
-    ) -> Result<Option<ReportRoutedPayload>> {
-        self.routed_payload(id, false)
+    /// The outbound view of an already-read `issue` (FIX 9366, merged send
+    /// read): the same filter [`Self::routed_payload`] applies, pure of IO.
+    /// `None` for a local, duplicate, rejected or denied report; otherwise
+    /// the content-free signature with its route, plus the request only when
+    /// `with_text` and the live view stands approved.
+    pub(super) fn routed_payload_from_issue(
+        issue: &ReportIssue,
+        with_text: bool,
+    ) -> Option<ReportRoutedPayload> {
+        if matches!(issue.route, ReportRoute::OwnerInbox)
+            || matches!(
+                issue.review.status,
+                ReportStatus::Duplicate | ReportStatus::Rejected
+            )
+            || issue.disclosure == ReportDisclosure::Denied
+        {
+            return None;
+        }
+        // The read gave the live view: an issue-once approval, or a standing
+        // grant live now.
+        let approved = with_text && issue.disclosure == ReportDisclosure::Approved;
+        Some(ReportRoutedPayload {
+            signature: ReportSignature {
+                issue_ref: issue.issue_ref.clone(),
+                subject_hash: *blake3::hash(issue.request.subject_ref.as_bytes()).as_bytes(),
+                category: issue.request.category,
+                kind: issue.request.kind,
+            },
+            route: issue.route.clone(),
+            disclosed: approved.then(|| issue.request.clone()),
+        })
     }
 
     fn routed_payload(
@@ -198,28 +242,7 @@ impl Vault {
         let Some(issue) = super::store::read(self, &txn, id)? else {
             return Ok(None);
         };
-        if matches!(issue.route, ReportRoute::OwnerInbox)
-            || matches!(
-                issue.review.status,
-                ReportStatus::Duplicate | ReportStatus::Rejected
-            )
-            || issue.disclosure == ReportDisclosure::Denied
-        {
-            return Ok(None);
-        }
-        // The read gave the live view: an issue-once approval, or a standing
-        // grant live now.
-        let approved = with_text && issue.disclosure == ReportDisclosure::Approved;
-        Ok(Some(ReportRoutedPayload {
-            signature: ReportSignature {
-                issue_ref: issue.issue_ref,
-                subject_hash: *blake3::hash(issue.request.subject_ref.as_bytes()).as_bytes(),
-                category: issue.request.category,
-                kind: issue.request.kind,
-            },
-            route: issue.route,
-            disclosed: approved.then_some(issue.request),
-        }))
+        Ok(Self::routed_payload_from_issue(&issue, with_text))
     }
 }
 

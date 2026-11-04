@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::learning::TypeRef;
+use crate::receipt::task_type_ref::TypeRef;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
@@ -218,4 +218,66 @@ pub(crate) fn take_attempt_pack_attribution_in_txn(
     fields.validate()?;
     ATTEMPT_ATTRIBUTION.delete(store, txn, &key)?;
     Ok(fields)
+}
+
+/// Re-keys the project of every live attempt attribution naming erased
+/// `entity` to one fresh opaque scope (FIX 11934), as the project's erase
+/// re-keys the frozen receipt copy (`learning::erase_receipt_scope_in_txn`):
+/// a run still in flight stays apart from the vault's and no longer names
+/// the project. A row naming it that no longer decodes is deleted.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_attempt_attribution_scope_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    let named = entity.to_hex();
+    let rows = ATTEMPT_ATTRIBUTION
+        .iter_raw_from(&vault.store, wtxn, &[])?
+        .collect::<Result<Vec<_>>>()?;
+    let mut scope = None;
+    for (key, value) in rows {
+        if !value
+            .windows(named.len())
+            .any(|window| window == named.as_bytes())
+        {
+            continue;
+        }
+        let Ok(key) = <[u8; 16]>::try_from(key.as_slice()) else {
+            continue;
+        };
+        match ATTEMPT_ATTRIBUTION.decode_value(&value) {
+            Ok(mut fields) if fields.project == Some(*entity) => {
+                let erased = match scope {
+                    Some(erased) => erased,
+                    None => {
+                        let minted = vault.store.clock.entity_id()?;
+                        scope = Some(minted);
+                        minted
+                    }
+                };
+                fields.project = Some(erased);
+                ATTEMPT_ATTRIBUTION.put(&vault.store, wtxn, &key, &fields)?;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "a live attempt attribution that no longer decodes is deleted"
+                );
+                // FIX 12085: the deleted row's lifted custody goes with it.
+                let place = format!("side:{}", ATTEMPT_ATTRIBUTION.decl().name);
+                let origin = crate::batch::secret_scan::side_row_origin(
+                    &place,
+                    &ATTEMPT_ATTRIBUTION.key_bytes(&key),
+                )?;
+                crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
+                ATTEMPT_ATTRIBUTION.delete(&vault.store, wtxn, &key)?;
+            }
+        }
+    }
+    Ok(())
 }

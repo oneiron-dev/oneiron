@@ -29,7 +29,7 @@ use super::AgentDispatcher;
 use super::spend_lease::observe_spend_walk;
 use super::spend_record::{SCOPE, SpendPayer, SpendScope, SpendScopeId, SpendState};
 use super::widen_record::invalid;
-use crate::attempt_queue::AttemptQueue;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::EntityId;
 use crate::llm::run_admission::LeaseUnit;
 use crate::scan_check::EngineScan;
@@ -60,6 +60,7 @@ struct ScopeSkeleton {
     shown_at_ms: Option<u64>,
     opened_at: u64,
     closed_at: Option<u64>,
+    exploration_attempt: Option<AttemptId>,
     /// Whether an agent's settlement calibrates it.
     calibrates: bool,
     /// When its payer accepted its cap, if one did.
@@ -127,6 +128,7 @@ fn partition(scopes: Vec<SpendScope>) -> Result<Partitioned<FreeTimeSpendRows, S
             shown_at_ms: scope.shown_at_ms,
             opened_at: scope.opened_at,
             closed_at: scope.closed_at,
+            exploration_attempt: scope.exploration_attempt,
         });
     }
     Ok(Partitioned {
@@ -204,6 +206,10 @@ fn rejoin_in_txn(
             },
             (None, _) => None,
         };
+        let calibration_sample = SCOPE
+            .get(&vault.store, txn, &skeleton.scope.0)?
+            .filter(|local| local.agent == agent && local.unit == skeleton.unit)
+            .and_then(|local| local.calibration_sample);
         scopes.push(SpendScope {
             scope: skeleton.scope,
             parent: skeleton.parent,
@@ -216,7 +222,9 @@ fn rejoin_in_txn(
             shown_at_ms: skeleton.shown_at_ms,
             opened_at: skeleton.opened_at,
             closed_at: skeleton.closed_at,
+            exploration_attempt: skeleton.exploration_attempt,
             agent,
+            calibration_sample,
             payer,
         });
     }
@@ -227,11 +235,19 @@ impl HomeTable for FreeTimeSpendRows {
     type Rows = Self;
     type Actor = SpendCompartment;
     const TABLE: &'static SideTableDecl = &side_table::AGENT_DISPATCH_SPEND_SCOPE;
-    const SCHEMA_VERSION: u16 = 3;
+    const SCHEMA_VERSION: u16 = 4;
 
     /// No try still spends under an open scope of a free-time tree: each has
     /// ended, or is a free-time item that never started, which the move
     /// carries and its new home queues again.
+    ///
+    /// A child scope is its attempt's ([`SpendScopeId::for_attempt`]), a try
+    /// spends under the scope of the nearest try its retry lineage reaches
+    /// back to, and every try a retry or a landing superseded has settled,
+    /// so only the newest try of each open scope's lineage can still spend
+    /// under it: each check reads that one try (FIX 6216). A lineage that
+    /// forks or does not read, or a scope no attempt names, reads the whole
+    /// ledger, as before.
     fn quiescent(vault: &Vault, txn: &RoTxn<'_>, _movement: &HomeMove) -> Result<bool> {
         let open: BTreeSet<SpendScopeId> = selected_in_txn(vault, txn)?
             .into_values()
@@ -242,16 +258,19 @@ impl HomeTable for FreeTimeSpendRows {
             return Ok(true);
         }
         let dispatcher = AgentDispatcher::new(vault);
-        for record in AttemptQueue::new(vault).list_in_txn(txn)? {
-            if record.state.is_terminal()
-                || crate::dreamer_runner::free_time_item_waits_unstarted(&record)
-            {
-                continue;
-            }
-            if dispatcher
-                .scope_for_attempt_in_txn(txn, record.id)?
-                .is_some_and(|scope| open.contains(&scope))
-            {
+        let queue = AttemptQueue::new(vault);
+        let mut newest = Vec::with_capacity(open.len());
+        for scope in &open {
+            let tip = scope_attempt(scope)
+                .and_then(|attempt| queue.newest_retry_in_txn(txn, attempt).ok().flatten());
+            let Some(tip) = tip else {
+                return ledger_quiescent(&dispatcher, txn, &open);
+            };
+            newest.push(tip);
+        }
+        // Read as the ledger's working set reads them.
+        for record in queue.working_rows_in_txn(txn, newest)? {
+            if spends_under(&dispatcher, txn, &record, &open)? {
                 return Ok(false);
             }
         }
@@ -361,6 +380,44 @@ impl HomeTable for FreeTimeSpendRows {
     }
 }
 
+/// The attempt a child scope is ([`SpendScopeId::for_attempt`]); `None` for
+/// a launch root, which no attempt names.
+fn scope_attempt(scope: &SpendScopeId) -> Option<crate::attempt_queue::AttemptId> {
+    let entity = EntityId::from_hex(scope.as_str()).ok()?;
+    crate::attempt_queue::AttemptId::from_bytes(entity.as_bytes()).ok()
+}
+
+/// Whether `record` is a try that still spends under one of `open`: not
+/// settled, not a free-time item that never started, and booked under one
+/// of them.
+fn spends_under(
+    dispatcher: &AgentDispatcher<'_>,
+    txn: &RoTxn<'_>,
+    record: &crate::attempt_queue::AttemptRecord,
+    open: &BTreeSet<SpendScopeId>,
+) -> Result<bool> {
+    if record.state.is_terminal() || crate::dreamer_runner::free_time_item_waits_unstarted(record) {
+        return Ok(false);
+    }
+    Ok(dispatcher
+        .scope_for_attempt_in_txn(txn, record.id)?
+        .is_some_and(|scope| open.contains(&scope)))
+}
+
+/// The free-time quiescence check over every try in the ledger.
+fn ledger_quiescent(
+    dispatcher: &AgentDispatcher<'_>,
+    txn: &RoTxn<'_>,
+    open: &BTreeSet<SpendScopeId>,
+) -> Result<bool> {
+    for record in AttemptQueue::new(dispatcher.vault).list_in_txn(txn)? {
+        if spends_under(dispatcher, txn, &record, open)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Every scope of every free-time tree here, by id: the roots this node's
 /// cycles name, and each scope whose parents lead to one.
 fn selected_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<BTreeMap<SpendScopeId, SpendScope>> {
@@ -465,6 +522,8 @@ fn follows(here: &SpendScope, carried: &SpendScope) -> bool {
         && carried.shown_at_ms >= here.shown_at_ms
         && (here.state == SpendState::Open || carried.state == SpendState::Closed)
         && (here.closed_at.is_none() || here.closed_at == carried.closed_at)
+        && (here.exploration_attempt.is_none()
+            || here.exploration_attempt == carried.exploration_attempt)
 }
 
 /// Forgets `actor` in every local spend scope, in its erase's transaction
