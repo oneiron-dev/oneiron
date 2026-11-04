@@ -193,9 +193,10 @@ impl DocxReanchor {
         else {
             return ReanchorOutcome::Drifted;
         };
-        let Some(paired) = pair_paragraph(before, after, index, self.shares_ids) else {
-            return ReanchorOutcome::Drifted;
-        };
+        let Some(paired) =
+            pair_paragraph(before, after, index, self.shares_ids, false) else {
+                return ReanchorOutcome::Drifted;
+            };
         let new = &after.blocks[paired];
         match remap_span(
             &before.blocks[index].text,
@@ -294,10 +295,20 @@ impl HtmlReanchor {
         else {
             return ReanchorOutcome::Drifted;
         };
-        let Some(paired) = pair_paragraph(before, after, index, self.shares_ids) else {
-            return ReanchorOutcome::Drifted;
-        };
+        let Some(paired) =
+            pair_paragraph(before, after, index, self.shares_ids, true) else {
+                return ReanchorOutcome::Drifted;
+            };
         let new = &after.blocks[paired];
+        if after
+            .blocks
+            .iter()
+            .filter(|block| block.block_id == new.block_id)
+            .count()
+            != 1
+        {
+            return ReanchorOutcome::Drifted;
+        }
         match remap_span(
             &before.blocks[index].text,
             &new.text,
@@ -317,13 +328,24 @@ fn pair_paragraph(
     after: &Paragraphs,
     index: usize,
     shares_ids: bool,
+    strict_producer_ids: bool,
 ) -> Option<usize> {
     // An explicit producer id pairs only on a unique exact match on both
-    // sides: a renamed or duplicated id drifts, and text never re-pins it.
-    // Text/position pairing is for structural blocks alone.
+    // sides. The strict (HTML) door drifts a renamed or duplicated id and
+    // never lets text re-pin it; the DOCX door keeps its prior pairing,
+    // where regenerated paraIds fall back to the text decision.
     if let Some(id) = before.blocks[index].para_id.as_deref() {
-        before.only(id)?;
-        return after.only(id);
+        if strict_producer_ids {
+            before.only(id)?;
+            return after.only(id);
+        }
+        if shares_ids && before.only(id).is_some() {
+            match after.ids.get(id).map_or(0, Vec::len) {
+                0 => return None,
+                1 => return after.only(id),
+                _ => {}
+            }
+        }
     }
     let found = pair_by_text(&before.blocks, &after.blocks, index)?;
     // The text never pairs it with a paragraph another one's id follows.
