@@ -37,6 +37,7 @@ use crate::secret_custody::{resolve_secret_ref_in_txn};
 use crate::side_table::HexId;
 use crate::store::Store;
 use crate::vault::Vault;
+use oneiron_store::secret_record::SecretCustodyFloorSource;
 
 /// A grant stamped in its writer, before the commit.
 struct Stamped {
@@ -310,7 +311,7 @@ impl Vault {
         let (mut lease, mut registration, mut value, mut guard) = (None, None, None, None);
         if grant.tier == CustodyTier::T0Doored {
             // A redemption right only: no lease, no value read.
-            let floor = SecretCustodyFloor::resolve(&self.store, wtxn)?;
+            let floor = self.store.resolve_secret_custody_floor(wtxn)?;
             admit_record_use(rec, effector, CustodyTier::T0Doored, &floor)?;
             crate::credential_door::admit_materialization_in_txn(
                 &self.store,

@@ -41,6 +41,7 @@ use crate::secret_manifest::{
     SecretManifestEntry, parse_secret_manifest, validate_secret_manifest,
 };
 use crate::store::Store;
+use oneiron_store::secret_record::SecretCustodyFloorSource;
 
 /// What a holder that is not the recorder checks a register against (CALLS
 /// CUSTODY_MANIFEST_RECHECK).
@@ -243,7 +244,7 @@ impl Vault {
             )));
         }
         default_import_fetch_actor(&mut bindings, &actor);
-        let floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
+        let floor = self.store.resolve_secret_custody_floor(&wtxn)?;
         if let Some(manifest) = &manifest {
             validate_secret_manifest(&manifest.manifest, &floor)?;
         }
@@ -371,7 +372,7 @@ pub(super) fn recheck_manifest_snapshot_in_txn(
     let Ok(manifest) = parse_secret_manifest(text) else {
         return Ok(Some(OwnerWorkRefusal::InvalidInput));
     };
-    match validate_secret_manifest(&manifest, &SecretCustodyFloor::resolve(store, txn)?) {
+    match validate_secret_manifest(&manifest, &store.resolve_secret_custody_floor(txn)?) {
         Ok(()) => {}
         Err(Error::Secret(SecretError::ManifestWidensFloor { .. })) => {
             return Ok(Some(OwnerWorkRefusal::WiderThanFloor));

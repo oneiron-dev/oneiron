@@ -73,6 +73,7 @@ use crate::secret_custody::{
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::write_envelope::ClaimCandidate;
+use oneiron_store::secret_record::SecretCustodyFloorSource;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 use text_spans::{file_spans, merged, occurrences, secret_spans};
 use wipe::{PlanOps, PlanValues, replace_wiped};
@@ -627,7 +628,7 @@ impl Masker {
         wtxn: &mut RwTxn<'_>,
         at: u64,
     ) -> Result<PlanValues<(String, EntityId)>> {
-        let floor = SecretCustodyFloor::resolve(write.store, &*wtxn)?;
+        let floor = write.store.resolve_secret_custody_floor(&*wtxn)?;
         let mut handles = PlanValues::default();
         let mut notes = Vec::with_capacity(self.found.len());
         for mut found in self.found {
