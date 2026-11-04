@@ -48,6 +48,7 @@ use crate::{
     critic::{CritiqueArtifact, CritiqueProvenance, CritiqueSeverity, CritiqueVerdict},
     store::critic_lens::LensCatalog,
 };
+use oneiron_model::llm::{DreamerFailureDecision, LlmResponse};
 
 /// Where a partition's extraction prefix stopped: already finished (a
 /// checkpoint or a thing branch's own run), or extracted and waiting for
@@ -67,6 +68,76 @@ pub(super) struct ExtractedPartition {
     axes: BranchAxes,
     subject: crate::EntityId,
     run_id: Option<String>,
+}
+
+/// What one slice's terminal step left, once its spend is accounted:
+/// the single classification the serial finish and the window arms
+/// that never reach a finish both tally by, so a paid extraction
+/// settles identically whichever arm accounts it (FIX 12487 round 1).
+enum SliceFate {
+    Finished {
+        response: LlmResponse,
+        failure_policy: Option<DreamerFailureDecision>,
+    },
+    Trapped,
+    Checkpoint,
+    Refused(String),
+}
+
+/// Accounts one slice step's outcome into `charges` and reports its
+/// fate. `record_terminal` and `record_usage` are the only charge
+/// sources for a partition (it registers no metered run line), so
+/// every paid outcome must pass here exactly once.
+fn tally_slice_outcome(
+    vault: &Vault,
+    attempt_id: AttemptId,
+    step_hash: [u8; 32],
+    outcome: DurableStepResult<StepOutcome>,
+    charges: &mut StepChargeTally,
+) -> Result<SliceFate> {
+    Ok(match outcome {
+        Ok(StepOutcome::Finished {
+            response,
+            failure_policy,
+            ..
+        }) => {
+            charges.record_terminal(vault, attempt_id, step_hash, &response.usage)?;
+            SliceFate::Finished {
+                response,
+                failure_policy,
+            }
+        }
+        Ok(StepOutcome::Trapped { .. }) => SliceFate::Trapped,
+        Err(DurableStepError::SpentFinalizeRefused { usage }) => {
+            charges.record_usage(&usage);
+            SliceFate::Checkpoint
+        }
+        Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
+            charges.record_usage(&usage);
+            SliceFate::Refused(format!("extraction reply refused: {}", errors.join("; ")))
+        }
+        Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
+            SliceFate::Checkpoint
+        }
+        Err(error) => SliceFate::Refused(error.to_string()),
+    })
+}
+
+/// Accounts an extracted prefix whose finish never tallies it (a
+/// window slot whose branch would not re-open, or whose extraction a
+/// changed prior set discards for a fresh run): the finish loop's own
+/// classification, fates discarded, so the paid steps settle beside
+/// their receipts instead of refunding at zero.
+pub(super) fn tally_extracted_outcomes(
+    vault: &Vault,
+    attempt_id: AttemptId,
+    extracted: ExtractedPartition,
+    charges: &mut StepChargeTally,
+) -> Result<()> {
+    for SliceStep { step_hash, outcome } in extracted.steps {
+        let _ = tally_slice_outcome(vault, attempt_id, step_hash, outcome, charges)?;
+    }
+    Ok(())
 }
 
 impl ConsolidationExecutor<'_> {
@@ -291,31 +362,15 @@ impl ConsolidationExecutor<'_> {
         let mut trapped = false;
         let mut checkpoint = false;
         for (slice, SliceStep { step_hash, outcome }) in slices.iter().zip(steps) {
-            match outcome {
-                Ok(StepOutcome::Finished {
+            match tally_slice_outcome(ctx.vault, attempt_id, step_hash, outcome, charges)? {
+                SliceFate::Finished {
                     response,
                     failure_policy,
-                    ..
-                }) => {
-                    charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
-                    replies.push((slice, step_hash, response, failure_policy));
-                }
-                Ok(StepOutcome::Trapped { .. }) => trapped = true,
-                Err(DurableStepError::SpentFinalizeRefused { usage }) => {
-                    charges.record_usage(&usage);
-                    checkpoint = true;
-                }
-                Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
-                    charges.record_usage(&usage);
-                    refused.get_or_insert_with(|| {
-                        format!("extraction reply refused: {}", errors.join("; "))
-                    });
-                }
-                Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
-                    checkpoint = true
-                }
-                Err(error) => {
-                    refused.get_or_insert_with(|| error.to_string());
+                } => replies.push((slice, step_hash, response, failure_policy)),
+                SliceFate::Trapped => trapped = true,
+                SliceFate::Checkpoint => checkpoint = true,
+                SliceFate::Refused(reason) => {
+                    refused.get_or_insert(reason);
                 }
             }
         }

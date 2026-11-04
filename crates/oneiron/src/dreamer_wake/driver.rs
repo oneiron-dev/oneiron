@@ -548,7 +548,11 @@ impl<'a> DreamerWakeDriver<'a> {
                 }
                 continue;
             }
-            if let SettleFlow::FailPass(error) = self
+            // The attempt admitted above is not yet dispatched: a flush
+            // failure ends the pass only after that admission is
+            // released (parked resumable, reservation refunded), never
+            // left leased behind the error (FIX 12487 round 1).
+            let flush_error = match self
                 .flush_window(
                     &mut window,
                     &input,
@@ -558,8 +562,26 @@ impl<'a> DreamerWakeDriver<'a> {
                     &mut held_error,
                     &mut report,
                 )
-                .await?
+                .await
             {
+                Ok(SettleFlow::FailPass(error)) => Some(error),
+                Ok(_) => None,
+                Err(error) => Some(error),
+            };
+            if let Some(error) = flush_error {
+                if let Err(release_error) = self.release_unflushed_admission(
+                    &input,
+                    &admitted,
+                    &line,
+                    cancel,
+                    cancel_requested,
+                    &mut report,
+                ) {
+                    tracing::warn!(
+                        kind = ?release_error.kind(),
+                        "release of the undispatched admission failed; its lease falls to the maintenance reclaim"
+                    );
+                }
                 return Err(error);
             }
             let dispatched = self

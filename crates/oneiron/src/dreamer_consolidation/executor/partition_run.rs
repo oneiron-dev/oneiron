@@ -465,18 +465,18 @@ impl ConsolidationExecutor<'_> {
             WindowSlotRun::Running {
                 started,
                 mut stages,
+                run_id,
                 run_started,
                 prefix,
-                ..
             } => {
                 let PartitionStarted {
+                    payload,
                     resources,
                     widened,
                     originals,
                     returned,
                     widened_round,
                     mut charges,
-                    ..
                 } = *started;
                 let executed = match prefix.expect("a running slot's prefix ran") {
                     Err(error) => {
@@ -517,8 +517,21 @@ impl ConsolidationExecutor<'_> {
                         let wake = ctx.prepared_wake.expect("a running slot is prepared");
                         match BranchResources::open_prepared(ctx.vault, self.actor, plan, wake) {
                             Ok(fresh) => {
-                                let run = self
-                                    .finish_partition_run(
+                                // The prefix rendered its slices over the
+                                // priors admitted at its own open; when a
+                                // finish before this slot changed that set,
+                                // its labels no longer meet the fresh pins
+                                // and a candidate citing a closed head
+                                // would drop whole at parse. Discard the
+                                // prefix, account its spend, and run the
+                                // partition serially over the fresh branch
+                                // instead (FIX 12487 round 1). The stamp
+                                // still takes the admission-time frozen
+                                // widened/originals/returned values.
+                                let run = if fresh.admitted_prior_ids()
+                                    == resources.admitted_prior_ids()
+                                {
+                                    self.finish_partition_run(
                                         *extracted,
                                         &fresh,
                                         ctx,
@@ -526,7 +539,29 @@ impl ConsolidationExecutor<'_> {
                                         &mut charges,
                                         &mut stages,
                                     )
-                                    .await;
+                                    .await
+                                } else {
+                                    match super::super::parallel::tally_extracted_outcomes(
+                                        ctx.vault,
+                                        attempt.status.attempt.id,
+                                        *extracted,
+                                        &mut charges,
+                                    ) {
+                                        Ok(()) => {
+                                            self.run_partition_attempt(
+                                                &payload,
+                                                &fresh,
+                                                ctx,
+                                                attempt.status.attempt.id,
+                                                run_id,
+                                                &mut charges,
+                                                &mut stages,
+                                            )
+                                            .await
+                                        }
+                                        Err(error) => Err(error.into()),
+                                    }
+                                };
                                 stages.close_model_run(run_started);
                                 self.settle_partition_run(
                                     &fresh,
@@ -543,6 +578,19 @@ impl ConsolidationExecutor<'_> {
                             }
                             Err(error) => {
                                 stages.close_model_run(run_started);
+                                // The finish that tallies the paid
+                                // extraction never runs on this arm:
+                                // account its steps first, so the
+                                // deferral settles the spend beside its
+                                // receipts instead of refunding at zero
+                                // (FIX 12487 round 1). A tally failure is
+                                // a genuine store failure and propagates.
+                                super::super::parallel::tally_extracted_outcomes(
+                                    ctx.vault,
+                                    attempt.status.attempt.id,
+                                    *extracted,
+                                    &mut charges,
+                                )?;
                                 super::super::residency::spent_or_deferred(error, ctx, &charges)
                             }
                         }

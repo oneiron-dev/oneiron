@@ -171,6 +171,73 @@ impl DreamerWakeDriver<'_> {
         })
     }
 
+    /// Releases an admitted attempt that never reached dispatch: the
+    /// window flush ahead of it ended the pass (a panic or another
+    /// pass-ending failure), so it parks as a later pass resumes and
+    /// its reservation refunds, before the flush failure leaves the
+    /// pass (FIX 12487 round 1). Left undispatched it would stay leased
+    /// with the reservation held until the maintenance sweep. The
+    /// executor is never touched (a panicking one is not reused in the
+    /// pass, FIX 7322).
+    pub(super) fn release_unflushed_admission(
+        &mut self,
+        input: &RunWakePass,
+        admitted: &DreamerAdmittedAttempt,
+        line: &str,
+        cancel: &WakeCancellation,
+        cancel_requested: bool,
+        report: &mut WakePassReport,
+    ) -> Result<()> {
+        let (reason, cause) = if cancel_requested && cancel.is_paused() {
+            (
+                DREAMER_PAUSED_PARK_REASON.to_owned(),
+                crate::dreamer_runner::DreamerParkCause::Paused,
+            )
+        } else if cancel_requested {
+            (
+                DREAMER_CANCELLED_PARK_REASON.to_owned(),
+                crate::dreamer_runner::DreamerParkCause::Cancelled,
+            )
+        } else {
+            (
+                "partition window flush ended the pass before dispatch".to_owned(),
+                crate::dreamer_runner::DreamerParkCause::Retry,
+            )
+        };
+        let parked = self.park_attempt(admitted, reason, cause, &input.lease_owner, input.now);
+        let park = if parked.is_ok() {
+            "committed"
+        } else {
+            "park_failed"
+        };
+        // Never dispatched: no run line, no owed calls, so the refund
+        // settles at zero.
+        let refunded = self.store.abort_budget_reservation(
+            crate::dreamer_runner::AbortDreamerBudgetReservation {
+                budget_id: line.to_owned(),
+                child_attempt: admitted.status.attempt.id,
+                now: input.now,
+            },
+        );
+        let settlement = if refunded.is_ok() {
+            "refunded"
+        } else {
+            "settle_failed"
+        };
+        self.log_attempt_outcome(
+            admitted,
+            "window_flush_release",
+            None,
+            Some(cause),
+            settlement,
+            park,
+        );
+        parked?;
+        refunded?;
+        report.parked += 1;
+        Ok(())
+    }
+
     /// Runs the held window's partitions through the executor and
     /// settles every slot in admission order, including a slot whose
     /// Running publish failed and — after a panicking executor — slots
@@ -285,10 +352,17 @@ impl DreamerWakeDriver<'_> {
             }
         }
 
+        // Every executed slot settles even when an earlier slot's
+        // settle fails: the first error is kept and returned after the
+        // drain, so one store error never abandons the window's later
+        // admitted attempts leased with reservations held (FIX 12487
+        // round 1). Every settle write is per-attempt and self-fenced,
+        // so draining in admission order is safe.
         let mut flow = SettleFlow::Continue;
+        let mut first_error: Option<crate::Error> = None;
         for (slot, outcome) in slots.into_iter().zip(outcomes) {
             let (executed, stage) = outcome.expect("every window slot decided before its settle");
-            let next = self
+            match self
                 .settle_attempt_outcome(
                     input,
                     &slot.admitted,
@@ -304,8 +378,18 @@ impl DreamerWakeDriver<'_> {
                     held_error,
                     report,
                 )
-                .await?;
-            flow.absorb(next);
+                .await
+            {
+                Ok(next) => flow.absorb(next),
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error);
         }
         Ok(flow)
     }
