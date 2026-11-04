@@ -385,7 +385,7 @@ impl Vault {
                 // its original act; claim it with this purge and its receipt.
                 self.claim_completed_authority_act_in_txn(
                     wtxn,
-                    &EntityId::from_bytes(act).to_hex(),
+                    &EntityId::from_bytes(act)?.to_hex(),
                     request_text,
                     Some(receipt_id.to_hex()),
                 )?;
