@@ -89,7 +89,7 @@ mod pipeline;
 pub mod pptx;
 mod session_validate;
 pub mod slides_review;
-mod xml;
+use oneiron_docedit::opc_xml as xml;
 
 pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
 pub use self::artifact_question::{
