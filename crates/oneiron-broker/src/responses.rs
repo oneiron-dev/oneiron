@@ -181,8 +181,8 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
     })
     .await
     {
-        let _ = error;
-        return cut_before_header(writer, call, Failure::Send, deadline).await;
+        let reason = send_or_timeout(&error);
+        return cut_before_header(writer, call, reason, deadline).await;
     }
     let header = ReplyHeader {
         version: PROTOCOL_VERSION,
@@ -233,8 +233,8 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
                             return cut_after_header(writer, Failure::ReplyTooLarge, deadline)
                                 .await;
                         }
-                        let _ = error;
-                        return cut_after_header(writer, Failure::Send, deadline).await;
+                        let reason = send_or_timeout(&error);
+                        return cut_after_header(writer, reason, deadline).await;
                     }
                     chained = false;
                     let mut retry_create = match serde_json::from_slice::<JsonValue>(&whole) {
@@ -256,8 +256,8 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
                     })
                     .await
                     {
-                        let _ = error;
-                        return cut_after_header(writer, Failure::Send, deadline).await;
+                        let reason = send_or_timeout(&error);
+                        return cut_after_header(writer, reason, deadline).await;
                     }
                     continue;
                 }
@@ -282,8 +282,8 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
                     if error.kind() == io::ErrorKind::InvalidData {
                         return cut_after_header(writer, Failure::ReplyTooLarge, deadline).await;
                     }
-                    let _ = error;
-                    return cut_after_header(writer, Failure::Send, deadline).await;
+                    let reason = send_or_timeout(&error);
+                    return cut_after_header(writer, reason, deadline).await;
                 }
                 if terminal {
                     let _ = within(deadline, async {
@@ -302,8 +302,8 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
                 })
                 .await
                 {
-                    let _ = error;
-                    return cut_after_header(writer, Failure::Send, deadline).await;
+                    let reason = send_or_timeout(&error);
+                    return cut_after_header(writer, reason, deadline).await;
                 }
             }
             Message::Pong(_) | Message::Frame(_) | Message::Binary(_) => {}
@@ -311,6 +311,16 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
                 return cut_after_header(writer, Failure::Send, deadline).await;
             }
         }
+    }
+}
+
+/// A `within` wait that ran out of time is a timeout; anything else that
+/// broke the socket after the request may have left is a failed send.
+fn send_or_timeout(error: &io::Error) -> Failure {
+    if error.kind() == io::ErrorKind::TimedOut {
+        Failure::Timeout
+    } else {
+        Failure::Send
     }
 }
 
