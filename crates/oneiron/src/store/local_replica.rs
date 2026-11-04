@@ -41,7 +41,6 @@ use loro::{LoroDoc, LoroMap};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::store::base_agent::is_base_agent_actor;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -52,6 +51,7 @@ use crate::ports::{
 use crate::registry;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+use crate::store::base_agent::is_base_agent_actor;
 use crate::store::loro_document::{doc_from_snapshot, import_doc, map_contains_binary};
 use crate::store::loro_tombstones::TombstoneIndex;
 use crate::store::replica_edge_key::format_edge_key;

@@ -339,8 +339,11 @@ fn mark_room_stale_in_txn(
     // the reconciled count instead of the stale advisory one.
     if view.hnsw_neighbors.get(&*txn, id.as_bytes())?.is_some() {
         let count = view.hnsw_neighbors.len(&*txn)?;
-        view.hnsw_meta
-            .put(txn, crate::store::vector_index::keys::COUNT_KEY, &count.to_le_bytes())?;
+        view.hnsw_meta.put(
+            txn,
+            crate::store::vector_index::keys::COUNT_KEY,
+            &count.to_le_bytes(),
+        )?;
         // A room can outlive base's entry point: base deleted its sole node
         // while the overlay still holds neighbor rows. Seed the missing
         // entry point from the composed graph so the strict delete finds

@@ -70,7 +70,9 @@ impl Vault {
             let Some(crate::store::code_snapshot::RepoRef::LocalFolder { path, .. }) =
                 crate::code_artifact::decode_code_artifact_body(&body)
                     .ok()
-                    .and_then(|artifact| crate::store::code_snapshot::RepoRef::parse(&artifact.repo_ref).ok())
+                    .and_then(|artifact| {
+                        crate::store::code_snapshot::RepoRef::parse(&artifact.repo_ref).ok()
+                    })
             else {
                 return Ok(());
             };

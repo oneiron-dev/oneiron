@@ -7,10 +7,10 @@ use heed::RwTxn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
 use crate::ports::EntityStoreStaging;
-use crate::store::ppr_cache_invalidation as ppr;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
+use crate::store::ppr_cache_invalidation as ppr;
 
 /// The `gate` module's trusted-manifest-origin marker, deleted here as part
 /// of full entity deindex. Key: hex32.
@@ -312,7 +312,8 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
 
     let Some(entity_record) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)?
     else {
-        let cleanup = crate::store::vad_annotation::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;
+        let cleanup =
+            crate::store::vad_annotation::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;
         had_vector |= cleanup.had_vector;
         had_graph_mutation |= cleanup.had_graph_mutation;
         neighbors.extend(cleanup.neighbors);
