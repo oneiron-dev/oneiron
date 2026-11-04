@@ -13,8 +13,10 @@ pub struct VectorRefinement {
 }
 
 impl VectorRefinement {
-    pub(crate) fn for_query(
-        config: &crate::VaultConfig,
+    /// The refinement a query of `query_dimensions` gets under `config`.
+    #[must_use]
+    pub fn for_query(
+        config: &crate::config::VaultConfig,
         query_dimensions: usize,
         skip_rescore: bool,
     ) -> Self {
