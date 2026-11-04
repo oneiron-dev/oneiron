@@ -12,7 +12,7 @@ use axum::routing::{get, post};
 use oneiron::skill_hub::pack_catalog::PackHookProposal;
 use serde::Deserialize;
 
-use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -25,6 +25,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/packs/hooks/proposals",
                 summary: "Every agent hook that asked wider than its own ceiling (ARCH-0080 §10), settled or not.",
                 row: None,
+                shape: None,
             },
             get(proposals),
         ),
@@ -34,6 +35,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/packs/hooks/proposals/approve",
                 summary: "Bind an agent's hook as it asked, as the owner's own act; it still runs as its agent.",
                 row: None,
+                shape: Some(RestShape::json(
+                    hook_proposal_answer_body_schema,
+                    hook_proposal_schema,
+                )),
             },
             post(approve),
         ),
@@ -43,6 +48,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/packs/hooks/proposals/discard",
                 summary: "Decline an agent's wider ask; its binding stays at the agent's ceiling.",
                 row: None,
+                shape: Some(RestShape::json(
+                    hook_proposal_answer_body_schema,
+                    hook_proposal_schema,
+                )),
             },
             post(discard),
         ),

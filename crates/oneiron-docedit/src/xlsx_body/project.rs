@@ -9,12 +9,15 @@ use super::*;
 /// read-only cell or name refuses. When a formula is removed, sheets are laid
 /// out again or rows and columns move, the workbook's calculation chain is
 /// dropped, since it would name the wrong cells; the opening application
-/// rebuilds it.
+/// rebuilds it. `location` is the file the workbook is opened from, its
+/// folder and file name (`C:\Reports\Budget.xlsx`): an external link whose
+/// path names it is the workbook's own, and a sheet layout carries it.
 pub fn project_xlsx(
     source: &[u8],
     changes: &[XlsxChange],
     limits: Limits,
     resources: &crate::resource::Resources,
+    location: Option<&str>,
 ) -> Result<XlsxProjection> {
     if changes.is_empty() {
         return Ok(XlsxProjection {
@@ -64,7 +67,8 @@ pub fn project_xlsx(
             if relaid {
                 return Err(refused("two sheet layouts"));
             }
-            book.relayout(sheets)?;
+            let own = book.own_links(location)?;
+            book.relayout(sheets, &own)?;
             relaid = true;
         }
     }
@@ -101,6 +105,7 @@ pub fn project_xlsx(
                     | XlsxChange::Shift { .. }
                     | XlsxChange::Formats { .. }
                     | XlsxChange::RenameColumn { .. }
+                    | XlsxChange::ConditionalFormats { .. }
             ) {
                 names.push(change);
             }
@@ -205,6 +210,16 @@ pub fn project_xlsx(
     }
     if !names.is_empty() {
         book.rewrite_names(&names)?;
+    }
+    // The body's conditional formats go on after the cells (FIX 3468).
+    let mut ruled = HashSet::new();
+    for change in changes {
+        if let XlsxChange::ConditionalFormats { sheet, formats } = change {
+            if !ruled.insert(sheet.as_str()) {
+                return Err(refused("two lists of conditional formats for one sheet"));
+            }
+            book.add_conditional_formats(sheet, formats)?;
+        }
     }
     // A layout change or a row or column edit moves the cells the chain
     // indexes.
@@ -427,7 +442,8 @@ impl Book {
                 | XlsxChange::Sheets { .. }
                 | XlsxChange::Shift { .. }
                 | XlsxChange::Formats { .. }
-                | XlsxChange::RenameColumn { .. } => {
+                | XlsxChange::RenameColumn { .. }
+                | XlsxChange::ConditionalFormats { .. } => {
                     continue;
                 }
             };

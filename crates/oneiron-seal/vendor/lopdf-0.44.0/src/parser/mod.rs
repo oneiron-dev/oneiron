@@ -474,7 +474,11 @@ fn xref<'a>(
                     if stopped.get() {
                         break;
                     }
-                    if is_normal && let Ok(generation) = generation.try_into() {
+                    // Past-u32 ids are skipped, never wrapped (FIX 8451, ported from Q).
+                    if is_normal
+                        && let Ok(generation) = generation.try_into()
+                        && let Some(id) = start.checked_add(index).and_then(|id| u32::try_from(id).ok())
+                    {
                         if let Some(admission) = admission
                             && let Err(err) = crate::admitted::xref::admit_entry(admission, xref.entries.is_empty())
                         {
@@ -482,7 +486,7 @@ fn xref<'a>(
                             stopped.set(true);
                             break;
                         }
-                        xref.insert((start + index) as u32, XrefEntry::Normal { offset, generation });
+                        xref.insert(id, XrefEntry::Normal { offset, generation });
                     }
                 }
                 xref

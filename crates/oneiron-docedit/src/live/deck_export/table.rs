@@ -100,6 +100,13 @@ pub(super) fn project(
                 },
             )?;
             work.changed.extend(report.changed_parts);
+            // A cell write that cut fields whole (FIX 12227) names them, so
+            // the outcome says each dynamic field became static text.
+            if !report.cut_fields.is_empty() {
+                work.converted(id, [Conversion::TableFieldsCut {
+                    fields: report.cut_fields,
+                }]);
+            }
         }
     }
     Ok(())
