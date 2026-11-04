@@ -26,20 +26,26 @@ impl PendingConnectorCall {
     /// Whether `other` asks for exactly this call: the same caller, tool,
     /// arguments and mutation, and for a `self.use` call the same use but
     /// for its intent and generation (FIX 2822).
-    fn same_call(&self, other: &Self) -> bool {
+    fn same_call(&self, vault: &Vault, other: &Self) -> bool {
         let arguments = |text: &str| serde_json::from_str::<Value>(text).ok();
         let same_use = match (&self.secret_use, &other.secret_use) {
             (Some(held), Some(asked)) => held.same_use(asked),
             (held, asked) => held.is_none() && asked.is_none(),
         };
         // A sweep-minted row skips the credential-family comparison (the
-        // sweep could not rebuild it), but the live route must still
-        // resolve to the frozen server before its fields are adopted.
-        let presentation_matches = self.name == other.name
-            && (self.sweep_minted
-                || (self.credential == other.credential
-                    && self.grant == other.grant
-                    && same_use));
+        // sweep could not rebuild it), but the live raw catalog name must
+        // still resolve to the frozen server before its fields are
+        // adopted. After adoption the raw names compare strictly again.
+        let presentation_matches = if self.sweep_minted {
+            vault
+                .route_connector_call(&other.name)
+                .is_ok_and(|route| route.is_some_and(|route| route.name == self.name))
+        } else {
+            self.name == other.name
+                && self.credential == other.credential
+                && self.grant == other.grant
+                && same_use
+        };
         let mut held_arguments = arguments(&self.arguments);
         let mut asked_arguments = arguments(&other.arguments);
         if self.sweep_minted
@@ -207,7 +213,7 @@ impl Vault {
                 Ok((self.ask_code_consent_for_hold(memory, outcome), rows))
             }
             // It read only the held row, which names no row of its own.
-            Some(held) if !held.same_call(&pending) => Ok((
+            Some(held) if !held.same_call(self, &pending) => Ok((
                 ConnectorCallOutcome::Refused {
                     decision_ref: None,
                     reasons: vec![CONNECTOR_CALL_INVOCATION_CONFLICT.to_owned()],
