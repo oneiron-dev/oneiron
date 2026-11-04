@@ -165,7 +165,7 @@ pub(super) fn validate_selected_option(
     )))
 }
 
-pub(super) fn validate_lens_token(context: &str, value: &str) -> Result<()> {
+pub fn validate_lens_token(context: &str, value: &str) -> Result<()> {
     if value.is_empty() {
         return Err(Error::InvalidConfig(format!("{context} must not be empty")));
     }

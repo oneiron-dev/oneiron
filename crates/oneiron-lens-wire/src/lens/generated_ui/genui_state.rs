@@ -396,7 +396,7 @@ impl<'de> Deserialize<'de> for GeneratedUiCardLifecycle {
 
 /// One addressable element of a card, in either the authored tree or the lowered
 /// flat render. Interactivity validation is shape-agnostic across the two.
-pub(in crate::lens) struct LensElementRef<'a> {
+pub struct LensElementRef<'a> {
     id: &'a LensAtomId,
     atom: &'a LensAtom,
     state_bindings: &'a [SelfUiBinding],
@@ -417,7 +417,7 @@ impl<'a> LensElementRef<'a> {
         elements
     }
 
-    pub(in crate::lens) fn collect_flat(nodes: &'a [GeneratedUiNode]) -> Vec<Self> {
+    pub fn collect_flat(nodes: &'a [GeneratedUiNode]) -> Vec<Self> {
         nodes
             .iter()
             .map(|node| Self {
@@ -498,7 +498,7 @@ pub(super) fn validate_generated_ui_interactivity(
 /// Prove every `$bind` descriptor against a `$state` snapshot. This runs at card
 /// assembly *and* after every accepted patch, so the domain a control declares for
 /// itself is the same domain a client patch has to land inside.
-pub(in crate::lens) fn validate_generated_ui_state_bindings(
+pub fn validate_generated_ui_state_bindings(
     elements: &[LensElementRef<'_>],
     state: &GeneratedUiStateSnapshot,
 ) -> Result<()> {
@@ -553,7 +553,7 @@ fn generated_ui_state_patch_key(path: &str) -> Result<SelfUiStateKey> {
 /// Apply a client patch to the current snapshot under the card's declared schema.
 /// The declared snapshot is the closed key space *and* the type schema: undeclared
 /// keys and type changes are rejected before any trigger is returned.
-pub(in crate::lens) fn apply_generated_ui_state_patch(
+pub fn apply_generated_ui_state_patch(
     schema: &GeneratedUiStateSnapshot,
     current: &GeneratedUiStateSnapshot,
     patch: &[GeneratedUiStatePatch],
