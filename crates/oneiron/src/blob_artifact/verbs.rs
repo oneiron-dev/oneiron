@@ -31,7 +31,7 @@ use crate::edit_settle::{
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::file_secret_marks::SecretSight;
-use crate::lens::RecordRef;
+use crate::store::record_ref::RecordRef;
 use crate::llm::decision::{ResolvedMedia, TypedDecision};
 use crate::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
