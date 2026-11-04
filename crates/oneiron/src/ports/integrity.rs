@@ -350,6 +350,10 @@ fn mark_room_stale_in_txn(
             .is_none()
         {
             if let Some((first_key, _)) = view.hnsw_neighbors.first(&*txn)? {
+                // Own the key before the put: the composed read above
+                // borrows the write transaction, which the put needs
+                // mutably.
+                let first_key = first_key.into_owned();
                 view.hnsw_meta.put(
                     txn,
                     crate::store::vector_index::keys::ENTRY_POINT_KEY,
