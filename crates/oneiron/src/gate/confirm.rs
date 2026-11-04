@@ -313,14 +313,18 @@ impl Vault {
             CriticalWriteConfirmDisposition::Clear => {
                 // A lapse that reached this replica before the owner's Clear
                 // left the claim Proposed. Fold the Clear first so the answer
-                // is not lost behind that lapse (FIX 12290).
-                let repaired = body.approval == ClaimApprovalStatus::Proposed;
+                // is not lost behind that lapse (FIX 12290). The resolved row
+                // is the put's expected body, never a held restriction view.
+                let resolved = self
+                    .get_claim_in_txn(&*wtxn, &binding.claim_id)?
+                    .ok_or(Error::EntityNotFound)?;
+                let repaired = resolved.approval == ClaimApprovalStatus::Proposed;
                 if repaired {
                     put_preauthorized_claim_status_in_txn(
                         self,
                         wtxn,
                         &binding.claim_id,
-                        &body,
+                        &resolved,
                         PreauthorizedClaimStatusGrant::FoldClear,
                         TimeRange {
                             start: header.occurred_start,
