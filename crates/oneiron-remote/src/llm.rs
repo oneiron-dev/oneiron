@@ -96,7 +96,7 @@ impl OwnServerTransport for RemoteLlmClient {
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         let remote = self.remote.clone();
         let lease = lease.clone();
-        let (send, receive) = futures_channel::mpsc::unbounded();
+        let (send, receive) = tokio::sync::mpsc::channel(1);
         let (cancel, cancelled) = tokio::sync::oneshot::channel::<()>();
         std::thread::spawn(move || {
             let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -105,7 +105,7 @@ impl OwnServerTransport for RemoteLlmClient {
             {
                 Ok(runtime) => runtime,
                 Err(_) => {
-                    let _ = send.unbounded_send(Err(RetryableLlmError::StreamCut.into()));
+                    let _ = send.try_send(Err(RetryableLlmError::StreamCut.into()));
                     return;
                 }
             };
@@ -113,7 +113,9 @@ impl OwnServerTransport for RemoteLlmClient {
                 tokio::select! {
                     _ = cancelled => {},
                     result = read_stream(&remote, &request, &lease, &send) => {
-                        if let Err(error) = result { let _ = send.unbounded_send(Err(error)); }
+                        if let Err(error) = result {
+                            let _ = send.send(Err(error)).await;
+                        }
                     }
                 }
             });
@@ -126,13 +128,13 @@ impl OwnServerTransport for RemoteLlmClient {
 }
 
 struct CancellableStream {
-    receive: futures_channel::mpsc::UnboundedReceiver<oneiron::LlmResult<LlmStreamEvent>>,
+    receive: tokio::sync::mpsc::Receiver<oneiron::LlmResult<LlmStreamEvent>>,
     _cancel: tokio::sync::oneshot::Sender<()>,
 }
 impl Stream for CancellableStream {
     type Item = oneiron::LlmResult<LlmStreamEvent>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.receive).poll_next(cx)
+        self.receive.poll_recv(cx)
     }
 }
 async fn read_generate(
@@ -173,7 +175,7 @@ async fn read_stream(
     remote: &RemoteClient,
     request: &LlmRequest,
     lease: &BudgetLease,
-    send: &futures_channel::mpsc::UnboundedSender<oneiron::LlmResult<LlmStreamEvent>>,
+    send: &tokio::sync::mpsc::Sender<oneiron::LlmResult<LlmStreamEvent>>,
 ) -> oneiron::LlmResult<()> {
     let mut response = remote.llm_stream(request, lease).await?;
     let status = response.status();
@@ -182,7 +184,6 @@ async fn read_stream(
     } else {
         65_536
     };
-    let mut total = 0;
     let mut buffer = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|e| {
         if e.is_timeout() {
@@ -191,21 +192,23 @@ async fn read_stream(
             RetryableLlmError::StreamCut
         }
     })? {
-        total += chunk.len();
-        if total > limit {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        buffer.extend_from_slice(&chunk);
-        if !status.is_success() {
-            continue;
-        }
-        while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
-            let line: Vec<_> = buffer.drain(..=end).collect();
-            if line.iter().all(u8::is_ascii_whitespace) {
+        for piece in chunk.split_inclusive(|b| *b == b'\n') {
+            if buffer.len().saturating_add(piece.len()) > limit {
+                return Err(FatalLlmError::InvalidRequest.into());
+            }
+            buffer.extend_from_slice(piece);
+            if !status.is_success() {
+                continue;
+            }
+            if !piece.ends_with(b"\n") {
+                continue;
+            }
+            if buffer.iter().all(u8::is_ascii_whitespace) {
+                buffer.clear();
                 continue;
             }
             let value: serde_json::Value =
-                serde_json::from_slice(&line).map_err(|_| FatalLlmError::InvalidRequest)?;
+                serde_json::from_slice(&buffer).map_err(|_| FatalLlmError::InvalidRequest)?;
             if let Some(error) = value.pointer("/error/llm") {
                 return Err(serde_json::from_value(error.clone())
                     .map_err(|_| FatalLlmError::InvalidRequest)?);
@@ -213,7 +216,8 @@ async fn read_stream(
             let event: LlmStreamEvent =
                 serde_json::from_value(value).map_err(|_| FatalLlmError::InvalidRequest)?;
             let done = matches!(event, LlmStreamEvent::Done { .. });
-            if send.unbounded_send(Ok(event)).is_err() || done {
+            buffer.clear();
+            if send.send(Ok(event)).await.is_err() || done {
                 return Ok(());
             }
         }
