@@ -39,6 +39,7 @@ pub mod entity_id;
 pub use oneiron_base::error;
 pub mod housekeeping;
 pub(crate) mod identity;
+pub mod host_memory;
 pub mod limit_ask;
 pub mod machine_destination;
 pub(crate) use oneiron_base::limits;
