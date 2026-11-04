@@ -197,6 +197,9 @@ pub fn compaction_home_worn_rows(
 pub struct CompactionExecution {
     /// The agent the summary is written as: the run's authenticated actor.
     pub writer: EntityId,
+    /// The actual dispatch's frozen caller provenance, supplied by its
+    /// flight's host. Unknown for a genuinely unbound runtime constructor.
+    pub caller_origin: crate::agent_dispatch::CallerOrigin,
     /// The context the call read as it ran: the retained turns or the live
     /// fork, never `auto`, which a flight resolves before its first call
     /// (FIX 6029).
@@ -323,6 +326,7 @@ pub struct CompactionLandingReceipt {
     /// The summary's words while they stand. Only the check reads them.
     #[serde(skip)]
     pub summary: Option<String>,
+    /// What ran this summary, including its frozen caller provenance.
     pub execution: CompactionExecution,
 }
 

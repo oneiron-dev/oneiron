@@ -460,6 +460,7 @@ impl CompactionBackend for SelfCompactionBackend {
         let sent = served.sent.zip(serde_json::to_vec(&served.response).ok());
         let mut execution = CompactionExecution {
             writer: self.host.actor().entity_ref(),
+            caller_origin: self.host.caller_origin(),
             source,
             admitted_model: served.model.to_string(),
             served_provider: usage.served_provider().map(str::to_owned),

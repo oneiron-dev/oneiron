@@ -291,11 +291,9 @@ impl Memory<'_> {
                 }
                 match proposal_origin_in(self.vault(), &rtxn, *id) {
                     Ok(parked) => {
-                        let same_creator = match (&parked, &origin) {
-                            (Some(parked), Some(origin)) => parked.same_creator_as(origin),
-                            (None, None) => true,
-                            _ => false,
-                        };
+                        let same_creator =
+                            parked.as_ref().and_then(TaskCreateOrigin::intent_identity)
+                                == origin.as_ref().and_then(TaskCreateOrigin::intent_identity);
                         same_creator.then_some(*id)
                     }
                     Err(error) => {

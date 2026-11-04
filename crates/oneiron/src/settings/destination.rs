@@ -25,7 +25,9 @@ use oneiron_base::machine_destination::{Destination, EffectiveRead, PeerMachine}
 /// host decides it, from the connection the caller reached it on; nothing the
 /// caller sends sets it. A device that forwards its caller's search to the
 /// home states it there, signed with the request (FIX 3550).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CallerLocality {
     /// On this device: the embedded host, or a caller on its local socket or

@@ -62,15 +62,38 @@ pub(crate) struct TaskCreateOrigin {
     caller_origin: crate::agent_dispatch::CallerOrigin,
 }
 
+/// The creator fields that affect an ask's identity. Caller provenance is
+/// recorded separately; a caller-only root witness has no creator identity.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub(super) struct TaskCreateOriginIdentity<'a> {
+    parent_attempt: Option<AttemptId>,
+    project_ref: Option<EntityId>,
+    run_id: Option<&'a str>,
+    origin_conversation: Option<EntityId>,
+    team: Option<&'a TeamRunStamp>,
+}
+
 impl TaskCreateOrigin {
-    /// Proposal identity is unchanged by provenance: a retry from another
-    /// connection still finds the first ask and keeps its original stamp.
-    pub(super) fn same_creator_as(&self, other: &Self) -> bool {
-        self.parent_attempt == other.parent_attempt
-            && self.project_ref == other.project_ref
-            && self.run_id == other.run_id
-            && self.origin_conversation == other.origin_conversation
-            && self.team == other.team
+    /// The unchanged creator identity used by proposal and wave dedupe.
+    /// A new caller-only root witness stays the same unstamped root ask.
+    pub(super) fn intent_identity(&self) -> Option<TaskCreateOriginIdentity<'_>> {
+        let identity = TaskCreateOriginIdentity {
+            parent_attempt: self.parent_attempt,
+            project_ref: self.project_ref,
+            run_id: self.run_id.as_deref(),
+            origin_conversation: self.origin_conversation,
+            team: self.team.as_ref(),
+        };
+        if identity.parent_attempt.is_none()
+            && identity.project_ref.is_none()
+            && identity.run_id.is_none()
+            && identity.origin_conversation.is_none()
+            && identity.team.is_none()
+        {
+            None
+        } else {
+            Some(identity)
+        }
     }
 
     pub(super) const fn caller_origin(&self) -> crate::agent_dispatch::CallerOrigin {
