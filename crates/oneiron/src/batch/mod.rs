@@ -33,6 +33,7 @@ mod put_apply;
 pub(crate) use person_substrate::sweep_scope_stamps;
 #[cfg(feature = "sync")]
 mod recovery_shell;
+pub(crate) mod row_put;
 #[cfg(feature = "sync")]
 pub(crate) use recovery_shell::restore_recovery_shell_in_txn;
 mod short_id;

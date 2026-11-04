@@ -151,9 +151,9 @@ impl ContentWriteSet {
                 // replay never enters this adapter and stays unstamped, and
                 // so does a replicated row an actor re-puts (FIX 11925).
                 let put = if effect.old.is_some() {
-                    crate::federation::record_scope::RowPut::LocalReput
+                    crate::batch::row_put::RowPut::LocalReput
                 } else {
-                    crate::federation::record_scope::RowPut::Birth
+                    crate::batch::row_put::RowPut::Birth
                 };
                 crate::federation::record_scope::stamp_put(
                     &vault.store,
