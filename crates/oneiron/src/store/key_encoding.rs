@@ -7,8 +7,10 @@ use crate::entity_id::EntityId;
 
 use super::*;
 
+#[cfg(test)]
+pub(crate) use oneiron_store::vector_row::VECTOR_ROW_FORMAT_F16_V1;
 pub(crate) use oneiron_store::vector_row::{
-    VECTOR_ROW_FORMAT_F16_V1, decode_vector_row, decode_vector_row_into, encode_vector_row_v1,
+    decode_vector_row, decode_vector_row_into, encode_vector_row_v1,
 };
 
 impl Store {
