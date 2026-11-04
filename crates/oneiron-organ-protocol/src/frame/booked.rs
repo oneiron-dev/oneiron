@@ -20,7 +20,7 @@ use crate::wire::MAX_FDS_PER_FRAME;
 pub const FD_ROOM_PER_FD: u64 = 3 * size_of::<OwnedFd>() as u64;
 
 /// What receiving `count` descriptors takes at its peak: 0 for none, else
-/// 3x the element over the count floored at one frame's pacing
+/// 3x the element over the count floored at one frame's descriptor capacity
 /// ([`MAX_FDS_PER_FRAME`], FIX 12434). The floor covers the first batch's
 /// exact reservation before the first extend, so small-N capacity (a `Vec`
 /// starts at 4 for its first element) is booked, not grown into; past it,
@@ -46,14 +46,16 @@ pub trait FrameBooking {
     /// What holds the message's room.
     type Held;
 
-    /// Room for the first frame's declared `len` bytes.
+    /// Starts the message's room. The frame reader calls this with zero
+    /// before its first header, then books that frame's bytes with
+    /// [`Self::more`] once their length is known.
     ///
     /// # Errors
     /// The message is not wanted, or no room can be made for it.
     fn body(&mut self, len: u64) -> Result<Self::Held, FrameError>;
 
-    /// Room for `len` more bytes: a further frame of the same message. By
-    /// default it grows as [`Self::value`] grows it.
+    /// Room for `len` encoded bytes: the first or a further frame of the
+    /// same message. By default it grows as [`Self::value`] grows it.
     ///
     /// # Errors
     /// As [`Self::body`].
