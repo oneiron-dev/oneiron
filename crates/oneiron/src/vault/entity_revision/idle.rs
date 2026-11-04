@@ -104,7 +104,7 @@ impl Vault {
                     if !crate::claim::claim_surfaceable(&claim) {
                         continue;
                     }
-                    let text = crate::claim::claim_value_index_text(&claim.value);
+                    let text = crate::store::claim_lineage::claim_value_index_text(&claim.value);
                     if text.is_empty() {
                         Vec::new()
                     } else {
@@ -550,7 +550,10 @@ pub(crate) fn drop_vector_state(
     vault.store.clear_pending_embedding(txn, id)?;
     #[cfg(feature = "sync")]
     {
-        crate::sync::queue::delete_embed_job_in_txn(&vault.store, txn, id)?;
+        vault
+            .store
+            .sync_hooks
+            .delete_embed_job_in_txn(&vault.store, txn, id)?;
         crate::embed::clear_pending_embedding_lease_if_any(vault, txn, id)?;
     }
     Ok(())
