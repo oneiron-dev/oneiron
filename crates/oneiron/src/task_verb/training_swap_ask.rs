@@ -477,6 +477,7 @@ fn issue_one(
                 author: WitnessAuthor::System,
                 message_type: SWAP_QUESTION_TYPE.to_owned(),
                 content: swap_question_text(&row.run, &route.expected)?,
+                parts: None,
                 metadata: Some(swap_question_metadata(&key)),
                 is_visible: true,
                 order: 0,
