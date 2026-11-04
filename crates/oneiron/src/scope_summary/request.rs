@@ -372,6 +372,27 @@ impl Vault {
         Ok(queued)
     }
 
+    /// Owner-ruled fresh remake (ROOM-DELETE-PROMOTE=A, L13-K S18): same
+    /// default-purpose/declaration/plan/enqueue/note machinery as
+    /// [`Self::request_scope_summary_in_txn`], but the declaration's
+    /// `previous` is explicitly `None` (writes `Value::Nil`) with lineage
+    /// `None`/`None`, so an old edited/stale summary is never read as
+    /// editor input. Same-writer only; no nested writer, no notify.
+    pub(crate) fn request_scope_summary_remake_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        request: &ScopeSummaryRequest,
+        now: u64,
+    ) -> Result<ScopeSummaryQueued> {
+        let purpose = requester_lane::default_purpose(&request.target);
+        let input = derivation::declaration(request, purpose, None);
+        plan_in_txn(self, txn, &input)?;
+        let queued = enqueue_with_lineage_in_txn(self, txn, input, None, None, now)?;
+        // FIX 3103: the asking run, as its request is queued.
+        crate::skill_attribution::note_summary_request_in_txn(&self.store, txn, queued.attempt);
+        Ok(queued)
+    }
+
     /// Declares the descriptor row as well as the scope. Only approved rows
     /// resolve; there is no enum and no implicit "other" purpose.
     pub fn request_scope_summary_for(
