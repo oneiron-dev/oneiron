@@ -8,7 +8,7 @@
 
 use heed::RoTxn;
 
-use super::row_birth_in_txn;
+use super::{RowBirth, row_birth_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::ManifestDbs;

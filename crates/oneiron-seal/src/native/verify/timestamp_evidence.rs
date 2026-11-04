@@ -4,8 +4,6 @@ use super::verify_evidence::ValidatedTimeToken;
 use super::verify_revocation::gen_time_beyond_skew;
 use super::verify_sig_pipeline::{Checks, SigEntry, unpadded_cms};
 use crate::api::{Sha256Digest, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode};
-use crate::error::{FatalCode, SealError, SealStage};
-use crate::memory::MemoryLedger;
 use crate::native::{cms, pdf, tsp};
 
 #[derive(Clone, Copy)]
@@ -64,37 +62,23 @@ impl TimestampEvidence {
         clock_ms: u64,
         signer: &cms::ParsedSignerInfo,
         anchors: &[pkix_chain::TrustAnchor],
-        memory: &MemoryLedger,
-    ) -> Result<Self, SealError> {
+    ) -> Self {
         let mut token = None;
         for attr in &signer.unsigned_attrs {
-            // Only an ordinary attribute failure is malformed; a memory
-            // refusal propagates as the verification's resource error.
-            let (oid, value) = match cms::parse_attribute(attr, memory) {
-                Ok(pair) => pair,
-                Err(err) if err.is_retryable() => return Err(err),
-                Err(_) => return Ok(Self::Malformed),
+            let Ok((oid, value)) = cms::parse_attribute(attr) else {
+                return Self::Malformed;
             };
             if oid == cms::OID_ATTR_TS_TOKEN.as_bytes() {
                 if token.is_some() {
-                    return Ok(Self::Malformed);
+                    return Self::Malformed;
                 }
-                memory
-                    .admit_len::<u8>(value.full.len())
-                    .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
                 token = Some(value.full.to_vec());
             }
         }
         let Some(token) = token else {
-            return Ok(Self::Absent);
+            return Self::Absent;
         };
-        Self::evaluate(
-            &token,
-            &cms::sha256(&signer.signature),
-            anchors,
-            clock_ms,
-            memory,
-        )
+        Self::evaluate(&token, &cms::sha256(&signer.signature), anchors, clock_ms)
     }
     pub(super) fn for_document(
         bytes: &[u8],
@@ -102,46 +86,31 @@ impl TimestampEvidence {
         anchors: &[pkix_chain::TrustAnchor],
         clock_ms: u64,
         coverage_ok: bool,
-        memory: &MemoryLedger,
-    ) -> Result<Self, SealError> {
+    ) -> Self {
         if !coverage_ok {
-            return Ok(Self::CryptoRejected);
+            return Self::CryptoRejected;
         }
         let Some(der) = unpadded_cms(&entry.contents) else {
-            return Ok(Self::Malformed);
+            return Self::Malformed;
         };
         let Ok(imprint) = pdf::hash_byte_range(bytes, entry.byte_range) else {
-            return Ok(Self::CryptoRejected);
+            return Self::CryptoRejected;
         };
-        Self::evaluate(der, &imprint, anchors, clock_ms, memory)
+        Self::evaluate(der, &imprint, anchors, clock_ms)
     }
     fn evaluate(
         token: &[u8],
         imprint: &Sha256Digest,
         anchors: &[pkix_chain::TrustAnchor],
         clock_ms: u64,
-        memory: &MemoryLedger,
-    ) -> Result<Self, SealError> {
-        // Only an ordinary token failure is a rejection; a memory refusal or
-        // an unconfigured service propagates, never a verdict on the token.
-        let value = match tsp::validate_token_for_verify(token, imprint, anchors, memory) {
-            Ok(value) => value,
-            Err(err) if err.is_retryable() => return Err(err),
-            Err(SealError::Fatal {
-                code: FatalCode::InvalidConfiguration,
-                ..
-            }) => {
-                return Err(SealError::Fatal {
-                    stage: SealStage::Verification,
-                    code: FatalCode::InvalidConfiguration,
-                });
-            }
-            Err(_) => return Ok(Self::CryptoRejected),
+    ) -> Self {
+        let Ok(value) = tsp::validate_token_for_verify(token, imprint, anchors) else {
+            return Self::CryptoRejected;
         };
         if gen_time_beyond_skew(value.gen_time_unix, clock_ms) {
-            return Ok(Self::CryptoRejected);
+            return Self::CryptoRejected;
         }
-        Ok(Self::Valid(value))
+        Self::Valid(value)
     }
     fn slots(&self, invalid: VerifyFindingCode) -> TimestampSlots {
         match self {
@@ -169,15 +138,12 @@ impl TimestampEvidence {
         }
     }
     /// Only trusted time may become signer or archival time evidence.
-    /// Memory the covered-set parse was refused propagates as the
-    /// verification's resource error, never a trust verdict.
     pub(super) fn project(
         self,
         kind: TimestampKind,
         checks: &mut Checks,
         covered: &mut Vec<EmbeddedCert>,
-        memory: &MemoryLedger,
-    ) -> Result<TimestampResult, SealError> {
+    ) -> TimestampResult {
         let (crypto_kind, invalid) = match kind {
             TimestampKind::Signature => (
                 VerifyCheckKind::SignatureTimestamp,
@@ -204,18 +170,14 @@ impl TimestampEvidence {
                 token.trust,
                 VerifyCheckStatus::Pass | VerifyCheckStatus::NotRun
             ) {
-                for d in &token.tsa_chain_ders {
-                    let cert = EmbeddedCert::from_der(d, memory)
-                        .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
-                    if let Some(cert) = cert {
-                        memory
-                            .admit_len::<EmbeddedCert>(1)
-                            .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
-                        covered.push(cert);
-                    }
-                }
+                covered.extend(
+                    token
+                        .tsa_chain_ders
+                        .iter()
+                        .filter_map(|d| EmbeddedCert::from_der(d)),
+                );
             }
-            return Ok(match token.trust {
+            return match token.trust {
                 VerifyCheckStatus::Pass => TimestampResult {
                     trusted: Some(ValidatedTimeToken {
                         gen_time: token.gen_time_unix,
@@ -230,8 +192,8 @@ impl TimestampEvidence {
                 VerifyCheckStatus::Fail | VerifyCheckStatus::NotApplicable => {
                     TimestampResult::none()
                 }
-            });
+            };
         }
-        Ok(TimestampResult::none())
+        TimestampResult::none()
     }
 }

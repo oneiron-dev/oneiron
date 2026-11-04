@@ -429,7 +429,9 @@ fn keep_until_revoked(lease: Option<WorkerLease>, grant: Option<DeviceGrant>) {
             }
             drop((lease, grant));
         });
-    } else if std::thread::Builder::new()
+    } else {
+        // A failed spawn drops the closure, and the lease and grant with it.
+        let _ = std::thread::Builder::new()
         .name("exl3-keep-lease".to_owned())
         .spawn(move || {
             let wait = async move {
@@ -445,10 +447,7 @@ fn keep_until_revoked(lease: Option<WorkerLease>, grant: Option<DeviceGrant>) {
                 Ok(runtime) => runtime.block_on(wait),
                 Err(_) => drop(wait),
             }
-        })
-        .is_err()
-    {
-        drop((lease, grant));
+        });
     }
 }
 
