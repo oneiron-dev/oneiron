@@ -110,9 +110,27 @@ impl ScopedRead<'_> {
         kind: Option<EdgeKind>,
     ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
         let txn = self.grant_read_txn()?;
-        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        self.edges_out_of_in(&txn, id, kind)
+    }
+
+    /// [`Self::edges_out`] in a shared snapshot (L15 recall speed).
+    pub(crate) fn edges_out_shared(
+        &self,
+        snapshot: &super::SharedReadSnapshot<'_>,
+        id: &EntityId,
+    ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
+        self.edges_out_of_in(snapshot.txn(), id, None)
+    }
+
+    fn edges_out_of_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: Option<EdgeKind>,
+    ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         let admitted = self.admitted_edges_in(
-            &txn,
+            txn,
             &policy,
             &filter,
             id,
