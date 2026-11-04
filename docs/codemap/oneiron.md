@@ -1220,7 +1220,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/slip_tests.rs` | test | m | — | — | Root provisioning and fail-closed read admission land together |
 | `src/claim/scoped_read/tests.rs` | test | m | — | — | The one point-read entry and the read-grant holes it keeps closed |
 | `src/claim/scoped_read/versions.rs` | src | m | 12 crate-vis | — | Explicit read frontiers keep the scoped lane's current and historic gates |
-| `src/claim/scoped_read/visibility.rs` | src | m | 4 fn · 19 crate-vis | — | — |
+| `src/claim/scoped_read/visibility.rs` | src | L | 4 fn · 19 crate-vis | — | — |
 | `src/claim/scoped_read/weave_correction.rs` | src | L | 2 struct · 1 enum · 5 fn · 3 crate-vis | WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection | Authenticated wrong labels emitted by the live weave report: one on a link, and one on a claim, project… |
 | `src/claim/scoped_read/weave_correction/admin.rs` | src | s | 2 crate-vis | — | A weave Admin's wrong labels (OF-499 A3): the one-tap wrong on a link, claim, project, budget or sieve audit… |
 | `src/claim/scoped_read/weave_digest.rs` | src | L | 3 struct · 2 enum · 10 fn · 1 const · 4 re-export · 11 crate-vis | StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule, WeaveScheduleHold | Per-reader report schedules (OF-499) |
@@ -2326,7 +2326,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/browser_programs.rs` | src | m | 2 struct · 1 fn · 1 const | CoachBrowserProgramsReport, CoachBrowserRepairPending | The Coach's browser programs (CUA E8, FIX 7605): each night, fixed code reads the solved-run evidence that… |
 | `src/dreamer_runner/maintenance/browser_programs/induction.rs` | src | m | 6 crate-vis | — | Deterministic induction for the Coach's browser programs (CUA E8): one candidate program from two solved… |
 | `src/dreamer_runner/maintenance/calibration_asks.rs` | src | s | 1 const · 1 crate-vis | — | Calibration asks (OF-420; ARCH-0053 #the-judge, ARCH-0042's judge re-pin protocol): "On uncertainty… |
-| `src/dreamer_runner/maintenance/coach.rs` | src | m | 1 trait · 11 fn · 31 const · 6 re-export · 12 crate-vis | PersonThresholdPolicy | The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and… |
+| `src/dreamer_runner/maintenance/coach.rs` | src | m | 1 trait · 11 fn · 31 const · 6 re-export · 13 crate-vis | PersonThresholdPolicy | The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and… |
 | `src/dreamer_runner/maintenance/coach/eval_measurement.rs` | src | s | 1 fn · 1 crate-vis | — | The Coach's eval measurement job (FIX 574, OF-578): one per request digest, queued when the measurement is… |
 | `src/dreamer_runner/maintenance/coach/person_threshold.rs` | src | s | 1 fn | — | Q3 tuning as the Coach (ARCH-0076 #ask, FIX 8708): every requested override record is read, a page at a… |
 | `src/dreamer_runner/maintenance/coach/think_threshold.rs` | src | s | 1 trait · 2 fn · 2 crate-vis | ThinkThresholdPolicy | Q2 tuning as the Coach (ARCH-0076 #ask, FIX 2437): the ThinkThreshold row learns from quick picks that later… |
@@ -4965,7 +4965,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retrieval_depth/spend.rs` | src | s | 1 struct · 1 fn · 1 type · 1 crate-vis | RetrievalError | Failure-side usage for the bounded deep retrieval and composition calls |
 | `src/retrieval_depth/tests.rs` | test | s | — | — | — |
 | `src/retrieval_depth/tests/repairs.rs` | test | s | — | — | — |
-| `src/run_budget/declaration.rs` | src | s | 4 struct · 2 enum · 15 fn · 5 crate-vis | BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration | The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid… |
+| `src/run_budget/declaration.rs` | src | s | 4 struct · 2 enum · 15 fn · 8 crate-vis | BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration | The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid… |
 | `src/run_budget/job_maximum.rs` | src | s | 7 struct · 4 enum · 9 fn | AddFundsNotice, CheckpointRef, DeclaredMaximum, JobMaximum, JobSignal, JobStartRefused, MaximumShown, MaximumStop +3 | The stop at a paid job's declared maximum (CROSS-ARCH-0023 C2) |
 | `src/run_budget/mod.rs` | src | s | 2 re-export | — | Run budget declarations and paid-job maximum state |
 | `src/run_tree/a2a.rs` | src | s | 1 fn | — | Attempt-record to A2A task projection with cancel/landing extensions |
@@ -5305,7 +5305,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/share/tests.rs` | test | L | 3 crate-vis | — | — |
 | `src/share/tests/recipient_class.rs` | test | m | — | — | — |
 | `src/share_travel.rs` | src | m | 3 struct · 1 enum · 3 fn · 1 const · 1 mod · 5 re-export · 11 crate-vis | ExportTarget, ExportTravel, GrantTravel, OmittedKnowledge | What travels with a body when it leaves the vault (OF-491) |
-| `src/share_travel/agent_pack.rs` | src | L | 11 struct · 8 enum · 8 fn · 1 const | AgentPackBudgetSplit, AgentPackCeiling, AgentPackCompaction, AgentPackDreaming, AgentPackKnowledge, AgentPackMcp, AgentPackMemoryProfile, AgentPackOptionalMemory +11 | The AgentPack a sharer sends to another party (OF-491, FIX 2040): a reference-free projection of an agent… |
+| `src/share_travel/agent_pack.rs` | src | L | 13 struct · 10 enum · 9 fn · 1 const | AgentPackBudgetSplit, AgentPackCeiling, AgentPackCompaction, AgentPackDreaming, AgentPackKnowledge, AgentPackMcp, AgentPackMemoryProfile, AgentPackOptionalMemory +15 | The AgentPack a sharer sends to another party (OF-491, FIX 2040): a reference-free projection of an agent… |
 | `src/share_travel/agent_pack_export.rs` | src | m | 3 struct · 1 fn · 1 crate-vis | AgentPackExport, AgentPackExportFile, AgentPackExportRequest | `vault.agents.export_pack` (OF-491, FIX 2042): the sharing door for an agent |
 | `src/share_travel/copy.rs` | src | s | 1 struct · 1 enum · 1 fn | CopyRefs, CopyTravelChoice | The ref choice a copy door takes (FIX 1199) |
 | `src/share_travel/pack_notice.rs` | src | m | 2 struct · 6 const · 9 crate-vis | PackNoticeWording, WorldRecipientNotice | The owner's notices on an agent pack's travel (FIX 5493, owner ruling 1-EXPORT = B) |
@@ -5419,7 +5419,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/import_receipt/rule_fit.rs` | src | s | 2 struct · 1 enum · 1 trait · 3 fn · 2 crate-vis | CallerPermissions, HoldsNothing, RuleSkillFit, SkillFitSetting | The deterministic skill fit and the owner's setting that picks it (FIX 9752, owner law ARCH-0053 "Everything… |
 | `src/skill_hub/index.rs` | src | m | 1 const · 15 crate-vis | — | Skill provenance and capability indexes |
 | `src/skill_hub/install_transition.rs` | src | m | 3 enum · 4 fn · 11 crate-vis | InstallDisposition, InstallHoldReason, InstallLifecycle | One transaction-local skill install plan and its finalized, loadable result |
-| `src/skill_hub/mod.rs` | src | s | 2 mod · 20 re-export · 21 crate-vis | — | Skill-hub records, provenance aliases, adapter contracts, and update gates |
+| `src/skill_hub/mod.rs` | src | s | 2 mod · 20 re-export · 22 crate-vis | — | Skill-hub records, provenance aliases, adapter contracts, and update gates |
 | `src/skill_hub/osv.rs` | src | m | 3 struct · 1 enum · 1 trait · 2 fn · 1 const · 3 crate-vis | DependencyCoordinate, DependencyScanStatus, OsvDevClient, OsvQuery, SkillInstallAdvisories | Dependency-only OSV queries on dynamic installs, using the existing scan ledger |
 | `src/skill_hub/osv/tests.rs` | test | s | — | — | — |
 | `src/skill_hub/pack_catalog/admission.rs` | src | m | 7 fn · 11 crate-vis | — | Post-fit installation of pinned pack source; requested powers stay inert |
@@ -5502,7 +5502,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/eval_set/authoring/apply.rs` | src | m | 8 struct · 3 fn | CaseDecision, CutDecision, EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip, EvalCohortDecision, EvalCohortSetup, FamilyDecision | The plan the eval-authoring skill answers with, checked whole against its inventory and applied in order… |
 | `src/skill_optimize/eval_set/authoring/lineage.rs` | src | s | 7 crate-vis | — | The lineage fixed code resolves for a candidate, from the existing readers' explicit links only: the… |
 | `src/skill_optimize/eval_set/authoring/sourced.rs` | src | s | 1 fn | — | The eval-authoring inventory and the rows it was read from, in one set of reads (FIX 6997): the Coach's… |
-| `src/skill_optimize/eval_set/cohort.rs` | src | m | 5 struct · 1 enum · 8 fn · 12 crate-vis | CohortRetirement, EvalCohort, EvalExposure, EvalExposureCounts, EvalExposureKind, EvalRelease | Date-cut sealed cohorts and the exposure ledger (ARCH-0053: "The ledger counts what each sealed cohort has… |
+| `src/skill_optimize/eval_set/cohort.rs` | src | m | 5 struct · 1 enum · 8 fn · 13 crate-vis | CohortRetirement, EvalCohort, EvalExposure, EvalExposureCounts, EvalExposureKind, EvalRelease | Date-cut sealed cohorts and the exposure ledger (ARCH-0053: "The ledger counts what each sealed cohort has… |
 | `src/skill_optimize/eval_set/cohort/space_probe.rs` | src | m | 2 crate-vis | — | The space probes' cohort metadata (FIX 6744; ARCH-0053 `#eval-exposure`), kept in the ledger's own family… |
 | `src/skill_optimize/eval_set/cut_audit.rs` | src | m | 7 struct · 1 enum · 1 fn · 8 crate-vis | AuditCase, AuditCoverage, AuditMethodPin, CoverageGap, EvalCutAudit, EvalCutAuditDraft, EvalCutAuthor, NearCopyFlag | The near-copy audit every cohort cut commits with (ARCH-0053: "At each cut, a near-copy audit runs across… |
 | `src/skill_optimize/eval_set/doors.rs` | src | m | 14 struct · 12 fn | EvalAuthorNowRequest, EvalAuthoringRef, EvalAuthoringResult, EvalBlockedLabelsRequest, EvalCaseLineage, EvalCasesRequest, EvalCohortOpenRequest, EvalCohortRef +6 | Owner-bound eval authoring and ledger doors |
@@ -6523,14 +6523,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/thread_passport/tests.rs` | test | m | — | — | — |
 | `src/thread_passport/vault_doors.rs` | src | s | 6 fn · 1 crate-vis | — | — |
 | `src/training_pack/actor_erase.rs` | src | s | 5 crate-vis | — | An erased owner out of the training rows that name it (FIX 3520): the runs, and the role-swap receipts in… |
-| `src/training_pack/authorize.rs` | src | s | 5 fn · 4 crate-vis | — | The owner's authorization of one prepared run, and the host's record of why a run that waits on it cannot… |
-| `src/training_pack/connector.rs` | src | m | 2 struct · 1 trait · 3 fn · 1 type · 1 crate-vis | TrainOutput, TrainRequest, TrainingConnector | One long-running connector verb |
-| `src/training_pack/custody.rs` | src | m | 5 fn · 8 crate-vis | — | Training artifacts use the existing versioned blob store, not another file store |
+| `src/training_pack/authorize.rs` | src | s | 5 fn · 5 crate-vis | — | The owner's authorization of one prepared run, and the host's record of why a run that waits on it cannot… |
+| `src/training_pack/connector.rs` | src | m | 2 struct · 1 trait · 3 fn · 2 type · 1 crate-vis | TrainOutput, TrainRequest, TrainingConnector | One long-running connector verb |
+| `src/training_pack/custody.rs` | src | m | 6 fn · 8 crate-vis | — | Training artifacts use the existing versioned blob store, not another file store |
 | `src/training_pack/custody/stream.rs` | src | s | 2 struct · 1 fn | CheckpointFileStream, CheckpointStream | FIX 12086: the owner's starting checkpoint read from one stream, its files one after another, so no door… |
 | `src/training_pack/detector_corpus.rs` | src | m | 1 struct · 1 fn | DetectorCorpusRef | A question head's corpus (FIX 8237) |
 | `src/training_pack/export.rs` | src | s | 1 fn | — | The existing consented reservoir becomes a reproducible, source-grouped split |
 | `src/training_pack/mod.rs` | src | s | 6 fn · 6 re-export · 3 crate-vis | — | OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap |
-| `src/training_pack/promotion.rs` | src | m | 2 struct · 2 enum · 7 fn · 5 crate-vis | RoleSwapOutcome, SwapExpectation, TrainingEvalInput, ViewedSwap | Held-out scoring releases a counted cohort |
+| `src/training_pack/promotion.rs` | src | m | 2 struct · 2 enum · 8 fn · 6 crate-vis | RoleSwapOutcome, SwapExpectation, TrainingEvalInput, ViewedSwap | Held-out scoring releases a counted cohort |
 | `src/training_pack/target.rs` | src | s | 1 struct · 1 enum · 4 fn · 2 const · 1 crate-vis | QuestionTarget, TrainingTarget | What a training run trains (FIX 7263): a model for one manifest role, or one two-logit head for one exact… |
 | `src/training_pack/types.rs` | src | m | 28 struct · 3 enum · 2 fn · 4 re-export · 1 crate-vis | ArtifactPin, CalibrationResult, CandleParityCheck, CheckpointFileKind, CheckpointFilePin, CheckpointFileUpload, CheckpointUpload, ComputePin +23 | Pins and receipts shared by the training pack and its host adapters |
 | `src/typed_body.rs` | src | m | 4 struct · 1 enum · 11 fn · 1 re-export · 16 crate-vis | TypedBodyCommit, TypedBodyFork, TypedBodyHead, TypedBodyWriter, TypedForkState | Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module… |
@@ -6708,7 +6708,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/persona.rs` | src | s | 9 struct · 2 enum · 5 fn | CompanionAccessRequestAnswer, CompanionAccessRequestAnswerRequest, CompanionAccessRequestAnswered, CompanionProfileRequestedScope, PersonaSnapshotCopyReceipt, PersonaSnapshotExportedCopy, PersonaSnapshotMemoryPack, PersonaSnapshotMemoryPackRow +3 | Typed owner doors for profile request answers and accepted persona copies |
 | `src/verbs/proxy.rs` | src | m | 14 struct · 7 enum · 8 fn | ChatCompletionChoice, ChatCompletionMemory, ChatCompletionMessage, ChatCompletionObject, ChatCompletionRememberError, ChatCompletionRemembered, ChatCompletionRequest, ChatCompletionResponse +13 | Typed OpenAI memory-proxy requests, replies and owner admission views (OF-445) |
 | `src/verbs/receipts_page.rs` | src | s | 1 struct · 1 re-export | VaultReceiptsRequest | `vault.receipts`'s input and its page (FIX 10186): any positive limit, served at most… |
-| `src/verbs/record_erase.rs` | src | s | 8 struct · 3 fn | EraseHeldBytes, EraseLfsChunk, EraseSameBytesRow, EraseShare, RecordEraseConfirmRequest, RecordEraseOutcome, RecordErasePreview, RecordEraseRequest | The served erase of one record (OF-150 / OF-163): `vault.records.erase_preview` shows what an erase would… |
+| `src/verbs/record_erase.rs` | src | m | 8 struct · 3 fn · 1 crate-vis | EraseHeldBytes, EraseLfsChunk, EraseSameBytesRow, EraseShare, RecordEraseConfirmRequest, RecordEraseOutcome, RecordErasePreview, RecordEraseRequest | The served erase of one record (OF-150 / OF-163): `vault.records.erase_preview` shows what an erase would… |
 | `src/verbs/reply.rs` | src | s | 6 struct | AiReply, AiReplyCompanion, AiReplyL2Base, AiReplyReader, AiReplyRequest, AiReplyStanding | Context-bearing text replies through the host's configured inference door |
 | `src/verbs/research.rs` | src | m | 23 struct · 1 enum · 19 fn · 2 crate-vis | ResearchArchive, ResearchArchiveWire, ResearchBasisWire, ResearchBenchmarkWire, ResearchBindWire, ResearchBudgetView, ResearchCandidateWire, ResearchChildReceipt +16 | `vault.research.*` (OF-351): the autoresearch workflow skill's verbs over the campaign record… |
 | `src/verbs/reservoir_sources.rs` | src | s | 1 struct · 1 fn | ReservoirSourcesRequest | `vault.coach.training_offers.sources` (FIX 11352): the owner's read of a reservoir scope before he prepares… |

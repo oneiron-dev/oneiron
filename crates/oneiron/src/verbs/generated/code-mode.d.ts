@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1271 code-mode rows (1231 host rows, 40 run rows), 4479 declarations.
-// Replies: 1076 fully typed, 183 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1272 code-mode rows (1232 host rows, 40 run rows), 4479 declarations.
+// Replies: 1076 fully typed, 179 typed down to an opaque serde_json::Value leaf, 16 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 119; unread shapes: EmbeddingSpace.evidence.
+// Opaque serde_json::Value leaves: 119; unread shapes: EmbeddingSpace.evidence, ModelStepReceipt.progression, Option<crate::llm::model_step::SettledStepView>, SavedResumeStep.Model.checkpoint, SettledProgramStepView.model_step, crate::llm::model_step::SettledStepRequest.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1303,10 +1303,8 @@ declare namespace Sdk {
   type SlimStateView = { residency: "full" } | { residency: "slim"; residue: SlimResidueView };
   type SlimStateSnapshot = { process_id: number; state: SlimStateView };
   type SlimResumeStepRequest = { kind: "model"; attempt_id: string; step_hash: string } | { kind: "outbound_intent"; intent_id: string };
-  type StepProgression = "started" | "response_received" | "logged" | "finished";
-  type ModelStepCheckpoint = { progression: StepProgression; updated_ms?: number | null; claim_ref?: string | null };
   type SavedIntentState = "pending" | "done" | "abandoned" | "deferred";
-  type SavedResumeStep = { kind: "model"; attempt_id: string; step_hash: string; checkpoint: ModelStepCheckpoint } | { kind: "outbound_intent"; step: SlimResumeStep; state: SavedIntentState };
+  type SavedResumeStep = { kind: "model"; attempt_id: string; step_hash: string; checkpoint: unknown } | { kind: "outbound_intent"; step: SlimResumeStep; state: SavedIntentState };
   type ShedCause = "long_outbound_wait" | "memory_pressure";
   type SlimDropRequest = { cause: ShedCause; waited_secs: number };
   type HeapDropReport = { sync_windows: number; ppr_cache_rows: number; ppr_dependency_rows: number; hnsw_nodes: number; estimated_reclaimed_bytes: number };
@@ -3258,7 +3256,7 @@ declare namespace Sdk {
   type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input" | "reasoning_content_history" | "token_logprobs";
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
   type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
-  type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased";
+  type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased" | "JobLost";
   type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine";
   type TransportFaultKind = "not_sent" | "io_after_send" | "refused" | "unexpected_frame" | "ended_with_error";
   type TransportFault = { kind: TransportFaultKind; stage?: string | null; detail: string };
@@ -3267,7 +3265,7 @@ declare namespace Sdk {
   type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied };
   type ModelStepFailure = { class: ModelStepFailureClass; message: string; llm?: LlmError | null; validation_attempts?: number | null; validation_errors: string[]; spent_usage?: LlmUsage | null };
   type ModelStepResult = { status: "finished"; response: LlmResponse; json?: unknown | null; memoized: boolean; fallback_source?: FatalLlmError | null; claim_ref: string } | { status: "failed"; failure: ModelStepFailure } | { status: "budget_denied"; trap_ref: string } | { status: "erased" };
-  type ModelStepReceipt = { step_ref: string; step_hash: string; model: ModelId; retry: ModelStepRetryPolicy; progression?: StepProgression | null; result?: ModelStepResult | null };
+  type ModelStepReceipt = { step_ref: string; step_hash: string; model: ModelId; retry: ModelStepRetryPolicy; progression?: unknown | null; result?: ModelStepResult | null };
   type ModelStepReceiptRequest = { step_key: string };
   type ModelStreamOpen = { stream_key: string; request: LlmRequest };
   type ModelStreamStatus = "pending" | "live" | "finished" | "failed";
@@ -3983,8 +3981,6 @@ declare namespace Sdk {
   type DreamerWakeLiveCallView = { call_ref: string; lease_id: string; lease?: DreamerWakeLeaseView | null };
   type DreamerWakeLiveView = { elapsed_ms: number; remaining_ms: number; calls: DreamerWakeLiveCallView[] };
   type DreamerWakeView = { wake_ref: string; header: DreamerWakeHeaderView; generation?: DreamerWakeGenerationView | null; members?: DreamerWakeGenerationView[]; calls?: DreamerWakeCallView[]; next_cursor?: string | null; live?: DreamerWakeLiveView | null };
-  type SettledStepRequest = { job_ref: string; step_hash: string };
-  type SettledStepView = { job_ref: string; run_id?: string | null; claim_ref: string; step_hash: string; model: ModelId; purpose: string; params_hash: string; response: LlmResponse };
   type CheckpointReadRequest = { run_ref: string; from_step?: number; limit?: number | null };
   type CheckpointStepView = { step: number; label: string; state_hash: string; created_at_ms: number };
   type CheckpointResumeView = { step: number; wait_ref: string; effect: string; output_handle: string; reply?: unknown | null };
@@ -4008,7 +4004,7 @@ declare namespace Sdk {
   type ProgramRunView = { root: string; admission: string; actor: EntityId; actor_class: string; code_run: string; definition?: ProgramRecipePin | null; root_created_at?: number | null; tries: ProgramTryView[]; queue?: ProgramQueueView | null; held?: ProgramHeldView | null; held_by_try: ProgramHeldView[]; run?: ProgramRunStateView | null; steps: ProgramStepView[]; erased_steps: string[]; undecodable_steps: number; next_cursor?: string | null; withheld: string[] };
   type SettledProgramStepRequest = { root: string; step_ref: string };
   type ProgramResultAvailability = "readable" | "withheld" | "absent";
-  type SettledProgramStepView = { root: string; attempt: string; actor: EntityId; code_run: string; step_ref: string; issue: ProgramStepIssueView; settled_at: number; result_digest: string; result_ref?: string | null; availability: ProgramResultAvailability; model_step?: SettledStepView | null; body_base64?: string | null };
+  type SettledProgramStepView = { root: string; attempt: string; actor: EntityId; code_run: string; step_ref: string; issue: ProgramStepIssueView; settled_at: number; result_digest: string; result_ref?: string | null; availability: ProgramResultAvailability; model_step?: unknown | null; body_base64?: string | null };
   type ProgramCheckpointRequest = { root: string; cursor?: string | null; limit?: number | null };
   type ProgramCheckpointConsentView = { binding_digest: string; effect_digest: string; state: string; ask?: string | null; choice?: string | null; word?: string | null; answer_receipt?: string | null; outcome?: string | null; settlement_receipt?: string | null; consumption_receipt?: string | null; settlement_facts_digest?: string | null; consumption_facts_digest?: string | null };
   type ProgramCheckpointWaitView = { row: number; wait_id: string; generation: number; delivered: boolean; consent?: ProgramCheckpointConsentView | null };
@@ -7143,7 +7139,7 @@ declare const vault: Sdk.VaultHost & {
     /** The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle. */
     settlement(input: Sdk.RunSettlementRequest): Promise<Sdk.RunSettlement | StoredResult>;
     /** Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work. */
-    step(input: Sdk.SettledStepRequest): Promise<Sdk.SettledStepView | null | StoredResult>;
+    step(input: unknown): Promise<unknown | null | StoredResult>;
   };
   scope: {
     /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
