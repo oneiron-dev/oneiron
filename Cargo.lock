@@ -7944,6 +7944,7 @@ dependencies = [
  "oneiron-docedit",
  "oneiron-guest",
  "oneiron-keystore",
+ "oneiron-linkedin-policy",
  "oneiron-model",
  "oneiron-retrieval",
  "oneiron-sandbox-contract",
@@ -8328,6 +8329,14 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "oneiron-linkedin-policy"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "serde",
 ]
 
 [[package]]
