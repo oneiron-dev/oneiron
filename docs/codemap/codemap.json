@@ -686,18 +686,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "OptionalMemory",
-      "OptionalMemoryProfile"
-     ],
+     "notable": [],
      "path": "src/agent_def/optional_memory.rs",
      "purpose": "How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget)",
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "enum": 1,
       "fn": 4,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -752,9 +748,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RefusalDial",
       "RefusalDomain",
-      "RefusalLevel",
       "RefusalOutcome",
       "VaultKind"
      ],
@@ -763,9 +757,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "enum": 4,
+      "enum": 3,
       "fn": 12,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -779,17 +773,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "AgentDefinition",
-      "MemoryProfile"
-     ],
+     "notable": [],
      "path": "src/agent_def/types.rs",
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "crate-vis": 59,
       "fn": 17,
-      "re-export": 15,
-      "struct": 2
+      "re-export": 17
      }
     },
     {
@@ -36808,17 +36798,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "CriticalWriteConfirmBinding",
       "CriticalWriteConfirmResolution"
      ],
      "path": "src/gate/confirm.rs",
      "purpose": "—",
      "surface": {
-      "const": 4,
-      "crate-vis": 19,
+      "const": 2,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 2,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -36828,7 +36817,7 @@
      "path": "src/gate/confirm/demotion_retry.rs",
      "purpose": "The expiry walk's backoff for a timeout demotion that keeps failing (FIX 12079)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 2
      }
     },
     {
@@ -36904,7 +36893,7 @@
      "path": "src/gate/decision.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 23
      }
     },
     {
@@ -37930,7 +37919,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "ProposalPolicySource",
       "ProposalSubmissionCheck",
       "ProposalSubmissionReceipt"
      ],
@@ -37940,7 +37928,8 @@
       "const": 1,
       "crate-vis": 6,
       "fn": 3,
-      "struct": 3
+      "re-export": 1,
+      "struct": 2
      }
     },
     {
@@ -38734,7 +38723,7 @@
      "path": "src/gate/witness_message.rs",
      "purpose": "ONE-1686 (RT-04): the witness MESSAGE approval-ceiling door",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -69095,11 +69084,49 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AgentDefinition"
+     ],
+     "path": "src/store/agent_definition.rs",
+     "purpose": "The stored agent definition record (AGENT_DEF): a saved, host-agnostic agent composition and the shared…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemoryProfile"
+     ],
+     "path": "src/store/agent_memory_profile.rs",
+     "purpose": "The per-agent context-window memory profile (RT-05, ONE-1687) an agent definition stores: its window budget…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AgentModel"
      ],
      "path": "src/store/agent_model.rs",
      "purpose": "One model on an agent's model list (FIX 4472): the revision-pinned model and the owner's words on when the…",
      "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OptionalMemory",
+      "OptionalMemoryProfile"
+     ],
+     "path": "src/store/agent_optional_memory.rs",
+     "purpose": "How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): the…",
+     "surface": {
+      "enum": 1,
       "struct": 1
      }
     },
@@ -69121,6 +69148,20 @@
       "enum": 4,
       "fn": 10,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RefusalDial",
+      "RefusalLevel"
+     ],
+     "path": "src/store/agent_refusal.rs",
+     "purpose": "The refusal dial (OF-533) an agent definition stores: one position from none to full, and the agent's…",
+     "surface": {
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -70565,6 +70606,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CriticalWriteConfirmBinding"
+     ],
+     "path": "src/store/critical_confirm_record.rs",
+     "purpose": "The critical-confirm pending record: its reason codes, its deadline, and the deterministic binding the…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/custody_retirement_status.rs",
      "purpose": "Completion marker for acknowledged custody retirement",
@@ -71234,6 +71289,16 @@
      "purpose": "The gate hooks the store layer's open, write, erase and read paths run, supplied by the engine when a store…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_metrics.rs",
+     "purpose": "One vault's gate outcome x reason-class counters",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -72209,7 +72274,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 118,
+      "crate-vis": 124,
       "mod": 108,
       "re-export": 31
      }
@@ -74164,7 +74229,7 @@
      "path": "src/store/witness_message_body.rs",
      "purpose": "Canonical MESSAGE body vocabulary, encoding, and structural validation",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -90556,7 +90621,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 429,
+     "files": 435,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90796,7 +90861,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6311,
+   "source_files": 6317,
    "test_files": 895
   },
   "oneiron-android": {
@@ -127177,6 +127242,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConfirmDemotionRetries",
+      "ConfirmDemotionRetry"
+     ],
+     "path": "src/critical_confirm_retry.rs",
+     "purpose": "The expiry walk's backoff state for a timeout demotion that keeps failing (FIX 12079): a row whose demotion…",
+     "surface": {
+      "const": 2,
+      "fn": 3,
+      "struct": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "EmbeddingDevice",
       "EmbeddingProvenance",
       "InputKind"
@@ -127187,6 +127268,18 @@
       "const": 2,
       "enum": 2,
       "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignRateThresholds"
+     ],
+     "path": "src/esign_rate_thresholds.rs",
+     "purpose": "The e-sign send-rate thresholds a policy manifest resolves to",
+     "surface": {
       "struct": 1
      }
     },
@@ -127250,7 +127343,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 33
+      "mod": 36
      }
     },
     {
@@ -127613,6 +127706,18 @@
       "const": 1,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProposalPolicySource"
+     ],
+     "path": "src/proposal_observation_record.rs",
+     "purpose": "The policy source behind a proposal submission's advisory threshold, as the proposal observation records it",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -129065,12 +129170,26 @@
      "layout": "dir",
      "purpose": "Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages…"
     },
+    "critical_confirm_retry": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The expiry walk's backoff state for a timeout demotion that keeps failing (FIX 12079): a row whose demotion…"
+    },
     "embedding_vocabulary": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…"
+    },
+    "esign_rate_thresholds": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The e-sign send-rate thresholds a policy manifest resolves to"
     },
     "file_secret_marks": {
      "files": 1,
@@ -129156,6 +129275,13 @@
      "layout": "file",
      "purpose": "A project's depth birth record, as a POLICY_MANIFEST contribution carries it"
     },
+    "proposal_observation_record": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The policy source behind a proposal submission's advisory threshold, as the proposal observation records it"
+    },
     "receive_scan": {
      "files": 1,
      "impl_vault": false,
@@ -129236,7 +129362,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 147,
+   "source_files": 150,
    "test_files": 4
   },
   "oneiron-uniffi": {
