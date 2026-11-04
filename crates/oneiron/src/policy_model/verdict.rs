@@ -45,6 +45,8 @@ pub enum PolicySkipReason {
     ResponseUnusable,
     /// The classifier budget refused the call.
     BudgetExhausted,
+    /// The budget guard denied admission without spending the classifier budget.
+    AdmissionDenied,
     /// The policy moved under every pass, so no verdict could be pinned to it.
     PolicyMoving,
 }
@@ -58,6 +60,7 @@ impl PolicySkipReason {
             Self::BackendUnavailable => "backend_unavailable",
             Self::ResponseUnusable => "response_unusable",
             Self::BudgetExhausted => "budget_exhausted",
+            Self::AdmissionDenied => "admission_denied",
             Self::PolicyMoving => "policy_moving",
         }
     }

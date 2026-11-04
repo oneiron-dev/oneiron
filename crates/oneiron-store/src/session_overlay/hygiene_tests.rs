@@ -27,13 +27,16 @@ fn count(bytes: isize) {
 
 /// The separately owned scratch allocation to observe at the short-id door.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ShortIdScratch {
+pub enum ShortIdScratch {
     Alias,
     StaleForwardKey,
     NewForwardKey,
 }
 
-struct ObservedAllocator;
+/// The allocator that counts a test thread's held bytes and reads a watched
+/// allocation before it is freed. Each crate's own test binary registers it
+/// as its `#[global_allocator]`; no other build does.
+pub struct ObservedAllocator;
 
 // SAFETY: all allocations/deallocations delegate to System with the original
 // layout; the observer reads only a specific registered initialized allocation
@@ -68,6 +71,7 @@ unsafe impl GlobalAlloc for ObservedAllocator {
     }
 }
 
+#[cfg(test)]
 #[global_allocator]
 static ALLOCATOR: ObservedAllocator = ObservedAllocator;
 
@@ -96,7 +100,7 @@ impl Drop for ObservationGuard {
 
 /// Runs `action` and returns the most bytes it held allocated at once on this
 /// thread, past what the thread held before it.
-pub(crate) fn peak_allocated<T>(action: impl FnOnce() -> T) -> (T, usize) {
+pub fn peak_allocated<T>(action: impl FnOnce() -> T) -> (T, usize) {
     struct Counting;
     impl Drop for Counting {
         fn drop(&mut self) {
@@ -115,7 +119,7 @@ pub(crate) fn peak_allocated<T>(action: impl FnOnce() -> T) -> (T, usize) {
 }
 
 /// Obtain an address only while `bytes` is still initialized and owned.
-pub(crate) fn allocation(bytes: &[u8]) -> (usize, usize) {
+pub fn allocation(bytes: &[u8]) -> (usize, usize) {
     assert!(!bytes.is_empty());
     (bytes.as_ptr() as usize, bytes.len())
 }
@@ -128,7 +132,7 @@ fn register(bytes: &[u8]) {
     });
 }
 
-pub(crate) fn observe_drop((ptr, len): (usize, usize), should_drop: bool, action: impl FnOnce()) {
+pub fn observe_drop((ptr, len): (usize, usize), should_drop: bool, action: impl FnOnce()) {
     assert!(len > 0);
     let _guard = ObservationGuard::new();
     WATCH.with(|slot| slot.set(Some((ptr, len))));
@@ -147,7 +151,7 @@ pub(crate) fn observe_drop((ptr, len): (usize, usize), should_drop: bool, action
 
 /// A short-ID function registers its own exact scratch allocation. No byte
 /// comparison or uninitialized unrelated allocation is touched.
-pub(crate) fn observe_short_id_scratch<T>(target: ShortIdScratch, action: impl FnOnce() -> T) -> T {
+pub fn observe_short_id_scratch<T>(target: ShortIdScratch, action: impl FnOnce() -> T) -> T {
     let _guard = ObservationGuard::new();
     SHORT_ID_TARGET.with(|slot| slot.set(Some(target)));
     let result = action();
@@ -159,7 +163,7 @@ pub(crate) fn observe_short_id_scratch<T>(target: ShortIdScratch, action: impl F
     result
 }
 
-pub(crate) fn register_short_id_buffer(target: ShortIdScratch, bytes: &[u8]) {
+pub fn register_short_id_buffer(target: ShortIdScratch, bytes: &[u8]) {
     if SHORT_ID_TARGET.with(Cell::get) == Some(target) {
         register(bytes);
     }
@@ -168,7 +172,7 @@ pub(crate) fn register_short_id_buffer(target: ShortIdScratch, bytes: &[u8]) {
 /// Follow the actual promotion builder's owned Put buffer through success or
 /// failure. Registration occurs inside its production constructor, after the
 /// clone, so this observes that exact allocation rather than a helper copy.
-pub(crate) fn observe_replay_copy<T>(action: impl FnOnce() -> T) -> T {
+pub fn observe_replay_copy<T>(action: impl FnOnce() -> T) -> T {
     let _guard = ObservationGuard::new();
     REPLAY_OBSERVING.with(|slot| slot.set(true));
     let outcome = action();
@@ -180,13 +184,13 @@ pub(crate) fn observe_replay_copy<T>(action: impl FnOnce() -> T) -> T {
     outcome
 }
 
-pub(crate) fn register_replay_copy(ops: &[crate::batch::BatchOp]) {
+pub fn register_replay_copy(ops: &[crate::batch_op::BatchOp]) {
     if !REPLAY_OBSERVING.with(Cell::get) {
         return;
     }
-    if let Some(crate::batch::BatchOp::Put { data, .. }) = ops
+    if let Some(crate::batch_op::BatchOp::Put { data, .. }) = ops
         .iter()
-        .find(|op| matches!(op, crate::batch::BatchOp::Put { .. }))
+        .find(|op| matches!(op, crate::batch_op::BatchOp::Put { .. }))
     {
         register(data);
     }

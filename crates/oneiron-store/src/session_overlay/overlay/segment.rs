@@ -4,13 +4,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use crate::error::{Error, Result};
+use oneiron_contracts::error::{Error, Result};
 
 use super::super::journal::{JournalEntry, PublishedEntry};
 use super::super::keyspace::{OverlayMutation, OverlayState, project_mutation};
 use super::ACTIVE_SEGMENT;
 use super::lifecycle::{Lease, OverlayLifecycleState, SessionOverlay};
-use crate::error::OffRecordError;
+use oneiron_contracts::error::OffRecordError;
 
 pub(in crate::session_overlay) struct TxnSegment {
     pub(super) overlay: Arc<SessionOverlay>,
@@ -33,7 +33,7 @@ pub(super) static NEXT_OVERLAY_GENERATION: AtomicU64 = AtomicU64::new(1);
     dead_code,
     reason = "ONE-1728 witness is the first lib-target owner of a session write segment"
 )]
-pub(crate) struct TxnSegmentGuard {
+pub struct TxnSegmentGuard {
     overlay: Arc<SessionOverlay>,
     finished: bool,
     _not_send: PhantomData<Rc<()>>,
@@ -45,7 +45,7 @@ pub(crate) struct TxnSegmentGuard {
 )]
 impl TxnSegmentGuard {
     /// Applies staged rows and typed journal entries after base commit.
-    pub(crate) fn commit(mut self) -> Result<()> {
+    pub fn commit(mut self) -> Result<()> {
         let segment = ACTIVE_SEGMENT.with(|slot| slot.borrow_mut().take());
         let Some(segment) = segment else {
             return Err(Error::InvariantViolation(
@@ -93,7 +93,7 @@ impl SessionOverlay {
         dead_code,
         reason = "ONE-1728 witness is the first lib-target session write transaction"
     )]
-    pub(crate) fn install_txn_segment(self: &Arc<Self>) -> Result<TxnSegmentGuard> {
+    pub fn install_txn_segment(self: &Arc<Self>) -> Result<TxnSegmentGuard> {
         ACTIVE_SEGMENT.with(|slot| {
             if slot.borrow().is_some() {
                 return Err(Error::InvariantViolation(
@@ -241,11 +241,11 @@ impl SessionOverlay {
 #[cfg(test)]
 mod hygiene_tests {
     use super::*;
-    use crate::batch::BatchOp;
-    use crate::entity_id::EntityId;
+    use crate::batch_op::BatchOp;
     use crate::session_overlay::hygiene_tests::{allocation, observe_drop};
     use crate::session_overlay::{JournalRole, JournalScope, OverlayKeyspace};
-    use crate::temporal::TimeRange;
+    use oneiron_contracts::entity_id::EntityId;
+    use oneiron_contracts::temporal::TimeRange;
 
     #[test]
     fn aborted_segment_scrubs_its_owned_mutation_and_journal_buffers() -> Result<()> {
