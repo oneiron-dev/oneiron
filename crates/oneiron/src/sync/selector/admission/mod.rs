@@ -34,7 +34,7 @@ pub(in crate::sync) use self::revalidate::{
     revalidate_admitted_facet_stamps, revalidate_admitted_federated_claims,
 };
 use self::routing::Routes;
-pub(in crate::sync) use self::state::staged_births;
+pub(in crate::sync) use self::state::{release_landed_stamps, staged_births};
 pub(crate) use self::state::{AdmittedUpdate, StagedBirths};
 
 pub use crate::store::window_protocol::FederationAdmissionRole;
@@ -245,6 +245,9 @@ fn admit_window_update(
     for (part, part_key) in routes.keys.iter().enumerate() {
         let admitted = create_admission_doc(part_key, update, role, guest)?;
         copy_admitted_entities(vault, &policy, &remote, &admitted, grading, &routes, part)?;
+        // A body reference rides beside the exact carrier admission kept, so
+        // the body follows it by reference (FIX 12118).
+        crate::sync::asset_body::references::copy_refs_within(&remote, &admitted)?;
         let edges = routes.edges_of(&remote, part)?;
         let early = copy_admitted_edges(
             vault,
@@ -257,7 +260,17 @@ fn admit_window_update(
             &admitted.get_map("edges"),
         )?;
         if part == 0 {
-            crate::sync::note::copy_judged(vault, &remote, &admitted)?;
+            // FIX 5588: the import lands on this install's machine, whose id
+            // alone names the receiving placement; never the sender's peer
+            // proof, though it is in scope on this path.
+            let receiving = {
+                let txn = vault.store.env.read_txn()?;
+                match crate::identity::read_machine_id_in_txn(vault, &txn)? {
+                    Some(machine) => crate::machine_destination::Destination::Machine(machine),
+                    None => crate::machine_destination::Destination::Unknown,
+                }
+            };
+            crate::sync::note::copy_judged(vault, &remote, &admitted, receiving)?;
         }
         copied.push((admitted, early));
     }
