@@ -17679,7 +17679,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 30,
       "fn": 3
      }
     },
@@ -17700,7 +17700,7 @@
      "path": "src/code_run/storage/records/bodies/reader.rs",
      "purpose": "A result body read as it streams (FIX 3677 step 7, FIX 5392): what the whole read checks, read a frame at a…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -71960,7 +71960,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 90,
+      "crate-vis": 91,
       "mod": 91,
       "re-export": 31
      }
@@ -72799,6 +72799,16 @@
      "purpose": "Reader pins: a result body a reader holds is never deleted",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/result_body_reader.rs",
+     "purpose": "A result body read as it streams (FIX 3677 step 7, FIX 5392): the reader the export snapshot carries, and…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -90137,7 +90147,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 374,
+     "files": 375,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90377,7 +90387,7 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6270,
+   "source_files": 6271,
    "test_files": 898
   },
   "oneiron-android": {
