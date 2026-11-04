@@ -89,7 +89,14 @@ impl Store {
             // environment instead of being dropped with the transaction.
             rtxn.commit()?;
             drop(db_open_guard);
-            Self::assemble(env, raw, registered_path, config, hooks)?
+            Self::assemble(
+                env,
+                raw,
+                registered_path,
+                config,
+                hooks,
+                config.store_clock.for_store(),
+            )?
         };
 
         verify_existing_hnsw_config(&store, config)?;
@@ -113,11 +120,11 @@ impl Store {
         registered_path: RegisteredPath,
         config: &VaultConfig,
         hooks: StoreHooks,
+        clock: crate::ports::StoreClock,
     ) -> Result<Self> {
         let vault_meta_view = OverlayDb::canonical(raw.vault_meta);
         let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta_view)?);
 
-        let clock = config.store_clock.for_store();
         {
             let txn = env.read_txn()?;
             if let Some(bytes) = vault_meta_view.get(&txn, crate::ports::ID_FLOOR)? {
@@ -405,6 +412,7 @@ impl Store {
         let id = crate::store::policy_record::default_policy_manifest_id()?;
         seed_default_policy_manifest_in_txn(
             self.gate_hooks,
+            &self.clock,
             &self.entities,
             &self.sync_state,
             &self.type_index,

@@ -853,6 +853,7 @@ impl Drop for StoreOwner {
 
 pub(super) fn seed_default_policy_manifest_in_txn(
     gate_hooks: &dyn crate::store::StoreGateHooks,
+    clock: &crate::ports::StoreClock,
     entities: &OverlayDb,
     sync_state: &OverlayStrDb,
     type_index: &OverlayDb,
@@ -875,10 +876,13 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     payload.extend_from_slice(&timestamp.to_be_bytes());
     payload.extend_from_slice(&body);
     entities.put(wtxn, id.as_bytes(), &payload)?;
+    let hash = blake3::hash(&body);
+    let mut trusted_origin = hash.as_bytes().to_vec();
+    trusted_origin.extend_from_slice(&clock.peek_recorded_at().to_be_bytes());
     sync_state.put(
         wtxn,
         &oneiron_store::manifest_origin_keys::trusted_manifest_key(id),
-        blake3::hash(&body).as_bytes(),
+        &trusted_origin,
     )?;
     sync_state.put(
         wtxn,
