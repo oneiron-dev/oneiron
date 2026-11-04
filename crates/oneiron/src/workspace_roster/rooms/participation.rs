@@ -37,12 +37,12 @@ use super::super::join_receipt::JoinReceiptRef;
 use super::fact_subject::FactSubject;
 use super::{ProjectRoom, RoomTurn, invalid, require_member, room_in, turn_in};
 use super::{TURNS, audience, hosting, offers};
-use crate::agent_dispatch::SpendScopeId;
 use crate::error::{ClaimError, Error, RecordError, Result};
 use crate::memory::WitnessTurn;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::store::Store;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
 mod admission;

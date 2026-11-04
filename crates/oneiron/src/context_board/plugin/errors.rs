@@ -1,6 +1,6 @@
 //! Plugin-seam error type and result alias.
 use super::super::frame::BoardFrameError;
-use crate::skill::SkillLifecycle;
+use crate::write_envelope::skill_record::SkillLifecycle;
 
 // ---------------------------------------------------------------------------
 // Errors

@@ -9,8 +9,8 @@ pub(super) fn observe_authority_put(
     wtxn: &mut RwTxn<'_>,
     id: &crate::EntityId,
     key: &str,
-    entry: Option<&crate::authority::AuthorityLogEntry>,
-    hash: Option<&crate::authority::AuthorityEntryHash>,
+    entry: Option<&oneiron_authority::authority::AuthorityLogEntry>,
+    hash: Option<&oneiron_contracts::authority::AuthorityEntryHash>,
     replicated: bool,
     mutation_recorded_at: u64,
 ) -> Result<bool> {

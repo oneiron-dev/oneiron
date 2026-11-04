@@ -135,7 +135,7 @@ impl<'v> ScopedRead<'v> {
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
         authority: &HeldAuthority<'v>,
-        grant: Option<&crate::federation::Scope>,
+        grant: Option<&oneiron_authority::federation::Scope>,
     ) -> Result<bool> {
         if raw.len() == ENTITY_METADATA_HEADER_LEN
             && self.vault.store.entity_deletion_present_in_txn(
@@ -167,7 +167,7 @@ impl<'v> ScopedRead<'v> {
         body: &ClaimBody,
         filter: &ResolvedRetrievalFilter,
         authority: &HeldAuthority<'v>,
-        grant: Option<&crate::federation::Scope>,
+        grant: Option<&oneiron_authority::federation::Scope>,
     ) -> Result<bool> {
         // History controls travel through scoped sync/export, never ordinary
         // claim recall. Their binary value contains signed birth payloads.

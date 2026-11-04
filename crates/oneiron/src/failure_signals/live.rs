@@ -22,13 +22,16 @@ use super::{
     AgentKind, AgentSurface, FailureClassV1, FailureSignalInput, FailureTaxonomy,
     VersionedComponent,
 };
-use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
+use crate::agent_dispatch::decode_agent_dispatch_input;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
-use crate::llm::{DurableStepContext, DurableStepError, LlmError};
-use crate::self_heal::{DiagnosticEvent, DiagnosticEventClass};
+use crate::model_step_context::DurableStepContext;
+use crate::model_step_error::DurableStepError;
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::diagnostic_record::{DiagnosticEvent, DiagnosticEventClass};
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_model::llm::LlmError;
 
 /// Each observation already counted, and the time it observed. Nightly scans
 /// capture the same content-addressed diagnostic again; it counts once.

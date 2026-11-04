@@ -32,7 +32,7 @@ pub(super) fn apply_delete_arm(
         store,
         wtxn,
         id,
-        crate::world_keys::WorldKeyDestroyCause::BatchDelete,
+        crate::key_material::WorldKeyDestroyCause::BatchDelete,
         None,
         state.mutation_recorded_at,
     )?;

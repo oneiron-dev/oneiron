@@ -117,7 +117,7 @@ impl Memory<'_> {
         assertions: Option<AssertionRead<'_, '_>>,
         person_author: Option<EntityId>,
         quoted: Option<&crate::conversation_dag::QuotedReply>,
-        thread: Option<&crate::workspace_roster::ThreadBinding>,
+        thread: Option<&crate::store::conversation_body::ThreadBinding>,
     ) -> MemoryResult<WitnessAdmission<'p>> {
         // OF-063 (FIX 1225/1670): every record the reply asserts is read in
         // THIS snapshot before any row stages. The first the writer cannot

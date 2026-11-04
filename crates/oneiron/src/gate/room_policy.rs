@@ -3,7 +3,7 @@
 //! role permissions and completed-sweep admission are policy decisions.
 use super::resolution::PolicyManifestResolution;
 use crate::EntityId;
-use crate::conversation::RoomRole;
+use crate::store::conversation_body::RoomRole;
 use rmpv::Value;
 
 pub(crate) const KEY: &str = "room_policy_rows";

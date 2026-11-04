@@ -9,10 +9,12 @@ mod call;
 mod codec;
 mod doors;
 mod graph;
+pub(crate) mod health_review;
 pub mod helper;
 mod helper_eval;
 mod identity;
 mod invocation;
+pub mod learning_judge;
 mod lifecycle;
 mod loaded_revision;
 mod pack_load;
@@ -86,3 +88,5 @@ use crate::registry::ENTITY_TYPE_SKILL;
 use crate::temporal::TimeRange;
 #[cfg(test)]
 use rmpv::Value;
+
+pub mod team_shape_catalog;

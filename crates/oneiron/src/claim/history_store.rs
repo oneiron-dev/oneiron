@@ -210,7 +210,7 @@ pub(crate) fn validate_machine_history_put(
             // A superseded history leaves the live row to its same-id
             // successor, an ordinary claim of the actor that superseded it.
             Ok(projection)
-                if projection.admits_successor_by(crate::memory::claim_author(incoming))
+                if projection.admits_successor_by(crate::claim::claim_author(incoming))
                     && !crate::authority::machine_claim_needs_history(store, txn, incoming)? => {}
             Ok(_) => {
                 return Err(Error::Claim(
@@ -312,12 +312,12 @@ pub(crate) fn validate_machine_history_put(
             };
             let packet =
                 super::ClaimHistoryHandoff::decode(bytes).map_err(|_| invalid_history())?;
-            let signature = crate::authority::AuthoritySignature {
+            let signature = oneiron_authority::authority::AuthoritySignature {
                 suite: packet.signer.suite(),
                 public_key: packet.signer.clone(),
                 signature: packet.signature.to_vec(),
             };
-            if !crate::authority::verify_authority_signature(
+            if !oneiron_authority::authority::verify_authority_signature(
                 &signature,
                 &packet.transcript().map_err(|_| invalid_history())?,
             ) {
@@ -458,7 +458,7 @@ pub(crate) fn machine_history_ids_for_target(
     let mut count = crate::scan_check::ScanCount::start(
         store,
         txn,
-        crate::scan_check::EngineScan::MachineHistoryTargetRows,
+        crate::store::EngineScan::MachineHistoryTargetRows,
         target.as_bytes(),
     )?;
     let mut ids = Vec::new();
@@ -745,7 +745,7 @@ pub(crate) fn stage_machine_birth_after_candidate(
             kind: crate::edge::EdgeKind::FacetOf,
             tgt: body.scope_facet,
             weight: 1.0,
-            vad: crate::affect::Vad::NEUTRAL,
+            vad: oneiron_contracts::affect::Vad::NEUTRAL,
         });
     }
     // Same txn, no second writer. A failure rolls back both controls and the

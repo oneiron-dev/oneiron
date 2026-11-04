@@ -9,8 +9,8 @@ use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer, To
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::pipeline::ScoredEntity;
 use crate::store::ManifestDbs;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::codec::{
     MAX_RAW_POSTING_KEY_BYTES, PostingEntry, corrupted, decode_posting_entry, posting_key,

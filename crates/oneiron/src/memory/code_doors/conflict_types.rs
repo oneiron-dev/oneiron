@@ -6,8 +6,8 @@ use super::CodeProposalSubmitRequest;
 use crate::EntityId;
 use crate::critic::{CritiqueSeverity, CritiqueVerdict};
 use crate::learning::LearningCell;
-use crate::repo_mutation::proposal::RepoProposalStatus;
 use crate::repo_mutation::proposal::settlement::{RepoProposalDecision, RepoProposalSettlement};
+use crate::store::repo_proposal_record::RepoProposalStatus;
 use serde::{Deserialize, Serialize};
 
 /// The engine stages both stored proposals at their shared retained base

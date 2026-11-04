@@ -3,7 +3,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::authority::{AuthorityEntryHash, AuthorityFold, AuthorityFoldIssue, AuthorityOp};
+use crate::authority::{AuthorityFold, AuthorityFoldIssue};
+use oneiron_authority::authority::AuthorityOp;
+use oneiron_contracts::authority::AuthorityEntryHash;
 
 /// The code an audit row carries for an entry this install holds back
 /// (FIX 1104): a diagnostic beside `fold_valid`, never a verdict on it.

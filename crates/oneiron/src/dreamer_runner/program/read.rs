@@ -28,10 +28,14 @@ use crate::attempt_queue::{AttemptId, AttemptResultRef, AttemptState};
 use crate::dreamer_runner::{DreamerAttemptStatus, DreamerParkedAttemptRecord, DreamerRunnerStore};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, ErrorKind, Result};
-use crate::llm::{CallerSettledStep, settled_step_for_caller};
+use crate::llm::settled_step_for_caller;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
+use crate::model_step_record::CallerSettledStep;
 use crate::{EdgeActorClass, Vault};
+use crate::{
+    attempt_queue::run_tree_view::{RunTreeNode, RunTreeStatus},
+    run_tree::RunTreeAdapter,
+};
 
 use super::run::{
     RunState, StepIssue, StepState, TurnProgramRun, TurnProgramStep, actor_gone_in_txn,

@@ -5,8 +5,8 @@ use heed::{RoTxn, RwTxn};
 
 use crate::EntityId;
 use crate::error::{Error, Result};
-use crate::gate::GateRetentionContext;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::GateRetentionContext;
 use crate::store::{ManifestDbs, Store};
 
 use super::types::{GateDecisionId, GateDecisionRecord};
