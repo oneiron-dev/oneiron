@@ -369,6 +369,9 @@ impl<'v> ScopedRead<'v> {
         requested: Option<&RetrievalFilter>,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
+        // Each read observes the grant clock as its own snapshot's open did,
+        // so a grant that expires during the hydrate is judged expired.
+        self.persist_grant_clock()?;
         self.read_projected_opaque_in(&snapshot.txn, reads, requested, |_, _| Ok(false), project)
     }
 

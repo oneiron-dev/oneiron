@@ -119,6 +119,7 @@ impl ScopedRead<'_> {
         snapshot: &super::SharedReadSnapshot<'_>,
         id: &EntityId,
     ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
+        self.persist_grant_clock()?;
         self.edges_out_of_in(snapshot.txn(), id, None)
     }
 
