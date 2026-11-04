@@ -1102,7 +1102,7 @@ impl Vault {
             if asked && let Some(read) = &read {
                 crate::llm::decision::questions::record_failed_standing_reask(
                     self,
-                    &standing_reask(wake, read, &[], now),
+                    &standing_reask(wake, read, &[], now, None),
                     error.kind(),
                 );
             }
@@ -1126,14 +1126,15 @@ impl Vault {
         reask_ref: &str,
         read: Option<&[(EntityId, u64)]>,
     ) -> Result<Option<PendingProposalView>> {
-        let (asked, proposal, unit_receipts, read_rows, retire) = match reasked {
-            Reasked::Nothing => (false, None, Vec::new(), Vec::new(), true),
-            Reasked::Replay => (false, None, Vec::new(), Vec::new(), false),
+        let (asked, proposal, unit_receipts, read_rows, retire, next_sheet_row) = match reasked {
+            Reasked::Nothing => (false, None, Vec::new(), Vec::new(), true, None),
+            Reasked::Replay => (false, None, Vec::new(), Vec::new(), false, None),
             Reasked::Asked {
                 proposal,
                 units,
                 read_rows,
-            } => (true, proposal, units, read_rows, false),
+                next_sheet_row,
+            } => (true, proposal, units, read_rows, false, next_sheet_row),
         };
         // The carried envelope is admitted through the principal's own read,
         // inside the asking version's saved lane, as the fresh proposal waits
@@ -1154,7 +1155,18 @@ impl Vault {
             )?,
             _ => None,
         };
-        let units: Vec<&WithdrawnUnit> = wake.answers.iter().map(|answer| &answer.unit).collect();
+        // The sheet adapter visits this exact snapshot's selected rows in
+        // ascending order. Its compact cursor leaves the selected suffix
+        // unwoken; rows absent from the snapshot are never marked either.
+        let units: Vec<&WithdrawnUnit> = wake
+            .answers
+            .iter()
+            .filter(|answer| match (&answer.unit, next_sheet_row) {
+                (WithdrawnUnit::SheetRow { row }, Some(next)) => *row < next,
+                _ => true,
+            })
+            .map(|answer| &answer.unit)
+            .collect();
         self.with_write_txn(|wtxn| {
             let proposed = match &proposal {
                 Some(proposal) => Some(self.retain_edit_proposal_with_reads_in_txn(
@@ -1172,7 +1184,7 @@ impl Vault {
                 crate::llm::decision::questions::record_standing_reask_in_txn(
                     self,
                     wtxn,
-                    &standing_reask(wake, read, &unit_receipts, now),
+                    &standing_reask(wake, read, &unit_receipts, now, next_sheet_row),
                     proposed.as_ref().map(|_| reask_ref),
                     None,
                 )?;
@@ -1181,12 +1193,10 @@ impl Vault {
                 return Ok(proposed);
             };
             // A replay marks nothing: its first ask already covered the
-            // evaluation. Any evaluation that ran — a real ask, or a
-            // terminal one with no unit left — retires this wake's own
-            // units. Only units present in this wake's snapshot are marked:
-            // newly appended units stay due for their own evaluation, and
-            // a later fresh wake covering them retires or asks them in turn,
-            // so no expired deadline can pump forever (FIX 9826).
+            // evaluation. A real ask retires only the selected units it
+            // completed; a terminal ask retires its whole snapshot. Newly
+            // appended units and an unfinished suffix remain due, and the
+            // next wake binds its own remaining set (FIX 9826, FIX 9817).
             if asked || retire {
                 for answer in &mut row.answers {
                     if answer.woken_at.is_none() && units.contains(&&answer.unit) {
@@ -1294,7 +1304,7 @@ impl Vault {
         {
             return Ok((Reasked::Nothing, reask_ref));
         }
-        let (proposal, units, read_rows) = match &wake.shape {
+        let (proposal, units, read_rows, next_sheet_row) = match &wake.shape {
             ReaskShape::SheetRows {
                 sheet,
                 answer_col,
@@ -1335,7 +1345,7 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units, run.read_rows)
+                (run.proposal, units, run.read_rows, run.next_sheet_row)
             }
             ReaskShape::FolderItems {
                 sheet,
@@ -1384,7 +1394,7 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units, run.read_rows)
+                (run.proposal, units, run.read_rows, run.next_sheet_row)
             }
             ReaskShape::Paragraphs { author, labels } => {
                 let blocks: Vec<String> = wake
@@ -1408,7 +1418,7 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units, run.read_rows)
+                (run.proposal, units, run.read_rows, run.next_sheet_row)
             }
             ReaskShape::Slides { author, labels } => {
                 let bytes = self
@@ -1489,7 +1499,7 @@ impl Vault {
                 })?;
                 // Standing artifact questions never ask slides, so a slide re-ask
                 // logs nowhere; it carries no unit receipts.
-                (run.proposal, Vec::new(), run.read_rows)
+                (run.proposal, Vec::new(), run.read_rows, None)
             }
         };
         Ok((
@@ -1497,6 +1507,7 @@ impl Vault {
                 proposal,
                 units,
                 read_rows,
+                next_sheet_row,
             },
             reask_ref,
         ))
@@ -1572,6 +1583,7 @@ enum Reasked {
         proposal: Option<EditProposal>,
         units: Vec<crate::llm::decision::questions::ArtifactUnitReceipt>,
         read_rows: Vec<EntityId>,
+        next_sheet_row: Option<u32>,
     },
 }
 
@@ -1583,6 +1595,7 @@ fn standing_reask<'a>(
     read: &'a [(EntityId, u64)],
     units: &'a [crate::llm::decision::questions::ArtifactUnitReceipt],
     now: u64,
+    next_sheet_row: Option<u32>,
 ) -> crate::llm::decision::questions::StandingReask<'a> {
     crate::llm::decision::questions::StandingReask {
         question: wake.question.id,
@@ -1593,6 +1606,7 @@ fn standing_reask<'a>(
         versions: read,
         asked_at: now,
         units,
+        next_sheet_row,
     }
 }
 

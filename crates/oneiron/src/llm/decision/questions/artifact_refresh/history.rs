@@ -48,7 +48,8 @@ impl Asking<'_> {
         );
         let event = |proposal_ref: Option<String>,
                      failed: Option<ErrorKind>,
-                     units: Vec<super::ArtifactUnitReceipt>| {
+                     units: Vec<super::ArtifactUnitReceipt>,
+                     next_sheet_row: Option<u32>| {
             ArtifactAskEvent {
                 ask_id,
                 artifact,
@@ -60,6 +61,7 @@ impl Asking<'_> {
                 parent_proposal_ref: None,
                 details_omitted: false,
                 units,
+                next_sheet_row,
             }
         };
         let committed = ask(&reference).and_then(|run| {
@@ -79,15 +81,26 @@ impl Asking<'_> {
                     ask_id: Some(ask_id),
                     live: live.clone(),
                 };
-                ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)?;
+                if run.next_sheet_row.is_none() {
+                    ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)?;
+                } else {
+                    // A previous stamp on the same frontier must not hide
+                    // the suffix this refresh left unfinished.
+                    ASKED.delete(&vault.store, wtxn, &(self.question, artifact))?;
+                }
                 let principal = self.record.principal;
-                let asked = event(proposal_ref, None, artifact_unit_receipts(&run));
+                let asked = event(
+                    proposal_ref,
+                    None,
+                    artifact_unit_receipts(&run),
+                    run.next_sheet_row,
+                );
                 append_artifact_ask_in_txn(vault, wtxn, self.question, principal, asked)?;
                 Ok(proposed)
             })
         });
         if let Err(error) = &committed {
-            let failed = event(None, Some(error.kind()), Vec::new());
+            let failed = event(None, Some(error.kind()), Vec::new(), None);
             let logged = vault.with_write_txn_grouped(|wtxn| {
                 let principal = self.record.principal;
                 append_artifact_ask_in_txn(vault, wtxn, self.question, principal, failed)
@@ -124,6 +137,7 @@ pub(in crate::llm::decision::questions) fn artifact_event_record(
         .parent_proposal_ref
         .clone_from(&event.parent_proposal_ref);
     record.units.clone_from(&event.units);
+    record.next_sheet_row = event.next_sheet_row;
     if event.details_omitted {
         record.details_omitted = true;
         if event.failed.is_none() {
@@ -164,6 +178,7 @@ fn ask_record(
         parent_proposal_ref: None,
         details_omitted: false,
         units: Vec::new(),
+        next_sheet_row: None,
     })
 }
 
