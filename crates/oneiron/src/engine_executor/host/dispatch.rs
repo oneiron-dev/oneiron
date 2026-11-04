@@ -5,10 +5,10 @@
 use super::*;
 
 impl RecordingJsHost<'_, '_> {
-    /// A verb's or a callable skill's answer too large for one reply, stored
-    /// whole as a body of the run as it is encoded. The guest and the replay
-    /// row get its handle (`result_handle_json`), never the answer; nothing is
-    /// refused for size.
+    /// A verb's, a callable skill's, a fold's or the leader's answer too
+    /// large for one reply, stored whole as a body of the run as it is
+    /// encoded. The guest and the replay row get its handle
+    /// (`result_handle_json`), never the answer; nothing is refused for size.
     pub(super) fn store_large_answer(
         &mut self,
         seq: u64,
@@ -17,6 +17,16 @@ impl RecordingJsHost<'_, '_> {
         let answer = match &mut outcome {
             SelfDispatchOutcome::AgentVerb(answer) => &mut answer.output,
             SelfDispatchOutcome::SkillCall(result) => &mut result.output,
+            // Kept as its JSON text, framed under `output` as the others are
+            // (FIX 1190): the row keeps the card's text in its place.
+            SelfDispatchOutcome::Fold(json) | SelfDispatchOutcome::Leader(json) => {
+                if json.len() <= RESULT_REPLY_INLINE_BYTES {
+                    return Ok(outcome);
+                }
+                let card = self.store_answer(seq, |sink| sink.write(json.as_bytes()))?;
+                *json = card.to_string();
+                return Ok(outcome);
+            }
             _ => return Ok(outcome),
         };
         let mut size = ByteCount::default();
@@ -222,9 +232,7 @@ impl RecordingJsHost<'_, '_> {
         // The post chain reads the answer as the guest gets it: a large one
         // by its handle.
         let outcome = self.store_large_answer(seq, outcome)?;
-        let rewritten = hooked
-            .as_ref()
-            .and_then(|hooked| hooked.1.clone());
+        let rewritten = hooked.as_ref().and_then(|hooked| hooked.1.clone());
         match hooked {
             Some(hooked) => Ok((
                 self.gated_write.leave_verb_hooks(hooked, outcome)?,

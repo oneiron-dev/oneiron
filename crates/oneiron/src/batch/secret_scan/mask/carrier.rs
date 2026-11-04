@@ -487,7 +487,10 @@ impl MaskedText {
     /// whole.
     pub(crate) fn split_at_stored(&self, cuts: &[usize]) -> Option<Vec<String>> {
         let crosses = self.0.iter().any(|run| {
-            run.handle && cuts.iter().any(|&cut| run.source.start < cut && cut < run.source.end)
+            run.handle
+                && cuts
+                    .iter()
+                    .any(|&cut| run.source.start < cut && cut < run.source.end)
         });
         if !crosses {
             return None;
