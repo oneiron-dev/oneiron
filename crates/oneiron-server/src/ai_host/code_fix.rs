@@ -146,6 +146,7 @@ pub(super) struct HostModels<'a> {
     run: RunAdmission,
     handle: tokio::runtime::Handle,
     purpose: &'static str,
+    wording: crate::config::models::DreamerWording,
 }
 
 impl<'a> HostModels<'a> {
@@ -190,7 +191,21 @@ impl<'a> HostModels<'a> {
             run: runtime.undeclared_run(run_id, guard),
             handle,
             purpose,
+            wording: server
+                .config
+                .models
+                .as_ref()
+                .map(|models| models.dreamer.wording.clone())
+                .unwrap_or_default(),
         })
+    }
+
+    pub(super) fn attribution_classify_prompt(&self) -> &str {
+        self.wording.attribution_classify()
+    }
+
+    pub(super) fn attribution_note_prompt(&self) -> &str {
+        self.wording.attribution_note()
     }
 
     /// The Coach's own seat, for its drafts and distill (`coach_role`).
