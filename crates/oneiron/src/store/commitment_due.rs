@@ -32,12 +32,12 @@
 
 use heed::{RoTxn, RwTxn};
 
-use crate::store::commitment_due_record::{
-    CommitmentDueEntry, CommitmentDueIndexSnapshot, CommitmentDuePhase, CommitmentOccurrence,
-};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::commitment_due_record::{
+    CommitmentDueEntry, CommitmentDueIndexSnapshot, CommitmentDuePhase, CommitmentOccurrence,
+};
 use crate::temporal::TimeRange;
 
 use super::*;
