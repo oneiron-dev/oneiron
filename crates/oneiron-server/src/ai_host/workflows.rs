@@ -49,6 +49,7 @@ use oneiron::agent_dispatch::{
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResumePoint, AttemptState};
 use oneiron::failure_ladder::FailureLadderOutcome;
 use oneiron::learning::TypeRef;
+use oneiron::llm::run_admission::forget_work_parent;
 use oneiron::self_heal::audit::{AttemptConfession, ObjectiveConfession};
 use oneiron::task_verb::RunnerDoneAnswer;
 use tokio::sync::{Notify, broadcast, watch};
@@ -335,6 +336,13 @@ fn pump_once(
                     bind_attribution(vault, step.attempt.id);
                     match ran {
                         Ok(output) => {
+                            // The try completed: no retry follows it, and no
+                            // later parent may use its ticket (FIX 11960).
+                            if let Ok(entity) = oneiron::EntityId::from_bytes(
+                                *step.attempt.id.as_bytes(),
+                            ) {
+                                forget_work_parent(&entity);
+                            }
                             // The seal measures the agent that ran, on the
                             // type the spawn was placed under. A step asked
                             // to confess is sealed whether or not its
