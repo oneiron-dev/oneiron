@@ -35,8 +35,10 @@ mod records;
 mod repo_rows;
 mod retained;
 mod side_rows;
+mod sync_text;
 
 pub(crate) use self::frontier::{propose_typed_body_at_in_txn, typed_body_at_proposal_due_in_txn};
+pub(crate) use self::sync_text::propose_sync_text_in_txn;
 pub use self::projection::secret_lift_as_owner_toward;
 
 use std::borrow::Cow;
@@ -771,7 +773,7 @@ fn settle(
                     file_in_txn(
                         vault,
                         &mut txn,
-                        run,
+                        run.run_id,
                         family,
                         key,
                         LiftCause::History,
@@ -783,7 +785,7 @@ fn settle(
         }
         Done::Propose(cause, reason) => Some((
             false,
-            file_in_txn(vault, &mut txn, run, family, key, cause, reason)?,
+            file_in_txn(vault, &mut txn, run.run_id, family, key, cause, reason)?,
         )),
     };
     progress_in_txn(vault, &mut txn, run, family, key, |current| {
@@ -853,7 +855,7 @@ fn lift_carrier(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Done> 
 fn file_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
-    run: &LiftRun,
+    run_id: EntityId,
     family: LiftFamily,
     key: &[u8],
     cause: LiftCause,
@@ -890,7 +892,7 @@ fn file_in_txn(
                 detector_reason: reason.to_owned(),
                 project_id: String::new(),
             },
-            run_id: run.run_id.to_hex(),
+            run_id: run_id.to_hex(),
             filed_at,
             closed_at: None,
             closed_by: None,
