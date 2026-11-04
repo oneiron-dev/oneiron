@@ -10,39 +10,30 @@ use crate::api::{
     SealResourceLimits, SignatureKind, VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
 };
 use crate::memory::SealMemoryRefusal;
+use lopdf::xref::XrefEntry;
 use lopdf::{Document, Object, ObjectId};
 
-/// Whether two xref entries are the same value. `XrefEntry` carries no
-/// `PartialEq`, and the old code compared the two `Debug` strings; a derived
-/// `Debug` is injective over these four shapes (each variant's fields print
-/// distinctly), so a field-by-field value comparison decides exactly what the
-/// string comparison decided, with no per-object allocation (FIX 8452).
-fn xref_entry_same(a: Option<&lopdf::xref::XrefEntry>, b: Option<&lopdf::xref::XrefEntry>) -> bool {
-    use lopdf::xref::XrefEntry as Entry;
-    match (a, b) {
+/// Whether two xref entries say the same, compared in place (FIX 8452):
+/// no string is built for either.
+fn same_entry(before: Option<&XrefEntry>, after: Option<&XrefEntry>) -> bool {
+    match (before, after) {
         (None, None) => true,
-        (Some(Entry::Free), Some(Entry::Free)) => true,
-        (Some(Entry::UnusableFree), Some(Entry::UnusableFree)) => true,
+        (Some(XrefEntry::Free), Some(XrefEntry::Free))
+        | (Some(XrefEntry::UnusableFree), Some(XrefEntry::UnusableFree)) => true,
         (
-            Some(Entry::Normal {
-                offset: a_offset,
-                generation: a_generation,
+            Some(XrefEntry::Normal { offset, generation }),
+            Some(XrefEntry::Normal {
+                offset: after_offset,
+                generation: after_generation,
             }),
-            Some(Entry::Normal {
-                offset: b_offset,
-                generation: b_generation,
-            }),
-        ) => a_offset == b_offset && a_generation == b_generation,
+        ) => offset == after_offset && generation == after_generation,
         (
-            Some(Entry::Compressed {
-                container: a_container,
-                index: a_index,
+            Some(XrefEntry::Compressed { container, index }),
+            Some(XrefEntry::Compressed {
+                container: after_container,
+                index: after_index,
             }),
-            Some(Entry::Compressed {
-                container: b_container,
-                index: b_index,
-            }),
-        ) => a_container == b_container && a_index == b_index,
+        ) => container == after_container && index == after_index,
         _ => false,
     }
 }
@@ -60,7 +51,7 @@ fn changed(before: &Document, after: &Document) -> Option<BTreeSet<ObjectId>> {
         let current = after.objects.get(id)?;
         // A redefinition with identical effective value is still a write.
         if current != old
-            || !xref_entry_same(
+            || !same_entry(
                 before.reference_table.get(id.0),
                 after.reference_table.get(id.0),
             )
@@ -344,12 +335,12 @@ pub(super) fn classify(
     let Some(facts) = facts else {
         return Ok((vec![], Modifications::NotRun, vec![]));
     };
-    if facts.ends(limits)? != ends {
+    if facts.ends() != ends {
         return Ok((vec![], Modifications::NotRun, vec![]));
     }
     let mut revisions = Vec::new();
     let mut anomalies = Vec::new();
-    if facts.has_duplicates(limits)? {
+    if facts.has_duplicates() {
         anomalies.push(Anomaly::DuplicateObjectNumber);
     }
     let mut previous: Option<Document> = None;
@@ -402,7 +393,7 @@ pub(super) fn classify(
                 anomalies.push(Anomaly::RetypedObject);
             }
             if first_signer.is_some() {
-                let allowed = facts.accounts_for(limits, index, &ids)?
+                let allowed = facts.accounts_for(index, &ids)
                     && match kind {
                         RevisionKind::Dss => dss_allowed(before, &doc, &ids),
                         RevisionKind::DocumentTimestamp => signed.is_some_and(|s| {

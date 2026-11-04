@@ -16,7 +16,7 @@ use super::evidence_time::{
 use super::verify_dss_core::{EmbeddedCert, dss_revision_end, verify_dss};
 use super::verify_report_build::{classify_signature, signature_report};
 use super::verify_revisions;
-use super::verify_sig_pipeline::{Checks, collect_signatures, evaluate_envelope};
+use super::verify_sig_pipeline::{Checks, SigEntry, collect_signatures, evaluate_envelope};
 
 pub(crate) struct VerifyCtx<'a> {
     pub config: &'a SealConfig,
@@ -184,8 +184,9 @@ pub(super) fn anchors(config: &SealConfig) -> Vec<pkix_chain::TrustAnchor> {
 /// Retry only the reason for a failed DSS check: if fully parsed material
 /// validates with crypto-valid embedded chains treated as PROVISIONAL roots,
 /// root availability is NotRun. No provisional result grants trust or profile.
-/// Memory its decodes were refused ends it as itself, never as a failed or
-/// malformed DSS.
+/// The covered certificates serve as those roots as they are, never copied
+/// (FIX 12260). Memory its decodes were refused ends it as itself, never as
+/// a failed or malformed DSS.
 fn classify_missing_material_root(
     doc: &Document,
     covered: &[EmbeddedCert],
@@ -207,15 +208,8 @@ fn classify_missing_material_root(
     {
         return Ok(());
     }
-    memory.admit_len::<EmbeddedCert>(covered.len())?;
-    let mut provisional = Vec::with_capacity(covered.len());
-    for c in covered {
-        if let Some(cert) = EmbeddedCert::from_der(&c.der, memory)? {
-            provisional.push(cert);
-        }
-    }
     let mut probe = Checks::new();
-    verify_dss(doc, &provisional, covered, at, memory, &mut probe)?;
+    verify_dss(doc, covered, covered, at, memory, &mut probe)?;
     if probe.passed(VerifyCheckKind::ValidationMaterial)
         && let Some(check) = checks
             .list
@@ -285,19 +279,30 @@ pub(crate) fn verify_document(
         VerifyFindingCode::InvalidPdfRevision,
     );
     let anchors = anchors(ctx.config);
-    memory
-        .admit_len::<EmbeddedCert>(ctx.config.trust_anchors_der.len())
-        .map_err(memory_refused)?;
-    let mut anchor_certs = Vec::with_capacity(ctx.config.trust_anchors_der.len());
-    for d in &ctx.config.trust_anchors_der {
-        if let Some(cert) = EmbeddedCert::from_der(d, &memory).map_err(memory_refused)? {
-            anchor_certs.push(cert);
-        }
-    }
+    // Every certificate copy below is held on the verification's ledger
+    // until it drops (FIX 12260).
+    let mut anchor_certs = Vec::new();
+    EmbeddedCert::extend_admitted(
+        &mut anchor_certs,
+        ctx.config.trust_anchors_der.iter().map(Vec::as_slice),
+        &memory,
+    )
+    .map_err(memory_refused)?;
     // Stage 1: bind every envelope to the already-proven xref chain and
     // validate its CMS/TSP integrity. No signer path or profile is decided
     // until all trusted time proofs are available.
     let sigs = collect_signatures(&doc)?;
+    // Each signature's copied `/Contents` (the CMS the stages below parse)
+    // and field name, charged as soon as they are built (FIX 12260).
+    let sigs_bytes = sigs.iter().fold(
+        sigs.capacity()
+            .saturating_mul(std::mem::size_of::<SigEntry>()),
+        |sum, sig| {
+            sum.saturating_add(sig.contents.capacity())
+                .saturating_add(sig.field_name.capacity())
+        },
+    );
+    let _sigs_held = memory.hold(sigs_bytes).map_err(memory_refused)?;
     let envelopes: Vec<_> = sigs
         .iter()
         .enumerate()
@@ -312,20 +317,17 @@ pub(crate) fn verify_document(
                 index + 1 == sigs.len(),
             )
         })
-        .collect::<Result<Vec<_>, SealError>>()?;
+        .collect::<Result<_, _>>()
+        .map_err(memory_refused)?;
     let dss_end = dss_revision_end(&doc, bytes);
     let mut covered = Vec::new();
     for envelope in &envelopes {
-        memory
-            .admit_len::<EmbeddedCert>(envelope.covered.len())
-            .map_err(memory_refused)?;
-        for cert in &envelope.covered {
-            if let Some(reparsed) =
-                EmbeddedCert::from_der(&cert.der, &memory).map_err(memory_refused)?
-            {
-                covered.push(reparsed);
-            }
-        }
+        EmbeddedCert::extend_admitted(
+            &mut covered,
+            envelope.covered.iter().map(|cert| cert.der.as_slice()),
+            &memory,
+        )
+        .map_err(memory_refused)?;
     }
     let decoded = verify_dss(
         &doc,
@@ -379,29 +381,24 @@ pub(crate) fn verify_document(
             envelopes[index].checks.extend(path.list);
         }
         let mut material = Vec::new();
-        memory
-            .admit_len::<EmbeddedCert>(envelopes[index].covered.len())
-            .map_err(memory_refused)?;
-        for cert in &envelopes[index].covered {
-            if let Some(reparsed) =
-                EmbeddedCert::from_der(&cert.der, &memory).map_err(memory_refused)?
-            {
-                material.push(reparsed);
-            }
-        }
+        EmbeddedCert::extend_admitted(
+            &mut material,
+            envelopes[index]
+                .covered
+                .iter()
+                .map(|cert| cert.der.as_slice()),
+            &memory,
+        )
+        .map_err(memory_refused)?;
         if let Some(archive) = &archival
             && let Some(proof) = envelopes[archive.timestamp].time_proof.as_ref()
         {
-            memory
-                .admit_len::<EmbeddedCert>(proof.tsa_chain_ders.len())
-                .map_err(memory_refused)?;
-            for der in &proof.tsa_chain_ders {
-                if let Some(reparsed) =
-                    EmbeddedCert::from_der(der, &memory).map_err(memory_refused)?
-                {
-                    material.push(reparsed);
-                }
-            }
+            EmbeddedCert::extend_admitted(
+                &mut material,
+                proof.tsa_chain_ders.iter().map(Vec::as_slice),
+                &memory,
+            )
+            .map_err(memory_refused)?;
         }
         let mut material_checks = Checks::new();
         let decoded = verify_dss(

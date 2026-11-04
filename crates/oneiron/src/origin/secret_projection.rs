@@ -202,6 +202,15 @@ pub(crate) struct RepoMaterializedCopy {
 }
 
 impl RepoMaterializedCopy {
+    /// How each projected path's bytes differ from its stored blob (FIX
+    /// 8965); a path holding its stored bytes has none.
+    pub(crate) fn projections(&self) -> BTreeMap<String, RepoFileProjectionView> {
+        self.files
+            .iter()
+            .filter_map(|(path, body)| Some((path.clone(), body.view()?)))
+            .collect()
+    }
+
     /// Each path's returned bytes: what a materializer copies and hashes.
     pub(crate) fn into_contents(self) -> BTreeMap<String, Vec<u8>> {
         self.files

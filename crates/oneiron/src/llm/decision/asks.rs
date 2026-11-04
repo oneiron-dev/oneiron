@@ -315,7 +315,20 @@ impl Vault {
         correlation: Option<EntityId>,
     ) -> Result<Option<DecisionAsk>> {
         let txn = self.store.env.read_txn()?;
-        for row in ASKS.iter_rev_from(&self.store, &txn, &[])? {
+        self.decision_ask_for_in_txn(&txn, question, principal, evidence, to, correlation)
+    }
+
+    /// [`Self::decision_ask_for`] in the caller's snapshot.
+    pub(crate) fn decision_ask_for_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        question: &DecisionQuestion,
+        principal: EntityId,
+        evidence: &[EntityId],
+        to: &AskTo,
+        correlation: Option<EntityId>,
+    ) -> Result<Option<DecisionAsk>> {
+        for row in ASKS.iter_rev_from(&self.store, txn, &[])? {
             let (_, ask) = row?;
             if ask.question.id == question.id
                 && ask.question.version == question.version
@@ -483,6 +496,7 @@ impl Vault {
                 grant,
             });
             ASKS.put(&self.store, txn, &seq, &held)?;
+            crate::campaign::surface::apply_campaign_complaint_answer_in_txn(self, txn, &held)?;
             Ok(held)
         })?;
         // The answer is durable: every waiter on the ask wakes (FIX 4706).

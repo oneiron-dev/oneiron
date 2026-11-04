@@ -16,6 +16,10 @@
 //! vectors it ([`finalize_repo_derived_index_copies_in_txn`]), so a text
 //! written after the mark is found too. The pass in [`worker`] derives the
 //! copy outside every writer and lands it only under the same proof.
+//!
+//! A text no edge links to a source, whose own words are a marked blob's
+//! whole bytes, indexes that blob's copy, joined by its own BLAKE3 as every
+//! other index input is; a mark change finds it by its content (FIX 10406).
 
 mod storage;
 mod worker;
@@ -35,7 +39,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::origin::secret_projection::index::{
-    RepoIndexMarks, opaque_index_text, repo_derived_dependents_in, repo_derived_index_sources_in,
+    RepoIndexMarks, bind_envelope_sources_in_txn, opaque_index_text, repo_derived_dependents_in,
+    repo_derived_index_sources_in,
 };
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, RetrievalIndexInventory};
 use crate::registry::ENTITY_TYPE_ASSET_TEXT;
@@ -96,8 +101,9 @@ pub(crate) fn repo_derived_fields(
 /// Every text a mask change on `roots` (the marked blobs' records) reaches
 /// through `DerivedFrom` edges, each made pending unless its ready copy
 /// still holds, and its index published again as its copy, in `wtxn`, the
-/// writer that changed the marks. Returns every record reached, for the
-/// room and probe invalidators.
+/// writer that changed the marks. A root that is itself a text (one whose
+/// own words are a marked blob's, FIX 10406) is published again too.
+/// Returns every record reached, for the room and probe invalidators.
 ///
 /// # Errors
 /// A storage error of `wtxn`, or the batch door's.
@@ -108,7 +114,7 @@ pub(crate) fn refresh_repo_derived_index_copies_in_txn(
     roots: &BTreeSet<EntityId>,
 ) -> Result<BTreeSet<EntityId>> {
     let dependents = repo_derived_dependents_in(&vault.store, wtxn, roots)?;
-    for entity in &dependents {
+    for entity in roots.iter().chain(&dependents) {
         if is_derived_text(&vault.store, wtxn, entity)? {
             refresh_one_in_txn(vault, wtxn, Some(marks), entity, None)?;
         }
@@ -209,9 +215,11 @@ pub(crate) fn finalize_repo_derived_index_copies_in_txn(
 }
 
 /// An erase of `id`, a cache cleanup only: its own copy goes, and each
-/// ready copy derived from it is pending again. No source or text is
-/// deleted for a cache, and a restored copy is served only under its
-/// current proof.
+/// ready copy derived from it is pending again, directly or through what
+/// derives from it (FIX 10889: a caption of an ASSET derived from `id`),
+/// read by its `DerivedFrom` edges before the erase takes them. No source
+/// or text is deleted for a cache, and a restored copy is served only
+/// under its current proof.
 ///
 /// # Errors
 /// A store failure.
@@ -221,19 +229,27 @@ pub(crate) fn retire_repo_derived_index_copies_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     delete_in_txn(store, wtxn, RepoDerivedOwner::Text(*id))?;
+    let dependents = repo_derived_dependents_in(store, wtxn, &BTreeSet::from([*id]))?;
     for (owner, row) in storage::copies_in(store, wtxn)? {
-        if let RepoDerivedCopyState::Ready(ready) = &row.state
-            && ready.sources.contains(id.as_bytes())
-        {
+        let reached = ready_reached(&row.state, id)
+            || matches!(&owner, RepoDerivedOwner::Text(text) if dependents.contains(text));
+        if reached && matches!(row.state, RepoDerivedCopyState::Ready(_)) {
             put_pending_in_txn(store, wtxn, owner, None)?;
         }
     }
     Ok(())
 }
 
+/// Whether a copy in `state` is ready with `id` among its direct sources.
+fn ready_reached(state: &RepoDerivedCopyState, id: &EntityId) -> bool {
+    matches!(state, RepoDerivedCopyState::Ready(ready) if ready.sources.contains(id.as_bytes()))
+}
+
 /// Text `entity`'s copy made pending (unless it is ready under its current
 /// proof), and its index published again: under `marks`, or, when they
-/// could not be read, on the placeholder if it is edged to any source.
+/// could not be read, on the placeholder if it is edged to any source. A
+/// text with no marked source is published again only when its own words
+/// are a marked blob's (FIX 10406).
 fn refresh_one_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -257,9 +273,11 @@ fn refresh_one_in_txn(
     };
     match repo_derived_index_sources_in(vault, &vault.store, wtxn, marks, entity) {
         Ok(Some(sources)) => {
+            bind_envelope_sources_in_txn(&vault.store, wtxn, &sources)?;
             put_pending_in_txn(&vault.store, wtxn, owner, Some(&sources.proof()))?;
         }
-        Ok(None) => return Ok(()),
+        Ok(None) if !own_words_marked(&vault.store, wtxn, marks, entity)? => return Ok(()),
+        Ok(None) => {}
         Err(error) if is_storage_error(&error) => return Err(error),
         Err(_) => put_pending_in_txn(&vault.store, wtxn, owner, None)?,
     }
@@ -270,7 +288,7 @@ fn refresh_one_in_txn(
 /// with revision state through its revision door, which drops its vector
 /// and owes a refill; any other as its fields (or its born field), its
 /// vector dropped. A text with no marked source is indexed as its words
-/// again.
+/// again, or as the copy of the marked blob they are (FIX 10406).
 pub(super) fn republish_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -291,6 +309,14 @@ pub(super) fn republish_in_txn(
             };
             let Some(text) = derived_text_words(&record.body) else {
                 return Ok(());
+            };
+            let text = match marks.text_in_txn(vault, wtxn, text) {
+                Ok(text) => text,
+                Err(error) if is_storage_error(&error) => return Err(error),
+                Err(error) => {
+                    tracing::warn!(error = %error, "a derived text indexes the placeholder");
+                    opaque_index_text()
+                }
             };
             vec![(DERIVED_TEXT_FIELD.to_owned(), text)]
         }
@@ -332,7 +358,7 @@ fn publish_text_in_txn(
 
 /// The words a derived text's body holds: a map's `text`, else the body as
 /// UTF-8.
-fn derived_text_words(body: &[u8]) -> Option<String> {
+pub(super) fn derived_text_words(body: &[u8]) -> Option<String> {
     if let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &body[..]) {
         return entries.iter().find_map(|(key, value)| {
             (key.as_str() == Some(DERIVED_TEXT_FIELD))
@@ -343,6 +369,21 @@ fn derived_text_words(body: &[u8]) -> Option<String> {
     String::from_utf8(body.to_vec())
         .ok()
         .filter(|text| !text.trim().is_empty())
+}
+
+/// Whether derived text `entity`'s own words are a marked blob's whole
+/// bytes (FIX 10406).
+fn own_words_marked(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    marks: &RepoIndexMarks,
+    entity: &EntityId,
+) -> Result<bool> {
+    let Some(record) = store.port_entity_record(txn, entity)? else {
+        return Ok(false);
+    };
+    Ok(derived_text_words(&record.body)
+        .is_some_and(|text| marks.is_marked(blake3::hash(text.as_bytes()).as_bytes())))
 }
 
 /// Whether record `id` is an ASSET_TEXT `store` holds.

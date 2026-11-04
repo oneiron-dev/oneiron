@@ -131,11 +131,12 @@ impl Vault {
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let graph = prepare_code_symbol_graph(
+            let mut graph = prepare_code_symbol_graph(
                 snapshot.repo_ref.clone(),
                 snapshot.commit_hash.clone(),
                 sources,
             )?;
+            graph.fill_producing_operations_in_txn(&self.store, read)?;
             self.put_prepared_code_symbol_graph_in_txn(
                 wtxn,
                 &artifact,

@@ -1,7 +1,9 @@
 //! Strict CMS ContentInfo/SignerInfo parsing with version gating.
 
-use crate::error::{SealError, SealStage};
-use crate::memory::MemoryLedger;
+use std::mem::size_of;
+
+use crate::error::SealError;
+use crate::memory::{Held, MemoryLedger, SealMemoryRefusal};
 
 use super::cms_err;
 use super::der::{DerReader, Tlv, tlv};
@@ -35,30 +37,14 @@ pub(crate) struct ParsedCms {
     pub signer: ParsedSignerInfo,
 }
 
-fn admit(bytes: usize, memory: &MemoryLedger) -> Result<(), SealError> {
-    memory
-        .admit_len::<u8>(bytes)
-        .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))
-}
-
-fn admit_slot<T>(memory: &MemoryLedger) -> Result<(), SealError> {
-    memory
-        .admit_len::<T>(1)
-        .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))
-}
-
-pub(super) fn parse_oid(t: Tlv, memory: &MemoryLedger) -> Result<Vec<u8>, SealError> {
+pub(super) fn parse_oid(t: Tlv) -> Result<Vec<u8>, SealError> {
     if t.tag != 0x06 {
         return Err(cms_err());
     }
-    admit(t.content.len(), memory)?;
     Ok(t.content.to_vec())
 }
 
-fn parse_signer_info(
-    tlv_bytes: &[u8],
-    memory: &MemoryLedger,
-) -> Result<ParsedSignerInfo, SealError> {
+fn parse_signer_info(tlv_bytes: &[u8]) -> Result<ParsedSignerInfo, SealError> {
     let top = DerReader::new(tlv_bytes).expect(0x30)?;
     let mut r = DerReader::new(top.content);
     let version = r.expect(0x02)?;
@@ -67,14 +53,11 @@ fn parse_signer_info(
     }
     let sid = r.expect(0x30)?;
     let mut sid_r = DerReader::new(sid.content);
-    let sid_issuer_tlv = sid_r.expect(0x30)?; // issuer Name TLV
-    admit(sid_issuer_tlv.full.len(), memory)?;
-    let sid_issuer = sid_issuer_tlv.full.to_vec();
-    let sid_serial_tlv = sid_r.expect(0x02)?; // serialNumber TLV
-    admit(sid_serial_tlv.full.len(), memory)?;
-    let sid_serial = sid_serial_tlv.full.to_vec();
+    // Read in place, never copied (FIX 12260).
+    let sid_issuer = sid_r.expect(0x30)?.full; // issuer Name TLV
+    let sid_serial = sid_r.expect(0x02)?.full; // serialNumber TLV
     let digest_alg = r.expect(0x30)?;
-    let digest_oid = parse_oid(DerReader::new(digest_alg.content).expect(0x06)?, memory)?;
+    let digest_oid = parse_oid(DerReader::new(digest_alg.content).expect(0x06)?)?;
     let attrs_field = r.expect(0xA0)?;
     // Canonicality: attributes must be strictly sorted by DER octets.
     let mut attrs_r = DerReader::new(attrs_field.content);
@@ -87,8 +70,6 @@ fn parse_signer_info(
         {
             return Err(cms_err()); // unsorted or duplicate
         }
-        admit(a.full.len(), memory)?;
-        admit_slot::<Vec<u8>>(memory)?;
         signed_attrs.push(a.full.to_vec());
     }
     // sid/ESS consistency (conformance hardening): when a
@@ -96,34 +77,28 @@ fn parse_signer_info(
     // the SAME issuer/serial as the SignerInfo sid; a disagreement is
     // rejected rather than silently decided by the ESS alone.
     for attr in &signed_attrs {
-        let (oid, _) = parse_attribute(attr, memory)?;
+        let (oid, _) = parse_attribute(attr)?;
         if oid == OID_ATTR_SIGNING_CERT_V2.as_bytes() {
-            let (_, ess_issuer, ess_serial) = ess_cert_id_v2(attr, memory)?;
+            let (_, ess_issuer, ess_serial) = ess_cert_id_v2(attr)?;
             if ess_issuer != sid_issuer || ess_serial != sid_serial {
                 return Err(cms_err());
             }
         }
     }
     let sig_alg = r.expect(0x30)?;
-    let sig_oid = parse_oid(DerReader::new(sig_alg.content).expect(0x06)?, memory)?;
-    let signature_tlv = r.expect(0x04)?;
-    admit(signature_tlv.content.len(), memory)?;
-    let signature = signature_tlv.content.to_vec();
+    let sig_oid = parse_oid(DerReader::new(sig_alg.content).expect(0x06)?)?;
+    let signature = r.expect(0x04)?.content.to_vec();
     let mut unsigned_attrs = Vec::new();
     if !r.is_done() {
         let ua = r.expect(0xA1)?;
         let mut ua_r = DerReader::new(ua.content);
         while !ua_r.is_done() {
-            let attr = ua_r.expect(0x30)?;
-            admit(attr.full.len(), memory)?;
-            admit_slot::<Vec<u8>>(memory)?;
-            unsigned_attrs.push(attr.full.to_vec());
+            unsigned_attrs.push(ua_r.expect(0x30)?.full.to_vec());
         }
     }
     if !r.is_done() {
         return Err(cms_err());
     }
-    admit(attrs_field.content.len(), memory)?;
     Ok(ParsedSignerInfo {
         digest_alg_oid: digest_oid,
         signed_attrs,
@@ -135,16 +110,14 @@ fn parse_signer_info(
 }
 
 /// Parse a detached CMS ContentInfo. Strict DER only; exactly one signer.
-/// Every owned copy is admitted on `memory` before it is made (FIX 8452); a
-/// refusal is the operation's resource error, never a malformed CMS.
-pub(crate) fn parse_cms(der: &[u8], memory: &MemoryLedger) -> Result<ParsedCms, SealError> {
+pub(crate) fn parse_cms(der: &[u8]) -> Result<ParsedCms, SealError> {
     let mut top = DerReader::new(der);
     let ci = top.expect(0x30)?;
     if !top.is_done() {
         return Err(cms_err()); // trailing bytes after ContentInfo
     }
     let mut r = DerReader::new(ci.content);
-    let content_oid = parse_oid(r.expect(0x06)?, memory)?;
+    let content_oid = parse_oid(r.expect(0x06)?)?;
     if content_oid != OID_SIGNED_DATA.as_bytes() {
         return Err(cms_err());
     }
@@ -163,21 +136,16 @@ pub(crate) fn parse_cms(der: &[u8], memory: &MemoryLedger) -> Result<ParsedCms, 
     let mut dr = DerReader::new(digest_set.content);
     while !dr.is_done() {
         let alg = dr.expect(0x30)?;
-        admit_slot::<Vec<u8>>(memory)?;
-        digest_algs.push(parse_oid(
-            DerReader::new(alg.content).expect(0x06)?,
-            memory,
-        )?);
+        digest_algs.push(parse_oid(DerReader::new(alg.content).expect(0x06)?)?);
     }
     let eci = s.expect(0x30)?;
     let mut eci_r = DerReader::new(eci.content);
-    let econtent_oid = parse_oid(eci_r.expect(0x06)?, memory)?;
+    let econtent_oid = parse_oid(eci_r.expect(0x06)?)?;
     let econtent = if eci_r.is_done() {
         None
     } else {
         let wrapper = eci_r.expect(0xA0)?;
         let os = DerReader::new(wrapper.content).expect(0x04)?;
-        admit(os.content.len(), memory)?;
         Some(os.content.to_vec())
     };
     // RFC 5652 §5.1: the SignedData version is DETERMINED by eContentType —
@@ -212,10 +180,7 @@ pub(crate) fn parse_cms(der: &[u8], memory: &MemoryLedger) -> Result<ParsedCms, 
                 seen_certificates = true;
                 let mut cr = DerReader::new(t.content);
                 while !cr.is_done() {
-                    let cert = cr.expect(0x30)?;
-                    admit(cert.full.len(), memory)?;
-                    admit_slot::<Vec<u8>>(memory)?;
-                    certificates.push(cert.full.to_vec());
+                    certificates.push(cr.expect(0x30)?.full.to_vec());
                 }
             }
             0x31 => {
@@ -227,35 +192,91 @@ pub(crate) fn parse_cms(der: &[u8], memory: &MemoryLedger) -> Result<ParsedCms, 
                 if !sr.is_done() {
                     return Err(cms_err()); // exactly one SignerInfo
                 }
-                admit(first.full.len(), memory)?;
-                signer_info_der = Some(first.full.to_vec());
+                signer_info_der = Some(first.full);
             }
             _ => return Err(cms_err()), // crls/other fields not used in v1
         }
     }
     let signer_info_der = signer_info_der.ok_or_else(cms_err)?;
-    let signer = parse_signer_info(&signer_info_der, memory)?;
-    // The working copy drops here; only the parsed fields are retained.
-    memory.release(signer_info_der.len() as u64);
     Ok(ParsedCms {
         content_oid,
         digest_algs,
         econtent_oid,
         econtent,
         certificates,
-        signer,
+        signer: parse_signer_info(signer_info_der)?,
     })
 }
 
-/// Rebuild the RFC 5652 §5.4 signature input from parsed signed attributes:
-/// the same content octets under the universal `SET OF` tag. The rebuilt TLV
-/// is admitted on `memory` before it is made.
-pub(crate) fn signed_attrs_signature_input(
-    signer: &ParsedSignerInfo,
+impl ParsedCms {
+    /// What the parse keeps: each copied field's bytes and its lists'
+    /// slots (FIX 12260).
+    pub(crate) fn held_bytes(&self) -> usize {
+        // A list of copied DER items: its slots and each item's bytes.
+        let list = |items: &Vec<Vec<u8>>| {
+            items.iter().fold(
+                items.capacity().saturating_mul(size_of::<Vec<u8>>()),
+                |sum, item| sum.saturating_add(item.capacity()),
+            )
+        };
+        let signer = &self.signer;
+        [
+            self.content_oid.capacity(),
+            list(&self.digest_algs),
+            self.econtent_oid.capacity(),
+            self.econtent.as_ref().map_or(0, Vec::capacity),
+            list(&self.certificates),
+            signer.digest_alg_oid.capacity(),
+            list(&signer.signed_attrs),
+            signer.signed_attrs_content.capacity(),
+            signer.signature_alg_oid.capacity(),
+            signer.signature.capacity(),
+            list(&signer.unsigned_attrs),
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add)
+    }
+
+    /// The parse, held on `memory` as soon as it is built and until it
+    /// drops (FIX 12260): [`parse_cms`] takes no handle.
+    ///
+    /// # Errors
+    /// The ledger's refusal.
+    pub(crate) fn held(self, memory: &MemoryLedger) -> Result<Held<Self>, SealMemoryRefusal> {
+        let hold = memory.hold(self.held_bytes())?;
+        Ok(Held::new(self, hold))
+    }
+}
+
+/// A copy of `certificates` as a chain, the one at `first` first and the
+/// others in their order, held on `memory` before it is made (FIX 12260).
+///
+/// # Errors
+/// The ledger's refusal.
+pub(crate) fn chain_copy(
+    certificates: &[Vec<u8>],
+    first: usize,
     memory: &MemoryLedger,
-) -> Result<Vec<u8>, SealError> {
-    // Tag plus length header (at most 10 bytes for a 64-bit length) plus the
-    // content the caller already holds; the header slack is admission-only.
-    admit(signer.signed_attrs_content.len().saturating_add(16), memory)?;
-    Ok(tlv(0x31, &signer.signed_attrs_content))
+) -> Result<Held<Vec<Vec<u8>>>, SealMemoryRefusal> {
+    let bytes = certificates.iter().fold(
+        certificates.len().saturating_mul(size_of::<Vec<u8>>()),
+        |sum, der| sum.saturating_add(der.len()),
+    );
+    let hold = memory.hold(bytes)?;
+    let mut chain = Vec::with_capacity(certificates.len());
+    chain.extend(certificates.get(first).cloned());
+    chain.extend(
+        certificates
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != first)
+            .map(|(_, der)| der.clone()),
+    );
+    Ok(Held::new(chain, hold))
+}
+
+/// Rebuild the RFC 5652 §5.4 signature input from parsed signed attributes:
+/// the same content octets under the universal `SET OF` tag.
+pub(crate) fn signed_attrs_signature_input(signer: &ParsedSignerInfo) -> Vec<u8> {
+    tlv(0x31, &signer.signed_attrs_content)
 }
