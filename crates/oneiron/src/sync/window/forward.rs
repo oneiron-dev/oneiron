@@ -577,6 +577,9 @@ fn after_edges(ctx: &RematCtx<'_>) {
     // takes them. A document lands before the pins that quote it.
     crate::sync::message_docs::apply_message_doc_map(vault, doc, window_key);
     crate::sync::document_pins::apply_document_pin_map(vault, doc, window_key);
+    // FIX 6870: the repo manifests it carries, after their CODE rows and
+    // before the tombstones, so an erased repo takes its manifest.
+    crate::sync::repo_manifests::apply_repo_manifest_map(vault, doc, window_key);
 }
 
 /// The settle after the tombstone pass: the marker bookkeeping, the

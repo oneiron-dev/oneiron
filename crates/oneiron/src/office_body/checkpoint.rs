@@ -28,9 +28,11 @@ use super::consent::{
     AnsweringAuthority, MEMBERSHIP, MemberAnswer, MemberVerdict, OfficeBodyProposal, PROPOSALS,
     close_if_done,
 };
+use super::holder_ask::LIVE_EDIT_GROUPS;
 use super::pptx::ORACLE;
 use super::{
-    EXPORTS, FORKS, ForkState, OfficeBodyExportRecord, OfficeBodyFork, SOURCES, version_key,
+    EXPORT_AUTHORS, EXPORTS, FORKS, ForkState, OfficeBodyExportAuthor, OfficeBodyExportRecord,
+    OfficeBodyFork, SOURCES, version_key,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -189,6 +191,40 @@ fn split_export(
     Ok(())
 }
 
+/// Splits one revision group's optional actor out of its token row. The
+/// token stays as content; a missing actor is today's unattributed form.
+fn split_export_author(
+    out: &mut Captured,
+    owner: OwnerRef,
+    row: TypedRow<(EntityId, u64, u64), OfficeBodyExportAuthor>,
+) -> Result<()> {
+    if !rows::spells_back(EXPORT_AUTHORS, &row) {
+        let reason = Unresolved::ActorSplit(rows::NOT_SPELLED_BACK);
+        out.unclassified(row.at, Some(owner), reason);
+        return Ok(());
+    }
+    let TypedRow {
+        at,
+        mut value,
+        bytes,
+        ..
+    } = row;
+    let Some(actor) = value.actor.take() else {
+        out.exact(owner, at, bytes);
+        return Ok(());
+    };
+    let content = EXPORT_AUTHORS.encode_value(&value)?;
+    let held = out.owner(owner);
+    held.actor_parts.push(ActorPart {
+        actor_entity: actor,
+        content_locator: at.clone(),
+        field: ACTOR.to_owned(),
+        bytes: actor.as_bytes().to_vec(),
+    });
+    held.rows.push(RowPart::NoActor { at, value: content });
+    Ok(())
+}
+
 /// Every office row in `txn`, by artifact.
 pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
     let mut out = Captured::default();
@@ -211,6 +247,10 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
         }
         let owner = OwnerRef::entity(&row.value.artifact);
         split_export(&mut out, owner, row)?;
+    }
+    for row in rows::typed_rows(dbs, txn, EXPORT_AUTHORS, &mut out)? {
+        let owner = OwnerRef::entity(&row.key.0);
+        split_export_author(&mut out, owner, row)?;
     }
     // A waiting member's membership row goes with it when its opener is
     // erased.
@@ -242,6 +282,9 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
     for row in rows::typed_rows(dbs, txn, ORACLE, &mut out)? {
         out.unclassified(row.at, None, Unresolved::NoOwner);
     }
+    for row in rows::typed_rows(dbs, txn, LIVE_EDIT_GROUPS, &mut out)? {
+        out.unclassified(row.at, None, Unresolved::NoOwner);
+    }
     Ok(out)
 }
 
@@ -250,6 +293,7 @@ fn owns(at: &RowLocator) -> bool {
         SOURCES.decl(),
         FORKS.decl(),
         EXPORTS.decl(),
+        EXPORT_AUTHORS.decl(),
         PROPOSALS.decl(),
         MEMBERSHIP.decl(),
     ]
@@ -269,6 +313,8 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
         rows::check_row(FORKS, at, value)
     } else if at.in_table(EXPORTS.decl()) {
         rows::check_row(EXPORTS, at, value)
+    } else if at.in_table(EXPORT_AUTHORS.decl()) {
+        rows::check_row(EXPORT_AUTHORS, at, value)
     } else if at.in_table(PROPOSALS.decl()) {
         rows::check_row(PROPOSALS, at, value)
     } else if at.in_table(MEMBERSHIP.decl()) {
@@ -306,6 +352,30 @@ fn join_export(value: &[u8], parts: &[&ActorPart]) -> Result<Vec<u8>> {
         }
     }
     EXPORTS.encode_value(&record)
+}
+
+/// A revision-author token with its actor back when it opened, or with no
+/// actor when it did not. The token never changes.
+fn join_export_author(value: &[u8], parts: &[&ActorPart]) -> Result<Vec<u8>> {
+    let mut record = EXPORT_AUTHORS.decode_value(value)?;
+    if parts.len() > 1 {
+        return Err(rows::bad_part());
+    }
+    for part in parts {
+        if part.field != ACTOR || record.actor.is_some() {
+            return Err(rows::bad_part());
+        }
+        let id: [u8; 16] = part
+            .bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| rows::bad_part())?;
+        if EntityId::from_bytes(id)? != part.actor_entity {
+            return Err(rows::bad_part());
+        }
+        record.actor = Some(part.actor_entity);
+    }
+    EXPORT_AUTHORS.encode_value(&record)
 }
 
 /// A proposal with its opened actors back. Each waiting member whose opener
@@ -347,6 +417,9 @@ fn join(
     }
     if at.in_table(EXPORTS.decl()) {
         return join_export(value, parts).map(Some);
+    }
+    if at.in_table(EXPORT_AUTHORS.decl()) {
+        return join_export_author(value, parts).map(Some);
     }
     if at.in_table(PROPOSALS.decl()) {
         return join_proposal(dbs, value, parts);

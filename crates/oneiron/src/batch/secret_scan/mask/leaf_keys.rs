@@ -29,9 +29,8 @@ impl Masker {
         // through the same mark.
         let known: Vec<(Range<usize>, EntityId)> = match &self.known {
             Some(known) => known
-                .spans(leaf)
+                .spans_except(leaf, |value| self.is_kept(value))
                 .into_iter()
-                .filter(|hit| !self.is_kept(&leaf[hit.span.clone()]))
                 .map(|hit| (hit.span, hit.custody))
                 .collect(),
             None => Vec::new(),
@@ -76,8 +75,8 @@ impl Masker {
             {
                 continue;
             }
-            // A value the owner ruled no secret in the record is left as
-            // written, whatever rule placed its span (FIX 8646).
+            // A value the owner ruled no secret or kept as text in the record is left
+            // as written, whatever rule placed its span (FIX 8646).
             if self.is_kept(&leaf[span.clone()]) {
                 continue;
             }
