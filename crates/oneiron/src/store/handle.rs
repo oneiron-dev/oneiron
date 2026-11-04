@@ -268,6 +268,9 @@ pub struct StoreCore {
     /// guards.
     #[cfg(feature = "sync")]
     pub(crate) sync_hooks: &'static dyn crate::store::StoreSyncHooks,
+    /// The engine's attempt queue operations, supplied by the open door with
+    /// the delete guards.
+    pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
