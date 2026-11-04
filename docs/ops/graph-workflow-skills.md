@@ -8,7 +8,11 @@ questions).
 The request names `skill` (the workflow skill's hex entity id) and `reference`
 (the exact JSON file path in that admitted source tree). There is no default file
 and no host filesystem path. Optional `ceiling`, `unit_deadline_ms`, `posture` and
-`criteria` have the same types and fallback behavior as `vault.graph.ask`.
+`criteria` have the same types as `vault.graph.ask`. Each stage starts from its
+actual saved question's dial, deadline and criteria. An explicit caller ceiling
+only caps that dial; it never lowers the saved first rung. Explicit deadline and
+criteria override those saved values. Posture always keeps the stricter of the
+saved question, caller and vault.
 
 The caller cannot supply an actor, principal, run, attempt, lease, executor or
 payer. The door uses its bound actor and run. It matches that actor and the
