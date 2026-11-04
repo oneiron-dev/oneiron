@@ -53,12 +53,12 @@ use crate::registry;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::store::loro_document::{doc_from_snapshot, import_doc, map_contains_binary};
+use crate::store::loro_tombstones::TombstoneIndex;
+use crate::store::replica_edge_key::format_edge_key;
 use crate::store::window_rows::{
     OFF_RECORD_PROMOTE_PICKUP, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
     WINDOW_UPDATE, WindowEntityKey,
 };
-use crate::sync::bridge::format_edge_key;
-use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::residence::residence_window_for_blob;
 use crate::temporal::TimeRange;
 use crate::window_key::WindowKey;
