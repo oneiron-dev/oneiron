@@ -765,7 +765,7 @@ pub(in crate::api::facade) fn door_admits(
         Row::VaultArtifactsReviewSlides => slide_reviewer(server, auth).map(drop),
         Row::VaultArtifactsAsk | Row::VaultArtifactsAdmit => artifact_asker(server, auth).map(drop),
         Row::SelfMemoryDiaryQuery | Row::SelfMemoryPadsRead | Row::SelfMemoryPadsAdminReads => {
-            diary_reader(server, auth).map(drop)
+            diary_reader(server, auth, verb).map(drop)
         }
         Row::VaultDecisionsAsksAnswer
         | Row::VaultDecisionsAsksClimb
