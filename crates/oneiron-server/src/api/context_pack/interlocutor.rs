@@ -71,20 +71,39 @@ pub(crate) fn resolve_core_interlocutor_set(
     // (`RoomAudience::agent_reads`). For a caller the room does not name
     // they stay unknown: an agent-only room never reads as the owner alone.
     if let Some(room) = room {
-        for (member, party) in &room.others {
-            parties.push(match party {
+        for (member, entry) in &room.others {
+            parties.push(match entry.party {
                 oneiron::disclosure::RoomParty::VaultOwner
                 | oneiron::disclosure::RoomParty::VaultAgent
                     if room_reader.is_some() =>
                 {
                     continue;
                 }
+                // FIX 6558: with no proven reader the owner still meets:
+                // by its readable roster contact where it has one (a live
+                // co-Owner's, exactly the ContactRef its contact's party
+                // brought before the one-Owner move), else by an
+                // owner-labelled bottom: the same clearance as the unknown
+                // it was, under the owner's label.
+                oneiron::disclosure::RoomParty::VaultOwner => match entry.contact {
+                    Some(contact)
+                        if read.is_ref_readable(&contact).map_err(|error| {
+                            core_engine_error("room contact admission failed", error)
+                        })? =>
+                    {
+                        oneiron::InterlocutorPartyInput::ContactRef(contact)
+                    }
+                    _ => oneiron::InterlocutorPartyInput::UnknownLabel {
+                        label: member.to_hex(),
+                        claimed_owner: true,
+                    },
+                },
                 oneiron::disclosure::RoomParty::Contact(contact)
-                    if read.is_ref_readable(contact).map_err(|error| {
+                    if read.is_ref_readable(&contact).map_err(|error| {
                         core_engine_error("room contact admission failed", error)
                     })? =>
                 {
-                    oneiron::InterlocutorPartyInput::ContactRef(*contact)
+                    oneiron::InterlocutorPartyInput::ContactRef(contact)
                 }
                 _ => oneiron::InterlocutorPartyInput::UnknownLabel {
                     label: member.to_hex(),
@@ -182,8 +201,9 @@ pub(crate) struct RoomAudience {
     pub(crate) reader: Option<oneiron::EntityId>,
     /// Whether that reader is the vault owner.
     pub(crate) owner_reads: bool,
-    /// Every other member and its party.
-    pub(crate) others: Vec<(oneiron::EntityId, oneiron::disclosure::RoomParty)>,
+    /// Every other member and its room party entry (party, roster contact
+    /// and agent standing, one snapshot; FIX 6558).
+    pub(crate) others: Vec<(oneiron::EntityId, oneiron::disclosure::RoomPartyEntry)>,
 }
 
 impl RoomAudience {
@@ -199,7 +219,7 @@ impl RoomAudience {
         live: oneiron::conversation::RoomLiveSpeakerEntries,
     ) -> Result<Self, ApiError> {
         let parties = vault
-            .room_parties_under(read, members)
+            .room_party_entries_under(read, members)
             .map_err(|error| core_engine_error("room contact resolution failed", error))?;
         let owner = bound_room_owner(vault, auth, members)?;
         let reader = owner.or_else(|| own_agent_reader(auth, members, &parties));
@@ -226,7 +246,7 @@ impl RoomAudience {
         }
         self.others
             .iter()
-            .filter(|(_, party)| *party == oneiron::disclosure::RoomParty::VaultAgent)
+            .filter(|(_, entry)| entry.vault_agent)
             .filter_map(|(member, _)| {
                 oneiron::claim::ScopedReadActorKey::new(member.to_hex())
                     .map(|key| key.require_access_grants(Some(*member)))
@@ -271,18 +291,19 @@ fn bound_room_owner(
 fn own_agent_reader(
     auth: &CoreAuth,
     members: &[oneiron::EntityId],
-    parties: &[oneiron::disclosure::RoomParty],
+    parties: &[oneiron::disclosure::RoomPartyEntry],
 ) -> Option<oneiron::EntityId> {
     if auth.actor_class() != Some("agent") {
         return None;
     }
     let id = oneiron::EntityId::from_hex(auth.principal_ref()?).ok()?;
+    // FIX 6558: agent standing, not the party: a live co-Owner who is also
+    // one of the vault's own agents classes VaultOwner now and still reads
+    // as itself here.
     members
         .iter()
         .zip(parties)
-        .any(|(member, party)| {
-            *member == id && *party == oneiron::disclosure::RoomParty::VaultAgent
-        })
+        .any(|(member, entry)| *member == id && entry.vault_agent)
         .then_some(id)
 }
 

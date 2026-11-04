@@ -6,7 +6,7 @@
 //!
 //! Key binding: the root's classical signature over
 //! `"oneiron/authority/checkpoint-key-binding/v1" || rmp named { vault_id,
-//! genesis, root, install, slhdsa, epoch }` certifies one install's SLH-DSA
+//! genesis, root, install, slhdsa, epoch, assurance }` certifies one install's SLH-DSA
 //! key for checkpoint attestation only. It is verified under the root key the
 //! verifier's policy names, never under a key the binding supplies alone.
 //!
@@ -25,13 +25,16 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 use crate::Vault;
-use crate::error::{Error, RecordError, Result};
+use crate::error::{Error, RecordError, Result, SideTableRowProblem, StoreError};
 use crate::side_table::{self, Named, SideTable};
 
 mod policy_match;
 
 /// The crypto epoch a certified checkpoint key signs at: a binding names it,
 /// and a hash-based record below it is refused.
+/// The binding statement domain stays v1 across the tier field (FIX 2754):
+/// pre-tier rows fail strict decode in both directions, so no domain bump
+/// carries them either way.
 pub const CHECKPOINT_KEY_EPOCH: u64 = 1;
 const KEY_BINDING_DOMAIN: &[u8] = b"oneiron/authority/checkpoint-key-binding/v1";
 const ATTESTATION_DOMAIN: &[u8] = b"oneiron/authority/checkpoint-attestation/v2";
@@ -56,6 +59,40 @@ pub(super) fn attest_refused(reason: &'static str) -> Error {
 
 fn encode_err() -> Error {
     Error::CorruptedIndex("authority checkpoint attestation")
+}
+
+/// Reads one checkpoint side-table row, treating a row this build cannot
+/// decode (pre-tier bindings and attestations) as absent so the caller
+/// re-mints: the tier is root-signed, so no default fill could verify. Any
+/// other store error still propagates.
+pub(super) fn decodable_or_absent<T>(result: Result<Option<T>>) -> Result<Option<T>> {
+    match result {
+        Err(Error::Store(StoreError::SideTableRow {
+            problem: SideTableRowProblem::Undecodable,
+            ..
+        })) => Ok(None),
+        result => result,
+    }
+}
+
+/// Collects a checkpoint table scan, skipping rows this build cannot decode
+/// (pre-tier rows): pins and quorum checks read only current rows, and
+/// re-minted rows rejoin them. Any other store error still fails the scan.
+pub(super) fn collect_decodable<K, V>(
+    rows: impl Iterator<Item = Result<(K, V)>>,
+) -> Result<Vec<(K, V)>> {
+    let mut out = Vec::new();
+    for row in rows {
+        match row {
+            Ok(row) => out.push(row),
+            Err(Error::Store(StoreError::SideTableRow {
+                problem: SideTableRowProblem::Undecodable,
+                ..
+            })) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(out)
 }
 
 /// A root key as a row key: a suite byte, then the key bytes.
@@ -139,6 +176,10 @@ pub struct AuthorityCheckpointKeyBinding {
     pub slhdsa: Vec<u8>,
     /// The crypto epoch the key signs at ([`CHECKPOINT_KEY_EPOCH`]).
     pub epoch: u64,
+    /// What keeps the install's checkpoint signing seed at rest, as the owner
+    /// is told it ([`oneiron_keystore::KeystoreAssurance::label`]), recorded
+    /// at mint and covered by the root's signature (FIX 2754).
+    pub assurance: String,
     #[serde(with = "signature_serde")]
     pub signature: AuthoritySignature,
 }
@@ -151,6 +192,7 @@ struct BindingStatement {
     install: [u8; 16],
     slhdsa: Vec<u8>,
     epoch: u64,
+    assurance: String,
 }
 
 impl AuthorityCheckpointKeyBinding {
@@ -165,13 +207,22 @@ impl AuthorityCheckpointKeyBinding {
                 install: self.install,
                 slhdsa: self.slhdsa.clone(),
                 epoch: self.epoch,
+                assurance: self.assurance.clone(),
             },
         )
     }
 
     fn check_shape(&self) -> Result<()> {
+        let tier = self.assurance.as_str();
+        let known = [
+            oneiron_keystore::KeystoreAssurance::Hardware.label(),
+            oneiron_keystore::KeystoreAssurance::Platform.label(),
+            oneiron_keystore::KeystoreAssurance::Software.label(),
+            oneiron_keystore::KeystoreAssurance::Process.label(),
+        ];
         if self.slhdsa.len() != SLHDSA_PUBLIC_KEY_LEN
             || self.epoch < CHECKPOINT_KEY_EPOCH
+            || !known.contains(&tier)
             || self.signature.public_key != self.root
             || self.signature.validate().is_err()
         {
@@ -416,12 +467,13 @@ pub(super) fn checkpoint_attestations_under_in_txn(
     image: &[u8; 32],
     policy: &[u8; 32],
 ) -> Result<Vec<AuthorityCheckpointAttestation>> {
-    Ok(ATTESTATIONS
-        .scan_from(store, txn, image)?
-        .into_iter()
-        .filter(|(_, stored)| stored.policy == *policy)
-        .map(|(_, stored)| stored.attestation)
-        .collect())
+    Ok(
+        collect_decodable(ATTESTATIONS.iter_from(store, txn, image)?)?
+            .into_iter()
+            .filter(|(_, stored)| stored.policy == *policy)
+            .map(|(_, stored)| stored.attestation)
+            .collect(),
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -475,7 +527,7 @@ impl Vault {
         challenge: [u8; 32],
     ) -> Result<AuthorityCheckpointPin> {
         let mut bindings = BTreeMap::new();
-        for (_, binding) in KEY_BINDINGS.scan(&self.store, txn)? {
+        for (_, binding) in collect_decodable(KEY_BINDINGS.iter_from(&self.store, txn, &[])?)? {
             if context.policy.root(&binding.root).is_some()
                 && binding.vault_id == context.vault_id
                 && binding.genesis == context.genesis
@@ -501,16 +553,17 @@ impl Vault {
         pin: &AuthorityCheckpointPin,
     ) -> Result<Vec<AuthorityCheckpointAttestation>> {
         let policy = pin.policy.digest()?;
-        Ok(ATTESTATIONS
-            .scan_from(&self.store, txn, &pin.checkpoint)?
-            .into_iter()
-            .filter(|(_, stored)| {
-                stored.policy == policy
-                    && pin.binding(&stored.attestation.binding.root)
-                        == Some(&stored.attestation.binding)
-            })
-            .map(|(_, stored)| stored.attestation)
-            .collect())
+        Ok(
+            collect_decodable(ATTESTATIONS.iter_from(&self.store, txn, &pin.checkpoint)?)?
+                .into_iter()
+                .filter(|(_, stored)| {
+                    stored.policy == policy
+                        && pin.binding(&stored.attestation.binding.root)
+                            == Some(&stored.attestation.binding)
+                })
+                .map(|(_, stored)| stored.attestation)
+                .collect(),
+        )
     }
 
     /// Whether the stored attestations of `image` reach `context`'s policy.
@@ -540,9 +593,10 @@ impl Vault {
         built_under: &[u8; 32],
     ) -> Result<bool> {
         let key = root_row_key(root);
-        if let Some(stored) = ATTESTATIONS.get(&self.store, txn, &(image, key.clone()))?
+        if let Some(stored) =
+            decodable_or_absent(ATTESTATIONS.get(&self.store, txn, &(image, key.clone())))?
             && stored.policy == *built_under
-            && KEY_BINDINGS.get(&self.store, txn, &key)?.as_ref()
+            && decodable_or_absent(KEY_BINDINGS.get(&self.store, txn, &key))?.as_ref()
                 == Some(&stored.attestation.binding)
         {
             return Ok(false);
@@ -563,6 +617,10 @@ impl Vault {
         sign: impl FnOnce(&[u8]) -> Result<Vec<u8>>,
     ) -> Result<AuthorityCheckpointKeyBinding> {
         let signer = self.checkpoint_signer()?;
+        let assurance = self
+            .device_keystore_assurance()
+            .map(|assurance| assurance.label().to_owned())
+            .ok_or_else(|| attest_refused("the install reports no keystore assurance"))?;
         let context = {
             let txn = self.store.env.read_txn()?;
             self.checkpoint_context_in_txn(&txn)?
@@ -575,6 +633,7 @@ impl Vault {
             install: signer.install,
             slhdsa: signer.slhdsa,
             epoch: CHECKPOINT_KEY_EPOCH,
+            assurance,
             signature: AuthoritySignature {
                 suite: root.suite(),
                 public_key: root.clone(),
@@ -612,9 +671,9 @@ impl Vault {
         let (context, binding, built) = {
             let txn = self.store.env.read_txn()?;
             let context = self.checkpoint_context_in_txn(&txn)?;
-            let binding = KEY_BINDINGS
-                .get(&self.store, &txn, &root_row_key(root))?
-                .ok_or_else(|| attest_refused("the root has certified no checkpoint key"))?;
+            let binding =
+                decodable_or_absent(KEY_BINDINGS.get(&self.store, &txn, &root_row_key(root)))?
+                    .ok_or_else(|| attest_refused("the root has certified no checkpoint key"))?;
             let built = policy_match::image_policy_in_txn(
                 &self.store,
                 &txn,
@@ -647,7 +706,8 @@ impl Vault {
         let key = root_row_key(root);
         let mut txn = self.store.env.write_txn()?;
         if self.checkpoint_context_in_txn(&txn)? != context
-            || KEY_BINDINGS.get(&self.store, &txn, &key)?.as_ref() != Some(&attestation.binding)
+            || decodable_or_absent(KEY_BINDINGS.get(&self.store, &txn, &key))?.as_ref()
+                != Some(&attestation.binding)
         {
             return Err(Error::InvalidConfig(
                 "the root policy or key binding changed while the root signed; attest again".into(),
@@ -723,10 +783,15 @@ impl Vault {
         let signer = self.checkpoint_signer()?;
         let stored = {
             let txn = self.store.env.read_txn()?;
-            KEY_BINDINGS.get(&self.store, &txn, &root_row_key(&root))?
+            decodable_or_absent(KEY_BINDINGS.get(&self.store, &txn, &root_row_key(&root)))?
         };
+        let assurance = self
+            .device_keystore_assurance()
+            .map(|assurance| assurance.label().to_owned());
         if !stored.is_some_and(|binding| {
-            binding.install == signer.install && binding.slhdsa == signer.slhdsa
+            binding.install == signer.install
+                && binding.slhdsa == signer.slhdsa
+                && Some(binding.assurance.as_str()) == assurance.as_deref()
         }) {
             self.checkpoint_key_binding(&root, |statement| issuer.sign_checkpoint(statement))?;
         }
@@ -741,11 +806,12 @@ impl Vault {
         image: &[u8; 32],
     ) -> Result<Vec<AuthorityCheckpointAttestation>> {
         let txn = self.store.env.read_txn()?;
-        Ok(ATTESTATIONS
-            .scan_from(&self.store, &txn, image)?
-            .into_iter()
-            .map(|(_, stored)| stored.attestation)
-            .collect())
+        Ok(
+            collect_decodable(ATTESTATIONS.iter_from(&self.store, &txn, image)?)?
+                .into_iter()
+                .map(|(_, stored)| stored.attestation)
+                .collect(),
+        )
     }
 
     /// The pin a pairing with `challenge` hands a new device: the newest
