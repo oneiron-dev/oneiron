@@ -125,6 +125,17 @@ pub(crate) fn assembly_fits(len: u64) -> bool {
 /// without aborting (FIX 8880). A carrier that does not fit waits in its
 /// window for a later pass, as one missing a part does.
 pub(crate) fn join_parts(map: &LoroMap, parts: &Parts) -> Option<Vec<u8>> {
+    join_parts_from(parts, |key| map_get_bytes(map, key))
+}
+
+/// The carrier `parts` lists, joined through `get`; `None` while a part is
+/// missing, fails its digest, or while the host has no memory to hold the
+/// joined carrier. The same well-formed, reserve, and length checks as
+/// [`join_parts`], over borrowed bytes (captured history) instead of a map.
+pub(crate) fn join_parts_from<B: AsRef<[u8]>>(
+    parts: &Parts,
+    mut get: impl FnMut(&str) -> Option<B>,
+) -> Option<Vec<u8>> {
     if !parts.well_formed() {
         return None;
     }
@@ -141,11 +152,13 @@ pub(crate) fn join_parts(map: &LoroMap, parts: &Parts) -> Option<Vec<u8>> {
         .try_reserve_exact(usize::try_from(parts.len).ok()?)
         .ok()?;
     for digest in &parts.parts {
-        let part = map_get_bytes(map, &part_key(digest))?;
-        if blake3::hash(&part).as_bytes() != digest {
+        let key = part_key(digest);
+        let part = get(&key)?;
+        let part = part.as_ref();
+        if blake3::hash(part).as_bytes() != digest {
             return None;
         }
-        bytes.extend_from_slice(&part);
+        bytes.extend_from_slice(part);
     }
     (bytes.len() == usize::try_from(parts.len).ok()?).then_some(bytes)
 }
