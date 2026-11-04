@@ -74910,7 +74910,7 @@
      "path": "src/sync/carrier_parts.rs",
      "purpose": "Linked parts for a window carrier too large for one map value (Rule 5)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -76926,7 +76926,7 @@
      "path": "src/sync/repo_manifests/checkpoint.rs",
      "purpose": "A repo manifest in a checkpoint (KS7-3a), read with the head codec and filed under its portable id: the head…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
