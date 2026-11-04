@@ -504,7 +504,8 @@ side_tables! {
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
     /// id).
     LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored
-        => crate::llm::registry::erase_registry_source_in_txn;
+        => crate::llm::registry::erase_registry_source_in_txn
+        [accepts: crate::llm::registry::llm_registry_row_accepts_masked];
     /// FIX 4546: when the owner marked a model's registry row stale, kept through re-puts and
     /// pack refreshes until the owner clears it. Key: string(model id).
     LLM_REGISTRY_STALE_MARK: VaultMeta b"llm:registry_stale:v1:" Named Engine;
