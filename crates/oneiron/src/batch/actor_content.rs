@@ -5,6 +5,7 @@ use super::*;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::batch::shared_vault_write::SharedVaultWrite;
+use crate::claim::ClaimRecordScope;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::write_envelope::WriteActor;
