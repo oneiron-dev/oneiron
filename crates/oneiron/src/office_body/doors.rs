@@ -552,17 +552,18 @@ impl Vault {
             // The version carries the calculator that computed its cached
             // values and the export's envelope (ARCH-0075 calculation;
             // ARCH-0078 made_by).
-            let version = self.append_blob_artifact_version_with_engine_and_parent_in_txn(
+            let version = self.append_blob_artifact_version_from_host_in_txn(
                 wtxn,
                 artifact,
                 &bytes,
                 &provenance,
-                recalc.as_ref(),
                 request.actor,
                 TimeRange { start: at, end: at },
                 at,
                 None,
+                recalc.as_ref(),
                 request.made_by,
+                request.host,
             )?;
             let record = OfficeBodyExportRecord {
                 artifact: *artifact,

@@ -9,8 +9,6 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::{AttemptId, AttemptQueue, AttemptRecord, decode_record};
 use crate::Vault;
 use crate::attempt_queue::source_rows::union_source_rows;
@@ -18,22 +16,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 pub use crate::store::attempt_read_producer::ReadSetProducer;
-
-/// What an attempt's producers recorded of the rows its inputs were read
-/// from. `rows` is the union of their reports, sorted and deduplicated;
-/// `Some([])` when they read no vault row; `None`, unknown, once any
-/// producer reported an unknown set or a producer reported undeclared.
-/// `expected` holds the producers the owner declared, `reported` the ones
-/// that reported (FIX 7073). An attempt no producer declared or recorded
-/// keeps no read set at all, which its receipt keeps as unknown too.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AttemptReadSet {
-    pub rows: Option<Vec<EntityId>>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub expected: BTreeSet<String>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub reported: BTreeSet<String>,
-}
+pub use crate::store::attempt_record::AttemptReadSet;
 
 impl AttemptReadSet {
     /// Nothing declared or read yet: a known, empty set.
