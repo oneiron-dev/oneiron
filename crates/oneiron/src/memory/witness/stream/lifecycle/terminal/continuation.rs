@@ -44,6 +44,7 @@ pub(super) fn continuation_unlinked_prose(
 pub(super) fn write_continuation_terminal(
     vault: &Vault,
     state: &State,
+    parts: Option<&[crate::ContentPart]>,
     assertions: &WitnessAssertions,
     gate: TerminalGate<'_>,
     callback: Callback,
@@ -60,6 +61,21 @@ pub(super) fn write_continuation_terminal(
     let seed = &state.seed;
     vault.write_txn_door(callback, |txn| -> MessageStreamResult<()> {
         admit_terminal(gate, txn)?;
+        let has_parts = parts.is_some_and(|parts| !parts.is_empty());
+        if has_parts {
+            if let Some(done) = storage::receipt(vault, txn, seed.message_id)?
+                && done.generation == seed.generation
+            {
+                *receipt = done;
+                return Ok(());
+            }
+            let active = storage::ACTIVE
+                .get(&vault.store, txn, &seed.message_id)?
+                .ok_or(Error::CorruptedIndex("stream recovery metadata missing"))?;
+            if active.generation != seed.generation {
+                return Err(Error::ConcurrentWrite("message stream generation changed").into());
+            }
+        }
         reply_assertions::judge_in_txn(lane, txn, assertions, unread)?;
         unproven.set(reply_assertions::unproven_in_txn(memory, txn, assertions));
         // Judged: this generation keeps its seed's and its terminal's
@@ -68,7 +84,13 @@ pub(super) fn write_continuation_terminal(
             admitted_in_txn(&vault.store, txn, &[&seed.assertions, assertions])?;
         let base = admission::committed_text(vault, txn, seed)?.ok_or(Error::EntityNotFound)?;
         let text = format!("{base}{}", state.pending);
-        admission::authorize(vault, txn, seed, &text, !state.pending.is_empty())?;
+        admission::authorize(
+            vault,
+            txn,
+            seed,
+            &text,
+            !state.pending.is_empty() || has_parts,
+        )?;
         let was_final =
             storage::receipt(vault, txn, seed.message_id)?.is_none_or(|prior| prior.complete());
         // A nonempty continuation edits the MESSAGE, and its first births
@@ -83,6 +105,9 @@ pub(super) fn write_continuation_terminal(
                 crate::write_envelope::WriteActor::new(seed.actor, seed.class()?),
                 seed.occurred_at,
             )?;
+        }
+        if let Some(parts) = parts.filter(|parts| !parts.is_empty()) {
+            admission::parts::append_model_parts_in_txn(vault, txn, seed, &text, parts)?;
         }
         receipt.bytes = text.len() as u64;
         storage::finish(vault, txn, seed, receipt)?;
