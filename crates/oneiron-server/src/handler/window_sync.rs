@@ -90,7 +90,7 @@ pub(super) async fn handle_window_sync(
             return Ok(ControlFlow::Continue(()));
         }
         if !protocol::is_residence_version(conn_state.protocol_version)
-            || payload.len() > 4096
+            || payload.len() > server.config.max_update_payload
             || !read_window_list(&server.root_doc).contains(&key)
         {
             return Err(ProtocolError::InvalidPayload(
