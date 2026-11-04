@@ -316,17 +316,14 @@ impl Vault {
                 // is not lost behind that lapse (FIX 12290). The resolved row
                 // is the put's expected body, never a held restriction view.
                 //
-                // No repair read for an in-place demotion (FIX 12713,
-                // REVIEW-4462 P2; answers the FIX 12709 seam choice): its
-                // history carrier may await the owner's answer, which the
-                // restriction read above and deferred completion allow but
-                // the resolved read refuses, so the repair is skipped and
-                // the restriction path below settles it.
+                // FIX 12709 seam, L06-A 15:09 ruling (b) scoped: the
+                // repair is decided from a fresh resolved read also for an
+                // in-place demotion (the restriction projection carries held
+                // machine history, which the full-equality put would refuse
+                // with InvariantViolation; the resolved row is the truth the
+                // put expects). This supersedes the REVIEW-4462 P2 skip.
                 let mut repaired = false;
-                if !self.deferred_claim_is_in_place_demotion_in_txn(
-                    &*wtxn,
-                    &binding.claim_id,
-                )? {
+                {
                     let resolved = self
                         .get_claim_in_txn(&*wtxn, &binding.claim_id)?
                         .ok_or(Error::EntityNotFound)?;
