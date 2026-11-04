@@ -258,6 +258,9 @@ pub struct StoreCore {
     /// The engine's record hooks, supplied by the open door with the delete
     /// guards.
     pub(crate) record_hooks: &'static dyn crate::store::StoreRecordHooks,
+    /// The engine's side-table actor scrubs, supplied by the open door with
+    /// the delete guards.
+    pub(crate) actor_scrubs: &'static dyn crate::store::StoreActorScrubs,
     /// The engine's sync hooks, supplied by the open door with the delete
     /// guards.
     #[cfg(feature = "sync")]

@@ -2,7 +2,9 @@
 
 #[cfg(feature = "sync")]
 use crate::store::StoreSyncHooks;
-use crate::store::{StoreDeleteGuards, StoreProjectWrites, StoreRecordHooks, StoreScopeStamps};
+use crate::store::{
+    StoreActorScrubs, StoreDeleteGuards, StoreProjectWrites, StoreRecordHooks, StoreScopeStamps,
+};
 
 /// The engine hooks a store is assembled with. Every open door takes one as a
 /// required input; the type has no default, so no store exists without each
@@ -20,6 +22,9 @@ pub struct StoreHooks {
     /// The identity-topology, federation and room hooks the store layer's
     /// write, erase and read paths run.
     pub record_hooks: &'static dyn StoreRecordHooks,
+    /// The actor scrubs of store-declared side tables whose eraser lives in
+    /// the engine.
+    pub actor_scrubs: &'static dyn StoreActorScrubs,
     /// The sync hooks the store layer's write, erase and maintenance paths
     /// run in a build with sync.
     #[cfg(feature = "sync")]
