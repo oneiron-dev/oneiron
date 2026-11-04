@@ -554,6 +554,7 @@ impl Vault {
                 occurred_at: row.asked_at,
                 receipt_ref: None,
                 payload_ref: Some(handle),
+                approval_digest: None,
                 concern: None,
                 diary_review: Some(AgentInboxDiaryReview {
                     request,
