@@ -18,9 +18,9 @@ use crate::batch::secret_scan::{KnownStreamFinder, StreamKnown};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
-use crate::store::result_body_pins::ResultBodyPin;
 use crate::secret_custody::KnownValues;
 use crate::store::body_store::SecretScan;
+use crate::store::result_body_pins::ResultBodyPin;
 use crate::store::{
     BodyDir, BodyFile, BodySpill, LINE_INDEX_BLOCK_BYTES, SpilledBody, StagedBodyKey,
 };

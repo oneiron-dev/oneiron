@@ -135,7 +135,8 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     let commitment_projection_actor_ref = commitment_projection_actor()?.entity_ref().to_hex();
     // The conversation-mirror MACHINE attests connector-observed reactions
     // (OF-372). Derived the same way, so a moved domain fails closed too.
-    let conversation_mirror_actor_ref = crate::claim::reaction_record::conversation_mirror_actor_id()?.to_hex();
+    let conversation_mirror_actor_ref =
+        crate::claim::reaction_record::conversation_mirror_actor_id()?.to_hex();
     let policy_values: serde_json::Value =
         serde_json::from_str(include_str!("policy_value_defaults.json"))
             .expect("valid shipped policy values");
@@ -365,7 +366,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::claim::reaction_record::PREDICATE_CONVERSATION_REACTION_ECHO),
+                        Value::from(
+                            crate::claim::reaction_record::PREDICATE_CONVERSATION_REACTION_ECHO,
+                        ),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -382,7 +385,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH),
+                        Value::from(
+                            crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH,
+                        ),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -1396,7 +1401,8 @@ pub(crate) fn default_consult_fanout_approval_threshold() -> u32 {
 }
 
 /// Caller-side builder values come from the same shipped data the vault seeds.
-pub(crate) fn default_consult_fanout_policy() -> crate::gate::consult_fanout_values::ConsultFanOutPolicy {
+pub(crate) fn default_consult_fanout_policy()
+-> crate::gate::consult_fanout_values::ConsultFanOutPolicy {
     let shipped = shipped_consult_fanout_rows();
     crate::gate::consult_fanout_values::ConsultFanOutPolicy {
         approval_threshold: shipped.threshold,

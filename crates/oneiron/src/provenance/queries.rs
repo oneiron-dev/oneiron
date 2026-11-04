@@ -13,8 +13,8 @@ use crate::error::{ClaimError, Error, Result};
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::store::{EngineScan};
-use crate::scan_check::{ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
 use crate::store::Store;
 use std::ops::ControlFlow;
 

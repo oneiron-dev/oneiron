@@ -218,12 +218,14 @@ impl Memory<'_> {
         request: &crate::memory::query_records::surface::SavedQueryReadRequest,
     ) -> MemoryResult<crate::memory::query_records::surface::SavedQueryReadResult> {
         let record = self.saved_query_read(request.query_ref)?;
-        Ok(crate::memory::query_records::surface::SavedQueryReadResult {
-            found: record.is_some(),
-            record: record
-                .as_ref()
-                .map(crate::memory::query_records::surface::saved_query_record_view),
-        })
+        Ok(
+            crate::memory::query_records::surface::SavedQueryReadResult {
+                found: record.is_some(),
+                record: record
+                    .as_ref()
+                    .map(crate::memory::query_records::surface::saved_query_record_view),
+            },
+        )
     }
 
     /// `self.saved_query.update` — replaces a query's definition whole
@@ -260,9 +262,7 @@ impl Memory<'_> {
         request: &crate::memory::query_records::surface::SavedQueryMembersRequest,
     ) -> MemoryResult<crate::memory::query_records::surface::SavedQueryMembershipPageView> {
         let page = self.saved_query_members(&request.read_request())?;
-        Ok(crate::memory::query_records::surface::saved_query_membership_page_view(
-            &page,
-        ))
+        Ok(crate::memory::query_records::surface::saved_query_membership_page_view(&page))
     }
 
     // ── campaign program `vault.campaign.program.*` verbs (decide-host 1193) ─
@@ -333,12 +333,14 @@ impl Memory<'_> {
             request.campaign_ref,
             request.program_ref,
         )?;
-        Ok(crate::memory::campaign_records::program::CampaignProgramReadResult {
-            found: program.is_some(),
-            record: program
-                .as_ref()
-                .map(crate::memory::campaign_records::program::campaign_program_record),
-        })
+        Ok(
+            crate::memory::campaign_records::program::CampaignProgramReadResult {
+                found: program.is_some(),
+                record: program
+                    .as_ref()
+                    .map(crate::memory::campaign_records::program::campaign_program_record),
+            },
+        )
     }
 
     /// `vault.campaign.program.update` — replaces a program's definition,

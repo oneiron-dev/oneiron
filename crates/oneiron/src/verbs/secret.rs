@@ -16,12 +16,9 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
-use crate::memory::{
-    Memory, MemoryError, MemoryResult,
-};
+use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::secret_custody::{
-    HandleReveal, SecretHandleCard, SecretRevealDecision, SecretRevealReceipt,
-    SecretSight,
+    HandleReveal, SecretHandleCard, SecretRevealDecision, SecretRevealReceipt, SecretSight,
 };
 
 /// `reveal`'s input: the handle, and why the agent needs the value.

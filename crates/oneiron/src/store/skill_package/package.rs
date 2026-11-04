@@ -5,10 +5,12 @@
 use std::collections::BTreeSet;
 
 use crate::error::{Error, Result};
-use crate::write_envelope::skill_record::{SkillContentHash, SkillRecord, canonical_skill_tree_hash};
+use crate::write_envelope::skill_record::{
+    SkillContentHash, SkillRecord, canonical_skill_tree_hash,
+};
 
-use crate::write_envelope::skill_source::support::validate_text;
 use crate::error::ArtifactError;
+use crate::write_envelope::skill_source::support::validate_text;
 
 pub(crate) const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
 pub(crate) const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;

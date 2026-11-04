@@ -1,7 +1,7 @@
 //! Guest document share input for the sync export door.
-use serde::{Deserialize, Serialize};
 use crate::EntityId;
 use crate::federation::SelectorRange;
+use serde::{Deserialize, Serialize};
 
 /// One named, locally authored world under the recipient's existing guest grant.
 /// Empty requested axes leave the grant ceiling in force; they never widen it.
@@ -16,4 +16,3 @@ pub struct GuestDocumentShareRequest {
     #[serde(default)]
     pub bands: Vec<SelectorRange>,
 }
-

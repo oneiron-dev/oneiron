@@ -493,8 +493,10 @@ pub(super) fn codebase_ids_by_fork_hash_in_txn(
     codebase_ids_by_index(FORK_INDEX, store, rtxn, &hash_index_scan_prefix(fork_hash))
 }
 
-pub(crate) use crate::store::code_snapshot::{codebase_asset_entity_id, entity_id_from_hash_material};
 pub(super) use crate::store::code_snapshot::codebase_snapshot_entity_id;
+pub(crate) use crate::store::code_snapshot::{
+    codebase_asset_entity_id, entity_id_from_hash_material,
+};
 
 /// The `sync_state`-free hex64 key `SnapshotCustodyReport` rows have always used: the lower-case
 /// hex spelling of the snapshot's fork hash.

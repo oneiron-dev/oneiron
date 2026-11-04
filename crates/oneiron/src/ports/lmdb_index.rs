@@ -7,11 +7,11 @@ use crate::batch::{
 use crate::deletion::{HydratedShortIdDeletion, HydratedShortIdDeletionSource, TombstoneValueV2};
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::error::{Error, Result};
-use oneiron_retrieval::pipeline::ScoredEntity;
 use crate::store::ShortIdAliasTarget;
 use crate::vault::require_key_len;
 use crate::{EntityId, HydratedShortId, Vault};
 use heed::{RoTxn, RwTxn};
+use oneiron_retrieval::pipeline::ScoredEntity;
 impl Vault {
     /// Actor-bound diary ids are evaluated by the scoped query in this read
     /// transaction. The ownerless RetrievalIndex trait always passes None.

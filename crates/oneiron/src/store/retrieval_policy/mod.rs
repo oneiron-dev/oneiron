@@ -98,4 +98,3 @@ impl RetrievalPolicyTrace {
         Ok(())
     }
 }
-
