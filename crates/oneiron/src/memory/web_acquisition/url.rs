@@ -1,5 +1,5 @@
-use std::collections::BTreeSet;
 use reqwest::Url;
+use std::collections::BTreeSet;
 
 /// What replaces the userinfo of any URL this module reports.
 pub(crate) const REDACTED_USERINFO: &str = "REDACTED";
@@ -133,4 +133,3 @@ pub(crate) fn validated_web_url(raw: &str) -> Option<Url> {
         .filter(is_web_url)
         .map(|url| normalize_url(&url))
 }
-

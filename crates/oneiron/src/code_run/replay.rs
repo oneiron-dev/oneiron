@@ -17,8 +17,8 @@ use super::payload::{
 };
 use super::spawn_replay::replay_request_match;
 use super::support::{
-    code_run_layout_hash,
-    expect_map, invalid_code_run_replay, map_get, str_value, validate_label, validate_text,
+    code_run_layout_hash, expect_map, invalid_code_run_replay, map_get, str_value, validate_label,
+    validate_text,
 };
 use super::types::{
     SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect, SelfSpeechCall, SelfSpeechResult,
@@ -389,10 +389,10 @@ impl CodeRunStepCheckpoint {
     }
 }
 
-pub use crate::store::result_manifest::{
-    CodeRunOutputPreview, CodeRunOutputKind, CodeRunRawOutput, ResultOccurrence,
-};
 pub(crate) use crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD;
+pub use crate::store::result_manifest::{
+    CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, ResultOccurrence,
+};
 
 /// One pinned host/guest record layout check carried by a replay record.
 #[derive(Debug, Clone, PartialEq, Eq)]

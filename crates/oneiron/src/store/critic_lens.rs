@@ -1,8 +1,8 @@
 //! Critic lens catalogue vocabulary, seed catalogue and pure shape checks.
 
-use std::collections::BTreeSet;
-use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 pub const CRITIC_LENS_CATALOG_SCHEMA_VERSION: u64 = 1;
 pub(crate) const MAX_CATALOG_LENSES: usize = 64;

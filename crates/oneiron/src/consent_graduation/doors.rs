@@ -325,7 +325,10 @@ impl crate::memory::Memory<'_> {
     /// `forbidden` when the scope belongs to another actor or the actor binding
     /// fails, plus the scope and storage errors of
     /// [`Vault::demote_scope_to_propose`].
-    pub fn demote_own_ramp_scope(&self, scope: &RampScope) -> oneiron_contracts::memory::MemoryResult<()> {
+    pub fn demote_own_ramp_scope(
+        &self,
+        scope: &RampScope,
+    ) -> oneiron_contracts::memory::MemoryResult<()> {
         let vault = self.vault();
         let at = vault.store.clock.now_recorded_at();
         // Giving up one's own grant requires the actor binding, not a content-write grant.

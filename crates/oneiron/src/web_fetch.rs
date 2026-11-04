@@ -18,11 +18,14 @@
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use reqwest::Url;
-pub use crate::memory::web_acquisition::{
-    RendererKind, FetchResult, RendererErrorKind, RendererError, RendererResult, RendererAttemptFailure, WebFetchError, WebFetchResult, MinExtractedContentBytes, CrawlPageBudget, CrawlScope, CrawlRequest, CrawlCompletion, CrawlPageFailure, CrawlResult, WEB_FETCH_CONTENT_HASH_DOMAIN, DEFAULT_MIN_EXTRACTED_CONTENT_BYTES,
-};
 use crate::memory::web_acquisition::content_hash;
+pub use crate::memory::web_acquisition::{
+    CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,
+    DEFAULT_MIN_EXTRACTED_CONTENT_BYTES, FetchResult, MinExtractedContentBytes,
+    RendererAttemptFailure, RendererError, RendererErrorKind, RendererKind, RendererResult,
+    WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult,
+};
+use reqwest::Url;
 
 mod client;
 mod door;
@@ -40,12 +43,6 @@ mod rungs;
 
 use self::ladder::{CrawlWalk, crawl_failure_reason, require_renderer_slot};
 use self::render::{parse_web_url, redact_url_credentials, validated_web_url};
-
-
-
-
-
-
 
 /// How many characters of a peer-declared charset label a diagnostic may quote.
 const MAX_REPORTED_CHARSET_LABEL_CHARS: usize = 32;

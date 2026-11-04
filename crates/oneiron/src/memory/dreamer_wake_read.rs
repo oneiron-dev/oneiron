@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::support::hex_string;
 use super::{Memory, MemoryError, MemoryResult, parse_job_ref};
+use crate::entity_id::EntityId;
 use crate::memory::wake_observation::ClaimAuthoringFallback;
 use crate::memory::wake_observation::WAKE_OBSERVATION_PAGE_MAX;
 use crate::memory::wake_observation::WakeCallState;
@@ -21,7 +22,6 @@ use crate::memory::wake_observation::WakeObservedCall;
 use crate::memory::wake_observation::WakeObservedCheckpoint;
 use crate::memory::wake_observation::WakeObservedGeneration;
 use crate::memory::wake_observation::WakeRef;
-use crate::entity_id::EntityId;
 use oneiron_model::llm::BudgetLeaseState;
 
 /// The input: an attempt's observation (`job_ref`, with `wake_ref` naming

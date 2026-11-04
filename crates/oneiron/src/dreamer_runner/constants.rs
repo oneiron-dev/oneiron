@@ -5,38 +5,38 @@
 #[cfg(doc)]
 use crate::attempt_queue::AttemptQueue;
 
-pub use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
-pub use crate::store::dreamer_attempt_kind::DREAMER_ATTEMPT_PAYLOAD_SCHEMA_VERSION;
 pub use crate::store::dreamer_attempt_kind::DREAMER_ATTEMPT_PAYLOAD_KEYS;
+pub use crate::store::dreamer_attempt_kind::DREAMER_ATTEMPT_PAYLOAD_SCHEMA_VERSION;
 pub use crate::store::dreamer_attempt_kind::DREAMER_MILESTONE_PREDICATE;
-pub use crate::store::dreamer_attempt_kind::DREAMER_MILESTONE_VALUE_SCHEMA_VERSION;
 pub use crate::store::dreamer_attempt_kind::DREAMER_MILESTONE_VALUE_KEYS;
+pub use crate::store::dreamer_attempt_kind::DREAMER_MILESTONE_VALUE_SCHEMA_VERSION;
+pub use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 
 pub use crate::store::dreamer_attempt_kind::DEFAULT_DREAMER_CHILD_RESERVE_UNITS;
-pub use crate::store::dreamer_attempt_kind::DEFAULT_DREAMER_TOURNAMENT_FANOUT_M;
 pub use crate::store::dreamer_attempt_kind::DEFAULT_DREAMER_TOURNAMENT_DEPTH_K;
-pub use crate::store::dreamer_attempt_kind::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND;
-pub use crate::store::dreamer_attempt_kind::DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DEFAULT_DREAMER_TOURNAMENT_FANOUT_M;
 pub use crate::store::dreamer_attempt_kind::DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND;
-pub use crate::store::dreamer_attempt_kind::DREAMER_WEAVE_RECIPE_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_NOTE_REVIEW_ATTEMPT_KIND;
 pub use crate::store::dreamer_attempt_kind::DREAMER_RECIPE_WAKE_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND;
 pub use crate::store::dreamer_attempt_kind::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND;
 pub use crate::store::dreamer_attempt_kind::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND;
-pub use crate::store::dreamer_attempt_kind::DREAMER_NOTE_REVIEW_ATTEMPT_KIND;
-pub use crate::store::dreamer_attempt_kind::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND;
-pub use crate::store::dreamer_attempt_kind::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_WEAVE_RECIPE_ATTEMPT_KIND;
 /// A Dreamer-lane TASK's realization: the one row `tasks.create` queues for
 /// a TASK routed to the Dreamer, carrying the TASK's bare spec rather than
 /// the runner envelope. Admitted on any wake after the wake recipes; its one
 /// model step writes the research NOTE the TASK's result names.
 pub const DREAMER_TASK_REALIZE_ATTEMPT_KIND: &str =
     crate::task_verb::highway_runner::REALIZE_ATTEMPT_KIND;
-pub use crate::store::dreamer_attempt_kind::DREAMER_WEAVE_LENS_ATTEMPT_KIND;
-pub use crate::store::dreamer_attempt_kind::DREAMER_TURN_PROGRAM_ATTEMPT_KIND;
 pub use crate::store::dreamer_attempt_kind::COACH_HEAL_ATTEMPT_KIND;
 pub use crate::store::dreamer_attempt_kind::COACH_RETRIEVAL_TUNE_FACET;
-pub use crate::store::dreamer_attempt_kind::DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION;
 pub use crate::store::dreamer_attempt_kind::DREAMER_HOME_NODE_DESIGNATION_KEYS;
+pub use crate::store::dreamer_attempt_kind::DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION;
+pub use crate::store::dreamer_attempt_kind::DREAMER_TURN_PROGRAM_ATTEMPT_KIND;
+pub use crate::store::dreamer_attempt_kind::DREAMER_WEAVE_LENS_ATTEMPT_KIND;
 
 // Storage/wire keys keep the legacy "job" spelling; ONE-1714 renamed code only.
 pub(super) const KEY_SCHEMA_VERSION: &str = "schema_version";
