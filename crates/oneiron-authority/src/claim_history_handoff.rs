@@ -16,8 +16,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::EntityId;
-use oneiron_authority::authority::{AuthorityKey, AuthoritySignature, verify_authority_signature};
+use crate::authority::{AuthorityKey, AuthoritySignature, verify_authority_signature};
+use oneiron_contracts::entity_id::EntityId;
 
 /// Signature domain, distinct from authority-log and machine-claim signatures.
 pub const CLAIM_HISTORY_HANDOFF_DOMAIN: &[u8] = b"oneiron/claim-history-handoff/v1";
@@ -390,7 +390,7 @@ impl Cursor<'_> {
 
 /// How one packet's delta closes over its roots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DeltaClosure {
+pub enum DeltaClosure {
     /// Every transition reduces from the roots and the heads are exact.
     Closed,
     /// A predecessor is neither a root nor a transition of this delta.
@@ -406,7 +406,7 @@ pub(crate) enum DeltaClosure {
 /// R, every predecessor set is nonempty and canonical, P ⊆ U, D reduces
 /// topologically from R, and the heads are exactly U \ P, so a previous head
 /// the delta does not consume stays a head. Pure: it reads this packet only.
-pub(crate) fn handoff_delta_closure(
+pub fn handoff_delta_closure(
     packet: &ClaimHistoryHandoff,
     previous_heads: &[[u8; 32]],
 ) -> DeltaClosure {

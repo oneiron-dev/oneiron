@@ -19,27 +19,27 @@ pub const HUMAN_FOLLOWUP_STAGE_ESCALATION: &str = "human_escalation";
 /// The one outbound verb follow-up uses. `remind`/`digest`/`escalate` are NOT
 /// outbound verbs and are never minted: the connector manifest decides what a
 /// channel can do, and follow-up is an ordinary send.
-pub(super) const HUMAN_FOLLOWUP_VERB: &str = "send";
+pub const HUMAN_FOLLOWUP_VERB: &str = "send";
 
 /// Quiet interval before the first direct nudge.
-pub(super) const REMINDER_AFTER_SECONDS: u64 = 24 * 60 * 60;
+pub const REMINDER_AFTER_SECONDS: u64 = 24 * 60 * 60;
 
 /// Interval from the reminder to the open-loop digest entry.
 const DIGEST_AFTER_SECONDS: u64 = 3 * 24 * 60 * 60;
 
 /// Interval from the digest to escalation, and between escalations.
-pub(super) const ESCALATION_AFTER_SECONDS: u64 = 7 * 24 * 60 * 60;
+pub const ESCALATION_AFTER_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 /// Bound on one wake-pass follow-up drive.
-pub(super) const FOLLOWUP_WAKE_LIMIT: usize = 64;
+pub const FOLLOWUP_WAKE_LIMIT: usize = 64;
 
 /// Follow-up cursors one drive reads at most, due or not: a pass's work is
 /// bounded by the cursors it reads, never by the ones it runs (F13). The
 /// next pass resumes after the last one read.
-pub(super) const FOLLOWUP_SWEEP_ROWS: usize = 4_096;
+pub const FOLLOWUP_SWEEP_ROWS: usize = 4_096;
 
 /// Page size for the bounded TASK walk in [`HumanTaskFollowupDriver::rebuild_cursors`].
-pub(super) const REBUILD_PAGE: usize = 256;
+pub const REBUILD_PAGE: usize = 256;
 
 /// Typed failure surface for native-human routing and response signalling.
 ///
@@ -92,7 +92,7 @@ impl HumanFollowupStage {
         }
     }
 
-    pub(super) fn from_token(token: &str) -> Result<Self> {
+    pub fn from_token(token: &str) -> Result<Self> {
         match token {
             "tracking" => Ok(Self::Tracking),
             "reminder_due" => Ok(Self::ReminderDue),
@@ -106,7 +106,7 @@ impl HumanFollowupStage {
     /// What running this stage's due work produces: the stage reached and the
     /// outbound family it notifies through. `Completed` and a not-yet-due
     /// `Tracking` produce nothing.
-    pub(super) const fn advance(self) -> Option<(Self, &'static str, u64)> {
+    pub const fn advance(self) -> Option<(Self, &'static str, u64)> {
         match self {
             Self::Tracking => Some((
                 Self::ReminderDue,
