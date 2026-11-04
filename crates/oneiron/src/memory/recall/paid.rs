@@ -710,9 +710,15 @@ impl Memory<'_> {
             .read_txn()
             .map_err(crate::error::Error::from)?;
         let mut carried = crate::settings::CarriedWorlds::default();
-        for (candidate, text) in block.iter().zip(&texts) {
+        for ((candidate, text), pinned) in block.iter().zip(&texts).zip(&pinned_worlds) {
             if text.is_empty() {
                 continue;
+            }
+            // The text was read at its pinned revision: fold its pinned world
+            // in, so a world move between block capture and the watermark
+            // sample cannot send old restricted text under new-world routes.
+            if let Some(world) = pinned {
+                carried.worlds.insert(*world);
             }
             let worlds =
                 crate::settings::carried_worlds_in(&self.vault.store, &rtxn, &candidate.id)?;
