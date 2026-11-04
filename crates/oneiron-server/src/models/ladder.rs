@@ -473,22 +473,33 @@ impl OfferLadder {
         }
     }
 
-    /// The requested rung and, only for one proved picked rung, its exact
-    /// route pin for the model-call record (FIX 12516). A fallback answer
-    /// leaves the route unknown instead of naming the first rung falsely.
-    /// The pin is the capsule-canonical one (adapter@origin, offer, catalog
-    /// revision, wire model), never rebuilt from today's catalog.
-    pub(crate) fn model_call_binding(&self) -> (CapsuleRungBinding, Option<ReplayRoutePin>) {
+    /// The answering rung, when the caller names the served model, and its
+    /// exact route pin for the model-call record (FIX 12516). The pin is the
+    /// capsule-canonical one (adapter@origin, offer, catalog revision, wire
+    /// model), never rebuilt from today's catalog; it is `Some` only when
+    /// the served model is this ladder's one picked rung. A fallback answer,
+    /// or a call whose served model the site cannot name (streams), leaves
+    /// the route unknown instead of naming the first rung falsely. The rung
+    /// model is the served model; its locality is the answering rung's when
+    /// that rung is on this ladder, else the requested first rung's (full
+    /// threading of the answering rung is FIX 12743).
+    pub(crate) fn model_call_binding(
+        &self,
+        served: Option<&ModelId>,
+    ) -> (CapsuleRungBinding, Option<ReplayRoutePin>) {
         let prompt = self.exact_prompt().flatten().map(str::to_owned);
-        let rung = self.rungs.first();
+        let answered = served.and_then(|model| self.rungs.iter().find(|rung| rung.model == *model));
+        let rung = answered.or(self.rungs.first());
         let binding = CapsuleRungBinding {
-            model: self.name.clone(),
+            model: served.cloned().unwrap_or_else(|| self.name.clone()),
             locality: rung.map_or(ModelLocality::OnDevice, |rung| rung.offer.binding.locality),
             prompt: prompt.clone(),
         };
-        let route = self
-            .exact_prompt()
-            .and_then(|_| rung.and_then(shadow_capture::route_pin));
+        let route = if self.exact_prompt().is_some() {
+            answered.and_then(shadow_capture::route_pin)
+        } else {
+            None
+        };
         (binding, route)
     }
 

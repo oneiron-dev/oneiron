@@ -668,27 +668,31 @@ impl StepRunner {
             live.book_and_revise();
             true
         };
-        let capture_request = request.clone();
         let generated = match &uses {
             Some(uses) => uses
                 .converse(runtime, &call.ladder, &run, &live, request)
-                .map(|(response, served, rounds)| ((response, served), rounds)),
-            None => runtime
-                .block_on(
-                    call.ladder
-                        .generate_served_while(&run, request, None, &may_send),
-                )
-                .map(|answered| (answered, false)),
+                .map(|(response, served, rounds, final_request)| {
+                    ((response, served, final_request), rounds)
+                }),
+            None => {
+                let final_request = request.clone();
+                runtime
+                    .block_on(
+                        call.ladder
+                            .generate_served_while(&run, request, None, &may_send),
+                    )
+                    .map(|(response, served)| ((response, served, final_request), false))
+            }
         };
         oneiron::code_run::finalize_step_captures(vault);
         // What this try spent and no call's look booked goes on the lease
         // whatever the call answered; the replayed tries recorded their own.
         live.book_rest()?;
-        let (response, served, tool_rounds) = match generated {
+        let (response, served, final_request, tool_rounds) = match generated {
             // The rung that answered, fallback included, is the step's
             // executor: its leaf is attributed to it (OF-540). A refused
             // stamp leaves the leaf unattributed, not failed.
-            Ok(((response, served), rounds)) => {
+            Ok(((response, served, final_request), rounds)) => {
                 if let Some(owner) = attempt.lease_owner.as_deref()
                     && let Err(error) = AttemptQueue::new(vault).set_executor_model(
                         attempt.id,
@@ -699,7 +703,7 @@ impl StepRunner {
                 {
                     tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
                 }
-                (response, served, rounds)
+                (response, served, final_request, rounds)
             }
             Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied)),
             Err(error) => {
@@ -727,7 +731,7 @@ impl StepRunner {
             vault,
             &call.ladder,
             &run,
-            &capture_request,
+            &final_request,
             &response,
             served,
             attempt,
@@ -782,7 +786,7 @@ fn record_workflow_response(
         tracing::warn!("workflow model-call record skipped: attempt id is not an entity");
         return;
     };
-    let (mut rung, route) = ladder.model_call_binding();
+    let (mut rung, route) = ladder.model_call_binding(Some(&served));
     // The record stamps the rung that answered, not the one requested.
     rung.model = served;
     // The parent try's own fence, read from its row and never guessed: a

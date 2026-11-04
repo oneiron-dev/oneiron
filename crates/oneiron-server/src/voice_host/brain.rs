@@ -694,25 +694,29 @@ impl Turn {
                     finish_reason: FinishReason::Stop,
                     message,
                     usage,
+                    reply_assertions,
                     ..
                 })) => {
                     let response = LlmResponse {
                         message: message.clone(),
                         usage: usage.clone(),
                         finish_reason: FinishReason::Stop,
-                        reply_assertions: Default::default(),
+                        reply_assertions: reply_assertions.clone(),
                         token_scores: None,
                     };
                     let no_record = self.capture.no_record_at_arrival
                         || self.capture.room.is_some_and(|room| {
                             self.capture.vault.room_has_unrecorded_stretch(room)
                         });
+                    // Streams cannot name the served model without a protocol
+                    // change, so the route pin is withheld here (FIX 12743).
                     crate::api::record_raw_response(
                         self.capture.vault.as_ref(),
                         &self.capture.ladder,
                         &self.capture.run,
                         &self.capture.request,
                         &response,
+                        None,
                         no_record,
                     );
                     break BrainEvent::Done;
