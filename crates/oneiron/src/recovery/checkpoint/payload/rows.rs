@@ -399,8 +399,8 @@ families! {
         EDIT_DISTANCE_PROPOSAL_ARTIFACT EDIT_DISTANCE_PROPOSAL_DOCUMENT
         EDIT_DISTANCE_RESERVOIR_EXPORT EDIT_SETTLE_ORGAN_WAIT
         EDIT_SETTLE_PENDING_PROPOSAL EDIT_SETTLE_STRANDED_PROPOSAL EDIT_SETTLE_UNDO
-        EDIT_SETTLE_UNIT_WITHDRAWAL EMBEDDING_BINDING_MOVE EMBEDDING_LOCALITY EMBEDDING_MEDIA_DEVICE
-        EMBEDDING_MEDIA_REFUSED EMBEDDING_MEDIA_VECTOR EMBEDDING_MOVE EMBEDDING_PROBE
+        EDIT_SETTLE_UNIT_WITHDRAWAL EMBEDDING_BINDING_MOVE EMBEDDING_LOCALITY
+        EMBEDDING_MEDIA_REFUSED EMBEDDING_MOVE EMBEDDING_PROBE
         EMBEDDING_SLOT EMBEDDING_SPACE
         ESIGN_ARTIFACT_ACTOR ESIGN_AUDIT ESIGN_CAPABILITY_TOKEN ESIGN_DISPATCH_MARKER
         ESIGN_HELD_SIGNING ESIGN_IMAGE_BYTES_BUDGET ESIGN_NOTICE_SEND_ACT ESIGN_PRINCIPAL_OWNER_STAMP
@@ -408,6 +408,7 @@ families! {
         ESIGN_PUBLIC_CHECK ESIGN_PUBLIC_RATE ESIGN_PUBLIC_RATE_V2 ESIGN_RECIPIENT_CAPABILITY_INDEX
         ESIGN_SEAL_RESULT ESIGN_SEALED_DOCUMENT ESIGN_SIGNATURE_IMAGE_BINDING EXPORT_RECEIPT
         EXPRESSION_ARCHIVE_BINDING;
+    Class::Owner(Getter::EmbedMedia) => EMBEDDING_MEDIA_DEVICE EMBEDDING_MEDIA_VECTOR;
     // side_table/decls/vault_meta_f_l.rs
     Class::Owner(Getter::PhoneticSource) => BATCH_PHONETIC_INDEX_SOURCE;
     Class::Owner(Getter::TextSource) => INDEX_SOURCE_TEXT;
@@ -743,7 +744,13 @@ pub(super) fn class_for_row(database: &str, key: &[u8], value: &[u8], declared: 
     let response = mixed
         && ResponseDb::of_name(database)
             .and_then(|db| ResponseFamily::of_row(db, key, value))
-            .is_some_and(|family| family.placed_as_response(key, value));
+            .is_some_and(|family| {
+                family.placed_as_response(
+                    crate::engine_store_hooks::ENGINE_STORE_HOOKS.attempt_operations,
+                    key,
+                    value,
+                )
+            });
     if response {
         Class::Other(Client::Dispatch(OtherClient::Response))
     } else {

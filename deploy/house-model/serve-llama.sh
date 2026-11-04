@@ -45,6 +45,7 @@ args=(
   --flash-attn on
   --jinja --reasoning-format deepseek
   --host 127.0.0.1 --port "$ONEIRON_HOUSE_LLAMA_PORT"
+  --metrics
 )
 
 identity=()

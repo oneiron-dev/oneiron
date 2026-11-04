@@ -30,7 +30,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayRecord, ResultOccurrence};
-use super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, REPLAY_RECORDS};
+use super::records::REPLAY_RECORDS;
 use super::replay_bodies::erase_replies;
 use super::replay_capsule::{actor_gone_in_txn, capsule_bodies_in_txn, names_no_actor};
 use super::response_owners::{
@@ -279,8 +279,7 @@ pub(super) fn release_occurrence_in_txn(
     let held = owned_body_in_txn(store, wtxn, &owner, &occurrence.id())?
         .and_then(|body| body.state.held().map(|held| held.blake3));
     let marks = occurrence.mark_key(&handle);
-    RAW_OUTPUT_TAINTS.delete(store, wtxn, &marks)?;
-    RAW_OUTPUT_SECRETS.delete(store, wtxn, &marks)?;
+    crate::code_run::drop_code_run_result_marks_in_txn(store, wtxn, &marks)?;
     release_body_in_txn(store, wtxn, &owner, &occurrence.id())?;
     Ok(held)
 }

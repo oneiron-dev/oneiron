@@ -74,11 +74,11 @@ pub use self::machine::{existing_machine_secret, machine_encryption_key, machine
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::owner_signing::OwnerRootSigner;
 pub use self::owner_work::{
-    BundleHomeWarning, CapsuleRead, EnsureDiagnostics, EnsureView, ExecutorObservation, LatestRead,
-    OwnerWorkCancelNote, OwnerWorkCancelState, OwnerWorkDiagnostics, OwnerWorkDrain,
-    OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned, PublicationDiagnostics,
-    PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics, ReassertKey,
-    ReassertKeyState, ReassertUnread, RelayObservation,
+    BundleHomeWarning, CapsuleRead, DeviceSyncStart, EnsureDiagnostics, EnsureView,
+    ExecutorObservation, LatestRead, OwnerWorkCancelNote, OwnerWorkCancelState,
+    OwnerWorkDiagnostics, OwnerWorkDrain, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned,
+    PublicationDiagnostics, PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics,
+    ReassertKey, ReassertKeyState, ReassertUnread, RelayObservation,
 };
 pub(crate) use self::pad_custody::world_pad_recipients_in_txn;
 #[allow(unused_imports, reason = "02A2 wires the projection (L02, L03)")]
@@ -129,7 +129,9 @@ pub use self::page_seal::{
     reopen_delivered_page_seal, unlock_page_seal, vault_is_sealed,
 };
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
-pub use self::root::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin};
+pub use self::root::{
+    RecoveryAuthoritySigner, RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin,
+};
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
 pub use self::root_issue::PreparedRoot;
 pub use self::root_work::{RootMaterial, RootSecret, RootWorkDone};

@@ -1,5 +1,7 @@
 //! Context-pack output formats and field profiles.
 
+pub use crate::store::context_field_profile::FieldProfile;
+
 /// Output serialization format for context packing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
@@ -13,14 +15,4 @@ pub enum PackFormat {
     Toon,
     Markdown,
     Plaintext,
-}
-
-/// Field selection profile for context packing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[non_exhaustive]
-pub enum FieldProfile {
-    Minimal,
-    #[default]
-    Standard,
-    Full,
 }
