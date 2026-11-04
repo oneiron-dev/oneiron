@@ -3,8 +3,8 @@
 //!
 //! The text layer is read first. A PDF whose text layer is blank (a scan)
 //! has its page images read by the ingest station's OCR instead
-//! (`image_text_recognizer`): a JPEG as it is stored, and 8-bit
-//! grey or RGB samples. With no OCR to run it reads as blank. A PDF of any
+//! (`image_text_recognizer`): a JPEG as it is stored, packed 1-bit grey,
+//! and 8-bit grey or RGB samples. With no OCR to run it reads as blank. A PDF of any
 //! size and any page count is read (rule 5): the only bound is the codec's.
 //! Every stream the load or a page decodes is bounded, so a small compressed
 //! stream cannot inflate without limit; a page past that bound is left out,
@@ -105,8 +105,8 @@ fn read_page_images(
 }
 
 /// One page image as bytes an image decoder reads: a JPEG as it is stored,
-/// or 8-bit grey or RGB samples as a PNG. `None` for any other encoding (a
-/// fax, JBIG2 or JPEG 2000 image, a palette or a mask).
+/// or packed 1-bit grey and 8-bit grey or RGB samples as a PNG. `None` for
+/// any other encoding (a fax, JBIG2 or JPEG 2000 image, a palette or a mask).
 fn page_image_bytes(
     document: &lopdf::Document,
     picture: &lopdf::xobject::PdfImage<'_>,
@@ -115,18 +115,48 @@ fn page_image_bytes(
     if filters.iter().any(|filter| filter == "DCTDecode") {
         return (filters.len() == 1).then(|| picture.content.to_vec());
     }
-    if picture.bits_per_component != Some(8) {
+    let packed_gray = picture.bits_per_component == Some(1)
+        && picture.color_space.as_deref() == Some("DeviceGray");
+    if picture.bits_per_component != Some(8) && !packed_gray {
         return None;
     }
-    let samples = document
-        .get_object(picture.id)
-        .ok()?
-        .as_stream()
-        .ok()?
+    let stream = document.get_object(picture.id).ok()?.as_stream().ok()?;
+    let samples = stream
         .get_plain_content_with_limit(MAX_DECODED_STREAM)
         .ok()?;
     let width = u32::try_from(picture.width).ok()?;
     let height = u32::try_from(picture.height).ok()?;
+    let samples = if packed_gray {
+        let width = usize::try_from(width).ok()?;
+        let height = usize::try_from(height).ok()?;
+        if width == 0 || height == 0 {
+            return None;
+        }
+        let row_bytes = width.div_ceil(8);
+        let packed = samples.get(..row_bytes.checked_mul(height)?)?;
+        let levels = match stream.dict.get(b"Decode") {
+            Ok(decode) => {
+                let (_, decode) = document.dereference(decode).ok()?;
+                let [zero, one] = decode.as_array().ok()?.as_slice() else {
+                    return None;
+                };
+                [zero.as_float().ok()?, one.as_float().ok()?]
+                    .map(|level| (level.clamp(0.0, 1.0) * 255.0).round() as u8)
+            }
+            Err(_) => [0, 255],
+        };
+        let mut expanded = Vec::with_capacity(width.checked_mul(height)?);
+        // PDF rows start on a byte boundary; samples are most-significant bit first.
+        for row in packed.chunks_exact(row_bytes) {
+            for x in 0..width {
+                let bit = (row[x / 8] >> (7 - x % 8)) & 1;
+                expanded.push(levels[usize::from(bit)]);
+            }
+        }
+        expanded
+    } else {
+        samples
+    };
     let decoded = match picture.color_space.as_deref() {
         Some("DeviceRGB") => {
             ::image::DynamicImage::ImageRgb8(::image::RgbImage::from_raw(width, height, samples)?)
