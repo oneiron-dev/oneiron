@@ -521,6 +521,8 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     crate::sync::repo_manifests::scrub_repo_manifests(vault, doc, Some(key))?;
     // FIX 3877: and an origin claim carrier that names an erased actor.
     crate::sync::origin_claims::scrub_origin_claims(vault, doc, Some(key))?;
+    // FIX 12769: and a section-fit receipt carrier that names an erased actor.
+    crate::sync::origin_claims::scrub_section_fit_receipts(vault, doc, Some(key))?;
     // FIX 6279: and a birth carrier whose maker this vault erased.
     crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(key))?;
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;

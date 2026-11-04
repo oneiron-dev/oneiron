@@ -29,6 +29,7 @@ impl MessageBirth {
                 author: self.author,
                 message_type: self.message_type.clone(),
                 content,
+                parts: None,
                 metadata,
                 is_visible: self.is_visible,
                 order: self.order,

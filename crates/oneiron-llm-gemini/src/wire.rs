@@ -31,9 +31,9 @@ pub(super) fn build_request(
         })
         .collect();
     let mut contents = Vec::new();
-    let mut system = Vec::new();
+    let mut system: Vec<Value> = Vec::new();
     for message in &request.messages {
-        let parts = message
+        let parts: Vec<Value> = message
             .content
             .iter()
             .map(|part| encode_part(part, &calls))

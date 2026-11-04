@@ -42,7 +42,7 @@ pub(super) const ELICITATION_ASK_QUEUE: &str = "outbound.connector_elicitation_a
 const ELICITATION_ASK_QUEUE_VERSION: &str = "v1";
 
 /// The version of the ask's question; bump it with its wording or contract.
-const ELICITATION_ASK_VERSION: u32 = 3;
+pub(super) const ELICITATION_ASK_VERSION: u32 = 3;
 
 /// The derivation domain of the ask's correlation.
 const ELICITATION_ASK_DOMAIN: &[u8] = b"oneiron:connector-elicitation-ask:v1";
@@ -281,6 +281,8 @@ impl Vault {
     /// connector question of the call `call_ref`, with the linked parts that
     /// quote it when its whole text passes one ask's bound (FIX 3842); the
     /// same answer to the same round is the same ask, and the same parts.
+    /// An answered ask is reused while its matching authenticated approval
+    /// remains unspent, including after the server restores the round.
     /// The call's row keeps what the ask is about first, so the owner's
     /// press finds it (FIX 8808). Never call it inside a write transaction:
     /// the ask queue opens its own.
@@ -298,17 +300,27 @@ impl Vault {
         let principal = EntityId::from_hex(&binding.principal_ref)?;
         let correlation =
             elicitation_ask_correlation(answer.handle, answer.generation, &answer.digest)?;
+        let answered = match self.answered_elicitation_consent(call_ref, binding, answer) {
+            Ok(answered) => answered,
+            Err(error) => {
+                tracing::warn!(%error, "connector elicitation answered consent not read");
+                None
+            }
+        };
         self.keep_elicitation_owner_consent(call_ref, binding, answer, correlation)?;
         let whole = elicitation_ask_text(binding, answer);
         if whole.len() <= DECISION_TEXT_BYTES {
             // One question per exact answer to one round.
-            let seq = self.queue_elicitation_ask(
-                principal,
-                correlation,
-                correlation,
-                whole,
-                consent_contract(),
-            )?;
+            let seq = match answered {
+                Some(seq) => seq,
+                None => self.queue_elicitation_ask(
+                    principal,
+                    correlation,
+                    correlation,
+                    whole,
+                    consent_contract(),
+                )?,
+            };
             return Ok(ConnectorElicitationOwnerAsk {
                 seq,
                 parts: Vec::new(),
@@ -351,13 +363,17 @@ impl Vault {
             }
         }
         let text = split_ask_text(binding, &label, parts.len());
-        match self.queue_elicitation_ask(
-            principal,
-            correlation,
-            correlation,
-            text,
-            consent_contract(),
-        ) {
+        let decisive = match answered {
+            Some(seq) => Ok(seq),
+            None => self.queue_elicitation_ask(
+                principal,
+                correlation,
+                correlation,
+                text,
+                consent_contract(),
+            ),
+        };
+        match decisive {
             Ok(seq) => Ok(ConnectorElicitationOwnerAsk { seq, parts }),
             Err(error) => {
                 self.withdraw_elicitation_ask_parts(&parts);

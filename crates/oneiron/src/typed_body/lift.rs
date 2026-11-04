@@ -403,7 +403,11 @@ impl Vault {
     /// a write would act on: one the door's rules place, or one they cannot
     /// while the owner's proposal for it is due (FIX 8996). A text whose key
     /// no rule places, once its proposal stands, opens no writer: a masked
-    /// reader reads it as the door's placeholder.
+    /// reader reads it as the door's placeholder. Each text is judged alone,
+    /// so a key split over two texts, which no text alone shows, opens no
+    /// writer and files no proposal: an earlier frontier's text is history,
+    /// and a masked reader reads each text the key touches as the
+    /// placeholder (FIX 12232).
     pub(crate) fn typed_body_unmarked_in_txn(
         &self,
         txn: &RoTxn<'_>,

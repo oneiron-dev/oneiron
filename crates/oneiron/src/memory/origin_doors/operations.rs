@@ -110,7 +110,7 @@ impl Memory<'_> {
         let author = revision
             .commit_metadata
             .as_ref()
-            .map(|metadata| metadata.author);
+            .and_then(|metadata| metadata.author);
         self.origin_listed(revision.provenance_claim_id.into_iter().chain(author))?;
         let authority = self.origin_export_authority(&input.repo)?;
         let receipt =

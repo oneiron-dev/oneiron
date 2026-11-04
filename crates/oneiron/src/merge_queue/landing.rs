@@ -342,7 +342,7 @@ impl MergeQueue<'_> {
     }
 }
 
-fn is_content_write(entry: &RepoMutationOplogEntry) -> bool {
+pub(super) fn is_content_write(entry: &RepoMutationOplogEntry) -> bool {
     !matches!(
         entry.operation_kind.as_str(),
         "create_worktree" | "remove_worktree" | "recover_snapshot"
