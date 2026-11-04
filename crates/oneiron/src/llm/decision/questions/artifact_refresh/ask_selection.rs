@@ -77,6 +77,7 @@ pub(super) fn ask_selection(
                     abstained: Vec::new(),
                     refused: Vec::new(),
                     read_rows: Vec::new(),
+                    next_sheet_row: None,
                 });
             }
             vault.ask_folder_items_into_sheet(

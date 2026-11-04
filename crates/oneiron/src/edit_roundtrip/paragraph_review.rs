@@ -211,6 +211,7 @@ impl Vault {
                 abstained,
                 refused,
                 read_rows,
+                next_sheet_row: None,
             });
         }
         let transaction = json!({ "ops": ops, "revision": { "author": author } }).to_string();
@@ -240,6 +241,7 @@ impl Vault {
             abstained,
             refused,
             read_rows,
+            next_sheet_row: None,
         })
     }
 }

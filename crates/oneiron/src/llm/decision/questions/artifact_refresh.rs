@@ -699,6 +699,9 @@ pub struct ArtifactAskRecord {
     /// the proposal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub units: Vec<ArtifactUnitReceipt>,
+    /// First selected sheet row left unfinished; this ask did not cover
+    /// the whole selection. No receipt is invented for the suffix.
+    pub next_sheet_row: Option<u32>,
 }
 
 /// Where one artifact ask's answers stand, by the same walk the next ask's baseline takes:
