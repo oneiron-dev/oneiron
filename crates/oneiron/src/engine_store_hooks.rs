@@ -298,6 +298,10 @@ impl StoreProjectWrites for EngineProjectWrites {
         crate::workspace_roster::root_project_in(store, txn)
     }
 
+    fn seed_root_project(&self, vault: &crate::Vault) -> Result<()> {
+        crate::workspace_roster::seed_root_project(vault)
+    }
+
     fn project_mint_gate_refs_in_txn(
         &self,
         vault: &crate::Vault,
@@ -415,6 +419,15 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::workspace_roster::record_thread_admits_in(vault, txn, id, actor)
     }
 
+    fn erase_room_side_rows(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_room_side_rows(store, txn, id)
+    }
+
     fn erase_audience_actor_in_txn(
         &self,
         vault: &crate::Vault,
@@ -506,6 +519,24 @@ impl StoreSyncHooks for EngineSyncHooks {
 
     fn merge_window_heads(&self, doc: &LoroDoc) -> Result<()> {
         crate::sync::window::merge_window_heads(doc)
+    }
+
+    fn erase_carried_born_with_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::sync::selector::erase_carried_born_with_in_txn(store, wtxn, id)
+    }
+
+    fn erase_retained_copies_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::sync::federation_burst::erase_retained_copies_in_txn(store, txn, id)
     }
 
     fn compact_document(&self, vault: &crate::Vault, id: EntityId, erased: bool) -> Result<()> {

@@ -107,6 +107,11 @@ pub trait StoreRecordHooks: Send + Sync {
         actor: EntityId,
     ) -> Result<bool>;
 
+    /// The engine's `workspace_roster::erase_room_side_rows`, an entity
+    /// side-row eraser of `deletion::derived_rows`.
+    fn erase_room_side_rows(&self, store: &Store, txn: &mut RwTxn<'_>, id: &EntityId)
+    -> Result<()>;
+
     /// The engine's `workspace_roster::erase_audience_actor_in_txn`.
     fn erase_audience_actor_in_txn(
         &self,
