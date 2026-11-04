@@ -152,8 +152,10 @@ class Worker:
         minimum_limits = {key: 1 for key in FIELDS}
         minimum_limits["max_ref_bytes"] = 12
         minimum_limits["max_header_bytes"] = self.limits["max_header_bytes"]
-        minimum_target = {key: "x" for key in (
-            "voice_id", "owner", "register", "reference_revision")}
+        # Rust sends a 32-hex EntityId and at least the fence's 32-byte
+        # digest in hex; an optional incarnation only lengthens that revision.
+        minimum_target = {"voice_id": "x", "register": "x",
+                          "owner": "0" * 32, "reference_revision": "0" * 64}
         minimum_target.update(warm=self.target(), limits=minimum_limits)
         managed = len(json.dumps(self.answer_meta(minimum_target),
                                  separators=(",", ":")).encode())
