@@ -35,7 +35,7 @@ use super::{RepoBodyProjection, project_repo_bytes_in_txn};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
+use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup, RepoSecretSource};
 use crate::store::code_snapshot::snapshot_asset_entity_id;
 
 mod derived;
@@ -276,12 +276,33 @@ impl RepoIndexMarks {
         self.sources.get(entity).copied()
     }
 
-    fn carried_source(&self, source: [u8; 32], bytes: &[u8]) -> [u8; 32] {
+    fn carried_source(
+        &self,
+        entity: &EntityId,
+        source: [u8; 32],
+        bytes: &[u8],
+    ) -> Result<[u8; 32]> {
+        self.readable(&source)?;
+        let prior = self.facts.for_hash(&source);
+        if prior.opaque() {
+            return Ok(source);
+        }
         let own = *blake3::hash(bytes).as_bytes();
-        if own != source && self.is_marked(&own) {
-            own
+        if own != source
+            && self.facts.for_hash(&own).marks().iter().any(|mark| {
+                matches!(mark.source, RepoSecretSource::SyncLanding { source } if source == *entity)
+                    && prior.marks().iter().any(|old| {
+                        old.operation_id == mark.operation_id
+                            && old.store_id == mark.store_id
+                            && old.store_identity == mark.store_identity
+                            && old.path == mark.path
+                            && old.content_kind == mark.content_kind
+                    })
+            })
+        {
+            Ok(own)
         } else {
-            source
+            Ok(source)
         }
     }
 
@@ -465,7 +486,7 @@ impl RepoIndexMarks {
         }
         Ok(match self.source_of(entity) {
             Some(source) => {
-                let source = self.carried_source(source, &body);
+                let source = self.carried_source(entity, source, &body)?;
                 self.source_input_in_txn(vault, txn, &source, body)?
             }
             None => {
@@ -519,9 +540,10 @@ impl RepoIndexMarks {
                 .map(|(name, value)| Ok((name, self.text_in_txn(vault, txn, value)?)))
                 .collect();
         };
-        let source = fields.first().map_or(source, |(_, value)| {
-            self.carried_source(source, value.as_bytes())
-        });
+        let source = match fields.first() {
+            Some((_, value)) => self.carried_source(entity, source, value.as_bytes())?,
+            None => source,
+        };
         let opaque = self.facts.for_hash(&source).opaque();
         let mut out = Vec::with_capacity(fields.len());
         for (index, (name, value)) in fields.into_iter().enumerate() {
