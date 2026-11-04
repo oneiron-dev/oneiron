@@ -9,9 +9,10 @@ pub mod xobject;
 pub mod xref;
 
 #[macro_use]
-mod object;
+mod admitted;
 mod document;
 mod incremental_document;
+mod object;
 
 mod bookmarks;
 mod cmap_section;
