@@ -19,6 +19,29 @@ pub(super) fn handle_document(
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
+    match handle_document_inner(server, conn_id, entity, kind, payload, direct, state) {
+        Err(ProtocolError::WaitedOut) => {
+            let waited = transport::DocumentWaitedOut::try_from(kind)
+                .map_err(|_| ProtocolError::WaitedOut)?;
+            let frame = transport::encode_document_waited_out(entity, waited)
+                .into_result()
+                .map_err(|_| ProtocolError::InvalidPayload("invalid document wait reply"))?;
+            let _ = direct.send(frame);
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+fn handle_document_inner(
+    server: &SyncServer,
+    conn_id: u32,
+    entity: EntityId,
+    kind: u8,
+    payload: &[u8],
+    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    state: &mut ConnState,
+) -> Result<(), ProtocolError> {
     if state.protocol_version != transport::PROTOCOL_VERSION
         && !transport::is_owner_window_version(state.protocol_version)
         && !transport::is_residence_version(state.protocol_version)
@@ -425,6 +448,12 @@ pub(super) fn document_delivery_retrying(
         let Ok(doc) = doc else {
             return true;
         };
+        if doc.kind == document_sub_tags::WAITED_OUT
+            && transport::decode_document_waited_out(doc.payload).is_ok()
+        {
+            out.extend(notice(doc));
+            return false;
+        }
         if doc.kind != document_sub_tags::ARTIFACT_RECEIPT {
             return true;
         }
