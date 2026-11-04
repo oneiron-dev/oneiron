@@ -34158,7 +34158,7 @@
      "path": "src/engine_store_hooks.rs",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -69359,6 +69359,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "StoreActorScrubs"
+     ],
+     "path": "src/store/actor_scrubs.rs",
+     "purpose": "The actor scrubs of side tables whose eraser lives in the engine: the trait the engine implements, and the…",
+     "surface": {
+      "crate-vis": 9,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/agent_birth_custody.rs",
      "purpose": "Physical custody of a birthed agent's captured source, read side: which asset holds a child's source, which…",
@@ -71897,9 +71910,9 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 80,
+      "crate-vis": 81,
       "mod": 79,
-      "re-export": 31
+      "re-export": 33
      }
     },
     {
@@ -73291,6 +73304,18 @@
      "purpose": "Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StoreSyncHooks"
+     ],
+     "path": "src/store/sync_hooks.rs",
+     "purpose": "The sync hooks the store layer's write, erase and maintenance paths run in a build with sync, supplied by…",
+     "surface": {
+      "trait": 1
      }
     },
     {
@@ -89854,7 +89879,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 353,
+     "files": 355,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90094,7 +90119,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6243,
+   "source_files": 6245,
    "test_files": 898
   },
   "oneiron-android": {
