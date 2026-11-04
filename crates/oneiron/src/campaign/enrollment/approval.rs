@@ -37,6 +37,8 @@ const RETAINED_VERSION: u8 = 1;
 const RETAINED_LEN: usize = 1 + 16 * 3 + 8 + 16 * 2 + 32 + 16 + 16;
 /// The domain of the retained request's digest.
 const REQUEST_DOMAIN: &[u8] = b"oneiron.campaign.enrollment.retained_request.v1";
+/// The additional domain separation for an email body's frozen subject.
+const EMAIL_PAYLOAD_DOMAIN: &[u8] = b"oneiron.campaign.enrollment.email_payload.v1";
 
 /// (consequence id, call sequence, request digest) → the retained request.
 const RETAINED: SideTable<([u8; 16], u64, [u8; 32]), [u8; RETAINED_LEN], Raw> =
@@ -55,10 +57,27 @@ pub(super) struct LegAsk {
     pub(super) first_event_ref: Option<EntityId>,
 }
 
+/// The frozen body digest, with the optional email subject framed explicitly.
+/// Non-email payloads keep their existing digest byte-for-byte.
+fn outbound_payload_digest(outbound: &CampaignProgramOutbound) -> [u8; 32] {
+    let body = crate::outbound_intent_ledger::hash_frozen_payload(&outbound.payload);
+    let Some(subject) = outbound.subject.as_deref() else {
+        return body;
+    };
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(EMAIL_PAYLOAD_DOMAIN);
+    hasher.update(&body);
+    hasher.update(&(subject.len() as u64).to_be_bytes());
+    hasher.update(subject.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
 /// The ask on the request `event`, `step` and `outbound` prepare for
 /// `consequence_id`'s call, read against the request retained for it. With
 /// `retain`, a request none retained yet is retained now, before the
 /// chokepoint asks for it; without, it reads and records nothing.
+/// A request the erase retired is not retained again: the fence in `keep`
+/// skips it, and the call goes on from its live rows.
 pub(super) fn leg_ask(
     vault: &Vault,
     event: &CampaignEnrollmentEvent,
@@ -76,7 +95,7 @@ pub(super) fn leg_ask(
         step_ref: step.step_ref,
         consequence_id: *consequence_id.as_bytes(),
         call_seq: outbound.call_seq,
-        payload_digest: crate::outbound_intent_ledger::hash_frozen_payload(&outbound.payload),
+        payload_digest: outbound_payload_digest(outbound),
     };
     let key = (
         live.consequence_id,
@@ -184,8 +203,9 @@ fn decode(
 }
 
 /// Retains `facts` (with its sender and the event row it is asked under)
-/// under `key`, in a writer of its own. `false` when it did not write: that
-/// is logged and the call goes on.
+/// under `key`, in a writer of its own. `false` when it did not write (the
+/// erase fence skipped it, or the write failed): that is logged and the call
+/// goes on.
 fn keep(
     vault: &Vault,
     key: &([u8; 16], u64, [u8; 32]),
@@ -212,8 +232,36 @@ fn keep(
         value[at..at + part.len()].copy_from_slice(part);
         at += part.len();
     }
-    match vault.try_with_write_txn(|wtxn| RETAINED.put(&vault.store, wtxn, key, &value)) {
-        Ok(()) => true,
+    let kept = vault.try_with_write_txn(|wtxn| -> crate::error::Result<bool> {
+        // FIX 6835 P1: this writer opens after the leg prepared its rows, so
+        // an erase of the call or of any id the retained request names may
+        // have committed in between and already dropped it. Fence the put:
+        // an erased ledger call leaves its erased row behind the attempt
+        // index, and an erased id leaves a hard-delete marker. Skip the
+        // retention when either shows; the call goes on from its live rows.
+        let attempt_id = AttemptId::from_bytes(&key.0)?;
+        if crate::outbound_intent_ledger::call_row_erased_in_txn(vault, wtxn, attempt_id, key.1)? {
+            return Ok(false);
+        }
+        for id in [
+            &facts.query_ref,
+            &facts.campaign_ref,
+            &facts.entity_ref,
+            &facts.program_ref,
+            &facts.step_ref,
+            &sender_ref,
+            &event_ref,
+        ] {
+            if vault.local_hard_delete_marker_exists_in_txn(wtxn, id)? {
+                return Ok(false);
+            }
+        }
+        RETAINED.put(&vault.store, wtxn, key, &value)?;
+        Ok(true)
+    });
+    match kept {
+        Ok(true) => true,
+        Ok(false) => false,
         Err(error) => {
             tracing::warn!(
                 reason = "campaign_enrollment_request_not_retained",
@@ -226,4 +274,98 @@ fn keep(
             false
         }
     }
+}
+
+/// The typed key one raw retained row names, for the erases that scan the
+/// table raw so a row that does not decode is passed over, never an error.
+fn retained_key(bytes: &[u8]) -> Option<([u8; 16], u64, [u8; 32])> {
+    if bytes.len() != 16 + 8 + 32 {
+        return None;
+    }
+    Some((
+        bytes.get(..16)?.try_into().ok()?,
+        u64::from_be_bytes(bytes.get(16..24)?.try_into().ok()?),
+        bytes.get(24..)?.try_into().ok()?,
+    ))
+}
+
+/// FIX 6835: drops every retained request `drop` names, in `wtxn`, after the
+/// scan: a retained press authorizes nothing once the Gate's own rows for
+/// what it names are erased, and a missing one only re-asks. A row that does
+/// not decode is passed over: nothing reads it back as a live request, and
+/// the damage report owns it, as in the ledger scrub.
+fn drop_retained_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    drop: impl Fn(&([u8; 16], u64, [u8; 32]), &CampaignLegFacts, &EntityId, &EntityId) -> bool,
+) -> crate::error::Result<()> {
+    let mut dropped = Vec::new();
+    for row in RETAINED.iter_raw_from(&vault.store, wtxn, &[])? {
+        let (key, value) = row?;
+        let Some(key) = retained_key(&key) else {
+            continue;
+        };
+        let Ok(value) = <[u8; RETAINED_LEN]>::try_from(value.as_slice()) else {
+            continue;
+        };
+        let Some((facts, event_ref)) = decode(&key, &value) else {
+            continue;
+        };
+        let Some(sender_ref) = value
+            .get(121..137)
+            .and_then(|bytes| bytes.try_into().ok())
+            .and_then(|bytes| EntityId::from_bytes(bytes).ok())
+        else {
+            continue;
+        };
+        if drop(&key, &facts, &sender_ref, &event_ref) {
+            dropped.push(key);
+        }
+    }
+    for key in dropped {
+        RETAINED.delete(&vault.store, wtxn, &key)?;
+    }
+    Ok(())
+}
+
+/// FIX 6835: this table's actor scrub (FIX 3520): an erase of `actor` drops
+/// every retained request naming it — as sender, recipient, query,
+/// campaign, program, step, event row, or the consequence in its key — in
+/// the erase's writer.
+///
+/// # Errors
+/// A storage failure.
+pub(crate) fn erase_enrollment_ask_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::error::Result<()> {
+    drop_retained_in_txn(vault, wtxn, |key, facts, sender_ref, event_ref| {
+        key.0 == *actor.as_bytes()
+            || *sender_ref == *actor
+            || facts.query_ref == *actor
+            || facts.campaign_ref == *actor
+            || facts.entity_ref == *actor
+            || facts.program_ref == *actor
+            || facts.step_ref == *actor
+            || *event_ref == *actor
+    })
+}
+
+/// FIX 6835: drops every retained request of one consequence's call, in the
+/// per-call erase's writer: that erase owns the whole call, so the drop is
+/// by key prefix and does not decode.
+///
+/// # Errors
+/// A storage failure.
+pub(crate) fn drop_enrollment_asks_of_call_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt_id: AttemptId,
+    call_seq: u64,
+) -> crate::error::Result<()> {
+    let mut prefix = attempt_id.as_bytes().to_vec();
+    prefix.extend_from_slice(&call_seq.to_be_bytes());
+    RETAINED.delete_from(&vault.store, wtxn, &prefix)?;
+    Ok(())
 }

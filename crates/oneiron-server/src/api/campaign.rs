@@ -26,8 +26,8 @@ use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorDetails};
 use crate::server::SyncServer;
 use oneiron::campaign::surface::{
-    SELF_CAMPAIGN_ARCHIVE, SELF_CAMPAIGN_CREATE, SELF_CAMPAIGN_MEMBERS, SELF_CAMPAIGN_READ,
-    SELF_CAMPAIGN_UPDATE, SurfaceCall, VAULT_CAMPAIGN_PROGRAM_ARCHIVE,
+    SELF_CAMPAIGN_ARCHIVE, SELF_CAMPAIGN_CREATE, SELF_CAMPAIGN_LAUNCH, SELF_CAMPAIGN_MEMBERS,
+    SELF_CAMPAIGN_READ, SELF_CAMPAIGN_UPDATE, SurfaceCall, VAULT_CAMPAIGN_PROGRAM_ARCHIVE,
     VAULT_CAMPAIGN_PROGRAM_CREATE, VAULT_CAMPAIGN_PROGRAM_READ, VAULT_CAMPAIGN_PROGRAM_UPDATE,
     invoke_campaign_surface,
 };
@@ -41,6 +41,7 @@ pub(crate) fn campaign_routes() -> Router<Arc<SyncServer>> {
             get(read_campaign).patch(update_campaign),
         )
         .route("/campaigns/{campaign_ref}/archive", post(archive_campaign))
+        .route("/campaigns/{campaign_ref}/launch", post(launch_campaign))
         .route("/campaigns/{campaign_ref}/members", get(campaign_members))
         .route(
             "/campaigns/{campaign_ref}/programs",
@@ -63,6 +64,17 @@ pub(crate) async fn create_campaign(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
     dispatch(&auth, &server, CoreScope::Write, SELF_CAMPAIGN_CREATE, body)
+}
+
+/// `POST /campaigns/{campaign_ref}/launch` → `self.campaign.launch`.
+pub(crate) async fn launch_campaign(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(campaign_ref): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let body = with_path_ref(body, "campaign_ref", &campaign_ref)?;
+    dispatch(&auth, &server, CoreScope::Write, SELF_CAMPAIGN_LAUNCH, body)
 }
 
 /// `GET /campaigns/{campaign_ref}` → `self.campaign.read`.
@@ -261,13 +273,26 @@ pub(crate) fn dispatch(
     auth.require_unrestricted_record_scope()?;
     auth.require(scope)?;
     let actor = surface_actor(auth)?;
-    let facade = super::credential_memory(
-        &server.vault,
-        Some(auth),
-        actor,
-        oneiron::EdgeActorClass::Human,
-    )
-    .at(auth.locality());
+    let actor_class = if verb == SELF_CAMPAIGN_LAUNCH {
+        match auth.actor_class() {
+            Some("human") => oneiron::EdgeActorClass::Human,
+            Some("agent") => oneiron::EdgeActorClass::Agent,
+            Some("system") => oneiron::EdgeActorClass::System,
+            _ => {
+                return Err(ApiError::new(
+                    "campaign launch requires an authenticated actor class",
+                    ApiErrorDetails::Forbidden {
+                        required_scope: None,
+                    },
+                    ["Present a bearer slip carrying actor_class=<human|agent|system>."],
+                ));
+            }
+        }
+    } else {
+        oneiron::EdgeActorClass::Human
+    };
+    let facade =
+        super::credential_memory(&server.vault, Some(auth), actor, actor_class).at(auth.locality());
     let reply = invoke_campaign_surface(
         &facade,
         SurfaceCall {
@@ -293,10 +318,9 @@ pub(crate) fn dispatch(
 /// than defaulted to some ambient owner: "the trust root" is not a person, and
 /// records owned by a rotating secret would be unreachable after rotation.
 ///
-/// The class is `Human` because `principal_ref` is the third-party PERSON
-/// binding (OF-365 ILD-1). The engine, not this file, decides whether the
-/// asserted class holds — `verify_actor_binding` rejects a principal whose
-/// stored entity type does not admit it, and that check is the authority.
+/// Non-launch verbs use `Human` for the third-party PERSON binding (OF-365
+/// ILD-1); launch takes its class from the authenticated credential. The engine
+/// validates that the principal's stored entity type admits the asserted class.
 pub(crate) fn surface_actor(auth: &CoreAuth) -> Result<oneiron::EntityId, ApiError> {
     let principal_ref = auth.principal_ref().ok_or_else(|| {
         ApiError::new(

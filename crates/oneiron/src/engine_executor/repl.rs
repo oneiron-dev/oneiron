@@ -20,13 +20,13 @@ use super::record::{
 };
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, IMPLICIT_SPEECH_TEXT_BYTES, ImplicitSpeechIntent,
-    ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_REPLY_INLINE_BYTES, checkpoint_label,
-    clean_for_context, console_output_path, fallback_speech_marker, implicit_speak_output_path,
-    load_context_output, load_observation_window, load_utf8_output, message_result_attachment,
-    observation_output_path, observation_ref, publish_output, record_prepared_source,
-    record_reply_evidence, record_script_output, record_text_output, recoverable_chunk_path,
-    resumed_output_path, resumed_output_wait, script_output_path, validate_runtime_outputs,
-    write_json,
+    ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_REPLY_INLINE_BYTES,
+    bind_published_output, checkpoint_label, clean_for_context, console_output_path,
+    fallback_speech_marker, implicit_speak_output_path, load_context_output,
+    load_observation_window, load_utf8_output, message_result_attachment, observation_output_path,
+    observation_ref, publish_output, record_prepared_source, record_reply_evidence,
+    record_script_output, record_text_output, recoverable_chunk_path, resumed_output_path,
+    resumed_output_wait, script_output_path, validate_runtime_outputs, write_json,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -37,7 +37,7 @@ use super::{compaction, types};
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
-    SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
+    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
 };
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
@@ -304,6 +304,8 @@ impl EngineNativeExecutor<'_> {
                     let durable_wait = host.durable_wait.filter(|_| !cancel.is_cancelled());
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
+                    let bound = host.bound;
+                    let receipts = host.receipts;
                     if !bridge_calls.is_empty()
                         && let Some(status) = self.persist_failed_step_after_bridge_calls(
                             &mut record,
@@ -314,6 +316,8 @@ impl EngineNativeExecutor<'_> {
                             bridge_start,
                             bridge_calls,
                             captured,
+                            bound,
+                            receipts,
                             callable_rows,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
@@ -345,6 +349,8 @@ impl EngineNativeExecutor<'_> {
                 let durable_wait = host.durable_wait;
                 let bridge_calls = host.bridge_calls;
                 let captured = host.captured;
+                let bound = host.bound;
+                let receipts = host.receipts;
                 if let Some(status) = self.persist_failed_step_after_bridge_calls(
                     &mut record,
                     expected_generation,
@@ -354,6 +360,8 @@ impl EngineNativeExecutor<'_> {
                     bridge_start,
                     bridge_calls,
                     captured,
+                    bound,
+                    receipts,
                     callable_rows,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
@@ -383,6 +391,8 @@ impl EngineNativeExecutor<'_> {
                     let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
+                    let bound = host.bound;
+                    let receipts = host.receipts;
                     if !bridge_calls.is_empty()
                         && let Some(status) = self.persist_failed_step_after_bridge_calls(
                             &mut record,
@@ -393,6 +403,8 @@ impl EngineNativeExecutor<'_> {
                             bridge_start,
                             bridge_calls,
                             captured,
+                            bound,
+                            receipts,
                             callable_rows,
                             durable_wait,
                             format!(
@@ -429,7 +441,7 @@ impl EngineNativeExecutor<'_> {
             );
             // The names the step bound join the record in this same
             // checkpointed append; a rebound name keeps its place.
-            let bindings: Vec<_> = host
+            let mut bindings: Vec<_> = host
                 .bound
                 .iter()
                 .map(|binding| (binding.name.clone(), binding.handle.clone()))
@@ -461,9 +473,15 @@ impl EngineNativeExecutor<'_> {
                 )?;
             }
             let mut outputs = Vec::with_capacity(bodies.files.len());
+            let mut file_outputs = Vec::with_capacity(bodies.files.len());
             for ((path, sink), stored_path) in bodies.files.into_iter().zip(runtime_output_paths) {
                 let output = publish_output(&self.storage, &mut record, stored_path, sink)?;
                 outputs.push((path, output.raw_blake3));
+                file_outputs.push(output);
+            }
+            bind_published_output(&mut record, &mut bindings, &observation);
+            for output in &file_outputs {
+                bind_published_output(&mut record, &mut bindings, output);
             }
             let step_result = StepResultDigests {
                 observation: observation.raw_blake3,

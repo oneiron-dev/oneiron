@@ -8,17 +8,18 @@ use super::{
     AgentHealthCounter, Attempts, DialBook, Dispatched, Dispatches, Finding, Traps, WAIT_PERSON,
     brief, dup_cost_unit, duplicate, entity, settled, task_of,
 };
-use crate::agent_dispatch::{AgentDispatcher, SpendScope, SpendState};
+use crate::agent_dispatch::{AgentDispatcher, SpendScope};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::edge::EdgeKind;
 use crate::learning::{
     DuplicateLabeller, DuplicateWorkKind, TeamEvent, project_run_coordination,
     team_events_from_attempts,
 };
-use crate::llm::DreamerTrapKind;
-use crate::llm::run_admission::LeaseUnit;
+use crate::model_step_record::DreamerTrapKind;
 use crate::ports::EdgeDirection;
-use crate::self_heal::AgentHealthSignal;
+use crate::run_budget::LeaseUnit;
+use crate::store::diagnostic_record::AgentHealthSignal;
+use crate::workspace_roster::spend_scope::SpendState;
 use crate::{EntityId, Result, Vault};
 
 /// `long_wait`: an attempt that spent more than the dial's share of its life

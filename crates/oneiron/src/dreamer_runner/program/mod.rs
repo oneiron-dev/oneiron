@@ -17,14 +17,17 @@
 //! same try, each settled call answered from its checkpoint, and a run the
 //! runtime holds resumes once its hold's condition is met (`resume`).
 //!
-//! PR3a reads it (`read`): what a turn's wakes admitted, where a program's
-//! run stands and a settled step's exact result, each for the program's
-//! waking actor or the verified owner, on the caller's own read lane; PR3b
-//! adds the checkpoint its restarter resumes from. A hold no condition
-//! returns is the owner's to stop or, once its checkpoint validates, to
+//! PR3a reads it (`read`): what a turn's wakes admitted and which it still
+//! owes, a held one with its hold (FIX 12172), where a program's run stands
+//! and a settled step's exact result, each for the program's waking actor
+//! or the verified owner, on the caller's own read lane; PR3b adds the
+//! checkpoint its restarter resumes from. A hold no condition returns is
+//! the owner's to stop or, once its checkpoint validates, to
 //! resume (`release`, FIX 5880). A try whose sealed slip no longer stands is
 //! its waking actor's to rebind to a live slip of theirs (`rebind`, FIX
-//! 11429), as a queued turn action is.
+//! 11429), as a queued turn action is, and so is a wake its turn owes that
+//! no admission has judged yet (FIX 11833). A wake whose sealed slip lapsed
+//! stays owed for that rebind until its own expiry (FIX 12058).
 
 mod admit;
 mod arm;
@@ -63,14 +66,14 @@ pub(crate) use self::bodies::{
 };
 pub(crate) use self::hold_index::{index_program_hold_in_txn, unindex_program_hold_in_txn};
 pub use self::read::{
-    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointConsentView,
-    ProgramCheckpointHeadView, ProgramCheckpointRequest, ProgramCheckpointView,
-    ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
-    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
-    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
-    SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
-    TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_checkpoint, program_run,
-    settled_program_step, turn_program_admission,
+    OwedWakeHoldView, ProgramAdmissionOutcomeView, ProgramCheckpointCallView,
+    ProgramCheckpointConsentView, ProgramCheckpointHeadView, ProgramCheckpointRequest,
+    ProgramCheckpointView, ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView,
+    ProgramQueueView, ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest,
+    ProgramRunStateView, ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView,
+    ProgramTryView, SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
+    TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
+    program_checkpoint, program_run, settled_program_step, turn_program_admission,
 };
 pub use self::rebind::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebind_turn_program};
 pub use self::release::{

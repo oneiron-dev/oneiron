@@ -20,7 +20,7 @@ mod budget;
 mod error;
 mod history;
 mod residence;
-pub(crate) use residence::ResidenceIndexCache;
+pub(crate) use residence::{ResidenceIndexCache, ResidenceTouchStage};
 mod routing;
 mod rpc;
 pub(crate) use rpc::SocketCallContext;
@@ -385,8 +385,17 @@ pub(crate) fn residence_rpc(
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
     append_stage: &mut Option<oneiron::sync::residence::AuthorityAppendStage>,
+    touch_stage: &mut Option<ResidenceTouchStage>,
 ) -> Result<RpcReply, ProtocolError> {
-    residence::run(server, auth, peer, request, index_cache, append_stage)
+    residence::run(
+        server,
+        auth,
+        peer,
+        request,
+        index_cache,
+        append_stage,
+        touch_stage,
+    )
 }
 
 /// FIX 6458: whether `method` is one of the home handoff's own calls, the
@@ -455,21 +464,24 @@ pub(crate) async fn rpc_reply(
     request: RpcRequest,
     context: SocketCallContext,
 ) -> Result<RpcReply, ProtocolError> {
-    let mut call = RpcCall::captured(server, &request);
-    let room_note = context.room_note_call(server, auth, &request.method, &request.params);
-    let (result, attempt) = call_receipt::attempt_witnessed(rpc::claimed(
-        server,
-        auth,
-        &context,
-        &request.method,
-        request.params,
-    ))
-    .await;
-    call.attempt = attempt;
-    // OF-063: judged on arrival and again before the receipt is written, so
-    // a session closed mid-call keeps its call's exception.
-    call.anonymous = room_note || context.anonymous(server, auth);
-    RpcReply::answer(server, auth, call, request.request_id, result)
+    crate::api::answer_hold::until_encoded(async move {
+        let mut call = RpcCall::captured(server, &request);
+        let room_note = context.room_note_call(server, auth, &request.method, &request.params);
+        let (result, attempt) = call_receipt::attempt_witnessed(rpc::claimed(
+            server,
+            auth,
+            &context,
+            &request.method,
+            request.params,
+        ))
+        .await;
+        call.attempt = attempt;
+        // OF-063: judged on arrival and again before the receipt is written, so
+        // a session closed mid-call keeps its call's exception.
+        call.anonymous = room_note || context.anonymous(server, auth);
+        RpcReply::answer(server, auth, call, request.request_id, result)
+    })
+    .await
 }
 
 /// A page size a scoped view asks for, or `default`, within the facade's

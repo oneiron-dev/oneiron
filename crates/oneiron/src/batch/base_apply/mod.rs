@@ -72,6 +72,22 @@ fn require_consumed_claim_bindings(
     super::verified_claim_transition::require_consumed(transitions)
 }
 
+/// Pending-birth prompt sources for `id` from this batch's births (FIX 11000):
+/// proven `Some` (possibly empty) — no entry, or an entry with no Prompt
+/// inputs, means none. Callers without batch state pass `None` (unknown,
+/// so incomplete anchors). Pure and infallible.
+pub(super) fn pending_prompt_for(
+    births: &[(EntityId, crate::provenance::birth::RowBirth)],
+    id: &EntityId,
+) -> Option<Vec<EntityId>> {
+    let prompts = births
+        .iter()
+        .find(|(row, _)| row == id)
+        .map(|(_, birth)| crate::provenance::birth::prompted::prompt_sources_of_birth(birth))
+        .unwrap_or_default();
+    Some(prompts)
+}
+
 /// Materializes the already-authorized CLAIM puts from a session-bundle merge.
 ///
 /// The narrow operation-shape check prevents the prechecked mode from being
@@ -141,7 +157,7 @@ struct BatchApplyState {
     refinement_admission: Option<crate::skill_hub::RefinementAdmissionProof>,
     birth_mask: Option<EntityId>,
     text_births: HashMap<EntityId, Vec<EntityId>>,
-    births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
+    births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
     replicated_puts: BTreeSet<EntityId>,
     mutation_recorded_at: u64,
@@ -151,7 +167,7 @@ struct BatchApplyState {
     claim_materializations: VecDeque<ClaimMaterialization>,
     claim_transitions: VecDeque<super::VerifiedClaimTransition>,
     preflight_gate_decision_ids: HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
-    pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::bm25::AnalyzedText>>>,
+    pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::store::text_index::AnalyzedText>>>,
     nsw_plans: HashMap<EntityId, VecDeque<crate::hnsw::InsertPlan>>,
     masked_files: super::secret_scan::MaskedFiles,
     masked_claims: HashMap<EntityId, VecDeque<ClaimCandidate>>,

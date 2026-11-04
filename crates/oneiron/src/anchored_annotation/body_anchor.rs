@@ -318,10 +318,9 @@ impl Vault {
         Ok((plans, unread))
     }
 
-    /// The body anchor of a version anchor: the same unit in the live body,
-    /// when the body held the anchor's version and, for Word, the body's
-    /// paragraph of that block id reads as the version's; for a deck, the
-    /// one node the version's ids name there.
+    /// The body anchor of a version anchor: the same unit in the live body
+    /// when it held the anchor's version. A Word paragraph's text must name
+    /// one body block there; a deck's version ids must name one node.
     fn stamp_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -346,18 +345,22 @@ impl Vault {
         }
         let held = match (units_at(units, &frontier), &anchor.locator) {
             (None, _) => return Stamp::Retry,
-            (Some(OfficeBodyUnits::Docx(blocks)), Locator::Docx { para_path, .. }) => {
+            (Some(OfficeBodyUnits::Docx(blocks)), Locator::Docx { .. }) => {
                 self.load_filed(txn, artifact, anchor.version, filed, unread);
-                match filed.get(&anchor.version) {
-                    Some(Filed::Blocks(filed)) => text_of(blocks, para_path)
-                        .is_some_and(|text| text_of(filed, para_path) == Some(text)),
+                return match filed.get(&anchor.version) {
+                    Some(Filed::Blocks(filed)) => {
+                        match unique_docx_locator(filed, blocks, &anchor.locator) {
+                            Some(locator) => Stamp::Held(BodyAnchor { frontier, locator }),
+                            None => Stamp::Missed,
+                        }
+                    }
                     // A blob that is there but is not a Word file reads the
                     // same on every pass.
-                    Some(Filed::NotWord) => return Stamp::Missed,
+                    Some(Filed::NotWord) => Stamp::Missed,
                     // A missing blob may still arrive by sync; a read error
                     // was already warned and counted.
-                    Some(Filed::Missing) | Some(Filed::Unread) | None => return Stamp::Retry,
-                }
+                    Some(Filed::Missing) | Some(Filed::Unread) | None => Stamp::Retry,
+                };
             }
             (Some(OfficeBodyUnits::Xlsx { sheets, .. }), Locator::Xlsx { sheet, .. }) => {
                 sheets.iter().any(|(_, name)| name == sheet)
@@ -529,6 +532,10 @@ fn plan_thread(
             {
                 return Follow::Idle;
             }
+            let landing_unread = landing.is_some_and(|(version, frontier)| {
+                units_at(units, frontier).is_none()
+                    || matches!(filed.get(version), Some(Filed::Missing | Filed::Unread))
+            });
             let landed = landing.and_then(|(version, frontier)| {
                 let target = units_at(units, frontier)?;
                 let ReanchorOutcome::Mapped(at_export) =
@@ -557,6 +564,10 @@ fn plan_thread(
                 frontier: body_head.to_vec(),
                 locator: at_head,
             };
+            if !stamped && landing.is_some() && !landing_unread && landed.is_none() && moved == body
+            {
+                return Follow::OutOfOrder;
+            }
             if !stamped && landed.is_none() && moved == body {
                 return Follow::Idle;
             }
@@ -644,29 +655,31 @@ fn move_body_locator(
 
 /// Where a body unit stands in the export that projected it. A cell range
 /// stands at the same place: the body's addresses are the file's. A Word
-/// span stands in the file's block of the same id when it reads the same,
-/// else in the one block that reads the same; `None` when no block does.
+/// span stands in the one file block with the body's paragraph text.
 fn file_locator(
     filed: Option<&Units>,
     target: &OfficeBodyUnits,
     locator: &Locator,
 ) -> Option<Locator> {
-    let (
-        OfficeBodyUnits::Docx(body),
-        Locator::Docx {
-            para_path,
-            char_start,
-            char_end,
-        },
-    ) = (target, locator)
-    else {
+    let (OfficeBodyUnits::Docx(body), Locator::Docx { .. }) = (target, locator) else {
         return Some(locator.clone());
     };
-    let (filed, text) = (filed?, text_of(body, para_path)?);
-    if text_of(filed, para_path) == Some(text) {
-        return Some(locator.clone());
-    }
-    let mut same = filed.iter().filter(|(_, block)| block.as_str() == text);
+    unique_docx_locator(body, filed?, locator)
+}
+
+/// Maps a Word span between file ordinals and stable body ids by unique
+/// paragraph text at the same frontier. Duplicate text names no block.
+fn unique_docx_locator(from: &Units, to: &Units, locator: &Locator) -> Option<Locator> {
+    let Locator::Docx {
+        para_path,
+        char_start,
+        char_end,
+    } = locator
+    else {
+        return None;
+    };
+    let text = text_of(from, para_path)?;
+    let mut same = to.iter().filter(|(_, block)| block.as_str() == text);
     let (id, _) = same.next()?;
     if same.next().is_some() {
         return None;

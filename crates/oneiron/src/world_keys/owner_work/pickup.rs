@@ -67,7 +67,8 @@ impl Vault {
     /// lifecycle tick, never on a timer of its own). First every admitted
     /// custody revoke is settled here, byte-free (`settle_revoked_custody`
     /// in `crate::secret_custody`), each kept custody input whose request is
-    /// answered is forgotten, and each revoke this install owes the owner's
+    /// answered is forgotten, and so is each kept export secret copy whose
+    /// secret ended (FIX 12064), and each revoke this install owes the owner's
     /// other machines is carried once it can sign (FIX 4851). A wait a root
     /// request's pickup committed is cleared once the fold holds that
     /// request cancelled or superseded, byte-free (FIX 5582). The machine
@@ -98,6 +99,13 @@ impl Vault {
             tracing::warn!(
                 kind = ?error.kind(),
                 "answered custody inputs were not forgotten on this install"
+            );
+        }
+        // A kept export secret copy goes with its secret (FIX 12064).
+        if let Err(error) = self.settle_export_outputs() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "ended secrets' export copies were not forgotten on this install"
             );
         }
         // A custody transition or input that arrived before its request

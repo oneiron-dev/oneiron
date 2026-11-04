@@ -80,7 +80,7 @@ impl Vault {
             self.destroy_world_keys_for_delete_in_txn(
                 wtxn,
                 *id,
-                crate::world_keys::WorldKeyDestroyCause::LocalDelete,
+                crate::key_material::WorldKeyDestroyCause::LocalDelete,
                 request_id.copied(),
             )?;
             // An erased custody record is fenced, every key its id names
@@ -90,6 +90,7 @@ impl Vault {
             // An erased custody record's known-value history goes, its
             // entries' retirement staged; another record's stays (KS-3).
             self.store.stage_known_history_erase_in_txn(wtxn, id)?;
+            crate::secret_custody::erase_secret_handle_label_in_txn(&self.store, wtxn, id)?;
             // An erased pad row takes its key's pad out of custody, never
             // another of its world's (KS-5, FIX 7192): every caller wrote
             // the row's hard marker in this transaction, which the
@@ -193,15 +194,15 @@ impl Vault {
             // the graph version once, even for an isolated row.
             ppr::purge_ppr_for_erase_in_txn(&self.store, wtxn, id, &neighbors)?;
             self.store.clear_ppr_community_cache_in_txn(wtxn)?;
-            ppr::increment_graph_version(&self.store, wtxn)?;
+            crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         } else {
             ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
             if had_graph_mutation {
-                ppr::increment_graph_version(&self.store, wtxn)?;
+                crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
             }
         }
         if had_vector {
-            crate::hnsw::increment_vector_version(&self.store, wtxn)?;
+            crate::store::vector_index::increment_vector_version(&self.store, wtxn)?;
         }
         crate::embed::erase_turn_vectors_in_txn(
             self,
@@ -267,6 +268,9 @@ impl Vault {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
+        // A carried history read no longer stands for an erased control (FIX
+        // 4296), as a delete's deindex does; the row is still here to read.
+        crate::claim::history_seal::scatter_index_seal_for_delete(&self.store, wtxn, id)?;
         let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
         let had_missing = crate::store::turn_missing::erase_in_txn(self, wtxn, id)?;
         // A soft erase keeps the graph, so the sieve and projection rows of
@@ -293,7 +297,7 @@ impl Vault {
             crate::workspace_roster::deindex_project_room(&self.store, wtxn, id)?;
         if room_had_graph {
             ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &room_neighbors)?;
-            ppr::increment_graph_version(&self.store, wtxn)?;
+            crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         }
         self.store
             .l2_base_cache
@@ -315,7 +319,7 @@ impl Vault {
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
             deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
         if hint_had_graph_mutation {
-            ppr::increment_graph_version(&self.store, wtxn)?;
+            crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         }
         crate::note::erase::purge(self, wtxn, id)?;
         self.port_retrieval_clear_text_for_soft_erase(wtxn, id)?;
@@ -328,7 +332,7 @@ impl Vault {
         let blob_cleanup =
             crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(&self.store, wtxn, id)?;
         if blob_cleanup.had_graph_mutation {
-            ppr::increment_graph_version(&self.store, wtxn)?;
+            crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         }
         self.store.clear_pending_embedding(wtxn, id)?;
         let entity_had_vector = self.port_retrieval_clear_vector_for_soft_erase(wtxn, id)?;
@@ -351,7 +355,7 @@ impl Vault {
             had_vector |= cleanup.had_vector;
             if cleanup.had_graph_mutation {
                 ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
-                ppr::increment_graph_version(&self.store, wtxn)?;
+                crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
             }
             return Ok((
                 had_refinement || had_merge_receipt || had_tags || had_missing,
@@ -410,7 +414,7 @@ impl Vault {
         had_vector |= cleanup.had_vector;
         if cleanup.had_graph_mutation {
             ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
-            ppr::increment_graph_version(&self.store, wtxn)?;
+            crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         }
 
         crate::claim::remove_claim_projection_index(&self.store, wtxn, *id)?;

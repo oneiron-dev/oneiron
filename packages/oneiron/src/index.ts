@@ -946,9 +946,9 @@ export class Oneiron {
       arm: (input: Facade.ArmTurnProgram): Facade.TurnProgramRegistration => this.#call(() => this.#client.vaultTurnProgramsArm(input) as Facade.TurnProgramRegistration),
       /** Disarms one of the caller's own armed turn programs; true when it was armed. */
       disarm: (input: Facade.DisarmTurnProgram): boolean => this.#call(() => this.#client.vaultTurnProgramsDisarm(input) as boolean),
-      /** Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes. */
+      /** Rebinds an unsettled turn program try, or an owed wake no admission judged yet (then admitted), that the caller's own turn woke on a lapsed credential, to this request's live one; it never widens, and a held try resumes. */
       rebind: (input: Facade.TurnProgramRebindRequest): Facade.TurnProgramRebindReceipt => this.#call(() => this.#client.vaultTurnProgramsRebind(input) as Facade.TurnProgramRebindReceipt),
-      /** Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential. */
+      /** Reads one page of a landed turn's admissions for the caller's turn programs, or all when the owner asks, and the wakes it still owes them with each hold, withholding each field whose record the caller's credential does not read. */
       admission: (input: Facade.TurnProgramAdmissionRequest): Facade.TurnProgramAdmissionView | null => this.#call(() => this.#client.vaultTurnProgramsAdmission(input) as Facade.TurnProgramAdmissionView | null),
     },
     weave: {
@@ -1496,6 +1496,12 @@ export class Oneiron {
         export: (input: Facade.ConnectExportRequest): Facade.ConnectDelivery => this.#call(() => this.#client.vaultFederationConnectExport(input) as Facade.ConnectDelivery),
         /** The owner admits a peer host signed update through guest admission into the retained foreign-world vault. */
         rejoin: (input: Facade.ConnectDelivery): Facade.ConnectRejoined => this.#call(() => this.#client.vaultFederationConnectRejoin(input) as Facade.ConnectRejoined),
+        world_privacy: {
+          /** The owner exports the world-settings leg a request owes a connected vault, host signed for the live pact: an agent's ask on a world that vault owns, or this vault's holders' answer to that vault's ask. */
+          export: (input: Facade.ForeignWorldPrivacyExportRequest): Facade.ForeignWorldPrivacyDelivery => this.#call(() => this.#client.vaultFederationConnectWorldPrivacyExport(input) as Facade.ForeignWorldPrivacyDelivery),
+          /** The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers. */
+          receive: (input: Facade.ForeignWorldPrivacyDelivery): Facade.WorldPrivacyRequest => this.#call(() => this.#client.vaultFederationConnectWorldPrivacyReceive(input) as Facade.WorldPrivacyRequest),
+        },
       },
     },
     trusted_contacts: {
@@ -1764,6 +1770,8 @@ export class Oneiron {
       log: (input: Facade.EmptyRequest = {}): Facade.LegalHoldEvent[] => this.#call(() => this.#client.vaultLegalHoldsLog(input) as Facade.LegalHoldEvent[]),
       /** The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records. */
       lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest): Facade.LegalHoldLiftAndErased => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as Facade.LegalHoldLiftAndErased),
+      /** The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting. */
+      withdraw_erase: (input: Facade.LegalHoldWithdrawEraseRequest): Facade.LegalHoldErasesWithdrawn => this.#call(() => this.#client.vaultLegalHoldsWithdrawErase(input) as Facade.LegalHoldErasesWithdrawn),
     },
     courtesy_delete: {
       /** The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery. */
@@ -1832,6 +1840,8 @@ export class Oneiron {
       deny: (input: Facade.DenyConsentRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentDeny(input) as Facade.ConsentActReceipt),
       /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
       create_standing_grant: (input: Facade.CreateStandingGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentCreateStandingGrant(input) as Facade.ConsentActReceipt),
+      /** The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed. */
+      create_auto_weave_grant: (input: Facade.AutoWeaveGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentCreateAutoWeaveGrant(input) as Facade.ConsentActReceipt),
       /** The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants. */
       registry: (input: Facade.ConsentRegistryQuery): Facade.ConsentRegistry => this.#call(() => this.#client.vaultConsentRegistry(input) as Facade.ConsentRegistry),
       /** Read the carried failure-signal batch's exact content and approval digest as the owner. */
@@ -3192,6 +3202,12 @@ export class Oneiron {
         /** Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log. */
         query: (input: Facade.DiaryQueryRequest): Facade.DiaryQueryOutcome => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as Facade.DiaryQueryOutcome),
       }),
+      pads: {
+        /** Reads an agent's sealed scratchpads as a ruled reader (a vault owner, a work vault's Admin or the Coach), stating a reason the agent sees in its read log. */
+        read: (input: Facade.DiaryQueryRequest): Facade.DiaryQueryOutcome => this.#call(() => this.#client.selfMemoryPadsRead(input) as Facade.DiaryQueryOutcome),
+        /** The companion's owner reads the reads a work vault's Admin made of an agent's sealed scratchpads, newest first, on their own authentication. */
+        admin_reads: (input: Facade.AdminPadReadsRequest): Facade.AdminPadReadsView => this.#call(() => this.#client.selfMemoryPadsAdminReads(input) as Facade.AdminPadReadsView),
+      },
     },
     standing: {
       /** This agent's configured standing block in one world: its handle, name and token floor. */
@@ -3218,6 +3234,12 @@ export class Oneiron {
       }),
       /** Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page. */
       lens: (input: Facade.InboxLensRequest): Facade.InboxLensPage => this.#call(() => this.#client.selfInboxLens(input) as Facade.InboxLensPage),
+      /** Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done. */
+      get: (input: Facade.InboxItemRequest): Facade.InboxItemView => this.#call(() => this.#client.selfInboxGet(input) as Facade.InboxItemView),
+      /** Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it. */
+      done: (input: Facade.InboxItemRequest): Facade.InboxItemMarked => this.#call(() => this.#client.selfInboxDone(input) as Facade.InboxItemMarked),
+      /** Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it. */
+      later: (input: Facade.InboxItemLaterRequest): Facade.InboxItemMarked => this.#call(() => this.#client.selfInboxLater(input) as Facade.InboxItemMarked),
     },
     /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
     message: (input: Facade.MessagePersonRequest): Facade.MessagePersonReceipt => this.#call(() => this.#client.selfMessage(input) as Facade.MessagePersonReceipt),

@@ -14,11 +14,11 @@ use crate::dreamer_runner::DreamerAttemptProgressProducer;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerConsolidationScope, DreamerParkCause};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::BudgetGuard;
 #[cfg(feature = "sync")]
 use crate::sync::EphemeralStore;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use crate::write_envelope::WriteEnvelope;
+use oneiron_model::llm::BudgetGuard;
 
 use super::deadline::{WakeCancellation, WakePassDeadline};
 
@@ -72,7 +72,7 @@ pub struct RunWakePass {
     pub now: u64,
     /// Exact caller attenuation for this wake. It is prepared once at the
     /// root, never inferred from a decorated executor's optional metadata.
-    pub host_scope: Option<crate::llm::Scope>,
+    pub host_scope: Option<oneiron_model::llm::Scope>,
 }
 
 /// Why the pass stopped.
@@ -96,15 +96,7 @@ pub enum WakePassStop {
     HookSkipped,
 }
 
-/// Why a pass authored its claims single-pass under a promoted
-/// claim-authoring default (FIX 897). Never a refusal: the pass ran.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClaimAuthoringFallback {
-    /// Several bound campaigns carry the default, in root order; none is
-    /// chosen for the host (Engine 10-18).
-    AmbiguousCampaigns { roots: Vec<AttemptId> },
-}
+pub use crate::memory::wake_observation::ClaimAuthoringFallback;
 
 /// Wake-pass tally.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +188,24 @@ pub enum DreamerAttemptExecution {
         /// Mint a successor row carrying the resume point.
         hand_off: bool,
     },
+}
+
+/// The error an executor panic leaves, from whichever containment
+/// caught it (the driver's dispatch/flush catch, or a partition
+/// window's per-slot catch): one constructor and one predicate, so
+/// the driver can mark the executor-panic stage - and end the pass
+/// without reusing the executor (FIX 7322) - no matter who caught it
+/// (FIX 12487 round 2).
+pub(crate) fn executor_panic_error() -> crate::Error {
+    crate::Error::InvariantViolation("dreamer attempt executor panicked")
+}
+
+/// Whether `error` is the shared executor-panic error above.
+pub(crate) fn is_executor_panic_error(error: &crate::Error) -> bool {
+    matches!(
+        error,
+        crate::Error::InvariantViolation("dreamer attempt executor panicked")
+    )
 }
 
 /// Per-attempt execution context handed to the executor.
@@ -418,6 +428,26 @@ pub trait DreamerAttemptExecutor {
         attempt: &DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution>;
+
+    /// Runs one window of plain Micro consolidation partitions the driver
+    /// admitted back to back (FIX 12487): their extractions may overlap,
+    /// but outcomes come back in window order and every commit lands
+    /// serially in that order, so the committed rows equal serial
+    /// `execute` calls over the same attempts. The window holds only
+    /// plain partition attempts (Micro kind, the scope's own attempt
+    /// type, a Ready prepared plan, no thing branch); a wrapper that
+    /// intercepts other shapes never sees its own shape here and may
+    /// forward the window whole. The default runs the window serially.
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        let mut outcomes = Vec::with_capacity(window.len());
+        for (attempt, ctx) in window.iter_mut() {
+            outcomes.push(self.execute(*attempt, ctx).await);
+        }
+        outcomes
+    }
 
     /// The host's answer to a completed TASK try's "Done means met?"
     /// (OF-533), asked once the try's result is attached and outside any

@@ -5,8 +5,9 @@ use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::{ExecutedModelWitness, ModelId};
+use crate::llm::ExecutedModelWitness;
 use crate::self_heal::tier1_source::VerifiedSourceSet;
+use oneiron_model::llm::ModelId;
 use rand_core::RngCore;
 
 #[derive(Clone)]
@@ -69,8 +70,8 @@ impl Vault {
             return Ok(());
         }
         let body = self.get(&id)?.ok_or(Error::EntityNotFound)?;
-        let event = crate::self_heal::decode_diagnostic_event_body(&body)?;
-        if crate::self_heal::diagnostic_event_id(&event.detector_id, &body) != id {
+        let event = crate::store::diagnostic_record::decode_diagnostic_event_body(&body)?;
+        if crate::store::diagnostic_record::diagnostic_event_id(&event.detector_id, &body) != id {
             return Err(Error::InvariantViolation(
                 "tier-1 diagnostic address changed",
             ));
@@ -101,7 +102,7 @@ impl Vault {
             let Some(body) = self.get(id)? else {
                 continue;
             };
-            let event = crate::self_heal::decode_diagnostic_event_body(&body)?;
+            let event = crate::store::diagnostic_record::decode_diagnostic_event_body(&body)?;
             let txn = self.store.env.read_txn()?;
             let sources = crate::self_heal::tier1_source::VerifiedSourceSet::point_producer(
                 &self.store,
@@ -155,7 +156,7 @@ impl Vault {
             let Some(body) = self.get(id)? else {
                 continue;
             };
-            let event = crate::self_heal::decode_diagnostic_event_body(&body)?;
+            let event = crate::store::diagnostic_record::decode_diagnostic_event_body(&body)?;
             let txn = self.store.env.read_txn()?;
             let sources = VerifiedSourceSet::retrieval_regression(
                 &self.store,
@@ -181,7 +182,10 @@ impl Vault {
     pub(crate) fn capture_tier1_consent_queue(
         &self,
         ids: &[EntityId],
-        witness: Option<(crate::self_heal::DiagnosticEvent, VerifiedSourceSet)>,
+        witness: Option<(
+            crate::store::diagnostic_record::DiagnosticEvent,
+            VerifiedSourceSet,
+        )>,
     ) -> Result<()> {
         if !self.config.failure_signals.exports() {
             return Ok(());
@@ -193,7 +197,7 @@ impl Vault {
             let Some(body) = self.get(id)? else {
                 continue;
             };
-            if crate::self_heal::decode_diagnostic_event_body(&body)? == drawn {
+            if crate::store::diagnostic_record::decode_diagnostic_event_body(&body)? == drawn {
                 self.capture_tier1_diagnostic(*id, sources.clone())?;
             }
         }
@@ -215,7 +219,7 @@ impl Vault {
             let Some(body) = self.get(id)? else {
                 continue;
             };
-            let event = crate::self_heal::decode_diagnostic_event_body(&body)?;
+            let event = crate::store::diagnostic_record::decode_diagnostic_event_body(&body)?;
             let txn = self.store.env.read_txn()?;
             let sources = VerifiedSourceSet::receipt_window(
                 &self.store,

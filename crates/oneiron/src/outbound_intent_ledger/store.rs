@@ -303,6 +303,26 @@ pub(crate) fn read_intent_for_attempt_in_txn(
     Ok(Some(record))
 }
 
+/// Whether the ledger call (`attempt_id`, `call_seq`) stands erased, for a
+/// keeper that must not resurrect rows beside it (FIX 6835 P1). `false` when
+/// no call row exists yet. A lookup failure errors, and the keeper logs it
+/// and leaves the call on its live rows.
+pub(crate) fn call_row_erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt_id: AttemptId,
+    call_seq: u64,
+) -> crate::error::Result<bool> {
+    let erased = match read_intent_for_attempt_in_txn(vault, txn, attempt_id, call_seq)
+        .map_err(|_| Error::CorruptedIndex("outbound intent attempt lookup"))?
+    {
+        Some(record) => super::payload::payload_erased(record.payload())
+            .map_err(|_| Error::CorruptedIndex("outbound intent payload"))?,
+        None => false,
+    };
+    Ok(erased)
+}
+
 #[cfg(test)]
 pub(super) fn insert_pending_or_read(
     vault: &Vault,
@@ -496,14 +516,16 @@ pub(crate) fn record_possible_delivery(
     if marked {
         record.delivery_uncertain = true;
         LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
-    }
-    open_payload_in_txn(vault, &wtxn, &mut record)?;
-    if marked {
         wtxn.commit().map_err(Error::from)?;
     } else {
         drop(wtxn);
     }
     force_sync(vault)?;
+    // Open only after the state write is durable (FIX 10959): a sealed row
+    // whose key will not open must not lose the mark. On an open error the
+    // caller re-reads the row, as after a post-commit sync error.
+    let rtxn = vault.store.custody_snapshot()?;
+    open_payload_in_txn(vault, &rtxn, &mut record)?;
     Ok(record)
 }
 
@@ -639,12 +661,15 @@ fn update_pending_recorded_outcome(
     record.updated_ms = now_ms.max(record.created_ms);
     LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
     also(&mut wtxn, &record)?;
-    open_payload_in_txn(vault, &wtxn, &mut record)?;
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
     // A takeover may have abandoned the row: the owner's waiting shed looks
     // again, as at a terminal transition (FIX 10688).
     vault.wake_owner_shed();
+    // Open only after the state write is durable (FIX 10959), as in
+    // `record_possible_delivery`.
+    let rtxn = vault.store.custody_snapshot()?;
+    open_payload_in_txn(vault, &rtxn, &mut record)?;
     synced?;
     Ok(record)
 }
@@ -721,6 +746,7 @@ pub(super) fn put_erased_record(
         &id,
         crate::side_table::Erased::of(record)?,
     )?;
+    super::pinned_approval::drop_pinned_approval_in_txn(vault, wtxn, &id)?;
     payload_erase::erase_call_compartment_in_txn(vault, wtxn, &attempt_id, call_seq)
 }
 

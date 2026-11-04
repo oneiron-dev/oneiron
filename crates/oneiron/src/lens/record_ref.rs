@@ -36,8 +36,7 @@ use crate::memory::{
 pub const RECORD_REF_LABEL_MAX_CHARS: usize = 80;
 /// The most characters a [`RecordRefPreview`] snippet carries.
 pub const RECORD_REF_SNIPPET_MAX_CHARS: usize = 280;
-/// The longest ref `vault.refs.resolve` reads, in bytes.
-pub const RECORD_REF_MAX_BYTES: usize = 256;
+pub use crate::request_limits::RECORD_REF_MAX_BYTES;
 
 /// The most messages one `vault.refs.links` page of a turn reads for links,
 /// and the page size when the caller names none.

@@ -16,7 +16,7 @@ use zeroize::Zeroizing;
 
 pub(crate) use self::container::{
     RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container, is_sealed,
-    masked_copy, scan_text_content, served_masked_copy,
+    live_content_hit, masked_copy, scan_text_content, served_masked_copy, tree_rebuilt_copy,
 };
 pub use self::lift_history::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
@@ -29,8 +29,8 @@ pub(crate) use self::lift_history::{
 };
 pub(super) use self::mask::MaskedFiles;
 pub(crate) use self::mask::admit::{
-    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
-    scan_document_in_txn,
+    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, predict_masked_body,
+    predict_masked_text, scan_content_in_txn, scan_document_in_txn,
 };
 pub(crate) use self::mask::carrier::{
     CarrierText, LiftedKeys, carrier_text_placeable, carrier_texts_hit_in_txn,
@@ -163,7 +163,7 @@ pub(super) fn scan_batch_ops(
                 // A sealed file (a container no reader here reads whole) is
                 // stored as it is, unmarked: a serving door gives it to the
                 // owner alone (owner ruling C2).
-                if *entity_type == ENTITY_TYPE_ASSET && is_sealed(data) {
+                if *entity_type == ENTITY_TYPE_ASSET && is_sealed(data, None) {
                     continue;
                 }
                 // A file's members are read too: a key in a compressed
@@ -182,9 +182,11 @@ pub(super) fn scan_batch_ops(
                 // A facet id is no secret material; any stamp scans alike.
                 let body = (**candidate).clone().into_claim_body(
                     envelope,
-                    crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
+                    crate::write_envelope::claim_body::substrate_facet_id(
+                        envelope.actor().entity_ref(),
+                    )?,
                 )?;
-                let data = crate::claim::encode_claim_body(&body)?;
+                let data = crate::write_envelope::claim_body::encode_claim_body(&body)?;
                 let _secrets_nulled = scan_payload(&data)?;
             }
             BatchOp::Text { fields, .. } => {
@@ -253,7 +255,7 @@ pub(crate) fn scan_undecoded_body(bytes: &[u8]) -> Option<&'static str> {
 /// whole-body decode reaches its fields, so every door decodes the wrapped
 /// body as a body too.
 fn framed_payload(data: &[u8]) -> Option<&[u8]> {
-    crate::skill_hub::refinement_carrier_payload(data)
+    crate::store::refinement_carrier::refinement_carrier_payload(data)
 }
 
 /// A structured body with every member it holds: JSON read into a MessagePack
@@ -496,8 +498,8 @@ pub(crate) fn scan_write_tree(data: &[u8]) -> Result<()> {
 /// and the bytes no reader shows (FIX 2470, 2480): the first hit's reason,
 /// or why the walk read no further. A serving door reads a masked copy, and
 /// a container no mark covers, by the rules of the door that accepted it.
-pub(crate) fn write_tree_hit(bytes: &[u8]) -> Option<&'static str> {
-    write_payload_hit(bytes).or_else(|| container::write_members_hit(bytes))
+pub(crate) fn write_tree_hit(bytes: &[u8], digest: Option<&[u8; 32]>) -> Option<&'static str> {
+    write_payload_hit(bytes).or_else(|| container::write_members_hit(bytes, digest))
 }
 
 /// [`scan_write_payload`] for a reader that marks a hit rather than refusing a

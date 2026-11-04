@@ -96,13 +96,23 @@ impl Vault {
                     continue;
                 };
                 let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-                if raw[0] == crate::registry::ENTITY_TYPE_CLAIM {
-                    let claim = crate::claim::decode_claim_body(&body, true)?;
+                // A claim republishes the text its commit indexed, never the
+                // generic string leaves: a non-string value would otherwise
+                // lose its postings at the first idle pass (FIX 12368).
+                let fields = if raw[0] == crate::registry::ENTITY_TYPE_CLAIM {
+                    let claim = crate::write_envelope::claim_body::decode_claim_body(&body, true)?;
                     if !crate::claim::claim_surfaceable(&claim) {
                         continue;
                     }
-                }
-                let fields = revision_text_fields(&self.store, &txn, &id, current.live, &body)?;
+                    let text = crate::claim::claim_value_index_text(&claim.value);
+                    if text.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![("val".to_owned(), text)]
+                    }
+                } else {
+                    revision_text_fields(&self.store, &txn, &id, current.live, &body)?
+                };
                 candidates.push(super::repo_projection::project_revision_input_in_txn(
                     self,
                     &txn,
@@ -134,7 +144,7 @@ impl Vault {
                         &input.entity,
                         input.source_revision_ref,
                     )?,
-                    crate::hnsw::read_embedding_model_epoch(&self.store, &txn)?,
+                    crate::store::vector_index::read_embedding_model_epoch(&self.store, &txn)?,
                 )
             };
             let snapshot_staged = staged.vector.is_some();
@@ -177,7 +187,8 @@ impl Vault {
             };
             if current.live != input.source_revision_ref
                 || read_entity_revision_in_txn(self, &txn, &input.entity, ReadMode::Live)?.is_none()
-                || crate::hnsw::read_embedding_model_epoch(&self.store, &txn)? != epoch
+                || crate::store::vector_index::read_embedding_model_epoch(&self.store, &txn)?
+                    != epoch
             {
                 report.superseded.push(input.entity);
                 continue;
@@ -369,7 +380,7 @@ impl Vault {
                     },
                 )?);
             }
-            let epoch = crate::hnsw::read_embedding_model_epoch(&self.store, &txn)?;
+            let epoch = crate::store::vector_index::read_embedding_model_epoch(&self.store, &txn)?;
             (candidates, epoch)
         };
         if !gone.is_empty() {
@@ -473,7 +484,7 @@ impl Vault {
         Ok(REFILL.contains(&self.store, txn, id)?
             && state(&self.store, txn, id)?.is_none_or(|s| s.live == s.indexed)
             && self.indexed_revision_in_txn(txn, id)? == Some(revision)
-            && crate::hnsw::read_embedding_model_epoch(&self.store, txn)? == epoch)
+            && crate::store::vector_index::read_embedding_model_epoch(&self.store, txn)? == epoch)
     }
 
     /// Exact index revision currently available, including unedited births.
@@ -531,7 +542,7 @@ pub(crate) fn drop_vector_state(
     let had_vector = vault.store.vectors.delete(txn, id.as_bytes())?;
     if had_vector || had_node {
         crate::hnsw::hnsw_deindex(&vault.store, txn, id)?;
-        crate::hnsw::increment_vector_version(&vault.store, txn)?;
+        crate::store::vector_index::increment_vector_version(&vault.store, txn)?;
     }
     crate::embed::clear_embedding_locality_in_txn(&vault.store, txn, id)?;
     crate::embed::record_embedding_device_in_txn(&vault.store, txn, id, None)?;

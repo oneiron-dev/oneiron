@@ -10,7 +10,6 @@
 //! PERSONs, so the PERSON pair rule is this writer's CLAIM pair rule, and no
 //! link of this kind is ever confirmed here.
 
-use crate::affect::Vad;
 use crate::batch::BatchOp;
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::consent::AuthenticatedOwner;
@@ -20,6 +19,7 @@ use crate::error::{Error, Result};
 use crate::ports::EdgeStoreRead;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
+use oneiron_contracts::affect::Vad;
 
 use super::{COREFERENCE_LINK_WEIGHT, require_coreference_actor};
 

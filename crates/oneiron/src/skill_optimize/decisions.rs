@@ -4,11 +4,11 @@
 use std::collections::BTreeMap;
 
 use crate::entity_id::bytes_to_hex_lower;
-use crate::llm::decision::catalogue::SKILL_OPTIMIZE_JUDGMENT;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    DecisionQuestion, Reversibility, StateCut, TypedDecision, cut_text, fit_reserve_state,
-    fit_state,
+use crate::llm::decision::{DecisionLadder, TypedDecision};
+use crate::model_decision::catalogue::SKILL_OPTIMIZE_JUDGMENT;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionQuestion,
+    Reversibility, StateCut, cut_text, fit_reserve_state, fit_state,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result};
@@ -480,10 +480,10 @@ impl dyn HeldOutReplayNotes + '_ {
     pub(crate) fn tradeoff_decision(
         &self,
         question: &super::SkillTradeoffQuestion,
-        band: crate::llm::decision::DecisionBand,
+        band: crate::model_decision::DecisionBand,
     ) -> Result<Option<TypedDecision>> {
         let decisions = self.decisions();
-        if decisions.dial.first == crate::llm::decision::DecisionRung::Human {
+        if decisions.dial.first == crate::model_decision::DecisionRung::Human {
             return Ok(None);
         }
         // This job owns the durable role ask. The shared ladder supplies the
@@ -492,7 +492,7 @@ impl dyn HeldOutReplayNotes + '_ {
             ceiling: decisions
                 .dial
                 .ceiling
-                .min(crate::llm::decision::DecisionRung::Big),
+                .min(crate::model_decision::DecisionRung::Big),
             band,
             ..decisions.dial
         };

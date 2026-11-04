@@ -450,7 +450,8 @@ fn plot_key(family: ChartKind, line: &ChartSeries) -> (ChartKind, u32) {
 /// where it left its base plot-mates: beside series of another base plot,
 /// or alone while a mate it left behind stayed put. A series with its
 /// mates, one whose mates are gone, and one whose family changed (placed
-/// by settlement, not moved) never count as moved.
+/// by settlement, not moved) never count as moved. A co-occupant that
+/// itself moved to the destination names its own move, never this one's.
 fn plot_moved(
     base_family: ChartKind,
     base_series: &[ChartSeries],
@@ -472,11 +473,19 @@ fn plot_moved(
             .map(|was| plot_key(base_family, was))
     };
     let (_, at) = plot_key(side_family, side);
+    // No raw-ordinal early return here (review-4320 P1): settlement
+    // renumbers ordinals when a plot goes, so `at == ordinal` does not
+    // prove the series stayed in its base plot. The mate-aware compare
+    // below decides instead: co-occupants from another base plot mark a
+    // different logical destination, while pure settlement renumbering
+    // (mates beside it, mates gone, family changed) stays silent.
     // Its side plot's base series, drawn in its family there as in the
     // base: a new series never moves it, and a series that changed family
-    // is judged by that field instead.
+    // is judged by that field instead. A co-occupant whose base plot holds
+    // a stronger claim elsewhere moved here on its own: it names its own
+    // move, never this series' destination; one this destination retained,
+    // beside its mates, or with none surviving elsewhere, still anchors it.
     let mut targets: Vec<u32> = Vec::new();
-    let mut present = false;
     for line in side_series {
         let Some(other) = line.id else {
             continue;
@@ -493,16 +502,55 @@ fn plot_moved(
         if kind != family {
             continue;
         }
-        if nth == ordinal {
-            present = true;
-        } else {
+        if nth != ordinal {
+            // A co-occupant that left surviving base-plot mates behind moved
+            // here on its own: it names its own move, never this series'
+            // destination — unless this destination still holds its base
+            // plot's strongest claim (review-4320 P1): the mates'
+            // departures do not move an occupant the destination retained.
+            // An occupied unchanged ordinal keeps the plot's claim even
+            // when more natives moved elsewhere. Among changed ordinals,
+            // the surviving native count decides. A foreign-only plot at
+            // the old ordinal carries no claim.
+            let plot_claim = |place: u32| -> (bool, usize) {
+                let count = side_series
+                    .iter()
+                    .filter(|line| {
+                        line.id.is_some_and(|mate| base_key(mate) == Some((family, nth)))
+                            && plot_key(side_family, line) == (family, place)
+                    })
+                    .count();
+                (count != 0 && place == nth, count)
+            };
+            let here = plot_claim(at);
+            let moved = side_series.iter().any(|line| {
+                let (_, place) = plot_key(side_family, line);
+                place != at && plot_claim(place) > here
+            });
+            if moved {
+                continue;
+            }
             targets.push(nth);
         }
     }
+    // At least one base-plot mate exists, and every surviving one joined
+    // the destination: a group move, not an own move. One surviving mate
+    // left behind still makes it a move; no mate at all never suppresses it.
+    let mut mates = base_series
+        .iter()
+        .filter_map(|line| line.id)
+        .filter(|&other| other != id && base_key(other) == Some((family, ordinal)))
+        .peekable();
+    let joined = mates.peek().is_some()
+        && mates.all(|other| {
+            side_series
+                .iter()
+                .any(|line| line.id == Some(other) && plot_key(side_family, line) == (family, at))
+        });
     if !targets.is_empty() {
-        // Beside series of another base plot: moved, unless its mates are
-        // beside it too (they joined it there).
-        if present {
+        // Beside series of another base plot: moved, unless every surviving
+        // base-plot mate joined it there too.
+        if joined {
             return None;
         }
         targets.sort_unstable();
@@ -523,7 +571,7 @@ fn plot_moved(
                 })
         })
         .collect();
-    if left.is_empty() || present {
+    if left.is_empty() || joined {
         return None;
     }
     let last = side_series
@@ -564,6 +612,16 @@ fn plot_moved(
         }
     }
     None
+}
+
+/// Whether two move destinations name the same plot (review-4320 P1):
+/// two non-empty destinations share a base-plot ordinal, while a solo
+/// `[]` only ever equals `[]`.
+fn same_plot_destination(head: &[u32], proposal: &[u32]) -> bool {
+    if head.is_empty() || proposal.is_empty() {
+        return head == proposal;
+    }
+    head.iter().any(|nth| proposal.contains(nth))
 }
 
 /// The conflicts of a chart both sides of a fork wrote, when the base, the
@@ -725,13 +783,8 @@ pub(crate) fn conflicts(
                     out.push(series(SeriesField::Order));
                 }
                 // Both sides moved it to different plots of its family.
-                let head_plot = plot_moved(
-                    *base_family,
-                    base_series,
-                    *head_family,
-                    head_series,
-                    id,
-                );
+                let head_plot =
+                    plot_moved(*base_family, base_series, *head_family, head_series, id);
                 let proposal_plot = plot_moved(
                     *base_family,
                     base_series,
@@ -740,7 +793,7 @@ pub(crate) fn conflicts(
                     id,
                 );
                 if let (Some(head_plot), Some(proposal_plot)) = (head_plot, proposal_plot)
-                    && head_plot != proposal_plot
+                    && !same_plot_destination(&head_plot, &proposal_plot)
                 {
                     out.push(series(SeriesField::Plot));
                 }

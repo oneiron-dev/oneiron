@@ -2,7 +2,6 @@
 
 use heed::RoTxn;
 
-use crate::affect::Vad;
 #[cfg(test)]
 use crate::config::PPR_VAD_ALPHA_DEFAULT;
 use crate::edge::EdgeKind;
@@ -10,6 +9,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::ManifestDbs;
+pub(crate) use oneiron_base::edge::kind_tables::lambda_for_kind;
+use oneiron_contracts::affect::Vad;
 
 use super::walk::PprNodeVisibility;
 
@@ -65,75 +66,6 @@ pub(super) fn vad_multiplier(vad: Option<Vad>, alpha: f32) -> f32 {
         1.0
     } else {
         vad.map_or(1.0, |vad| 1.0 + alpha * vad_salience(vad))
-    }
-}
-/// Per-kind λ_τ traversal budget (ARCH-0039 Layer 1). The values are the
-/// LITERAL `edgeKinds.lambda` column of the pinned contract module
-/// (`oneiron-docs` `site/src/data/oneiron-contracts.ts`):
-///
-/// - `None` — the kind is NEVER traversed by PPR (`child_of`, `assigned_to`,
-///   `blocked_by`; contract `lambda: null`, "Not traversed."). Tree queries go
-///   through the dedicated `subtree` / `ancestors` read APIs instead, and
-///   TASK readiness is computed at read time over `blocked_by`.
-/// - `Some(0.0)` — `opposes` blocks propagation at the KIND level regardless
-///   of the stored per-edge weight byte (contradiction isolation).
-/// - The five world-model kinds carry pinned ARCH-0039 budgets that
-///   deliberately DIFFER from their stored-weight priors (`pprWeight`):
-///   `employed_by` λ = 0.10 (prior 0.8); `has_facet` / `facet_of` /
-///   `in_world` / `set_in` λ = 0.05 (prior 0.7). Do NOT derive this table
-///   from `EdgeKind::default_weight`.
-pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
-    match kind {
-        EdgeKind::AuthoredBy => Some(0.9),
-        EdgeKind::ScopedTo => Some(0.7),
-        EdgeKind::PartOf => Some(0.8),
-        EdgeKind::Supersedes => Some(0.3),
-        EdgeKind::BelongsTo => Some(1.0),
-        EdgeKind::ClaimOf => Some(1.0),
-        EdgeKind::ChildOf => None,
-        EdgeKind::AssignedTo => None,
-        EdgeKind::BlockedBy => None,
-        // ONE-1608 (ARCH-0050 R6 L2): the code-memory readiness edge is
-        // NEVER an ordinary PPR edge. `None` is the traversal exclusion —
-        // strictly stronger than λ = 0.0 — so a note attached to a blocked
-        // symbol can never inherit relevance through a readiness dependency.
-        EdgeKind::Blocks => None,
-        // CMT-4 (ONE-1541): a brief discharging an obligation says nothing
-        // about retrieval relevance, so neither ruled direction is traversed.
-        EdgeKind::Fulfills | EdgeKind::DischargedBy => None,
-        EdgeKind::DerivedFrom => Some(0.2),
-        EdgeKind::Mentions => Some(0.6),
-        EdgeKind::About => Some(0.5),
-        EdgeKind::Supports => Some(1.0),
-        EdgeKind::Opposes => Some(0.0),
-        EdgeKind::ParticipatesIn => Some(1.0),
-        EdgeKind::Attached => Some(0.8),
-        EdgeKind::EmployedBy => Some(0.10),
-        EdgeKind::HasFacet => Some(0.05),
-        EdgeKind::FacetOf => Some(0.05),
-        EdgeKind::InWorld => Some(0.05),
-        EdgeKind::SetIn => Some(0.05),
-        // ARCH-0055 redirect edges: traversed like `supersedes` (λ 0.3) so
-        // shell mass reaches the canonical head.
-        EdgeKind::MergedInto => Some(0.3),
-        EdgeKind::SplitInto => Some(0.3),
-        // ONE-1414 cross-vault coreference: `None` IS the no-pooling
-        // contract. A `same_as` link asserts that two PERSON entities are one
-        // person; it does NOT merge their claim sets, so no PPR mass may
-        // cross it in either direction. Gate 1 below drops the hop outright,
-        // which is strictly stronger than λ = 0.0 (`opposes`): the edge also
-        // contributes nothing to the `s_out`/`s_in` normalizers, so its mere
-        // presence cannot even reweight a node's other hops. A traversable
-        // λ here — however small — would be exactly the claim pooling this
-        // ticket exists to prevent.
-        // Conversation topology is not semantic retrieval mass, and neither
-        // is a Retry reply's link to the reply it answers again.
-        EdgeKind::SameAs
-        | EdgeKind::Parent
-        | EdgeKind::SpawnedBy
-        | EdgeKind::AddressedTo
-        | EdgeKind::RepliesTo
-        | EdgeKind::Regenerates => None,
     }
 }
 /// Signed zero has one identity, just as it has one production computation.

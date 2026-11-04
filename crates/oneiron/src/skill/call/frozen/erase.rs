@@ -38,7 +38,7 @@ pub(crate) fn erase_callable_case_actor_in_txn(
     }
     let lower = actor.to_hex();
     let spellings = [lower.to_ascii_uppercase(), lower];
-    for (key, mut row) in cases_in_txn(&vault.store, wtxn)? {
+    for (key, mut row) in cases_in_txn(vault, wtxn)? {
         let mut named = row.caller == CaseCaller::Actor(*actor);
         if named {
             row.caller = CaseCaller::Erased;
@@ -117,8 +117,10 @@ pub(crate) fn erase_callable_cases_in_txn(
 }
 
 /// Whether the live attempt `receipt` names — still running, its pack
-/// receipt not sealed yet — read the erased row (FIX 12187): its recorded
-/// read set. `false` when the receipt names no attempt row, as before.
+/// receipt not sealed yet — read the erased row (FIX 12187): positive
+/// membership in its accumulated read set. Reports only union, so an
+/// incomplete set still proves a reported row was read; `None` (unknown)
+/// remains no positive evidence. `false` when the receipt names no row.
 fn live_attempt_names_source(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -132,7 +134,11 @@ fn live_attempt_names_source(
     let Some(record) = queue.get_in_txn(txn, attempt)? else {
         return Ok(false);
     };
-    Ok(record.source_rows().is_some_and(|rows| rows.contains(id)))
+    Ok(record
+        .read_set
+        .as_ref()
+        .and_then(|set| set.rows.as_deref())
+        .is_some_and(|rows| rows.contains(id)))
 }
 
 /// The attempt a pack receipt id names (`attempt:` + its hex), when it is one.
@@ -146,7 +152,8 @@ pub(super) fn receipt_attempt(receipt: &str) -> Option<crate::attempt_queue::Att
 
 /// Every frozen case. A row that no longer decodes names nothing either
 /// hook can match: it is deleted, and the count is said.
-fn cases_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<Vec<(Vec<u8>, FrozenCall)>> {
+fn cases_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Result<Vec<(Vec<u8>, FrozenCall)>> {
+    let store = &vault.store;
     let raw = CASES
         .iter_raw_from(store, wtxn, &[])?
         .collect::<Result<Vec<_>>>()?;
@@ -156,6 +163,11 @@ fn cases_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<Vec<(Vec<u8
         match CASES.decode_value(&value) {
             Ok(row) => rows.push((key, row)),
             Err(_) => {
+                // FIX 12085: the deleted row's lifted custody goes with it.
+                let place = format!("side:{}", CASES.decl().name);
+                let origin =
+                    crate::batch::secret_scan::side_row_origin(&place, &CASES.key_bytes(&key))?;
+                crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
                 delete_case_in_txn(store, wtxn, &key)?;
                 dropped += 1;
             }

@@ -5,12 +5,21 @@ use crate::claim::{claim_consolidatable, claim_correctable_generated, decode_cla
 use crate::dreamer_consolidation::routing::{CandidateKeys, PredicateKeyRules, candidate_keys};
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::{ConflictSet, PriorHead, PromotionCandidate};
-use crate::llm::{Scope, ScopeResource};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::{EntityId, Result};
+use oneiron_model::llm::{Scope, ScopeResource};
 use std::collections::BTreeSet;
 
 impl BranchResources<'_> {
+    /// The exact prior heads this branch admitted. A window slot's
+    /// finish compares its opening set against the re-opened branch's:
+    /// a prefix rendered over priors an earlier finish closed must
+    /// never parse against pins that no longer hold them (FIX 12487
+    /// round 1).
+    pub(in crate::dreamer_consolidation) fn admitted_prior_ids(&self) -> BTreeSet<EntityId> {
+        self.priors.keys().copied().collect()
+    }
+
     pub(super) fn admit_priors(&mut self) -> Result<()> {
         // Only explicit exact document rights can introduce persisted heads.
         // Signal/output projections never grant a stored-head write right.

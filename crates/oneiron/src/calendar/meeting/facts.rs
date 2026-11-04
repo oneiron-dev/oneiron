@@ -1,9 +1,9 @@
 //! Hydration under the caller's lane, shared by prep, check-in and transcript linking.
 use crate::calendar::PrepEvent;
 use crate::calendar::claims::{
-    CalendarStatus, CalendarTimeKind, PREDICATE_CALENDAR_ATTENDEE, PREDICATE_CALENDAR_STATUS,
-    PREDICATE_CALENDAR_TIME_KIND, decode_attendee_value, decode_status_value,
-    decode_time_kind_value,
+    CalendarStatus, CalendarTimeKind, PREDICATE_CALENDAR_ATTENDEE, PREDICATE_CALENDAR_PREP_OPT_IN,
+    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND, decode_attendee_value,
+    decode_prep_opt_in_value, decode_status_value, decode_time_kind_value,
 };
 use crate::claim::{ScopedRead, claim_surfaceable};
 use crate::ports::TombstoneStore;
@@ -85,6 +85,10 @@ pub(in crate::calendar) fn meeting_event_in_txn(
             return Ok(None);
         }
         if !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)? {
+            continue;
+        }
+        if body.predicate == PREDICATE_CALENDAR_PREP_OPT_IN {
+            result.internal_meeting_opt_in |= decode_prep_opt_in_value(&body.value)?;
             continue;
         }
         if body.predicate == PREDICATE_CALENDAR_ATTENDEE {

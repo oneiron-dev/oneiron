@@ -3,6 +3,7 @@
 //! Each door's own facade module defines the proof it admits on; this match only routes to it.
 //! The generated `HostDoorRow` names every host door that checks first, so the match has no
 //! catch-all arm and a new host door fails to compile until it names its check (FIX 1763).
+//! Checked verbs that project no host row keep main's owner-proof check in the fallback below.
 
 use oneiron::memory::MemoryResult;
 
@@ -28,7 +29,24 @@ pub(in crate::api::facade) fn door_admits(
 ) -> MemoryResult<()> {
     // Every other host door names its check below (FIX 1763).
     let Some(row) = Row::from_verb(verb) else {
-        return Ok(());
+        // Verbs main's match checks that project no host row (all under
+        // the owner's proof there) keep that check here instead of passing.
+        return match verb {
+            "vault.artifacts.live_preview.revoke_invite"
+            | "vault.artifacts.live_preview.revoke_share"
+            | "vault.authority.handoff_alarms.acknowledge"
+            | "vault.coach.training_offers.candidates.prepare"
+            | "vault.coach.training_offers.pilots.complete"
+            | "vault.coach.training_offers.pilots.prepare"
+            | "vault.federation.connect.world_privacy.export"
+            | "vault.federation.connect.world_privacy.receive"
+            | "vault.federation.coreference.share_consent"
+            | "vault.skills.attribution.evidence.record"
+            | "vault.skills.attribution.positive.retire" => {
+                owner_proof(auth, server, verb).map(drop)
+            }
+            _ => Ok(()),
+        };
     };
     match row {
         Row::VaultBookingConstraintTurn
@@ -225,6 +243,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultLegalHoldsList
         | Row::VaultLegalHoldsLog
         | Row::VaultLegalHoldsLiftAndErase
+        | Row::VaultLegalHoldsWithdrawErase
         | Row::VaultAgentsGrantsMint
         | Row::VaultAgentsGrantsRevoke
         | Row::VaultRepoGitPushMint
@@ -445,6 +464,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultFederationConnectDisconnect
         | Row::VaultFederationConnectExport
         | Row::VaultFederationConnectRejoin
+        | Row::VaultFederationConnectWorldPrivacyExport
+        | Row::VaultFederationConnectWorldPrivacyReceive
         | Row::VaultGuestsShare
         | Row::VaultGuestsReshare
         | Row::VaultGuestsRevoke
@@ -743,7 +764,9 @@ pub(in crate::api::facade) fn door_admits(
         }
         Row::VaultArtifactsReviewSlides => slide_reviewer(server, auth).map(drop),
         Row::VaultArtifactsAsk | Row::VaultArtifactsAdmit => artifact_asker(server, auth).map(drop),
-        Row::SelfMemoryDiaryQuery => diary_reader(server, auth).map(drop),
+        Row::SelfMemoryDiaryQuery | Row::SelfMemoryPadsRead | Row::SelfMemoryPadsAdminReads => {
+            diary_reader(server, auth).map(drop)
+        }
         Row::VaultDecisionsAsksAnswer
         | Row::VaultDecisionsAsksClimb
         | Row::SelfDecisionsAsks
@@ -785,7 +808,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultArtifactsRepoint
         | Row::VaultUsageEventsUndecodable
         | Row::VaultUsageEventsRemoveUndecodable
-        | Row::VaultUsageRepairReceipts => {
+        | Row::VaultUsageRepairReceipts
+        | Row::VaultConsentCreateAutoWeaveGrant => {
             crate::api::facade::owner_binding::caller_bound_admits(server, auth, verb)
                 .unwrap_or(Ok(()))
         }

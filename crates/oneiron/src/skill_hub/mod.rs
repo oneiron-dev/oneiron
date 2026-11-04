@@ -28,6 +28,7 @@ mod refinement_admission;
 mod refinement_custody;
 mod shared_delta;
 mod shared_gate;
+mod shared_merge_queue;
 mod site;
 pub use site::SITE_SEED_DIGEST_MISMATCH;
 mod site_folder;
@@ -74,6 +75,7 @@ pub use shared_delta::{SharedSkillDelta, SharedSkillLane};
 pub use shared_gate::{
     SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, SharedSkillRollback,
 };
+pub use shared_merge_queue::{SharedSkillMergeEntry, SharedSkillMergeState};
 
 #[cfg(test)]
 mod admission_tests;
@@ -101,6 +103,21 @@ pub use self::index::PREDICATE_SKILL_HUB_PROVENANCE;
 pub use self::package::{
     HubFile, HubIndexEntry, HubPackage, SkillCapabilitySurface, SkillPackageFormat,
 };
+
+/// The ordinary hub-folder provenance, including a site skill's import notes.
+/// Kept beside the travel rebuild so Folder-form imports lose nothing (FIX 3276).
+pub(crate) fn hub_folder_provenance(files: &[HubFile]) -> rmpv::Value {
+    let mut provenance = vec![(rmpv::Value::from("source"), rmpv::Value::from("hub-folder"))];
+    let site_notes = site_folder::import_notes(files);
+    if !site_notes.is_empty() {
+        provenance.push((
+            rmpv::Value::from(site_folder::SITE_NOTES_KEY),
+            rmpv::Value::Array(site_notes.into_iter().map(rmpv::Value::from).collect()),
+        ));
+    }
+    rmpv::Value::Map(provenance)
+}
+
 pub(crate) use folder::{declared_role_call, package_from_files, package_from_source};
 mod fork_source;
 pub use self::record::{
