@@ -2,8 +2,9 @@
 //!
 //! A plan an agent queued keeps that agent's run as its creator (OF-532): the
 //! cut states the creator's cap, and its agent TASKs run inside the
-//! creator's lease tree. Host-created planning stays root, linked to the
-//! conversation the host stamped, if any (OF-221).
+//! creator's lease tree. Host-created planning stays root, carrying its
+//! caller origin and optional conversation (FIX 4973, OF-221), frozen at
+//! first admission.
 use super::create_origin::{
     TaskCreateOrigin, put_wave_plan_origin_in_txn, require_creator_in_txn,
     task_create_origin_in_txn, wave_plan_origin_in,
@@ -67,7 +68,8 @@ pub struct VaultWaveTaskPort<'a> {
     attempt: Option<crate::attempt_queue::AttemptRecord>,
     /// The agent run that queued the plan, as its planning attempt's witness
     /// holds it; `None` or a root witness: host-created planning, whose
-    /// TASKs stay roots (a root witness carries only its conversation).
+    /// TASKs stay roots (a root witness carries its caller origin and
+    /// optional conversation).
     origin: Option<TaskCreateOrigin>,
     /// The launch approval a gated apply's cut waits on (OF-393); `None`:
     /// the ungated apply, whose cut lands at once.
@@ -928,6 +930,8 @@ impl Vault {
     }
 
     /// Queue a planning attempt. Planning itself remains host/agent code.
+    /// A native vault plan stays unwitnessed: a genuine unstamped root,
+    /// never retrofitted on retry.
     pub fn enqueue_wave_plan(
         &self,
         epic: EntityId,
@@ -935,10 +939,24 @@ impl Vault {
         constraints: serde_json::Value,
         now: u64,
     ) -> crate::Result<crate::attempt_queue::EnqueueOutcome> {
+        self.enqueue_wave_plan_with_origin(epic, objective, constraints, now, None)
+    }
+
+    /// [`Self::enqueue_wave_plan`] with an optional root witness, frozen
+    /// only when this enqueue mints the attempt (FIX 4973). `None` stays
+    /// unwitnessed; `Some` on an existing attempt keeps the first witness.
+    fn enqueue_wave_plan_with_origin(
+        &self,
+        epic: EntityId,
+        objective: &str,
+        constraints: serde_json::Value,
+        now: u64,
+        origin: Option<&TaskCreateOrigin>,
+    ) -> crate::Result<crate::attempt_queue::EnqueueOutcome> {
         let payload = serde_json::to_vec(&serde_json::json!({"epic": epic.to_hex(), "objective": objective, "constraints": constraints}))
             .map_err(|_| Error::InvariantViolation("wave request encoding"))?;
         self.with_write_txn_grouped(|txn| {
-            crate::ports::JobQueue::port_job_enqueue(
+            let outcome = crate::ports::JobQueue::port_job_enqueue(
                 self,
                 txn,
                 crate::attempt_queue::EnqueueAttempt {
@@ -948,7 +966,13 @@ impl Vault {
                     run_id: None,
                     now,
                 },
-            )
+            )?;
+            if let Some(origin) = origin {
+                if let crate::attempt_queue::EnqueueOutcome::Enqueued(record) = &outcome {
+                    put_wave_plan_origin_in_txn(self, txn, record.id, origin)?;
+                }
+            }
+            Ok(outcome)
         })
     }
 
@@ -1089,10 +1113,11 @@ impl Memory<'_> {
     /// exact creator in an engine witness, never in its payload; its cut
     /// states the creator's cap, and its agent TASKs run inside the
     /// creator's lease tree. Two creators asking for the same plan get two
-    /// planning attempts. With no creator bound the plan is root; one the
-    /// host stamped with its conversation (OF-221) keeps that conversation
-    /// in the same witness, so its TASKs land still linked to it. With
-    /// neither this is [`Vault::enqueue_wave_plan`].
+    /// planning attempts. With no creator bound the plan is root, carrying
+    /// its caller origin and optional conversation (FIX 4973, OF-221) in
+    /// the same witness, frozen at first admission; a retry keeps the
+    /// first witness. A native vault plan ([`Vault::enqueue_wave_plan`])
+    /// stays unwitnessed.
     pub fn enqueue_wave_plan(
         &self,
         epic: EntityId,
@@ -1101,9 +1126,14 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<crate::attempt_queue::EnqueueOutcome> {
         if self.task_host().is_none() && self.origin_conversation().is_none() {
-            return Ok(self
-                .vault()
-                .enqueue_wave_plan(epic, objective, constraints, now)?);
+            let origin = TaskCreateOrigin::root(self);
+            return Ok(self.vault().enqueue_wave_plan_with_origin(
+                epic,
+                objective,
+                constraints,
+                now,
+                Some(&origin),
+            )?);
         }
         let payload = serde_json::to_vec(&serde_json::json!({"epic": epic.to_hex(), "objective": objective, "constraints": constraints}))
             .map_err(|_| Error::InvariantViolation("wave request encoding"))?;
@@ -1136,9 +1166,9 @@ impl Memory<'_> {
                     now,
                 },
             )?;
-            let (crate::attempt_queue::EnqueueOutcome::Enqueued(record)
-            | crate::attempt_queue::EnqueueOutcome::Existing(record)) = &outcome;
-            put_wave_plan_origin_in_txn(self.vault(), wtxn, record.id, &origin)?;
+            if let crate::attempt_queue::EnqueueOutcome::Enqueued(record) = &outcome {
+                put_wave_plan_origin_in_txn(self.vault(), wtxn, record.id, &origin)?;
+            }
             Ok(outcome)
         })
     }
