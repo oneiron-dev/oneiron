@@ -12,7 +12,7 @@ use axum::response::Json;
 use axum::routing::{get, put};
 use oneiron::outbound::WeaveDigestChannelSetting;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
@@ -26,6 +26,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/digest-channels",
                 summary: "Every reader's digest channel override, in reader order. A reader with no row has the default: the companion agent sends the digest to the reader's primary route.",
                 row: None,
+                shape: None,
             },
             get(overrides),
         ),
@@ -35,6 +36,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/weave/digest-channels",
                 summary: "One reader's digest channel: `route` {kind: off} sends nothing, {kind: identity, channel_identity_ref} sends from that channel identity to the reader's live contact on it, null removes the row and restores the default. The inbox notice stays either way.",
                 row: None,
+                shape: Some(RestShape::json(
+                    weave_digest_channel_schema,
+                    weave_digest_channel_schema,
+                )),
             },
             put(set_override),
         ),
