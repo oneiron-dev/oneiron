@@ -705,7 +705,11 @@ fn lane_walks_world(
             continue;
         }
         matched = true;
-        if crate::gate::scoped_read_grant_reads_world(grant, world, key.authority_scope()) {
+        if lane.vault().store.gate_hooks.scoped_read_grant_reads_world(
+            grant,
+            world,
+            key.authority_scope(),
+        ) {
             return Ok(true);
         }
     }
