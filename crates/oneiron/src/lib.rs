@@ -47,6 +47,7 @@ pub mod off_record;
 pub(crate) mod overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
+pub(crate) mod room_codec;
 pub mod registry {
     //! Entity-type registry: defined in `oneiron-contracts` and named through
     //! `oneiron_base::registry`; the vault-backed pack byte map stays here.
