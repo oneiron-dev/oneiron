@@ -11,6 +11,13 @@ const OWNED: [&str; 7] = [
     PREDICATE_CALENDAR_ATTENDEE,
     PREDICATE_CALENDAR_MEETING_LINK,
 ];
+
+/// The new property claims one admission pass admits for one event (FIX
+/// 11997). An event past it, a very large attendee set most of all, is
+/// signalled, and a queued continuation admits the rest the same way;
+/// nothing is refused or cut.
+pub(in crate::calendar) const CALENDAR_PROPERTY_ADMISSIONS_PER_PASS: usize = 500;
+
 pub(super) fn preflight(event: &ParsedVEvent) -> crate::Result<()> {
     for (predicate, value) in values(event) {
         validate_calendar_claim_value(predicate, &value)?;
@@ -18,14 +25,20 @@ pub(super) fn preflight(event: &ParsedVEvent) -> crate::Result<()> {
     Ok(())
 }
 
+/// Reconciles `event`'s properties from `source_prefix` on `event_ref`:
+/// each value the event carries and no live claim holds is admitted through
+/// `admit`, at most `budget` of them when one is given, and each live claim
+/// the event no longer carries is retracted. Answers how many values past
+/// the budget are still owed; a later pass over the same event admits them.
 pub(in crate::calendar) fn reconcile<E: From<crate::Error>>(
     vault: &Vault,
     event_ref: EntityId,
     event: &ParsedVEvent,
     source_prefix: &str,
     now: u64,
+    budget: Option<usize>,
     mut admit: impl FnMut(&str, Value) -> Result<EntityId, E>,
-) -> Result<(), E> {
+) -> Result<usize, E> {
     let desired = values(event);
     let mut live = Vec::new();
     for id in vault.claims_for_subject(&event_ref)? {
@@ -52,12 +65,18 @@ pub(in crate::calendar) fn reconcile<E: From<crate::Error>>(
             live.push((id, body.predicate, body.value));
         }
     }
+    let (mut admitted, mut owed) = (0_usize, 0_usize);
     for (predicate, value) in &desired {
         if !live
             .iter()
             .any(|(_, pred, old)| pred == predicate && old == value)
         {
+            if budget.is_some_and(|budget| admitted >= budget) {
+                owed += 1;
+                continue;
+            }
             admit(predicate, value.clone())?;
+            admitted += 1;
         }
     }
     for (id, predicate, value) in live {
@@ -68,7 +87,7 @@ pub(in crate::calendar) fn reconcile<E: From<crate::Error>>(
             vault.retract_claim(&id, now)?;
         }
     }
-    Ok(())
+    Ok(owed)
 }
 fn values(event: &ParsedVEvent) -> Vec<(&'static str, Value)> {
     let p = &event.properties;
