@@ -74,7 +74,8 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
     {
         record.payload = payload;
     }
-    let stored = crate::attempt_queue::encode_admitted_signal_record(vault, txn, &mut record)?;
+    let stored =
+        crate::store::attempt_record_codec::encode_admitted_signal_record(vault, txn, &mut record)?;
     vault.store.attempt_records.put(txn, key, &stored)?;
     Ok(match hit(key, &stored) {
         Some(left) => Done::Propose(LiftCause::NoDoor, left),

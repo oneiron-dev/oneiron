@@ -688,7 +688,7 @@ fn note_diary_author(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
-) -> Result<Option<crate::note::NoteActor>> {
+) -> Result<Option<crate::store::note_body::NoteActor>> {
     #[cfg(feature = "sync")]
     let body = crate::entity_doc::resolve_record_body(&vault.store, rtxn, id, body)?;
     #[cfg(not(feature = "sync"))]

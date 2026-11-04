@@ -139,6 +139,7 @@ pub mod attempt_inputs;
 pub mod attempt_lease;
 pub mod attempt_manifest;
 pub mod attempt_outcomes;
+pub(crate) mod attempt_payload_response;
 pub(crate) mod attempt_payload_retire;
 pub(crate) mod attempt_payload_route;
 pub mod attempt_read_producer;
@@ -177,6 +178,8 @@ mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
 pub(crate) mod attempt_operations;
 pub(crate) use attempt_operations::StoreAttemptOperations;
+pub(crate) mod core_write_operations;
+pub(crate) use core_write_operations::StoreCoreWriteOperations;
 pub(crate) mod actor_scrubs;
 pub use actor_scrubs::StoreActorScrubs;
 pub(crate) mod critical_confirm_record;
@@ -201,6 +204,9 @@ pub mod model_score_diff;
 pub(crate) mod model_step_response_carriage;
 pub mod model_step_submission;
 pub(crate) mod model_stream_row;
+pub mod note_body;
+pub mod note_kind;
+pub mod outbound_actor;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
 pub(crate) mod output_decay;
@@ -310,6 +316,7 @@ pub mod site_skill_exposure;
 pub mod skill_attribution_evidence;
 pub(crate) mod text_index;
 pub(crate) mod vector_index;
+mod vector_index_dbs;
 pub mod workflow_definition;
 
 pub use scan_checks::ScanCheck;
@@ -577,19 +584,28 @@ pub mod repo_proposal_record;
 
 pub mod repo_import_predicate;
 
-pub(crate) mod task_authority_guard;
-pub(crate) mod vad_annotation;
+pub(crate) mod habit_streak;
+pub(crate) mod own_rate_rows;
+pub mod persona_snapshot_record;
 
-pub(crate) mod container_output;
-pub(crate) mod live_speaker_calls;
-pub mod record_ref;
-
-pub(crate) mod identity_redirect_rows;
+pub mod query_health;
+pub(crate) mod query_memo_lifetime;
+pub mod skill_source_index;
+pub mod snapshot_catalog;
+pub(crate) mod snapshot_ledger;
+pub(crate) mod snapshot_lifecycle;
 
 pub(crate) mod authority_rows;
 pub mod channel_class;
 pub mod claim_source_ranking;
 pub mod code_document_receipt;
+pub(crate) mod container_output;
+pub(crate) mod identity_redirect_rows;
+pub(crate) mod live_speaker_calls;
+pub mod record_ref;
+pub(crate) mod task_authority_guard;
+pub(crate) mod vad_annotation;
+pub(crate) use oneiron_store::vector_insert_plan;
 pub(crate) mod consent_bound;
 pub(crate) mod conversation_summary;
 pub(crate) mod gate_metrics;
@@ -603,7 +619,6 @@ pub(crate) mod record_links;
 pub(crate) mod record_references;
 pub(crate) mod scan_count;
 pub(crate) mod skill_resident;
-pub(crate) mod vector_insert_plan;
 
 pub(crate) mod host_issuer_seed;
 pub(crate) mod principal_record;
