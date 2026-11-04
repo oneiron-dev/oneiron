@@ -133,6 +133,7 @@ pub(crate) mod attempt_payload_retire;
 pub(crate) mod attempt_payload_route;
 pub mod attempt_read_producer;
 pub mod attempt_record;
+pub(crate) mod attempt_record_codec;
 pub(crate) mod attempt_retention;
 pub mod attempt_result;
 pub mod attempt_run_signal;

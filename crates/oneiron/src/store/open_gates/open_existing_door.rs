@@ -443,7 +443,7 @@ impl Store {
         let mut attempts = Vec::new();
         for row in crate::ports::JobQueueRead::port_job_rows(self, &wtxn, None)? {
             let (id, raw) = row?;
-            attempts.push(crate::attempt_queue::decode_record(&raw, id)?);
+            attempts.push(crate::store::attempt_record_codec::decode_record(&raw, id)?);
         }
         for attempt in &attempts {
             self.put_attempt_run_index_in_txn(
