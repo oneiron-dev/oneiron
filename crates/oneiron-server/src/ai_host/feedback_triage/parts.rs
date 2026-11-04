@@ -7,8 +7,8 @@
 use oneiron::EntityId;
 use oneiron::ModelId;
 use oneiron::feedback::{
-    FeedbackTriageInput, FeedbackTriageNodeInput, FeedbackTriagePin, FeedbackTriageSourceRef,
-    FeedbackTriageSpan, FeedbackTriageStep,
+    FeedbackTriageInput, FeedbackTriageNodeInput, FeedbackTriageParkOutcome, FeedbackTriagePin,
+    FeedbackTriageSourceRef, FeedbackTriageSpan, FeedbackTriageStep,
 };
 use oneiron::skill::LoadedSkillPack;
 use serde::Serialize;
@@ -19,6 +19,7 @@ use crate::server::SyncServer;
 
 /// The input one request may fill: the model's window less the output it
 /// reserves.
+#[derive(Clone)]
 pub(super) struct Window {
     /// The model whose window it is.
     pub(super) model: String,
@@ -276,14 +277,16 @@ pub(super) fn begin(
         model: window.model,
         input_tokens: window.input_tokens,
     };
-    run.server
-        .vault()
-        .park_coach_feedback_triage(
-            run.admitted,
-            FeedbackTriageStep::Generation { pin, spans },
-            run.now,
-        )
-        .map(drop)
+    match run.server.vault().park_coach_feedback_triage(
+        run.admitted,
+        FeedbackTriageStep::Generation { pin, spans },
+        run.now,
+    )? {
+        FeedbackTriageParkOutcome::Parked(_) => Ok(()),
+        FeedbackTriageParkOutcome::Ready(_) => Err(unavailable(
+            "feedback triage park outcome does not match its step",
+        )),
+    }
 }
 
 /// An unanswered part's span cut again for a changed window; `None` while
