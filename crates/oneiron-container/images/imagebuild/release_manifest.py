@@ -57,8 +57,9 @@ GUEST_RUNTIME_REVISION = 1
 GUEST_RUNTIME_DESCRIPTOR = "usr/lib/oneiron/guest-runtimes/manifest.json"
 VAULT_INIT = "usr/sbin/oneiron-vault-init"
 # The first Linux release that offers each Landlock ABI (kernel
-# Documentation/userspace-api/landlock.rst). The fence runs on the host
-# kernel in the OCI form, so its floor is the host's kernel floor.
+# Documentation/userspace-api/landlock.rst). The fence's floors are the
+# guest's needs: a container shares the host kernel, while a microVM guest
+# runs its own.
 LANDLOCK_KERNEL = {1: "5.13", 2: "5.19", 3: "6.2", 4: "6.7", 5: "6.10", 6: "6.12"}
 
 
@@ -436,6 +437,8 @@ def emit(model: Model, work: Path, variant: str, *, kernel: Path | None, signer_
         "host": {
             # The vault boots only as a microVM; every other variant's OCI form runs without KVM.
             "kvm": variant == "vault",
+        },
+        "guest": {
             "kernel_floor": LANDLOCK_KERNEL[floor] if floor is not None else None,
             "landlock_abi_floor": floor,
             "seccomp_user_notify": fenced,

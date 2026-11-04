@@ -71,6 +71,15 @@ pub(crate) fn load_or_mint_client_id_in_txn(
     }
 }
 
+/// Drops the prior install's client id during an explicit machine-identity reset.
+pub(crate) fn drop_client_id_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    CLIENT_ID.delete(store, wtxn, &())?;
+    Ok(())
+}
+
 /// Reads `m:client_id` in a read transaction when present.
 ///
 /// Missing rows return `Ok(None)` so callers can explicitly decide whether to
