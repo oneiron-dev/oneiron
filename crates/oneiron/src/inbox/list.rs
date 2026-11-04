@@ -189,7 +189,11 @@ impl InboxMarkWriteScope {
                 if !own {
                     return Ok(false);
                 }
-                if crate::federation::record_scope::has_stored_position(&vault.store, txn, id)? {
+                if vault
+                    .store
+                    .scope_stamps
+                    .has_stored_position(&vault.store, txn, id)?
+                {
                     vault.authorize_shared_content_write_in_txn(txn, id, &memory.write_actor())?;
                 }
                 Ok(true)
