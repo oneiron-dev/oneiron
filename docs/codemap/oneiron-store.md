@@ -26,19 +26,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/retrieval_affect.rs` | src | s | 1 struct · 3 fn · 3 const | AffectRetrievalPolicy | Per-vault read-side affect retrieval policy |
 | `src/config/tagging.rs` | src | s | 2 struct · 1 enum · 9 fn · 7 const | TaggingMarkerConfig, TaggingMode, TaggingTraceHistory | Tagging marker configuration and identity validation |
 | `src/connector_key_status.rs` | src | s | 1 enum · 2 fn | ConnectorKeyStatus | Connector-key lifecycle status and its pinned wire strings |
+| `src/consolidation_reader.rs` | src | s | 1 enum · 1 fn · 1 const | ConsolidationReader | The readers that consolidate a claim: the vocabulary the engine's consolidation check and the store layer's… |
 | `src/conversation_record.rs` | src | s | 7 struct · 4 enum · 3 fn · 1 const | AddressMode, AppendFailure, AppendRecord, AppendedRecord, DagPage, DagPageRequest, DagReplyTarget, QuoteSpan +3 | Door inputs and snapshot results |
 | `src/core_write/batch.rs` | src | s | 4 struct · 1 enum | CoreBatchCommit, CoreBatchEntityInput, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt | The `vault.batch` row's input and receipt types (OF-181) |
 | `src/core_write/conversations.rs` | src | s | 3 struct · 1 fn | ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt | The `vault.conversations.create` and `vault.conversations.turns.create` rows' input and receipt types (OF-181) |
 | `src/core_write/dag.rs` | src | s | 3 struct · 1 enum · 1 fn | CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt | The `vault.conversations.records.append` row's input and receipt types (OF-181) and the append door's input… |
 | `src/core_write/mod.rs` | src | s | 1 mod · 4 re-export | — | Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages… |
 | `src/core_write/shape.rs` | src | m | 2 struct · 2 enum · 14 fn · 5 const | AnnouncementAuthority, CoreWriteRefusal, CoreWriteTextField, CoreWriteTimes | The shape every core entity write shares: its id, its interval, its announcement-normalized body and its… |
+| `src/critical_confirm_retry.rs` | src | s | 2 struct · 3 fn · 1 type · 2 const | ConfirmDemotionRetries, ConfirmDemotionRetry | The expiry walk's backoff state for a timeout demotion that keeps failing (FIX 12079): a row whose demotion… |
 | `src/embedding_vocabulary.rs` | src | s | 1 struct · 2 enum · 7 fn · 2 const | EmbeddingDevice, EmbeddingProvenance, InputKind | Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and… |
 | `src/file_secret_marks.rs` | src | s | 1 struct · 2 enum · 5 fn · 2 type · 2 const | KeySpan, MemberStep, SecretSight | Value-free file-mask paths, read visibility, and byte-span transformations |
 | `src/identity_hints.rs` | src | s | 1 fn | — | Per-kind declared identity fields (human-facing identity hints) |
 | `src/index_keys.rs` | src | s | 3 fn | — | Byte layouts of the edge, temporal and type index keys |
 | `src/key_material.rs` | src | s | 1 struct · 1 enum · 4 fn | WorldKeyDestroyCause, WorldKeyDestruction | Guarded key derivation, OS entropy, and the world-key refusal constructor |
-| `src/lib.rs` | src | s | 29 mod | — | The store layer of the oneiron engine |
+| `src/lib.rs` | src | s | 35 mod | — | The store layer of the oneiron engine |
 | `src/long_interval.rs` | src | s | 1 const | — | The occurrence span past which a stored record is a long interval |
+| `src/manifest_origin_keys.rs` | src | s | 2 fn | — | The row keys of a policy manifest's trusted-origin and seeded-confidence side tables, spelled for the… |
 | `src/model_decision/answer_actor.rs` | src | s | 1 enum · 4 fn | AnswerActor | An answer actor identity, including its erased state |
 | `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 50 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/model_decision/codec.rs` | src | s | 7 fn · 3 mod | — | Canonical entity references for typed-decision wire records |
@@ -59,6 +62,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/overlay_db/merge.rs` | src | m | 4 struct · 11 crate-vis | MergedPrefixRows, MergedRows, PrefetchedMergedRows, StrMergedRows | Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and… |
 | `src/overlay_db/mod.rs` | src | s | 3 mod · 1 re-export | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
 | `src/overlay_db/tests.rs` | test | s | — | — | — |
+| `src/policy_scoped_grant.rs` | src | s | 1 struct | PolicyScopedGrant | One scoped grant row of a policy manifest, as the manifest fold decodes it |
+| `src/project_depth_record.rs` | src | s | 2 struct · 2 fn · 1 const | ProjectBirthOwnerProof, ProjectDepthBirth | A project's depth birth record, as a POLICY_MANIFEST contribution carries it |
+| `src/proposal_observation_record.rs` | src | s | 1 struct | ProposalPolicySource | The policy source behind a proposal submission's advisory threshold, as the proposal observation records it |
 | `src/receive_scan.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 const | PushedBlob, ReceiveBlobKind, ReceiveScanHit | Pushed-blob scan inputs, value-free hits, and the receive-pack effector name |
 | `src/retained_memory.rs` | src | s | 1 trait | RetainedCharge | Host-owned retained-memory accounting for in-memory storage |
 | `src/run_write_token.rs` | src | s | 1 struct · 5 fn | RunWriteToken | A leased agent run's write identity, as the engine's run-write envelope carries it with each write |

@@ -20,9 +20,9 @@
 
 use zeroize::Zeroizing;
 
-use crate::store::host_issuer_seed::HOST_ISSUER_SEED_BYTES;
 use crate::error::{Error, Result};
 use crate::store::Store;
+use crate::store::host_issuer_seed::HOST_ISSUER_SEED_BYTES;
 use crate::store::key_custody::{
     CustodyBinding, CustodyKind, CustodyPlan, CustodySecret, CustodySubject, EntryState,
     LocalCustody, custody_present,
