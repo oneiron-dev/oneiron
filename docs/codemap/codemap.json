@@ -26573,6 +26573,7 @@
      "path": "src/dreamer_consolidation/person_about/sources.rs",
      "purpose": "The `about` line a reader sees, with the CLAIM ids it stands on (FIX 3515)",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -49543,7 +49544,7 @@
      "purpose": "MESSAGE doors adapt typed calls to the existing witness and stream programs",
      "surface": {
       "crate-vis": 1,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -104647,7 +104648,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 6,
-      "fn": 17,
+      "fn": 18,
       "struct": 5
      }
     },
@@ -109436,8 +109437,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/api/ai/chat/segments/retry.rs",
-     "purpose": "A reused Retry's fresh session metadata and post-save successor",
+     "path": "src/api/ai/chat/segments/actions.rs",
+     "purpose": "A reused turn action's fresh session metadata and post-save successor",
      "surface": {
       "crate-vis": 4
      }
