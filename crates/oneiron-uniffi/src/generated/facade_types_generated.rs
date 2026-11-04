@@ -37183,6 +37183,8 @@ pub enum RepoProposalStatus {
     Failed,
     #[serde(rename = "Rejected")]
     Rejected,
+    #[serde(rename = "Superseded")]
+    Superseded,
 }
 
 /// `oneiron::code_document::review_views::CodeProposedStamp`.
@@ -51262,6 +51264,8 @@ pub enum FatalLlmError {
     LabelRead(LabelReadFailure),
     #[serde(rename = "ResponseErased")]
     ResponseErased,
+    #[serde(rename = "JobLost")]
+    JobLost,
 }
 
 /// `oneiron::llm::step::public::ModelStepFailureClass`.
