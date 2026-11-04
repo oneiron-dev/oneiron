@@ -12,10 +12,8 @@ use super::{
 use crate::entity_id::bytes_to_hex_lower;
 use crate::learning_setting::{SettingSpec, setting_value};
 use crate::limit_ask::EngineLimit;
-use crate::side_table::{self, Named, SideTable};
 use crate::store::{ResponseFamily, ResponseRead};
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
-use serde::{Deserialize, Serialize};
 
 mod erase;
 pub(super) use erase::run_sources;
@@ -23,8 +21,8 @@ pub(crate) use erase::{
     centroid_evidence_carriage, centroid_evidence_owners, erase_centroid_source_in_txn,
 };
 
-const EVIDENCE: SideTable<[u8; 32], CentroidEvidence, Named> =
-    SideTable::new(&side_table::SELF_HEAL_CENTROID_EVIDENCE);
+use crate::store::centroid_evidence::{CentroidEvidence, EVIDENCE, VectorEvidence};
+pub(crate) use crate::store::centroid_evidence::snapshot_live_in_txn;
 
 /// The cosine a T2a candidate must reach against its corpus's centroid (FIX
 /// 2078): an owner-steered catalog row over every cosine, -1 to 1.
@@ -34,23 +32,6 @@ pub const DETECTOR_CENTROID_MIN_SIMILARITY: SettingSpec = SettingSpec {
     max: 1.0,
     seed: 0.8,
 };
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct VectorEvidence {
-    id: [u8; 16],
-    vector: Vec<f32>,
-}
-
-/// A versioned, immutable copy of every byte used by the centroid verdict.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct CentroidEvidence {
-    version: u8,
-    run: RetrievalRunRecord,
-    candidate: VectorEvidence,
-    labeled: Vec<VectorEvidence>,
-    min_similarity: f32,
-    similarity: f64,
-}
 
 /// One pass's T2a corpus for one family (FIX 2078): every entity a minted
 /// T2's live reviewed-positive examples retrieved that holds a vector, by id,
@@ -81,38 +62,6 @@ pub struct CentroidReplay {
     pub min_similarity: f32,
     pub similarity: f64,
     pub matched: bool,
-}
-
-/// Read-time custody of the immutable centroid inputs used by a tier-1
-/// observation. The producer performs the full replay check before minting.
-/// A snapshot with an erased source is not live.
-pub(crate) fn snapshot_live_in_txn(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    hash: &[u8; 32],
-) -> Result<bool> {
-    let Some(raw) = EVIDENCE.get_bytes(store, txn, hash)? else {
-        return Ok(false);
-    };
-    // A snapshot a source's erase reached holds its erased marker, live or
-    // restored from an image.
-    let ResponseRead::Present(raw) = ResponseRead::of(
-        ResponseFamily::CentroidEvidence,
-        &EVIDENCE.key_bytes(hash),
-        &raw,
-    ) else {
-        return Ok(false);
-    };
-    if blake3::hash(raw).as_bytes() != hash {
-        return Ok(false);
-    }
-    let evidence: CentroidEvidence =
-        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
-    let canonical = rmp_serde::to_vec_named(&evidence)
-        .map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
-    Ok(evidence.version == 1
-        && raw == canonical.as_slice()
-        && erase::erased_source_in_txn(store, txn, &evidence.sources())?.is_none())
 }
 
 /// A T2a corpus's revision (FIX 2078): its threshold, then each label, by id, with its vector.

@@ -116,37 +116,38 @@ pub(crate) fn run_pending_legacy_rebuild(
     Ok(())
 }
 
-/// A fresh node's neighbour search, run under a read snapshot before the
-/// write transaction opens (RESEARCH-1115 Bend 2), so the writer only writes
-/// edges. It stands only while the transaction's graph is the graph it
-/// searched: same node count, entry point and vector version, no earlier graph
-/// write in the batch, and every chosen neighbour still present.
-pub(crate) struct InsertPlan {
-    vector_version: u64,
-    count: u64,
-    entry_point: EntityId,
-    vector: Vec<f32>,
-    /// Every neighbour list the search expanded: the beam is a function of
-    /// these lists, the entry point and the vectors it scored.
-    expanded: ExpandedLists,
-    selected: Vec<EntityId>,
+pub(crate) use crate::store::vector_insert_plan::InsertPlan;
+
+pub(crate) trait InsertPlanSearch: Sized {
+    fn search(
+        store: &impl ManifestDbs,
+        config: &VaultConfig,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        vector: &[f32],
+    ) -> Option<Self>;
+
+    fn try_search(
+        store: &impl ManifestDbs,
+        config: &VaultConfig,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        vector: &[f32],
+    ) -> Result<Option<Self>>;
+
+    fn stands(
+        &self,
+        store: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+        state: (&[f32], u64, EntityId),
+    ) -> bool;
 }
 
-impl std::fmt::Debug for InsertPlan {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InsertPlan")
-            .field("count", &self.count)
-            .field("expanded", &self.expanded.len())
-            .field("selected", &self.selected.len())
-            .finish_non_exhaustive()
-    }
-}
-
-impl InsertPlan {
+impl InsertPlanSearch for InsertPlan {
     /// Searches the committed graph for `id`'s neighbours. `None` when the
     /// insert is not a fresh one into a live, non-empty graph, or when the
     /// search fails: the transaction's own search then decides.
-    pub(crate) fn search(
+    fn search(
         store: &impl ManifestDbs,
         config: &VaultConfig,
         rtxn: &RoTxn<'_>,
