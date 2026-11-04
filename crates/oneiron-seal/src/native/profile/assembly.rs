@@ -182,6 +182,18 @@ async fn fetch_timestamp_token(
         let mut nonce = [0u8; 16];
         rsa::rand_core::OsRng.fill_bytes(&mut nonce);
         let req_der = tsp::build_request(imprint, &nonce)?;
+        // Url owns only its serialized String; keep both copies admitted through fetch.
+        let content_type = "application/timestamp-query";
+        let metadata_bytes = endpoint
+            .url
+            .as_str()
+            .len()
+            .saturating_add(content_type.len());
+        let metadata_hold = ctx
+            .limits
+            .memory
+            .hold(metadata_bytes)
+            .map_err(|refusal| refusal.seal_error(SealStage::Timestamp))?;
         let response = ctx
             .fetcher
             .fetch(FetchRequest {
@@ -189,9 +201,10 @@ async fn fetch_timestamp_token(
                 url: endpoint.url.clone(),
                 method: FetchMethod::Post,
                 request_body: req_der,
-                content_type: Some("application/timestamp-query".to_string()),
+                content_type: Some(content_type.to_owned()),
             })
             .await;
+        drop(metadata_hold);
         let resp = match response {
             Ok(resp) => resp,
             Err(FetchError::Memory(refusal)) => {
