@@ -73,8 +73,11 @@ pub struct PackStats {
     pub deadline_exceeded: bool,
 }
 
-pub use crate::serialize::pack_accounting::{PackItemAccounting, PackItemAccountingReason, PackItemTokenStats, PackSectionTokenStats, PackTokenStats};
 pub(crate) use crate::serialize::pack_accounting::{PackCriticalAccounting, PackWorldShare};
+pub use crate::serialize::pack_accounting::{
+    PackItemAccounting, PackItemAccountingReason, PackItemTokenStats, PackSectionTokenStats,
+    PackTokenStats,
+};
 
 /// A fully hydrated context pack ready for serialization or programmatic use.
 #[derive(Debug, Clone)]

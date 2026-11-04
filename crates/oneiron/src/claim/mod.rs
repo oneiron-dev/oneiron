@@ -46,22 +46,17 @@
 //!   supersession/retraction/demotion doors.
 //! * `expression_preference` — the typed expression-preference write surface.
 
-pub mod dispatch_target;
 pub(crate) mod dispatch_input;
+pub mod dispatch_target;
 pub(crate) use dispatch_input as widen_record;
-pub mod retrieval_scope;
-pub mod consult_payload_ref;
 mod aging_profiles;
-pub mod code_instruction;
 mod authorship;
+pub mod code_instruction;
+pub mod consult_payload_ref;
+pub mod retrieval_scope;
 pub(crate) use authorship::claim_author;
-pub mod learning_predicate;
-pub mod learning_evidence;
-pub mod maintenance_kind;
-pub mod learning_estimate;
 mod core_types;
 pub mod corpus_scope;
-pub mod served_lifecycle;
 mod decay;
 mod deferred;
 mod demotion;
@@ -70,6 +65,11 @@ mod expression_archive;
 mod expression_preference;
 mod history_handoff;
 mod history_pin_exchange;
+pub mod learning_estimate;
+pub mod learning_evidence;
+pub mod learning_predicate;
+pub mod maintenance_kind;
+pub mod served_lifecycle;
 pub(crate) use history_pin_exchange::MachineHistoryRuntime;
 #[cfg(feature = "sync")]
 pub(crate) use history_pin_exchange::PinExchangeOutcome;
@@ -106,8 +106,8 @@ mod source_trust;
 pub(crate) mod supersession_diff;
 mod supersession_provenance;
 pub(crate) mod transition;
-mod write_target;
 pub mod world_access;
+mod write_target;
 
 pub use aging_profiles::ClaimAgingProfiles;
 pub use core_types::*;

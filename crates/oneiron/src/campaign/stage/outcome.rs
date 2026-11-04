@@ -15,8 +15,8 @@ use crate::campaign::claims::{CrmStageValue, EvidenceBasis, StageEvidenceClass};
 use crate::claim::claim_surfaceable;
 use crate::{EntityId, Result, Vault};
 
-pub use crate::memory::campaign_records::stage_results::NoShowRecoveryStep;
 pub use crate::memory::campaign_records::stage_results::NoShowRecoveryPlan;
+pub use crate::memory::campaign_records::stage_results::NoShowRecoveryStep;
 
 // ---------------------------------------------------------------------------
 // Calendar outcomes - read side only
