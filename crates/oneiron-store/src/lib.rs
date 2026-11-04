@@ -1,5 +1,6 @@
 //! The store layer of the oneiron engine.
 
+pub mod batch_op;
 pub mod bundle_generations;
 pub mod checkpoint_host_recipient;
 pub mod config;
