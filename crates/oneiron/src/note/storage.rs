@@ -98,6 +98,13 @@ pub(crate) fn snapshot(
     shallow: bool,
 ) -> Result<()> {
     let document = DocumentSlot::of(slot(vault, txn, id)?);
+    // The stamp tokens its changes past the stored version name, for the
+    // hold check (FIX 11965); with no stored version, every change's.
+    let stored = vault
+        .store
+        .port_document_row(txn, document, DocumentRow::StateVector)?;
+    let since = stored.and_then(|bytes| loro::VersionVector::decode(&bytes).ok());
+    super::token_uses::record_token_uses_in_txn(vault, txn, id, doc, since.as_ref())?;
     let bytes = if shallow {
         state_copy(doc)?
     } else {

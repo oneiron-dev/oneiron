@@ -35,6 +35,7 @@ mod files;
 mod guards;
 pub(super) mod persist;
 mod queue_review;
+pub(crate) mod resolve_handles;
 mod review;
 mod run;
 pub mod settlement;
@@ -126,6 +127,10 @@ pub struct RepoProposal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_review: Option<QueueReviewAdmission>,
     pub status: RepoProposalStatus,
+    /// The approved proposal this one resolves the lifted secret handles
+    /// of (FIX 2938), when it was minted for exactly that at landing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolves: Option<EntityId>,
     pub settlement: Option<settlement::RepoProposalSettlement>,
     pub operation_seq: Option<u64>,
     pub created_at: u64,
@@ -267,7 +272,8 @@ impl RepoProposal {
             }
             RepoProposalStatus::Proposed
             | RepoProposalStatus::Failed
-            | RepoProposalStatus::Rejected => ClaimApprovalStatus::Proposed,
+            | RepoProposalStatus::Rejected
+            | RepoProposalStatus::Superseded => ClaimApprovalStatus::Proposed,
         }
     }
     /// Its own catalog's unanimous critics. Only an explicit catalog makes a
@@ -370,6 +376,13 @@ impl Vault {
     /// A split verdict leaves the proposal and its recovery snapshot intact.
     pub fn apply_repo_proposal(&self, id: EntityId) -> Result<RepoMutationOutcome> {
         let row = self.repo_proposal(id)?.ok_or(Error::EntityNotFound)?;
+        // A superseded original lands as the successor that resolved it
+        // (FIX 2938): the same ask, on the row that carries the bytes.
+        if row.status == RepoProposalStatus::Superseded
+            && let Some(successor) = resolve_handles::successor_of(self, id)?
+        {
+            return self.apply_repo_proposal(successor);
+        }
         let repo = RepoRef::parse(&row.repo)?;
         let repo_root = resolve_mutable_repo_root(&repo)?;
         let _guard = lock_repository(&git_common_dir(&repo_root)?)?;
@@ -378,6 +391,26 @@ impl Vault {
         let mut row = PROPOSAL
             .get(&self.store, &txn, &id)?
             .ok_or(Error::EntityNotFound)?;
+        // A supersede that committed after this caller's first read still
+        // forwards (FIX 2938 race): recheck on the row reloaded under the
+        // repository lock, and forward after dropping the write transaction
+        // (the repository guard is re-entrant on this thread).
+        if row.status == RepoProposalStatus::Superseded {
+            drop(txn);
+            if let Some(successor) = resolve_handles::successor_of(self, id)? {
+                return self.apply_repo_proposal(successor);
+            }
+            return Err(invalid(
+                "proposal requires unanimous independent multi-critic acceptance",
+            ));
+        }
+        // Round-6 (review P1 sol:110): a retry that reaches an unconsumed
+        // resolved successor replays the mint-time custody admission on this
+        // transaction first: a secret or binding withdrawn after the mint
+        // refuses typed instead of landing the cached plaintext.
+        if row.resolves.is_some() && row.operation_seq.is_none() {
+            resolve_handles::revalidate_resolved_successor_in_txn(self, &txn, &row)?;
+        }
         if row.merge_stack.is_some() {
             return Err(invalid("stack-bound proposal requires its merge queue"));
         }
@@ -415,6 +448,11 @@ impl Vault {
         row.status = RepoProposalStatus::Approved;
         store(self, &mut txn, &row)?;
         txn.commit()?;
+        // A handle-bearing reviewed operation lands as its resolved
+        // successor (FIX 2938), never as the handle text itself.
+        if let Some(successor) = resolve_handles::resolved_successor(self, &row)? {
+            return self.apply_repo_mutation_approved(successor.request()?, successor.id);
+        }
         self.apply_repo_mutation_approved(row.request()?, id)
     }
 }

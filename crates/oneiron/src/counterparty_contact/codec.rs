@@ -7,7 +7,7 @@ use super::types::{
     KEY_CREATED_AT, KEY_FIRST_TOUCH, KEY_IDENTITY_REF, KEY_NOTES, KEY_OPT_OUT, KEY_OPT_OUT_REASON,
     KEY_OPT_OUT_RECEIPT_REASON, KEY_OPT_OUT_RECORDED_AT, KEY_PROMO_CONSENT, KEY_REVOKED_AT,
     KEY_SCHEMA_VERSION, KEY_STATUS, KEY_UPDATED_AT, MAX_COUNTERPARTY_BYTES, MAX_NOTE_BYTES,
-    MAX_NOTES, OPT_OUT_KEYS, PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+    OPT_OUT_KEYS, PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
     PREDICATE_COUNTERPARTY_CONTACT_CREATED_AT, PREDICATE_COUNTERPARTY_CONTACT_FIRST_TOUCH,
     PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF, PREDICATE_COUNTERPARTY_CONTACT_NOTES,
     PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT, PREDICATE_COUNTERPARTY_CONTACT_PROMO_CONSENT,
@@ -309,10 +309,8 @@ fn validate_notes_value(value: &Value) -> Result<()> {
         .map_err(|_| Error::InvalidClaimBody("counterparty_contact.notes invalid"))
 }
 
+/// Each note on its own; how many a contact keeps is the writer's (FIX 9773).
 pub(super) fn validate_notes(notes: &[String]) -> Result<()> {
-    if notes.len() > MAX_NOTES {
-        return Err(invalid_contact());
-    }
     for note in notes {
         validate_note(note)?;
     }

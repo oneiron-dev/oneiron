@@ -20,6 +20,7 @@ pub(super) mod cache_warmth;
 mod call_deadline;
 mod decision_posture;
 mod live_fork;
+mod model_call;
 mod shadow_capture;
 mod step_attempt;
 mod step_quota;
@@ -46,6 +47,7 @@ use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
 
 pub use call_deadline::CallDeadline;
+pub(crate) use model_call::ModelCallBinding;
 
 use super::cooldown::{
     Asked, FallbackRung, OfferCooldowns, ProbeBlocked, ProbePermit, Rest, leaves_device,
@@ -59,9 +61,9 @@ use super::source_admission::{self, SourceAdmission};
 use super::status::RungHealth;
 use super::walk::{Passed, Walk, ends_call, failure_kind, provider_down};
 
-/// A chat call's answer and the model of the rung that gave it.
+/// A chat call's answer and the binding of the rung that gave it (FIX 12743).
 type ServedFuture<'a> = std::pin::Pin<
-    Box<dyn std::future::Future<Output = LlmResult<(LlmResponse, ModelId)>> + Send + 'a>,
+    Box<dyn std::future::Future<Output = LlmResult<(LlmResponse, ModelCallBinding)>> + Send + 'a>,
 >;
 
 /// One rung: a provider's offer for one model, and the instruction prepended
@@ -1353,7 +1355,7 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         sources: Option<&dyn SourceAdmission>,
-    ) -> LlmResult<(LlmResponse, ModelId)> {
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         self.admits(&request)?;
         // The run is live until this call ends: the host stays awake for it.
         let _awake = oneiron_vault_contract::host_adapters::run_awake();
@@ -1412,7 +1414,7 @@ impl OfferLadder {
                 sent[index] = true;
                 match self.send(call, index, may_send, sources, &mut walk).await? {
                     Sent::Answer(response) => {
-                        return Ok((response, self.rungs[index].model.clone()));
+                        return Ok((response, ModelCallBinding::for_rung(&self.rungs[index])));
                     }
                     Sent::Failed | Sent::Held => {}
                     Sent::Stopped => return Err(self.ended(call, walk)),

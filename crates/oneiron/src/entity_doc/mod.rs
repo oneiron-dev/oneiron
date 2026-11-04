@@ -38,6 +38,8 @@ mod side_keys;
 mod storage;
 #[cfg(feature = "sync")]
 mod sweep;
+mod token_uses;
+pub(crate) use token_uses::engine_stamp_token;
 #[cfg(feature = "sync")]
 mod sync;
 pub(crate) use citation_floor::record_citation_floor_in_txn;
@@ -105,6 +107,19 @@ pub(crate) fn source_frontier_in_txn(
     let mut pin = head.incarnation.into_bytes();
     pin.extend_from_slice(&doc.frontier());
     Ok(Some(pin))
+}
+
+/// Resolve an active document's incarnation id in a caller-owned
+/// transaction, reading only its head row. An unmigrated row has none.
+pub(crate) fn source_incarnation_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &crate::EntityId,
+) -> crate::Result<Option<String>> {
+    if !storage::has_record_head(store, txn, entity)? {
+        return Ok(None);
+    }
+    Ok(Some(storage::head(store, txn, entity)?.incarnation))
 }
 
 use crate::error::{ArtifactError, Error};
