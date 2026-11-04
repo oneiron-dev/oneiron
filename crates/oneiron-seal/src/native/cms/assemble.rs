@@ -53,15 +53,18 @@ pub(crate) fn attr_signing_cert_v2(
     serial_der: &[u8],
     memory: &MemoryLedger,
 ) -> Result<Vec<u8>, SealError> {
-    // The 32-byte cert hash plus the issuer/serial copies, their TLV headers
-    // (at most 16 bytes each, nine TLVs), and the intermediate bodies, which
-    // together stay below twice the inputs plus headers; the slack covers the
-    // OID and SET/SEQUENCE wrappers and is admission-only.
+    // Nine issuer-sized buffers are live at once at the peak (`gn`,
+    // `is_body`, `issuer_serial`, `ess_body`, `ess_cert_id`, `certs_seq`,
+    // `signing_cert`, and `attribute`'s body plus returned TLV, each nesting
+    // the previous), plus the 32-byte cert hash, TLV headers (at most 16
+    // bytes each), and the OID/SET wrappers; the slack beyond the wrappers
+    // is admission-only.
     admit(
         issuer_name_der
             .len()
             .saturating_add(serial_der.len())
-            .saturating_add(512),
+            .saturating_mul(9)
+            .saturating_add(1024),
         memory,
     )?;
     let cert_hash = tlv(0x04, &sha256(signer_cert_der));
@@ -110,7 +113,12 @@ pub(crate) fn attr_ts_token(
     token_content_info_der: &[u8],
     memory: &MemoryLedger,
 ) -> Result<Vec<u8>, SealError> {
-    admit(token_content_info_der.len().saturating_add(128), memory)?;
+    // Two token-sized copies are live at once (`attribute`'s body plus the
+    // returned TLV); the slack covers the OID/SET wrappers and headers.
+    admit(
+        token_content_info_der.len().saturating_mul(2).saturating_add(128),
+        memory,
+    )?;
     Ok(attribute(&OID_ATTR_TS_TOKEN, token_content_info_der))
 }
 
