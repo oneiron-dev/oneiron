@@ -260,6 +260,16 @@ impl crate::Vault {
             Caller::DevMode => Judged::DevMode,
             Caller::Embedded => Judged::RecordedOwner(crate::vault::embedded_owner_actor_id()?),
         };
+        // Only a holder proof's judging spends a nonce in this writer; a
+        // caller that spends none takes no guard and is refused nothing new.
+        let _spend_guard = if matches!(
+            judged,
+            Judged::AttestedProof { .. } | Judged::HostProof { .. }
+        ) {
+            Some(crate::authority::slip_replay::spend_guard(self)?)
+        } else {
+            None
+        };
         let judge = |txn: &mut heed::RwTxn<'_>| self.judge_repair_caller_in_txn(txn, judged);
         let mut txn = self.store.env.write_txn()?;
         match super::floor_row_in_txn(&self.store, &txn)? {

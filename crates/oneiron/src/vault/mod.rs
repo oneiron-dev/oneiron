@@ -103,6 +103,11 @@ pub struct Vault {
     /// only: a close or a crash drops them.
     pub(crate) pending_owner_export_receipts:
         std::sync::Mutex<Vec<crate::share_travel::ExportTravel>>,
+    /// The holder-proof nonces an admission spent in memory before its
+    /// reply, whose rows land through the detached door (FIX 12023 W0). In
+    /// memory only, and one set per environment in this process, shared by
+    /// its handles.
+    pub(crate) spent_nonces: std::sync::Arc<crate::authority::SpentNonces>,
     /// One housekeeping pass at a time on this handle.
     pub(crate) housekeeping:
         std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
@@ -244,6 +249,16 @@ pub struct Vault {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
         std::sync::Mutex<Option<crate::store::retrieval_deadline::SlowRetrievalStage>>,
+}
+
+/// A vault's detached writes run before it closes (FIX 12023): those queued
+/// through its own doors (a call receipt's) need the vault itself, and run
+/// here, on the closing thread, in arrival order with the rest, before any
+/// part of the vault drops. The store's own drop then ends its leader.
+impl Drop for Vault {
+    fn drop(&mut self) {
+        self.store.finish_detached_writes(Some(&*self));
+    }
 }
 
 #[cfg(test)]

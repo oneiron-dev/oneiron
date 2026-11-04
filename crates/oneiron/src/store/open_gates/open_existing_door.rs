@@ -236,6 +236,7 @@ impl Store {
             #[cfg(not(unix))]
             _env: env,
             _registered_path: registered_path,
+            opened_with_writer_lease: false,
         };
         Ok(Self {
             entities: OverlayDb::canonical(core.raw.entities),

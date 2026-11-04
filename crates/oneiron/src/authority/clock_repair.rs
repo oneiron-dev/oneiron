@@ -270,6 +270,7 @@ impl crate::Vault {
                 self.admit_capability_slip_request_in_txn(txn, slip, timestamp, signature, nonce)?;
             self.bind_owner_credential_in_txn(txn, owner.clone(), verified)
         };
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         match floor_row_in_txn(&self.store, &txn)? {
             FloorRow::Whole(floor) => {
