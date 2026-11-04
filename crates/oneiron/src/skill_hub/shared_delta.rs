@@ -294,7 +294,7 @@ impl Vault {
                 "call reference must name a UTF-8 file in the exact skill tree",
             ));
         }
-        self.put_skill_record_in_txn(txn, fork, &record, occurred, learned_at)?;
+        self.put_skill_record_in_txn(txn, fork, &saved.record, occurred, learned_at)?;
         self.persist_hub_package_in_txn(txn, fork, &saved)?;
         self.scan_and_ingest_on_import_in_txn(
             txn,
