@@ -497,7 +497,15 @@ impl Vault {
                         // under a fresh token. A persistent single-shot
                         // failure is not a sequential regression; the
                         // single-shot error then replaces this one.
-                        let changes = docx::changes(&docx::read(&scratch)?, &live)?;
+                        // The full window from the import frontier, exactly the
+                        // pre-PR export: `scratch` already replayed earlier
+                        // groups, so a tail diff would drop their edits from
+                        // the original package (FIX 595 sol review).
+                        let import_state = docx::read(
+                            &doc.fork_at(&from)
+                                .map_err(|_| invalid("unknown body frontier"))?,
+                        )?;
+                        let changes = docx::changes(&import_state, &live)?;
                         if changes.is_empty() {
                             return Ok(None);
                         }
