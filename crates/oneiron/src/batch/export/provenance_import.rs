@@ -321,6 +321,11 @@ fn restore_cohort(
                 return Err(invalid("archive provenance ID collision"));
             }
             unchanged += 1;
+            // Blind-review P1 (REVIEW-4378-kimi): an existing row breaks the
+            // tied-prior chain — a later missing row must not re-name a prior
+            // this restore inserted before the on-disk row, which is already
+            // closed (ProvenanceClaimAlreadyClosed).
+            previous = None;
             continue;
         }
         let explicit_prior = previous.and_then(|(prior, prior_learned_at, prior_lifecycle)| {
