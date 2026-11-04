@@ -20227,6 +20227,7 @@ class OwedWakeHoldView(TypedDict):
     reason: str
     held_at: int
     expires_at: NotRequired[int | None]
+    expired: NotRequired[bool | None]
 class TurnProgramOwedWakeItem(TypedDict):
     registration: EntityId
     actor: EntityId
