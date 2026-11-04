@@ -42,6 +42,11 @@ const PROCEED: &str = "proceed";
 const HOLD: &str = "hold";
 pub(super) const USED: &str =
     "this invocation's ask was already used; call again with a new invocation";
+/// A consumed-but-unfinished WRITE's honest answer (FIX 1443): its outcome
+/// is unknown because its call never finished, so the retry must use a new
+/// invocation instead of meeting the misleading "already used".
+pub(super) const UNKNOWN: &str =
+    "this invocation's ask was used but its call never finished; call again with a new invocation";
 /// The most bytes of JSON a drained call's saved result keeps for its
 /// caller's retry. Encoding stops past it.
 pub(super) const MAX_SAVED_VERB_RESULT_BYTES: usize = 65_536;
@@ -203,7 +208,7 @@ pub(super) enum Retry {
 /// The proceed answer a resumed chain uses up in its own commit: the
 /// invocation's key and the ask it answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct AskToken {
+pub(crate) struct AskToken {
     key: [u8; 16],
     ask: EntityId,
     /// `<pack>/<hook>`: the asking hook.
@@ -215,6 +220,16 @@ impl AskToken {
     /// stays parked on its ask until they are back on.
     pub(super) fn parked(&self, invocation: InvocationId) -> VerbHookStop {
         pending(invocation, self.ask)
+    }
+
+    /// The invocation whose ask this token answers (chain-resume reopen path).
+    pub(super) fn key(&self) -> [u8; 16] {
+        self.key
+    }
+
+    /// The ask this token answers (chain-resume reopen path).
+    pub(super) fn ask(&self) -> EntityId {
+        self.ask
     }
 }
 
@@ -284,11 +299,47 @@ pub(super) fn retry(
         return skipped("this invocation belongs to another call");
     }
     if row.state == VerbAskState::Consumed {
-        return match &row.outcome {
-            Some(outcome) if same => Ok(Retry::Stop(completed(call.invocation, outcome)?)),
-            _ => skipped(USED),
+        if let Some(outcome) = &row.outcome {
+            if same {
+                return Ok(Retry::Stop(completed(call.invocation, outcome)?));
+            }
+            return skipped(USED);
+        }
+        // FIX 1443: a consumed-but-unfinished READ re-opens inline and
+        // resumes, while the same state on a WRITE answers Skipped with an
+        // honest unknown-outcome reason instead of "already used".
+        if row.domain == VerbDomain::Write {
+            return skipped(UNKNOWN);
+        }
+        let token = AskToken {
+            key,
+            ask: row.ask,
+            hook: row.hook.clone(),
         };
+        let reopened = vault.with_write_txn_grouped(|txn| reopen_in_txn(vault, txn, &token))?;
+        if !reopened {
+            return skipped(USED);
+        }
+        return resume_from(vault, call, &row, key, turn);
     }
+    resume_from(vault, call, &row, key, turn)
+}
+
+/// The Open-path resume construction, shared by a fresh Open row and a
+/// consumed-but-unfinished READ row re-opened inline (FIX 1443).
+fn resume_from(
+    vault: &Vault,
+    call: &VerbCall,
+    row: &VerbAsk,
+    key: [u8; 16],
+    turn: Option<&Arc<TaskWorkTurn>>,
+) -> Result<Retry> {
+    let skipped = |reason: &str| -> Result<Retry> {
+        Ok(Retry::Stop(VerbHookStop::Skipped {
+            hook: row.hook.clone(),
+            reason: reason.to_owned(),
+        }))
+    };
     let status = author_memory(vault, row.author, row.author_class, turn)
         .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
     let result = match status {
@@ -319,7 +370,7 @@ pub(super) fn retry(
         token: AskToken {
             key,
             ask: row.ask,
-            hook: row.hook,
+            hook: row.hook.clone(),
         },
     })
 }
@@ -343,6 +394,32 @@ pub(super) fn consume_in_txn(
     row.ready = false;
     ASKS.put(&vault.store, txn, &token.key, &row)?;
     credential::forget_in_txn(vault, txn, token.key)?;
+    Ok(true)
+}
+
+/// Re-opens the consumed ask `token` names (FIX 1431), in the same grouped
+/// write the caller holds: flips `Consumed` back to `Open` only when the row
+/// still names this ask and holds no outcome, else no-ops false. A retried
+/// call then resumes through the ordinary Resume path instead of meeting
+/// Skipped "already used". Re-opening restores the drain's `ready` mark for
+/// a row with a resume target, so a transient failure still leaves it ready
+/// for the next pass; a row with none keeps none, as the drain never runs
+/// it.
+pub(super) fn reopen_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    token: &AskToken,
+) -> Result<bool> {
+    let Some(mut row) = ASKS.get(&vault.store, txn, &token.key)? else {
+        return Ok(false);
+    };
+    if row.state != VerbAskState::Consumed || row.ask != token.ask || row.outcome.is_some() {
+        return Ok(false);
+    }
+    row.state = VerbAskState::Open;
+    row.consumed_at = None;
+    row.ready = row.resume.is_some();
+    ASKS.put(&vault.store, txn, &token.key, &row)?;
     Ok(true)
 }
 

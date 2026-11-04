@@ -16,15 +16,24 @@ side_tables! {
     /// One merge batch's proposals, worktree paths, and lifecycle state. Key: hex(repo identity) ":"
     /// hex64(batch id).
     MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_batch_accepts_masked];
+    /// One merge batch filed under a proposal, run work or run declaration it names, so a run's
+    /// enqueue, stage and observe read its own batches by key (FIX 7067). Key: hex(repo
+    /// identity) ":" kind ":" id ":" hex64(batch id).
+    MERGE_QUEUE_BATCH_INDEX: VaultMeta b"merge_queue:batch_index:v1:" Named Engine;
     /// One object store's checked queue configuration: the approved baseline, the plan frozen
     /// from it and the owner's queued check approval (FIX 6868). Key: hex(repo identity).
     MERGE_QUEUE_CHECK_CONFIG: VaultMeta b"merge_queue:check_config:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_check_config_accepts_masked];
     /// One requested queue init, check or diagnosis: its attempt, generation, status and
     /// receipts (FIX 6868). Key: hex(repo identity) ":" hex64(request digest).
     MERGE_QUEUE_CHECK_WORK: VaultMeta b"merge_queue:check_work:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_check_work_accepts_masked];
+    /// One checker receipt filed under its inputs digest and verdict, so a reused, bound or
+    /// sealed receipt is read by key (FIX 7349). Key: hex(repo identity) ":" inputs digest ":"
+    /// verdict ref (empty for none) ":" hex64(request digest).
+    MERGE_QUEUE_RECEIPT_INDEX: VaultMeta b"merge_queue:receipt_index:v1:" Named Engine;
     /// The vault's one opt-in review policy for merge queue work; no row lands on green (FIX
-    /// 8268). Key: ().
-    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored [accepts: crate::merge_queue::merge_queue_review_policy_accepts_masked];
+    /// 8268). Key: (). FIX 8519: this entry's scrub takes an erased setter's id out of it.
+    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored [accepts: crate::merge_queue::merge_queue_review_policy_accepts_masked]
+        => crate::merge_queue::erase_review_policy_actor_in_txn;
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;
@@ -181,6 +190,13 @@ side_tables! {
     /// provenance then blake3(ref_name). Key: id16 ":" hash32.
     ORIGIN_CODE_OPERATIONS: VaultMeta b"origin:code_operations:v1:" LegacyCompact
         => crate::origin::erase_code_operations_actor_in_txn;
+    /// Marker (empty): one retained received ref of an object store that the candidate intake
+    /// still reads, unresolved or resolved from a masked copy (FIX 7535). Key: hash32 (the store)
+    /// + id16 (the push provenance) + hash32 (blake3 of the ref name).
+    ORIGIN_CODE_PENDING: VaultMeta b"origin:code_pending:v1:" Raw;
+    /// Marker (empty): a received ref of an object store resolved to a candidate with this
+    /// incoming tip (FIX 7535). Key: hash32 (the store) + string (the tip's hex).
+    ORIGIN_CODE_RESOLVED_TIP: VaultMeta b"origin:code_resolved_tip:v1:" Raw;
     /// Stable Git commit projection (oid hex text) of one finalized engine CodeRevision. Key: string
     /// ":" id16.
     ORIGIN_ENGINE_EXPORT: VaultMeta b"origin:engine_export:v1:" Raw;
@@ -250,6 +266,10 @@ side_tables! {
     /// One batch of a push intent's per-ref progress, so settling a batch rewrites that batch
     /// alone. Key: string + id16 (the intent's key) + u64be (batch index).
     ORIGIN_RECEIVE_PACK_PROGRESS: VaultMeta b"origin:receive_pack_progress:v1:" Named;
+    /// Index (empty marker) of each received ref update by its exact (store, ref, old, new),
+    /// so an import finds its receive by key, never by a walk of the store's receipts (FIX
+    /// 7595). Key: hash32 (the update) + id16 (the push provenance).
+    ORIGIN_RECEIVED_UPDATE: VaultMeta b"origin:received_update:v1:" Raw;
     /// The OF-520 check one engine scan raised for one scope, once (`crate::scan_check`; the
     /// origin's scans came first). Key: u8 (scan) + the scope's bytes (a repository's id16, ...),
     /// or the u8 alone for a vault-wide scan.
@@ -633,6 +653,10 @@ side_tables! {
     /// made from one (FIX 7608 S3F): pending, or ready with its source proof. Node-local cache, no
     /// secret value. Key: u8 (owner kind) + id16.
     REPO_DERIVED_INDEX_COPY: VaultMeta b"repo_index:derived_copy:v1:" Named;
+    /// A source record a derived text was written from that a repo mark covered by its media
+    /// bytes, not its id, bound to that blob's whole BLAKE3, so it stays marked once erased as a
+    /// snapshot record does (FIX 10887). A hash, no value. Key: id16 (the source).
+    REPO_DERIVED_SOURCE_BLOB: VaultMeta b"repo_index:derived_source_blob:v1:" Named;
     /// FIX 6870: the portable repo id that stands for one CODE entity (value = 32 bytes). Key:
     /// id16 (CODE entity).
     REPO_MANIFEST_BY_CODE: VaultMeta b"repo_manifest:by_code:v1:" Raw;

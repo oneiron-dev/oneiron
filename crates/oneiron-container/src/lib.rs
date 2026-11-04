@@ -31,6 +31,8 @@ mod wire;
 #[cfg(target_os = "linux")]
 pub use launcher::launch as launch_fenced;
 #[cfg(target_os = "linux")]
+pub use linux::{landlock_abi, landlock_restrict, landlock_ruleset};
+#[cfg(target_os = "linux")]
 pub use supervisor::{NativeFenceGuard, serve_native as serve_native_fence};
 
 use crate::cli_env::ApplyCliEnv as _;
