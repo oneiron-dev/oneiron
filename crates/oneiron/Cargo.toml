@@ -24,6 +24,7 @@ doctest = true
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
 oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
+oneiron-linkedin-policy = { version = "0.1.0", path = "../oneiron-linkedin-policy" }
 oneiron-skill-attribution = { version = "0.1.0", path = "../oneiron-skill-attribution" }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 # The OF-570 envelope: world keys (P6b), and the recovery kit's passphrase
