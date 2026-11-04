@@ -29,23 +29,27 @@ use oneiron::llm::{
     SegmentLocator, SegmentManifest, SessionInvalidation, TrustFence, VaultRef,
 };
 use oneiron::memory::StreamFinality;
-use oneiron::prompt::{PromptLayout, session_prompt_layout};
+use oneiron::prompt::PromptLayout;
 use oneiron::{EdgeActorClass, EntityId, LlmMessage, LlmMessageRole, Vault};
 
 use super::compaction::SelfChat;
+
+mod retry;
 use super::{Answering, TurnCredential, text_message};
 use crate::api::context_board::BoardSectionSource;
 use crate::api::credential_memory;
-use crate::auth::CoreAuth;
 use crate::models::{
     AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
     reply_committed, turn_admitted,
 };
+pub(crate) use retry::RetrySession;
 
 /// Where the turn's messages lay as it assembled them, before its craft and
 /// its board went in.
 #[derive(Clone, Copy)]
 pub(super) struct Layout {
+    /// The same effective layout the producer placed its craft under.
+    pub(super) prompt: PromptLayout,
     /// The leading System messages: the agent's instructions.
     pub(super) system_end: usize,
     /// Where the log ended: the newest user message's place.
@@ -56,7 +60,7 @@ pub(super) struct Layout {
 #[derive(Clone)]
 pub(super) struct Reader {
     pub(super) vault: Arc<Vault>,
-    pub(super) auth: CoreAuth,
+    pub(super) credential: TurnCredential,
     pub(super) actor: EntityId,
     pub(super) class: EdgeActorClass,
     pub(super) locality: CallerLocality,
@@ -65,12 +69,21 @@ pub(super) struct Reader {
 impl Reader {
     /// The read key the turn's log is read under now, as the turn reads it.
     fn read_key(&self) -> Option<ScopedReadActorKey> {
-        let memory = match self.auth.principal_ref() {
-            Some(_) => credential_memory(&self.vault, Some(&self.auth), self.actor, self.class)
-                .at(self.locality),
-            None => self.vault.memory(self.actor, self.class),
-        };
-        memory.read_key().ok()
+        match &self.credential {
+            TurnCredential::Request { auth, .. } => {
+                let memory = match auth.principal_ref() {
+                    Some(_) => credential_memory(&self.vault, Some(auth), self.actor, self.class)
+                        .at(self.locality),
+                    None => self.vault.memory(self.actor, self.class),
+                };
+                memory.read_key().ok()
+            }
+            TurnCredential::Action { action, .. } => {
+                crate::ai_host::action_reader(&self.vault, action)?
+                    .read_key()
+                    .ok()
+            }
+        }
     }
 }
 
@@ -111,7 +124,17 @@ pub(super) fn admitted(
     assembled: Assembled<'_>,
     admitted: &[LlmMessage],
 ) -> Option<TurnSegments> {
+    admitted_with_sources(reader, assembled, admitted, &[])
+}
+
+fn admitted_with_sources(
+    reader: &Reader,
+    assembled: Assembled<'_>,
+    admitted: &[LlmMessage],
+    borrowed: &[EntityId],
+) -> Option<TurnSegments> {
     let Layout {
+        prompt,
         system_end,
         log_end,
     } = assembled.layout;
@@ -123,7 +146,7 @@ pub(super) fn admitted(
     // instructions in today's layout, inside the prefix; as the turn's
     // data-only context right before the newest user message in the stable
     // one, outside it.
-    let early = session_prompt_layout() == PromptLayout::EarlySystem;
+    let early = prompt == PromptLayout::EarlySystem;
     let craft = match messages.len().checked_sub(log_end + 1) {
         Some(0) => false,
         Some(1) if assembled.craft.is_some() => true,
@@ -187,7 +210,10 @@ pub(super) fn admitted(
         let revocation = reader.vault.authority_generation().ok();
         (revocation, reader.read_key())
     });
-    let sources = canonical_sources(&assembled);
+    let sources = canonical_sources(&assembled).map(|mut sources| {
+        sources.extend_from_slice(borrowed);
+        sources
+    });
     let anchor = match (log, &read_key, &sources) {
         (Some(log), Some(key), Some(_)) => Some(ConversationAnchor {
             vault: VaultRef(reader.vault.vault_key_vault_id()),
@@ -216,10 +242,7 @@ pub(super) fn admitted(
         (Some(anchor), Some(key), Some(rows)) => {
             let turn: Arc<dyn CheckpointAuthority> = Arc::new(ChatAuthority {
                 reader: reader.clone(),
-                credential: TurnCredential::Request {
-                    auth: reader.auth.clone(),
-                    vault: Arc::clone(&reader.vault),
-                },
+                credential: reader.credential.clone(),
                 read_key: key.clone(),
                 sources: rows.clone(),
                 at: Some((anchor.head, anchor.fold_epoch)),

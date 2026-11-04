@@ -20,13 +20,16 @@
 //! copy rows to the stored bytes or the shipped visible diff), then encoded
 //! again over the same spans on a second copy that does not hold them. A
 //! held row write becomes a causally equivalent delete in an empty map;
-//! its source stays unchanged. Snapshot and mixed-edge holds retain their
-//! whole-blob hold path.
+//! its source stays unchanged. Full snapshots can retain these neutral causal
+//! units through a same-span snapshot; shallow and mixed-edge holds retain
+//! their whole-blob hold path.
 //!
 //! A blob nothing marked touches goes as it came. One the checkpoint cannot
 //! take goes as it came only when its operations and state carry nothing
 //! marked; otherwise it is withheld (never released raw), and stays owed to
 //! the peer: nothing here retires, acknowledges or deletes it.
+
+mod snapshot;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -242,6 +245,11 @@ impl SyncSecretProjection {
                     return as_sent();
                 }
                 if !held.is_empty() {
+                    if let Some(admitted) =
+                        self.admit_held_full_snapshot(store, context, &doc, &input)
+                    {
+                        return Ok(admitted);
+                    }
                     return Ok(WindowAdmission::Held(held));
                 }
                 Ok(WindowAdmission::Admit(
