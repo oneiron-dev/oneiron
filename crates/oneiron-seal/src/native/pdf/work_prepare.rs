@@ -218,7 +218,9 @@ pub(crate) fn prepare_in(
         reserve(limits.ledger, &mut close, b"\nQ\nn\n".len() + encoded.len())?;
         close.extend_from_slice(b"\nQ\nn\n");
         close.extend_from_slice(&encoded);
-        limits.ledger.release(wide(encoded.len()));
+        let encoded_len = encoded.len();
+        drop(encoded);
+        limits.ledger.release_admitted(wide(encoded_len));
         object_insert(limits.ledger)?;
         let close_id = out.add_object(Stream::new(Dictionary::new(), close));
         push(limits.ledger, &mut page_streams, Object::Reference(close_id))?;
@@ -354,7 +356,7 @@ fn page_tree(out: &mut Document, root: ObjectId, kids: Vec<Object>, limits: &Wor
                     .as_dict_mut()
                     .map_err(|err| lopdf_error(limits, err))?
                     .set("Parent", node);
-                limits.ledger.release(wide(6));
+                limits.ledger.release_admitted(wide(6));
                 count += leaves;
                 push(limits.ledger, &mut node_kids, kid.clone())?;
             }
@@ -423,7 +425,7 @@ impl std::io::Write for BoundedOutput<'_> {
                 return Err(std::io::Error::other("memory"));
             }
             let old_bytes = layout_bytes::<u8>(old_capacity).unwrap_or(0);
-            self.limits.ledger.release(u64::try_from(old_bytes).unwrap_or(u64::MAX));
+            self.limits.ledger.release_admitted(u64::try_from(old_bytes).unwrap_or(u64::MAX));
         }
         self.buf.extend_from_slice(bytes);
         Ok(bytes.len())
@@ -466,7 +468,7 @@ fn reserve<T>(ledger: &MemoryLedger, output: &mut Vec<T>, additional: usize) -> 
     ledger.admit_len::<T>(target).map_err(WorkError::Memory)?;
     output.try_reserve_exact(target - output.len()).map_err(|_| WorkError::Memory(floor(bytes)))?;
     let old_bytes = layout_bytes::<T>(old_capacity).unwrap_or(0);
-    ledger.release(u64::try_from(old_bytes).unwrap_or(u64::MAX));
+    ledger.release_admitted(u64::try_from(old_bytes).unwrap_or(u64::MAX));
     Ok(())
 }
 

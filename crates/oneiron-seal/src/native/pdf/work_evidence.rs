@@ -213,7 +213,9 @@ pub(crate) fn certificate(
                 .admit_len::<u8>(tail.len())
                 .map_err(WorkError::Memory)?;
             line.push_str(&tail);
-            limits.ledger.release(wide(tail.len()));
+            let tail_len = tail.len();
+            drop(tail);
+            limits.ledger.release_admitted(wide(tail_len));
         }
         push(limits.ledger, &mut details, line)?;
     }
@@ -309,7 +311,9 @@ fn append_lines(
                 .map_err(WorkError::Memory)?;
             push(limits.ledger, &mut wrapped, owned)?;
         }
-        limits.ledger.release(wide(clean.len()));
+        let clean_len = clean.len();
+        drop(clean);
+        limits.ledger.release_admitted(wide(clean_len));
     }
     for group in wrapped.chunks(56) {
         let mut ops = Vec::new();
@@ -430,7 +434,7 @@ fn reserve<T>(
         .try_reserve_exact(target - output.len())
         .map_err(|_| WorkError::Memory(floor(bytes)))?;
     let old_bytes = layout_bytes::<T>(old_capacity).unwrap_or(0);
-    ledger.release(u64::try_from(old_bytes).unwrap_or(u64::MAX));
+    ledger.release_admitted(u64::try_from(old_bytes).unwrap_or(u64::MAX));
     Ok(())
 }
 

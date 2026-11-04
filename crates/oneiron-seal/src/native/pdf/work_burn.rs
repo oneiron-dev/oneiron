@@ -114,8 +114,9 @@ pub(super) fn resource(resources: &mut Dictionary, kind: &[u8], id: ObjectId, li
         counter += 1;
         let next = format!("{base}_{counter}").into_bytes();
         limits.ledger.admit_len::<u8>(next.len()).map_err(WorkError::Memory)?;
-        limits.ledger.release(wide(name.len()));
+        let old_len = name.len();
         name = next;
+        limits.ledger.release_admitted(wide(old_len));
     }
     dictionary_insert(limits.ledger, name.len())?;
     members.set(name.clone(), id);
@@ -431,7 +432,7 @@ fn reserve<T>(ledger: &MemoryLedger, output: &mut Vec<T>, additional: usize) -> 
     ledger.admit_len::<T>(target).map_err(WorkError::Memory)?;
     output.try_reserve_exact(target - output.len()).map_err(|_| WorkError::Memory(floor(bytes)))?;
     let old_bytes = layout_bytes::<T>(old_capacity).unwrap_or(0);
-    ledger.release(u64::try_from(old_bytes).unwrap_or(u64::MAX));
+    ledger.release_admitted(u64::try_from(old_bytes).unwrap_or(u64::MAX));
     Ok(())
 }
 
