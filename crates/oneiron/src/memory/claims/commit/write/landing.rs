@@ -95,10 +95,9 @@ impl Memory<'_> {
         }
         if require_replay || in_place_replay(write) {
             let existing = self.vault.get_claim_in_txn(txn, &id)?;
-            if require_replay && existing.is_none()
-                || existing
-                    .as_ref()
-                    .is_some_and(|existing| !claim_replay_content_matches(existing, write))
+            if existing
+                .as_ref()
+                .is_some_and(|existing| !claim_replay_content_matches(existing, write))
             {
                 return Err(Error::InvalidClaimBody(
                     "claim replay content changed before its write",
