@@ -596,8 +596,8 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
 /// One frame's header, and the descriptors that rode on its first byte.
 /// Each control batch is booked before the heap grows to hold it
 /// ([`fd_read_cost`], cumulative difference), and the first nonzero batch
-/// reserves one frame's pacing before the first extend, so small-N
-/// capacity is booked, not grown into (FIX 12434).
+/// reserves the batch descriptor capacity before the first extend, so
+/// small-N capacity is booked, not grown into (FIX 12434).
 fn recv_header<B: FrameBooking>(
     stream: &UnixStream,
     wait: Wait,
@@ -623,8 +623,8 @@ fn recv_header<B: FrameBooking>(
             Err(errno) => return Err(io::Error::from(errno).into()),
         };
         // Onto the stack first (RAII: a drop closes whatever is held),
-        // so no heap grows before its room is made; everything past one
-        // batch's pacing is the truncated case, closed as it comes.
+        // so no heap grows before its room is made; everything past the
+        // batch capacity is the truncated case, closed as it comes.
         let mut batch: [Option<OwnedFd>; MAX_FDS_PER_FRAME] = [const { None }; MAX_FDS_PER_FRAME];
         let mut count = 0;
         let mut truncated = false;
@@ -645,15 +645,22 @@ fn recv_header<B: FrameBooking>(
             return Err(FrameError::FdsTruncated);
         }
         if count > 0 {
+            // Close-on-exec before any room/floor wait: without an atomic
+            // receive flag, a process spawned meanwhile must not inherit
+            // these. The flags travel with the move into `fds` below.
+            for fd in batch.iter().flatten() {
+                mark_cloexec(std::slice::from_ref(fd))?;
+            }
             let before = fds.len();
             let after = before.saturating_add(count);
             let cost = fd_read_cost(after).saturating_sub(fd_read_cost(before));
-            booking.fds(held, cost)?;
+            if cost > 0 {
+                booking.fds(held, cost)?;
+            }
             if before == 0 {
                 fds.reserve_exact(MAX_FDS_PER_FRAME.saturating_sub(fds.capacity()));
             }
             fds.extend(batch.into_iter().flatten());
-            mark_cloexec(&fds[before..])?;
         }
         if msg.flags.contains(ReturnFlags::CTRUNC) {
             return Err(FrameError::FdsTruncated);
