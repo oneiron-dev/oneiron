@@ -1,14 +1,14 @@
 //! Room row part codecs without the sync feature (FIX 12405).
 //!
-//! The carrier and room-row part codecs, mounted here from their one source
-//! so canonical recovery rebuilds them with or without `sync`. `sync`
-//! re-exports both modules, so every old path keeps resolving and the codec
-//! compiles once. Codec logic and format are byte-identical; only the Loro
+//! The carrier, room-row and document-pin codecs are mounted here from
+//! their one source so recovery can read them with or without `sync`. The
+//! sync facades retain every old path and each codec compiles once. Codec logic and format are byte-identical; only the Loro
 //! byte-map import below differs per feature.
 
 #[path = "sync/carrier_parts.rs"]
 pub(crate) mod carrier_parts;
 
+pub(crate) mod document_pins;
 #[path = "sync/room_parts.rs"]
 pub(crate) mod room_parts;
 
