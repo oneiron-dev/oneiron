@@ -22,9 +22,9 @@ use crate::batch::secret_scan::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::secret_custody::masked_file_in_txn;
 use crate::side_table::{self, SideTableDecl};
 use crate::store::Store;
+use crate::store::file_key_masks::masked_file_in_txn;
 
 /// One family of a typed body's stored documents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
