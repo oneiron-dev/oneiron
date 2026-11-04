@@ -540,6 +540,7 @@ pub(crate) fn craft_candidate_inbox_items(vault: &Vault) -> Result<Vec<AgentInbo
             occurred_at: card.proposed_at,
             receipt_ref: None,
             payload_ref: Some(card.candidate_id),
+            approval_digest: None,
             concern: None,
             diary_review: None,
             sender: None,
