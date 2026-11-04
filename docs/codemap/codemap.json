@@ -77664,16 +77664,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/tagging/body.rs",
-     "purpose": "An earlier MESSAGE's text, read from its stored MessagePack row as far as the live window keeps it and no…",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "TaggingFreshness",
       "TaggingMoodPartView"
@@ -89759,7 +89749,7 @@
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 24,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89964,7 +89954,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6228,
+   "source_files": 6227,
    "test_files": 898
   },
   "oneiron-android": {
@@ -91227,7 +91217,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 20
+      "mod": 21
      }
     },
     {
@@ -91270,6 +91260,19 @@
      "path": "src/live_rows/tests.rs",
      "purpose": "Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MessageFields"
+     ],
+     "path": "src/message_body_fields.rs",
+     "purpose": "An earlier MESSAGE's text, read from its stored MessagePack row as far as the live window keeps it and no…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -91471,6 +91474,13 @@
      "layout": "file+dir",
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
+    "message_body_fields": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "An earlier MESSAGE's text, read from its stored MessagePack row as far as the live window keeps it and no…"
+    },
     "msgpack_shape": {
      "files": 1,
      "impl_vault": false,
@@ -91530,7 +91540,7 @@
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 26,
+   "source_files": 27,
    "test_files": 2
   },
   "oneiron-bench": {
