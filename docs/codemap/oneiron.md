@@ -60,8 +60,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/affect/state_index/tests.rs` | test | s | — | — | — |
 | `src/affect/state_inputs.rs` | src | s | 1 re-export · 2 crate-vis | — | The composite state index's inputs, measured from the subject's own records (OF-335) |
 | `src/affect/trigger.rs` | src | s | 1 re-export · 2 crate-vis | — | Affect trigger values and codecs are defined in core write vocabulary |
-| `src/agent_def/birth_custody.rs` | src | s | 9 crate-vis | — | Physical custody of captured agent source, without authorship or delete grants |
-| `src/agent_def/birth_dependencies.rs` | src | s | 5 crate-vis | — | Retirement of copied agent source when a captured input is erased |
+| `src/agent_def/birth_custody.rs` | src | s | 7 crate-vis | — | Physical custody of captured agent source, without authorship or delete grants |
+| `src/agent_def/birth_dependencies.rs` | src | s | 4 crate-vis | — | Retirement of copied agent source when a captured input is erased |
 | `src/agent_def/byte_observation.rs` | src | s | 2 crate-vis | — | The bytes one definition's put reads (FIX 10542) |
 | `src/agent_def/codec.rs` | src | m | 2 fn · 3 crate-vis | — | Pinned-key MessagePack encode and top-level body decode |
 | `src/agent_def/codec/value.rs` | src | m | 4 crate-vis | — | Agent definition value and field decoding |
@@ -5414,7 +5414,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/import_receipt.rs` | src | m | 2 struct · 1 enum · 1 trait · 9 fn · 1 re-export · 6 crate-vis | HubImportReceipt, MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator | Source receipts and admitted-publisher ingress beside content dedup, never in place of it |
 | `src/skill_hub/import_receipt/fitted.rs` | src | s | 9 crate-vis | — | The marketplace import in two halves (FIX 9752) |
 | `src/skill_hub/import_receipt/rule_fit.rs` | src | s | 2 struct · 1 enum · 1 trait · 3 fn · 2 crate-vis | CallerPermissions, HoldsNothing, RuleSkillFit, SkillFitSetting | The deterministic skill fit and the owner's setting that picks it (FIX 9752, owner law ARCH-0053 "Everything… |
-| `src/skill_hub/index.rs` | src | m | 1 const · 15 crate-vis | — | Skill provenance and capability indexes |
+| `src/skill_hub/index.rs` | src | m | 1 re-export · 15 crate-vis | — | Skill provenance and capability indexes |
 | `src/skill_hub/install_transition.rs` | src | m | 3 enum · 4 fn · 11 crate-vis | InstallDisposition, InstallHoldReason, InstallLifecycle | One transaction-local skill install plan and its finalized, loadable result |
 | `src/skill_hub/mod.rs` | src | s | 2 mod · 21 re-export · 22 crate-vis | — | Skill-hub records, provenance aliases, adapter contracts, and update gates |
 | `src/skill_hub/osv.rs` | src | m | 3 struct · 1 enum · 1 trait · 2 fn · 1 const · 3 crate-vis | DependencyCoordinate, DependencyScanStatus, OsvDevClient, OsvQuery, SkillInstallAdvisories | Dependency-only OSV queries on dynamic installs, using the existing scan ledger |
@@ -5490,7 +5490,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/tests.rs` | test | XL | — | — | — |
 | `src/skill_hub/tests/support.rs` | test | s | 3 crate-vis | — | Imported Active fixtures traverse the same consent and held-out doors as a host |
 | `src/skill_hub/transport_tests.rs` | test | L | — | — | Real Git repositories and loopback static HTTP fixtures; no mocked adapter calls |
-| `src/skill_hub/verdict.rs` | src | m | 1 struct · 4 enum · 6 fn · 1 const · 9 crate-vis | ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillGovernance, SkillScanReceipt | Skill scan verdict admission |
+| `src/skill_hub/verdict.rs` | src | m | 1 struct · 4 enum · 6 fn · 1 re-export · 9 crate-vis | ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillGovernance, SkillScanReceipt | Skill scan verdict admission |
 | `src/skill_optimize/ask_band.rs` | src | s | 1 struct · 1 trait | AskBandLabel, AskBandPolicy | Question-class band policy input from settled human ask receipts |
 | `src/skill_optimize/audit_rate.rs` | src | s | 3 crate-vis | — | OF-542: `audit_rate` learned from audit checks (ARCH-0003 settings catalog: "Learned from audit checks |
 | `src/skill_optimize/brief.rs` | src | m | 4 struct · 2 enum · 1 trait · 3 fn · 3 const · 3 crate-vis | RejectedSkillEdit, RejectedSkillEditReason, SkillEditDraft, SkillFailureContext, SkillFailureReport, SkillOptimizeAuthor, SkillOptimizeBrief | The author seam and the dev-partitioned evidence brief handed across it |
@@ -5590,6 +5590,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/speculative.rs` | src | m | 4 struct · 2 enum · 7 fn · 2 re-export · 2 crate-vis | SpeculativeFinal, SpeculativeFireDecision, SpeculativePartial, SpeculativeSession, SpeculativeSessionConfig, SpeculativeThreads | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
 | `src/speculative/scoped.rs` | src | s | 3 fn · 5 crate-vis | — | Credential-bound candidate admission, inside every speculative pass |
 | `src/store/active_write_txn.rs` | src | s | 3 crate-vis | — | The calling thread's open write-transaction depth: a guard raises it while a vault write runs its closure… |
+| `src/store/agent_birth_custody.rs` | src | s | 6 crate-vis | — | Physical custody of a birthed agent's captured source, read side: which asset holds a child's source, which… |
+| `src/store/agent_birth_identity.rs` | src | s | 1 crate-vis | — | The derived id of the asset that carries a birthed agent's captured source |
 | `src/store/agent_record.rs` | src | s | 2 struct · 4 enum · 10 fn · 14 const | AgentCeiling, AgentWakeCadence, CompactionOwnership, ContextBudgetSplit, DreamingMode, McpRef | Stored agent descriptors, schema keys and byte-observation thresholds |
 | `src/store/archive_scratch.rs` | src | s | 3 crate-vis | — | FIX 3678 (rule 5): the scratch environment a whole-vault import keeps its row index in |
 | `src/store/asset_body/mod.rs` | src | m | 22 crate-vis | — | ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18) |
@@ -5796,7 +5798,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/loro_document.rs` | src | s | 1 fn · 16 crate-vis | — | Loro byte-map operations and document codecs used by storage readers |
 | `src/store/loro_tombstones.rs` | src | s | 9 crate-vis | — | The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity… |
 | `src/store/materialization_event.rs` | src | s | 2 struct · 1 enum · 1 trait | LiveQueryTee, MaterializedDiffSummary, OriginMark, RevisionEvent | Commit-bound materialization revisions and read invalidation data |
-| `src/store/mod.rs` | src | m | 73 mod · 29 re-export · 71 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 74 mod · 29 re-export · 74 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/notification_updates.rs` | src | s | 1 fn · 2 crate-vis | — | The vault's one committed-notification signal (FIX 3084) |
 | `src/store/open_gates/create_commit.rs` | src | s | 1 crate-vis | — | Create-door commit phase: build handles, re-key, seed and commit |
 | `src/store/open_gates/create_dbs.rs` | src | s | 2 crate-vis | — | Create-door database phase: open the manifest databases and gate versions |
@@ -5851,6 +5853,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/repo_proposal_record.rs` | src | s | 1 struct · 2 enum · 1 fn · 7 crate-vis | RepoProposalOperation, RepoProposalStatus, RepoProposedFile | Reviewed file-operation identity and received bundle input vocabulary |
 | `src/store/repo_provenance_trailer.rs` | src | s | 1 fn · 1 const · 2 crate-vis | — | Repository provenance trailer grammar and exact entity-reference parsing |
 | `src/store/restore_admission.rs` | src | s | 1 struct · 3 enum · 3 fn · 7 crate-vis | RestoreAdmissionError, RestoreAdmissionReason, RestoreDestinationState, RestorePhase | Why a cold managed restore refused (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md): a… |
+| `src/store/result_body_erasure.rs` | src | s | 1 crate-vis | — | The typed unavailable a read of erased reply content answers with |
 | `src/store/result_body_pins.rs` | src | s | 8 crate-vis | — | Reader pins: a result body a reader holds is never deleted |
 | `src/store/result_manifest.rs` | src | s | 3 struct · 1 enum · 5 fn · 1 const · 13 crate-vis | CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, ResultOccurrence | Result-body manifests, occurrence identifiers and their format bounds |
 | `src/store/result_memory.rs` | src | s | 1 struct · 4 fn · 7 crate-vis | ResultMemoryPool | The memory code-mode result bodies may hold (OF-190 B++) |
@@ -5886,6 +5889,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/setting_seed.rs` | src | s | 1 struct · 15 const | SettingSpec | Learned numeric setting specifications and shipped seeds |
 | `src/store/short_id_alias.rs` | src | m | 1 enum · 14 crate-vis | ShortIdAliasTarget | Legacy short-id alias rows: resolve/insert/retarget, the short-id counter key, and the short-id prefix… |
 | `src/store/skill_content_index.rs` | src | s | 6 crate-vis | — | Content-hash lookup rows for stored skills and their maintenance |
+| `src/store/skill_hub_predicates.rs` | src | s | 2 const | — | The claim predicates the skill hub attaches |
 | `src/store/skill_package/capability.rs` | src | s | 1 crate-vis | — | Stored capability surface encoding |
 | `src/store/skill_package/codec.rs` | src | s | 2 fn · 4 crate-vis | — | Package envelope codec and source consistency validation |
 | `src/store/skill_package/folder.rs` | src | m | 6 crate-vis | — | Strict portable SKILL.md frontmatter subset used by real hub transports |

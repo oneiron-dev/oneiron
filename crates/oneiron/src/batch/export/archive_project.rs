@@ -555,7 +555,7 @@ impl KeptDeclarations {
             }
         }
         for agent in self.agents.iter().filter(|agent| agent.forked) {
-            let Ok(carrier) = crate::agent_def::birth_source_id(&agent.id) else {
+            let Ok(carrier) = crate::store::agent_birth_identity::birth_source_id(&agent.id) else {
                 continue;
             };
             let entity_id = agent.id.to_hex();
