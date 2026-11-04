@@ -109,6 +109,9 @@ pub struct SyncConnection {
     /// The host asked before each batch the loop applies or sends (FIX
     /// 12036); `None` admits every batch at once.
     batch_admission: Option<Arc<dyn SyncBatchAdmission>>,
+    /// An optional nonblocking host notification for an HTTP 401 upgrade.
+    /// It schedules a verified notice probe; the refusal is never a leave.
+    on_upgrade_unauthorized: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Held so this device's query doors reach the home while the
     /// connection lives (OF-534); a federation lane lends none.
     _home_search: Option<Arc<HomeSearch>>,
@@ -180,8 +183,17 @@ impl SyncConnection {
             leave_unqueued: std::sync::atomic::AtomicU64::new(0),
             leave_unqueued_receipt: std::sync::OnceLock::new(),
             batch_admission: None,
+            on_upgrade_unauthorized: None,
             _home_search: home_search,
         })
+    }
+
+    /// Notifies the host before a typed HTTP 401 upgrade failure is
+    /// formatted. The callback must only schedule work; it must not block
+    /// or confirm a leave. Other failures and the reconnect path are unchanged.
+    pub fn with_upgrade_unauthorized(mut self, notify: Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.on_upgrade_unauthorized = Some(notify);
+        self
     }
 
     /// The client configuration with the residence mode this machine runs now.

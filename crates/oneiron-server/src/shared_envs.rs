@@ -25,6 +25,10 @@
 //! ledger's `housekeeping` entry, and [`SharedEnvRegistry::stop`] beside
 //! `DeviceSyncHost::stop` at shutdown.
 
+mod leave_signal;
+
+use leave_signal::{LeaveCheckRun, LeaveCheckSignal};
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -121,6 +125,7 @@ struct SharedEnvEntry {
     /// The last unix second a leave check ran clean (`None` answered).
     /// Failures leave the stamp alone, so they retry on the next round.
     last_leave_check: u64,
+    leave_check_signal: Arc<LeaveCheckSignal>,
 }
 
 /// One opened env before its run starts: the vault, its leave state read, and
@@ -132,11 +137,13 @@ struct OpenedEnv {
     vault: Arc<Vault>,
     connection: Arc<SyncConnection>,
     left: bool,
+    leave_check_signal: Arc<LeaveCheckSignal>,
 }
 
 #[derive(Default)]
 struct SharedEnvInner {
     envs: Mutex<HashMap<SharedEnvKey, SharedEnvEntry>>,
+    leave_check_wake: Arc<tokio::sync::Notify>,
 }
 
 /// The dedicated shared envs this host keeps open, keyed by membership.
@@ -226,8 +233,11 @@ impl SharedEnvRegistry {
             return;
         }
         let config = config.clone();
-        let opened =
-            tokio::task::spawn_blocking(move || open_one(&spec, &config, lease_vault_id)).await;
+        let leave_check_wake = Arc::clone(&self.inner.leave_check_wake);
+        let opened = tokio::task::spawn_blocking(move || {
+            open_one(&spec, &config, lease_vault_id, leave_check_wake)
+        })
+        .await;
         match opened {
             Ok(Ok(env)) => {
                 let lane = if env.left {
@@ -266,6 +276,7 @@ impl SharedEnvRegistry {
                             false
                         }
                     };
+                let leave_check_signal = Arc::clone(&env.leave_check_signal);
                 self.lock().insert(
                     env.key,
                     SharedEnvEntry {
@@ -276,8 +287,10 @@ impl SharedEnvRegistry {
                         lane,
                         purge_complete,
                         last_leave_check: 0,
+                        leave_check_signal: env.leave_check_signal,
                     },
                 );
+                leave_check_signal.wake_if_requested();
             }
             Ok(Err(reason)) => tracing::warn!("shared env skipped: {reason}"),
             Err(error) => tracing::warn!("shared env skipped: its open task failed: {error}"),
@@ -319,15 +332,35 @@ impl SharedEnvRegistry {
     /// caller holds each handle so shutdown joins the checks. A refusal or
     /// failure (a 401 included) warns and retries, never reads as a leave.
     pub(crate) fn leave_check_round(&self, now: u64) -> Vec<tokio::task::JoinHandle<()>> {
-        let due: Vec<(SharedEnvKey, Arc<Vault>, Arc<SyncConnection>, bool)> = {
+        self.leave_checks(now, false)
+    }
+
+    pub(crate) async fn leave_check_requested(&self) {
+        self.inner.leave_check_wake.notified().await;
+    }
+
+    pub(crate) fn requested_leave_checks(&self, now: u64) -> Vec<tokio::task::JoinHandle<()>> {
+        self.leave_checks(now, true)
+    }
+
+    fn leave_checks(&self, now: u64, requested_only: bool) -> Vec<tokio::task::JoinHandle<()>> {
+        let due: Vec<(
+            SharedEnvKey,
+            Arc<Vault>,
+            Arc<SyncConnection>,
+            bool,
+            LeaveCheckRun,
+        )> = {
             let envs = self.lock();
             envs.iter()
                 .filter_map(|(key, entry)| {
-                    if entry.purge_complete
-                        || now.saturating_sub(entry.last_leave_check) < LEAVE_CHECK_EVERY_SECS
-                    {
+                    if entry.purge_complete {
                         return None;
                     }
+                    let run = entry.leave_check_signal.take(
+                        !requested_only
+                            && now.saturating_sub(entry.last_leave_check) >= LEAVE_CHECK_EVERY_SECS,
+                    )?;
                     // The transport guard holds for every leave POST, not
                     // just the open-time lane build: a non-direct home URL
                     // keeps its retained reads but never sends the slip.
@@ -337,12 +370,13 @@ impl SharedEnvRegistry {
                         Arc::clone(&entry.vault),
                         Arc::clone(&entry.connection),
                         direct,
+                        run,
                     ))
                 })
                 .collect()
         };
         let mut checks = Vec::with_capacity(due.len());
-        for (key, vault, connection, direct) in due {
+        for (key, vault, connection, direct, run) in due {
             if !direct {
                 // Throttled like a clean round, so the misconfiguration
                 // warns hourly instead of every tick; the purge stays
@@ -357,7 +391,9 @@ impl SharedEnvRegistry {
             // A receipt is not purge completion: every recorded left gets the
             // same idempotent confirmation again until it finishes.
             match oneiron::sync::shared_leave::has_left(&vault) {
-                Ok(true) | Ok(false) => checks.push(self.spawn_leave_check(key, connection, now)),
+                Ok(true) | Ok(false) => {
+                    checks.push(self.spawn_leave_check(key, connection, now, run));
+                }
                 Err(error) => tracing::warn!(
                     vault_id = key.0,
                     kind = ?error.kind(),
@@ -397,10 +433,12 @@ impl SharedEnvRegistry {
         key: SharedEnvKey,
         connection: Arc<SyncConnection>,
         now: u64,
+        run: LeaveCheckRun,
     ) -> tokio::task::JoinHandle<()> {
         let this = self.clone();
         let (vault_id, member) = key.clone();
         tokio::spawn(async move {
+            let _run = run;
             let check = connection.check_shared_leave(vault_id, &member);
             match tokio::time::timeout(LEAVE_CHECK_TIMEOUT, check).await {
                 Ok(Ok(Some(receipt))) => {
@@ -625,6 +663,7 @@ fn open_one(
     spec: &SharedEnvSpec,
     config: &crate::config::ServeConfig,
     lease_vault_id: u64,
+    leave_check_wake: Arc<tokio::sync::Notify>,
 ) -> Result<OpenedEnv, String> {
     let vault_id = spec.vault_id;
     let mut resolved = config.vault_config();
@@ -667,7 +706,13 @@ fn open_one(
     }
     // Left or not, this connection stays for idempotent leave confirmation;
     // only unleft entries start a sync run on it.
-    let connection = open_lane(Arc::clone(&vault), spec, lease_vault_id)?;
+    let leave_check_signal = Arc::new(LeaveCheckSignal::new(leave_check_wake));
+    let connection = open_lane(
+        Arc::clone(&vault),
+        spec,
+        lease_vault_id,
+        &leave_check_signal,
+    )?;
     if left {
         tracing::info!(
             vault_id = vault_id,
@@ -688,6 +733,7 @@ fn open_one(
         vault,
         connection,
         left,
+        leave_check_signal,
     })
 }
 
@@ -701,6 +747,7 @@ fn open_lane(
     vault: Arc<Vault>,
     spec: &SharedEnvSpec,
     lease_vault_id: u64,
+    leave_check_signal: &Arc<LeaveCheckSignal>,
 ) -> Result<Arc<SyncConnection>, String> {
     let vault_id = spec.vault_id;
     let manager = Arc::new(WindowManager::new(
@@ -762,6 +809,8 @@ fn open_lane(
         },
     )
     .map_err(|error| format!("lane of shared env {vault_id} unbuildable: {error:#}"))?;
+    let signal = Arc::clone(leave_check_signal);
+    let connection = connection.with_upgrade_unauthorized(Arc::new(move || signal.request()));
     Ok(Arc::new(connection))
 }
 

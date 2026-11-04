@@ -226,8 +226,12 @@ sets it.
 At start, serve opens every entry and keeps its handle. Each active membership gets its own
 window manager and sync connection; one bad environment is logged and skipped without stopping
 the others. Once an hour, the lifecycle tick asks the engine's verified leave door for each
-active membership. A refusal or failed check is not a leave. Only a verified notice detaches the
-lane. The environment's own durable leave receipt is the record; there is no second registry in
+active membership. An HTTP 401 on that membership's sync upgrade also wakes its verified leave
+check without waiting for the hourly round. Other connection failures keep their existing
+reconnect handling. Both triggers use the same host admission and shutdown-held pass; requests
+during an in-flight check are coalesced for that membership. A refusal or failed check is not a
+leave. Only a verified notice detaches the lane. The environment's own durable leave receipt is
+the record; there is no second registry in
 the vault and no new side table.
 
 The handle stays open after a confirmed leave. The person can still read retained removal
