@@ -8,7 +8,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
-use serde::{Deserialize, Serialize};
+use oneiron::task_verb::sdk::ModelResponsesStoreSettings as ModelSettings;
 
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
@@ -22,7 +22,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/settings/models",
-                summary: "The connector's tool rows, the actor's live grant per row, and the installed endpoint.",
+                summary: "The owner's Responses store setting.",
                 row: None,
                 shape: None,
             },
@@ -42,14 +42,6 @@ pub(super) fn owner_table() -> OwnerTable {
             post(put),
         ),
     ]
-}
-
-/// The owner's model settings.
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct ModelSettings {
-    /// Whether a provider keeps each Responses turn (`store`).
-    responses_store: bool,
 }
 
 /// The OpenAPI schema of `POST /v1/owner/settings/models`'s body and answer (FIX
@@ -80,16 +72,7 @@ async fn put(
     let owner = owner(&auth, &server)?;
     let settings = payload.read(&server).await?;
     let settings = blocking(move || -> OwnerResult<ModelSettings> {
-        server
-            .vault()
-            .set_responses_store(&owner, settings.responses_store)?;
-        // Only this server's providers read it (FIX 9516), once its vault
-        // kept it.
-        server
-            .ai
-            .models()
-            .responses_context()
-            .set_store(settings.responses_store);
+        server.apply_responses_store(&owner, settings.responses_store)?;
         Ok(settings)
     })
     .await?;
