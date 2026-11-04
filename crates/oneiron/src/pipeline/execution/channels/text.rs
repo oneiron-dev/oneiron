@@ -322,7 +322,16 @@ impl PipelineBuilder<'_> {
         let mut scan_metadata = EntityMetadataCache::default();
         let stage_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
         let mut l15_gated = 0_u64;
-        let mut exact_posting_matches_scope = |id: &EntityId| {
+        let mut l15_hits = 0_u64;
+        // bench-only (L15-LEAD, never merge): L15_TRY=no_text_gate_memo keeps no answer, as before.
+        let l15_keep = !crate::stage_timing::try_on("no_text_gate_memo");
+        let mut posting_answers: std::collections::HashMap<EntityId, bool> =
+            std::collections::HashMap::new();
+        let mut exact_posting_matches_scope = |id: &EntityId| -> Result<bool> {
+            if l15_keep && let Some(&matches) = posting_answers.get(id) {
+                l15_hits += 1;
+                return Ok(matches);
+            }
             l15_gated += 1;
             let l15_started = std::time::Instant::now();
             let l15_outcome = pipeline_candidate_matches_filters_and_gate(
@@ -337,7 +346,11 @@ impl PipelineBuilder<'_> {
                 "pipe.text_gate",
                 u64::try_from(l15_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
             );
-            l15_outcome
+            let matches = l15_outcome?;
+            if l15_keep {
+                posting_answers.insert(*id, matches);
+            }
+            Ok(matches)
         };
         let text_query = inputs
             .hyde_expansion
@@ -405,6 +418,7 @@ impl PipelineBuilder<'_> {
             fetch_limit = fetch_limit.saturating_mul(2).min(fold_cap);
         };
         crate::stage_timing::record("count.text_postings_gated", l15_gated);
+        crate::stage_timing::record("count.text_gate_memo_hits", l15_hits);
         if self.candidate_filter.is_none()
             && text_channel_limit > limit
             && inputs.text_scope_widening_active
