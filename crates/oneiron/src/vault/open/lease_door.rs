@@ -19,7 +19,12 @@ impl Vault {
         validate_open_config(&config)?;
         let canonical = path.canonicalize()?;
         lease.validate_directory(&canonical)?;
-        let store = Store::open_with_writer_lease(&canonical, &config, lease)?;
+        let store = Store::open_with_writer_lease(
+            &canonical,
+            &config,
+            lease,
+            super::engine_delete_guards(),
+        )?;
         Self::finish_open(store, config, DefaultPolicySeedMode::Required)
     }
 

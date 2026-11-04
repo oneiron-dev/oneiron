@@ -14,6 +14,7 @@
 pub mod batch;
 pub mod config;
 pub mod deletion;
+pub(crate) mod engine_delete_guards;
 pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
     //! defined in `oneiron-base`. The `regenerates` proofs over stored rows are

@@ -132,6 +132,8 @@ pub mod code_tree_blob;
 pub mod conversation_body;
 pub mod conversation_record;
 pub mod custody_retirement_status;
+mod delete_guards;
+pub use delete_guards::StoreDeleteGuards;
 #[cfg(feature = "sync")]
 pub mod document_frame_tags;
 pub mod housekeeping_report;
