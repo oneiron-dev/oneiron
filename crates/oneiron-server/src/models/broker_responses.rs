@@ -14,7 +14,7 @@ use futures_util::StreamExt;
 use oneiron::llm::SingleRouteBackend;
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest,
-    LlmResult, LlmStream, LlmStreamResult, ModelId, RetryableLlmError,
+    LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, ModelId, RetryableLlmError,
 };
 use oneiron_broker::{CallHeader, Failure, Outcome, Refusal, Shape, StreamPart};
 use oneiron_llm_openai::{
@@ -397,10 +397,22 @@ impl LlmBackend for BrokerResponses {
         let opened = async move {
             match self.run(lease, turn).await {
                 Ok(Some(stream)) => Ok(LlmStream::new(OpenAiResponsesLlmStream::new(stream))),
-                Ok(None) if self.refused.load(Ordering::Relaxed) => {
-                    self.chat.stream(request, lease)
+                // The socket path answered without a send (an unreachable
+                // broker, a latched refusal): the broker chat strips
+                // Streaming, so its buffered reply is emitted here as one
+                // terminal event, never as chat SSE.
+                Ok(None) => {
+                    let response = self.chat.generate(request, lease).await?;
+                    let event = LlmStreamEvent::Done {
+                        message: response.message,
+                        usage: response.usage,
+                        finish_reason: response.finish_reason,
+                        reply_assertions: response.reply_assertions,
+                    };
+                    Ok(LlmStream::new(futures_util::stream::once(
+                        std::future::ready(Ok(event)),
+                    )))
                 }
-                Ok(None) => Err(RetryableLlmError::StreamCut.into()),
                 Err(error) => Err(error),
             }
         };
