@@ -59,6 +59,7 @@ impl Vault {
             org_ref: None,
             grant_ref: None,
             invitation_ref: Some(invitation.to_owned()),
+            share_ref: None,
             delegation: None,
             comm: None,
         };
