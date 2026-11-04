@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::store::attempt_id::AttemptId;
 use crate::entity_id::EntityId;
+use crate::store::attempt_id::AttemptId;
 
 // ---------------------------------------------------------------------------
 // Pinned vocabulary
