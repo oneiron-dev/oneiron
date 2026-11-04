@@ -367,7 +367,7 @@ side_tables! {
     /// its contract, the caller, its source rows, the revision. Key: id16 (skill that ran) + u64be
     /// at + u64be step seq + receipt string.
     SKILL_CALLABLE_CASE: VaultMeta b"skill:callable_case:v1:" Named Authored
-        [refs: CALLABLE_CASE_REFS] => crate::skill::erase_callable_case_actor_in_txn;
+        [refs: CALLABLE_CASE_REFS] [accepts: crate::skill::skill_callable_case_accepts_masked] => crate::skill::erase_callable_case_actor_in_txn;
     /// The frozen callable cases by what they were made from, so an erase reads only the cases
     /// naming its row (FIX 12180). Key: b'S' + source id16 + case key, or, when the sources are
     /// unknown, b'R' + u16be receipt length + receipt string + case key. Value: empty.
