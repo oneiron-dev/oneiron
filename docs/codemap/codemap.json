@@ -23830,7 +23830,7 @@
      "path": "src/conversation/visibility.rs",
      "purpose": "The audience predicate shared by all ScopedRead paths",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -71763,7 +71763,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 5,
-      "fn": 16,
+      "fn": 17,
       "struct": 9
      }
     },
