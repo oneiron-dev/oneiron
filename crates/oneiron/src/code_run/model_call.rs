@@ -18,6 +18,15 @@ const SCHEMA: u8 = 1;
 const MODEL_CALLS: SideTable<(EntityId, u64, u64), ModelCallRecord, Named> =
     SideTable::new(&side_table::CODE_RUN_MODEL_CALL);
 
+/// Where a model output part is owned. A code-run output and a witnessed
+/// MESSAGE are distinct stores; neither reference is synthesized from the other.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ModelCallPartRef {
+    Output { occurrence: OutputRef },
+    Message { message: EntityId, part_index: u64 },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelCallReasoningPart {
@@ -29,7 +38,7 @@ pub struct ModelCallReasoningPart {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub occurrence: Option<OutputRef>,
+    pub occurrence: Option<ModelCallPartRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub produced_row: Option<EntityId>,
 }
@@ -65,8 +74,8 @@ impl ModelCallReasoningPart {
                 kind,
                 text: None,
                 bytes: None,
-                signature: signature.clone(),
-                occurrence,
+                signature: None,
+                occurrence: occurrence.map(|occurrence| ModelCallPartRef::Output { occurrence }),
                 produced_row,
             });
         }
@@ -108,16 +117,52 @@ impl ModelCallReasoningPart {
         }
     }
 
+    /// References the ordered part of a MESSAGE that the terminal already
+    /// committed. The MESSAGE owns every byte, including opaque signatures.
+    pub fn from_message_terminal(
+        part: &crate::ContentPart,
+        message: EntityId,
+        part_index: u64,
+    ) -> Option<Self> {
+        let crate::ContentPart::Reasoning {
+            text,
+            signature,
+            reasoning_kind,
+            data,
+        } = part
+        else {
+            return None;
+        };
+        let kind = match reasoning_kind {
+            ReasoningPartKind::Full
+                if text.is_empty() && (signature.is_some() || data.is_some()) =>
+            {
+                ReasoningPartKind::Encrypted
+            }
+            other => *other,
+        };
+        Some(Self {
+            kind,
+            text: None,
+            bytes: None,
+            signature: None,
+            occurrence: Some(ModelCallPartRef::Message {
+                message,
+                part_index,
+            }),
+            produced_row: Some(message),
+        })
+    }
+
     fn validate(&self) -> Result<()> {
-        let bodies = usize::from(self.text.is_some())
-            + usize::from(self.bytes.is_some())
-            + usize::from(self.occurrence.is_some());
+        let bodies = usize::from(self.text.is_some()) + usize::from(self.bytes.is_some());
+        let references = usize::from(self.occurrence.is_some());
         match self.kind {
             ReasoningPartKind::Count if bodies != 0 || self.signature.is_some() => {
                 Err(invalid("count-only reasoning carries no body"))
             }
             ReasoningPartKind::Count => Ok(()),
-            _ if bodies != 1 => Err(invalid(
+            _ if bodies + references != 1 => Err(invalid(
                 "a reasoning part needs exactly one body or reference",
             )),
             _ => Ok(()),
@@ -352,6 +397,43 @@ pub(crate) fn erase_model_call_actor_in_txn(
         let origin =
             crate::batch::secret_scan::side_row_origin(&place, &MODEL_CALLS.key_bytes(&key))?;
         crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
+        MODEL_CALLS.put_erased(&vault.store, wtxn, &key, erased)?;
+    }
+    Ok(())
+}
+
+/// Scrubs a call record whose reasoning is owned by the erased MESSAGE.
+/// The typed occurrence, not a code-run output or an inferred source relation,
+/// is the link. Custody minted by the row leaves before the tombstone lands.
+pub(crate) fn erase_message_model_calls_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    message: &EntityId,
+    act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
+) -> Result<()> {
+    let mut stale = Vec::new();
+    for row in MODEL_CALLS.iter_raw_from(&vault.store, wtxn, &[])? {
+        let (key, bytes) = row?;
+        let Some(key) = <(EntityId, u64, u64) as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        if let Ok(record) = MODEL_CALLS.decode_value(&bytes)
+            && !record.erased
+            && record.reasoning.iter().any(|part| {
+                matches!(
+                    &part.occurrence,
+                    Some(ModelCallPartRef::Message { message: owner, .. }) if owner == message
+                )
+            })
+        {
+            stale.push((key, Erased::of(record)?));
+        }
+    }
+    for (key, erased) in stale {
+        let place = format!("side:{}", MODEL_CALLS.decl().name);
+        let origin =
+            crate::batch::secret_scan::side_row_origin(&place, &MODEL_CALLS.key_bytes(&key))?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, act)?;
         MODEL_CALLS.put_erased(&vault.store, wtxn, &key, erased)?;
     }
     Ok(())

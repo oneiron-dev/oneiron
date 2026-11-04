@@ -240,6 +240,7 @@ impl Memory<'_> {
                 author: WitnessAuthor::Companion,
                 message_type: "text".to_owned(),
                 content: request.content.clone(),
+                parts: None,
                 metadata: Some(serde_json::json!({ "room_reply_to": plan.parent.to_hex() })),
                 is_visible: true,
                 order: 0,
