@@ -781,16 +781,14 @@
      "kind": "src",
      "notable": [
       "AgentDefinition",
-      "AgentScope",
       "MemoryProfile"
      ],
      "path": "src/agent_def/types.rs",
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "crate-vis": 59,
-      "enum": 1,
       "fn": 17,
-      "re-export": 14,
+      "re-export": 15,
       "struct": 2
      }
     },
@@ -69129,6 +69127,18 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AgentScope"
+     ],
+     "path": "src/store/agent_scope.rs",
+     "purpose": "The run scope persisted with an agent definition: every world, base reality only, or one world plus base…",
+     "surface": {
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/archive_scratch.rs",
      "purpose": "FIX 3678 (rule 5): the scratch environment a whole-vault import keeps its row index in",
@@ -72114,7 +72124,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 112,
+      "crate-vis": 113,
       "mod": 108,
       "re-export": 31
      }
@@ -90461,7 +90471,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 420,
+     "files": 421,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90701,7 +90711,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6302,
+   "source_files": 6303,
    "test_files": 895
   },
   "oneiron-android": {
