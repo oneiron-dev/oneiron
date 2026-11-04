@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::edge::{DecodedEdgeValue, EdgeKind};
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use oneiron_base::edge::{DecodedEdgeValue, EdgeKind};
+use oneiron_contracts::entity_id::{EntityId, bytes_to_hex_lower};
 
 pub use oneiron_base::config::ppr_community::{
     CommunityError, PPR_COMMUNITY_BETA_DEFAULT, PPR_COMMUNITY_CPM_GAMMA,
@@ -25,12 +25,12 @@ pub const PPR_COMMUNITY_DETERMINISTIC_SEED: u64 = 0x4f4e455f313837;
 
 pub const PPR_COMMUNITY_CACHE_PREFIX: &str = "ppr_community_cache:v0:";
 
-pub(crate) const META_KEY: &str = "ppr_community_cache:v0:meta";
+pub const META_KEY: &str = "ppr_community_cache:v0:meta";
 
-pub(crate) type Result<T> = std::result::Result<T, CommunityError>;
+pub type Result<T> = std::result::Result<T, CommunityError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct CommunityId(pub(crate) [u8; 16]);
+pub struct CommunityId(pub [u8; 16]);
 
 impl CommunityId {
     /// Domain-separated BLAKE3-128 of the sorted, unique member IDs.
@@ -105,15 +105,15 @@ pub struct CommunityGraphInput<'a> {
 /// fully validated snapshot may construct this view. It is never a full family
 /// and must not be published or passed to full-snapshot validation.
 #[derive(Debug, Clone)]
-pub(crate) struct CommunityQueryView {
-    pub(crate) nodes: BTreeMap<EntityId, CommunityMembership>,
-    pub(crate) sizes: BTreeMap<CommunityId, usize>,
-    pub(crate) graph_size: usize,
+pub struct CommunityQueryView {
+    pub nodes: BTreeMap<EntityId, CommunityMembership>,
+    pub sizes: BTreeMap<CommunityId, usize>,
+    pub graph_size: usize,
 }
 
 /// A validated read view. Version must come from the same graph read transaction.
 pub struct PprCommunityCache<'a> {
-    pub(crate) nodes: &'a BTreeMap<EntityId, CommunityMembership>,
-    pub(crate) sizes: BTreeMap<CommunityId, usize>,
-    pub(crate) graph_size: usize,
+    pub nodes: &'a BTreeMap<EntityId, CommunityMembership>,
+    pub sizes: BTreeMap<CommunityId, usize>,
+    pub graph_size: usize,
 }

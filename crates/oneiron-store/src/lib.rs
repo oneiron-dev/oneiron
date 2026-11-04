@@ -2,6 +2,7 @@
 
 pub mod bundle_generations;
 pub mod checkpoint_host_recipient;
+pub mod config;
 pub mod connector_key_status;
 pub mod file_secret_marks;
 pub mod identity_hints;

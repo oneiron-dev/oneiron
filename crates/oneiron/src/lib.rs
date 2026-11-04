@@ -12,7 +12,7 @@
 
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
-pub mod config;
+pub use oneiron_store::config;
 pub mod deletion;
 pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
