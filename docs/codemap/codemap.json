@@ -26134,7 +26134,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/partition_run.rs",
@@ -26452,7 +26452,7 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "Partition planning: cuts dirty turns into consolidation partitions",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 6,
       "re-export": 1,
       "struct": 3
@@ -26707,7 +26707,7 @@
      "path": "src/dreamer_consolidation/resources/pins.rs",
      "purpose": "What reading an extraction candidate needs from its branch: the pinned sources, the prior heads and the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -30725,7 +30725,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 24,
       "mod": 1,
       "re-export": 15
      }
@@ -30907,7 +30907,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ProjectorPolicy"
@@ -30915,7 +30915,7 @@
      "path": "src/dreamer_wake/projector.rs",
      "purpose": "The projector's surprise check (ARCH-0026 RD-26): a due wake writes only when its material is new to the…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 17,
       "fn": 2,
       "struct": 1
      }
@@ -90172,7 +90172,7 @@
     "dreamer_wake": {
      "files": 68,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)"
     },
@@ -91248,7 +91248,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 122,
+   "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6280,
    "test_files": 900
