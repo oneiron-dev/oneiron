@@ -536,7 +536,7 @@ fn no_streaming(model: &ModelId) -> LlmError {
     .into()
 }
 
-fn broker_error(error: BrokerError) -> LlmError {
+pub(crate) fn broker_error(error: BrokerError) -> LlmError {
     match error {
         // Nothing was written: no key read, no send.
         BrokerError::Unreachable => RetryableLlmError::StreamCut.into(),

@@ -237,7 +237,17 @@ impl BrokerResponses {
         let (previous, input) = chain.plan(&turn.items);
         let chained = previous.is_some();
         let (header, body, whole) = self.header(lease.id(), &turn, previous, input)?;
-        let reply = match open_with_whole(
+        // The broker's own Unreachable never reaches the send: nothing was
+        // written, so this answers without one and the caller falls back.
+        // The check dials and drops; the send below dials again. Any later
+        // failure arrives from open_with_whole as its own LlmError.
+        if let Err(error) = self.chat.client().connect().await {
+            if matches!(error, oneiron_broker::BrokerError::Unreachable) {
+                return Ok(None);
+            }
+            return Err(broker_error(error));
+        }
+        let reply = open_with_whole(
             self.chat.client(),
             self.chat.keys(),
             self.chat.secret(),
@@ -245,14 +255,7 @@ impl BrokerResponses {
             &body,
             &whole,
         )
-        .await
-        {
-            Ok(reply) => reply,
-            Err(error) if matches!(error, oneiron_broker::BrokerError::Unreachable) => {
-                return Ok(None);
-            }
-            Err(error) => return Err(broker_error(error)),
-        };
+        .await?;
         match reply.outcome().clone() {
             Outcome::Answered { status, .. } if !(200..=299).contains(&status) => {
                 if (400..500).contains(&status) && !matches!(status, 408 | 429) {
