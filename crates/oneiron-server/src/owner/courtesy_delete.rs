@@ -225,6 +225,16 @@ pub(crate) fn answer(
         review_at: request.review_at,
         delete,
         hold,
+        restrict: request
+            .restrict
+            .iter()
+            .map(|id| entity_id("restrict", id))
+            .collect::<OwnerResult<Vec<_>>>()?,
+        restriction_notice_given: request
+            .restriction_notice_given
+            .iter()
+            .map(|id| entity_id("restriction_notice_given", id))
+            .collect::<OwnerResult<Vec<_>>>()?,
         retention: request
             .retention
             .as_ref()

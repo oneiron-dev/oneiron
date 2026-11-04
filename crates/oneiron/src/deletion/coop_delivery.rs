@@ -34,12 +34,14 @@ use oneiron_authority::authority::FederationPactStatus;
 
 mod answer;
 mod refresh;
+mod restrict;
 mod types;
 
 pub use types::{
     CooperativeDeleteOperation, CooperativeDeleteRecord, CooperativeDeleteRecordState,
     CooperativeDeletionAnswer, CooperativeDeletionDisposition, CooperativeDeletionDispositionKind,
-    CooperativeDeletionRetention, IncomingCooperativeDeletion,
+    CooperativeDeletionRetention, CooperativeRestrictionLiftAttestation,
+    IncomingCooperativeDeletion,
 };
 
 /// The queue kind carrying both legs: the ask and the answer.
@@ -434,6 +436,8 @@ impl Vault {
                     reply_status: None,
                     reply_started_at: None,
                     courtesy_hold_ids: Vec::new(),
+                    courtesy_restriction_records: Vec::new(),
+                    restriction_lifts: Vec::new(),
                 };
                 INCOMING.put(&self.store, txn, &key, &filed)?;
                 Ok(CooperativeDeletionIngress::Filed)

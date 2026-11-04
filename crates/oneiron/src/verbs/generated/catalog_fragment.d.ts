@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1275 code-mode rows (1235 host rows, 40 run rows), 4513 declarations.
+// Census: 1275 code-mode rows (1235 host rows, 40 run rows), 4515 declarations.
 // Replies: 1090 fully typed, 184 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
@@ -1978,9 +1978,11 @@ declare namespace Sdk {
   type CourtesyDeleteHold = { hold: string; status: string; records: string[]; lifted?: string | null };
   type CourtesyDeleteRecordProgress = { record: string; state: string };
   type CourtesyDeleteRetention = { records: string[]; basis_code: string; retention_class: string };
-  type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review?: string | null; deleted: string[]; recorded: string; holds: CourtesyDeleteHold[]; excluded: string[]; progress: CourtesyDeleteRecordProgress[]; retention?: CourtesyDeleteRetention | null };
-  type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; candidates: string[]; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null; holds: CourtesyDeleteHold[] };
-  type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; retention?: CourtesyDeleteRetention | null; reply_to?: string | null };
+  type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review?: string | null; deleted: string[]; recorded: string; holds: CourtesyDeleteHold[]; excluded: string[]; progress: CourtesyDeleteRecordProgress[]; retention?: CourtesyDeleteRetention | null; restricted: string[] };
+  type CourtesyDeleteRestriction = { record: string; since: string; reason_code: string; review: string };
+  type CourtesyDeleteRestrictionLift = { records: string[]; attested_by: string; attested: string };
+  type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; candidates: string[]; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null; holds: CourtesyDeleteHold[]; restrictions: CourtesyDeleteRestriction[]; restriction_lifts: CourtesyDeleteRestrictionLift[] };
+  type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; retention?: CourtesyDeleteRetention | null; restrict?: string[]; restriction_notice_given?: string[]; reply_to?: string | null };
   type VectorEvidenceFloors = { floor: number; strong: number };
   type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: VectorEvidenceFloors | null };
   type SpaceRef = "text_index" | { declared: string };

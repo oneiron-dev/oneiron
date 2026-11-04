@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1224 facade rows, 4458 declarations.
+Census: 1224 facade rows, 4460 declarations.
 Inputs: 1155 of 1224 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1060 of 1224 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -9944,6 +9944,16 @@ class CourtesyDeleteChoice(TypedDict):
     excluded: list[str]
     progress: list[CourtesyDeleteRecordProgress]
     retention: NotRequired[CourtesyDeleteRetention | None]
+    restricted: list[str]
+class CourtesyDeleteRestriction(TypedDict):
+    record: str
+    since: str
+    reason_code: str
+    review: str
+class CourtesyDeleteRestrictionLift(TypedDict):
+    records: list[str]
+    attested_by: str
+    attested: str
 class CourtesyDeleteIncoming(TypedDict):
     request: str
     pact: str
@@ -9957,6 +9967,8 @@ class CourtesyDeleteIncoming(TypedDict):
     answer: NotRequired[CourtesyDeleteChoice | None]
     reply_status: NotRequired[str | None]
     holds: list[CourtesyDeleteHold]
+    restrictions: list[CourtesyDeleteRestriction]
+    restriction_lifts: list[CourtesyDeleteRestrictionLift]
 class CourtesyDeleteAnswerRequest(TypedDict):
     pact: str
     request: str
@@ -9966,6 +9978,8 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     delete: NotRequired[list[str]]
     hold: NotRequired[list[str]]
     retention: NotRequired[CourtesyDeleteRetention | None]
+    restrict: NotRequired[list[str]]
+    restriction_notice_given: NotRequired[list[str]]
     reply_to: NotRequired[str | None]
 class VectorEvidenceFloors(TypedDict):
     floor: float
