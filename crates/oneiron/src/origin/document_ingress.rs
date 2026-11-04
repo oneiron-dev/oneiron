@@ -5,12 +5,12 @@ use crate::code_document::{CodeEditReceipt, CodeFileIngress};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo};
-use crate::store::scan_count::ScanCount;
 use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
 use crate::store::EngineScan;
 use crate::store::code_document_values::CodeFileEdit;
 use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
+use crate::store::scan_count::ScanCount;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -166,7 +166,8 @@ impl Vault {
             let paths: BTreeSet<_> = old.keys().chain(new.keys()).cloned().collect();
             // The repository's own scope, as every local writer spells it:
             // one document per path whatever ref a push moves (FIX 12199).
-            let scope = crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
+            let scope =
+                crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
             // A file the push renamed keeps its document, as a local rename
             // does, so its symbols and notes keep their ids (FIX 12199).
             let mut renames = received_renames(

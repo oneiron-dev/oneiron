@@ -1,12 +1,12 @@
 use super::effect::ComposedEffect;
 use super::grant::StandingConsentGrant;
 
+pub(super) use crate::store::consent_bound::DOMAIN_ACTION;
 pub use crate::store::consent_bound::{
     ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope,
     BoundSubject, ConsentDomain, DisclosureClass, DisclosureEnvelope, GrantBound,
     MAX_AUDIENCE_MEMBERS, MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS,
 };
-pub(super) use crate::store::consent_bound::DOMAIN_ACTION;
 
 pub(super) fn covers(grants: &[StandingConsentGrant], required: &GrantBound) -> bool {
     grants.iter().any(|grant| grant.bound().contains(required))
