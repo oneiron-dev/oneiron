@@ -19,12 +19,17 @@
 //! ([`SyncSecretProjection::translate_history`]: copy keys to source keys,
 //! copy rows to the stored bytes or the shipped visible diff), then encoded
 //! again over the same spans on a second copy that does not hold them. A
-//! ruled hold imports nothing of the update; only its held record is kept.
+//! held row write becomes a causally equivalent delete in an empty map;
+//! its source stays unchanged. Full snapshots can retain these neutral causal
+//! units through a same-span snapshot; shallow and mixed-edge holds retain
+//! their whole-blob hold path.
 //!
 //! A blob nothing marked touches goes as it came. One the checkpoint cannot
 //! take goes as it came only when its operations and state carry nothing
 //! marked; otherwise it is withheld (never released raw), and stays owed to
 //! the peer: nothing here retires, acknowledges or deletes it.
+
+mod snapshot;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -36,6 +41,7 @@ use loro::{
     LoroValue, VersionVector,
 };
 
+use super::history::needs_whole_hold;
 use super::rows::{HeldEdit, Landing};
 use super::{CopyRow, InboundRow, SyncSecretProjection};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -60,7 +66,7 @@ const UNREAD_EDIT: &str = "a write of a marked repo row whose copy is unread is 
 pub(crate) enum WindowAdmission<'a> {
     /// Import these bytes as today: the blob as it came, or translated onto
     /// its sources, with the new bytes they land (FIX 10732).
-    Admit(Cow<'a, [u8]>, Vec<Landing>),
+    Admit(Cow<'a, [u8]>, Vec<Landing>, Vec<HeldEdit>),
     /// Edits of a copy the visible diff holds on a ruled cause: nothing of the
     /// blob persists, imports or relays, and no edit of it is ever applied.
     Held(Vec<HeldEdit>),
@@ -212,7 +218,13 @@ impl SyncSecretProjection {
         encoded: &'a [u8],
         context: Option<&LoroDoc>,
     ) -> Result<WindowAdmission<'a>> {
-        let as_sent = || Ok(WindowAdmission::Admit(Cow::Borrowed(encoded), Vec::new()));
+        let as_sent = || {
+            Ok(WindowAdmission::Admit(
+                Cow::Borrowed(encoded),
+                Vec::new(),
+                Vec::new(),
+            ))
+        };
         if self.is_empty() {
             return as_sent();
         }
@@ -233,11 +245,17 @@ impl SyncSecretProjection {
                     return as_sent();
                 }
                 if !held.is_empty() {
+                    if let Some(admitted) =
+                        self.admit_held_full_snapshot(store, context, &doc, &input)
+                    {
+                        return Ok(admitted);
+                    }
                     return Ok(WindowAdmission::Held(held));
                 }
                 Ok(WindowAdmission::Admit(
                     Cow::Owned(joined(&parts)?),
                     landings,
+                    Vec::new(),
                 ))
             }
             EncodedBlobMode::Updates => {
@@ -248,11 +266,19 @@ impl SyncSecretProjection {
                     scratch.export_json_updates(&input.partial_start_vv, &input.partial_end_vv);
                 self.resolve_copy_carriers(store, &mut json);
                 let translated = self.translate_history(store, context, &mut json)?;
-                if !translated.held.is_empty() {
+                // Other carriers or a shell can depend on the held row.
+                // Keep their whole-blob hold, not a newly refused update.
+                if !translated.held.is_empty() && needs_whole_hold(&json) {
                     return Ok(WindowAdmission::Held(translated.held));
                 }
-                self.unread_rows(store, context, &json)?;
-                if translated.sources.is_empty() {
+                if let Err(error) = self.unread_rows(store, context, &json) {
+                    return if translated.held.is_empty() {
+                        Err(error)
+                    } else {
+                        Ok(WindowAdmission::Held(translated.held))
+                    };
+                }
+                if translated.sources.is_empty() && translated.held.is_empty() {
                     return as_sent();
                 }
                 // A proven copy edit is never admitted untranslated. The
@@ -268,7 +294,11 @@ impl SyncSecretProjection {
                     .import_json_updates(json)
                     .map_err(decode("window copy translation"))?;
                 if status.pending.is_some() {
-                    return as_sent();
+                    return if translated.held.is_empty() {
+                        as_sent()
+                    } else {
+                        Ok(WindowAdmission::Held(translated.held))
+                    };
                 }
                 let bytes = target
                     .export(ExportMode::updates_in_range(spans_of(&input)))
@@ -276,6 +306,7 @@ impl SyncSecretProjection {
                 Ok(WindowAdmission::Admit(
                     Cow::Owned(bytes),
                     translated.landings,
+                    translated.held,
                 ))
             }
             EncodedBlobMode::OutdatedSnapshot | EncodedBlobMode::OutdatedRle => as_sent(),
