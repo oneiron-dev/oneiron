@@ -14,8 +14,8 @@ use super::{
     whole_vault_export_excludes_entity_in_txn,
 };
 use crate::Vault;
-use crate::authority::{HolderExportRequest};
-use crate::batch::export::secret_supplement_record::{HolderExportNeed};
+use crate::authority::HolderExportRequest;
+use crate::batch::export::secret_supplement_record::HolderExportNeed;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::{EdgeActorClass, parse_strict_edge_record};
 use crate::entity_id::EntityId;
@@ -688,7 +688,7 @@ fn note_diary_author(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
-) -> Result<Option<crate::note::NoteActor>> {
+) -> Result<Option<crate::store::note_body::NoteActor>> {
     #[cfg(feature = "sync")]
     let body = crate::entity_doc::resolve_record_body(&vault.store, rtxn, id, body)?;
     #[cfg(not(feature = "sync"))]

@@ -25,14 +25,14 @@ use super::verbs::Admitted;
 use crate::EdgeActorClass;
 use crate::Vault;
 use crate::batch::secret_scan::LiftedKeys;
-use crate::gate::record_references::{
-    validate_record_references,
-};
-use crate::store::record_links::{MAX_PROSE_LINKS, MAX_PROSE_SCAN_BYTES, PROSE_LINK_SCHEME, ProseLink, parse_record_links};
-use crate::store::record_references::{NamedRecordRef, ReferenceRefusal};
+use crate::gate::record_references::validate_record_references;
 use crate::memory::Memory;
+use crate::receipt::receipt_reference_refusals;
+use crate::store::record_links::{
+    MAX_PROSE_LINKS, MAX_PROSE_SCAN_BYTES, PROSE_LINK_SCHEME, ProseLink, parse_record_links,
+};
+use crate::store::record_references::{NamedRecordRef, ReferenceRefusal};
 use crate::store::reference_refusal::{ReferenceOutcome, ReferenceRefusalFacts};
-use crate::receipt::{receipt_reference_refusals};
 use crate::write_envelope::WriteActor;
 
 /// The row an anchored edit lands through.

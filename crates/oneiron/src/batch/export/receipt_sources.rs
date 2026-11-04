@@ -1,8 +1,8 @@
 //! Actual cited pack receipts in an archive. Never terminal-stamp authority.
 use crate::{
     error::{Error, Result},
-    store::receipt_row::ReceiptRecord,
     serialize::ExportBody,
+    store::receipt_row::ReceiptRecord,
     write_envelope::claim_body::ClaimBody,
 };
 use rmpv::Value;
@@ -123,7 +123,9 @@ impl ExportReceiptSource {
 }
 /// Exact owning citation positions, not a recursive scan for arbitrary strings.
 pub(crate) fn task_receipt_refs(claim: &ClaimBody) -> BTreeSet<String> {
-    let citations = if claim.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
+    let citations = if claim.predicate
+        == crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY
+    {
         claim.evidence.as_ref()
     } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&claim.predicate) {
         let Some(Value::Map(entries)) = claim.evidence.as_ref() else {

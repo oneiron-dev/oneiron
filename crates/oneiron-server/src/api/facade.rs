@@ -53,6 +53,7 @@ mod coach_offer_doors;
 mod code_doors;
 mod code_import_doors;
 mod code_run_doors;
+mod code_run_secret_lift_doors;
 mod code_view_doors;
 mod code_wait_doors;
 mod codebase_doors;

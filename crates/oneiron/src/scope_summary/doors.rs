@@ -5,7 +5,6 @@ use super::codec::{
     encode_scope_summary_body, invalid, scope_value,
 };
 use crate::batch::EdgeValueFields;
-use crate::ports::{ClaimReadStatus};
 use crate::claim::{ScopedRead, ScopedReadActorKey};
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
@@ -17,6 +16,7 @@ use crate::conversation_dag::{
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::memory::Memory;
+use crate::ports::ClaimReadStatus;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
     ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
@@ -81,7 +81,9 @@ fn validate_covers_in_txn(
         let stored = require_type(&vault.store, txn, &message.id, ENTITY_TYPE_MESSAGE)?;
         let logical =
             crate::entity_doc::resolve_record_body(&vault.store, txn, &message.id, &stored)?;
-        if crate::dreamer_consolidation::swarm_evidence_content_hash(&logical) != message.revision {
+        if crate::store::consolidation_evidence::swarm_evidence_content_hash(&logical)
+            != message.revision
+        {
             return Err(invalid("summary source message revision changed"));
         }
     }
@@ -247,7 +249,7 @@ pub(crate) fn validate_summary_put(
             .and_then(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..))
             == Some(bytes);
         if !cfg!(test) && !unchanged {
-            if body.actor != crate::dreamer_runner::authority::dreamer_actor_id()?.to_hex()
+            if body.actor != crate::store::base_agent::dreamer_actor_id()?.to_hex()
                 || (!replicated && !super::producer::admitted(store, *id, bytes))
             {
                 return Err(invalid("only the Dreamer may mint a scope-summary body"));
