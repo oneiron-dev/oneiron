@@ -1397,7 +1397,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/fold_api.rs` | src | s | 7 struct · 1 fn | FoldCompactRequest, FoldHistoryRequest, FoldMarkRequest, FoldRunRequest, FoldUnfoldRequest, RunAttachRequest, RunAttached | Typed public calls on a credential's attached live run |
 | `src/code_run/live_run.rs` | src | s | 2 struct · 9 fn · 1 const | CodeRunLiveRunBinding, LiveRunCredential | A live agent run's attachment to the one credential that may act for it (OF-181) |
 | `src/code_run/mod.rs` | src | m | 8 mod · 31 re-export · 45 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
-| `src/code_run/model_call.rs` | src | m | 3 struct · 1 enum · 8 fn · 1 crate-vis | ModelCallDigests, ModelCallInputPart, ModelCallReasoningPart, ModelCallRecord | Per-model-call evidence and replay records (FIX 12516) |
+| `src/code_run/model_call.rs` | src | m | 3 struct · 2 enum · 9 fn · 2 crate-vis | ModelCallDigests, ModelCallInputPart, ModelCallPartRef, ModelCallReasoningPart, ModelCallRecord | Per-model-call evidence and replay records (FIX 12516) |
 | `src/code_run/payload.rs` | src | m | 13 crate-vis | — | Code-run request and outcome replay values |
 | `src/code_run/payload/observations.rs` | src | s | 3 crate-vis | — | The replay codec of the observations a verb's answer carries beside its output (FIX 2135): each frame the… |
 | `src/code_run/payload/request.rs` | src | s | 4 crate-vis | — | Canonical request values used by code-run replay |
@@ -2775,9 +2775,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/entity_doc/forks.rs` | src | m | 4 struct · 4 enum · 7 fn · 1 const · 20 crate-vis | DocAuthorization, ForkRecord, ForkRequest, ForkStatus, PendingDocForkErase, ProposalBundle, SettleVerb, TextReceipt | Durable divergences, entity-bound grant admission and atomic fork-set settlement |
 | `src/entity_doc/history_erase.rs` | src | s | 1 enum · 2 fn · 1 crate-vis | TextHistoryErase | The owner's "erase history" in a shared vault waits on the vault's `erase` veto window when two or more live… |
 | `src/entity_doc/lift.rs` | src | s | 4 crate-vis | — | Entity documents the historical lift sweep reads again (OF-067, Engine ruling G2 = b) |
+| `src/entity_doc/message_parts.rs` | src | s | 1 crate-vis | — | A continuation's ordered-parts append: its stored prefix extended by the terminal's suffix, written as the… |
 | `src/entity_doc/message_stream.rs` | src | s | 5 crate-vis | — | MESSAGE terminal commits join the common EntityDoc storage transaction |
 | `src/entity_doc/metadata.rs` | src | s | 1 struct · 2 fn · 7 crate-vis | MetadataEdit | Editable record fields live in the owning document's meta map |
-| `src/entity_doc/mod.rs` | src | s | 2 mod · 10 re-export · 22 crate-vis | — | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
+| `src/entity_doc/mod.rs` | src | s | 2 mod · 10 re-export · 23 crate-vis | — | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
 | `src/entity_doc/office.rs` | src | s | 3 struct · 4 fn · 1 type | DeckBody, DeckReview, ReevalWake | The live deck body bound to a deck entity (OF-510; ARCH-0077 "Multiplayer", ARCH-0075 section 4) |
 | `src/entity_doc/pins.rs` | src | m | 2 struct · 1 enum · 9 fn · 16 crate-vis | CitationPin, CursorResolution, PurgeReceipt | Causal citation floors, retained quotes and the owner's shallow-purge door |
 | `src/entity_doc/pins/birth.rs` | src | s | 1 crate-vis | — | A MESSAGE quote anchored to the atomic text a document's local birth took (FIX 8942) |
@@ -3151,6 +3152,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/weave_grant.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | AutoWeaveGrantRequest, AutoWeaveWriterClass | The owner's auto-weave Grant (OF-351, FIX 3433) |
 | `src/gate/weave_policy.rs` | src | s | 14 crate-vis | — | Trusted manifest rows for the weave lens: nested narrowing, never read authority |
 | `src/gate/witness_message.rs` | src | m | 16 crate-vis | — | ONE-1686 (RT-04): the witness MESSAGE approval-ceiling door |
+| `src/gate/witness_message/binding.rs` | src | s | 1 crate-vis | — | Whole-envelope witness binding |
 | `src/genui/consent_cards.rs` | src | m | 3 struct · 2 enum · 21 fn | BundleApprovalScope, BundleApproveCard, BundleSendItem, ConsentAskCard, ConsentScopeEscalator | Consent-ask and bundle-approve cards with scope vocabularies |
 | `src/genui/consent_eval.rs` | src | m | 3 struct · 6 enum · 11 fn · 6 const · 11 crate-vis | ConsentActionDecision, ConsentActionEvaluation, ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentConfirmOutcome, ConsentSurface, GrantMintIntent +1 | DEC-0006 action vocabulary, request/decision/intent types and evaluation helpers |
 | `src/genui/failure_card.rs` | src | s | 4 struct · 1 enum · 1 fn · 1 const · 1 crate-vis | FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SurfacedFailureCard, SurfacedFailureCardInput | ONE-1887 surfaced-failure card composer and QA validators |
@@ -3976,7 +3978,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/wellness_doors.rs` | src | s | 3 struct · 4 fn | WellnessPersonRequest, WellnessPolicyConfigureRequest, WellnessProjection | Per-person wellness projections reuse the measured state index and configured action modes |
 | `src/memory/witness/assertions.rs` | src | s | 2 crate-vis | — | The records a witnessed reply asserts (OF-063), judged in the writer's one snapshot: every cited and created… |
 | `src/memory/witness/base.rs` | src | m | 2 fn · 15 crate-vis | — | Base witness landing: container resolve, K7 door, batch write, text ops, session bump |
-| `src/memory/witness/codec.rs` | src | s | 14 crate-vis | — | Turn-speaker and message-envelope codec plus session alias formatting |
+| `src/memory/witness/codec.rs` | src | m | 14 crate-vis | — | Turn-speaker and message-envelope codec plus session alias formatting |
 | `src/memory/witness/linked.rs` | src | s | 1 crate-vis | — | A base witness that commits its caller's own record with the turn (FIX 8533): the record runs in the turn's… |
 | `src/memory/witness/mod.rs` | src | s | 4 re-export · 10 crate-vis | — | Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record… |
 | `src/memory/witness/program.rs` | src | s | 10 crate-vis | — | The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract… |
@@ -3990,11 +3992,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/program/provenance.rs` | src | s | 3 crate-vis | — | Witness provenance checks and the overlay landing's receipt |
 | `src/memory/witness/reply_assertions.rs` | src | s | 1 struct · 10 crate-vis | MessageReplyAssertions | The canonical reply assertions a MESSAGE generation keeps (FIX 10258, FIX 10259, FIX 10260): the typed… |
 | `src/memory/witness/session.rs` | src | m | 3 fn · 10 crate-vis | — | Session overlay landing: journal staging from the door's authorized values, room-shell claim |
-| `src/memory/witness/stream/admission.rs` | src | m | 6 fn · 7 crate-vis | — | Begin, append and flush |
+| `src/memory/witness/stream/admission.rs` | src | m | 6 fn · 8 crate-vis | — | Begin, append and flush |
+| `src/memory/witness/stream/admission/parts.rs` | src | s | 1 crate-vis | — | A continuation's ordered output parts, in its authorized terminal writer |
 | `src/memory/witness/stream/api.rs` | src | s | 8 fn · 1 crate-vis | — | MESSAGE doors adapt typed calls to the existing witness and stream programs |
 | `src/memory/witness/stream/api_types.rs` | src | s | 12 struct · 4 enum | AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest, MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions +8 | Typed public MESSAGE lifecycle inputs, projected by the verb table |
 | `src/memory/witness/stream/completion.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | MessageCompletion | Whether a MESSAGE's reply is complete, derived from its latest stream receipt |
-| `src/memory/witness/stream/lifecycle.rs` | src | m | 1 struct · 7 fn · 1 crate-vis | MessageStreamPump | Terminal transitions and the host-driven quiet-stream pump |
+| `src/memory/witness/stream/lifecycle.rs` | src | m | 1 struct · 7 fn · 2 crate-vis | MessageStreamPump | Terminal transitions and the host-driven quiet-stream pump |
 | `src/memory/witness/stream/lifecycle/terminal.rs` | src | s | 1 crate-vis | — | A stream's terminal write, its host gate, and the retirement of a Retry its own proof refuses |
 | `src/memory/witness/stream/lifecycle/terminal/continuation.rs` | src | s | 2 crate-vis | — | A continuation's terminal: its prose links, read before its writer, and its one write |
 | `src/memory/witness/stream/lifecycle/terminal/new_message.rs` | src | s | 1 crate-vis | — | A new message's terminal: its witness, with a Retry proven again in the same write |
@@ -4005,8 +4008,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/stream/presence.rs` | src | s | 1 fn · 6 crate-vis | — | Native EphemeralStore publication |
 | `src/memory/witness/stream/reader.rs` | src | s | 1 crate-vis | — | The handle a stream's terminal reads under: its opener's (FIX 1667) |
 | `src/memory/witness/stream/refused.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | StreamRecoveryRefusal | The stream seeds the vault's open could not replay, kept for the owner (FIX 9974, FIX 11933) |
-| `src/memory/witness/stream/reply_assertions.rs` | src | s | 7 crate-vis | — | A model stream's reply assertions at its terminal (OF-063, FIX 3416) |
-| `src/memory/witness/stream/storage.rs` | src | m | 2 fn · 14 crate-vis | — | Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit |
+| `src/memory/witness/stream/reply_assertions.rs` | src | s | 8 crate-vis | — | A model stream's reply assertions at its terminal (OF-063, FIX 3416) |
+| `src/memory/witness/stream/storage.rs` | src | m | 2 fn · 16 crate-vis | — | Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit |
 | `src/memory/witness/stream/tests.rs` | test | m | — | — | Observable stream contracts: no partial persistence, cadence, finality and retry |
 | `src/memory/witness/stream/types.rs` | src | s | 4 struct · 7 enum · 1 fn · 1 type · 2 const | MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy, MessageStreamReceipt, MessageWriteMode, StreamCadence, StreamCancelReason +3 | Public streaming vocabulary |
 | `src/memory/witness/turn_program.rs` | src | s | 2 fn · 2 crate-vis | — | DOOR-141's two seams on the actor's surface: arming a program for this actor's own future turns, and the… |
