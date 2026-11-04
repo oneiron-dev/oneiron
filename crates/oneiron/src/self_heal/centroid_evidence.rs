@@ -21,8 +21,8 @@ pub(crate) use erase::{
     centroid_evidence_carriage, centroid_evidence_owners, erase_centroid_source_in_txn,
 };
 
-use crate::store::centroid_evidence::{CentroidEvidence, EVIDENCE, VectorEvidence};
 pub(crate) use crate::store::centroid_evidence::snapshot_live_in_txn;
+use crate::store::centroid_evidence::{CentroidEvidence, EVIDENCE, VectorEvidence};
 
 /// The cosine a T2a candidate must reach against its corpus's centroid (FIX
 /// 2078): an owner-steered catalog row over every cosine, -1 to 1.
