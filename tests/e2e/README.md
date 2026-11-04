@@ -272,13 +272,15 @@ placeholder executable digests that could accidentally pass.
   asset as well as the wheel. Include `sdk-http` if a case consumes it. Add every
   required organ/browser/VM executable and data file with a source, licence and
   digest. Every supplied asset is verified, even when its client is optional.
-- `launcher`: argv prefix with an absolute, hash-listed Linux containment
-  executable. It must **exec** the appended command, keep host-visible PIDs,
-  deny outside network, retain loopback, and put all descendants (including
-  detached sessions) in the file's CPU/memory cgroup or equivalent. It receives
-  `E2E_FILE_SLOTS`, `E2E_CPU_CREDITS`, and `E2E_MEMORY_MIB`. No PID namespace that
-  hides ownership-journal PIDs from the coordinator. No shell interpolation.
-- `capabilities` includes `linux`, `network-isolated`, `four-slot-accounting`
+- `launcher`: argv prefix with an absolute, hash-listed Linux executable that
+  execs the appended command without shell interpolation. On the fleet this can
+  be `/usr/bin/env`: the fleet job is already the sandbox (Engine, 5 Nov 02:51).
+  Do not add `sudo`, `unshare`, user namespaces or a nested cgroup. The fleet
+  enforces the booking's resource limits; the scheduler accounts for file slots
+  and passes `E2E_FILE_SLOTS`, `E2E_CPU_CREDITS`, and `E2E_MEMORY_MIB`. These are
+  accounting values, not additional per-file kernel limits. Ownership-journal
+  PIDs remain visible for cleanup. This mode does not claim network isolation.
+- `capabilities` includes `linux`, `fleet-job`, `slot-accounting`
   plus runtime prerequisites explicitly checked by a selected scenario.
 - `environment`: prepared non-secret runtime paths/settings. HOME, XDG, TMP,
   locale, TZ and thread limits are fixture-owned. Inherited `ONEIRON_*` values
@@ -314,8 +316,8 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 2 \
 ```
 
 The report records the selected files and `scope.completePlan`. A partial run
-never claims completion of the 242-ID plan. A missing containment launcher is a
-prerequisite, not permission to run eight uncontrolled servers on the host.
+never claims completion of the 242-ID plan. The prepared manifest must identify
+the booked fleet job; never run the suite outside that job or on the Mac.
 
 ## Reports, cleanup and redaction
 
