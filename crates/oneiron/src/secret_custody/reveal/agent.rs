@@ -17,6 +17,7 @@ use crate::error::{Error, Result};
 use crate::secret_custody::run_bound::reveal_run_admission;
 use crate::secret_custody::{SecretCustodyFloor, read_secret_custody_admission_in_txn};
 use crate::vault::Vault;
+use oneiron_store::secret_record::SecretCustodyFloorSource;
 
 impl Vault {
     /// `reveal(handle, why)`: an agent asks for a secret's value for its
@@ -60,7 +61,7 @@ impl Vault {
                 let (handle, secret) = resolve_handle_in_txn(&self.store, txn, handle)?;
                 let rec = read_secret_custody_admission_in_txn(&self.store, txn, &secret)?
                     .ok_or_else(|| unknown(&handle))?;
-                let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
+                let floor = self.store.resolve_secret_custody_floor(txn)?;
                 crate::secret_lease::reveal_tier_admission(&rec, &floor)?;
                 // A secret a run found reveals to that run (FIX 8028).
                 reveal_run_admission(&rec.name, &handle, asker.attempt.as_ref())?;
@@ -273,7 +274,7 @@ impl Vault {
                     .to_owned(),
                 masked_at: origin.masked_at,
             });
-        let floor = SecretCustodyFloor::resolve(&self.store, &txn)?;
+        let floor = self.store.resolve_secret_custody_floor(&txn)?;
         let attempt = asker.and_then(|asker| asker.attempt.as_ref());
         let admitted = crate::secret_lease::reveal_tier_admission(&rec, &floor)
             .and_then(|()| reveal_run_admission(&rec.name, &handle, attempt));

@@ -58,6 +58,7 @@ use crate::secret_custody::{
 };
 use crate::typed_body::LiftedSources;
 use crate::vault::Vault;
+use oneiron_store::secret_record::SecretCustodyFloorSource;
 
 /// Domain of the id of the one ask an agent's read of a file files.
 const FILE_ASK_DOMAIN: &[u8] = b"oneiron.secret_reveal.file_ask.v1";
@@ -597,7 +598,7 @@ fn admitted_keys_in_txn(
     txn: &heed::RoTxn<'_>,
     custody: impl IntoIterator<Item = EntityId>,
 ) -> Result<Option<Vec<AdmittedKey>>> {
-    let floor = SecretCustodyFloor::resolve(&vault.store, txn)?;
+    let floor = vault.store.resolve_secret_custody_floor(txn)?;
     let mut keys: Vec<AdmittedKey> = Vec::new();
     for secret in custody {
         if keys.iter().any(|key| key.secret == secret) {

@@ -47,7 +47,7 @@
 //! * the ONE strict walk over the vault's indexed POLICY_MANIFEST bodies,
 //!   shared by every security consumer of that plane:
 //!   `policy_manifest_bodies_strict`;
-//! * floor resolution over those bodies: [`SecretCustodyFloor::resolve`];
+//! * floor resolution over those bodies: `SecretCustodyFloorSource::resolve_secret_custody_floor`;
 //! * the `Vault` doors: [`Vault::register_secret`](crate::Vault::register_secret),
 //!   [`Vault::resolve_secret_ref`](crate::Vault::resolve_secret_ref), [`Vault::get_secret_metadata`](crate::Vault::get_secret_metadata), and the
 //!   SECRET-02 value-read door `Vault::get_secret_value_in_txn`;
