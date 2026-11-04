@@ -8,6 +8,8 @@ use crate::error::Error;
 use crate::llm::run_admission::{JobStartRefused, LeaseUnit};
 use crate::side_table::{self, LegacyJson, SideTable};
 
+use super::spend_calibration::AgentSpendCalibration;
+
 /// One launch tree's spend scopes. Key: the scope id.
 pub(super) const SCOPE: SideTable<String, SpendScope, LegacyJson> =
     SideTable::new(&side_table::AGENT_DISPATCH_SPEND_SCOPE);
@@ -29,6 +31,21 @@ pub struct SpendPayer {
     pub granted_by: Option<EntityId>,
     /// When the payer accepted the cap, in host milliseconds.
     pub at_ms: u64,
+}
+
+/// The local calibration state before one scope's sample was folded.
+/// The wrapper distinguishes the first sample (`before: None`) from a scope
+/// that never contributed a sample on this vault.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SpendCalibrationSample {
+    pub before: Option<AgentSpendCalibration>,
+}
+
+impl SpendCalibrationSample {
+    pub(super) fn ordinal(&self) -> u64 {
+        self.before.as_ref().map_or(0, |row| row.samples)
+    }
 }
 
 /// One node of a launch's lease tree.
@@ -61,6 +78,9 @@ pub struct SpendScope {
     /// The AGENT_DEF this scope's settlement calibrates; `None` for a root or
     /// an inert workflow wrapper, which are not agents.
     pub agent: Option<EntityId>,
+    /// This vault's folded calibration sample; absent until settlement or
+    /// when this scope has no local sample. Handoffs do not carry it.
+    pub calibration_sample: Option<SpendCalibrationSample>,
     /// A root's payer consent (OF-531); `None` on every child, which reads its
     /// root's, and on a root no payer accepted.
     #[serde(default, skip_serializing_if = "Option::is_none")]

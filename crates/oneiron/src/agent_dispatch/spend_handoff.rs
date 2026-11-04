@@ -204,6 +204,10 @@ fn rejoin_in_txn(
             },
             (None, _) => None,
         };
+        let calibration_sample = SCOPE
+            .get(&vault.store, txn, &skeleton.scope.0)?
+            .filter(|local| local.agent == agent && local.unit == skeleton.unit)
+            .and_then(|local| local.calibration_sample);
         scopes.push(SpendScope {
             scope: skeleton.scope,
             parent: skeleton.parent,
@@ -217,6 +221,7 @@ fn rejoin_in_txn(
             opened_at: skeleton.opened_at,
             closed_at: skeleton.closed_at,
             agent,
+            calibration_sample,
             payer,
         });
     }

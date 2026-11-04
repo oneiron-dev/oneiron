@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1220 facade rows, 4420 declarations.
+Census: 1220 facade rows, 4422 declarations.
 Inputs: 1146 of 1220 fully typed, 71 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read
 Results: 1045 of 1220 fully typed, 159 typed down to an opaque serde_json::Value leaf, 16 with a shape the generator could not read
 Opaque serde_json::Value leaves: 122; unread shapes: 6.
@@ -2170,6 +2170,14 @@ class FanoutSlotTerminal(TypedDict):
     finished_at: int
 AttemptState = Literal["Queued", "Leased", "Paused", "Completed", "Failed", "Cancelled", "Scheduled", "Landing", "Abandoned"]
 SpendState = Literal["open", "closed"]
+class AgentSpendCalibration(TypedDict):
+    samples: int
+    total_units: int
+    ewma_units: int
+    last_units: int
+    updated_at: int
+class SpendCalibrationSample(TypedDict):
+    before: NotRequired[AgentSpendCalibration | None]
 class SpendPayer(TypedDict):
     party: EntityId
     granted_by: NotRequired[EntityId | None]
@@ -2187,6 +2195,7 @@ class SpendScope(TypedDict):
     opened_at: int
     closed_at: NotRequired[int | None]
     agent: NotRequired[EntityId | None]
+    calibration_sample: NotRequired[SpendCalibrationSample | None]
     payer: NotRequired[SpendPayer | None]
 class SpendSignalWrapUp(TypedDict):
     signal: Literal["wrap_up"]
