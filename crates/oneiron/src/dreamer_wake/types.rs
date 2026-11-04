@@ -18,7 +18,7 @@ use crate::error::Result;
 use crate::sync::EphemeralStore;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use crate::write_envelope::WriteEnvelope;
-use oneiron_model::llm::BudgetGuard;
+use oneiron_model::llm::{BudgetGuard, WorkCancel};
 
 use super::deadline::{WakeCancellation, WakePassDeadline};
 
@@ -216,6 +216,10 @@ pub struct WakeAttemptContext<'a> {
     /// running attempt polls it at its boundaries and parks, resumable,
     /// when raised. `None` outside a driven pass: nothing is ever asked.
     pub cancel: Option<&'a WakeCancellation>,
+    /// The pass's device-work cancellation (FIX 11963): an attempt admits
+    /// its device work under a clone, so tripping it aborts in-flight
+    /// device work with the pass. `None` admits unlinked, as before.
+    pub device_cancel: Option<WorkCancel>,
     pub budget_id: &'a str,
     pub now_ms: u64,
     /// One frozen LMDB ledger revision for this entire wake, if the driver
