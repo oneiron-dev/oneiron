@@ -36,7 +36,8 @@ pub(super) fn dimensions_to_engine(value: f64) -> Result<usize, MemoryError> {
     Ok(value as usize)
 }
 
-/// Validates the original JS count, then applies the shared list/search cap.
+/// Validates the original JS count into a positive engine limit: a finite
+/// whole number in the unsigned 32-bit range, served whole downstream.
 pub(super) fn limit_to_engine(value: f64) -> Result<usize, MemoryError> {
     if !value.is_finite() || value.fract() != 0.0 || !(1.0..=f64::from(u32::MAX)).contains(&value) {
         return Err(MemoryError {
@@ -45,7 +46,7 @@ pub(super) fn limit_to_engine(value: f64) -> Result<usize, MemoryError> {
                 .to_owned(),
             suggestions: vec![format!(
                 "Set limit to a whole number between 1 and {}, or omit it to use the default.",
-                oneiron_remote::MAX_SEARCH_LIMIT
+                u32::MAX
             )],
             successor_short_id: None,
             gate_denial: None,
@@ -60,9 +61,8 @@ pub(super) fn limit_to_engine(value: f64) -> Result<usize, MemoryError> {
         });
     }
     // Positive whole u32 values are exact JS integers and fit usize on N-API targets.
-    let limit = value as usize;
-    oneiron_remote::check_limit(limit)?;
-    Ok(limit)
+    // The range above already proves the count positive; the door serves it whole.
+    Ok(value as usize)
 }
 
 fn claim_timestamp(value: Option<f64>, field: &str) -> Result<Option<u64>, MemoryError> {

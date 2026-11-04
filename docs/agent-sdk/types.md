@@ -444,7 +444,7 @@ export type RetrievalMeta = {
   claimsReturned: number
   deepPending?: boolean
   temporalHints?: TemporalHint[]
-  /** The request's limit was past the ceiling and was served at it. */
+  /** Whether a retrieval policy lowered the requested result count. */
   limitClamped?: boolean
 }
 
@@ -1187,6 +1187,8 @@ class Oneiron:
         @property
         def federation(self) -> "Oneiron._VaultFederationVerbs": ...
         @property
+        def sync(self) -> "Oneiron._VaultSyncVerbs": ...
+        @property
         def trusted_contacts(self) -> "Oneiron._VaultTrustedContactsVerbs": ...
         @property
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
@@ -1200,6 +1202,8 @@ class Oneiron:
         def off_record(self) -> "Oneiron._VaultOffRecordVerbs": ...
         @property
         def records(self) -> "Oneiron._VaultRecordsVerbs": ...
+        @property
+        def outbound_calls(self) -> "Oneiron._VaultOutboundCallsVerbs": ...
         @property
         def research(self) -> "Oneiron._VaultResearchVerbs": ...
         @property
@@ -1925,6 +1929,8 @@ class Oneiron:
         @property
         def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs": ...
         @property
+        def fit(self) -> "Oneiron._VaultSkillsFitVerbs": ...
+        @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs": ...
         @property
         def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
@@ -1944,6 +1950,9 @@ class Oneiron:
     class _VaultSkillsCodeAutoInstallVerbs:
         def set(self, spec: Facade.SkillCodeAutoInstallRequest) -> Facade.HubConsentReceipt:
             """The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."""
+    class _VaultSkillsFitVerbs:
+        def set(self, spec: Facade.SkillFitSetRequest) -> Facade.HubConsentReceipt:
+            """The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert."""
     class _VaultSkillsPermissionsVerbs:
         def approve(self, spec: Facade.HubSkillPermissionRequest) -> Facade.HubConsentReceipt:
             """The owner answers one imported skill permission ask at its exact hub source."""
@@ -2416,6 +2425,15 @@ class Oneiron:
             """The owner exports the world-settings leg a request owes a connected vault, host signed for the live pact: an agent's ask on a world that vault owns, or this vault's holders' answer to that vault's ask."""
         def receive(self, spec: Facade.ForeignWorldPrivacyDelivery) -> Facade.WorldPrivacyRequest:
             """The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers."""
+    class _VaultSyncVerbs:
+        @property
+        def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs": ...
+    class _VaultSyncRetainedWorkVerbs:
+        @property
+        def wait(self) -> "Oneiron._VaultSyncRetainedWorkWaitVerbs": ...
+    class _VaultSyncRetainedWorkWaitVerbs:
+        def set(self, spec: Facade.RetainedWorkWaitSetRequest) -> int:
+            """The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait."""
     class _VaultTrustedContactsVerbs:
         def name(self, spec: Facade.TrustedContactNameRequest) -> Facade.TrustedContact:
             """A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
@@ -2537,6 +2555,12 @@ class Oneiron:
             """Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."""
         def erase_sweep(self, spec: Facade.RecordEraseSweepRequest) -> Facade.RecordEraseSweep | None:
             """Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep."""
+    class _VaultOutboundCallsVerbs:
+        @property
+        def request(self) -> "Oneiron._VaultOutboundCallsRequestVerbs": ...
+    class _VaultOutboundCallsRequestVerbs:
+        def erase(self, spec: Facade.OutboundCallRequestEraseRequest) -> Facade.OutboundCallRequestErased:
+            """The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting."""
     class _VaultResearchVerbs:
         def create_child(self, spec: Facade.ResearchChildWire) -> Facade.ResearchChildReceipt:
             """The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."""
