@@ -148,7 +148,7 @@ pins the `oneiron` crate root to the names in `scripts/ratchet/root-surface.txt`
 - sudachi and formualizer (used from `oneiron-xlsx-formula` on) are git dependencies on the
   `oneiron-dev` forks, pinned by `rev`. A change to either is a fork commit plus a new `rev`
   (`docs/ops/forked-dependencies.md`).
-- The `oneiron` crate declares no default features.
+- The `oneiron` crate enables `sync` by default. `--no-default-features` disables it.
 
 ## CI
 
