@@ -429,9 +429,11 @@ pub(crate) fn room_clearance_in(
 }
 
 /// One read key per member other than `caller`. A member positively known
-/// as the vault owner reads with the owner's key. Any other member names no
-/// class, so only class-agnostic grants admit it, and its access grants
-/// apply.
+/// as the vault owner reads with the owner's key; a live co-Owner (FIX
+/// 6558) with the census owner's key, which a census the read cannot take
+/// never mints: that peer keeps its access-grant key. Any other member
+/// names no class, so only class-agnostic grants admit it, and its access
+/// grants apply.
 fn peer_read_keys_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -440,12 +442,18 @@ fn peer_read_keys_in(
 ) -> crate::Result<Vec<crate::claim::ScopedReadActorKey>> {
     let embedded_owner = crate::vault::embedded_owner_actor_id()?;
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    let owners = crate::policy_model::owners_in_txn(vault, txn).unwrap_or_default();
     members
         .iter()
         .filter(|member| **member != caller)
         .map(|member| {
             if crate::disclosure::is_vault_owner(&fold, embedded_owner, member) {
                 return Ok(crate::claim::ScopedReadActorKey::vault_owner(*member));
+            }
+            if owners.contains(member) {
+                return Ok(crate::claim::ScopedReadActorKey::vault_owner_by_census(
+                    *member,
+                ));
             }
             // The same positive and private-access gates the member's own
             // reads pass.
