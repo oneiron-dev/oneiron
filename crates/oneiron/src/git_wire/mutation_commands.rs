@@ -99,6 +99,9 @@ pub(crate) fn run_git_at_path(path: &Path, args: &[String]) -> Result<Vec<u8>> {
     )))
 }
 
+/// Repo-mutation failures are durable: the queue stores them on the oplog row.
+/// They therefore carry only what GitWire's redaction allows — a classified
+/// cause, the exit code, and a digest of the diagnostics.
 fn format_git_failure(args: &[String], code: Option<i32>, stderr: &[u8]) -> String {
     truncate_failure(&redact_bridged_failure(args, code, stderr))
 }
