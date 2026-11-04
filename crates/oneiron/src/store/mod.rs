@@ -210,11 +210,17 @@ mod diagnostics;
 pub mod document_segments;
 pub mod embedding;
 mod gate_decision;
+pub(crate) mod file_key_masks;
+pub(crate) mod found_key_notice_queue;
 pub(crate) mod graph_version;
+pub(crate) mod known_value_index;
 pub(crate) mod l2_evidence;
 pub mod receipt_identity;
 pub mod retrieval_deadline;
 pub mod row_birth;
+pub(crate) mod pending_custody_revoke;
+pub(crate) mod secret_handle_labels;
+pub(crate) mod secret_name_index;
 mod scan_checks;
 mod scan_kind;
 mod scan_kind_table;
@@ -228,6 +234,7 @@ mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
 pub mod world_registration_keys;
+pub(crate) mod world_pad_rows;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
@@ -246,8 +253,6 @@ mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
 pub(crate) mod local_replica;
-#[cfg(feature = "sync")]
-pub(crate) mod replica_edge_key;
 mod notification_updates;
 mod open_gates;
 mod outbound_send_receipt;
@@ -258,6 +263,8 @@ mod ppr_community;
 mod ppr_community_indexed;
 pub(crate) mod reader_fold_receipt;
 pub(crate) mod refinement_carrier;
+#[cfg(feature = "sync")]
+pub(crate) mod replica_edge_key;
 pub mod result_manifest;
 pub mod retrieval_policy;
 mod retrieval_telemetry;
