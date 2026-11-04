@@ -156,12 +156,12 @@ impl Store {
         plan: &mut CustodyPlan,
         call_ref: &EntityId,
         generation: u32,
-    ) -> Result<Requirement> {
-        let source = plan
-            .source()
-            .ok_or_else(|| CustodyKind::ConnectorResume.corrupt())?;
+    ) -> Result<Option<Requirement>> {
+        let Some(source) = plan.source() else {
+            return Ok(None);
+        };
         let id = resume_subject(source, call_ref)?.at(u64::from(generation));
-        plan.require_exact(&id)
+        plan.require_exact_present(&id)
     }
 
     /// Reads a resume leaf from an activation's fork, never the old binding.

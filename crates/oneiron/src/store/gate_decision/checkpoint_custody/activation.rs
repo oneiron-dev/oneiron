@@ -179,7 +179,10 @@ impl Store {
         // references go.
         let mut kept = rows.clone();
         require_known_history(&mut kept, custody.plan_mut())?;
-        crate::calendar::connectors::plan_archived_calendar_rows(&mut kept, custody.plan_mut())?;
+        let calendars = crate::calendar::connectors::plan_archived_calendar_rows(
+            &mut kept,
+            custody.plan_mut(),
+        )?;
         let prune = ArchivePrune::of(&rows, kept, &retired)?;
         let erased_pads = crate::world_keys::plan_archived_pads(self, custody.plan_mut())?;
         // Its credential values' keys fork with the rest, each by exact id
@@ -215,9 +218,7 @@ impl Store {
             .and_then(|()| self.read_back_known_in_txn(&wtxn, &prune.kept))
             .and_then(|()| {
                 crate::calendar::connectors::read_back_archived_calendar_rows(
-                    self,
-                    &wtxn,
-                    &prune.kept,
+                    self, &wtxn, &calendars,
                 )
             })
             .and_then(|()| {

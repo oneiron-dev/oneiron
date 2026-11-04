@@ -179,7 +179,7 @@ impl LiteralCarrier {
         &self,
         plan: &mut CustodyPlan,
         kind: LiteralKind,
-    ) -> crate::Result<Requirement> {
+    ) -> crate::Result<Option<Requirement>> {
         Store::plan_connector_resume(plan, &reference(kind, &self.instance), GENERATION)
     }
 

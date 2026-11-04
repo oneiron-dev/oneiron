@@ -41,11 +41,17 @@ passport/cursor ordering race. There is no migration or old masked-row reader.
 Activation collects every current outbox and remote-object cursor, including
 Committed outbox evidence. It plans only each carrier's purpose-derived resume
 ref at generation 0 before forking custody. A retired instance removes only its
-own row through the existing archive prune. Missing or damaged required custody
-keeps the existing strict error; no replacement key is minted.
+own row through the existing archive prune. A row already unavailable because
+its source key is absent, custody planning fails, or its row cannot decode stays
+sealed and unavailable; it does not veto other activation work. No replacement
+key or empty transport precondition is substituted.
 
-Before lifting the archive mark, activation opens each kept carrier under the
+Before lifting the archive mark, activation opens each source-live carrier under the
 new fork's transaction binding and validates the same ciphertext encoding and
 envelope bindings as ordinary operation reads. This validation returns no
-literal and admits no transport work. It does not change credential, owner, or
-installed-seat admission. Side-restore parity is not established by this slice.
+literal and admits no transport work. A source-live carrier that fails this
+forked readback rolls back activation, retaining the old binding and archive
+mark; it is never silently dropped or blessed as pending. A later source
+retirement is not revived; a subsequent activation plans its proved retirement.
+This does not change credential, owner, or installed-seat admission. Side-restore
+parity is not established by this slice.
