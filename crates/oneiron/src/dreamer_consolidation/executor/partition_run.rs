@@ -19,9 +19,10 @@ struct PartitionStarted<'a> {
     resources: BranchResources<'a>,
     /// The peers this attempt's widening newly assigned beyond its
     /// queued originals, with the readings this branch froze of their
-    /// words at its open: recorded as taken only once the run completes,
-    /// under `widened_round` (FIX 12246). A held run stamps none of them.
-    widened: Vec<(EntityId, [u8; 32])>,
+    /// words at its open and the partition each was read under: recorded
+    /// as taken only once the run completes, under `widened_round`
+    /// (FIX 12246). A held run stamps none of them.
+    widened: Vec<(EntityId, [u8; 32], [u8; 32])>,
     /// The projection round this attempt itself carries, for the
     /// latest-round bookkeeping its widened stamp owes; `None` for an
     /// unkeyed attempt, which records no assignment at all.
@@ -143,15 +144,15 @@ impl ConsolidationExecutor<'_> {
             resources => resources?,
         };
         // The widened peers carry the readings this branch froze of their
-        // words at its open: a window slot's finish re-opens its branch,
-        // but the stamp owes the words as first read, never a reread.
-        let widened: Vec<(EntityId, [u8; 32])> = Self::widened_turns(attempt, plan)
+        // words at its open and the partition each was read under: a
+        // window slot's finish re-opens its branch, but the stamp owes
+        // the words as first read, never a reread.
+        let widened: Vec<(EntityId, [u8; 32], [u8; 32])> = Self::widened_turns(attempt, plan)
             .into_iter()
             .filter_map(|turn| {
-                resources
-                    .taken_reading(&turn)
-                    .ok()
-                    .map(|reading| (turn, reading))
+                let reading = resources.taken_reading(&turn).ok()?;
+                let partition = resources.taken_partition(&turn).ok()?;
+                Some((turn, reading, partition))
             })
             .collect();
         // The projection round this attempt itself carries: a deferral
@@ -181,7 +182,7 @@ impl ConsolidationExecutor<'_> {
         &mut self,
         resources: &BranchResources<'_>,
         run: crate::llm::DurableStepResult<PartitionRun>,
-        widened: &[(EntityId, [u8; 32])],
+        widened: &[(EntityId, [u8; 32], [u8; 32])],
         widened_round: Option<[u8; 32]>,
         ctx: &WakeAttemptContext<'_>,
         charges: &mut StepChargeTally,
@@ -504,7 +505,8 @@ impl ConsolidationExecutor<'_> {
     /// Hands `candidates` to the sink, its wall ms the commit stage. On an
     /// accepted commit it also records the frozen readings this branch's
     /// widening assigned (`widened`) as taken - only for widened turns
-    /// still live and still reading as frozen when the stamp runs -
+    /// still live, still reading as frozen, and still in the partition
+    /// they were read under when the stamp runs -
     /// with the latest-round bookkeeping that assignment owes under
     /// this attempt's own round
     /// (`widened_round`), in the stamp's own commit after the candidates'
@@ -513,7 +515,7 @@ impl ConsolidationExecutor<'_> {
         &mut self,
         resources: &BranchResources<'_>,
         candidates: Vec<VerifiedCandidate>,
-        widened: &[(EntityId, [u8; 32])],
+        widened: &[(EntityId, [u8; 32], [u8; 32])],
         widened_round: Option<[u8; 32]>,
         ctx: &WakeAttemptContext<'_>,
         stages: &mut PartitionStages,
@@ -543,8 +545,14 @@ impl ConsolidationExecutor<'_> {
                 // in the gap already deleted its row, and moved-on words
                 // re-enter through the usual doors.
                 let mut current = Vec::new();
-                for (turn, reading) in widened {
+                for (turn, reading, partition) in widened {
+                    // A same-text republish that moved the turn's partition
+                    // reads as frozen but was extracted under other axes:
+                    // new work there, never stamped here.
                     if crate::dreamer_wake::reading_current_in_txn(ctx.vault, txn, turn, *reading)?
+                        && crate::dreamer_consolidation::turn_partition_hash_in_txn(
+                            ctx.vault, txn, turn,
+                        )? == Some(*partition)
                     {
                         current.push((*turn, *reading));
                     }
