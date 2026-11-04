@@ -6,7 +6,8 @@
 //! the owner's ask answer door before the answer is recorded, lands exactly
 //! that allow through [`Vault::answer_pack_setup`] in the answering owner's
 //! own session, each permission with its consent receipt. A no allows
-//! nothing, and so does an answer at a door that holds no owner proof.
+//! nothing. A role-door yes without owner proof leaves the ask open for the
+//! owner to press at that door; it records no answer and wakes no waiter.
 
 use serde::{Deserialize, Serialize};
 
