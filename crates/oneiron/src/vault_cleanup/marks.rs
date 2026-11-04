@@ -15,7 +15,7 @@
 //! Any other length marks nothing.
 
 use crate::Vault;
-use crate::attempt_queue::AttemptId;
+use crate::store::attempt_id::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
