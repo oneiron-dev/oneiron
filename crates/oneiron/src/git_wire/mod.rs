@@ -27,7 +27,6 @@
 mod argv;
 mod bridge;
 pub(crate) mod bundle_tree;
-pub(crate) mod mutation_commands;
 mod checkout;
 mod checkout_remote;
 mod config;
@@ -41,6 +40,7 @@ mod import_fetch;
 mod mirror_plan_push;
 mod mirror_plan_review;
 mod mirror_push;
+pub(crate) mod mutation_commands;
 mod objects;
 mod operation;
 mod plan;

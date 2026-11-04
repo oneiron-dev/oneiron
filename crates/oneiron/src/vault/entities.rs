@@ -7,9 +7,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use crate::ports::EntityStoreRead;
-use crate::store::scan_count::ScanCount;
 use crate::store::EngineScan;
 use crate::store::retrieval_values::RetrievalWithTelemetry;
+use crate::store::scan_count::ScanCount;
 use crate::store::{RetrievalSignal, ShortIdAliasTarget};
 use crate::temporal::TimeRange;
 use oneiron_retrieval::pipeline::ScoredEntity;

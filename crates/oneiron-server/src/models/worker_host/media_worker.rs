@@ -367,8 +367,8 @@ async fn vox_answer(http: &ProviderHttp) -> Result<Answered, WorkerReadiness> {
         // not a pin contradiction; only the body's shape below can be one.
         return Err(failed(WorkerFailure::Unreachable, None));
     }
-    let (meta, pcm) = render_parts(&reply.body)
-        .ok_or_else(|| failed(WorkerFailure::Unreachable, None))?;
+    let (meta, pcm) =
+        render_parts(&reply.body).ok_or_else(|| failed(WorkerFailure::Unreachable, None))?;
     if meta["target"] != target
         || meta["sample_rate"].as_u64() != Some(u64::from(warm.sample_rate))
         || meta["channels"].as_u64() != Some(1)
