@@ -28,6 +28,7 @@ pub struct ImageRef {
     /// BLAKE3 of the exact encoded bytes: hex on a JSON wire, its bytes in
     /// storage (FIX 12262).
     #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub hash: [u8; 32],
     pub media_type: String,
     pub width: u32,

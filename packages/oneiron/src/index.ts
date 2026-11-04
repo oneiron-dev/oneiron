@@ -1766,6 +1766,8 @@ export class Oneiron {
       log: (input: Facade.EmptyRequest = {}): Facade.LegalHoldEvent[] => this.#call(() => this.#client.vaultLegalHoldsLog(input) as Facade.LegalHoldEvent[]),
       /** The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records. */
       lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest): Facade.LegalHoldLiftAndErased => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as Facade.LegalHoldLiftAndErased),
+      /** The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting. */
+      withdraw_erase: (input: Facade.LegalHoldWithdrawEraseRequest): Facade.LegalHoldErasesWithdrawn => this.#call(() => this.#client.vaultLegalHoldsWithdrawErase(input) as Facade.LegalHoldErasesWithdrawn),
     },
     courtesy_delete: {
       /** The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery. */
@@ -2520,7 +2522,7 @@ export class Oneiron {
       /** Resumes one paused branch of a run by its attempt id: the vault owner resumes any branch, any other caller only a branch of a TASK it owns. A repeat answers already_resumed. */
       resume: (input: Facade.RunControlRequest): Facade.RunControlReceipt => this.#call(() => this.#client.vaultRunsResume(input) as Facade.RunControlReceipt),
       /** Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work. */
-      step: (input: Facade.SettledStepRequest): Facade.SettledStepView | null => this.#call(() => this.#client.vaultRunsStep(input) as Facade.SettledStepView | null),
+      step: (input: unknown): unknown | null => this.#call(() => this.#client.vaultRunsStep(input) as unknown | null),
       /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
       checkpoint: (input: Facade.CheckpointReadRequest): Facade.CheckpointView | null => this.#call(() => this.#client.vaultRunsCheckpoint(input) as Facade.CheckpointView | null),
       /** Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it. */

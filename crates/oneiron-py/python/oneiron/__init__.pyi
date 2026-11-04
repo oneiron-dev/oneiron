@@ -2109,6 +2109,8 @@ class Oneiron:
             """The owner-visible legal hold log, oldest first."""
         def lift_and_erase(self, spec: Facade.LegalHoldLiftAndEraseRequest) -> Facade.LegalHoldLiftAndErased:
             """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
+        def withdraw_erase(self, spec: Facade.LegalHoldWithdrawEraseRequest) -> Facade.LegalHoldErasesWithdrawn:
+            """The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting."""
     class _VaultCourtesyDeleteVerbs:
         def send(self, spec: Facade.CourtesyDeleteSendRequest) -> Facade.CourtesyDeleteSent:
             """The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."""
@@ -2869,7 +2871,7 @@ class Oneiron:
             """Pauses one queued or scheduled branch of a run by its attempt id: the vault owner pauses any branch, any other caller only a branch of a TASK it owns. A repeat answers already_paused; a running branch is not paused."""
         def resume(self, spec: Facade.RunControlRequest) -> Facade.RunControlReceipt:
             """Resumes one paused branch of a run by its attempt id: the vault owner resumes any branch, any other caller only a branch of a TASK it owns. A repeat answers already_resumed."""
-        def step(self, spec: Facade.SettledStepRequest) -> Facade.SettledStepView | None:
+        def step(self, spec: Any) -> Any | None:
             """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
         def checkpoint(self, spec: Facade.CheckpointReadRequest) -> Facade.CheckpointView | None:
             """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
