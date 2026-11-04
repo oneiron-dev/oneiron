@@ -239,7 +239,8 @@ pub struct CommitReceipt {
 /// What became of one element of a per-element claim batch (`vault.commit`,
 /// `vault.claims.seed`): its landed receipt, or its typed refusal and the
 /// refusal's own receipt (OF-063). A refused element persisted nothing.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+// No Eq: the landed receipt holds a generated record ref without one.
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum CommitOutcome {
     /// The claim landed.
     Landed {
