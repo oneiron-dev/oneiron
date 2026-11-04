@@ -4,6 +4,8 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use oneiron_model::llm::WorkCancel;
+
 use super::observation::{WakeBinding, WakeRef};
 
 /// Wake-pass wall-clock ceiling: the REAL ceiling (1184-D4-C), monotonic.
@@ -252,5 +254,18 @@ impl WakeCancellation {
     #[must_use]
     pub fn is_paused(&self) -> bool {
         self.raised.load(std::sync::atomic::Ordering::Acquire) == PAUSED
+    }
+}
+
+/// Trips the device-work cancellation once the wake pass asked for one
+/// (FIX 11963): the pass polls the wake flag at its checkpoints, and
+/// device work admitted under the pass's cancellation stops admitting once
+/// tripped. Idempotent on both sides; returns whether it tripped now.
+pub fn sync_wake_cancel(wake: &WakeCancellation, device: &WorkCancel) -> bool {
+    if wake.is_cancelled() {
+        device.cancel();
+        true
+    } else {
+        false
     }
 }

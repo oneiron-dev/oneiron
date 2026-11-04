@@ -29,9 +29,7 @@ use serde::{Deserialize, Serialize};
 use super::membership::HistoryChoice;
 use super::*;
 use crate::consent::{AuthenticatedOwner, ContactDisclosureOutcome, DisclosureConfirmationReceipt};
-use crate::disclosure::{
-    AttendeeIdentityChoice, DisclosureScopeStatus, RoomParty, UnknownAttendeeAsk,
-};
+use crate::disclosure::{AttendeeIdentityChoice, DisclosureScopeStatus, UnknownAttendeeAsk};
 use crate::error::GateError;
 use crate::memory::{Memory, MemoryResult};
 use crate::task_verb::{AttendeeEntryFact, TaskAskReceipt};
@@ -159,10 +157,16 @@ pub(super) fn initial_member_enters_in(
     {
         return Ok(false);
     }
-    Ok(!matches!(
-        crate::disclosure::bound_room_party_in(vault, txn, fold, person)?,
-        RoomParty::VaultOwner | RoomParty::VaultAgent
-    ))
+    // FIX 6558: anyone but the embedded/binding owner or one of the vault's
+    // own agents. A live co-Owner now classes VaultOwner too, and still
+    // enters, as it did under its contact's party.
+    let entry = crate::disclosure::room_party_entry_in(vault, txn, fold, person)?;
+    Ok(!entry.vault_agent
+        && !crate::disclosure::is_vault_owner(
+            fold,
+            crate::vault::embedded_owner_actor_id()?,
+            &person,
+        ))
 }
 
 impl Memory<'_> {
@@ -428,10 +432,11 @@ impl Vault {
         let contact = match &fact.attendee {
             ContainerAttendee::Person(person) => {
                 let fold = self.authority_view_readonly_in_txn(txn)?;
-                match crate::disclosure::bound_room_party_in(self, txn, &fold, *person)? {
-                    RoomParty::Contact(contact) => Some(contact),
-                    _ => None,
-                }
+                // FIX 6558: the contact the room knows the PERSON by (its
+                // sole linked Active contact), which a live co-Owner keeps
+                // beside its VaultOwner party; none follows today's
+                // not-clearable path below.
+                crate::disclosure::room_party_entry_in(self, txn, &fold, *person)?.contact
             }
             ContainerAttendee::Speaker {
                 session_key,
