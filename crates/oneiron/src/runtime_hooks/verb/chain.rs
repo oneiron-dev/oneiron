@@ -207,6 +207,7 @@ pub(super) fn pre(
             carry: Some(carry),
             landing: None,
             session: None,
+            resumed_ask: None,
         }));
     }
     // A resumed call with no sandbox runs no hook after the asking one, as a
@@ -227,6 +228,7 @@ pub(super) fn pre(
     );
     chain.landing = landing.as_mut();
     chain.expired = expired;
+    let resumed_ask = token.clone();
     let ended = chain.pre(&hooks, start, args, check, token, resume)?;
     Ok(ended.map(|args| VerbHookPre {
         call,
@@ -234,6 +236,7 @@ pub(super) fn pre(
         carry: Some(carry),
         landing,
         session: None,
+        resumed_ask,
     }))
 }
 
@@ -290,6 +293,7 @@ fn through(call: VerbCall, args: Value) -> Result<Stopped<VerbHookPre>> {
         carry: None,
         landing: None,
         session: None,
+        resumed_ask: None,
     }))
 }
 

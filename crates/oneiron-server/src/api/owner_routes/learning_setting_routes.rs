@@ -18,7 +18,7 @@ use oneiron::learning_setting_doors::{
 };
 use serde_json::Value;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, hooked_owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -33,6 +33,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/settings/learning",
                 summary: "The catalog, each knob with the value the vault reads now, and the owner's rows.",
                 row: None,
+                shape: None,
             },
             get(list),
         ),
@@ -42,6 +43,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/settings/learning",
                 summary: "Lays one seed or pin, replacing the row of the same key, mode and scope.",
                 row: None,
+                shape: Some(RestShape::json(
+                    put_learning_setting_body_schema,
+                    learning_settings_view_schema,
+                )),
             },
             post(put),
         ),
@@ -51,6 +56,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/settings/learning/clear",
                 summary: "Clears one row; an absent row clears too.",
                 row: None,
+                shape: Some(RestShape::json(
+                    clear_learning_setting_body_schema,
+                    learning_settings_view_schema,
+                )),
             },
             post(clear),
         ),
