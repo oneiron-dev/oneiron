@@ -70238,21 +70238,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "HostHoldsRecipient",
-      "HostHoldsSealing"
-     ],
-     "path": "src/store/checkpoint_host_recipient.rs",
-     "purpose": "Host recipient and sealing policy for checkpoint legal-hold members",
-     "surface": {
-      "enum": 1,
-      "fn": 3,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/store/checkpoint_payload/capture.rs",
      "purpose": "The compartments a capture seals its owners under (KS7-5): each owner's active incarnation, or a newly…",
@@ -72234,8 +72219,8 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 64,
-      "mod": 75,
-      "re-export": 23
+      "mod": 74,
+      "re-export": 24
      }
     },
     {
@@ -91022,7 +91007,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 325,
+     "files": 324,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91276,7 +91261,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6309,
+   "source_files": 6308,
    "test_files": 899
   },
   "oneiron-android": {
@@ -126735,6 +126720,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "HostHoldsRecipient",
+      "HostHoldsSealing"
+     ],
+     "path": "src/checkpoint_host_recipient.rs",
+     "purpose": "Host recipient and sealing policy for checkpoint legal-hold members",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ConnectorKeyStatus"
      ],
      "path": "src/connector_key_status.rs",
@@ -126784,7 +126784,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 10
+      "mod": 11
      }
     },
     {
@@ -127097,6 +127097,13 @@
      "layout": "file",
      "purpose": "Bundle generation identity, upload cadence and retirement selection"
     },
+    "checkpoint_host_recipient": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Host recipient and sealing policy for checkpoint legal-hold members"
+    },
     "connector_key_status": {
      "files": 1,
      "impl_vault": false,
@@ -127163,7 +127170,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 23,
+   "source_files": 24,
    "test_files": 0
   },
   "oneiron-uniffi": {
