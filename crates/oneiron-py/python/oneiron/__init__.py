@@ -688,6 +688,9 @@ class Oneiron:
         def federation(self) -> "Oneiron._VaultFederationVerbs":
             return Oneiron._VaultFederationVerbs(self._client)
         @property
+        def sync(self) -> "Oneiron._VaultSyncVerbs":
+            return Oneiron._VaultSyncVerbs(self._client)
+        @property
         def trusted_contacts(self) -> "Oneiron._VaultTrustedContactsVerbs":
             return Oneiron._VaultTrustedContactsVerbs(self._client)
         @property
@@ -708,6 +711,9 @@ class Oneiron:
         @property
         def records(self) -> "Oneiron._VaultRecordsVerbs":
             return Oneiron._VaultRecordsVerbs(self._client)
+        @property
+        def outbound_calls(self) -> "Oneiron._VaultOutboundCallsVerbs":
+            return Oneiron._VaultOutboundCallsVerbs(self._client)
         @property
         def research(self) -> "Oneiron._VaultResearchVerbs":
             return Oneiron._VaultResearchVerbs(self._client)
@@ -1921,6 +1927,9 @@ class Oneiron:
         def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs":
             return Oneiron._VaultSkillsCodeAutoInstallVerbs(self._client)
         @property
+        def fit(self) -> "Oneiron._VaultSkillsFitVerbs":
+            return Oneiron._VaultSkillsFitVerbs(self._client)
+        @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
             return Oneiron._VaultSkillsPermissionsVerbs(self._client)
         @property
@@ -1953,6 +1962,12 @@ class Oneiron:
         def set(self, spec):
             """The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."""
             return json.loads(_translate(lambda: self._client.vault_skills_code_auto_install_set(json.dumps(spec))))
+    class _VaultSkillsFitVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert."""
+            return json.loads(_translate(lambda: self._client.vault_skills_fit_set(json.dumps(spec))))
     class _VaultSkillsPermissionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2748,6 +2763,24 @@ class Oneiron:
         def receive(self, spec):
             """The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers."""
             return json.loads(_translate(lambda: self._client.vault_federation_connect_world_privacy_receive(json.dumps(spec))))
+    class _VaultSyncVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs":
+            return Oneiron._VaultSyncRetainedWorkVerbs(self._client)
+    class _VaultSyncRetainedWorkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def wait(self) -> "Oneiron._VaultSyncRetainedWorkWaitVerbs":
+            return Oneiron._VaultSyncRetainedWorkWaitVerbs(self._client)
+    class _VaultSyncRetainedWorkWaitVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait."""
+            return json.loads(_translate(lambda: self._client.vault_sync_retained_work_wait_set(json.dumps(spec))))
     class _VaultTrustedContactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2951,6 +2984,18 @@ class Oneiron:
         def erase_sweep(self, spec):
             """Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep."""
             return json.loads(_translate(lambda: self._client.vault_records_erase_sweep(json.dumps(spec))))
+    class _VaultOutboundCallsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def request(self) -> "Oneiron._VaultOutboundCallsRequestVerbs":
+            return Oneiron._VaultOutboundCallsRequestVerbs(self._client)
+    class _VaultOutboundCallsRequestVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def erase(self, spec):
+            """The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting."""
+            return json.loads(_translate(lambda: self._client.vault_outbound_calls_request_erase(json.dumps(spec))))
     class _VaultResearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
