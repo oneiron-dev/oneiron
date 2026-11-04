@@ -34,6 +34,8 @@ pub mod secret_record;
 pub mod session_overlay;
 pub mod store_clock;
 pub mod vault_page_seal;
+pub mod vector_index;
+pub mod vector_row;
 pub mod window_key;
 pub mod world_pad_codec;
 pub mod write_envelope;
