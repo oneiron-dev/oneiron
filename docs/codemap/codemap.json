@@ -23935,9 +23935,9 @@
      "path": "src/core_write/batch.rs",
      "purpose": "`vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "enum": 1,
-      "fn": 3
+      "fn": 2
      }
     },
     {
@@ -23947,17 +23947,7 @@
      "path": "src/core_write/conversations.rs",
      "purpose": "`vault.conversations.create` and `vault.conversations.turns.create` (OF-181): a conversation, and a TURN…",
      "surface": {
-      "fn": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/core_write/dag.rs",
-     "purpose": "`vault.conversations.records.append` (OF-181): one DAG record and its topology, the write `POST…",
-     "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -34042,7 +34032,7 @@
      "path": "src/engine_store_hooks.rs",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -46395,6 +46385,17 @@
       "crate-vis": 4,
       "fn": 3,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/core_write_doors.rs",
+     "purpose": "The core write doors on the `Memory` facade (OF-181): `vault.batch`, `vault.conversations.create`…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5
      }
     },
     {
@@ -70736,6 +70737,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/core_write_operations.rs",
+     "purpose": "The engine operations the core write doors run on conversation rows and owner credentials: the trait the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -72519,7 +72530,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 145,
+      "crate-vis": 147,
       "mod": 115,
       "re-export": 31
      }
@@ -90062,7 +90073,7 @@
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution"
     },
     "core_write": {
-     "files": 5,
+     "files": 4,
      "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -90503,7 +90514,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 352,
+     "files": 353,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90965,7 +90976,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 471,
+     "files": 472,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91205,7 +91216,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6351,
+   "source_files": 6352,
    "test_files": 895
   },
   "oneiron-android": {
