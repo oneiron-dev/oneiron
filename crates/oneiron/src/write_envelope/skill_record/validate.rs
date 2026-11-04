@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use rmpv::Value;
 
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::error::{Error, Result};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 
 use super::lifecycle::SkillLifecycle;
 use super::record::{

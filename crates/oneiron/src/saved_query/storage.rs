@@ -523,7 +523,7 @@ fn matcher_from_json(value: &Value) -> Result<MatcherSpec> {
     }
 }
 
-pub(super) use crate::store::query_memos::{encode_memo_row, decode_memo_row};
+pub(super) use crate::store::query_memos::{decode_memo_row, encode_memo_row};
 
 pub(super) fn encode_event(event: &MembershipEvent) -> Result<Vec<u8>> {
     let mut root = JsonMap::new();
@@ -583,5 +583,6 @@ pub(super) fn encode_member_value_bytes(value: &CampaignMemberValue) -> Result<V
 }
 
 use crate::store::query_memos::{
-    parse_row, required_string, required_actor_class, required_u64, required_entity_ref, required_hash,
+    parse_row, required_actor_class, required_entity_ref, required_hash, required_string,
+    required_u64,
 };

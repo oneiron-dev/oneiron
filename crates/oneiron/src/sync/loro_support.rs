@@ -6,15 +6,17 @@
 
 use std::collections::HashMap;
 
-use loro::{LoroMap, LoroValue, ValueOrContainer};
 #[cfg(test)]
 use loro::{ExportMode, LoroDoc};
+use loro::{LoroMap, LoroValue, ValueOrContainer};
 
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::{Error, Result, SyncEngineContext};
 
-pub(crate) use crate::store::loro_document::{map_insert_bytes, map_get_bytes, copy_binary_root_map, map_delete, map_contains_binary};
+pub(crate) use crate::store::loro_document::{
+    copy_binary_root_map, map_contains_binary, map_delete, map_get_bytes, map_insert_bytes,
+};
 
 /// Presence check for tombstone maps: ANY value or container under the key
 /// counts as present (fail closed). Entities/edges maps must keep using
@@ -160,7 +162,9 @@ thread_local! {
         const { std::cell::Cell::new(0) };
 }
 
-pub(super) use crate::store::loro_document::{map_for_each_value_bytes, map_for_each_value_bytes_deferring};
+pub(super) use crate::store::loro_document::{
+    map_for_each_value_bytes, map_for_each_value_bytes_deferring,
+};
 
 pub(crate) use crate::store::loro_document::{map_for_each_bytes, map_for_each_tombstone_value};
 
@@ -170,9 +174,12 @@ pub(crate) fn export_all_updates(doc: &LoroDoc) -> Result<Vec<u8>> {
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))
 }
 
-pub(crate) use crate::store::loro_document::{export_updates_from, json_covers_blob, export_snapshot, import_doc, doc_version_vector, doc_from_snapshot};
+pub(crate) use crate::store::loro_document::{
+    doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_from, import_doc,
+    json_covers_blob,
+};
 
-pub use crate::store::loro_document::{export_updates_since};
+pub use crate::store::loro_document::export_updates_since;
 
 /// Deep value without empty root maps: `get_map` registers a root on the
 /// local doc at first read, so an empty root is not replicated state.

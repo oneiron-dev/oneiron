@@ -41,9 +41,9 @@ use crate::memory::{
     WitnessTurn,
 };
 use crate::side_table::{self, Named, SideTable};
-use crate::training_pack::{SwapExpectation, TrainingRun};
 use crate::skill_optimize::training_choice::SwapChoice;
 use crate::skill_optimize::training_choice::TrainingState;
+use crate::training_pack::{SwapExpectation, TrainingRun};
 use crate::{EntityId, Vault};
 
 mod question;

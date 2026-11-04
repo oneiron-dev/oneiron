@@ -11,15 +11,15 @@ use std::collections::HashMap;
 use serde_json::{Map, Number, Value};
 
 use crate::context_pack::ContextPack;
-use crate::serialize::pack_format::PackFormat;
-use crate::serialize::pack_accounting::PackItemTokenStats;
-use crate::serialize::pack_accounting::PackSectionTokenStats;
 use crate::context_pack::PackStats;
-use crate::serialize::pack_accounting::PackTokenStats;
-use crate::serialize::pack_accounting::TokenAllocation;
 use crate::pipeline::Signal;
 use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
+use crate::serialize::pack_accounting::PackItemTokenStats;
+use crate::serialize::pack_accounting::PackSectionTokenStats;
+use crate::serialize::pack_accounting::PackTokenStats;
+use crate::serialize::pack_accounting::TokenAllocation;
+use crate::serialize::pack_format::PackFormat;
 use crate::tokenizer::PackTokenizer;
 
 use super::group_labels::known_group_labels;
@@ -553,7 +553,9 @@ pub(super) fn json_stats(pack_stats: &PackStats) -> Value {
     Value::Object(stats)
 }
 
-fn item_accounting_json(accounting: crate::serialize::pack_accounting::PackItemAccounting) -> Value {
+fn item_accounting_json(
+    accounting: crate::serialize::pack_accounting::PackItemAccounting,
+) -> Value {
     let mut out = Map::new();
     out.insert(
         "count".to_owned(),

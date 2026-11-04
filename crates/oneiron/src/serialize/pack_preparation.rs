@@ -5,14 +5,14 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::serialize::context_entity::ContextEntity;
 use crate::context_pack::ContextPack;
-use crate::serialize::pack_format::FieldProfile;
-use crate::serialize::pack_format::PackFormat;
 use crate::context_pack::PackStats;
-use crate::serialize::pack_accounting::TokenAllocation;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
+use crate::serialize::context_entity::ContextEntity;
+use crate::serialize::pack_accounting::TokenAllocation;
+use crate::serialize::pack_format::FieldProfile;
+use crate::serialize::pack_format::PackFormat;
 use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
 
 use super::field_profile_table::fields_for_profile;

@@ -117,7 +117,9 @@ pub struct DirtySolvedGroup {
     pub processed: u64,
 }
 
-pub use crate::dreamer_runner::maintenance::browser_candidate::{ProgramFailureRef, FailureLineage, ProgramSeen};
+pub use crate::dreamer_runner::maintenance::browser_candidate::{
+    FailureLineage, ProgramFailureRef, ProgramSeen,
+};
 
 fn cursor_bytes<const N: usize>(cursor: &PageCursor) -> Result<[u8; N]> {
     <[u8; N]>::try_from(cursor.0.as_slice()).map_err(|_| Error::InvalidClaimBody("page cursor"))

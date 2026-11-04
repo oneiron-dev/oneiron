@@ -5,16 +5,16 @@
 //! its Vault doors. The three birth roads enter through `put_skill_record`:
 //! `skill_convert`, `skill_hub`, and `skill_optimize`.
 
-pub(crate) mod health_review;
-pub mod learning_judge;
 mod call;
 mod codec;
 mod doors;
 mod graph;
+pub(crate) mod health_review;
 pub mod helper;
 mod helper_eval;
 mod identity;
 mod invocation;
+pub mod learning_judge;
 mod lifecycle;
 mod loaded_revision;
 mod pack_load;
