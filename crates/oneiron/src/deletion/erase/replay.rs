@@ -76,7 +76,8 @@ impl Vault {
     ///
     /// Also returns the other documents whose local reads this apply changed
     /// (citing NOTEs, rewritten merge events, a restamped subject edge's
-    /// endpoints); the caller notifies them only after its commit.
+    /// endpoints), and actual native cancellation generations. The caller
+    /// publishes their notices and cancellation signals only after its root commit.
     ///
     /// Every branch, the absent-id ones included, ends at one post-effect
     /// hook: a Grant a decision seal names decides seal standing again in

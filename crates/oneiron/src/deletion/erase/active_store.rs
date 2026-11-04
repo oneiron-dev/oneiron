@@ -45,8 +45,9 @@ impl Vault {
         )
     }
 
-    /// Returns whether local state existed, plus the citing NOTE documents
-    /// whose pins the erasure rewrote, for the caller's post-commit notice.
+    /// Returns whether local state existed, the citing NOTE documents whose
+    /// pins the erasure rewrote, and actual native cancellation generations.
+    /// The caller publishes notices and cancellation signals only after commit.
     /// `erase` is set for a hard reason: only an erase destroys a world's
     /// keys; a soft delete's purge of headerless residue keeps them. `act`
     /// is the owner act an erase carries out, when its door bound one: the

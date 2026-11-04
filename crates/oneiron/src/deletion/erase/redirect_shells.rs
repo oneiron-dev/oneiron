@@ -39,7 +39,8 @@ impl Vault {
     /// Returns the erased shells for the redaction sweep, plus the other
     /// documents this walk rewrote (author-stamped events, citing NOTEs, a
     /// restamped subject edge's endpoints) for post-commit local
-    /// invalidation. No notice is sent from inside the transaction. Each
+    /// invalidation, plus actual native cancellation generations for the
+    /// caller to signal only after commit. No notice is sent inside the transaction. Each
     /// shell's actor scrub runs under `act`, the owner act the head's erase
     /// carries out, when its door bound one (FIX 11883).
     pub(in crate::deletion) fn cascade_hard_erase_to_redirect_shells_in_txn(
