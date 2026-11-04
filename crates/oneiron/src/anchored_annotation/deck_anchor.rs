@@ -126,11 +126,7 @@ fn bound_to<'a>(
 /// node stays on the slide its binding names, so only such a node is named.
 /// That serves an export no rebinding bound the deck to, as a Keep leaves
 /// one when the deck was bound to another version since.
-fn filed_ids<'a>(
-    at: &'a DeckUnits,
-    ids: Option<&'a DeckUnits>,
-    node: u64,
-) -> Option<Filed<'a>> {
+fn filed_ids<'a>(at: &'a DeckUnits, ids: Option<&'a DeckUnits>, node: u64) -> Option<Filed<'a>> {
     let unit = at.nodes.iter().find(|unit| unit.node == node)?;
     if unit.node == unit.slide {
         return Some(Filed {
