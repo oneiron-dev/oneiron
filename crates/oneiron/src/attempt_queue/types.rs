@@ -36,6 +36,10 @@ pub use crate::store::attempt_inputs::{AttemptEvent, AttemptInterventionKind};
 
 pub use crate::store::attempt_manifest::{ManifestEntry, ManifestKind};
 
+pub use crate::store::attempt_outcomes::{
+    AbandonAttempt, AbandonOutcome, ClaimOutcome, CompleteOutcome, EnqueueOutcome, FailOutcome,
+    InterveneAttempt, InterveneOutcome, RetryOutcome,
+};
 pub use crate::store::attempt_record::{
     AttemptPlacement, AttemptRecord, PlannedBinding, PlannedExactness,
 };
@@ -114,99 +118,17 @@ impl AttemptRecord {
 
 pub use crate::store::attempt_inputs::EnqueueAttempt;
 
-/// Typed enqueue outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum EnqueueOutcome {
-    Enqueued(AttemptRecord),
-    Existing(AttemptRecord),
-}
-
 pub use crate::store::attempt_inputs::ClaimAttempt;
-
-/// Typed claim outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-#[allow(clippy::large_enum_variant)]
-pub enum ClaimOutcome {
-    Empty,
-    Claimed(AttemptRecord),
-}
 
 pub use crate::store::attempt_inputs::CompleteAttempt;
 
-/// Typed complete outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CompleteOutcome {
-    Completed(AttemptRecord),
-    AlreadyCompleted(AttemptRecord),
-}
-
 pub use crate::store::attempt_inputs::FailAttempt;
-
-/// Typed fail outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum FailOutcome {
-    Failed(AttemptRecord),
-    AlreadyFailed(AttemptRecord),
-}
 
 pub use crate::store::attempt_inputs::SetAttemptResult;
 
-/// Input for abandoning a live attempt: it stopped without delivering, and
-/// nobody stopped it.
-///
-/// The result reference is REQUIRED, not optional. An abandonment with nothing
-/// to point at would be indistinguishable from a lost row, and the whole point
-/// of the state is that the stop stays auditable.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AbandonAttempt {
-    pub id: AttemptId,
-    pub lease_owner: String,
-    pub attempt_count: u32,
-    pub result_ref: AttemptResultRef,
-    pub reason: String,
-    pub now: u64,
-}
-
-/// Typed abandon outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum AbandonOutcome {
-    Abandoned(AttemptRecord),
-    AlreadyAbandoned(AttemptRecord),
-}
-
 pub use crate::store::attempt_inputs::RetryAttempt;
 
-/// Typed retry outcome, carrying the newly scheduled try (not the finalized
-/// source, which stays point-readable by its own id).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum RetryOutcome {
-    Retried(AttemptRecord),
-}
-
-/// Input for interrupting, pausing, resuming, or cancelling an attempt row.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InterveneAttempt {
-    pub id: AttemptId,
-    pub kind: AttemptInterventionKind,
-    pub actor: String,
-    pub note: Option<String>,
-    pub now: u64,
-}
-
 pub use crate::store::attempt_inputs::AttemptInterventionEffect;
-
-/// Typed intervention outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InterveneOutcome {
-    pub effect: AttemptInterventionEffect,
-    pub record: AttemptRecord,
-}
 
 pub(crate) fn attempt_record_order(
     left: &AttemptRecord,
