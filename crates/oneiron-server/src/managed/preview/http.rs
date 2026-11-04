@@ -153,8 +153,17 @@ fn bootstrap(
     if Access::authorize(shared, token, origin).is_none() {
         return refusal();
     }
+    let secure = if origin
+        .url
+        .split_once("://")
+        .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("https"))
+    {
+        "; Secure"
+    } else {
+        ""
+    };
     let Ok(cookie) = HeaderValue::from_str(&format!(
-        "{ACCESS_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax"
+        "{ACCESS_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax{secure}"
     )) else {
         return refusal();
     };
