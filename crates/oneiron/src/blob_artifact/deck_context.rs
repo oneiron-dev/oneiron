@@ -40,4 +40,3 @@ pub struct DeckEditContext {
     #[serde(default)]
     pub renders: Vec<DeckRender>,
 }
-

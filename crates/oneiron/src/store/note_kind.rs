@@ -155,4 +155,3 @@ pub(crate) fn valid_name(s: &str) -> bool {
         && s.bytes()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._/-".contains(&c))
 }
-

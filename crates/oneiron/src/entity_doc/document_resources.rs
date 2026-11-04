@@ -86,4 +86,3 @@ pub(crate) fn machine_memory_refused(refusal: ResourceRefusal) -> crate::error::
         ResourceRefusal::Deadline => document_refused(refusal),
     }
 }
-
