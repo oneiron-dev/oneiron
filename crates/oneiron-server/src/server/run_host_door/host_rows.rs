@@ -27,6 +27,8 @@ pub(super) fn host_row(
     input: Value,
     line: Option<&RunAdmission>,
     attempt: Option<&str>,
+    origin: &oneiron::memory::HostWriteOrigin,
+    run_id: Option<EntityId>,
     evidence: &mut Option<Vec<EntityId>>,
 ) -> MemoryResult<Value> {
     let (principal, class) = (actor.entity_ref(), actor.actor_class());
@@ -71,6 +73,9 @@ pub(super) fn host_row(
                 evidence.get_or_insert_with(Vec::new),
                 None,
             )?)
+        }
+        AgentVerb::SelfSkillsGraph => {
+            super::graph_skill::run(server, actor, origin, run_id, line, input, evidence)
         }
         AgentVerb::VaultGraphAsk => {
             let request: GraphAskRequest = decode(input)?;

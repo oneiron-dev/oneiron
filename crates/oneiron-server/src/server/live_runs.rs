@@ -434,6 +434,34 @@ impl LiveRuns {
             .then(|| (entry.leased.clone(), entry.executor.clone())))
     }
 
+    /// The registered skill-load lease of this bound call's actual actor
+    /// and origin. The origin's token must name that same leased try; the
+    /// registered proof is then checked live, as for site skills.
+    pub(crate) fn skill_lease_for_origin(
+        &self,
+        vault: &Vault,
+        run: EntityId,
+        actor: WriteActor,
+        origin: &oneiron::memory::HostWriteOrigin,
+    ) -> oneiron::Result<Option<(AttemptRecord, String)>> {
+        let Some(token) = oneiron::skill_attribution::run_write_token_of_origin(origin) else {
+            return Ok(None);
+        };
+        let Some(entry) = self.get(run) else {
+            return Ok(None);
+        };
+        if !is_actor(entry.actor, actor)
+            || token.attempt() != entry.leased.id
+            || entry.leased.lease_owner.as_deref() != Some(token.owner())
+            || entry.leased.attempt_count != token.generation()
+        {
+            return Ok(None);
+        }
+        Ok(self
+            .holds(vault, &entry)?
+            .then(|| (entry.leased.clone(), entry.executor.clone())))
+    }
+
     /// The run `run` for `caller`, its own agent, while `caller`'s credential
     /// holds its attachment, of the issue `issued` when one is named.
     fn attached_for(
