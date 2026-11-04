@@ -2,6 +2,7 @@
 
 use rmpv::Value;
 
+use crate::blob_artifact::OutputProductionStamp;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::side_table::{CodecError, RawValue};
@@ -35,7 +36,7 @@ impl RawValue for CodeRevisionFork {
 
 pub(crate) const CODE_REVISION_CLAIM_PREDICATE: &str = "code.revision";
 
-pub const CODE_REVISION_RECORD_KEYS: [&str; 13] = [
+pub const CODE_REVISION_RECORD_KEYS: [&str; 14] = [
     "revision_id",
     "kind",
     "session_id",
@@ -49,6 +50,7 @@ pub const CODE_REVISION_RECORD_KEYS: [&str; 13] = [
     "tested_queue",
     "snapshot_anchor",
     "retired_paths",
+    "production",
 ];
 
 pub const CODE_REVISION_FORK_KEYS: [&str; 4] = [
@@ -83,6 +85,8 @@ const KEY_TESTED_QUEUE: &str = CODE_REVISION_RECORD_KEYS[10];
 const KEY_SNAPSHOT_ANCHOR: &str = CODE_REVISION_RECORD_KEYS[11];
 
 const KEY_RETIRED_PATHS: &str = CODE_REVISION_RECORD_KEYS[12];
+
+const KEY_PRODUCTION: &str = CODE_REVISION_RECORD_KEYS[13];
 
 const KEY_FORK_SESSION_ID: &str = CODE_REVISION_FORK_KEYS[0];
 
@@ -146,6 +150,7 @@ pub fn encode_code_revision(revision: &CodeRevision) -> Result<Vec<u8>> {
             Value::from(KEY_RETIRED_PATHS),
             super::tree_codec::retirements_to_value(&revision.retired_paths)?,
         ),
+        (Value::from(KEY_PRODUCTION), revision.production.to_value()),
     ]);
     encode_value(&value, "code revision MessagePack encode failed")
 }
@@ -222,6 +227,7 @@ fn decode_code_revision_value(value: &Value) -> Result<CodeRevision> {
     let mut tested_queue = None;
     let mut snapshot_anchor = None;
     let mut retired_paths = None;
+    let mut production = None;
     let mut seen = [false; CODE_REVISION_RECORD_KEYS.len()];
 
     for (key, value) in entries {
@@ -284,11 +290,21 @@ fn decode_code_revision_value(value: &Value) -> Result<CodeRevision> {
             KEY_RETIRED_PATHS => {
                 retired_paths = Some(super::tree_codec::retirements_from_value(value)?);
             }
+            KEY_PRODUCTION => {
+                production = Some(OutputProductionStamp::from_value(value).map_err(|_| {
+                    Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                        "invalid code revision production stamp",
+                    ))
+                })?);
+            }
             _ => unreachable!("index resolved from CODE_REVISION_RECORD_KEYS"),
         }
     }
 
     let revision = CodeRevision {
+        production: production.ok_or(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "missing production",
+        )))?,
         commit_metadata: commit_metadata
             .ok_or(Error::InvalidClaimBody("missing commit_metadata"))?,
         file_frontiers: file_frontiers.ok_or(Error::Artifact(

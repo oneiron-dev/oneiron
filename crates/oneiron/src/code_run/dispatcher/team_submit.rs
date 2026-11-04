@@ -13,7 +13,7 @@ use rmpv::Value;
 use sha2::{Digest, Sha256};
 
 use super::HostSelfDispatcher;
-use super::team_submit_output::output_descriptor_in_txn;
+use super::team_submit_output::{output_descriptor_in_txn, producer_attempt_in_txn};
 use crate::attempt_queue::AttemptId;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::team_submit::{
@@ -205,7 +205,11 @@ impl HostSelfDispatcher<'_> {
                     &stored,
                     now,
                     crate::team::owner_outcome::ProducerMembership::of_attempt_in_txn(
-                        vault, txn, None, leader, &team,
+                        vault,
+                        txn,
+                        producer_attempt_in_txn(vault, txn, output)?,
+                        leader,
+                        &team,
                     )?,
                 )?;
                 bind_team_deliverable_in_txn(vault, txn, &binding)

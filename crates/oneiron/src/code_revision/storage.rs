@@ -5,6 +5,7 @@ use std::collections::{HashMap, VecDeque};
 use heed::{RoTxn, RwTxn};
 
 use crate::Vault;
+use crate::blob_artifact::OutputProductionStamp;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -12,6 +13,8 @@ use crate::ppr;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SESSION};
 use crate::side_table::{Raw, SideTable};
 use crate::store::Store;
+use crate::task_verb::HostBinding;
+use crate::write_envelope::WriteActor;
 
 use super::codec::validate_code_revision_fork_shape;
 use super::codec::validate_code_revision_shape;
@@ -42,25 +45,29 @@ impl Vault {
     pub fn commit_code_revision(
         &self,
         revision: &CodeRevision,
+        actor: &WriteActor,
+        host: Option<&HostBinding>,
     ) -> Result<CodeRevisionWriteOutcome> {
         if revision.kind != CodeRevisionKind::Commit {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "commit_code_revision requires kind commit",
             )));
         }
-        write_code_revision(&self.store, revision)
+        write_code_revision(self, revision, actor, host)
     }
 
     pub fn revert_code_revision(
         &self,
         revision: &CodeRevision,
+        actor: &WriteActor,
+        host: Option<&HostBinding>,
     ) -> Result<CodeRevisionWriteOutcome> {
         if revision.kind != CodeRevisionKind::Revert {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "revert_code_revision requires kind revert",
             )));
         }
-        write_code_revision(&self.store, revision)
+        write_code_revision(self, revision, actor, host)
     }
 
     pub fn branch_code_revision(&self, fork: &CodeRevisionFork) -> Result<()> {
@@ -74,7 +81,7 @@ impl Vault {
 
     pub fn get_code_revision(&self, revision_id: &EntityId) -> Result<Option<CodeRevision>> {
         let rtxn = self.store.env.read_txn()?;
-        get_code_revision_in_txn(&self.store, &rtxn, revision_id)
+        self.get_code_revision_in_txn(&rtxn, revision_id)
     }
 
     /// [`Vault::get_code_revision`] in the caller's snapshot: the finalized
@@ -84,12 +91,16 @@ impl Vault {
         rtxn: &RoTxn<'_>,
         revision_id: &EntityId,
     ) -> Result<Option<CodeRevision>> {
-        get_code_revision_in_txn(&self.store, rtxn, revision_id)
+        let mut revision = get_code_revision_in_txn(&self.store, rtxn, revision_id)?;
+        if let Some(revision) = &mut revision {
+            revision.production.project_erased_in_txn(self, rtxn)?;
+        }
+        Ok(revision)
     }
 
     pub fn code_revisions_for_session(&self, session_id: &EntityId) -> Result<Vec<CodeRevision>> {
         let rtxn = self.store.env.read_txn()?;
-        let revisions =
+        let mut revisions =
             collect_code_revisions_by_index_prefix(&self.store, &rtxn, SESSION_INDEX, session_id)?;
         if revisions.is_empty() {
             if get_code_revision_frontier_in_txn(&self.store, &rtxn, session_id)?.is_some() {
@@ -103,12 +114,24 @@ impl Vault {
             }
             verify_code_revision_session_trace_in_txn(&self.store, &rtxn, session_id, &revisions)?;
         }
+        for revision in &mut revisions {
+            revision.production.project_erased_in_txn(self, &rtxn)?;
+        }
         Ok(revisions)
     }
 
     pub fn child_code_revisions(&self, parent_revision_id: &EntityId) -> Result<Vec<CodeRevision>> {
         let rtxn = self.store.env.read_txn()?;
-        collect_code_revisions_by_index_prefix(&self.store, &rtxn, PARENT_INDEX, parent_revision_id)
+        let mut revisions = collect_code_revisions_by_index_prefix(
+            &self.store,
+            &rtxn,
+            PARENT_INDEX,
+            parent_revision_id,
+        )?;
+        for revision in &mut revisions {
+            revision.production.project_erased_in_txn(self, &rtxn)?;
+        }
+        Ok(revisions)
     }
 
     pub fn get_code_revision_fork(
@@ -156,17 +179,32 @@ pub(crate) fn delete_code_revision_lifecycle_in_txn(
 
 pub(crate) use crate::store::code_revision_record::tables::has_finalized_code_revision_in_txn;
 
-fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRevisionWriteOutcome> {
+fn write_code_revision(
+    vault: &Vault,
+    revision: &CodeRevision,
+    actor: &WriteActor,
+    host: Option<&HostBinding>,
+) -> Result<CodeRevisionWriteOutcome> {
     // Blob and queue evidence are minted by the queue seal alone (G2 PR3).
     if revision.tested_queue.is_some() || !revision.blob_frontiers.is_empty() {
         return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "a tested queue revision is finalized by its queue seal alone",
         )));
     }
-    validate_code_revision_shape(revision)?;
-    RECORDS.encode_value(revision)?;
+    let mut revision = revision.clone();
+    revision.production = OutputProductionStamp::capture(actor, host);
+    validate_code_revision_shape(&revision)?;
+    let store = &vault.store;
     let mut wtxn = store.env.write_txn()?;
-    let (outcome, written) = write_code_revision_in_txn(store, &mut wtxn, revision)?;
+    revision.production.project_erased_in_txn(vault, &wtxn)?;
+    RECORDS.encode_value(&revision)?;
+    let (mut outcome, written) = write_code_revision_in_txn(store, &mut wtxn, &revision)?;
+    if let CodeRevisionWriteOutcome::Proposed(proposal) = &mut outcome {
+        proposal
+            .revision
+            .production
+            .project_erased_in_txn(vault, &wtxn)?;
+    }
     if written {
         wtxn.commit()?;
     }
@@ -186,7 +224,11 @@ pub(super) fn write_code_revision_in_txn(
     // A retained proposal stays retained even if its old parent later becomes
     // the head. Resolution must submit a new revision identity explicitly.
     if let Some(existing) = super::proposals::load(store, wtxn, &revision.revision_id)? {
-        if existing.revision != *revision || existing.artifact_body != artifact_body {
+        let mut comparison = revision.clone();
+        comparison
+            .production
+            .clone_from(&existing.revision.production);
+        if existing.revision != comparison || existing.artifact_body != artifact_body {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "stranded revision identity reused",
             )));
