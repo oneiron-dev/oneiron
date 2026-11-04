@@ -2,7 +2,7 @@
 
 mod delete;
 mod discipline;
-mod entry_point;
+use oneiron_retrieval::hnsw_entry_point as entry_point;
 mod insert;
 mod keys;
 mod one_way;

@@ -29,9 +29,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use oneiron::llm::BudgetDenied;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::WorkPhysical;
+use oneiron::llm::{BudgetDenied, WorkCancel, WorkClass};
 use oneiron::memory::{
     Effort, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
     RecallRerank, RecallRerankHost, RerankDocument, RerankEgress, RerankScores,
@@ -170,6 +170,7 @@ impl RecallRerankHost for ServedRerank {
         documents: &[RerankDocument<'_>],
         egress: &RerankEgress<'_>,
         answer_at: Option<Instant>,
+        cancel: Option<WorkCancel>,
     ) -> MemoryResult<RerankScores> {
         let texts: Vec<&str> = documents.iter().map(|document| document.text).collect();
         let price = payload_units(query, &texts);
@@ -188,6 +189,11 @@ impl RecallRerankHost for ServedRerank {
             .sourced(sent_rows(documents));
         let run = run.with_work_context({
             let mut context = run.work_context();
+            context.class = WorkClass::Background;
+            context.deadline = answer_at;
+            if let Some(cancel) = cancel {
+                context.cancel = cancel;
+            }
             context.physical = if self
                 .ai
                 .seat(ModelRole::Reranker)
