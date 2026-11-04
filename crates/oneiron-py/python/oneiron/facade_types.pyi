@@ -21624,6 +21624,7 @@ class ForkRecord(TypedDict):
     status: ForkStatus
     read_refs: list[str]
     keep: NotRequired[str | None]
+    delta_receipt: NotRequired[str | None]
 class ProposalBundle(TypedDict):
     proposal: str
     author: DocActor

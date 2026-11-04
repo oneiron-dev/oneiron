@@ -181,7 +181,7 @@ pub fn propose_organ_outputs(
         .iter()
         .map(|output| {
             let reader = vault.organ_landing_reader(submitter)?;
-            vault.propose_native_output(artifact, output, Some(reader), actor, now)
+            vault.propose_native_output(artifact, output, Some(reader), actor, now, None)
         })
         .collect()
 }

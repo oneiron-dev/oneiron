@@ -795,6 +795,7 @@ impl Memory<'_> {
                 self.made_by_reader(made_by)?,
                 (actor, at),
                 &read,
+                None,
             )?),
             None => None,
         };
@@ -1001,6 +1002,7 @@ impl Memory<'_> {
                 self.made_by_reader(made_by)?,
                 (actor, at),
                 &read,
+                None,
             )?),
             None => None,
         };
@@ -1092,6 +1094,7 @@ impl Memory<'_> {
                     self.made_by_reader(input.made_by.as_ref())?,
                     self.artifact_actor(),
                     self.vault().now_recorded_at(),
+                    None,
                 )?),
                 rejected: None,
             }),
@@ -1124,6 +1127,7 @@ impl Memory<'_> {
             self.made_by_reader(output.made_by.as_ref())?,
             self.artifact_actor(),
             self.vault().now_recorded_at(),
+            None,
         )?)
     }
 

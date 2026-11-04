@@ -78,6 +78,10 @@ pub struct ForkRecord {
     pub read_refs: Vec<String>,
     /// The SUMMARY editor memo this generation read, not a new memo.
     pub keep: Option<String>,
+    /// The delta receipt id this rework answered (FIX 11967): its merge
+    /// anchors the routing outcome. `None` when no amendment stood behind
+    /// the fork.
+    pub delta_receipt: Option<String>,
 }
 
 /// One review bundle, never inferred from author or time proximity.
@@ -359,7 +363,7 @@ impl Vault {
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
         let (out, landed) = self.with_write_txn_grouped(|txn| {
-            open_proposal_in_txn(self, txn, proposal, requests, authorization, at, &[])
+            open_proposal_in_txn(self, txn, proposal, requests, authorization, at, &[], None)
         })?;
         registry.clear();
         drop(registry);
@@ -450,6 +454,7 @@ pub(super) fn open_proposal_in_txn(
     authorization: &DocAuthorization<'_>,
     at: u64,
     sources: &[EntityId],
+    delta_receipt: Option<&str>,
 ) -> Result<(ProposalBundle, Vec<LandedProse>)> {
     // No count bounds a proposal or its operations (FIX 9844): the whole
     // ordered set lands or retains in this one transaction.
@@ -524,6 +529,7 @@ pub(super) fn open_proposal_in_txn(
             ForkStatus::Pending,
             at,
             &lineage,
+            delta_receipt,
         )?;
         if req.rewrite.is_none() && covered(vault, txn, authorization, &req.entity, req.actor)? {
             settle_one(vault, txn, &id.to_hex(), SettleVerb::Merge, req.actor, at)?;
@@ -557,6 +563,7 @@ pub(super) fn retain_fork(
     status: ForkStatus,
     at: u64,
     opener_lineage: &[[u8; 32]],
+    delta_receipt: Option<&str>,
 ) -> Result<()> {
     let key = proposal.to_hex();
     let mut bundle = match ENTITY_DOC_PROPOSAL_BUNDLE.get(&vault.store, txn, &key)? {
@@ -585,6 +592,7 @@ pub(super) fn retain_fork(
         status,
         read_refs: Vec::new(),
         keep: None,
+        delta_receipt: delta_receipt.map(str::to_owned),
     };
     ENTITY_DOC_FORK.put(&vault.store, txn, &id.to_hex(), &record)?;
     // A fork is its own shallow document, not a second complete history copy.
@@ -719,6 +727,18 @@ fn settle_one(
         &before,
         &after,
     )?;
+    if verb == SettleVerb::Merge
+        && let Some(stamp) = record.delta_receipt.as_deref()
+    {
+        crate::edit_distance::routing::put_routing_outcome_in_txn(
+            vault,
+            txn,
+            stamp,
+            crate::edit_distance::routing::OUTCOME_MERGED,
+            at,
+            actor,
+        )?;
+    }
     Ok(())
 }
 

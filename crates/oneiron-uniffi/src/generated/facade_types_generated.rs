@@ -66958,6 +66958,12 @@ pub struct ForkRecord {
     pub read_refs: Vec<String>,
     #[serde(rename = "keep", default, skip_serializing_if = "Option::is_none")]
     pub keep: Option<String>,
+    #[serde(
+        rename = "delta_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub delta_receipt: Option<String>,
 }
 
 /// `oneiron::entity_doc::forks::ProposalBundle`.

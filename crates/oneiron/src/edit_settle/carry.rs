@@ -818,6 +818,7 @@ impl Vault {
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
+        delta_receipt: Option<&str>,
     ) -> Result<SettleSelectOutcome> {
         let withdrawal = (!split.withdrawal.answers.is_empty()).then_some(&split.withdrawal);
         match &split.carried {
@@ -830,6 +831,7 @@ impl Vault {
                 occurred,
                 learned_at,
                 Some(withdrawal),
+                delta_receipt,
             ),
             None => self.settle_all_withdrawn(
                 artifact,
@@ -1156,6 +1158,11 @@ impl Vault {
         };
         let units: Vec<&WithdrawnUnit> = wake.answers.iter().map(|answer| &answer.unit).collect();
         self.with_write_txn(|wtxn| {
+            // The rework's stamp rides forward: the superseded row's, when it
+            // still waits and one stood behind it (FIX 11967).
+            let forwarded = PENDING
+                .get(&self.store, wtxn, key)?
+                .and_then(|row| row.delta_receipt);
             let proposed = match &proposal {
                 Some(proposal) => Some(self.retain_edit_proposal_with_reads_in_txn(
                     wtxn,
@@ -1165,6 +1172,7 @@ impl Vault {
                     lane.as_ref(),
                     (actor, now),
                     &read_rows,
+                    forwarded.as_deref(),
                 )?),
                 None => None,
             };

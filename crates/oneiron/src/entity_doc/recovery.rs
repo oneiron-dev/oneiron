@@ -349,6 +349,7 @@ fn history(
                     .map(|reference| raw(reference))
                     .collect::<Result<_>>()?,
                 keep: fork.record.keep,
+                delta_receipt: fork.record.delta_receipt,
             })
         })
         .collect::<Result<_>>()?;
@@ -707,6 +708,7 @@ fn bind_rows(
                 .map(hex)
                 .collect::<Result<_>>()?,
             keep: fork.keep.clone(),
+            delta_receipt: fork.delta_receipt.clone(),
         };
         ENTITY_DOC_FORK.put(store, txn, &record.fork, &record)?;
         if let Some(output) = &fork.output {

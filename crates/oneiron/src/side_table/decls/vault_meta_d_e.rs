@@ -494,6 +494,10 @@ side_tables! {
     EDIT_DISTANCE_ROUTING_RUNG: VaultMeta b"edit_distance/routing_rung/v1\0" Raw;
     /// Model-version stamp new routing folds are recorded against. Key: ().
     EDIT_DISTANCE_ROUTING_SERVING_MODEL: VaultMeta b"edit_distance/routing_serving_model/v1" Raw;
+    /// The owner-anchored outcome of one judged amendment's rework (FIX 11706):
+    /// `undone` for a Keep later undone, `merged` for a fork later merged.
+    /// Key: string (the delta receipt id).
+    EDIT_DISTANCE_ROUTING_OUTCOME: VaultMeta b"edit_distance/routing_outcome/v1\0" Raw;
     /// An organ call held until one of the owner's nodes can run it (OF-575 MESH): the call's
     /// bytes, why it waits, and its tries. Key: id16 + hash32 (blake3 of the run ref).
     EDIT_SETTLE_ORGAN_WAIT: VaultMeta b"edit_settle:organ_wait:v1:" Named;
@@ -507,6 +511,9 @@ side_tables! {
     /// The answers of one held answer proposal whose units changed under it (ARCH-0075 §4): each
     /// with the revision it was judged against, and its proposer's wake. Key: id16 + hash32.
     EDIT_SETTLE_UNIT_WITHDRAWAL: VaultMeta b"edit_settle:withdrawal:v1:" Named;
+    /// The delta receipt id a Selected Keep answered (FIX 11706), so its undo
+    /// anchors the routing outcome. Key: id16 + hash32 (blake3 of the proposal ref).
+    EDIT_SETTLE_KEEP_LINK: VaultMeta b"edit_settle:keep_link:v1:" Named;
     /// An owner-approved retrieval embedder binding staged through a space move, with its move
     /// and state (OF-577, O3b PR B). Key: id16 (the offer, or the training run).
     EMBEDDING_BINDING_MOVE: VaultMeta b"embedding/binding_move/" Named
