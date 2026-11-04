@@ -686,18 +686,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "OptionalMemory",
-      "OptionalMemoryProfile"
-     ],
+     "notable": [],
      "path": "src/agent_def/optional_memory.rs",
      "purpose": "How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget)",
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "enum": 1,
       "fn": 4,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -752,9 +748,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RefusalDial",
       "RefusalDomain",
-      "RefusalLevel",
       "RefusalOutcome",
       "VaultKind"
      ],
@@ -763,9 +757,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "enum": 4,
+      "enum": 3,
       "fn": 12,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -69106,6 +69100,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OptionalMemory",
+      "OptionalMemoryProfile"
+     ],
+     "path": "src/store/agent_optional_memory.rs",
+     "purpose": "How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): the…",
+     "surface": {
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AgentCeiling",
       "AgentWakeCadence",
       "CompactionOwnership",
@@ -69120,6 +69128,20 @@
       "enum": 4,
       "fn": 10,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RefusalDial",
+      "RefusalLevel"
+     ],
+     "path": "src/store/agent_refusal.rs",
+     "purpose": "The refusal dial (OF-533) an agent definition stores: one position from none to full, and the agent's…",
+     "surface": {
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -72232,7 +72254,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 120,
+      "crate-vis": 122,
       "mod": 108,
       "re-export": 31
      }
@@ -90579,7 +90601,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 431,
+     "files": 433,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90819,7 +90841,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6313,
+   "source_files": 6315,
    "test_files": 895
   },
   "oneiron-android": {
