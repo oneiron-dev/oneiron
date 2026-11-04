@@ -35,7 +35,7 @@ mod files;
 mod guards;
 pub(super) mod persist;
 mod queue_review;
-pub(super) mod resolve_handles;
+pub(crate) mod resolve_handles;
 mod review;
 mod run;
 pub mod settlement;

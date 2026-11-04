@@ -75,7 +75,7 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// Whether any file the row carries holds a handle span: what a merge
 /// stack refuses outright, as its tested tree already binds the reviewed
 /// bytes and no successor can join it after the fact.
-pub(in crate::repo_mutation) fn refuse_handle_bearing_row(row: &RepoProposal) -> Result<()> {
+pub(crate) fn refuse_handle_bearing_row(row: &RepoProposal) -> Result<()> {
     if row
         .files
         .iter()
