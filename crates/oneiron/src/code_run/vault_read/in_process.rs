@@ -1,5 +1,7 @@
 //! The in-process adapter: scoped reads against a live vault plus retrieval-budget control.
 
+mod frames;
+
 use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadActorKey};
 use crate::context_pack::{
     ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, DEFAULT_MAX_NEIGHBORS,
@@ -575,9 +577,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .flatten()
             .map(|(id, hash)| PointRead::short(id, *hash))
             .collect();
-        let hydrated = self
-            .scoped_read
-            .read_named(&refs, None)
+        let hydrated = frames::read_named_frames(&self.scoped_read, &refs)
             .map_err(|error| engine_failure(METHOD, &error))?;
         let mut narrowing = hydrated.receipt;
         let mut values = hydrated.value.into_iter();
