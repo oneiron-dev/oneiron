@@ -19,7 +19,6 @@ use super::coop_request::{
     SignedCooperativeDeletionRequest, decode_and_verify_cooperative_deletion_request,
     encode_signed_cooperative_deletion_request, peek_cooperative_deletion_pact,
 };
-use crate::attempt_queue::AttemptQueue;
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::attempt_inputs::ClaimAttempt;

@@ -81,7 +81,9 @@ fn validate_covers_in_txn(
         let stored = require_type(&vault.store, txn, &message.id, ENTITY_TYPE_MESSAGE)?;
         let logical =
             crate::entity_doc::resolve_record_body(&vault.store, txn, &message.id, &stored)?;
-        if crate::store::consolidation_evidence::swarm_evidence_content_hash(&logical) != message.revision {
+        if crate::store::consolidation_evidence::swarm_evidence_content_hash(&logical)
+            != message.revision
+        {
             return Err(invalid("summary source message revision changed"));
         }
     }

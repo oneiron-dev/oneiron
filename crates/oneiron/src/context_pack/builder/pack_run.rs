@@ -261,7 +261,10 @@ impl UnfinalizedContextPack<'_> {
         // flattening it cannot hide a room's failure.
         let mut replay_config = self.replay_config.take();
         if let Some(value) = replay_config.as_mut() {
-            value["projection"] = super::replay::projection_config(config);
+            value["projection"] = super::replay::projection_config(
+                config,
+                crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER,
+            );
             value["terminal_kind"] = "projected_json".into();
         }
         let telemetry_run_id = finalize_context_pack_telemetry(
