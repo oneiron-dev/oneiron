@@ -63,11 +63,15 @@ pub(crate) fn validate_known_claim_scope_entries(scope: Option<&Value>) -> Resul
 }
 
 /// Principal audience for learned preferences. Missing is unknown, not everyone.
-pub fn claim_principal_id(body: &ClaimBody) -> Result<Option<oneiron_contracts::entity_id::EntityId>> {
+pub fn claim_principal_id(
+    body: &ClaimBody,
+) -> Result<Option<oneiron_contracts::entity_id::EntityId>> {
     principal_id_from_scope(body.scope.as_ref())
 }
 
-fn principal_id_from_scope(scope: Option<&Value>) -> Result<Option<oneiron_contracts::entity_id::EntityId>> {
+fn principal_id_from_scope(
+    scope: Option<&Value>,
+) -> Result<Option<oneiron_contracts::entity_id::EntityId>> {
     let Some(Value::Map(entries)) = scope else {
         return Ok(None);
     };
@@ -76,8 +80,11 @@ fn principal_id_from_scope(scope: Option<&Value>) -> Result<Option<oneiron_contr
         if key.as_str() != Some("principal") {
             continue;
         }
-        let invalid =
-            || oneiron_contracts::error::Error::InvalidClaimBody("invalid or duplicate principal scope");
+        let invalid = || {
+            oneiron_contracts::error::Error::InvalidClaimBody(
+                "invalid or duplicate principal scope",
+            )
+        };
         if principal.is_some() {
             return Err(invalid());
         }
@@ -85,7 +92,8 @@ fn principal_id_from_scope(scope: Option<&Value>) -> Result<Option<oneiron_contr
             return Err(invalid());
         };
         let bytes: [u8; 16] = bytes.as_slice().try_into().map_err(|_| invalid())?;
-        principal = Some(oneiron_contracts::entity_id::EntityId::from_bytes(bytes).map_err(|_| invalid())?);
+        principal =
+            Some(oneiron_contracts::entity_id::EntityId::from_bytes(bytes).map_err(|_| invalid())?);
     }
     Ok(principal)
 }

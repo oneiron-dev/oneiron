@@ -520,7 +520,7 @@ fn failure(error: DurableStepError) -> ModelStepFailure {
             out.spent_usage = Some(*usage);
         }
         DurableStepError::Fallback(_) => out.class = ModelStepFailureClass::Fallback,
-        DurableStepError::SpentFallback { usage } => {
+        DurableStepError::SpentFallback { usage, .. } => {
             out.class = ModelStepFailureClass::Fallback;
             out.spent_usage = Some(*usage);
         }
