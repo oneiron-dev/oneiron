@@ -272,7 +272,7 @@ pub(super) fn stage_project_put(
     replicated: bool,
     posture: crate::HostingPrivacyPosture,
 ) -> Result<Option<Vec<u8>>> {
-    let project = if crate::workspace_roster::is_project_type(store, entity_type) {
+    let project = if crate::store::project_kind::is_project_type(store, entity_type) {
         Some(
             store
                 .project_writes
@@ -491,7 +491,7 @@ pub(super) fn validate_scope_carriers(
     if entity_type == crate::registry::ENTITY_TYPE_FACET {
         super::super::facet_identity::validate_facet_overwrite(store, wtxn, id, data)?;
     }
-    if crate::workspace_roster::is_project_type(store, entity_type) {
+    if crate::store::project_kind::is_project_type(store, entity_type) {
         for referenced in store.project_writes.validate_project_body(id, data)? {
             super::reject_overlay_member_base_write(store, &referenced, context.origin)?;
         }
