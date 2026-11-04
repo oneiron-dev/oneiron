@@ -42,11 +42,11 @@ use zeroize::Zeroizing;
 
 use super::page_seal::{OpenedDataKey, WrapTransition};
 use super::refused;
-pub(crate) use oneiron_store::vault_page_seal::VaultDataKey;
-pub(super) use oneiron_store::vault_page_seal::WrapDigest;
 use crate::Vault;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
+pub(crate) use oneiron_store::vault_page_seal::VaultDataKey;
+pub(super) use oneiron_store::vault_page_seal::WrapDigest;
 
 mod escrow;
 pub(super) mod kit;

@@ -132,8 +132,9 @@ impl Vault {
             attestation,
         )?;
         let key = root_row_key(&root);
-        let kept = KEY_BINDINGS.get(&self.store, &txn, &key)?;
-        let stored = ATTESTATIONS.get(&self.store, &txn, &(image, key.clone()))?;
+        let kept = decodable_or_absent(KEY_BINDINGS.get(&self.store, &txn, &key))?;
+        let stored =
+            decodable_or_absent(ATTESTATIONS.get(&self.store, &txn, &(image, key.clone())))?;
         if ROOT_CHECKPOINT_RETRY.kept(stored.as_ref(), kept.as_ref(), &policy, binding) {
             let attested = self.image_attested_in_txn(&txn, &context, image)?;
             return Ok(CheckpointAttestationIntake::AlreadyKept { attested });
