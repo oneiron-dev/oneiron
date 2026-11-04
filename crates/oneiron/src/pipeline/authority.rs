@@ -1,6 +1,6 @@
 //! Enforcement of gate-resolved retrieval authority. No caller requests enter here.
 
-use crate::claim::ClaimBody;
+use crate::claim::{ClaimBody, ClaimReadStatusExt};
 use crate::federation::Sensitivity;
 use crate::gate::ResolvedRetrievalFilter;
 use crate::registry::{ENTITY_TYPE_CLAIM, EntityClassification, entity_type_registry_entry};

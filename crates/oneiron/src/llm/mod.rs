@@ -208,5 +208,3 @@ pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::routing::llm_routed_seat_accepts_masked;
-pub(crate) use self::seat::llm_model_description_accepts_masked;
-pub(crate) use self::step::model_step_submission_accepts_masked;
