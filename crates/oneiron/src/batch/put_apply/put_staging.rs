@@ -273,9 +273,11 @@ pub(super) fn stage_project_put(
     posture: crate::HostingPrivacyPosture,
 ) -> Result<Option<Vec<u8>>> {
     let project = if crate::store::project_kind::is_project_type(store, entity_type) {
-        Some(crate::workspace_roster::normalize_project_body(
-            store, txn, id, data, posture,
-        )?)
+        Some(
+            store
+                .project_writes
+                .normalize_project_body(store, txn, id, data, posture)?,
+        )
     } else {
         None
     };
@@ -436,7 +438,7 @@ pub(super) fn stage_claim_projection(
         if !replicated {
             crate::entity_doc::retain_fresh_claim_citations_in_txn(store, wtxn, &id, body)?;
         }
-        crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
+        crate::store::claim_projection::maintain_claim_projection_index(store, wtxn, id, body)?;
         crate::claim::history_store::maintain_machine_history_index(store, wtxn, id, body)?;
     }
     Ok(())
@@ -490,14 +492,14 @@ pub(super) fn validate_scope_carriers(
         super::super::facet_identity::validate_facet_overwrite(store, wtxn, id, data)?;
     }
     if crate::store::project_kind::is_project_type(store, entity_type) {
-        for referenced in crate::workspace_roster::validate_project_body(id, data)? {
+        for referenced in store.project_writes.validate_project_body(id, data)? {
             super::reject_overlay_member_base_write(store, &referenced, context.origin)?;
         }
         // Live writes prove the signed leader or board authority at the door.
         // Replay stops at structure (ARCH-0040 ONE-AUTHLOG-F2): its authority
         // is judged by the project read fold, which quarantines, never refuses.
         if !context.replicated {
-            crate::workspace_roster::validate_project_transition(
+            store.project_writes.validate_project_transition(
                 store,
                 wtxn,
                 id,
@@ -506,10 +508,14 @@ pub(super) fn validate_scope_carriers(
                 context.posture,
             )?;
         }
-        crate::workspace_roster::note_project_proof(store, wtxn, id, entity_type, data)?;
+        store
+            .project_writes
+            .note_project_proof(store, wtxn, id, entity_type, data)?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
-        crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;
+        store
+            .project_writes
+            .validate_room_body(store, wtxn, id, data)?;
     }
     Ok(())
 }
@@ -581,7 +587,7 @@ pub(super) fn stage_task_and_turn(
     if entity_type == crate::registry::ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
         if body_changed {
-            crate::task_verb::note_task_write(store, wtxn, id, data)?;
+            crate::store::linear_task_revision::note_task_write(store, wtxn, id, data)?;
         }
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {

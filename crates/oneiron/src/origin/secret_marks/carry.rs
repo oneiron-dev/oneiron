@@ -14,9 +14,9 @@
 //! placement names the new bytes by their BLAKE3 and Git blob OID, under
 //! [`RepoSecretSource::SyncLanding`]. No span is shifted from the old blob.
 //!
-//! Landed bytes with residue no span isolates, or with no key the rules
-//! place, take no fact: their copy stays the sealed-file placeholder, as
-//! before.
+//! Landed bytes with placed keys also carry any residue no span isolates as
+//! an opaque fact. Landings with no placed key take no fact: their copy stays
+//! the sealed-file placeholder, as before.
 
 use heed::RwTxn;
 
@@ -31,17 +31,18 @@ use crate::batch::secret_scan::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
-use crate::secret_custody::{CustodyWrite, KnownValues};
+use crate::secret_custody::CustodyWrite;
+use crate::store::known_value_index::KnownValues;
 
-/// The reason landed bytes no rule places a key in are planned under: the
-/// plan's whole-blob residue, for which no fact is written.
+/// The reason landed bytes no rule places a key in are planned under, also
+/// carried by the opaque fact when the plan places keys beside that residue.
 const SYNC_LANDING_REASON: &str = "sync.copy_edit_landing";
 
 /// Marks `landed`, the bytes a translated sync copy edit lands on the marked
 /// source `source` whose old bytes hash to `old`, in `wtxn`, the landing's
 /// own writer. Returns how many facts it newly wrote: 0 when the old blob has
 /// no readable mark, when the bytes did not change, and when the landed bytes
-/// hold residue no span isolates or no key at all.
+/// hold no placed key at all.
 ///
 /// # Errors
 /// A plan, custody, mark or claim failure: the landing aborts with it, so the
@@ -80,7 +81,7 @@ pub(crate) fn carry_repo_secret_marks_in_txn(
         source,
         at,
     )?;
-    if placed.opaque.is_some() || placed.keys.is_empty() {
+    if placed.keys.is_empty() {
         return Ok(0);
     }
     let blob_oid = git_blob_oid(landed)?;

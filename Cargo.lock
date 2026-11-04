@@ -7919,6 +7919,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "gix",
+ "gix-quote",
  "half",
  "heed",
  "icalendar",
@@ -7947,11 +7948,13 @@ dependencies = [
  "oneiron-guest",
  "oneiron-keystore",
  "oneiron-lens-wire",
+ "oneiron-linkedin-policy",
  "oneiron-model",
  "oneiron-policy-vocabulary",
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
  "oneiron-vault-contract",
@@ -8047,8 +8050,11 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-model",
  "oneiron-retrieval",
+ "rand 0.8.8",
+ "rand_distr 0.4.3",
  "schemars 0.8.22",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "tiktoken-rs",
  "tokio",
@@ -8369,6 +8375,14 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "oneiron-linkedin-policy"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "serde",
 ]
 
 [[package]]
@@ -8764,6 +8778,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-skill-attribution"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+]
+
+[[package]]
 name = "oneiron-spawn"
 version = "0.1.0"
 dependencies = [
@@ -8775,19 +8796,25 @@ dependencies = [
 name = "oneiron-store"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "blake3",
  "getrandom 0.4.3",
  "heed",
+ "oneiron-authority",
  "oneiron-base",
  "oneiron-contracts",
  "oneiron-crypto",
  "oneiron-docedit",
  "oneiron-model",
+ "rmp-serde",
  "rmpv",
  "rustix",
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
  "tracing",
  "uuid",
  "xxhash-rust",
