@@ -6,6 +6,7 @@
 use heed::RwTxn;
 use loro::{CommitOptions, ExportMode};
 
+use crate::code_document::CodeOpProvenanceValidation;
 use super::super::codec::{doc_from_snapshot, frontier, invalid, path_hash, validate_path};
 use super::super::{CodeDocumentSession, CodeEditReceipt, CodeFileEdit, CodeFileMetadataEdit};
 use super::{
