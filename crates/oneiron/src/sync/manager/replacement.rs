@@ -7,6 +7,7 @@ use super::WindowManager;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 use crate::sync::WindowKey;
+use crate::sync::client::OwnDeviceImport;
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::{self, LoadedWindow, ReplacementByteBound, ReplacementConflict};
 
@@ -47,11 +48,15 @@ impl WindowManager {
             evidence,
             admitted,
             ReplacementByteBound::NetworkFrame,
+            None,
         )
     }
 
     /// [`Self::replace_window_admitted`] for a snapshot up to `bound`
-    /// ([`window::prepare_bounded_replacement`]).
+    /// ([`window::prepare_bounded_replacement`]). Under `own_device`, the
+    /// proof an own machine's proven connection sent `snapshot`, each MESSAGE
+    /// row the snapshot holds takes the own-device lane as the replacement's
+    /// forward pass lands it (FIX 12111); with none, no row takes one.
     pub(in crate::sync) fn replace_window_bounded(
         self: &Arc<Self>,
         key: &WindowKey,
@@ -59,6 +64,7 @@ impl WindowManager {
         evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
         admitted: impl FnOnce() -> bool,
         bound: ReplacementByteBound,
+        own_device: Option<&OwnDeviceImport>,
     ) -> Result<(Arc<LoadedWindow>, Vec<ReplacementConflict>)> {
         self.attach_to_vault();
         let mut registry = self.lock_registry_settled(key);
@@ -95,14 +101,22 @@ impl WindowManager {
                 Err(error) => return Err(error),
             },
         };
-        let prepared = window::prepare_bounded_replacement(
+        let prepared = crate::sync::ingest::with_own_device_import(
             &self.vault,
-            &self.materializer,
-            key,
-            &old,
+            own_device,
+            (key, &old),
             snapshot,
-            evidence,
-            bound,
+            || {
+                window::prepare_bounded_replacement(
+                    &self.vault,
+                    &self.materializer,
+                    key,
+                    &old,
+                    snapshot,
+                    evidence,
+                    bound,
+                )
+            },
         )?;
         drop(old);
         drop(current);
