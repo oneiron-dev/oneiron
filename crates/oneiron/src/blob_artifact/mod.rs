@@ -40,6 +40,7 @@ mod family;
 mod holders;
 mod lifecycle;
 mod made_by;
+mod production;
 mod provenance;
 mod references;
 mod review_request;
@@ -78,6 +79,7 @@ pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub(crate) use self::lifecycle::{hold_asset_reference_in_txn, release_asset_reference_in_txn};
 // FIX 6225: a step response's exact version, released by its last pin.
 pub(crate) use self::lifecycle::{release_response_version_in_txn, response_version_stands_in_txn};
+pub use self::production::{HostProductionStamp, OutputProductionStamp};
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::archive_version_claim_tables;
 pub(crate) use self::references::{

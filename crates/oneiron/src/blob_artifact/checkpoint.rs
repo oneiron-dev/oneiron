@@ -10,7 +10,9 @@
 //! A version's MadeBy names its process's actor: the compartment keeps the
 //! record with the artifact in that place, and the actor is an actor part.
 //! The erased-producer form stays in the record with no actor part (FIX 9619);
-//! any other actor must open on restore or its version stays out. Nothing
+//! any other process actor must open on restore or its version stays out.
+//! The host production witness is a separate actor payload: if it does not
+//! open, only the witness is erased and version availability is unchanged. Nothing
 //! calls this until KS7-5, and only once CHECKPOINT_PAYLOADS_ENABLED is on.
 #![allow(
     dead_code,
@@ -20,16 +22,21 @@
 use heed::{RoTxn, RwTxn};
 
 use super::erase::erased_producer;
+use super::production::OutputProductionStamp;
+use super::store_keys::{encode_value, read_value};
 use super::versions::{BlobArtifactVersion, HEAD, VERSIONS};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::side_table::{Raw, SideKey, SideTable};
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
-    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
+    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator, RowPart,
+    TypedRow, Unresolved,
 };
 
 /// The field the MadeBy process's actor fills.
 const PROCESS: &str = "made_by.process.actor";
+const PRODUCTION: &str = "production";
 
 /// Moves the process's actor out, leaving `artifact` in its place.
 fn take_process(
@@ -44,12 +51,118 @@ fn take_process(
     vec![(PROCESS.to_owned(), actor)]
 }
 
-fn put_process(version: &mut BlobArtifactVersion, field: &str, actor: EntityId) -> Result<()> {
-    if field != PROCESS {
-        return Err(rows::bad_part());
+/// The host witness belongs to its producer's compartment as one payload:
+/// none of its attempt or run links remain in the artifact skeleton.
+fn split_version<K: SideKey>(
+    out: &mut Captured,
+    table: SideTable<K, BlobArtifactVersion, Raw>,
+    row: TypedRow<K, BlobArtifactVersion>,
+    artifact: EntityId,
+    erased: EntityId,
+) -> Result<()> {
+    let owner = OwnerRef::entity(&artifact);
+    if !rows::spells_back(table, &row) {
+        out.unclassified(
+            row.at,
+            Some(owner),
+            Unresolved::ActorSplit(rows::NOT_SPELLED_BACK),
+        );
+        return Ok(());
     }
-    version.made_by.process.actor = actor;
+    let TypedRow {
+        at,
+        mut value,
+        bytes,
+        ..
+    } = row;
+    let actors = take_process(&mut value, artifact, erased);
+    let production = match &value.production {
+        OutputProductionStamp::Host(host) => Some((
+            host.actor(),
+            encode_value(
+                &value.production.to_value(),
+                "production checkpoint encode failed",
+            )?,
+        )),
+        OutputProductionStamp::Unknown | OutputProductionStamp::Erased => None,
+    };
+    if actors.is_empty() && production.is_none() {
+        out.exact(owner, at, bytes);
+        return Ok(());
+    }
+    if production.is_some() {
+        value.production = OutputProductionStamp::Erased;
+    }
+    let content = table.encode_value(&value)?;
+    let rows = out.owner(owner);
+    for (field, actor) in actors {
+        rows.actor_parts.push(ActorPart {
+            actor_entity: actor,
+            content_locator: at.clone(),
+            field,
+            bytes: actor.as_bytes().to_vec(),
+        });
+    }
+    if let Some((actor, bytes)) = production {
+        rows.actor_parts.push(ActorPart {
+            actor_entity: actor,
+            content_locator: at.clone(),
+            field: PRODUCTION.to_owned(),
+            bytes,
+        });
+    }
+    rows.rows.push(RowPart::NoActor { at, value: content });
     Ok(())
+}
+
+/// The existing process part still decides version availability. A missing
+/// production part erases only that witness; it never withholds the version.
+fn join_version<K: SideKey>(
+    table: SideTable<K, BlobArtifactVersion, Raw>,
+    value: &[u8],
+    parts: &[&ActorPart],
+    erased: EntityId,
+) -> Result<Option<Vec<u8>>> {
+    let mut version = table.decode_value(value)?;
+    let mut process_seen = version.made_by.process.actor == erased;
+    let mut production_seen = false;
+    for part in parts {
+        match part.field.as_str() {
+            PROCESS if !process_seen => {
+                let id: [u8; 16] = part
+                    .bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| rows::bad_part())?;
+                let actor = EntityId::from_bytes(id)?;
+                if actor != part.actor_entity {
+                    return Err(rows::bad_part());
+                }
+                version.made_by.process.actor = actor;
+                process_seen = true;
+            }
+            PRODUCTION
+                if !production_seen && version.production == OutputProductionStamp::Erased =>
+            {
+                let production = OutputProductionStamp::from_value(&read_value(
+                    &part.bytes,
+                    "production checkpoint",
+                )?)?;
+                if !matches!(&production, OutputProductionStamp::Host(host) if host.actor() == part.actor_entity)
+                {
+                    return Err(rows::bad_part());
+                }
+                version.production = production;
+                production_seen = true;
+            }
+            _ => return Err(rows::bad_part()),
+        }
+    }
+    if process_seen {
+        table.encode_value(&version).map(Some)
+    } else {
+        Ok(None)
+    }
 }
 
 /// Every head and version record in `txn`, by artifact.
@@ -58,23 +171,11 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
     let mut out = Captured::default();
     for row in rows::typed_rows(dbs, txn, HEAD, &mut out)? {
         let artifact = row.key;
-        rows::split_actors(
-            &mut out,
-            OwnerRef::entity(&artifact),
-            HEAD,
-            row,
-            |version| take_process(version, artifact, erased),
-        )?;
+        split_version(&mut out, HEAD, row, artifact, erased)?;
     }
     for row in rows::typed_rows(dbs, txn, VERSIONS, &mut out)? {
         let artifact = row.key.0;
-        rows::split_actors(
-            &mut out,
-            OwnerRef::entity(&artifact),
-            VERSIONS,
-            row,
-            |version| take_process(version, artifact, erased),
-        )?;
+        split_version(&mut out, VERSIONS, row, artifact, erased)?;
     }
     out.merge(crate::artifact_hosting::checkpoint::capture(dbs, txn)?);
     Ok(out)
@@ -112,28 +213,10 @@ fn join(
 ) -> Result<Option<Vec<u8>>> {
     let erased = erased_producer()?;
     if at.in_table(HEAD.decl()) {
-        if parts.is_empty() {
-            let head = HEAD.decode_value(value)?;
-            return if head.made_by.process.actor == erased {
-                HEAD.encode_value(&head).map(Some)
-            } else {
-                Ok(None)
-            };
-        }
-        let head = rows::join_actors(HEAD, value, parts, put_process)?;
-        return HEAD.encode_value(&head).map(Some);
+        return join_version(HEAD, value, parts, erased);
     }
     if at.in_table(VERSIONS.decl()) {
-        if parts.is_empty() {
-            let version = VERSIONS.decode_value(value)?;
-            return if version.made_by.process.actor == erased {
-                VERSIONS.encode_value(&version).map(Some)
-            } else {
-                Ok(None)
-            };
-        }
-        let version = rows::join_actors(VERSIONS, value, parts, put_process)?;
-        return VERSIONS.encode_value(&version).map(Some);
+        return join_version(VERSIONS, value, parts, erased);
     }
     if crate::artifact_hosting::checkpoint::owns(at) {
         return crate::artifact_hosting::checkpoint::join(txn, at, value, parts);

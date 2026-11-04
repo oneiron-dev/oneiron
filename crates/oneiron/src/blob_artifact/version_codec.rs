@@ -8,13 +8,14 @@ use super::body::{
     BLOB_ARTIFACT_MEDIA_TYPE_MAX_BYTES, BLOB_ARTIFACT_NAME_MAX_BYTES, validate_text_field,
 };
 use super::made_by::{made_by_from_text, made_by_text};
+use super::production::OutputProductionStamp;
 use super::provenance::{BlobVersionProvenance, validate_provenance};
 use super::store_keys::{encode_value, entity_value, hash_from_value, read_value, u64_value};
 use super::versions::{
     BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion, CalcEngineStamp, KEY_CALC_ENGINE,
     KEY_CALC_ENGINE_VERSION, KEY_CLAIM_ID, KEY_CONTENT_HASH, KEY_CREATED_AT, KEY_EXPORT_MEDIA_TYPE,
-    KEY_EXPORT_NAME, KEY_FORK_OF_VERSION, KEY_MADE_BY, KEY_PARENT_VERSION, KEY_PROVENANCE,
-    KEY_RUN_REF, KEY_VERSION,
+    KEY_EXPORT_NAME, KEY_FORK_OF_VERSION, KEY_MADE_BY, KEY_PARENT_VERSION, KEY_PRODUCTION,
+    KEY_PROVENANCE, KEY_RUN_REF, KEY_VERSION,
 };
 
 pub(super) fn encode_blob_artifact_version_record(record: &BlobArtifactVersion) -> Result<Vec<u8>> {
@@ -69,6 +70,7 @@ pub(super) fn encode_blob_artifact_version_record(record: &BlobArtifactVersion) 
             Value::from(KEY_MADE_BY),
             Value::from(made_by_text(&record.made_by)?),
         ),
+        (Value::from(KEY_PRODUCTION), record.production.to_value()),
     ];
     if let Some(parent) = record.parent_version {
         entries.push((
@@ -109,6 +111,7 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
     let mut calc_engine: Option<Option<String>> = None;
     let mut calc_engine_version: Option<Option<String>> = None;
     let mut made_by = None;
+    let mut production = None;
     let mut seen = [false; BLOB_ARTIFACT_VERSION_RECORD_KEYS.len()];
 
     for (key, value) in &entries {
@@ -183,6 +186,7 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
                     )),
                 )?)?);
             }
+            KEY_PRODUCTION => production = Some(OutputProductionStamp::from_value(value)?),
             KEY_PARENT_VERSION => parent_version = Some(u64_value(value, "parent_version")?),
             KEY_FORK_OF_VERSION => fork_of_version = Some(u64_value(value, "fork_of_version")?),
             KEY_CALC_ENGINE | KEY_CALC_ENGINE_VERSION => {
@@ -282,6 +286,9 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
         fork_of_version,
         export_name,
         export_media_type,
+        production: production.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+            "missing required version record key production",
+        )))?,
         made_by: made_by.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "missing required version record key made_by",
         )))?,

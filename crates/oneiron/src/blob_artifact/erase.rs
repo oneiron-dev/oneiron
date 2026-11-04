@@ -34,6 +34,7 @@ pub(crate) fn project_version_erased_in_txn(
     if actor != erased_producer()? && vault.carrier_actor_erased_in_txn(txn, &actor)? {
         projected.made_by.process.actor = erased_producer()?;
     }
+    projected.production.project_erased_in_txn(vault, txn)?;
     Ok(projected)
 }
 
@@ -63,15 +64,23 @@ pub(crate) fn erase_blob_artifact_version_actor_in_txn(
     let erased = erased_producer()?;
     let mut versions = Vec::new();
     for (key, mut record) in VERSIONS.scan(&vault.store, wtxn)? {
+        let mut changed = record.production.erase_actor(actor);
         if record.made_by.process.actor == *actor {
             record.made_by.process.actor = erased;
+            changed = true;
+        }
+        if changed {
             versions.push((key, record));
         }
     }
     let mut heads = Vec::new();
     for (artifact, mut record) in HEAD.scan(&vault.store, wtxn)? {
+        let mut changed = record.production.erase_actor(actor);
         if record.made_by.process.actor == *actor {
             record.made_by.process.actor = erased;
+            changed = true;
+        }
+        if changed {
             heads.push((artifact, record));
         }
     }
@@ -133,6 +142,7 @@ fn rewrite_version_claim_in_txn(
         record.fork_of_version,
         record.calc_engine.as_ref(),
         &made_by_text(&record.made_by)?,
+        &record.production,
     );
     if let Some(rmpv::Value::Map(entries)) = claim.evidence.as_mut() {
         entries.retain(|(key, _)| {
