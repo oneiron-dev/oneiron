@@ -628,13 +628,26 @@ fn readable_notes(
         // probes, through the review's own scoped read: no claims, so the
         // review's scope holds no prior head. A NOTE carries no byline. A
         // replay lists what this NOTE's pin keeps (FIX 7578).
+        // FIX 5588 S1 (Unknown-always, C3/C8): symmetric with the wake
+        // plan's listing fork; inert today (axes None lists no claims) but
+        // kept so the later FIX 12712 flip stays one value. The shared read
+        // is never narrowed.
+        let destination = super::neighbourhood::listing_destination();
+        let listing = vault.scoped_read(read.actor_key().clone().for_destination(&destination));
         let passage = Passage {
             turns: &[(&[][..], Some(markdown.as_str()))],
             axes: None,
             bound: None,
             thing: None,
+            destination,
         };
-        let (listed, _) = discover_in(vault, &txn, read, ListingPin::note(attempt, *id), &passage)?;
+        let (listed, _) = discover_in(
+            vault,
+            &txn,
+            &listing,
+            ListingPin::note(attempt, *id),
+            &passage,
+        )?;
         notes.push(Note {
             id: *id,
             version,

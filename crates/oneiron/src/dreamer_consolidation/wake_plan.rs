@@ -497,16 +497,22 @@ fn neighbourhood_in(
         project: Some(project),
         ..Scope::default()
     });
+    // FIX 5588 S1 (Unknown-always, C3/C8): the listing is read through a
+    // fork of the wake's read bound to the plan destination; the shared read
+    // still feeds sources/texts/receipts and is never narrowed.
+    let destination = super::neighbourhood::listing_destination();
+    let listing = vault.scoped_read(read.actor_key().clone().for_destination(&destination));
     let passage = super::neighbourhood::Passage {
         turns: &turns,
         axes: axes.as_ref(),
         bound,
         thing: plan.thing,
+        destination,
     };
     super::neighbourhood::discover_in(
         vault,
         txn,
-        read,
+        &listing,
         super::neighbourhood::ListingPin::attempt(plan.attempt_id),
         &passage,
     )
