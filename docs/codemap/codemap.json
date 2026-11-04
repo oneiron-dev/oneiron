@@ -58111,37 +58111,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "Clock",
-      "IdGen",
-      "StoreClock"
-     ],
+     "notable": [],
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 19,
-      "fn": 8,
-      "struct": 1,
-      "trait": 2
+      "crate-vis": 11,
+      "fn": 3,
+      "re-export": 1
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/ports/time/lease_journal.rs",
-     "purpose": "The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A)",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/ports/time/tests.rs",
-     "purpose": "The store clock's reads, observed through what a caller gets back",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -71515,7 +71492,7 @@
      "purpose": "Declared entity identity hints and their lookup index",
      "surface": {
       "crate-vis": 6,
-      "fn": 1
+      "re-export": 1
      }
     },
     {
@@ -90685,7 +90662,7 @@
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 51,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91261,8 +91238,8 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6308,
-   "test_files": 899
+   "source_files": 6307,
+   "test_files": 898
   },
   "oneiron-android": {
    "files": [
@@ -126765,6 +126742,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/identity_hints.rs",
+     "purpose": "Per-kind declared identity fields (human-facing identity hints)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "WorldKeyDestroyCause",
       "WorldKeyDestruction"
@@ -126784,7 +126771,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 11
+      "mod": 13
      }
     },
     {
@@ -127075,6 +127062,47 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Clock",
+      "IdGen",
+      "LeaseRenewal",
+      "StoreClock"
+     ],
+     "path": "src/store_clock.rs",
+     "purpose": "Per-store clock and id source",
+     "surface": {
+      "const": 1,
+      "fn": 20,
+      "mod": 1,
+      "struct": 2,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LeaseJournal"
+     ],
+     "path": "src/store_clock/lease_journal.rs",
+     "purpose": "The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/store_clock/tests.rs",
+     "purpose": "The store clock's reads, observed through what a caller gets back",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -127118,6 +127146,13 @@
      "layout": "file",
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
+    "identity_hints": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Per-kind declared identity fields (human-facing identity hints)"
+    },
     "key_material": {
      "files": 1,
      "impl_vault": false,
@@ -127160,6 +127195,13 @@
      "layout": "file",
      "purpose": "Secret custody floor and binding vocabulary used by the store layer"
     },
+    "store_clock": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Per-store clock and id source"
+    },
     "window_key": {
      "files": 1,
      "impl_vault": false,
@@ -127170,8 +127212,8 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 24,
-   "test_files": 0
+   "source_files": 27,
+   "test_files": 1
   },
   "oneiron-uniffi": {
    "files": [
