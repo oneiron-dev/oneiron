@@ -57,7 +57,7 @@ pub(super) struct Seed {
     /// pinned by the terminal witness that births the MESSAGE, so a quote
     /// whose source stopped being readable mid-stream is refused there.
     /// `None` on a continuation, which keeps its MESSAGE's birth quote.
-    pub quote: Option<crate::conversation_dag::QuoteSpan>,
+    pub quote: Option<crate::store::conversation_record::QuoteSpan>,
     /// The verified read proof the stream's opener held, when a host bound
     /// one (FIX 1667): the terminal reads its links under that same proof,
     /// after a restart too. `None` is an opener with no bound proof. Every
@@ -168,7 +168,7 @@ pub(crate) fn redact_receipt_assertions_in_txn(
     if let Some(mut latest) = RECEIPT.get(store, txn, message)?
         && !latest.reply_assertions.is_empty()
     {
-        latest.reply_assertions = crate::llm::ReplyAssertions::default();
+        latest.reply_assertions = oneiron_model::llm::ReplyAssertions::default();
         RECEIPT.put(store, txn, message, &latest)?;
     }
     let generations: Vec<(String, MessageStreamReceipt)> = RECEIPT_BY_REF
@@ -177,7 +177,7 @@ pub(crate) fn redact_receipt_assertions_in_txn(
         .filter(|(_, done)| done.message_id == *message && !done.reply_assertions.is_empty())
         .collect();
     for (reference, mut done) in generations {
-        done.reply_assertions = crate::llm::ReplyAssertions::default();
+        done.reply_assertions = oneiron_model::llm::ReplyAssertions::default();
         RECEIPT_BY_REF.put(store, txn, &reference, &done)?;
     }
     Ok(())

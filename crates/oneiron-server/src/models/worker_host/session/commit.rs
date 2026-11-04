@@ -60,13 +60,56 @@ struct Claimed {
     admitted: Admitted,
 }
 
+/// A newly admitted rung supersedes every earlier pending attempt at the
+/// same admitted turn. Its own session opens later; a plain or non-native
+/// rung opens none, so its reply cannot steal an earlier rung's pending.
+pub(super) fn rung_admitted(digest: &ManifestDigest) {
+    let mut workers = registry::lock();
+    for worker in workers.values_mut() {
+        for session in worker.sessions.values_mut() {
+            if session
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.manifest == *digest)
+            {
+                session.pending = None;
+            }
+        }
+    }
+}
+
 /// Takes the pending turn `digest` names from its session, under the
 /// admission its vault grants now. A session whose fork showed it stale is
-/// dropped instead.
+/// dropped instead. Ambiguous pendings publish nothing: the digest alone
+/// cannot name the rung that answered (REVIEW-4386).
 fn claim(digest: &ManifestDigest) -> Option<Claimed> {
     let mut stale = None;
     let claimed = {
         let mut workers = registry::lock();
+        let matches = workers
+            .values()
+            .flat_map(|worker| worker.sessions.values())
+            .filter(|session| {
+                session
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.manifest == *digest)
+            })
+            .count();
+        if matches != 1 {
+            for worker in workers.values_mut() {
+                for session in worker.sessions.values_mut() {
+                    if session
+                        .pending
+                        .as_ref()
+                        .is_some_and(|pending| pending.manifest == *digest)
+                    {
+                        session.pending = None;
+                    }
+                }
+            }
+            return None;
+        }
         workers.iter_mut().find_map(|(worker_id, worker)| {
             let (binding, session) = worker.sessions.iter_mut().find(|(_, session)| {
                 session

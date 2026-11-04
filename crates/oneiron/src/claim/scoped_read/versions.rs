@@ -14,7 +14,7 @@ pub(super) struct AdmittedRevision {
 pub(crate) struct RevisionedHits {
     pub(crate) vector_refinement: Option<crate::pipeline::VectorRefinement>,
     pub(crate) embedding_matches:
-        std::collections::HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
+        std::collections::HashMap<EntityId, Vec<crate::store::embedding::EmbeddingMatchEvidence>>,
     pub(crate) hits: Vec<ScoredEntity>,
     pub(crate) receipt: ScopedReadReceipt,
     pub(crate) revisions: std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
@@ -29,9 +29,9 @@ enum DenseChannel<'q> {
     /// A vector that `query_kind`'s tower of space `space_id` encoded.
     Space {
         space_id: &'q str,
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         query: &'q [f32],
-        kinds: &'q [crate::embed::InputKind],
+        kinds: &'q [crate::store::embedding::InputKind],
     },
 }
 
@@ -68,7 +68,7 @@ impl<'v> ScopedRead<'v> {
     pub(crate) fn search_space_revisioned(
         &self,
         space_id: &str,
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         query: &[f32],
         limit: usize,
         requested: Option<&RetrievalFilter>,
@@ -80,9 +80,9 @@ impl<'v> ScopedRead<'v> {
     pub(crate) fn search_space_kinds_revisioned(
         &self,
         space_id: &str,
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         query: &[f32],
-        kinds: &[crate::embed::InputKind],
+        kinds: &[crate::store::embedding::InputKind],
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<RevisionedHits> {
@@ -257,7 +257,7 @@ impl<'v> ScopedRead<'v> {
         mode: ReadMode,
         authority: &HeldAuthority<'v>,
     ) -> Result<Option<AdmittedRevision>> {
-        let Some(mut raw) = self.admitted_raw_in(txn, policy, filter, id, mode, authority)? else {
+        let Some(raw) = self.admitted_raw_in(txn, policy, filter, id, mode, authority)? else {
             return Ok(None);
         };
         // The short-reference hash names the stored revision, so it is taken
@@ -265,6 +265,11 @@ impl<'v> ScopedRead<'v> {
         // comes from its manifest, never from the manifest's own bytes.
         let content_hash =
             crate::store::short_content_hash_in_txn(&self.vault.store, txn, id, &raw)?;
+        // A file-plane ASSET's live row serves its body, not its manifest;
+        // an older revision keeps the manifest it was stored as. It is
+        // materialized while it is still the stored row, so the live
+        // projection below reads the body, never the manifest (FIX 12149).
+        let mut raw = self.vault.materialized_revision_in_txn(txn, id, raw)?;
         if mode == ReadMode::Live {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -290,9 +295,6 @@ impl<'v> ScopedRead<'v> {
             raw.truncate(ENTITY_METADATA_HEADER_LEN);
             raw.extend_from_slice(&body);
         }
-        // A file-plane ASSET's live row serves its body, not its manifest;
-        // an older revision keeps the manifest it was stored as.
-        let raw = self.vault.materialized_revision_in_txn(txn, id, raw)?;
         Ok(Some(AdmittedRevision { raw, content_hash }))
     }
 

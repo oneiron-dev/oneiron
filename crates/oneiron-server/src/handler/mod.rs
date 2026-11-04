@@ -26,6 +26,7 @@ mod note_socket_tests;
 mod protocol_close;
 #[cfg(test)]
 mod residence_socket_tests;
+pub(crate) mod selector_scope;
 mod socket_stop;
 mod transport;
 mod window_copy;
@@ -37,7 +38,7 @@ mod window_sync;
 pub(crate) use self::connection::ws_routes;
 pub(crate) use self::leaf_keys::LeafKeyRelay;
 pub(crate) use self::mcp_socket::{MCP_RPC_METHOD, MCP_SUBPROTOCOL};
-pub(crate) use self::window_sync::selector_grant_scope;
+pub(crate) use self::selector_scope::selector_grant_scope;
 
 #[cfg(test)]
 mod tests;

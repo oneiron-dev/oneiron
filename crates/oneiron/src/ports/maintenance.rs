@@ -62,7 +62,7 @@ pub(crate) trait EntityStoreMaintenance: Transactions {
         &self,
         txn: &mut Self::Write<'_>,
         id: &EntityId,
-        streak: crate::habit::HabitStreak,
+        streak: crate::write_envelope::task_body::HabitStreak,
     ) -> Result<()>;
     /// FloorWrites is the only durable session crossing; it authorizes this append.
     fn port_redaction_audit_append(
@@ -89,13 +89,13 @@ pub(crate) trait EdgeStoreMaintenance: Transactions {
     fn port_edge_stamp_provenance(
         &self,
         txn: &mut Self::Write<'_>,
-        subject: &crate::provenance::EdgeRef,
+        subject: &crate::write_envelope::provenance::EdgeRef,
         flags: crate::edge::EdgeProvenanceFlags,
     ) -> Result<()>;
     fn port_edge_clear_provenance(
         &self,
         txn: &mut Self::Write<'_>,
-        subject: &crate::provenance::EdgeRef,
+        subject: &crate::write_envelope::provenance::EdgeRef,
     ) -> Result<bool>;
 }
 
@@ -105,14 +105,14 @@ pub(crate) trait EdgeStoreReadiness: Transactions {
         txn: &mut Self::Write<'_>,
         from: EntityId,
         to: EntityId,
-        context: crate::code_memory::BlocksWriteContext<'_>,
+        context: crate::store::code_memory_values::BlocksWriteContext<'_>,
     ) -> Result<()>;
     fn port_blocks_remove(
         &self,
         txn: &mut Self::Write<'_>,
         from: EntityId,
         to: EntityId,
-        context: crate::code_memory::BlocksWriteContext<'_>,
+        context: crate::store::code_memory_values::BlocksWriteContext<'_>,
     ) -> Result<bool>;
 }
 

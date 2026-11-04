@@ -29,7 +29,7 @@ use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 
 use super::reminder::{ReminderRef, civil_time, quoted_promise, reminder_text};
-use super::wake_approval::approved_commitment_wake;
+use super::wake_approval::approved_commitment_wake_in_txn;
 use super::wake_event::{
     CommitmentWakePhase, KEY_CONTENT_REF, PREDICATE_COMMITMENT_WAKE_PROPOSAL, validate_wake_string,
 };
@@ -290,25 +290,38 @@ impl Vault {
         {
             return Ok(());
         }
-        let run_prefix = if self.commitment_reminder_approved(&reminder.instance_id, content_ref)? {
-            tracing::info!(
+        // The approval check and the append commit in ONE write
+        // transaction: an owner approval landing between them would file
+        // later wording under the sendable prefix, and the send would read
+        // words filed after that approval.
+        self.with_write_txn(|wtxn| {
+            let run_prefix = if self.commitment_reminder_approved_in_txn(
+                wtxn,
+                &reminder.instance_id,
                 content_ref,
-                "a reminder wording filed after its approval is kept beside the approved words"
-            );
-            UNSENT_WORDING_RUN_PREFIX
-        } else {
-            WORDING_RUN_PREFIX
-        };
-        self.append_blob_artifact_version(
-            &artifact_id,
-            text.as_bytes(),
-            &BlobVersionProvenance::AgentRun {
-                run_ref: format!("{run_prefix}{content_ref}"),
-            },
-            self.dreamer_authority()?,
-            at,
-            now,
-        )?;
+            )? {
+                tracing::info!(
+                    content_ref,
+                    "a reminder wording filed after its approval is kept beside the approved words"
+                );
+                UNSENT_WORDING_RUN_PREFIX
+            } else {
+                WORDING_RUN_PREFIX
+            };
+            let authority = self.dreamer_authority_in_txn(wtxn, now)?;
+            self.append_blob_artifact_version_in_txn(
+                wtxn,
+                &artifact_id,
+                text.as_bytes(),
+                &BlobVersionProvenance::AgentRun {
+                    run_ref: format!("{run_prefix}{content_ref}"),
+                },
+                authority,
+                at,
+                now,
+            )?;
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -460,14 +473,17 @@ impl Vault {
     }
 
     /// Whether an approved wake proposal about the commitment `instance_id`
-    /// that still stands sends the reminder `content_ref`.
-    fn commitment_reminder_approved(
+    /// that still stands sends the reminder `content_ref`, read through the
+    /// caller's write transaction: the same check the send asks, for an
+    /// approval the caller commits beside its own append.
+    fn commitment_reminder_approved_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         instance_id: &EntityId,
         content_ref: &str,
     ) -> Result<bool> {
-        for claim in self.claims_for_subject(instance_id)? {
-            if approved_commitment_wake(self, &claim)
+        for claim in self.claims_for_subject_in_txn(txn, instance_id)? {
+            if approved_commitment_wake_in_txn(self, txn, &claim)
                 .is_ok_and(|approved| approved.content_ref() == Some(content_ref))
             {
                 return Ok(true);

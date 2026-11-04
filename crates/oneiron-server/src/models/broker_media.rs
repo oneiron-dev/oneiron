@@ -27,8 +27,10 @@ use oneiron_llm_openai::{
     OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
 };
 
-use super::broker::{BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, join};
-use super::http::charge_read;
+use super::broker::{
+    BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, call_with_key_released, join,
+};
+use super::http::{charge_read, is_cloud_node};
 use crate::config::models::{ProviderConfig, ProviderKind};
 
 const JSON: &str = "application/json";
@@ -162,6 +164,15 @@ impl BrokerMedia {
         exchange: Exchange,
         lease: &BudgetLease,
     ) -> LlmResult<(u16, BTreeMap<String, String>, Vec<u8>)> {
+        self.send_released(exchange, lease, None).await
+    }
+
+    async fn send_released(
+        &self,
+        exchange: Exchange,
+        lease: &BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'_>>,
+    ) -> LlmResult<(u16, BTreeMap<String, String>, Vec<u8>)> {
         let Exchange {
             shape,
             path,
@@ -184,11 +195,20 @@ impl BrokerMedia {
             path,
             headers,
             wire_model,
+            is_cloud_node(),
             &body,
         );
         header.check(&body).map_err(|_| invalid())?;
-        let mut reply =
-            call_with_key(&self.client, &self.keys, &self.secret, &header, &body).await?;
+        let mut reply = call_with_key_released(
+            &self.client,
+            &self.keys,
+            &self.secret,
+            &header,
+            &body,
+            release,
+            Some(lease),
+        )
+        .await?;
         let (status, headers) = answered(reply.outcome)?;
         let body = std::mem::take(&mut *reply.body);
         // The broker hands the reply over whole: its bytes are charged on the
@@ -318,6 +338,24 @@ impl OpenAiMediaTransport for BrokerMedia {
     ) -> OpenAiMediaTransportFuture<'a> {
         Box::pin(async move {
             let (status, headers, body) = self.send(self.openai(request)?, lease).await?;
+            Ok(OpenAiMediaHttpResponse {
+                status,
+                headers,
+                body,
+            })
+        })
+    }
+
+    fn execute_released<'a>(
+        &'a self,
+        request: OpenAiMediaHttpRequest,
+        lease: &'a BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'a>>,
+    ) -> OpenAiMediaTransportFuture<'a> {
+        Box::pin(async move {
+            let (status, headers, body) = self
+                .send_released(self.openai(request)?, lease, release)
+                .await?;
             Ok(OpenAiMediaHttpResponse {
                 status,
                 headers,

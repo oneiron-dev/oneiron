@@ -17,10 +17,12 @@ use crate::embed::media::{MediaEmbeddingInput, TEXT_MEDIA_TYPE};
 use crate::embed::{EgressDecision, EgressPredicate, EmbedderLocality, InputKind};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::machine_destination::PeerMachine;
 use crate::origin::secret_projection::index::{
     RepoDerivedIndexSources, RepoIndexMarks, opaque_index_text, repo_derived_index_sources_in,
 };
 use crate::ports::EntityStoreRead;
+use crate::settings::ReadDestination;
 
 /// A host model that writes the text standing in for one a model derived
 /// from repo bytes: a caption of an image, a transcript of audio, a short
@@ -221,12 +223,15 @@ impl Vault {
         if author.locality() != EmbedderLocality::ThirdParty {
             return Ok(true);
         }
+        // This door carries no endpoint for its author: the judge stays a destination
+        // nobody proved, as today.
+        let unknown = ReadDestination::toward(PeerMachine::Unknown);
         for input in inputs.iter().filter(|input| input.kind != InputKind::Text) {
             let Some(egress) = egress else {
                 return Ok(false);
             };
             if egress.decide_media(input) != EgressDecision::Allow
-                || !self.media_rows_may_leave(None, &[input.entity_id])?
+                || !self.media_rows_may_leave(None, input.source_rows(), &unknown)?
             {
                 return Ok(false);
             }

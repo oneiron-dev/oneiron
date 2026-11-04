@@ -32,8 +32,6 @@ use zeroize::Zeroizing;
 use crate::error::{Error, Result};
 use crate::world_keys::{os_fill, refused};
 
-/// The format version both values' bytes and every chunk key id carry.
-const VERSION: u8 = 1;
 /// Plaintext per chunk: one envelope seals this much of the body.
 const CHUNK_LEN: usize = 64 * 1024;
 /// The snapshot id's width: fresh random bytes, never taken from a digest.
@@ -43,47 +41,9 @@ const EPOCH: u64 = 1;
 const RECIPIENT: &[u8] = b"oneiron/inference-snapshot/chunk";
 /// The domain a wrapped data key's associated data opens with.
 const WRAP_AAD_DOMAIN: &[u8] = b"oneiron/inference-snapshot-key/v1\0";
-const WRAP_NONCE_LEN: usize = 12;
-/// A wrapped key's fixed width: version ‖ nonce ‖ 32 key bytes + 16 tag.
-const WRAPPED_LEN: usize = 1 + WRAP_NONCE_LEN + 48;
 
-fn corrupt() -> Error {
-    Error::CorruptedIndex("inference snapshot")
-}
-
-/// One snapshot's data key, wrapped under the vault's key: `u8` version 1, a
-/// fresh 12-byte nonce, then the 32 key bytes sealed under it. The sealed
-/// body never carries the key; whoever holds only [`SealedSnapshot`] opens
-/// nothing.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WrappedSnapshotKey {
-    bytes: Vec<u8>,
-}
-
-impl WrappedSnapshotKey {
-    /// Parses wrapped bytes: the version, then nonce and ciphertext, exactly.
-    pub fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() != WRAPPED_LEN || bytes[0] != VERSION {
-            return Err(corrupt());
-        }
-        Ok(Self {
-            bytes: bytes.to_vec(),
-        })
-    }
-
-    /// The canonical bytes: version, nonce, ciphertext.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        self.bytes.clone()
-    }
-
-    /// Retires this copy of the wrapped key: its bytes are wiped and dropped,
-    /// so this handle never unwraps again. Durable erasure — the stored rows,
-    /// copies and backups — is the store's erase wiring, not a filename
-    /// delete here.
-    pub fn retire(mut self) {
-        zeroize::Zeroize::zeroize(&mut self.bytes);
-    }
-}
+pub use crate::store::snapshot_key::WrappedSnapshotKey;
+use crate::store::snapshot_key::{VERSION, WRAP_NONCE_LEN, WRAPPED_LEN, corrupt};
 
 /// One snapshot's sealed body: the snapshot id, the chunk count, the
 /// plaintext length, and one envelope per chunk. Opaque bytes: no key, no

@@ -12,6 +12,8 @@
 //! tasks bound to it are signalled, and every run parked on it gets its
 //! terminal state (FIX 4706). Its decision ask's waiters wake only after the
 //! commit returned. A collected yes wakes nothing: the request still waits.
+//! A settled ask a connected vault's agent sent here tells this vault's
+//! owners to carry the answer back (FIX 4702).
 
 use crate::authority::{ActSurface, WorldEditAuthor};
 use crate::consent::AuthenticatedOwner;
@@ -58,7 +60,8 @@ impl Vault {
     /// [`GateError::ConsentOwnerNotAuthenticated`] for a non-holder or the
     /// opener's lineage or a fork of it (FIX 5064);
     /// [`Error::EntityNotFound`] for no such request;
-    /// [`Error::InvalidConfig`] for one already settled;
+    /// [`Error::InvalidConfig`] for one already settled, or for a yes to an
+    /// agent's ask on a world a connected vault owns (FIX 4702);
     /// [`Error::ConcurrentWrite`] when the world's settings changed since it
     /// was opened.
     pub fn answer_world_privacy_request(
@@ -124,11 +127,18 @@ impl Vault {
                 };
                 self.put_world_privacy_request_in_txn(txn, &stored)?;
                 crate::task_verb::deliver_world_privacy_wait_in_txn(self, txn, &stored)?;
+                self.notify_foreign_answer_in_txn(txn, &stored)?;
                 let settled = match stored.ask {
                     Some(seq) => self.settle_world_privacy_ask_in_txn(txn, seq, actor, false)?,
                     None => None,
                 };
                 return Ok((WorldPrivacyAnswer::Declined(stored), settled));
+            }
+            // An agent's ask on a world a connected vault owns is applied by
+            // that vault's holders (FIX 4702): a holder here only cancels it,
+            // and the owning vault's answer settles it when it comes back.
+            if stored.owned_by.is_some() {
+                return Err(super::foreign_world());
             }
             if let Some(needs) = &live_needs {
                 stored.needs = needs.iter().map(EntityId::to_hex).collect();
@@ -166,6 +176,7 @@ impl Vault {
             };
             self.put_world_privacy_request_in_txn(txn, &stored)?;
             crate::task_verb::deliver_world_privacy_wait_in_txn(self, txn, &stored)?;
+            self.notify_foreign_answer_in_txn(txn, &stored)?;
             let settled = match stored.ask {
                 Some(seq) => self.settle_world_privacy_ask_in_txn(txn, seq, actor, true)?,
                 None => None,

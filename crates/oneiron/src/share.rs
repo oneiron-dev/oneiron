@@ -12,8 +12,8 @@ use sha2::Sha256;
 use crate::Vault;
 use crate::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
-    decode_access_grant_body, decode_entity_ref, encode_access_grant_body, invalid_grant,
-    required_value, validate_keys,
+    decode_access_grant_body, decode_entity_ref, decode_erased_grant_body,
+    encode_access_grant_body, erased_grant, invalid_grant, required_value, validate_keys,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ScopedReadActorKey, claim_surfaceable, decode_claim_body};
@@ -269,7 +269,15 @@ pub(crate) fn check_generic_grant_write(
         && EntityMetadataHeader::parse(&raw)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_ACCESS_GRANT)
     {
-        let old = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let old = match decode_access_grant_body(body) {
+            Ok(grant) => grant,
+            // Inert history is named, not raw-errored (FIX 4981).
+            Err(_) if decode_erased_grant_body(body).is_ok() => {
+                return Err(erased_grant());
+            }
+            Err(error) => return Err(error),
+        };
         if matches!(old.scope, AccessGrantScope::SharedBrief { .. }) {
             return Err(Error::Record(RecordError::InvalidAccessGrantBody(
                 "shared briefs require the share door",

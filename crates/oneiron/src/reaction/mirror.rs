@@ -56,10 +56,7 @@ pub enum ReactionIngress {
     },
 }
 
-/// The engine's conversation-mirror write actor: one deterministic MACHINE.
-pub fn conversation_mirror_actor_id() -> Result<EntityId> {
-    EntityId::derive(CONVERSATION_MIRROR_ACTOR, &[])
-}
+pub use crate::claim::reaction_record::conversation_mirror_actor_id;
 
 pub(crate) fn ensure_conversation_mirror_actor(vault: &Vault, now: u64) -> Result<EntityId> {
     let id = conversation_mirror_actor_id()?;

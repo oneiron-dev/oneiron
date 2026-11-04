@@ -19,10 +19,10 @@
 use super::ceremony::sign;
 use super::ledger::state_in;
 use super::model::*;
-use crate::llm::decision::catalogue;
-use crate::llm::decision::{
-    AnswerActor, AnswerContract, AskRole, DecisionAsk, DecisionQuestion, RoleRank,
-};
+use crate::llm::decision::{AskRole, DecisionAsk};
+use crate::model_decision::AnswerActor;
+use crate::model_decision::catalogue;
+use crate::model_decision::{AnswerContract, DecisionQuestion, RoleRank};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -39,8 +39,8 @@ pub const HOLD_DECLINE: &str = "decline";
 /// before it climbs to the next role up its chain (CALLS "OF-415 held
 /// signing climb"). At the vault owners it waits on: no unanswered ask
 /// signs or lapses.
-pub const ESIGN_ASK_CLIMB_HOURS: crate::learning_setting::SettingSpec =
-    crate::learning_setting::SettingSpec {
+pub const ESIGN_ASK_CLIMB_HOURS: crate::store::setting_seed::SettingSpec =
+    crate::store::setting_seed::SettingSpec {
         key: "esign.ask.climb_hours",
         min: 1.0,
         max: 720.0,

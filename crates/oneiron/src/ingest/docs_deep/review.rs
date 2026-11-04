@@ -211,19 +211,17 @@ impl Vault {
             .iter()
             .find(|grant| grant.bound().contains(&covering))
             .map(|grant| grant.bound().digest().to_hex());
-        if let Some(grant_ref) = grant_ref {
+        if let Some(grant_ref) = &grant_ref {
             let approved = claims
                 .iter()
                 .map(|claim| write.candidate(claim, ClaimApprovalStatus::Approved))
                 .collect::<Result<Vec<_>>>()?;
             apply_deep_writes(self, txn, &approved)?;
-            let digest = deep_review_effect(owner, write.asset, claims)?.digest();
-            self.record_standing_grant_use_in_txn(txn, &grant_ref, digest)?;
             // A revision whose earlier claims still wait for the owner stays
             // undecided; only a grant that approved every batch decides it.
             if review.claims.is_empty() || review.decision == ClaimApprovalStatus::Approved {
                 review.decision = ClaimApprovalStatus::Approved;
-                review.standing_grant_ref = Some(grant_ref);
+                review.standing_grant_ref = Some(grant_ref.clone());
             }
         } else {
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
@@ -250,7 +248,24 @@ impl Vault {
         for (id, ..) in &proposed {
             self.store.delete_pending_gate_consent_in_txn(txn, id)?;
         }
-        review.claims.extend_from_slice(claims);
+        let admitted = claims
+            .iter()
+            .map(|claim| {
+                let id = EntityId::from_hex(&claim.claim_ref)?;
+                let body = self
+                    .get_claim_in_txn(txn, &id)?
+                    .ok_or(Error::CorruptedIndex("docs deep admitted claim"))?;
+                let mut admitted = claim.clone();
+                admitted.value = serde_json::to_value(body.value)
+                    .map_err(|_| invalid("docs deep review value encoding failed"))?;
+                Ok(admitted)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if let Some(grant_ref) = &grant_ref {
+            let digest = deep_review_effect(owner, write.asset, &admitted)?.digest();
+            self.record_standing_grant_use_in_txn(txn, grant_ref, digest)?;
+        }
+        review.claims.extend(admitted);
         Ok(())
     }
 

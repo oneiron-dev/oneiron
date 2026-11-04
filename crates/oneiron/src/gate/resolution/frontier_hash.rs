@@ -7,7 +7,7 @@ use crate::booking::anti_abuse::{BookingAntiAbuseRule, BookingAntiAbuseRuleRow};
 use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, BudgetPolicyTable};
+use oneiron_model::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, BudgetPolicyTable};
 
 use super::manifest_types::{
     PolicyManifestDiagnostics, PolicyManifestResolution, ResidenceOperationBudgetLimits,
@@ -146,7 +146,8 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "failure_signal_policy");
         hash_len(hasher, resolution.failure_signal_policy.len());
         for row in &resolution.failure_signal_policy {
-            use crate::failure_signals::policy::{Precedence, Scope};
+            use crate::gate::failure_signal_policy::Precedence;
+            use crate::gate::failure_signal_policy::Scope;
             match row.scope {
                 Scope::Default => hash_str(hasher, "default"),
                 Scope::Vault => hash_str(hasher, "vault"),
@@ -192,8 +193,7 @@ pub(super) fn hash_policy_frontier_v0(
     if let Some(defaults) = resolution.voice_ref_defaults.as_ref() {
         hash_voice_ref_policy(hasher, "voice_ref_defaults", defaults);
     }
-    if resolution.voice_ref_limits
-        != crate::voice_identity::ref_limits::VoiceRefLimitPolicy::default()
+    if resolution.voice_ref_limits != crate::gate::voice_ref_limits::VoiceRefLimitPolicy::default()
     {
         hash_voice_ref_policy(
             hasher,
@@ -264,7 +264,7 @@ pub(super) fn hash_policy_frontier_v0(
     // The shipped row and an absent legacy row resolve identically. Only a
     // behavior change contributes a new domain tag, preserving existing
     // no-review-policy consent bindings.
-    if resolution.slide_review_policy != crate::llm::decision::SlideReviewPolicy::default() {
+    if resolution.slide_review_policy != crate::model_decision::SlideReviewPolicy::default() {
         let mut slide_policy = Vec::new();
         rmpv::encode::write_value(&mut slide_policy, &resolution.slide_review_policy.rows())
             .map_err(|_| Error::InvariantViolation("slide review policy frontier encoding"))?;
@@ -610,9 +610,11 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "authority_scope");
         hash_opt_value(
             hasher,
-            Some(&crate::federation::scope_codec::encode_scope_value(
-                &grant.authority_scope,
-            )?),
+            Some(
+                &oneiron_authority::federation::scope_codec::encode_scope_value(
+                    &grant.authority_scope,
+                )?,
+            ),
         )?;
         hash_opt_value(hasher, grant.scope.as_ref())?;
         hash_opt_value(hasher, grant.budget.as_ref())?;
@@ -849,7 +851,7 @@ fn hash_len(hasher: &mut Sha256, value: usize) {
 fn hash_voice_ref_policy(
     hasher: &mut Sha256,
     tag: &str,
-    policy: &crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
+    policy: &crate::gate::voice_ref_limits::VoiceRefLimitPolicy,
 ) {
     hash_str(hasher, tag);
     hash_str(

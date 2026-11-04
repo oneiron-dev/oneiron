@@ -1,10 +1,11 @@
 //! Standing-grant resolution plus scoped-MCP channel check and grant use receipt.
 
+use crate::consent::tool_scope::ScopedMcpConsentDecision;
+use crate::consent::tool_scope::evaluate_scoped_mcp_call;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::input::ExternalEffectGateInput;
 use crate::gate::resolution::PolicyManifestResolution;
-use crate::outbound_consent::{ScopedMcpConsentDecision, evaluate_scoped_mcp_call};
 use crate::outbound_grant::{
     StandingOutboundGrant, StandingOutboundGrantScope, standing_outbound_grant_in_txn,
     standing_outbound_grants_for_principal_in_txn,
@@ -75,7 +76,7 @@ pub(super) fn standing_outbound_grant_for_effect(
                             prepared.decision(scoped_grant)
                         } else {
                             ScopedMcpConsentDecision::Escalate(
-                                crate::outbound_consent::ScopedMcpEscalationReason::InvalidGrant,
+                                crate::consent::tool_scope::ScopedMcpEscalationReason::InvalidGrant,
                             )
                         }
                     },

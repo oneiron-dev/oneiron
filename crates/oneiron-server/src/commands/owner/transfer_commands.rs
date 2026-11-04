@@ -127,6 +127,9 @@ struct ImportedArchive {
     skipped_unproven_regenerates_edges: usize,
     /// Secrets the archive carried as handles only: re-enter each one.
     missing_secrets: Vec<String>,
+    /// Secrets the archive could not carry even as a handle, by id: each
+    /// comes as its export secret supplement (FIX 12066).
+    owed_secrets: Vec<String>,
     embedding_setup: ImportedEmbeddingSetup,
 }
 
@@ -184,6 +187,11 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
             .missing_secrets
             .into_iter()
             .map(|secret| secret.name)
+            .collect(),
+        owed_secrets: receipt
+            .owed_secrets
+            .iter()
+            .map(|secret| secret.to_hex())
             .collect(),
         embedding_setup: ImportedEmbeddingSetup {
             status,

@@ -164,8 +164,8 @@ pub struct MemoryRow {
     pub world: Option<String>,
     /// The row's world cannot be proven (`record_world_in` places it
     /// nowhere): it renders under `MEMORIES world=unknown`, never under
-    /// base's `unscoped` (FIX 9744). Not on the wire.
-    #[serde(skip)]
+    /// base's `unscoped` (FIX 9744; on the wire since FIX 10563).
+    #[serde(default)]
     pub world_unproven: bool,
     #[serde(default)]
     pub tier: MemoryTier,
