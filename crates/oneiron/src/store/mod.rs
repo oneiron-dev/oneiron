@@ -276,6 +276,7 @@ mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
 pub(crate) mod linear_pull_cursor;
+pub(crate) mod linear_task_revision;
 mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
@@ -301,6 +302,7 @@ mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
 mod short_id_alias;
+pub(crate) mod skill_attribution_causes;
 pub(crate) mod skill_content_index;
 pub mod skill_hub_predicates;
 pub mod skill_package;
