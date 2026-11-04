@@ -9,42 +9,7 @@ use std::collections::BTreeSet;
 const ORG_ADMIN_POLICY: SideTable<HexId, OrgAdminPolicy, LegacyJson> =
     SideTable::new(&side_table::ORG_ADMIN_POLICY);
 
-/// The complete administration vocabulary, fixed by the engine.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum OrgAdminPower {
-    /// Enroll a member's public identity, never their private key.
-    AddMember,
-    /// Remove an organization membership.
-    RemoveMember,
-    /// Assign a non-root organization role.
-    AssignRole,
-    /// Reset access to a shared project, not a member vault.
-    ResetSharedProjectAccess,
-}
-impl OrgAdminPower {
-    /// Closed wire token used by Console routes and rendered actions.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::AddMember => "org:add-member",
-            Self::RemoveMember => "org:remove-member",
-            Self::AssignRole => "org:assign-role",
-            Self::ResetSharedProjectAccess => "org:reset-shared-project-access",
-        }
-    }
-    /// Parses only named administrative powers. Root and private reads do not exist here.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "org:add-member" => Some(Self::AddMember),
-            "org:remove-member" => Some(Self::RemoveMember),
-            "org:assign-role" => Some(Self::AssignRole),
-            "org:reset-shared-project-access" => Some(Self::ResetSharedProjectAccess),
-            _ => None,
-        }
-    }
-}
+pub use crate::batch::shared_vault_write::OrgAdminPower;
 
 /// Immutable setup policy. Contains actor references, never member key material.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

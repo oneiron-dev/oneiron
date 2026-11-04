@@ -688,10 +688,8 @@ pub(super) fn prepared_step_state_hash(
         hash_bytes(&mut hasher, &outcome);
         // Rewritten rows are pinned; legacy rows hash identically (FIX 1442).
         if let Some(rewritten) = &call.rewritten_request {
-            let rewritten = encode_code_run_replay_value(
-                rewritten,
-                "executor bridge call rewritten hash",
-            )?;
+            let rewritten =
+                encode_code_run_replay_value(rewritten, "executor bridge call rewritten hash")?;
             hash_bytes(&mut hasher, &rewritten);
         }
     }

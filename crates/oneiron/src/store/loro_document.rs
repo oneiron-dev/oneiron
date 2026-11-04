@@ -2,6 +2,7 @@
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncEngineContext, SyncError};
 
 pub(crate) fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) -> Result<()> {
@@ -179,4 +180,15 @@ pub(crate) fn doc_from_snapshot(bytes: &[u8]) -> Result<LoroDoc> {
             source,
         })
     })
+}
+
+/// The entity carriers `ids` hold in `doc`, read before a local path removes
+/// them, so `sync::window::mark_removed_carriers_first` can mark the task of
+/// an authority fact among them that this vault never admitted: removing its
+/// carrier before ingest saw it would otherwise read as a fact never made.
+pub(crate) fn entity_carriers(doc: &LoroDoc, ids: &[EntityId]) -> Vec<(EntityId, Vec<u8>)> {
+    let entities = doc.get_map("entities");
+    ids.iter()
+        .filter_map(|id| map_get_bytes(&entities, &id.to_hex()).map(|carrier| (*id, carrier)))
+        .collect()
 }
