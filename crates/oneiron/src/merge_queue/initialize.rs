@@ -20,9 +20,9 @@ use super::check_store::{
 };
 use super::plan::RepoCheckPlan;
 use super::{CheckPhase, MergeQueue, REPO_CHECK_PLAN_PATH};
-use crate::store::contract_oracle::{CommandOutput, ContractOracle, WorkspaceGraph, invalid};
 use crate::error::Result;
 use crate::git_wire::lock_repository;
+use crate::store::contract_oracle::{CommandOutput, ContractOracle, WorkspaceGraph, invalid};
 
 impl MergeQueue<'_> {
     /// Runs claimed init `work`: both baseline phases of the frozen plan
