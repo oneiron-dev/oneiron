@@ -251,6 +251,7 @@ impl<'v> DocumentWriter<'v> {
                 .into_iter()
                 .map(|(binding, withheld)| ExportRunBinding {
                     name: binding.name,
+                    path: binding.path,
                     handle: withheld.is_none().then_some(binding.handle),
                     withheld: withheld.map(str::to_owned),
                 })

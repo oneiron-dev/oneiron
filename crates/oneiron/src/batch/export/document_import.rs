@@ -702,7 +702,19 @@ fn put_run_results_in_txn<R: Read + Seek>(
             staged.push(finished.output.raw_blake3);
             let occurrence = finished.at(output.path.clone(), output.complete)?;
             vault.put_code_run_output_in_txn(wtxn, &finished, &occurrence, Some(run_id))?;
-            manifests.push(occurrence);
+            // Custody admission may have masked the bytes, so the restored
+            // manifest's own handle can differ from the archived one the
+            // bindings name. The canonical handle of the archived digest is
+            // kept beside the restored occurrence, in memory only, so the
+            // rebind below resolves through it.
+            manifests.push(RestoredRunOutput {
+                source_handle: format!(
+                    "{}{}",
+                    crate::store::result_manifest::CODE_RUN_OUTPUT_HANDLE_PREFIX,
+                    crate::entity_id::bytes_to_hex_lower(&digest)
+                ),
+                output: occurrence,
+            });
             imported += 1;
         }
         if !manifests.is_empty() {
@@ -739,7 +751,10 @@ fn put_run_results_in_txn<R: Read + Seek>(
             continue;
         }
         let mut record = crate::code_run::CodeRunReplayRecord::new(run_id, determinism);
-        record.outputs = outputs.to_vec();
+        record.outputs = outputs
+            .iter()
+            .map(|restored| restored.output.clone())
+            .collect();
         record.bindings = bindings;
         record.callable_rows = None;
         let existing = {
@@ -751,19 +766,19 @@ fn put_run_results_in_txn<R: Read + Seek>(
                 && current
                     .outputs
                     .iter()
-                    .map(|output| (&output.handle, output.complete))
+                    .map(|output| (&output.handle, &output.path, output.complete))
                     .eq(record
                         .outputs
                         .iter()
-                        .map(|output| (&output.handle, output.complete)))
+                        .map(|output| (&output.handle, &output.path, output.complete)))
                 && current
                     .bindings
                     .iter()
-                    .map(|binding| (&binding.name, &binding.handle))
+                    .map(|binding| (&binding.name, &binding.handle, &binding.path))
                     .eq(record
                         .bindings
                         .iter()
-                        .map(|binding| (&binding.name, &binding.handle)))
+                        .map(|binding| (&binding.name, &binding.handle, &binding.path)))
         });
         match existing {
             None => {
@@ -825,11 +840,21 @@ fn put_run_results_in_txn<R: Read + Seek>(
     ))
 }
 
+/// One restored result occurrence with the archived handle that named it.
+/// Custody admission can mask the bytes as they go in, so the restored
+/// manifest's own handle may differ from the archived one; the rebind
+/// matches archived names through this association, never the two
+/// handle namespaces against each other.
+struct RestoredRunOutput {
+    source_handle: String,
+    output: crate::code_run::CodeRunRawOutput,
+}
+
 /// Rebinds archived names to the outputs restored in this writer. A name or
 /// handle with the wrong shape is malformed archive data; a well-formed
-/// handle that none of the restored outputs names is merely unresolved.
+/// archived occurrence no restored output matches is merely unresolved.
 fn rebind_run_results(
-    outputs: &[crate::code_run::CodeRunRawOutput],
+    outputs: &[RestoredRunOutput],
     bindings: &[super::ExportRunBinding],
 ) -> Result<(Vec<crate::code_run::CodeRunResultBinding>, usize, usize)> {
     let mut bound = Vec::new();
@@ -848,13 +873,14 @@ fn rebind_run_results(
                 if crate::entity_id::bytes_to_hex_lower(&digest) != hex {
                     return Err(invalid("run result binding handle"));
                 }
-                if let Some(output) = outputs
-                    .iter()
-                    .find(|output| output.handle == handle.as_str())
-                {
+                if let Some(restored) = outputs.iter().find(|restored| {
+                    restored.source_handle == handle.as_str()
+                        && (binding.path.is_empty() || restored.output.path == binding.path)
+                }) {
                     bound.push(crate::code_run::CodeRunResultBinding::new(
                         binding.name.clone(),
-                        output.handle.clone(),
+                        restored.output.handle.clone(),
+                        restored.output.path.clone(),
                     ));
                 } else {
                     unresolved += 1;

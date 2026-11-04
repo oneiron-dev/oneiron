@@ -216,12 +216,16 @@ pub struct ExportRun {
     pub receipts: Vec<ExportReaderFold>,
 }
 
-/// One archived result name and the output handle it names. The handle is
-/// absent exactly when the occurrence's egress judgment withheld it.
+/// One archived result name and the occurrence it names: its path and its
+/// output handle. Same bytes under different paths are distinct
+/// occurrences, so the path is required. The handle is absent exactly when
+/// the occurrence's egress judgment withheld it; the name, path and reason
+/// still travel then.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportRunBinding {
     pub name: String,
+    pub path: String,
     pub handle: Option<String>,
     pub withheld: Option<String>,
 }
