@@ -388,7 +388,13 @@ impl SyncServer {
                         // final receipt row a crash or a fault left owed
                         // (FIX 5844); a pass that runs appends them itself.
                         vault.finish_redaction_erases_logged();
-                        return status;
+                        match vault.retire_deleted_backup_custody(&host.backups.dir) {
+                            Ok(false) => return status,
+                            Ok(true) => {}
+                            Err(error) => {
+                                return not_run(&error, "the backup custody expiry did not run");
+                            }
+                        }
                     }
                     // FIX 9522: the background pass does the HTTP anchor reads and advances.
                     publish(vault, &host.backups, true, true)
