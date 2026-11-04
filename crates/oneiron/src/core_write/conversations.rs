@@ -13,7 +13,8 @@ use super::shape::{
     core_write_times, entity_id, stage_core_put, text_pairs, write_id,
 };
 use crate::authority::VerifiedSlip;
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::ports::{ClaimReadStatus};
+use crate::claim::{ScopedRead};
 use crate::edge::EdgeActorClass;
 use crate::memory::Memory;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};

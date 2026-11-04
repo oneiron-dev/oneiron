@@ -14,7 +14,8 @@ use super::shape::{
 };
 use crate::Vault;
 use crate::batch::BatchBuilder;
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::ports::{ClaimReadStatus};
+use crate::claim::{ScopedRead};
 use crate::memory::Memory;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
