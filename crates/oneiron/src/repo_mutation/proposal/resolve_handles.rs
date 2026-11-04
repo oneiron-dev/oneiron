@@ -139,7 +139,7 @@ pub(super) fn resolved_successor(
     // The original's review carries only onto the proposal it actually
     // judged: the successor must re-redact to the original byte for byte
     // (Engine ruling on FIX 2938 F4).
-    if reredact(&resolved, &values) != content {
+    if reredact(&resolved, &values)? != content {
         return Err(invalid(
             "the resolved bytes are not the reviewed operation with its handles replaced",
         ));
@@ -229,10 +229,30 @@ fn substitute(
     resolved
 }
 
+/// Pushes `chunk` unless the re-redaction already exceeds the ordinary proposal
+/// bound: handles inserted by earlier passes must not compound without a bound
+/// (a few dozen distinct handle spellings with short bound values would otherwise
+/// grow each pass over the preceding handles). Overflow refuses the review carry.
+fn push_bounded(out: &mut Vec<u8>, chunk: &[u8]) -> Result<()> {
+    let end = out
+        .len()
+        .checked_add(chunk.len())
+        .filter(|len| *len <= 32 * 1024 * 1024);
+    match end {
+        Some(_) => {
+            out.extend_from_slice(chunk);
+            Ok(())
+        }
+        None => Err(invalid(
+            "the resolved bytes are not the reviewed operation with its handles replaced",
+        )),
+    }
+}
+
 /// The inverse substitution, for the review-carry proof: each bound value
 /// back to its span. An empty value proves nothing and is left, which the
 /// caller's byte equality then refuses.
-fn reredact(resolved: &[u8], values: &[(String, Vec<u8>)]) -> Vec<u8> {
+fn reredact(resolved: &[u8], values: &[(String, Vec<u8>)]) -> Result<Vec<u8>> {
     let mut out = resolved.to_vec();
     for (text, value) in values {
         if value.is_empty() {
@@ -241,14 +261,14 @@ fn reredact(resolved: &[u8], values: &[(String, Vec<u8>)]) -> Vec<u8> {
         let mut replaced = Vec::with_capacity(out.len());
         let mut at = 0;
         while let Some(hit) = find(&out[at..], value) {
-            replaced.extend_from_slice(&out[at..at + hit]);
-            replaced.extend_from_slice(text.as_bytes());
+            push_bounded(&mut replaced, &out[at..at + hit])?;
+            push_bounded(&mut replaced, text.as_bytes())?;
             at += hit + value.len();
         }
-        replaced.extend_from_slice(&out[at..]);
+        push_bounded(&mut replaced, &out[at..])?;
         out = replaced;
     }
-    out
+    Ok(out)
 }
 
 /// The stored pre-action snapshot `fork` names, its hash proven.
