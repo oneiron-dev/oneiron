@@ -193,6 +193,7 @@ pub(crate) use claim_vad_owed::{
 };
 pub mod body_descriptor;
 mod commitment_due;
+pub mod commitment_due_record;
 mod credential_custody;
 mod deadline_jobs;
 pub mod derivation;
