@@ -422,7 +422,7 @@ pub(super) fn project_in_txn(
     // attempt beside each write for the person, the held cell for its
     // coordinates, so the person's cell needs no re-read.
     let mut anchored_person_writes: Vec<(LearningCell, String, LearningEvidence)> = Vec::new();
-    let mut anchored_person_withdrawals: Vec<(LearningCell, String, String, EvidenceRow)> =
+    let mut anchored_person_withdrawals: Vec<(LearningCell, String, String, EntityId, EvidenceRow)> =
         Vec::new();
     for held in &anchored {
         match effective_evidence_in_txn(vault, txn, held, &amended)? {
@@ -440,6 +440,7 @@ pub(super) fn project_in_txn(
                     held.cell.clone(),
                     held.receipt.clone(),
                     held.attempt.clone(),
+                    held.subject,
                     held.row.clone(),
                 ));
                 anchored_withdrawals.push((held.cell.clone(), held.receipt.clone()));
