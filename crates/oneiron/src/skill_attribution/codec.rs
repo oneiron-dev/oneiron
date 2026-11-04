@@ -108,13 +108,7 @@ pub(super) const EVIDENCE: SideTable<u64, EvidenceRow, Raw> =
 const EVIDENCE_SEQUENCE: SideTable<(), u64, Raw> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE);
 
-/// One durable attribution verdict routed from evidence. Key: u64be evidence sequence.
-pub(super) const JUDGMENT: SideTable<u64, AttributionJudgment, Raw> =
-    SideTable::new(&side_table::SKILL_ATTRIBUTION_JUDGMENT);
-
-/// One minted skill-edit proposal awaiting gated apply. Key: u64be judgment sequence.
-pub(super) const EDIT_PROPOSAL: SideTable<u64, SkillEditProposal, Raw> =
-    SideTable::new(&side_table::SKILL_ATTRIBUTION_EDIT_PROPOSAL);
+pub(super) use crate::store::skill_attribution_judgments::{EDIT_PROPOSAL, JUDGMENT};
 
 /// Persisted audit run of a judge (its report and batch), keyed by run time then
 /// evidence sequence. Key: u64be `at` + u64be sequence.
