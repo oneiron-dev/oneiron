@@ -51,7 +51,7 @@ fn erase_ledger_scopes_in_txn(
             continue;
         }
         let old = (scope_key(&row.scope), id);
-        row.scope = row.scope.replacen(hex, ERASED_CALL_IDENTITY, 1);
+        row.scope = row.scope.replace(hex, ERASED_CALL_IDENTITY);
         ESCALATION.delete(&vault.store, wtxn, &old)?;
         ESCALATION.put(&vault.store, wtxn, &(scope_key(&row.scope), id), &row)?;
     }
@@ -69,7 +69,14 @@ fn erase_policy_scopes_in_txn(
     let rows = STANDING_POLICY
         .iter_from(&vault.store, wtxn, &[])?
         .collect::<Result<Vec<_>>>()?;
-    for (key, mut row) in rows {
+    for (key, _) in rows {
+        // An earlier convergence in this same pass may have folded this key's
+        // row into another destination; scrub the live row, never a stale
+        // snapshot, so folded history is not overwritten.
+        let mut row = match STANDING_POLICY.get(&vault.store, wtxn, &key)? {
+            Some(live) => live,
+            None => continue,
+        };
         if !scrub_policy_row(&mut row, hex) {
             continue;
         }
@@ -79,6 +86,15 @@ fn erase_policy_scopes_in_txn(
         };
         if new != key {
             STANDING_POLICY.delete(&vault.store, wtxn, &key)?;
+            // The destination may already hold a row: a pre-existing converged
+            // policy, or one folded earlier in this pass. Fold the rewritten
+            // row into its superseded history instead of overwriting it, so
+            // the erase removes nothing (review round 1).
+            if let Some(mut kept) = STANDING_POLICY.get(&vault.store, wtxn, &new)? {
+                kept.superseded.push(row);
+                STANDING_POLICY.put(&vault.store, wtxn, &new, &kept)?;
+                continue;
+            }
         }
         STANDING_POLICY.put(&vault.store, wtxn, &new, &row)?;
     }
@@ -93,7 +109,7 @@ fn erase_policy_scopes_in_txn(
 fn scrub_policy_row(row: &mut StoredStandingPolicy, hex: &str) -> bool {
     let mut touched = false;
     if row.scope.contains(hex) {
-        row.scope = row.scope.replacen(hex, ERASED_CALL_IDENTITY, 1);
+        row.scope = row.scope.replace(hex, ERASED_CALL_IDENTITY);
         touched = true;
     }
     if row.accepted_by.as_deref() == Some(hex) {
