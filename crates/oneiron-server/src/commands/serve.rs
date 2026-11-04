@@ -300,9 +300,9 @@ pub(super) async fn serve_anchored(
 pub(crate) async fn build_server(
     vault: Arc<oneiron::Vault>,
     config: &ServeConfig,
-    startup_args: &crate::config::ServeArgs,
     mut server_config: crate::config::SyncServerConfig,
     owner_host: crate::owner::schedule::OwnerHost,
+    startup_args: &crate::config::ServeArgs,
 ) -> anyhow::Result<(SyncServer, Option<tokio::task::JoinHandle<()>>)> {
     // The Linear host's settings: `[linear]`, or with none the
     // `ONEIRON_LINEAR_*` environment read into the same settings, never both.

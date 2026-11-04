@@ -296,12 +296,34 @@ fn prepare_model_setup(
     answers: &InitArgs,
     path: &Path,
     env: EnvConfig,
+    startup_args: Option<&ServeArgs>,
 ) -> anyhow::Result<PreparedModelSetup> {
     let choice = answers.embedder.unwrap_or(EmbedderProvider::None);
     let config_text = config_text(answers, choice, path)?;
     let staged = stage_config(path, &config_text)?;
     let result = (|| {
-        let config = read_config(&staged, env)?;
+        let config = match startup_args {
+            Some(startup_args) => read_config_with_args(&staged, env, startup_args)?,
+            None => read_config(&staged, env)?,
+        };
+        if startup_args.is_some() {
+            anyhow::ensure!(
+                config
+                    .embedder
+                    .as_ref()
+                    .map_or(EmbedderProvider::None, |embedder| embedder.provider)
+                    == choice,
+                "startup settings override the requested embedder provider; update those settings before setup"
+            );
+            anyhow::ensure!(
+                config
+                    .oneironer
+                    .as_ref()
+                    .map_or(OneironerProvider::None, |tagger| tagger.provider)
+                    == answers.oneironer.unwrap_or(OneironerProvider::None),
+                "startup settings override the requested tagger provider; update those settings before setup"
+            );
+        }
         // Checked first, so a refusal comes before the local model download.
         let tagger_slot = crate::oneironer::build_slot_for_validation(config.oneironer.as_ref())?;
         let device = match config.embedder.as_ref().filter(|c| c.is_active()) {
@@ -352,7 +374,7 @@ pub(crate) fn setup_models(
     path: &Path,
     env: EnvConfig,
 ) -> anyhow::Result<(oneiron::Vault, ModelSetupOutcome)> {
-    let prepared = prepare_model_setup(answers, path, env)?;
+    let prepared = prepare_model_setup(answers, path, env, None)?;
     let vault = open_vault(answers, &prepared.config)?;
     std::fs::rename(&prepared.staged, path)?;
     let outcome = prepared.outcome(path);
@@ -416,11 +438,12 @@ pub(crate) fn setup_models_on_open_vault(
         ));
     }
     let args = answers.to_init_args(&current, &path)?;
-    let prepared = prepare_model_setup(&args, &path, env).map_err(|error| {
-        crate::owner::OwnerError::Invalid(format!(
-            "model setup answers were not accepted: {error:#}"
-        ))
-    })?;
+    let prepared =
+        prepare_model_setup(&args, &path, env, Some(&startup.startup_args)).map_err(|error| {
+            crate::owner::OwnerError::Invalid(format!(
+                "model setup answers were not accepted: {error:#}"
+            ))
+        })?;
     if absolute(&prepared.config.vault_path)? != vault_path
         || prepared.config.dimensions != current.dimensions
     {
@@ -770,14 +793,17 @@ fn ask_remote_options(
 }
 
 fn read_config(path: &Path, env: EnvConfig) -> anyhow::Result<ServeConfig> {
-    crate::config::resolve_serve_config_with_sources(
-        &ServeArgs {
-            config: Some(path.to_path_buf()),
-            ..Default::default()
-        },
-        env,
-        None,
-    )
+    read_config_with_args(path, env, &ServeArgs::default())
+}
+
+fn read_config_with_args(
+    path: &Path,
+    env: EnvConfig,
+    startup_args: &ServeArgs,
+) -> anyhow::Result<ServeConfig> {
+    let mut replay = startup_args.clone();
+    replay.config = Some(path.to_path_buf());
+    crate::config::resolve_serve_config_with_sources(&replay, env, None)
 }
 
 #[cfg(test)]
