@@ -64,7 +64,7 @@ impl Vault {
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
         let grant = match crate::access_grant::decode_access_grant_body(body) {
             Ok(grant) => grant,
-            Err(_) if crate::access_grant::decode_erased_share_body(body).is_ok() => {
+            Err(_) if crate::access_grant::decode_erased_grant_body(body).is_ok() => {
                 return Ok(false);
             }
             Err(error) => return Err(error),
@@ -197,7 +197,7 @@ impl Vault {
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
             let existing = match crate::access_grant::decode_access_grant_body(body) {
                 Ok(existing) => existing,
-                Err(_) if crate::access_grant::decode_erased_share_body(body).is_ok() => {
+                Err(_) if crate::access_grant::decode_erased_grant_body(body).is_ok() => {
                     return Err(invalid_autonomy());
                 }
                 Err(error) => return Err(error),
@@ -526,7 +526,7 @@ impl AutonomyReader<'_> {
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
         let grant = match crate::access_grant::decode_access_grant_body(body) {
             Ok(grant) => grant,
-            Err(_) if crate::access_grant::decode_erased_share_body(body).is_ok() => {
+            Err(_) if crate::access_grant::decode_erased_grant_body(body).is_ok() => {
                 return Err(invalid_autonomy());
             }
             Err(error) => return Err(error),

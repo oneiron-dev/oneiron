@@ -24,6 +24,12 @@ use self::config_validation::validate_open_config;
 /// profile reads at every profile level.
 const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
 
+/// The hooks every open door below passes to its store: the one place the
+/// vault names the engine's implementation.
+fn engine_store_hooks() -> crate::store::StoreHooks {
+    crate::engine_store_hooks::ENGINE_STORE_HOOKS
+}
+
 /// The pinned id of the embedded default owner actor (ONE-1441 WIRE-P1).
 ///
 /// Minted ids are opaque ULIDs; this one comes from the one derived-id rule
@@ -33,6 +39,24 @@ const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
 /// which would strand every claim that names the old one.
 pub(crate) fn embedded_owner_actor_id() -> Result<EntityId> {
     EntityId::derive(EMBEDDED_OWNER_ACTOR, &[])
+}
+
+/// The directory's identity from its path while it is fresh: following
+/// links, as the vault root is canonical by the time it is retained. Only
+/// the fallback where the open kept no bound descriptor; None where the
+/// host cannot name it (REVIEW-4381 P1).
+#[cfg(unix)]
+fn directory_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path)
+        .ok()
+        .map(|meta| (meta.dev(), meta.ino()))
+}
+
+/// No directory identity off unix: path-string checks apply alone.
+#[cfg(not(unix))]
+fn directory_identity(_path: &Path) -> Option<(u64, u64)> {
+    None
 }
 
 /// Encodes the minimal PERSON body the bootstrap writes.
@@ -109,6 +133,21 @@ impl Vault {
         Self::open_leased(&canonical, config, lease)
     }
 
+    /// This vault's own directory on this host, as it was opened
+    /// (canonical). A folder read uses it to pass over the vault itself
+    /// (FIX 10249).
+    pub fn path(&self) -> &Path {
+        self.store.env.path()
+    }
+
+    /// This vault's own directory identity, retained at open while its path
+    /// was fresh: a folder read excludes the vault by identity, so a rename
+    /// after open cannot defeat the exclusion (REVIEW-4381 P1). None where
+    /// the host cannot name it; path-string checks still apply there.
+    pub fn dir_identity(&self) -> Option<(u64, u64)> {
+        self.dir_identity
+    }
+
     /// [`Self::open_owned`] on `directory`, a vault root the caller already
     /// holds open, as a managed host's isolation probe does. The writer lease
     /// and, on Linux, the LMDB environment bind that descriptor, so a
@@ -129,7 +168,8 @@ impl Vault {
     }
 
     fn open_leased(canonical: &Path, config: VaultConfig, lease: VaultWriterLease) -> Result<Self> {
-        let store = Store::open_with_writer_lease(canonical, &config, &lease)?;
+        let store =
+            Store::open_with_writer_lease(canonical, &config, &lease, engine_store_hooks())?;
         // Only the lease holder writes bodies, so what a writer left half
         // done is debris now: unfinished temp files and the bodies of
         // off-record sessions, none of which outlived its process.
@@ -175,7 +215,7 @@ impl Vault {
         // the vault's own bytes, and passed into the store open so the exact
         // analyzer comparison happens before any write transaction exists.
         let analyzer = discover_analyzer(&config)?;
-        let store = Store::open_existing(path, &config, &analyzer)?;
+        let store = Store::open_existing(path, &config, &analyzer, engine_store_hooks())?;
         Self::assemble_open(
             store,
             config,
@@ -458,9 +498,11 @@ impl Vault {
     ) -> Result<Self> {
         validate_open_config(&config)?;
         let store = match seed_mode {
-            DefaultPolicySeedMode::Required => Store::open(path, &config)?,
+            DefaultPolicySeedMode::Required => Store::open(path, &config, engine_store_hooks())?,
             #[cfg(feature = "test-support")]
-            DefaultPolicySeedMode::TestUnseeded => Store::open_unseeded_for_test(path, &config)?,
+            DefaultPolicySeedMode::TestUnseeded => {
+                Store::open_unseeded_for_test(path, &config, engine_store_hooks())?
+            }
         };
         Self::finish_open(store, config, seed_mode)
     }
@@ -532,6 +574,16 @@ impl Vault {
         // Cloned before `config` moves into the handle: the retained copy is
         // the pairing `validate_open_config` already accepted.
         let privacy = config.privacy.clone();
+        // One spent set per environment in this process (FIX 12023 W0, P2),
+        // taken before `store` moves into the handle.
+        let spent_nonces = crate::authority::SpentNonces::shared_for(store.canonical_root());
+        // The vault directory's identity from the descriptor the open
+        // bound, never a fresh pathname lookup: a rename after open (even
+        // during the open itself) cannot redirect it. Falls back to the
+        // path only where the open retained no descriptor (REVIEW-4381 P1).
+        let dir_identity = store
+            .bound_root_identity()
+            .or_else(|| directory_identity(store.env.path()));
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
             vault_id: super::VaultId::resolve_at_open(
@@ -544,6 +596,7 @@ impl Vault {
             retrieval_trace_key: super::retrieval_trace_key::RetrievalTraceKey::resolve_at_open(
                 &store,
             )?,
+            dir_identity,
             store,
             vector_evidence: std::sync::RwLock::new(super::vector_evidence::NoMatchFloors::new(
                 config.vector_evidence,
@@ -555,6 +608,7 @@ impl Vault {
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
             owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64::new(0),
+            claim_vad_payment: Default::default(),
             // Opens FULL; only a ctl-driven shed parks it, an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
@@ -576,6 +630,7 @@ impl Vault {
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
             pending_owner_export_receipts: Default::default(),
+            spent_nonces,
             housekeeping: Default::default(),
             entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
             #[cfg(feature = "sync")]
@@ -681,6 +736,14 @@ impl Vault {
         // refuses every write from here on (`Store::swap_out`).
         vault.store.seal_if_archived()?;
         vault.resolve_pending_credential_restores_logged();
+        // A crashed lease holder's journaled spends land first (FIX 12023
+        // W0, P1-a=B), on an open that took the writer lease alone, so a
+        // replay after the open meets its committed row.
+        vault.spent_nonces.replay_journal_at_open(&vault)?;
+        // The second this handle opened at: a slip minted after it spends its
+        // nonces in memory (FIX 12023 W0). Read last, so every slip minted
+        // while it opened takes the writer.
+        vault.spent_nonces.note_open(&vault);
         Ok(vault)
     }
 

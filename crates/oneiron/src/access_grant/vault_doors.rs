@@ -9,7 +9,8 @@ use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::temporal::TimeRange;
 
 use super::codec::{
-    decode_access_grant_body, decode_erased_share_body, encode_access_grant_body, invalid_grant,
+    decode_access_grant_body, decode_erased_grant_body, encode_access_grant_body, erased_grant,
+    invalid_grant,
 };
 use super::record::{AccessGrant, AccessGrantScope, CalendarAccessGrantRow};
 use crate::error::RecordError;
@@ -57,25 +58,20 @@ impl Vault {
             .map(|row| row.encode())
             && EntityMetadataHeader::parse(&raw)
                 .is_some_and(|h| h.entity_type == ENTITY_TYPE_ACCESS_GRANT)
-        {
-            // An erased history names its scope in its terms (FIX 4981): only
-            // a ChannelIdentity or DiaryCoreference history keeps this door's
-            // refusal. Any other erased scope is not this door's grant.
-            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-            let old_scope = match decode_access_grant_body(body) {
-                Ok(old) => old.scope,
-                Err(error) => match decode_erased_share_body(body) {
-                    Ok(terms) => terms.scope,
-                    Err(_) => return Err(error),
+            && matches!(
+                match decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+                    Ok(grant) => grant.scope,
+                    // Inert history keeps its terms: judge them as live
+                    // ones (FIX 4981), never raw-error on erased bodies.
+                    Err(_) => {
+                        decode_erased_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?.scope
+                    }
                 },
-            };
-            if matches!(
-                old_scope,
                 AccessGrantScope::ChannelIdentity { .. }
                     | AccessGrantScope::DiaryCoreference { .. }
-            ) {
-                return Err(invalid_grant());
-            }
+            )
+        {
+            return Err(invalid_grant());
         }
         Ok(())
     }
@@ -199,10 +195,8 @@ impl Vault {
                 body,
             } => match decode_access_grant_body(&body) {
                 Ok(grant) => grant,
-                // An erased history grants nothing (FIX 4981): no grant left
-                // to revoke, as a missing or deleted one is.
-                Err(_) if decode_erased_share_body(&body).is_ok() => {
-                    return Err(Error::EntityNotFound);
+                Err(_) if decode_erased_grant_body(&body).is_ok() => {
+                    return Err(erased_grant());
                 }
                 Err(error) => return Err(error),
             },
@@ -240,13 +234,13 @@ impl Vault {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_ACCESS_GRANT,
                 body,
-            } => match decode_access_grant_body(&body) {
-                Ok(grant) => Some(grant),
-                // An erased history grants nothing (FIX 4981): no standing
-                // grant, as when no row exists.
-                Err(_) if decode_erased_share_body(&body).is_ok() => None,
+            } => Some(match decode_access_grant_body(&body) {
+                Ok(grant) => grant,
+                Err(_) if decode_erased_grant_body(&body).is_ok() => {
+                    return Err(erased_grant());
+                }
                 Err(error) => return Err(error),
-            },
+            }),
             LiveEntityRow::Live { entity_type, .. } => {
                 return Err(Error::InvalidEntityType(entity_type));
             }
@@ -280,14 +274,7 @@ impl Vault {
         if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
-        // An erased history grants nothing (FIX 4981): no grant, as when no
-        // row exists.
-        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        match decode_access_grant_body(body) {
-            Ok(grant) => Ok(Some(grant)),
-            Err(_) if decode_erased_share_body(body).is_ok() => Ok(None),
-            Err(error) => Err(error),
-        }
+        decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 
     /// Lists every access grant whose scope names `calendar_ref`, revoked rows
@@ -362,6 +349,7 @@ impl Vault {
         learned_at: u64,
         data: Vec<u8>,
     ) -> Result<()> {
+        let data = super::witness_history::with_witness_read_history_in_txn(self, wtxn, id, data)?;
         apply_ops(
             &self.store,
             &self.config,

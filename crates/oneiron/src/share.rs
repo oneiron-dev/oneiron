@@ -12,8 +12,8 @@ use sha2::Sha256;
 use crate::Vault;
 use crate::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
-    decode_access_grant_body, decode_entity_ref, decode_erased_share_body,
-    encode_access_grant_body, invalid_grant, required_value, validate_keys,
+    decode_access_grant_body, decode_entity_ref, decode_erased_grant_body,
+    encode_access_grant_body, erased_grant, invalid_grant, required_value, validate_keys,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ScopedReadActorKey, claim_surfaceable, decode_claim_body};
@@ -269,18 +269,16 @@ pub(crate) fn check_generic_grant_write(
         && EntityMetadataHeader::parse(&raw)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_ACCESS_GRANT)
     {
-        // An erased history names its scope in its terms (FIX 4981): only
-        // a SharedBrief history keeps this door's refusal. Any other erased
-        // scope is not this door's grant.
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        let old_scope = match decode_access_grant_body(body) {
-            Ok(old) => old.scope,
-            Err(error) => match decode_erased_share_body(body) {
-                Ok(terms) => terms.scope,
-                Err(_) => return Err(error),
-            },
+        let old = match decode_access_grant_body(body) {
+            Ok(grant) => grant,
+            // Inert history is named, not raw-errored (FIX 4981).
+            Err(_) if decode_erased_grant_body(body).is_ok() => {
+                return Err(erased_grant());
+            }
+            Err(error) => return Err(error),
         };
-        if matches!(old_scope, AccessGrantScope::SharedBrief { .. }) {
+        if matches!(old.scope, AccessGrantScope::SharedBrief { .. }) {
             return Err(Error::Record(RecordError::InvalidAccessGrantBody(
                 "shared briefs require the share door",
             )));
@@ -625,14 +623,25 @@ impl Vault {
         {
             return Err(Error::Record(RecordError::IdentityUnsettled { name }));
         }
-        let (gate_id, decision) = crate::gate::check_share_create_policy(
+        let (gate_id, decision) = match crate::gate::check_share_create_policy(
             &self.store,
             &mut txn,
             share_id,
             issuer,
             share,
             travel,
-        )?;
+        )? {
+            crate::gate::ExternalEffectCheck::Decided(id, decision, _) => (id, decision),
+            // FIX 12155: a full count-bound window paces the share: nothing
+            // was recorded or charged, so drop the writer and wait for the
+            // window instead of committing a budget-exhausted denial.
+            crate::gate::ExternalEffectCheck::Paced { next_eligible_at } => {
+                drop(txn);
+                return Err(Error::Gate(GateError::ShareCreatePaced {
+                    next_eligible_at,
+                }));
+            }
+        };
         if decision.outcome() != GateOutcome::Allow {
             let error = Error::Gate(GateError::GateWriteRejected {
                 outcome: decision.outcome().as_str(),

@@ -337,7 +337,8 @@ impl FloorWrites<'_> {
     /// pickup markers. There is no migration transaction, no index-copy
     /// transaction, and no receipt-after-commit transaction — a crash either
     /// leaves the whole promotion or none of it. Only a body the room spilled
-    /// to a file comes first, unnamed, through `import_result_bodies`.
+    /// to a file comes first, unnamed, through `import_result_bodies`, and
+    /// goes once the transaction ends with no row naming it (FIX 3633).
     ///
     /// # Retry
     ///

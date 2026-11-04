@@ -32,9 +32,8 @@ use crate::EntityId;
 use crate::llm::decision::{
     AnswerContract, BandMode, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
     DecisionMedia, DecisionMediaRef, DecisionQuestion, DecisionRung, EvidenceVersion, ImageRef,
-    MAX_DECISION_IMAGE_BYTES, MAX_DECISION_STATE_BYTES, MediaCall, MediaServed, PairedReading,
-    Reasoning, ReasoningCause, ResolvedMedia, Reversibility, SlideReviewLimits, StopCause,
-    TypedDecision,
+    MAX_DECISION_STATE_BYTES, MediaCall, MediaServed, PairedReading, Reasoning, ReasoningCause,
+    ResolvedMedia, Reversibility, SlideReviewLimits, StopCause, TypedDecision,
 };
 use crate::llm::image::ImageBytes;
 use crate::retrieval_depth::RetrievalDeadline;
@@ -96,6 +95,14 @@ impl SlideReviewImage {
 /// `state.media`, and its judgment's `render_hash`, as text.
 pub fn review_image_key(image: &[u8]) -> String {
     blake3::hash(image).to_hex().to_string()
+}
+
+/// The most the review's own copies of a render's `images` hold at once,
+/// admitted to its renderer first (FIX 8244): the largest, since a review
+/// copies one unit's image at a time and drops it before the next.
+pub(crate) fn review_copy_bytes(images: &[Vec<u8>]) -> u64 {
+    let bytes = images.iter().map(Vec::len).max().unwrap_or(0);
+    u64::try_from(bytes).unwrap_or(u64::MAX)
 }
 
 /// The host's review renderer (ARCH-0077 "Review images"), which a proposer
@@ -186,27 +193,35 @@ impl SlideReviewLabels {
 /// The managed anchor kept beside the comment, not only inside the exported
 /// file (ARCH-0077, "Managed anchor"): the typed view's slide identity and
 /// fingerprints, and for a shape unit its retained node and fingerprint.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Each fingerprint is hex on a JSON wire (FIX 9342).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideReviewAnchor {
     pub slide_part: String,
     pub sld_id: u32,
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub slide_fingerprint: [u8; 32],
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub render_fingerprint: [u8; 32],
     pub shape: Option<ShapeReviewAnchor>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ShapeReviewAnchor {
     /// The retained shape element: its part and document-order index.
     pub node_part: String,
     pub node_index: u64,
     pub shape_id: Option<u32>,
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub fingerprint: [u8; 32],
 }
 
 /// Bound to its exported comment and exact source version. Settlement keeps
 /// this record with the consume-once receipt, not just a client-side preview.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Its frontier and hashes are hex on a JSON wire (FIX 9342).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideJudgment {
     pub thread_id: EntityId,
     pub target: PptxCommentTarget,
@@ -232,16 +247,21 @@ pub struct SlideJudgment {
     /// rung is left to read it again (FIX 10745).
     pub ceiling: DecisionRung,
     pub renderer: String,
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub frontier: [u8; 32],
     /// The unit's `state.media`: its image's ref and whether its pixels rode
     /// with the call.
     #[serde(default)]
     pub media: Vec<DecisionMedia>,
-    /// The hash of the image its media entry names (its ref's `hash`). A row
-    /// from before media entries pinned its image on the receipt by it.
+    /// The hash of the image its media entry names (its ref's `hash`).
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub render_hash: [u8; 32],
     /// Hash of the exact state the providers read: the unit, its text and its
     /// media entries.
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub evidence_hash: [u8; 32],
     pub judged_version: Option<u64>,
     /// The deck's live body when it was reviewed: an edit to it never
@@ -256,7 +276,7 @@ pub struct SlideJudgment {
 /// A located answer on its slide, in EMU from the slide's top-left corner: the
 /// answer's fractions of a host-rendered whole-slide image times the deck's
 /// slide size. A point is a box with no extent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlideLocation {
     pub slide_width: i64,
@@ -321,7 +341,7 @@ pub struct SlideReviewRun {
 /// clock (a cut, no rung able to take it), or the presence step's when it left
 /// a Box or Point question unanswered; none when the host had no image, or no
 /// rung reads one for a Box or Point question.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideAbstention {
     pub target: PptxCommentTarget,
     pub decision: Option<TypedDecision>,
@@ -346,7 +366,7 @@ pub struct SlideUnitRefusal {
 
 /// On the wire as its variant name (`MissingShape`, ...), the words a
 /// review's refusals have always carried.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum SlideUnitRefusalReason {
     /// No shape on the slide carries the creation id.
     MissingShape,
@@ -356,8 +376,7 @@ pub enum SlideUnitRefusalReason {
     TargetChanged,
     /// The writer cannot verify the shape's slide-space position.
     UnresolvedGeometry,
-    /// The unit's text, state or image exceeds the evidence budget; nothing is
-    /// trimmed or scaled to fit.
+    /// The unit's text or state exceeds the evidence budget; nothing is trimmed to fit.
     EvidenceBudget,
     /// The rendered image is not PNG or JPEG whose header gives its size.
     UnreadableImage,
