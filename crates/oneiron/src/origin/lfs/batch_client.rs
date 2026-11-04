@@ -357,7 +357,35 @@ impl LfsBatchRemote {
         if !action.href.starts_with("https://") {
             return Err(invalid("an LFS action names no https href"));
         }
-        let mut request = self.client.request(method, &action.href);
+        let url = reqwest::Url::parse(&action.href)
+            .map_err(|_| invalid("an LFS action names no valid href"))?;
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(invalid("an LFS action href carries a credential"));
+        }
+        let host = url
+            .host_str()
+            .ok_or_else(|| invalid("an LFS action names no host"))?;
+        let addresses = url
+            .socket_addrs(|| Some(443))
+            .map_err(|_| invalid("an LFS action host did not resolve"))?;
+        if addresses.is_empty()
+            || addresses
+                .iter()
+                .any(|address| !oneiron_sandbox_contract::network::global_address(address.ip()))
+        {
+            return Err(invalid("an LFS action names a non-global address"));
+        }
+        // LFS storage may live on another public host. Pin the admitted
+        // addresses so reqwest cannot resolve the name again after admission.
+        let client = reqwest::blocking::Client::builder()
+            .https_only(true)
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(10))
+            .resolve_to_addrs(host, &addresses)
+            .build()
+            .map_err(|_| invalid("the LFS action client is unavailable"))?;
+        let mut request = client.request(method, url);
         for (name, value) in &action.header {
             request = request.header(name.as_str(), value.as_str());
         }
