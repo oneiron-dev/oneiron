@@ -22938,7 +22938,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 69,
+      "fn": 70,
       "struct": 1
      }
     },
@@ -64824,7 +64824,7 @@
      "surface": {
       "const": 4,
       "crate-vis": 7,
-      "fn": 4,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -92721,7 +92721,7 @@
      "surface": {
       "const": 2,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "trait": 1
      }
     },
@@ -93248,7 +93248,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/beam/model_scaffold.rs",
@@ -94632,7 +94632,7 @@
     "beam": {
      "files": 42,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
@@ -94735,7 +94735,7 @@
      "purpose": "`vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120)"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "oneiron-bench — benchmark harness drivers",
    "source_files": 153,
    "test_files": 18
