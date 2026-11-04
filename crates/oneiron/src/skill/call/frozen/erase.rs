@@ -29,7 +29,7 @@ pub(crate) fn erase_callable_case_actor_in_txn(
     }
     let lower = actor.to_hex();
     let spellings = [lower.to_ascii_uppercase(), lower];
-    for (key, mut row) in cases_in_txn(&vault.store, wtxn)? {
+    for (key, mut row) in cases_in_txn(vault, wtxn)? {
         let mut named = row.caller == CaseCaller::Actor(*actor);
         if named {
             row.caller = CaseCaller::Erased;
@@ -95,7 +95,8 @@ pub(crate) fn erase_callable_cases_in_txn(
 
 /// Every frozen case. A row that no longer decodes names nothing either
 /// hook can match: it is deleted, and the count is said.
-fn cases_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<Vec<(Vec<u8>, FrozenCall)>> {
+fn cases_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Result<Vec<(Vec<u8>, FrozenCall)>> {
+    let store = &vault.store;
     let raw = CASES
         .iter_raw_from(store, wtxn, &[])?
         .collect::<Result<Vec<_>>>()?;
@@ -105,6 +106,11 @@ fn cases_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<Vec<(Vec<u8
         match CASES.decode_value(&value) {
             Ok(row) => rows.push((key, row)),
             Err(_) => {
+                // FIX 12085: the deleted row's lifted custody goes with it.
+                let place = format!("side:{}", CASES.decl().name);
+                let origin =
+                    crate::batch::secret_scan::side_row_origin(&place, &CASES.key_bytes(&key))?;
+                crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
                 delete_case_in_txn(store, wtxn, &key)?;
                 dropped += 1;
             }

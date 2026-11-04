@@ -121,6 +121,7 @@ pub use self::replay_capsule::{
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
+pub(crate) use self::result_read::unmarked_secret;
 pub(crate) use self::result_read::{
     Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card, read_result_in,
     refusal as result_refusal, resolve as resolve_result, result_cards_in, unknown_handle,

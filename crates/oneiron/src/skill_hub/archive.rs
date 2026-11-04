@@ -16,7 +16,7 @@ impl Vault {
     ) -> Result<()> {
         // Both formats derive capabilities from real source, never a manifest grant.
         // Native metadata can be independent of partial frontmatter, but grants no trust.
-        let mut package = package_from_source(record, source.1, source.0)?;
+        let package = package_from_source(record, source.1, source.0)?;
         if record.content_hash != Some(package.content_hash()?)
             || record.skill_id != package.record.skill_id
             || record.desc != package.record.desc
@@ -28,9 +28,10 @@ impl Vault {
             return Err(invalid("archive skill does not match its candidate folder"));
         }
         // Keep source metadata, dependencies and lineage, but not foreign authority.
-        // The ordinary typed put validates the parent and all local lifecycle gates.
-        package.record = record.clone();
-        self.put_skill_record_in_txn(txn, id, record, occurred, learned_at)?;
+        // The stored record is the package's: this record with the site notes
+        // its tree gives (FIX 11958). The ordinary typed put validates the
+        // parent and all local lifecycle gates.
+        self.put_skill_record_in_txn(txn, id, &package.record, occurred, learned_at)?;
         self.write_admitted_capability_surface_in_txn(txn, id, &package.capabilities)?;
         self.scan_and_ingest_on_import_in_txn(
             txn,

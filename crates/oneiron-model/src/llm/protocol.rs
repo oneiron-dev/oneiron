@@ -135,6 +135,20 @@ pub enum LlmMessageRole {
     Tool,
 }
 
+/// Provider-neutral identity of one reasoning part. Old serialized parts default
+/// to `Full`; opaque bytes travel in `data`, never in `text`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningPartKind {
+    #[default]
+    Full,
+    Summary,
+    Encrypted,
+    Count,
+}
+
 /// Bidirectional content representation shared by history-in and generation-out.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -146,6 +160,10 @@ pub enum ContentPart {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         signature: Option<String>,
+        #[serde(default)]
+        reasoning_kind: ReasoningPartKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
     },
     ToolCall {
         call_id: String,
@@ -200,6 +218,10 @@ pub enum LlmStreamEvent {
         part_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         signature: Option<String>,
+        #[serde(default)]
+        reasoning_kind: ReasoningPartKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
     },
     ReasoningDelta {
         part_id: String,

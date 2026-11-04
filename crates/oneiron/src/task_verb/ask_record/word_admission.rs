@@ -116,6 +116,19 @@ fn admit_word_with_source(
         vault, txn, id, group, source, actor, word, owner,
     )?;
     super::super::training_swap_ask::guard_word(vault, txn, id, group, source, actor, word, owner)?;
+    if crate::office_body::is_live_edit_ask(&group.requested.intent_key) {
+        crate::office_body::guard_live_edit_word(
+            vault,
+            txn,
+            id,
+            &group.requested.intent_key,
+            source,
+            actor,
+            word,
+            owner,
+            super::super::ask_record::owns_revision(vault, txn, id, group)?,
+        )?;
+    }
     super::super::comm_widen::guard_word(vault, txn, id, group, source, actor, word)?;
     super::super::code_consent_word::guard_word(vault, txn, id, group, source, actor, word)?;
     if word.confirmation.is_some() {

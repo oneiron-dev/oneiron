@@ -38,14 +38,14 @@ use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
-    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat,
+    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat,
     TierPrecedence, Vault, WriteActor,
 };
 
 use super::CHAT_ROLE;
 use super::live_lease::{self, LiveLease};
 use super::payer_funding::{PayerFault, requires_payer, scope_funding};
-use crate::models::{ModelRuntime, OfferLadder};
+use crate::models::{ModelCallBinding, ModelRuntime};
 use crate::server::SyncServer;
 
 mod secret_use;
@@ -671,39 +671,39 @@ impl StepRunner {
         let generated = match &uses {
             Some(uses) => uses
                 .converse(runtime, &call.ladder, &run, &live, request)
-                .map(|(response, served, rounds, final_request)| {
-                    ((response, served, final_request), rounds)
+                .map(|(response, binding, rounds, final_request)| {
+                    ((response, binding, final_request), rounds)
                 }),
             None => {
                 let final_request = request.clone();
                 runtime
                     .block_on(
                         call.ladder
-                            .generate_served_while(&run, request, None, &may_send),
+                            .generate_recorded_while(&run, request, None, &may_send),
                     )
-                    .map(|(response, served)| ((response, served, final_request), false))
+                    .map(|(response, binding)| ((response, binding, final_request), false))
             }
         };
         oneiron::code_run::finalize_step_captures(vault);
         // What this try spent and no call's look booked goes on the lease
         // whatever the call answered; the replayed tries recorded their own.
         live.book_rest()?;
-        let (response, served, final_request, tool_rounds) = match generated {
+        let (response, binding, final_request, tool_rounds) = match generated {
             // The rung that answered, fallback included, is the step's
             // executor: its leaf is attributed to it (OF-540). A refused
             // stamp leaves the leaf unattributed, not failed.
-            Ok(((response, served, final_request), rounds)) => {
+            Ok(((response, binding, final_request), rounds)) => {
                 if let Some(owner) = attempt.lease_owner.as_deref()
                     && let Err(error) = AttemptQueue::new(vault).set_executor_model(
                         attempt.id,
                         owner,
                         attempt.attempt_count,
-                        served.as_str(),
+                        binding.rung.model.as_str(),
                     )
                 {
                     tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
                 }
-                (response, served, final_request, rounds)
+                (response, binding, final_request, rounds)
             }
             Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied)),
             Err(error) => {
@@ -729,11 +729,10 @@ impl StepRunner {
             || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         record_workflow_response(
             vault,
-            &call.ladder,
             &run,
             &final_request,
             &response,
-            served,
+            &binding,
             attempt,
             actor,
             tool_rounds,
@@ -761,11 +760,10 @@ impl StepRunner {
 #[allow(clippy::too_many_arguments)]
 fn record_workflow_response(
     vault: &Vault,
-    ladder: &OfferLadder,
     run: &RunAdmission,
     request: &LlmRequest,
     response: &LlmResponse,
-    served: ModelId,
+    binding: &ModelCallBinding,
     attempt: &AttemptRecord,
     actor: WriteActor,
     tool_rounds: bool,
@@ -786,9 +784,10 @@ fn record_workflow_response(
         tracing::warn!("workflow model-call record skipped: attempt id is not an entity");
         return;
     };
-    let (mut rung, route) = ladder.model_call_binding(Some(&served));
-    // The record stamps the rung that answered, not the one requested.
-    rung.model = served;
+    // The record stamps the exact rung that answered, threaded with the
+    // final answer (FIX 12743), not the one requested.
+    let rung = binding.rung.clone();
+    let route = binding.route.clone();
     // The parent try's own fence, read from its row and never guessed: a
     // retry's attempt_count does not count logical retries.
     let replay_of = attempt.retry_of.and_then(|parent| {
