@@ -63383,7 +63383,7 @@
      "path": "src/secret_custody/cloud_registration/store.rs",
      "purpose": "The owner's doors over the cloud registration's slots: each rechecks the owner proof and live ownership in…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 9
      }
     },
@@ -63555,7 +63555,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/control/pending_revoke.rs",
@@ -63643,15 +63643,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/found_keys/actions.rs",
-     "purpose": "The owner's four answers to a found key: rotate (the rotate door settles it), delete, grant and not a secret",
+     "purpose": "The owner's five answers to a found key: rotate (the rotate door settles it), delete, grant, not a secret…",
      "surface": {
-      "const": 1,
-      "crate-vis": 5,
-      "fn": 4
+      "const": 2,
+      "crate-vis": 6,
+      "fn": 5
      }
     },
     {
@@ -63664,6 +63664,21 @@
      "path": "src/secret_custody/found_keys/page.rs",
      "purpose": "The found-key notices a page at a time (FIX 8204): the order [`Vault::found_keys`] reads, newest key first…",
      "surface": {
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SecretHandleLabel",
+      "SecretHandleLabelSet"
+     ],
+     "path": "src/secret_custody/handle_labels.rs",
+     "purpose": "An owner's display label on a secret handle (L04 s43 FIX 12541, engine part)",
+     "surface": {
+      "crate-vis": 3,
       "fn": 3,
       "struct": 2
      }
@@ -63727,7 +63742,7 @@
      "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
      "surface": {
       "const": 1,
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -63737,7 +63752,7 @@
      "path": "src/secret_custody/known_values/forms.rs",
      "purpose": "A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -63808,8 +63823,8 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 23,
-      "re-export": 15
+      "crate-vis": 24,
+      "re-export": 16
      }
     },
     {
@@ -72153,13 +72168,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/known_history.rs",
      "purpose": "The known-value index's custody client (KS-3, FIX 5684 = FIX 5503 card A; owner KEY STORE = A): the index's…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -90920,9 +90935,9 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 80,
+     "files": 81,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…"
     },
@@ -91340,9 +91355,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 129,
+   "over_bar": 131,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6289,
+   "source_files": 6290,
    "test_files": 900
   },
   "oneiron-android": {
@@ -98161,7 +98176,7 @@
       "const": 2,
       "crate-vis": 3,
       "enum": 4,
-      "fn": 4,
+      "fn": 7,
       "re-export": 1,
       "struct": 2
      }
@@ -126160,6 +126175,7 @@
       "ArtifactExportRequest",
       "ArtifactKind",
       "ArtifactLinkToken",
+      "ArtifactPin",
       "ArtifactPointer",
       "ArtifactPointerChannel",
       "ArtifactPointerRequest",
@@ -126180,6 +126196,7 @@
       "ArtifactServeTier",
       "ArtifactUnitReceipt",
       "ArtifactUnitView",
+      "ArtifactUnits",
       "ArtifactUnitsRequest",
       "ArtifactUnitsView",
       "ArtifactUnpublished",
@@ -126271,6 +126288,10 @@
       "BatchStopCause",
       "BeginMessageStreamRequest",
       "BillingAccountFiling",
+      "BindingMoveLink",
+      "BindingMoveState",
+      "BindingNotApplied",
+      "BindingSource",
       "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
@@ -126411,6 +126432,7 @@
       "CalendarSel",
       "CalendarSyncOutcome",
       "CalibrationPair",
+      "CalibrationResult",
       "CallAttemptRef",
       "CallClass",
       "CallEnvelope",
@@ -126471,6 +126493,7 @@
       "CancelStreamRequest",
       "CandidateLabel",
       "CandidateRef",
+      "CandleParityCheck",
       "Care",
       "CareLevel",
       "CaseDecision",
@@ -126550,6 +126573,8 @@
       "CheckoutTakeoverInput",
       "CheckoutTeardownInput",
       "CheckoutTornDown",
+      "CheckpointFileKind",
+      "CheckpointFilePin",
       "CheckpointReadRequest",
       "CheckpointResumeView",
       "CheckpointStepView",
@@ -127080,6 +127105,7 @@
       "CustodyMemberRef",
       "CustodyRegisterCheck",
       "CustodySetRevision",
+      "CustodyTier",
       "CustodyUncheckedReason",
       "CutDecision",
       "DagRecordAppendInput",
@@ -127098,9 +127124,11 @@
       "DecisionBandLearnRequest",
       "DecisionBandReadRequest",
       "DecisionClass",
+      "DecisionDial",
       "DecisionMedia",
       "DecisionMediaRef",
       "DecisionQuestion",
+      "DecisionQuestionInput",
       "DecisionReceipt",
       "DecisionRung",
       "DecisionTime",
@@ -127285,6 +127313,7 @@
       "EditNoteRequest",
       "EffectReceipt",
       "EmbeddingMatchEvidence",
+      "EmbeddingSpace",
       "EmbeddingSpaceBindRequest",
       "EmbeddingSpaceCandidateRequest",
       "EmbeddingSpaceMoveChecked",
@@ -127296,6 +127325,7 @@
       "EmbeddingSpaceProbePutRequest",
       "EmbeddingSpaceProbes",
       "EmbeddingSpaceRequest",
+      "EmbeddingSpacesView",
       "EncoderExecution",
       "EncoderOutput",
       "EngineSwitchRecord",
@@ -127416,6 +127446,7 @@
       "ExplainScoreEvidence",
       "ExportAnswer",
       "ExportChannel",
+      "ExportCheck",
       "ExportDiaryRead",
       "ExportTransfer",
       "ExportTransferPiece",
@@ -127581,6 +127612,7 @@
       "FreeTimeSchedule",
       "FreeTimeSpendView",
       "FreeTimeSplit",
+      "FrozenReadLane",
       "FrozenTrialCase",
       "GateCheckerReceipt",
       "GateCheckerSet",
@@ -127720,6 +127752,7 @@
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
+      "HeldOutResult",
       "HeldOutSelection",
       "HolderExportRequest",
       "HolderExportState",
@@ -127765,6 +127798,7 @@
       "HostedPassEvidence",
       "HostedPlaneAttestation",
       "HostedRelayDecision",
+      "HostingPrivacyPosture",
       "HubAdmissionReceipt",
       "HubConsentOutcome",
       "HubConsentReceipt",
@@ -128682,6 +128716,7 @@
       "PendingActMatured",
       "PendingActStarted",
       "PendingAuthorityAct",
+      "PendingEmbedderBinding",
       "PendingProposalKind",
       "PendingProposalView",
       "PendingRootRequestView",
@@ -128702,6 +128737,7 @@
       "PersonaSnapshotPreviewRequest",
       "PersonaSnapshotPreviewRow",
       "PersonaSnapshotTextEdit",
+      "PinnedCheckpoint",
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
@@ -128903,14 +128939,22 @@
       "QualificationLimits",
       "QualificationPlan",
       "Quarantine",
+      "QuestionActivation",
       "QuestionAnswer",
       "QuestionAnswersPage",
       "QuestionAnswersReply",
       "QuestionAnswersRequest",
+      "QuestionAskerClass",
+      "QuestionAudience",
       "QuestionBackfillRequest",
       "QuestionCreateRequest",
       "QuestionCriteriaCriterion",
       "QuestionCriteriaString",
+      "QuestionDefinitionDecisionQuestion",
+      "QuestionDefinitionDecisionQuestionInput",
+      "QuestionEditRequest",
+      "QuestionExportCheck",
+      "QuestionMedia",
       "QuestionOutcomeWindowsRequest",
       "QuestionOutcomes",
       "QuestionOutcomesProjectRequest",
@@ -128919,6 +128963,7 @@
       "QuestionPauseRequest",
       "QuestionPaused",
       "QuestionReadRequest",
+      "QuestionRecord",
       "QuestionRefreshRequest",
       "QuestionScheduleHead",
       "QuestionScheduleRequest",
@@ -128983,6 +129028,7 @@
       "RecordedStep",
       "RecordingGap",
       "RecordingGapKind",
+      "RefreshPolicy",
       "RefusalDial",
       "RefusalLevel",
       "RefusalOutcome",
@@ -129237,6 +129283,7 @@
       "RevokeGrantRequest",
       "RoleHolder",
       "RoleRank",
+      "RoleSwapReceipt",
       "RoomClaimOutcome",
       "RoomClaimReceipt",
       "RoomClaimRequest",
@@ -129475,6 +129522,7 @@
       "SeatWorkload",
       "SecretArg",
       "SecretCustodyCandidateReply",
+      "SecretCustodyFloor",
       "SecretCustodyGetRequest",
       "SecretCustodyLiveRequest",
       "SecretCustodyPermit",
@@ -129791,6 +129839,7 @@
       "SnapshotSecretLiftProposal",
       "SourceConflict",
       "SourceFamily",
+      "SourcePin",
       "SourceSpan",
       "SourceTrust",
       "SourceTrustRow",
@@ -129912,6 +129961,7 @@
       "SupportHolderClass",
       "SupportRepair",
       "SurfaceBand",
+      "SwapChoice",
       "SwitchCarried",
       "SwitchComponent",
       "SwitchEngineInput",
@@ -130065,6 +130115,7 @@
       "ThreadPassportsRequest",
       "ThreadPassportsView",
       "ThrobberAtom",
+      "TierBand",
       "TierPrecedence",
       "TimeRangeWire",
       "ToggleControl",
@@ -130171,6 +130222,7 @@
       "Vad",
       "VadAnnotationSource",
       "VadBadge",
+      "VectorEvidenceFloors",
       "VectorPutReceipt",
       "VectorPutRequest",
       "VectorRefinement",
@@ -130381,8 +130433,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1086,
-      "struct": 3305
+      "enum": 1096,
+      "struct": 3332
      }
     },
     {
