@@ -315,24 +315,36 @@ impl Vault {
                 // left the claim Proposed. Fold the Clear first so the answer
                 // is not lost behind that lapse (FIX 12290). The resolved row
                 // is the put's expected body, never a held restriction view.
-                let resolved = self
-                    .get_claim_in_txn(&*wtxn, &binding.claim_id)?
-                    .ok_or(Error::EntityNotFound)?;
-                let repaired = resolved.approval == ClaimApprovalStatus::Proposed;
-                if repaired {
-                    put_preauthorized_claim_status_in_txn(
-                        self,
-                        wtxn,
-                        &binding.claim_id,
-                        &resolved,
-                        PreauthorizedClaimStatusGrant::FoldClear,
-                        TimeRange {
-                            start: header.occurred_start,
-                            end: header.occurred_end,
-                        },
-                        header.learned_at,
-                    )?;
-                    body.approval = ClaimApprovalStatus::Auto;
+                //
+                // No repair read for an in-place demotion (FIX 12713,
+                // REVIEW-4462 P2; answers the FIX 12709 seam choice): its
+                // history carrier may await the owner's answer, which the
+                // restriction read above and deferred completion allow but
+                // the resolved read refuses, so the repair is skipped and
+                // the restriction path below settles it.
+                if !self.deferred_claim_is_in_place_demotion_in_txn(
+                    &*wtxn,
+                    &binding.claim_id,
+                )? {
+                    let resolved = self
+                        .get_claim_in_txn(&*wtxn, &binding.claim_id)?
+                        .ok_or(Error::EntityNotFound)?;
+                    let repaired = resolved.approval == ClaimApprovalStatus::Proposed;
+                    if repaired {
+                        put_preauthorized_claim_status_in_txn(
+                            self,
+                            wtxn,
+                            &binding.claim_id,
+                            &resolved,
+                            PreauthorizedClaimStatusGrant::FoldClear,
+                            TimeRange {
+                                start: header.occurred_start,
+                                end: header.occurred_end,
+                            },
+                            header.learned_at,
+                        )?;
+                        body.approval = ClaimApprovalStatus::Auto;
+                    }
                 }
                 // The owner's Clear answers the item this confirm bound.
                 let removal = super::owner_answer::close_owner_answer_obligation_in_txn(
