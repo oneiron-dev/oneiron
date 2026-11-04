@@ -152,6 +152,7 @@ fn current_abi_vault_is_rejected_before_an_older_abi_reader_checks_receipt_marke
         path,
         &VaultConfig::device(),
         OLDER_READER_ABI,
+        crate::engine_store_hooks::ENGINE_STORE_HOOKS,
     ) {
         Ok(_) => panic!(
             "an ABI-{OLDER_READER_ABI} reader must reject an ABI-{STORAGE_ABI_VERSION} vault at \
