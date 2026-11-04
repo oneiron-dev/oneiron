@@ -182,14 +182,6 @@ const PADS: Kind = Kind {
     step: SEALED_KEY_PADS_STEP_BYTES,
 };
 
-impl SealedBundleGeneration {
-    fn fresh(slot: u64) -> Result<Self> {
-        let mut nonce = [0u8; 16];
-        os_fill(&mut nonce)?;
-        Ok(Self { slot, nonce })
-    }
-}
-
 /// One sealed object's bytes and the generation its frame names.
 #[derive(Clone, PartialEq, Eq)]
 struct SealedObject {

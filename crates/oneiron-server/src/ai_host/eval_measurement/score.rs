@@ -74,8 +74,23 @@ fn state(rubric: Option<&JudgeRubric>, task: &EvalTaskInput, prompt: &str, answe
     state
 }
 
-/// Scores one leg's answer blind on the measurement's clock, and journals
-/// the question with the rows the case was read from.
+/// Whether the judge's failure is its run's budget denial (FIX 10443): the judgment
+/// spends on the job's run, and every provider the judge can route to reports a run
+/// admission denial in these words (the Big rung and Local vision wrap
+/// `LlmError::BudgetDenied` as "budget denied"; the System One rung and the house read
+/// refuse "by the budget"). A denial reads [`MeasurementUnavailable::BudgetExhausted`],
+/// so the job's Suspend guard trips truthfully.
+pub(super) fn is_budget_denied(error: &oneiron::Error) -> bool {
+    let message = error.to_string();
+    message.contains("budget denied") || message.contains("by the budget")
+}
+
+/// Scores one leg's answer blind on the measurement's clock and the job's run, and
+/// journals the question with the rows the case was read from.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the job's run joins the vault, judge, clock, rubric, task, prompt and answer"
+)]
 pub(super) fn score(
     vault: &Vault,
     judge: &'static ServeReplayJudge,
@@ -84,6 +99,7 @@ pub(super) fn score(
     task: &EvalTaskInput,
     prompt: &str,
     answer: &str,
+    run: &oneiron::llm::run_admission::RunAdmission,
 ) -> oneiron::Result<Scored> {
     // Read whole; past its `[limits]` row it asks whether all is well.
     let _ = vault.measure_limit(
@@ -113,7 +129,7 @@ pub(super) fn score(
     if clock.decision_time_left().is_zero() {
         return Ok(Scored::Unavailable(MeasurementUnavailable::ClockExhausted));
     }
-    let decision = match decisions.ladder.run(
+    let decision = match decisions.ladder.run_with_run(
         &question,
         decisions.principal,
         &[],
@@ -122,17 +138,18 @@ pub(super) fn score(
         &decisions.bands,
         Reversibility::ReversibleRead,
         clock,
+        run,
     ) {
         Ok(decision) => decision,
         Err(error) => {
             tracing::debug!(%error, "an eval measurement judgment did not run");
-            return Ok(Scored::Unavailable(
-                if clock.decision_time_left().is_zero() {
-                    MeasurementUnavailable::ClockExhausted
-                } else {
-                    MeasurementUnavailable::NoScorer
-                },
-            ));
+            return Ok(Scored::Unavailable(if is_budget_denied(&error) {
+                MeasurementUnavailable::BudgetExhausted
+            } else if clock.decision_time_left().is_zero() {
+                MeasurementUnavailable::ClockExhausted
+            } else {
+                MeasurementUnavailable::NoScorer
+            }));
         }
     };
     // The rows the judgment read: the case's and its labels'. The answer is
