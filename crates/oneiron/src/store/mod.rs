@@ -208,6 +208,7 @@ pub(crate) mod l2_evidence;
 pub mod receipt_identity;
 pub mod retrieval_deadline;
 pub mod row_birth;
+pub(crate) mod secret_name_index;
 mod scan_checks;
 mod scan_kind;
 mod scan_kind_table;
