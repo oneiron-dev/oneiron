@@ -301,7 +301,9 @@ impl RepoIndexMarks {
             return Ok(None);
         }
         let mut places = marks.places();
-        if let Some(row) = crate::secret_custody::masked_file_in_txn(&vault.store, txn, source)? {
+        if let Some(row) =
+            crate::store::file_key_masks::masked_file_in_txn(&vault.store, txn, source)?
+        {
             for (member, spans) in row.places() {
                 for span in spans {
                     crate::origin::secret_marks::add_place(&mut places, &member, span);

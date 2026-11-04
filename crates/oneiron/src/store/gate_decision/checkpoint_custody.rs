@@ -287,7 +287,7 @@ pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
 /// parts are taken for the generations `copy` does not keep (FIX 11824).
 pub(crate) fn read_live_custody(
     vault_dir: &Path,
-    page_seal: Option<&crate::world_keys::VaultPageSeal>,
+    page_seal: Option<&oneiron_store::vault_page_seal::VaultPageSeal>,
     copy: &CopyGenerations,
 ) -> Result<LiveCustody> {
     // A shared directory on the source's path is no reason to refuse: the

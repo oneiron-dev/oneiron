@@ -349,8 +349,7 @@ pub enum WorkPhysical {
 /// resolves only against that same live admission; a lookup miss, an
 /// admission mismatch or a reaped ticket parents nothing, which is today's
 /// behaviour.
-static WORK_PARENTS: OnceLock<Mutex<HashMap<EntityId, (u64, WorkId)>>> =
-    OnceLock::new();
+static WORK_PARENTS: OnceLock<Mutex<HashMap<EntityId, (u64, WorkId)>>> = OnceLock::new();
 
 fn work_parents() -> &'static Mutex<HashMap<EntityId, (u64, WorkId)>> {
     WORK_PARENTS.get_or_init(Default::default)
