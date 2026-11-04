@@ -12,8 +12,8 @@
 use super::*;
 use crate::Vault;
 use crate::error::Result;
-use crate::store::housekeeping_schedule::HousekeepingBudget;
 use crate::store::housekeeping_report::HousekeepingReport;
+use crate::store::housekeeping_schedule::HousekeepingBudget;
 use crate::store::housekeeping_schedule::HousekeepingSweep;
 
 /// The housekeeping sweep a support repair runs.

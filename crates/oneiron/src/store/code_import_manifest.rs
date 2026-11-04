@@ -1,13 +1,13 @@
 //! Reviewed repository import anchors, manifest digests and raw claim codecs.
 
-use std::collections::BTreeMap;
-use serde::{Deserialize, Serialize};
-use crate::store::code_tree_blob::CodeTreeBlob;
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{ArtifactError, Error, Result};
+use crate::store::code_snapshot::entity_id_from_hash_material;
+use crate::store::code_tree_blob::CodeTreeBlob;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// The engine-owned predicate of an import manifest.
 pub(crate) const IMPORT_MANIFEST_PREDICATE: &str = "repo.import_manifest";
@@ -113,7 +113,11 @@ pub(crate) fn manifest_id(digest: &str) -> Result<EntityId> {
 }
 
 /// An engine-owned, observed, active claim about `subject` holding `record`.
-pub(crate) fn claim_body<T: Serialize>(predicate: &str, subject: EntityId, record: &T) -> Result<ClaimBody> {
+pub(crate) fn claim_body<T: Serialize>(
+    predicate: &str,
+    subject: EntityId,
+    record: &T,
+) -> Result<ClaimBody> {
     let value = rmpv::ext::to_value(record).map_err(|_| invalid("import record encode"))?;
     let mut body = ClaimBody::new(
         predicate,
@@ -131,7 +135,10 @@ pub(crate) fn claim_body<T: Serialize>(predicate: &str, subject: EntityId, recor
 
 /// `body`'s record, when it is an active claim of `predicate`; any other
 /// shape is corruption.
-pub(crate) fn from_claim<T: for<'de> Deserialize<'de>>(body: &ClaimBody, predicate: &str) -> Result<T> {
+pub(crate) fn from_claim<T: for<'de> Deserialize<'de>>(
+    body: &ClaimBody,
+    predicate: &str,
+) -> Result<T> {
     if body.predicate != predicate || body.lifecycle != ClaimLifecycleStatus::Active {
         return Err(Error::CorruptedIndex("an import record's claim moved"));
     }
@@ -161,4 +168,3 @@ impl CodeImportManifest {
         Ok(manifest)
     }
 }
-

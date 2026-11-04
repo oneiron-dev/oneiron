@@ -22,8 +22,8 @@ use crate::store::Store;
 /// know them whole.
 const SOURCE_REFS_FIELD: &[u8] = b"\"source_refs\"";
 
-pub(crate) use crate::store::query_memos::{memo_owners, memo_carriage};
 use crate::store::query_memos::owners;
+pub(crate) use crate::store::query_memos::{memo_carriage, memo_owners};
 
 /// The erase of `source` takes every memo it is a source of, its `why`
 /// included, and its health row, in the erase's own transaction at both

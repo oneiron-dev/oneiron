@@ -1,8 +1,8 @@
 //! Persisted cohort-program values and complete authoring drafts.
 
+use super::CampaignLifecycle;
 use crate::entity_id::EntityId;
 use crate::write_envelope::cohort_claims::CampaignMemberChannel;
-use super::CampaignLifecycle;
 
 /// A campaign program: the persisted binding between a campaign and the steps
 /// its enrollments execute.
@@ -92,7 +92,6 @@ impl CampaignProgramStep {
     }
 }
 
-
 /// The authored half of a campaign program, stored beside its binding by the
 /// checked doors ([`create_campaign_program`] and its siblings).
 ///
@@ -162,7 +161,6 @@ pub struct AuthoredCampaignProgram {
     /// automatic intake, and this says so.
     pub automatic_intake: bool,
 }
-
 
 /// Schema version shared by every campaign-local row this module persists.
 pub const CAMPAIGN_ENROLLMENT_SCHEMA_VERSION: u32 = 1;

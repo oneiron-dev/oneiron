@@ -1,11 +1,11 @@
 //! Batch op vocabulary and shared op constructors.
 
-use oneiron_contracts::affect::Vad;
 use crate::edge::{EdgeKind, EdgeProvenanceFlags};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
+use oneiron_contracts::affect::Vad;
 
 #[derive(Clone)]
 pub(crate) enum BatchOp {

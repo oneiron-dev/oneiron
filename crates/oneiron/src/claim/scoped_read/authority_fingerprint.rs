@@ -25,13 +25,13 @@ use sha2::{Digest, Sha256};
 
 use super::{RoomTurnCeiling, ScopedReadActorKey};
 use crate::authority::{HostActionGuard, VerifiedSlip};
-use crate::machine_destination::{PeerMachine};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::world_access::WorldAuthoritySet;
 use crate::claim::{ClaimSubject, claim_surfaceable, decode_claim_body};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::claim::world_access::WorldAuthoritySet;
+use crate::machine_destination::PeerMachine;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE,
     ENTITY_TYPE_RELATIONSHIP,

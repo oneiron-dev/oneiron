@@ -5,14 +5,14 @@
 //! confers no authority, and the question never runs under the turn's writer.
 use super::{ProjectMintReceipt, ROOM_PROJECT, invalid};
 use crate::agent_dispatch::{
-    AgentDispatchOutcome,  AgentDispatcher, AgentSpawnContext, DispatchAgent,
+    AgentDispatchOutcome, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
-use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
     FailAttempt,
 };
 use crate::claim::ClaimReadStatus;
+use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::consent::AuthenticatedOwner;
 use crate::context_projection::ContextSpec;
 use crate::edge::EdgeActorClass;

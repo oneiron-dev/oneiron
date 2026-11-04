@@ -1,11 +1,13 @@
 //! World-access authority values and their strict claim-value codecs.
 
-use std::collections::BTreeSet;
-use rmpv::Value;
-use oneiron_authority::federation::{ScopeAxis, ScopeId};
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use oneiron_authority::federation::{ScopeAxis, ScopeId};
+use rmpv::Value;
+use std::collections::BTreeSet;
 
 pub use crate::write_envelope::world_access_predicates::{
     PREDICATE_WORLD_ACCESS_ALLOWED_SET, PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
@@ -358,4 +360,3 @@ fn decode_world_access_members(value: &Value) -> Result<BTreeSet<EntityId>> {
 fn invalid_world_access_value(reason: &str) -> Error {
     Error::InvalidConfig(format!("world-access claim value {reason}"))
 }
-
