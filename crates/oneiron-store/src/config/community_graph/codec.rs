@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::entity_id::EntityId;
+use oneiron_contracts::entity_id::EntityId;
 
 use super::types::{
     CommunityCacheMeta, CommunityError, CommunityId, CommunityMembership, META_KEY,
@@ -13,14 +13,14 @@ impl CommunityCacheMeta {
     /// The unpublished v0 row also stores a writer-derived graph node count.
     /// Full decoding checks it against every node; indexed queries trust that
     /// atomic publication and never substitute the size of their selected view.
-    pub(crate) fn decode_row(value: &[u8], max_nodes: usize) -> Result<(Self, usize)> {
+    pub fn decode_row(value: &[u8], max_nodes: usize) -> Result<(Self, usize)> {
         Self::decode_row_inner(value, Some(max_nodes))
     }
 
     /// The refresh path's uncapped metadata decode: every shape, version
     /// and gamma check stays; only the node ceiling is lifted. The decoded
     /// count is then used relationally, never as a refusal.
-    pub(crate) fn decode_row_unbounded(value: &[u8]) -> Result<(Self, usize)> {
+    pub fn decode_row_unbounded(value: &[u8]) -> Result<(Self, usize)> {
         Self::decode_row_inner(value, None)
     }
 
@@ -47,7 +47,7 @@ impl CommunityCacheMeta {
 }
 
 impl CommunityMembership {
-    pub(crate) fn decode_row(value: &[u8]) -> Result<Self> {
+    pub fn decode_row(value: &[u8]) -> Result<Self> {
         if value.len() != 32 {
             return Err(CommunityError::Cache);
         }
@@ -58,7 +58,7 @@ impl CommunityMembership {
     }
 }
 
-pub(crate) fn decode_community_members(
+pub fn decode_community_members(
     id: CommunityId,
     value: &[u8],
     max_nodes: usize,

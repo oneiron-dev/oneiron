@@ -1,11 +1,11 @@
 //! Rank-profile config: field/channel params, formula, recency, defaults.
-use crate::analyzer::AnalyzerChannel;
+use oneiron_base::analyzer::AnalyzerChannel;
 
 // === Rank profile configuration ===
 
 /// Per-channel length normalization policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FieldLengthPolicy {
+pub enum FieldLengthPolicy {
     /// Denominator uses `(1 - b) + b * len_f / avgdl_f`, i.e. classical
     /// BM25 length norm.
     CountLengthIncrement,
@@ -16,7 +16,7 @@ pub(crate) enum FieldLengthPolicy {
 }
 
 impl FieldLengthPolicy {
-    pub(crate) fn manifest_tag(self) -> &'static str {
+    pub fn manifest_tag(self) -> &'static str {
         match self {
             FieldLengthPolicy::CountLengthIncrement => "count_length_increment",
             FieldLengthPolicy::NoNorm => "no_norm",
@@ -26,14 +26,14 @@ impl FieldLengthPolicy {
 
 /// Per-field (channel) BM25F parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct FieldConfig {
+pub struct FieldConfig {
     pub weight: f64,
     pub b: f64,
     pub length_policy: FieldLengthPolicy,
 }
 
 impl FieldConfig {
-    pub(crate) const fn disabled() -> Self {
+    pub const fn disabled() -> Self {
         Self {
             weight: 0.0,
             b: 0.0,
@@ -50,9 +50,8 @@ impl FieldConfig {
 /// The formula is scoring-only — switching it never requires a reindex.
 /// `delta` must be finite and strictly positive; it is validated
 /// fail-closed when a [`crate::config::Bm25RankProfile`] is used and rejected
-/// with [`StoreError::InvalidRankProfile`](crate::error::StoreError::InvalidRankProfile) otherwise.
+/// with [`StoreError::InvalidRankProfile`](oneiron_contracts::error::StoreError::InvalidRankProfile) otherwise.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[non_exhaustive]
 pub enum Bm25Formula {
     /// Classical Okapi BM25 saturation (contract default).
     Okapi,
@@ -69,23 +68,23 @@ pub enum Bm25Formula {
 /// scoring-only parameter (plan §4.2) — changing it does **not** require
 /// a reindex, so this config lives outside the on-disk manifest.
 #[derive(Debug, Clone)]
-pub(crate) struct Bm25Config {
-    pub(crate) k1: f64,
-    pub(crate) formula: Bm25Formula,
+pub struct Bm25Config {
+    pub k1: f64,
+    pub formula: Bm25Formula,
     /// Per-channel config, indexed by [`AnalyzerChannel::field_id`]. The
     /// array has one slot per reserved channel, so adding a new channel
     /// in [`AnalyzerChannel`] requires extending this.
-    pub(crate) fields: [FieldConfig; BM25_FIELD_COUNT],
+    pub fields: [FieldConfig; BM25_FIELD_COUNT],
 }
 
 /// Query-time recency blend for BM25F keyword ranking. Each row ages by
 /// its entity type's half-life in the default pipeline's table
-/// ([`crate::pipeline::retrieval_recency_half_life_days_for_type`]), so a
+/// (`pipeline::retrieval_recency_half_life_days_for_type`), so a
 /// keyword search and a pipeline run age a row alike (FIX 7781).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Bm25RecencyConfig {
-    pub(crate) boost: f64,
-    pub(crate) now_secs: u64,
+pub struct Bm25RecencyConfig {
+    pub boost: f64,
+    pub now_secs: u64,
 }
 
 /// Direct keyword search keeps its pre-learned-blend recency boost (FIX 12009).
@@ -95,14 +94,14 @@ impl Bm25RecencyConfig {
     /// The blend a direct keyword search runs by default (ARCH-0031
     /// `recencyBlend: "enabled-by-default"`): the fixed 0.35 boost, aged from
     /// `now_secs`, independent of the learned blend's recency share.
-    pub(crate) fn table_default(now_secs: u64) -> Self {
+    pub fn table_default(now_secs: u64) -> Self {
         Self {
             boost: DIRECT_SEARCH_RECENCY_BOOST,
             now_secs,
         }
     }
 
-    pub(crate) fn is_enabled(self) -> bool {
+    pub fn is_enabled(self) -> bool {
         self.boost.is_finite() && self.boost > 0.0
     }
 }
@@ -112,7 +111,7 @@ impl Bm25RecencyConfig {
 /// out-of-bounds index `Bm25Config::fields`; the const block below ties
 /// this constant to the highest-id channel so adding a variant without
 /// growing the array breaks the build.
-pub(crate) const BM25_FIELD_COUNT: usize = AnalyzerChannel::ALL_RESERVED.len();
+pub const BM25_FIELD_COUNT: usize = AnalyzerChannel::ALL_RESERVED.len();
 
 const _: () = {
     // The reserved-channel set is `Surface, Stem, NormalizedOverlay,
@@ -126,7 +125,7 @@ const _: () = {
 };
 
 impl Bm25Config {
-    pub(crate) fn field(&self, channel: AnalyzerChannel) -> FieldConfig {
+    pub fn field(&self, channel: AnalyzerChannel) -> FieldConfig {
         self.fields[channel.field_id() as usize]
     }
 }
