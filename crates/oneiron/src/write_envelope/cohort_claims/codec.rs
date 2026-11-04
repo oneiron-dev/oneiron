@@ -2,9 +2,9 @@
 
 use rmpv::Value;
 
-use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 
 use super::types::*;
 
@@ -506,9 +506,7 @@ pub(crate) fn decode_comm_bounce_value(value: &Value) -> Result<CommBounceValue>
 }
 
 /// Decodes a `comm.jurisdiction` value.
-pub(crate) fn decode_comm_jurisdiction_value(
-    value: &Value,
-) -> Result<CommJurisdictionValue> {
+pub(crate) fn decode_comm_jurisdiction_value(value: &Value) -> Result<CommJurisdictionValue> {
     let entries = value_map(value)?;
     let keys = [KEY_JURISDICTION, KEY_OBSERVED_AT];
     validate_keys(entries, &keys, &keys)?;

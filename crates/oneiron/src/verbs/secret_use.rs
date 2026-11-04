@@ -55,7 +55,7 @@ fn no_arguments() -> serde_json::Value {
     serde_json::Value::Object(serde_json::Map::new())
 }
 
-pub use crate::code_run::{SecretUseStatus, SecretUseAnswer, SecretUseRecord};
+pub use crate::code_run::{SecretUseAnswer, SecretUseRecord, SecretUseStatus};
 
 /// `self.use` on a handle, for the calling actor. `connector.call` is
 /// refused here: a server's host door sends it.

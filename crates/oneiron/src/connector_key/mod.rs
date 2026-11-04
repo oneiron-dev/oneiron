@@ -10,8 +10,8 @@
 //! `pending_charter` slots are pinned in the v1 body so GOV-10 (ONE-1417) can
 //! fill them without re-versioning the schema.
 
-pub mod budget_class;
 mod accounting;
+pub mod budget_class;
 mod channel_subscription;
 mod charter;
 mod codec;

@@ -1,11 +1,11 @@
 //! Holder-bound exact skill source carrier framing.
 
-use sha2::{Digest, Sha256};
-use crate::store::skill_package::HubPackage;
-use crate::store::skill_package::codec::{decode_hub_package, encode_hub_package, invalid};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::store::skill_package::HubPackage;
+use crate::store::skill_package::codec::{decode_hub_package, encode_hub_package, invalid};
 use crate::write_envelope::skill_record::SkillContentHash;
+use sha2::{Digest, Sha256};
 
 const MAGIC: &[u8] = b"oneiron.hub-source.v1\0";
 const DOMAIN: &[u8] = b"oneiron.hub-source.asset.v1\0";
