@@ -546,6 +546,12 @@ side_tables! {
     /// A published revision whose vector an embedding-space swap dropped, to be embedded again at
     /// idle. Key: id16.
     ENTITY_REVISION_VECTOR_REFILL: VaultMeta b"entity_revision:vector_refill:" Raw;
+    /// The erase previews a caller was shown and may still confirm (FIX
+    /// 12522): the digest the preview showed, and when it was issued and
+    /// expires on the vault's recording clock. Key: id16 (caller) + id16
+    /// (record).
+    ERASE_PREVIEW: VaultMeta b"erase:preview:v1:" Named
+        => crate::verbs::erase_preview_actor_in_txn;
     /// Esign machine actor id. Key: ().
     ESIGN_ARTIFACT_ACTOR: VaultMeta b"esign.artifact_actor.v1" Raw;
     /// Esign document audit event. Key: id16 + u64be.
@@ -583,8 +589,10 @@ side_tables! {
     ESIGN_SEALED_DOCUMENT: VaultMeta b"esign.sealed.v1/" LegacyJson;
     /// Signature image ownership marker. Key: id16 + string + string.
     ESIGN_SIGNATURE_IMAGE_BINDING: VaultMeta b"esign.signature_image.v1/" Raw;
-    /// One whole-vault export receipt: when, which format, how many bytes and their digest, by
-    /// whom; never the exported bytes. Key: u64be(sequence).
+    /// The export audit (FIX 6427): one row per Owner copy that left the vault, the whole vault
+    /// or an off-record room's talk. It holds the export id, scope, exporter, time, format and
+    /// actor, and the copy's length and digest where its door read the copy back; never the
+    /// exported bytes. Key: u64be(sequence).
     EXPORT_RECEIPT: VaultMeta b"export:receipt:v1:" Named;
     /// Binding proof tying a restored foreign expression-preference claim to the exact local row it
     /// reconstructed. Key: id16.

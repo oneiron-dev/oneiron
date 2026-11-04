@@ -39,11 +39,49 @@ use crate::outbound_chokepoint::CoActorEffect;
 use crate::outbound_intent_ledger::{
     AdmittedApproval, IntentLedgerError, keep_press_after_admission,
 };
-use crate::side_table::{self, Raw, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::task_verb::linear_effect_state_in_txn;
 
-/// (operation id, the press's approve-once digest) → the actor's role tag.
-const KEPT_PRESS: SideTable<([u8; 32], [u8; 32]), [u8; 1], Raw> =
+/// What one kept press row holds: the actor's role tag, the actor who
+/// pressed, and the TASK the press belongs to, so an erase of either can
+/// retire it (FIX 6835). A row written before the ids were kept holds the
+/// tag alone and does not decode: it authorizes no retry (a press that does
+/// not read only re-asks) and no scrub can attribute it, so scrubs keep it
+/// for the damage report.
+#[derive(Clone, Copy)]
+struct KeptPress {
+    role_tag: u8,
+    actor: EntityId,
+    task: EntityId,
+}
+
+impl RawValue for KeptPress {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut bytes = vec![self.role_tag];
+        bytes.extend_from_slice(self.actor.as_bytes());
+        bytes.extend_from_slice(self.task.as_bytes());
+        Ok(bytes)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let corrupt = || Error::CorruptedIndex("linear effect approval value").into();
+        if bytes.len() != 33 {
+            return Err(corrupt());
+        }
+        let actor = EntityId::from_bytes(bytes[1..17].try_into().map_err(|_| corrupt())?)
+            .map_err(|_| corrupt())?;
+        let task = EntityId::from_bytes(bytes[17..33].try_into().map_err(|_| corrupt())?)
+            .map_err(|_| corrupt())?;
+        Ok(Self {
+            role_tag: bytes[0],
+            actor,
+            task,
+        })
+    }
+}
+
+/// (operation id, the press's approve-once digest) → the actor's kept press.
+const KEPT_PRESS: SideTable<([u8; 32], [u8; 32]), KeptPress, Raw> =
     SideTable::new(&side_table::LINEAR_EFFECT_APPROVAL);
 
 /// Which of a Linear mirror mutation's two actors an ask is for (OF-427).
@@ -124,25 +162,46 @@ pub(super) fn kept_press_in(
 ) -> Option<AdmittedApproval> {
     effect.provenance.approval_target.as_ref()?;
     let digest = crate::gate::external_effect_approval_digest(effect)?;
-    KEPT_PRESS
-        .contains(&vault.store, txn, &(operation_id, *digest.as_bytes()))
-        .ok()?
-        .then(|| AdmittedApproval::from_gate(operation_id, digest))
+    // FIX 6835: the row must decode in its named form to authorize; a row
+    // that does not read leaves the retry on its existing path.
+    let _kept = KEPT_PRESS
+        .get(&vault.store, txn, &(operation_id, *digest.as_bytes()))
+        .ok()??;
+    Some(AdmittedApproval::from_gate(operation_id, digest))
 }
 
-/// Keeps the press `role`'s admission of `operation_id` spent.
+/// Keeps the press `role`'s admission of `operation_id` spent, with the
+/// pressing `actor` and the mirrored `task` named in the row so an erase of
+/// either retires it (FIX 6835).
 fn keep_press_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     operation_id: [u8; 32],
     role: LinearEffectRole,
     digest: EffectDigest,
+    actor: EntityId,
+    task: EntityId,
 ) -> crate::error::Result<()> {
+    // FIX 6835 P1: this writer opens after the admission committed, so an
+    // erase of the pressing actor or the mirrored TASK may have committed in
+    // between and already run the scrub below on a press that did not exist
+    // yet. An erased id leaves no entity row (the admission's own liveness
+    // probe), so recheck both here and skip the keep when either is gone. A
+    // missing press only re-asks on retry.
+    for id in [&actor, &task] {
+        if vault.get_entity_type_in_txn(&*txn, id)?.is_none() {
+            return Ok(());
+        }
+    }
     KEPT_PRESS.put(
         &vault.store,
         txn,
         &(operation_id, *digest.as_bytes()),
-        &[role.tag()],
+        &KeptPress {
+            role_tag: role.tag(),
+            actor,
+            task,
+        },
     )
 }
 
@@ -155,19 +214,65 @@ fn keep_press_in(
 pub(super) fn keep_spent_presses(
     vault: &Vault,
     operation_id: [u8; 32],
+    actors: (EntityId, EntityId),
+    task_ref: EntityId,
     spent: [Option<EffectDigest>; 2],
 ) -> crate::error::Result<()> {
     let [scheduler, writer] = spent;
     let subject = crate::entity_id::bytes_to_hex_lower(&operation_id);
-    for (role, digest) in [
-        (LinearEffectRole::Scheduler, scheduler),
-        (LinearEffectRole::Writer, writer),
+    for (role, actor, digest) in [
+        (LinearEffectRole::Scheduler, actors.0, scheduler),
+        (LinearEffectRole::Writer, actors.1, writer),
     ] {
         if let Some(digest) = digest {
             keep_press_after_admission(vault, &subject, |txn| {
-                keep_press_in(vault, txn, operation_id, role, digest)
+                keep_press_in(vault, txn, operation_id, role, digest, actor, task_ref)
             })?;
         }
+    }
+    Ok(())
+}
+
+/// The typed key one raw kept-press row names, for the erase that scans
+/// the table raw.
+fn press_key(bytes: &[u8]) -> Option<([u8; 32], [u8; 32])> {
+    if bytes.len() != 64 {
+        return None;
+    }
+    Some((
+        bytes.get(..32)?.try_into().ok()?,
+        bytes.get(32..)?.try_into().ok()?,
+    ))
+}
+
+/// FIX 6835: this table's actor scrub (FIX 3520): an erase of `actor` drops
+/// every kept press that names it — as the pressing actor or as the
+/// mirrored TASK — in the erase's writer. Positive match only: a row that
+/// does not decode (a tag-only row from before the ids were kept among
+/// them) names nothing, authorizes nothing, and is kept for the damage
+/// report.
+///
+/// # Errors
+/// A storage failure.
+pub(crate) fn erase_effect_approval_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::error::Result<()> {
+    let mut dropped = Vec::new();
+    for row in KEPT_PRESS.iter_raw_from(&vault.store, wtxn, &[])? {
+        let (key, value) = row?;
+        let Ok(press) = KEPT_PRESS.decode_value(&value) else {
+            continue;
+        };
+        if (press.actor == *actor || press.task == *actor)
+            && let Some(key) = press_key(&key)
+        {
+            dropped.push(key);
+        }
+    }
+    for key in dropped {
+        KEPT_PRESS.delete(&vault.store, wtxn, &key)?;
     }
     Ok(())
 }
@@ -208,13 +313,28 @@ pub(crate) fn linear_writer_co_actor_in_txn(
     let effect = super::effect::linear_effect_writer_in_txn(vault, txn, request)?;
     let operation_id = request.operation_id;
     let kept_press = kept_press_in(vault, txn, operation_id, &effect);
+    let writer = effect.provenance.actor_entity_ref;
+    let task_ref = request.task_ref;
     Ok(CoActorEffect {
         effect,
         kept_press,
         keep_press: Box::new(
             move |vault: &Vault, txn: &mut heed::RwTxn<'_>, digest: EffectDigest| {
-                keep_press_in(vault, txn, operation_id, LinearEffectRole::Writer, digest)
-                    .map_err(IntentLedgerError::from)
+                // A press that names no writer (this door's writer effect
+                // always names one) is not kept; its retry re-asks.
+                let Some(writer) = writer else {
+                    return Ok(());
+                };
+                keep_press_in(
+                    vault,
+                    txn,
+                    operation_id,
+                    LinearEffectRole::Writer,
+                    digest,
+                    writer,
+                    task_ref,
+                )
+                .map_err(IntentLedgerError::from)
             },
         ),
     })

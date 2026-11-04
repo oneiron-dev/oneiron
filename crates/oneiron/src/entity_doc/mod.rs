@@ -38,6 +38,8 @@ mod side_keys;
 mod storage;
 #[cfg(feature = "sync")]
 mod sweep;
+mod token_uses;
+pub(crate) use token_uses::engine_stamp_token;
 #[cfg(feature = "sync")]
 mod sync;
 pub(crate) use citation_floor::record_citation_floor_in_txn;

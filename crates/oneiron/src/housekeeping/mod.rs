@@ -19,6 +19,7 @@
 //! A host that stops a vault between uses asks [`Vault::housekeeping_wake_at`]
 //! when it must run the vault again for a retirement that comes due.
 
+mod claim_vad_payment;
 mod report;
 mod schedule;
 mod sweeps;
@@ -27,6 +28,8 @@ mod sync_work;
 mod tests;
 mod wake;
 
+pub(crate) use self::claim_vad_payment::ClaimVadPayment;
+pub use self::claim_vad_payment::ClaimVadPaymentWorker;
 pub use self::report::{
     HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork,
 };
