@@ -25385,7 +25385,7 @@ async fn vault_artifacts_proposals(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -27213,6 +27213,28 @@ async fn self_skills_callables(
         actor,
         class,
         "self.skills.callables",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_skills_callable_amend(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.skills.callable.amend",
         value,
         &producers,
     )?;
@@ -40727,6 +40749,9 @@ async fn call_verb_row(
         "self.skills.save" => Box::pin(self_skills_save(server, call, input)).await,
         "self.skills.fork" => Box::pin(self_skills_fork(server, call, input)).await,
         "self.skills.callables" => Box::pin(self_skills_callables(server, call, input)).await,
+        "vault.skills.callable.amend" => {
+            Box::pin(vault_skills_callable_amend(server, call, input)).await
+        }
         "vault.skills.pack_receipt" => {
             Box::pin(vault_skills_pack_receipt(server, call, input)).await
         }

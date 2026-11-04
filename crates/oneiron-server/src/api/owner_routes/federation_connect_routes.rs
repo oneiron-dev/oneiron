@@ -17,7 +17,7 @@ use oneiron::task_verb::sdk::{
 };
 use serde_json::Value;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, hooked_owner, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::federation_connect::{self, AcceptConnect, MintConnectGrant, OfferConnect};
@@ -32,6 +32,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/connect",
                 summary: "This vault's id and host key, what a peer's owner names to offer it a pact.",
                 row: None,
+                shape: None,
             },
             get(identity),
         ),
@@ -41,6 +42,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/connect/grants",
                 summary: "Mints the guest grant a Connect with a peer vault governs: named local worlds, read and propose only, inside the vault's Connect guest ceiling. Inert until the pact is Active.",
                 row: None,
+                shape: Some(RestShape::json(
+                    mint_grant_body_schema,
+                    connect_grant_schema,
+                )),
             },
             post(mint_grant),
         ),
@@ -50,6 +55,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/connect/offer",
                 summary: "This host's signed half of a new pact with a peer vault, for the owner to carry to the peer.",
                 row: None,
+                shape: Some(RestShape::json(
+                    offer_connect_body_schema,
+                    connect_offer_schema,
+                )),
             },
             post(offer),
         ),
@@ -59,6 +68,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/connect/accept",
                 summary: "Logs the Connect the peer's half signs and answers this host's half of the same pact.",
                 row: None,
+                shape: Some(RestShape::json(
+                    accept_connect_body_schema,
+                    connect_accepted_schema,
+                )),
             },
             post(accept),
         ),
@@ -68,6 +81,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/connect/proposals",
                 summary: "Every pending proposal Connect guests sent this vault (FIX 3684): the proposer and its grant, the world and record it names, its update's length and BLAKE3, and the record's text as accepting it would leave it. A guest's proposal never writes the vault.",
                 row: None,
+                shape: Some(RestShape::no_body(connect_proposals_schema)),
             },
             get(proposals),
         ),
@@ -77,6 +91,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/connect/proposals/accept",
                 summary: "Accepts one pending proposal: its update joins the record's text as the owner's own act, and its record names the proposer, the grant and whether that grant still stood; the accept applies either way.",
                 row: None,
+                shape: Some(RestShape::json(
+                    connect_proposal_ref_body_schema,
+                    connect_proposal_schema,
+                )),
             },
             post(accept_proposal),
         ),
@@ -86,6 +104,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/federation/connect/proposals/reject",
                 summary: "Rejects one pending proposal: nothing is written to the vault, and its record names the proposer and the grant.",
                 row: None,
+                shape: Some(RestShape::json(
+                    connect_proposal_ref_body_schema,
+                    connect_proposal_schema,
+                )),
             },
             post(reject_proposal),
         ),

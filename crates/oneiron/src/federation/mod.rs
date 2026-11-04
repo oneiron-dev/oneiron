@@ -87,9 +87,10 @@ pub use shared_act::{
     NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS,
     ReceivedRemovalArchive, ReceivedRemovalArchiveState, RemovalExportCopy, RemovalExportDelivery,
     RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN, SHARED_INVITATION_TTL_SECS,
-    SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind, SharedActOutcome,
-    SharedEraseAsk, SharedInvitation, SharedInvitationState, SharedVaultChange, SharedVaultDeletion,
-    SignedSharedActOutcome, TransferOwnershipPlan, shared_act_outcome_transcript,
+    SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind,
+    SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState, SharedVaultChange,
+    SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
+    shared_act_outcome_transcript,
 };
 pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;
 pub use shared_creation::{

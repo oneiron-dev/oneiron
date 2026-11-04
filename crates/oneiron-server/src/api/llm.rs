@@ -256,7 +256,7 @@ fn admit_owner(
     raw.call(request, server.run_receipts())
         .ok_or_else(|| Box::new(refusal(StatusCode::BAD_REQUEST, "invalid_request")))
 }
-/// Best-effort record of one completed raw call, off the reply path. Missing
+/// Best-effort record of one completed model call, off the reply path. Missing
 /// provider fields stay unknown; no receipt, route or read-world is invented.
 pub(crate) fn record_raw_response(
     vault: &oneiron::Vault,
@@ -278,9 +278,9 @@ pub(crate) fn record_raw_response(
             return;
         }
     };
-    // A generate call's exact answering binding travels with its answer
-    // (FIX 12743) and bypasses the requested-ladder lookup; a stream names
-    // none, so the route stays explicitly unknown, never a false pin.
+    // A recorded call's exact answering binding travels with its answer
+    // (FIX 12743) and bypasses the requested-ladder lookup; a call that
+    // names none leaves the route explicitly unknown, never a false pin.
     let (rung, route) = match binding {
         Some(binding) => (binding.rung.clone(), binding.route.clone()),
         None => ladder.model_call_binding(None),
@@ -297,7 +297,7 @@ pub(crate) fn record_raw_response(
     source_rows.dedup();
     let input_parts = if source_rows.is_empty() {
         vec![ModelCallInputPart::Unknown {
-            reason: "raw API request sources were not captured".to_owned(),
+            reason: "model-call request sources were not captured".to_owned(),
         }]
     } else {
         Vec::new()
@@ -432,12 +432,13 @@ async fn stream(
     // The first rung is admitted here, so a refused call answers before the
     // stream starts. Each rung settles itself; a stream the client leaves
     // ends its call, and a started rung keeps its reservation as spend.
-    // stream_by takes the request by value; the record keeps its own copy.
+    // stream_recorded_by takes the request by value; the record keeps its own copy.
     let record_request = request.clone();
-    let mut source = match ladder.stream_by(&run, request, None, CallDeadline::Open) {
-        Ok(source) => source,
-        Err(e) => return failure(e),
-    };
+    let (mut source, mut binding) =
+        match ladder.stream_recorded_by(&run, request, None, CallDeadline::Open) {
+            Ok(opened) => opened,
+            Err(e) => return failure(e),
+        };
     let (send, receive) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
     tokio::spawn(async move {
         loop {
@@ -475,15 +476,17 @@ async fn stream(
                     || server
                         .vault()
                         .model_call_keeps_no_record_for(session.as_deref(), principal);
-                // Streams cannot name the served model without a protocol
-                // change, so the route pin is withheld here (FIX 12743).
+                // A recorded stream's exact answering binding travels beside
+                // its answer (FIX 12743); a stream that ended any other way
+                // leaves the route explicitly unknown, never a false pin.
+                let binding = binding.try_recv().ok();
                 record_raw_response(
                     server.vault(),
                     &ladder,
                     &run,
                     &record_request,
                     &response,
-                    None,
+                    binding.as_ref(),
                     no_record,
                 );
             }

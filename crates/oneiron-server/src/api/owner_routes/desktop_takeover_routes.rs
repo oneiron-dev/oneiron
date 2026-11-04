@@ -29,7 +29,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron_browser::{BrowserError, DesktopSession, PersonInput, Takeover, TakeoverRecord};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -51,6 +51,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/desktops",
                 summary: "Each bound run desktop whose guest started, with who has it, the agent's ask while it waits, and the holder's count of inputs.",
                 row: None,
+                shape: None,
             },
             get(list),
         ),
@@ -60,6 +61,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/desktops/take",
                 summary: "The owner holds the run's desktop, asked or not, once the agent's call in flight ends.",
                 row: None,
+                shape: Some(RestShape::json(
+                    desktop_run_request_body_schema,
+                    desktop_takeover_schema,
+                )),
             },
             post(take),
         ),
@@ -69,6 +74,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/desktops/screen",
                 summary: "The whole display as a PNG, unmasked, for the owner only: never kept, never a receipt.",
                 row: None,
+                shape: Some(RestShape::png(desktop_run_request_body_schema)),
             },
             post(screen),
         ),
@@ -78,6 +84,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/desktops/stream",
                 summary: "The run desktop's whole display as server-sent events while the owner watches or holds it: state, frame (changed PNGs as base64, paced), error, ended and refused events.",
                 row: None,
+                shape: None,
             },
             get(stream),
         ),
@@ -87,6 +94,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/desktops/input",
                 summary: "One click, type, key, hotkey or scroll from the owner who holds the desktop, at the pixels of the screen they were last shown.",
                 row: None,
+                shape: Some(RestShape::json(
+                    desktop_input_body_schema,
+                    desktop_input_reply_schema,
+                )),
             },
             post(input),
         ),
@@ -96,6 +107,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/desktops/return",
                 summary: "The owner hands the desktop back, from holding it or from the agent's ask unanswered.",
                 row: None,
+                shape: Some(RestShape::json(
+                    desktop_run_request_body_schema,
+                    desktop_return_reply_schema,
+                )),
             },
             post(hand_back),
         ),

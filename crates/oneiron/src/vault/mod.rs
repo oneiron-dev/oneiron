@@ -122,6 +122,10 @@ pub struct Vault {
     pub(crate) analyzer: MultilingualAnalyzer,
     /// Which vault this handle belongs to, resolved once at open.
     vault_id: VaultId,
+    /// This vault's own directory identity, retained at open while its path
+    /// is fresh: folder reads exclude the vault by identity, so a rename
+    /// after open cannot defeat the exclusion (REVIEW-4381 P1).
+    dir_identity: Option<(u64, u64)>,
     /// The key over this vault's stored retrieval-trace fork hashes,
     /// resolved once at open.
     retrieval_trace_key: self::retrieval_trace_key::RetrievalTraceKey,
