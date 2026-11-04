@@ -1,5 +1,6 @@
 //! The host doors of the Files world's source rows (FIX 6942):
-//! `vault.files.sources.attach`, `.rescan`, `.detach`, `.list` and `.files`.
+//! `vault.files.sources.attach`, `.rescan`, `.detach`, `.list`, `.files` and
+//! `.exclude`.
 //! `host_doors` re-exports them, so the generated HTTP facade handler and the
 //! MCP dispatcher call them by the name every host door has. Each runs under
 //! the vault owner's proof, as `/v1/owner` takes it, off the async runtime:
@@ -20,8 +21,9 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     self, FilesRescanAnswer, FilesSourceAttachAnswer, FilesSourceAttachRequest,
-    FilesSourceDetachAnswer, FilesSourceDetachRequest, FilesSourceFiles, FilesSourceFilesRequest,
-    FilesSourceList, FilesSourceListRequest, FilesSourceRescanRequest,
+    FilesSourceDetachAnswer, FilesSourceDetachRequest, FilesSourceExcludeAnswer,
+    FilesSourceExcludeRequest, FilesSourceFiles, FilesSourceFilesRequest, FilesSourceList,
+    FilesSourceListRequest, FilesSourceRescanRequest,
 };
 
 use super::host_doors::support::{Listed, internal, owner_proof};
@@ -165,6 +167,31 @@ pub(crate) async fn vault_files_sources_list(
                 }
             }
             Ok((list, rows))
+        },
+    )
+    .await
+}
+
+/// `vault.files.sources.exclude`: a Files source's filters change without
+/// detach and attach; its next rescan reads with them.
+pub(crate) async fn vault_files_sources_exclude(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: FilesSourceExcludeRequest,
+) -> Listed<FilesSourceExcludeAnswer> {
+    as_owner_listing(
+        server,
+        auth,
+        "vault.files.sources.exclude",
+        move |server, owner| {
+            let vault = server.vault();
+            let answer = sdk::exclude_files_source_as(vault, owner, input)?;
+            let rows = vault
+                .files_source(answer.source)?
+                .and_then(|source| source.files)
+                .map(|files| vec![files.world])
+                .unwrap_or_default();
+            Ok((answer, rows))
         },
     )
     .await

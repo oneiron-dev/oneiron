@@ -450,6 +450,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.files.sources.detach"
         | "vault.files.sources.list"
         | "vault.files.sources.files"
+        | "vault.files.sources.exclude"
         | "vault.projects.confirm"
         | "vault.weave.owner.link.wrong"
         | "vault.weave.owner.item.wrong"
