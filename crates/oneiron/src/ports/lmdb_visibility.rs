@@ -175,8 +175,9 @@ struct DeletionMarkers {
 
 impl DeletionMarkers {
     /// The sets of the snapshot `txn` reads, or `None` past
-    /// [`MAX_RECALL_DELETION_MARKERS`] rows or where a pending tombstone key
-    /// does not decode, which a point read of a month's world windows reports.
+    /// [`MAX_RECALL_DELETION_MARKERS`] rows or at any key of a shape the
+    /// family does not write (a pending tombstone key that does not decode is
+    /// one a point read of a month's world windows reports).
     fn load(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Option<Self>> {
         let mut rows = 0usize;
         let Some(archived) = hex_marker_ids(dbs, txn, DeletionMarker::Archive, &mut rows)? else {
@@ -264,7 +265,8 @@ fn canonical_hex_id(hex: &[u8]) -> Option<EntityId> {
 }
 
 /// The ids a hex-keyed `marker` family holds, counting each row in `rows`;
-/// `None` once `rows` passes [`MAX_RECALL_DELETION_MARKERS`].
+/// `None` once `rows` passes [`MAX_RECALL_DELETION_MARKERS`] or at a key that
+/// is not an id's canonical hex.
 fn hex_marker_ids(
     dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -278,17 +280,19 @@ fn hex_marker_ids(
         if *rows > MAX_RECALL_DELETION_MARKERS {
             return Ok(None);
         }
-        // Any other key spelling is one no point read asks for.
-        if let Some(id) = canonical_hex_id(&hex) {
-            ids.insert(id);
-        }
+        // A key that is not an id's canonical hex leaves the recall on point
+        // reads, as the loader takes no key shape it does not expect.
+        let Some(id) = canonical_hex_id(&hex) else {
+            return Ok(None);
+        };
+        ids.insert(id);
     }
     Ok(Some(ids))
 }
 
 /// The ids under `prefix` in `vault_meta`, keyed `prefix` + the id's 16
 /// bytes, counting each row in `rows`; `None` once `rows` passes
-/// [`MAX_RECALL_DELETION_MARKERS`].
+/// [`MAX_RECALL_DELETION_MARKERS`] or at a key of another length.
 fn vault_meta_ids(
     dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -302,13 +306,14 @@ fn vault_meta_ids(
         if *rows > MAX_RECALL_DELETION_MARKERS {
             return Ok(None);
         }
-        // A key of another length is one no point read asks for.
-        if let Some(bytes) = key
+        // A key of another length leaves the recall on point reads.
+        let Some(bytes) = key
             .get(prefix.len()..)
             .and_then(|id| <[u8; 16]>::try_from(id).ok())
-        {
-            ids.insert(EntityId::from_bytes_unchecked(bytes));
-        }
+        else {
+            return Ok(None);
+        };
+        ids.insert(EntityId::from_bytes_unchecked(bytes));
     }
     Ok(Some(ids))
 }
