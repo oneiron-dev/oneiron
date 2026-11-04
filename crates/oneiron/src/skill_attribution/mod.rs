@@ -97,7 +97,7 @@ pub(crate) use oneiron_skill_attribution::row_ids::{
 };
 mod skill_erase;
 pub(crate) use self::skill_erase::{
-    erase_attribution_evidence_skill_in_txn, erase_attribution_judgment_skill_in_txn,
+    erase_attribution_evidence_skill_in_txn,
     erase_scan_in_txn,
 };
 mod split;
@@ -160,7 +160,6 @@ pub(crate) use derivation_witness::{
     erase_derivation_witness_in_txn, note_summary_landing_in_txn, note_summary_request_in_txn,
 };
 mod site_exposure;
-pub(crate) use site_exposure::erase_site_exposure_in_txn;
 pub use site_exposure::{SiteSkillExposure, record_site_exposures, site_exposed};
 mod run_writes;
 pub(crate) use run_writes::{
