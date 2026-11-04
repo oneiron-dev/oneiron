@@ -198,6 +198,7 @@ impl Store {
             #[cfg(feature = "sync")]
             sync_hooks: hooks.sync_hooks,
             attempt_operations: hooks.attempt_operations,
+            core_write_operations: hooks.core_write_operations,
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
             policy_fold_cache: Default::default(),
             machine_history_issuer: Mutex::new(None),
