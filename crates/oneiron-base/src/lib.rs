@@ -27,6 +27,8 @@ pub mod posterior;
 pub mod registry;
 pub mod request_limits;
 pub mod retrieval_quality;
+pub mod skill_invocations;
+pub mod step_cancellation;
 pub mod tokenizer;
 pub mod work_line;
 
