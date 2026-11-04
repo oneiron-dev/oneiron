@@ -340,6 +340,23 @@ fn mark_room_stale_in_txn(
         let count = view.hnsw_neighbors.len(&*txn)?;
         view.hnsw_meta
             .put(txn, crate::hnsw::COUNT_KEY, &count.to_le_bytes())?;
+        // A room can outlive base's entry point: base deleted its sole node
+        // while the overlay still holds neighbor rows. Seed the missing
+        // entry point from the composed graph so the strict delete finds
+        // one; only overlay-staged rows are written, base is untouched.
+        if view
+            .hnsw_meta
+            .get(&*txn, crate::store::vector_index::keys::ENTRY_POINT_KEY)?
+            .is_none()
+        {
+            if let Some((first_key, _)) = view.hnsw_neighbors.first(&*txn)? {
+                view.hnsw_meta.put(
+                    txn,
+                    crate::store::vector_index::keys::ENTRY_POINT_KEY,
+                    &first_key,
+                )?;
+            }
+        }
     }
     let write_view = view.write_snapshot()?;
     crate::hnsw::hnsw_deindex(&write_view, txn, id)?;
