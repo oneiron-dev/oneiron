@@ -14,10 +14,13 @@
 //! it; the worker answers [`ScheduleAck`] once its owner thread has applied
 //! it between rounds. A call's `final` or `released` carries its
 //! [`SchedulingReceipt`].
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Instant;
 
+use oneiron_contracts::EntityId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use tokio::sync::Notify;
@@ -338,6 +341,45 @@ pub enum WorkPhysical {
     KeylessOwnServer,
 }
 
+/// Attempt and run entities to the device ticket their admission took (FIX
+/// 11960): a retry or scoped child parents its device work on the ticket its
+/// source's admission took, so device dependency links mirror run retries
+/// and scoped children. Ticket ids are one monotonic namespace per device
+/// admission and never reused, and a parent link names a ticket of the same
+/// admission only; a lookup miss or a reaped ticket parents nothing, which
+/// is today's behaviour.
+static WORK_PARENTS: OnceLock<Mutex<HashMap<EntityId, WorkId>>> = OnceLock::new();
+
+fn work_parents() -> &'static Mutex<HashMap<EntityId, WorkId>> {
+    WORK_PARENTS.get_or_init(Default::default)
+}
+
+/// Records the device ticket `entity`'s admission took.
+pub fn record_work_parent(entity: EntityId, ticket: WorkId) {
+    work_parents()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(entity, ticket);
+}
+
+/// The device ticket `entity`'s admission took, if still known.
+#[must_use]
+pub fn lookup_work_parent(entity: &EntityId) -> Option<WorkId> {
+    work_parents()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(entity)
+        .copied()
+}
+
+/// Forgets `entity`'s ticket once nothing can parent on it anymore.
+pub fn forget_work_parent(entity: &EntityId) {
+    work_parents()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(entity);
+}
+
 /// Host scheduling and physical-custody context for one run-admission handle.
 /// It is metadata, never prompt text, conditioning, or a budget widening.
 /// Unlabeled work is Foreground; memory work maps to Background at the
@@ -350,6 +392,9 @@ pub struct WorkContext {
     pub parent: Option<WorkId>,
     pub cancel: WorkCancel,
     pub physical: WorkPhysical,
+    /// The run or attempt entity this context runs as, when one names it:
+    /// its admission records the device ticket under it (FIX 11960).
+    pub entity: Option<EntityId>,
 }
 
 impl Default for WorkContext {
@@ -361,6 +406,7 @@ impl Default for WorkContext {
             parent: None,
             cancel: WorkCancel::new(),
             physical: WorkPhysical::Paid,
+            entity: None,
         }
     }
 }

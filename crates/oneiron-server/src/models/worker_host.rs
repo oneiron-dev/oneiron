@@ -42,7 +42,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use oneiron::llm::run_admission::WorkContext;
+use oneiron::llm::run_admission::{WorkContext, record_work_parent};
 use oneiron::llm::{
     CallSchedule, InferenceCallReceipt, SchedulingCapability, WorkClass, WorkerKind, WorkerMode,
     WorkerStatus,
@@ -434,7 +434,13 @@ pub(super) fn admit_bound_work(
         request.parent = context.parent;
         request.cancel = context.cancel.shared();
         request.cancel_changed = context.cancel.shared_notify();
-        Some(admission.enqueue(request))
+        let ticket = admission.enqueue(request);
+        // The run or attempt behind this context parents its retries and
+        // scoped children on this ticket (FIX 11960).
+        if let Some(entity) = context.entity {
+            record_work_parent(entity, ticket.ticket);
+        }
+        Some(ticket)
     });
     BoundWork {
         ticket,

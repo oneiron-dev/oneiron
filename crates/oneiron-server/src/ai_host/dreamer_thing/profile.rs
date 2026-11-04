@@ -23,6 +23,7 @@ use oneiron::dreamer_consolidation::{
     PortFuture, ThingChildEvent, ThingChildSession, ThingChildSettled, ThingPortCall,
 };
 use oneiron::llm::BudgetDenied;
+use oneiron::llm::run_admission::WorkCancel;
 use oneiron::{
     BudgetLease, EntityId, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmRequest,
     LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, ModelId, Vault,
@@ -166,6 +167,9 @@ pub(super) struct ThingSession {
     /// commit falls between a reduction and the wait; `None` once gone.
     commits: Option<broadcast::Receiver<()>>,
     stop: ScopedChildStop,
+    /// The device-work cancellation of the child's run (FIX 11961): tripped
+    /// beside the stop so in-flight device work aborts with the child.
+    cancel: WorkCancel,
     count: Arc<GenerationCount>,
 }
 
@@ -177,6 +181,7 @@ impl ThingSession {
         parent_run: EntityId,
         calls: UnboundedReceiver<ThingPortCall>,
         stop: ScopedChildStop,
+        cancel: WorkCancel,
         count: Arc<GenerationCount>,
     ) -> Self {
         let commits = Some(AttemptQueue::new(&vault).subscribe());
@@ -190,6 +195,7 @@ impl ThingSession {
             calls_closed: false,
             commits,
             stop,
+            cancel,
             count,
         }
     }
@@ -282,7 +288,11 @@ impl ThingChildSession for ThingSession {
     }
 
     fn stop(&mut self, code: &'static str) {
+        // The stop lands and the run's device work aborts with it (FIX
+        // 11961): the cancellation is idempotent, so a later stop retrips
+        // nothing new.
         self.stop.stop(code);
+        self.cancel.cancel();
     }
 
     fn close_generation(&self) -> u64 {

@@ -32,7 +32,7 @@ use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::llm::{
     WorkClass,
-    run_admission::{RunAdmission, WorkPhysical},
+    run_admission::{RunAdmission, WorkPhysical, forget_work_parent, lookup_work_parent},
 };
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
@@ -231,6 +231,10 @@ impl StepRunner {
             .lock()
             .expect("step spend mutex poisoned")
             .remove(&attempt);
+        // Nothing can parent on this try's ticket anymore (FIX 11960).
+        if let Ok(entity) = oneiron::EntityId::from_bytes(*attempt.as_bytes()) {
+            forget_work_parent(&entity);
+        }
     }
 
     /// Runs on the pump thread, which owns `runtime`: blocking on the model
@@ -651,6 +655,14 @@ impl StepRunner {
             } else {
                 WorkPhysical::Paid
             };
+            // This try runs as its attempt: its admission records the ticket
+            // under it, and a retry parents on the ticket its source took
+            // (FIX 11960). Either conversion failing parents nothing.
+            context.entity = oneiron::EntityId::from_bytes(*attempt.id.as_bytes()).ok();
+            context.parent = attempt
+                .retry_of
+                .and_then(|retry| oneiron::EntityId::from_bytes(*retry.as_bytes()).ok())
+                .and_then(|entity| lookup_work_parent(&entity));
             context
         });
         // The admitted request is the step's replay capsule (FIX 3028),
