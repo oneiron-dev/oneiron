@@ -167,7 +167,7 @@ impl Vault {
         // in memory here is unlanded, and none starts until it ends.
         let Some(recovery) = self.spent_nonces.begin_clock_recovery() else {
             return Err(Error::ConcurrentWrite(
-                "clock recovery needs every in-memory nonce spend landed: stop serving the vault first",
+                "clock recovery needs every in-memory nonce spend landed and no other recovery under way: stop serving the vault first",
             ));
         };
         let mut txn = self.store.env.write_txn()?;
@@ -198,9 +198,7 @@ impl Vault {
         PROOF_CLOCK_FLOOR.put(&self.store, &mut txn, &(), &wall)?;
         PROOF_NOT_BEFORE.put(&self.store, &mut txn, &(), &not_before)?;
         txn.commit()?;
-        // The recovered clock is the wall: the spends judged on the clock
-        // that ran ahead no longer hold it there.
-        recovery.recovered();
+        drop(recovery);
         Ok(ProofClockRecovery::Recovered {
             old_floor: floor,
             new_floor: wall,

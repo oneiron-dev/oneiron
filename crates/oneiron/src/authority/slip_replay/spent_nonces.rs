@@ -733,16 +733,22 @@ impl SpentNonces {
     }
 
     /// Starts an owner's clock recovery ([`Vault::recover_proof_clock`]),
-    /// enforcing the stopped vault it needs (L02 11-04 16:34): `false` while
+    /// enforcing the stopped vault it needs (L02 11-04 16:34): `None` while
     /// any spend made here has not landed, whose landing would raise the
-    /// floor again after the recovery. Until the returned guard drops, every
-    /// admission takes the writer.
+    /// floor again after the recovery, or while another recovery is under
+    /// way (review #4484 Astra round 5). Until the returned guard drops,
+    /// every admission takes the writer. The live high-water goes now,
+    /// before the recovery's writer: every spend judged on it has landed,
+    /// and each landing raised the committed floor to its clock, so the
+    /// floor holds it, and a writer admission after the recovery commits
+    /// reads only the lowered floor (Astra round 5).
     pub(super) fn begin_clock_recovery(&self) -> Option<ClockRecovery<'_>> {
         let mut nonces = self.lock();
-        if self.in_own_process() && !nonces.drained() {
+        if nonces.recovering || (self.in_own_process() && !nonces.drained()) {
             return None;
         }
         nonces.recovering = true;
+        nonces.live_high = 0;
         Some(ClockRecovery { nonces: self })
     }
 
@@ -1100,14 +1106,6 @@ pub(in crate::authority) struct SpendDoor {
 /// An owner's clock recovery in progress ([`SpentNonces::begin_clock_recovery`]).
 pub(super) struct ClockRecovery<'a> {
     nonces: &'a SpentNonces,
-}
-
-impl ClockRecovery<'_> {
-    /// The recovery set the clock back to the wall: the spends judged on the
-    /// clock that ran ahead no longer hold the live clock there.
-    pub(super) fn recovered(&self) {
-        self.nonces.lock().live_high = 0;
-    }
 }
 
 impl Drop for ClockRecovery<'_> {
