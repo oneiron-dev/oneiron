@@ -1,8 +1,8 @@
 //! Authorship, message and file modes are canonical revision data, not export input.
+use crate::store::code_commit_metadata::CodeCommitMetadata;
 use crate::{EntityId, Error, Result};
 use rmpv::Value;
 use std::collections::BTreeMap;
-use crate::store::code_commit_metadata::CodeCommitMetadata;
 fn invalid() -> Error {
     Error::InvalidClaimBody("invalid canonical code commit metadata")
 }
@@ -12,7 +12,8 @@ pub(crate) fn validate(revision: &super::CodeRevision) -> Result<()> {
     };
     if meta.message.len() > 64 * 1024
         || meta.message.contains('\0')
-        || crate::store::repo_provenance_trailer::parse_repo_provenance_trailer(&meta.message)?.is_some()
+        || crate::store::repo_provenance_trailer::parse_repo_provenance_trailer(&meta.message)?
+            .is_some()
         || meta.file_modes.iter().any(|(id, mode)| {
             !revision.file_frontiers.contains_key(id)
                 || !matches!(*mode, 0o100644 | 0o100755 | 0o120000)
