@@ -17,6 +17,10 @@ use crate::store::attempt_result::AttemptResultRef;
 use crate::store::attempt_run_signal::{RunAsk, RunBranchSignal, SignalIntent};
 use crate::store::attempt_state::AttemptState;
 
+/// Receipt-family ABI-pin rule: changing this requires a
+/// [`crate::store::STORAGE_ABI_VERSION`] bump.
+pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 3;
+
 /// Durable attempt row stored in LMDB.
 ///
 /// One synced TASK owns N node-local ATTEMPT rows. A retry never mutates a
@@ -248,4 +252,13 @@ pub struct AttemptTerminalExhaust {
 )]
 fn is_zero(value: &u32) -> bool {
     *value == 0
+}
+
+pub(crate) fn attempt_record_order(
+    left: &AttemptRecord,
+    right: &AttemptRecord,
+) -> std::cmp::Ordering {
+    left.created_at
+        .cmp(&right.created_at)
+        .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
 }

@@ -16,14 +16,14 @@ use super::actions::NotificationAction;
 use super::notification::{
     NotificationBody, NotificationKind, NotificationSource, decode_notification_body,
 };
-use crate::ports::{ClaimReadStatus};
-use crate::claim::{ScopedRead};
+use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::inbox::notification_recipient::{
     NotificationRecipientScope, notification_body_json, notification_recipient_scope,
     notification_scoped_to_caller,
 };
 use crate::memory::{Memory, verify_actor_binding_in_txn};
+use crate::ports::ClaimReadStatus;
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
 use crate::store::Callback;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
