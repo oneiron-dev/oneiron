@@ -401,7 +401,8 @@ families! {
     Class::Owner(Getter::PhoneticSource) => BATCH_PHONETIC_INDEX_SOURCE;
     Class::Owner(Getter::TextSource) => INDEX_SOURCE_TEXT;
     Class::Structure => GATE_DECISION_PENDING_SCRUB HOME_HANDOFF_RECEIPT
-        INFERENCE_SNAPSHOT_CATALOG KEY_CUSTODY_BINDING KEY_CUSTODY_ERASABLE_REF
+        INFERENCE_SNAPSHOT_CATALOG INFERENCE_SNAPSHOT_CONVERSATION_INDEX
+        KEY_CUSTODY_BINDING KEY_CUSTODY_ERASABLE_REF
         KEY_CUSTODY_RETIRE_PENDING;
     // CALLS HOME_HANDOFF_ENDPOINT (FIX 6460): a handoff's head and transfer
     // carry the target's endpoint URL, which no owner is proven to hold.
