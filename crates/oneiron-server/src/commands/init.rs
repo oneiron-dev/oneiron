@@ -390,7 +390,17 @@ pub(crate) fn setup_models_on_open_vault(
         ));
     }
     let env = EnvConfig::from_process().map_err(crate::owner::OwnerError::Host)?;
-    let current = read_config(&path, env.clone()).map_err(crate::owner::OwnerError::Host)?;
+    // The startup layers replayed onto this file: a server started with a
+    // settings file or holder overrides compares its live source, not the
+    // bare file, so an unchanged server never reads as Changed.
+    let mut replay = startup.startup_args.clone();
+    replay.config = Some(path.clone());
+    let current = crate::config::resolve_serve_config_with_sources(
+        &replay,
+        env.clone(),
+        crate::config::default_config_path(),
+    )
+    .map_err(crate::owner::OwnerError::Host)?;
     if current.vault_path != startup.vault_path
         || current.dimensions != startup.dimensions
         || current.map_size != startup.map_size
@@ -429,6 +439,25 @@ pub(crate) fn setup_models_on_open_vault(
         .map_err(crate::owner::OwnerError::Host)?;
     std::fs::rename(&prepared.staged, &path)
         .map_err(|error| crate::owner::OwnerError::Host(error.into()))?;
+    // The tagger serves an open vault its open armed with no marker: arm it
+    // once here, before its slot publishes and its worker starts, so the
+    // first witness already owes the tag pass.
+    if tagger.is_some() {
+        let marker = prepared
+            .config
+            .oneironer
+            .as_ref()
+            .and_then(crate::config::OneironerConfig::marker_config)
+            .ok_or_else(|| {
+                crate::owner::OwnerError::Host(anyhow::anyhow!(
+                    "the staged tagger section arms no tagging marker"
+                ))
+            })?;
+        server
+            .vault()
+            .arm_tagging_once(marker)
+            .map_err(|error| crate::owner::OwnerError::Host(error.into()))?;
+    }
     server
         .attach_first_run_slots(built.slot, tagger, built.gpu_pool)
         .map_err(crate::owner::OwnerError::Refused)?;

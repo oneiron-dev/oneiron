@@ -179,7 +179,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
-        .with_model_setup_config(&config)
+        .with_model_setup_config(&config, &crate::config::ServeArgs::default())
         .with_gpu_pool(gpu_pool)
         .with_broker(broker)
         .with_owner_host(owner_host)

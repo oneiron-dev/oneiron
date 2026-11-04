@@ -41,7 +41,7 @@ pub(super) async fn serve_with_config(
     config: ServeConfig,
     files: Option<super::ConfigFiles>,
 ) -> anyhow::Result<()> {
-    serve_anchored(config, files, None).await
+    serve_anchored(config, files, None, &crate::config::ServeArgs::default()).await
 }
 
 /// `files` are the files `config` was read from, which the server's runtime
@@ -51,6 +51,7 @@ pub(super) async fn serve_anchored(
     mut config: ServeConfig,
     files: Option<super::ConfigFiles>,
     anchor: Option<Arc<CustodyAnchorCredentials>>,
+    startup_args: &crate::config::ServeArgs,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         config.privacy_posture != oneiron::HostingPrivacyPosture::Relay,
@@ -116,7 +117,8 @@ pub(super) async fn serve_anchored(
     // Built before the listener binds: a reachable endpoint that serves the
     // wrong embedding space must stop serve rather than fill a vault from two
     // spaces. The local provider downloads nothing here — that is the worker's.
-    let (sync_server, gpu_poller) = build_server(vault, &config, server_config, owner_host).await?;
+    let (sync_server, gpu_poller) =
+        build_server(vault, &config, server_config, owner_host, startup_args).await?;
     // The host's socket: adopted from the service manager, or host:port
     // bound here. Bound before any worker starts, so a refused bind leaves
     // nothing running. An adopted socket is judged by where it listens.
@@ -298,6 +300,7 @@ pub(super) async fn serve_anchored(
 pub(crate) async fn build_server(
     vault: Arc<oneiron::Vault>,
     config: &ServeConfig,
+    startup_args: &crate::config::ServeArgs,
     mut server_config: crate::config::SyncServerConfig,
     owner_host: crate::owner::schedule::OwnerHost,
 ) -> anyhow::Result<(SyncServer, Option<tokio::task::JoinHandle<()>>)> {
@@ -333,7 +336,7 @@ pub(crate) async fn build_server(
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
-        .with_model_setup_config(config)
+        .with_model_setup_config(config, startup_args)
         .with_gpu_pool(gpu_pool)
         .with_broker(broker)
         .with_owner_host(owner_host)

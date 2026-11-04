@@ -549,6 +549,7 @@ impl Vault {
                 config.vector_evidence,
             )),
             config,
+            tagging_arm: Default::default(),
             analyzer,
             writer_lease: None,
             page_seal_mirror_carry: Default::default(),

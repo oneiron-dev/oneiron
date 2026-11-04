@@ -116,6 +116,7 @@ pub(crate) async fn start_desktop_workers(
     .await;
     let sync_server = Arc::new(sync_server);
     let model_setup = Arc::new(crate::server::ModelSetupRuntime::new(
+        tokio::runtime::Handle::current(),
         admitted(),
         drain_tagging,
     ));

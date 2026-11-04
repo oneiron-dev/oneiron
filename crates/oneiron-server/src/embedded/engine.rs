@@ -402,10 +402,28 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
         let (host, readied) = embedded_host(state.app.clone(), self.limits);
         let owner_host = OwnerHost::from_config(&self.config, self.rehearsal.clone())
             .anchored_at(&self.config.backup, self.anchor.clone());
+        let mut config = self.config.clone();
+        // First-run setup commits the model sections to the config file
+        // while the vault stays open; a wake rebuilds the server, so it
+        // reloads those sections instead of silently dropping the models.
+        // Sizing and the vault path never reload: those need a reopen.
+        if let Some(path) = config.config_path.clone() {
+            let reread = crate::config::resolve_serve_config_with_sources(
+                &crate::config::ServeArgs {
+                    config: Some(path),
+                    ..Default::default()
+                },
+                crate::config::EnvConfig::from_process()?,
+                crate::config::default_config_path(),
+            )?;
+            config.embedder = reread.embedder;
+            config.oneironer = reread.oneironer;
+            config.gpu = reread.gpu;
+        }
         let serving = spawn_run(
             host,
             Arc::clone(&self.vault),
-            self.config.clone(),
+            config,
             owner_host,
             self.serve_workers,
         )?;

@@ -316,7 +316,7 @@ impl SyncServer {
             memories_cursors,
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
-            model_slots: Default::default(),
+            model_slots: Arc::new(Default::default()),
             model_setup: None,
             model_setup_runtime: std::sync::OnceLock::new(),
             gpu_pool: std::sync::OnceLock::new(),

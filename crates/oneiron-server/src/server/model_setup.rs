@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use tokio::sync::{Mutex, MutexGuard, watch};
+use tokio::sync::{watch, Mutex, MutexGuard};
 use tokio::task::JoinHandle;
 
 use crate::embedder::EmbedderSlot;
@@ -20,6 +20,9 @@ use super::{HousekeepingAdmission, PassControl, SyncServer};
 /// The nonsecret serving facts an open-vault setup must keep unchanged.
 #[derive(Clone)]
 pub(crate) struct ModelSetupConfig {
+    /// The startup resolution layers, so a setup re-read layers the same
+    /// settings file and holder overrides instead of the bare file.
+    pub(crate) startup_args: crate::config::ServeArgs,
     pub(crate) config_path: Option<PathBuf>,
     pub(crate) vault_path: PathBuf,
     pub(crate) dimensions: usize,
@@ -41,6 +44,9 @@ pub(crate) type SharedModelSlots = ArcSwap<ModelSlots>;
 /// The setup mutex also serializes worker startup against ordered shutdown.
 pub(crate) struct ModelSetupRuntime {
     setup: Mutex<()>,
+    /// The serving runtime late workers spawn on: setup runs inside a
+    /// blocking closure with no runtime context, so spawns enter this.
+    handle: tokio::runtime::Handle,
     admission: HousekeepingAdmission,
     drain_tagging: bool,
     stopping: watch::Sender<bool>,
@@ -49,10 +55,15 @@ pub(crate) struct ModelSetupRuntime {
 }
 
 impl ModelSetupRuntime {
-    pub(crate) fn new(admission: HousekeepingAdmission, drain_tagging: bool) -> Self {
+    pub(crate) fn new(
+        handle: tokio::runtime::Handle,
+        admission: HousekeepingAdmission,
+        drain_tagging: bool,
+    ) -> Self {
         let (stopping, _) = watch::channel(false);
         Self {
             setup: Mutex::new(()),
+            handle,
             admission,
             drain_tagging,
             stopping,
@@ -76,6 +87,9 @@ impl ModelSetupRuntime {
         if *self.stopping.borrow() {
             return;
         }
+        // No runtime context reaches here (the owner route runs setup in a
+        // blocking closure): every late spawn enters the serving runtime.
+        let _entered = self.handle.enter();
         let mut workers = Vec::new();
         workers.extend(gpu_poller);
         workers.extend(server.spawn_embedding_worker_admitted(self.admission.clone()));

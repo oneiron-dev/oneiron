@@ -207,7 +207,10 @@ pub struct SyncServer {
     /// The embedder and tagger slots as one atomic pair, both `None` at rung 0.
     /// Startup attaches its pair here; first-run owner setup can later fill an
     /// empty pair without replacing a serving model.
-    pub(crate) model_slots: SharedModelSlots,
+    /// The live slot pair behind one shared atomic: late setup stores into
+    /// the same pair seat factories read, so runs created after attach see
+    /// the serving embedder without a rebind.
+    pub(crate) model_slots: Arc<SharedModelSlots>,
     /// The nonsecret file/vault facts an open-vault first-run setup must match.
     pub(crate) model_setup: Option<ModelSetupConfig>,
     /// Plain/embedded worker admission and late-worker handles, installed before
@@ -590,8 +593,13 @@ impl SyncServer {
     }
 
     /// The nonsecret startup facts an open-vault setup must preserve.
-    pub(crate) fn with_model_setup_config(mut self, config: &ServeConfig) -> Self {
+    pub(crate) fn with_model_setup_config(
+        mut self,
+        config: &ServeConfig,
+        startup_args: &crate::config::ServeArgs,
+    ) -> Self {
         self.model_setup = Some(ModelSetupConfig {
+            startup_args: startup_args.clone(),
             config_path: config.config_path.clone(),
             vault_path: config.vault_path.clone(),
             dimensions: config.dimensions,

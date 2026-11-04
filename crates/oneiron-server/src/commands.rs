@@ -101,7 +101,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     // named, read before the vault opens (FIX 5788).
     let anchor =
         crate::owner::backup::CustodyAnchorCredentials::handed(args.custody_anchor_credentials_fd)?;
-    serve_anchored(config, files, anchor).await
+    serve_anchored(config, files, anchor, &args).await
 }
 
 /// The files a plain `serve` read its config from, as its runtime file names
