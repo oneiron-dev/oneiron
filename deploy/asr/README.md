@@ -15,6 +15,8 @@ refused). The file is a PCM16 WAV, mono or stereo, at any rate from 8 to
 192 kHz; it is downmixed to mono, resampled to 16 kHz and transcribed whole,
 however long (Whisper's long-form decoding, greedy, in the language it
 detects unless the call names one). MP3 and other codecs are not read. The
+body's read has a deadline (FIX 11378, `--upload-read-deadline-ms`): a
+dripping upload answers 408 instead of holding the transcriber. The
 answer is `{"text", "duration", "model", "usage"}`; `usage` holds one
 inference receipt naming the worker's verified identity and its epoch, and
 the launch manifest's digest. One transcription runs at a time; a request
