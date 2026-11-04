@@ -478,7 +478,7 @@ impl super::RetrievalIndexMaintenance for Vault {
     fn port_retrieval_validate_rebuild(&self, txn: &RoTxn<'_>) -> Result<()> {
         for row in self.store.vectors.iter(txn)? {
             let (id, value) = row?;
-            crate::maintain::validate_rebuild_vector(self, &id, &value)?;
+            crate::store::vector_index::rebuild::validate_rebuild_vector(self, &id, &value)?;
         }
         Ok(())
     }

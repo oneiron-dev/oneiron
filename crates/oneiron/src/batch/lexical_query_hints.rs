@@ -9,7 +9,7 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, Result};
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK};
 use crate::store::EngineScan;
 use crate::store::Store;

@@ -283,7 +283,7 @@ pub(super) fn register_in_txn(
             // own hash, as an unreadable scope does at the commit boundary,
             // so the first commit after the promotion that reads it
             // re-derives.
-            Err(error) if crate::dreamer_consolidation::waits_on_residency(&error) => {
+            Err(error) if crate::store::conversation_residency::waits_on_residency(&error) => {
                 *blake3::hash(&encode(&current_input)?).as_bytes()
             }
             Err(error) => return Err(error),
