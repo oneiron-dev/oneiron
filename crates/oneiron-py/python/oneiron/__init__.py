@@ -688,6 +688,9 @@ class Oneiron:
         def federation(self) -> "Oneiron._VaultFederationVerbs":
             return Oneiron._VaultFederationVerbs(self._client)
         @property
+        def sync(self) -> "Oneiron._VaultSyncVerbs":
+            return Oneiron._VaultSyncVerbs(self._client)
+        @property
         def trusted_contacts(self) -> "Oneiron._VaultTrustedContactsVerbs":
             return Oneiron._VaultTrustedContactsVerbs(self._client)
         @property
@@ -708,6 +711,9 @@ class Oneiron:
         @property
         def records(self) -> "Oneiron._VaultRecordsVerbs":
             return Oneiron._VaultRecordsVerbs(self._client)
+        @property
+        def outbound_calls(self) -> "Oneiron._VaultOutboundCallsVerbs":
+            return Oneiron._VaultOutboundCallsVerbs(self._client)
         @property
         def research(self) -> "Oneiron._VaultResearchVerbs":
             return Oneiron._VaultResearchVerbs(self._client)
@@ -918,9 +924,6 @@ class Oneiron:
         @property
         def custody(self) -> "Oneiron._VaultCustodyVerbs":
             return Oneiron._VaultCustodyVerbs(self._client)
-        @property
-        def sync(self) -> "Oneiron._VaultSyncVerbs":
-            return Oneiron._VaultSyncVerbs(self._client)
     class _VaultCommitmentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1924,6 +1927,9 @@ class Oneiron:
         def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs":
             return Oneiron._VaultSkillsCodeAutoInstallVerbs(self._client)
         @property
+        def fit(self) -> "Oneiron._VaultSkillsFitVerbs":
+            return Oneiron._VaultSkillsFitVerbs(self._client)
+        @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
             return Oneiron._VaultSkillsPermissionsVerbs(self._client)
         @property
@@ -1956,6 +1962,12 @@ class Oneiron:
         def set(self, spec):
             """The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."""
             return json.loads(_translate(lambda: self._client.vault_skills_code_auto_install_set(json.dumps(spec))))
+    class _VaultSkillsFitVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert."""
+            return json.loads(_translate(lambda: self._client.vault_skills_fit_set(json.dumps(spec))))
     class _VaultSkillsPermissionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2751,6 +2763,42 @@ class Oneiron:
         def receive(self, spec):
             """The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers."""
             return json.loads(_translate(lambda: self._client.vault_federation_connect_world_privacy_receive(json.dumps(spec))))
+    class _VaultSyncVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs":
+            return Oneiron._VaultSyncRetainedWorkVerbs(self._client)
+        @property
+        def repo_manifests(self) -> "Oneiron._VaultSyncRepoManifestsVerbs":
+            return Oneiron._VaultSyncRepoManifestsVerbs(self._client)
+    class _VaultSyncRetainedWorkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def wait(self) -> "Oneiron._VaultSyncRetainedWorkWaitVerbs":
+            return Oneiron._VaultSyncRetainedWorkWaitVerbs(self._client)
+    class _VaultSyncRetainedWorkWaitVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait."""
+            return json.loads(_translate(lambda: self._client.vault_sync_retained_work_wait_set(json.dumps(spec))))
+    class _VaultSyncRepoManifestsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def conflict(self) -> "Oneiron._VaultSyncRepoManifestsConflictVerbs":
+            return Oneiron._VaultSyncRepoManifestsConflictVerbs(self._client)
+    class _VaultSyncRepoManifestsConflictVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def review(self, spec):
+            """The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier."""
+            return json.loads(_translate(lambda: self._client.vault_sync_repo_manifests_conflict_review(json.dumps(spec))))
+        def discard(self, spec):
+            """The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."""
+            return json.loads(_translate(lambda: self._client.vault_sync_repo_manifests_conflict_discard(json.dumps(spec))))
     class _VaultTrustedContactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2954,6 +3002,18 @@ class Oneiron:
         def erase_sweep(self, spec):
             """Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep."""
             return json.loads(_translate(lambda: self._client.vault_records_erase_sweep(json.dumps(spec))))
+    class _VaultOutboundCallsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def request(self) -> "Oneiron._VaultOutboundCallsRequestVerbs":
+            return Oneiron._VaultOutboundCallsRequestVerbs(self._client)
+    class _VaultOutboundCallsRequestVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def erase(self, spec):
+            """The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting."""
+            return json.loads(_translate(lambda: self._client.vault_outbound_calls_request_erase(json.dumps(spec))))
     class _VaultResearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5643,27 +5703,6 @@ class Oneiron:
         def folder(self, spec):
             """The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision."""
             return json.loads(_translate(lambda: self._client.vault_custody_members_drain_folder(json.dumps(spec))))
-    class _VaultSyncVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        @property
-        def repo_manifests(self) -> "Oneiron._VaultSyncRepoManifestsVerbs":
-            return Oneiron._VaultSyncRepoManifestsVerbs(self._client)
-    class _VaultSyncRepoManifestsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        @property
-        def conflict(self) -> "Oneiron._VaultSyncRepoManifestsConflictVerbs":
-            return Oneiron._VaultSyncRepoManifestsConflictVerbs(self._client)
-    class _VaultSyncRepoManifestsConflictVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def review(self, spec):
-            """The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier."""
-            return json.loads(_translate(lambda: self._client.vault_sync_repo_manifests_conflict_review(json.dumps(spec))))
-        def discard(self, spec):
-            """The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."""
-            return json.loads(_translate(lambda: self._client.vault_sync_repo_manifests_conflict_discard(json.dumps(spec))))
     class _FeedbackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
