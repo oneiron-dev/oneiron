@@ -20,6 +20,7 @@
 //! fails before egress is held: nothing goes out, the mirror row shows
 //! `review_unavailable`, and the next run reviews again from scratch.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use super::mirror::{OriginMirrorPushes, OriginMirrorTarget, TARGETS};
@@ -94,6 +95,11 @@ impl Vault {
             ..OriginMirrorPushes::default()
         };
         let now = self.now_recorded_at();
+        // The pass is the manifest refresh door (FIX 6870, ruling 8): every
+        // published-ref move wakes it, due mirror or not. A served repo with
+        // no outbound mirror has no target row, so its standing manifest
+        // refreshes here, once per pass, not in the target loop.
+        self.refresh_all_repo_manifests();
         for (repo_id, target) in targets {
             let due = match target.sync_strategy {
                 OriginMirrorSyncStrategy::Schedule => {
@@ -228,6 +234,29 @@ impl Vault {
         match started {
             Some(summary) => self.finish_mirror_run(scope, &summary).map(Some),
             None => Ok(None),
+        }
+    }
+
+    /// Refreshes every standing repo manifest whose origin this host serves,
+    /// whether or not the repo has an outbound mirror target: the
+    /// pass-level refresh door (ruling 8). It never fails its caller; a
+    /// fault is logged and the next pass retries.
+    fn refresh_all_repo_manifests(&self) {
+        let standing = match self.standing_repo_manifests(|_| true) {
+            Ok(standing) => standing,
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "repo manifests not read for refresh");
+                return;
+            }
+        };
+        let mut origins = BTreeSet::new();
+        for manifest in &standing {
+            if let Some(origin) = manifest.origin_name.as_deref() {
+                origins.insert(origin);
+            }
+        }
+        for origin in origins {
+            self.refresh_repo_manifests_for_origin(origin);
         }
     }
 

@@ -13,6 +13,10 @@ pub enum RepoProposalStatus {
     Applied,
     Failed,
     Rejected,
+    /// Its handles were resolved into a successor proposal (FIX 2938),
+    /// which `resolves` is named from here backwards: the successor lands,
+    /// this row never does.
+    Superseded,
 }
 
 /// The complete reviewed operation identity. File bytes remain on `RepoProposal`.
