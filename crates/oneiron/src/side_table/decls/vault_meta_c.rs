@@ -311,9 +311,6 @@ side_tables! {
     /// and the delivered wait reply answering it. Refs and digests only, never an effect's body.
     /// Key: id16(code run) + be64(kind: 0 head, 1 page) + be64(page).
     CODE_RUN_PROGRAM_RESUME: VaultMeta b"code_run:program_resume:v1:" Named;
-    /// The owner's value-free dismissal of one code-run secret lift proposal. The
-    /// occurrence's secret/taint marks stay unchanged. Key: string(handle/occurrence).
-    CODE_RUN_SECRET_LIFT_DISMISSED: VaultMeta b"code_run:secret_lift:dismissed:v1:" Named Engine;
     /// The secret scan's hit in one raw-output body (its reason string), keyed by the same
     /// content handle; absent for a body it found nothing in. Key: string.
     CODE_RUN_RAW_OUTPUT_SECRET: VaultMeta b"code_run:raw_output:secret:v1:" Raw;
@@ -356,6 +353,9 @@ side_tables! {
     /// or a write receipt's run) and the actor its host stamped, or Erased once that actor's erase
     /// took it. The capsule table's scrub erases it. Key: id16(record).
     CODE_RUN_RESPONSE_OWNER: VaultMeta b"code_run:response_owner:v1:" Named Engine;
+    /// The owner's value-free dismissal of one code-run secret lift proposal. The
+    /// occurrence's secret/taint marks stay unchanged. Key: string(handle/occurrence).
+    CODE_RUN_SECRET_LIFT_DISMISSED: VaultMeta b"code_run:secret_lift:dismissed:v1:" Named Engine;
     /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
     /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
     CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored;

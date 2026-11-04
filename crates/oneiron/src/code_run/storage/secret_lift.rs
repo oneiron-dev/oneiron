@@ -114,7 +114,7 @@ impl Vault {
                 Some(dismissal) => dismissal,
                 None => {
                     let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
-                    let at = crate::ports::recorded_at_in_txn(&self.store, &txn)?;
+                    let at = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
                     let dismissal = CodeRunSecretLiftDismissal {
                         handle: handle.to_owned(),
                         occurrence: occurrence.id().to_hex(),
@@ -188,7 +188,7 @@ pub(crate) fn drop_code_run_result_marks_in_txn(
 pub(crate) fn erase_retained_result_marks_in_txn(
     dbs: &impl crate::side_table::SideTableDbs,
     txn: &mut heed::RwTxn<'_>,
-    bodies: &[crate::store::OwnedBody],
+    bodies: &[crate::provenance::body::OwnedBody],
 ) -> Result<()> {
     for body in bodies {
         if body.result.is_none() {
