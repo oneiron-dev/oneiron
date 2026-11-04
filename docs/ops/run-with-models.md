@@ -838,6 +838,7 @@ rung and a prompt package for the executor is named:
 prompt_package = "prompts"   # holds blocks/engine-executor-wire.md; relative to this file
 budget_units = 10000000      # optional; process-lifetime meter for its model calls
 max_runs = 32                # optional; runs at once, each its own thread (default: from cores and memory)
+step_wall_secs = 30           # optional; one step's time allowance in seconds (default: 5)
 ```
 
 A run holds its place until its worker ends, whether or not its caller is
@@ -857,6 +858,11 @@ reservation for each provider call it made: every rung of the seat, or the one
 model the vault's manifest pins. A browser subgoal's step may run on
 `browser_planner` instead, on the same meter ("Browser subgoals", below).
 An omitted `models.code_mode.budget_units` is uncapped.
+`step_wall_secs` is optional; unset keeps the runtime's 5-second default step
+wall. A set value replaces only the wall: once a step's allowance is spent
+the step stops at its next safe point with the typed `step_deadline` stop,
+not done and not failed, and its finished host calls keep their answers, so
+the next step continues without repeating a finished write.
 A run's clock and config are saved when it
 starts, so a run resumed after a restart keeps its clock and refuses another
 task. A vault with a model

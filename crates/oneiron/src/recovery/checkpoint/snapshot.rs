@@ -146,6 +146,7 @@ impl Vault {
         let filter = payload::ImageFilter::of_snapshot(&self.store, &txn)?;
         let mut databases = BTreeMap::new();
         let mut census = carried_bodies::BodyCensus::default();
+        let mut credential_keys_unavailable = Vec::new();
         // Window snapshots kept as they rest, warned by count (FIX 7107).
         let mut kept_windows = 0;
         // Pad rows the image carries with their pad, counted in its receipt
@@ -155,6 +156,16 @@ impl Vault {
             let mut image_row = |key: &[u8], value: &[u8]| -> Result<Option<(Vec<u8>, Vec<u8>)>> {
                 if !filter.takes(entry.name, key, value) {
                     return Ok(None);
+                }
+                if entry.name == "entities"
+                    && let Some(observed) = super::credential_custody::source_key_unavailable_in_txn(
+                        &self.store,
+                        &txn,
+                        key,
+                        value,
+                    )
+                {
+                    credential_keys_unavailable.push(observed);
                 }
                 // Every body a row names goes with it, sealed under its
                 // instance: a result body's file, a file-plane ASSET's (FIX
@@ -266,6 +277,13 @@ impl Vault {
             Some(projected) => payload::seal_image(self, projected, &filter, &mut databases)?,
             None => None,
         };
+        // Do not expose an owner-compartment row's identity or key state
+        // beside it under the image's wider seal.
+        credential_keys_unavailable.retain(|observed| {
+            databases
+                .get("entities")
+                .is_some_and(|rows| observed.matches_rows(rows))
+        });
         let (bodies, sealed_bodies, inline_bodies) = files.image_bodies();
         // The artifact's snapshot id, minted before anything is sealed to
         // it: the host-order member binds it, never the image's digest.
@@ -277,6 +295,7 @@ impl Vault {
             version: super::image::IMAGE_VERSION,
             created_at,
             databases,
+            credential_keys_unavailable,
             bodies,
             sealed_bodies,
             inline_bodies,
