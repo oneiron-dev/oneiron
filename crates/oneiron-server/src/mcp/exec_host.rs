@@ -117,6 +117,8 @@ pub struct McpCodeExecutionRequest<'a> {
     /// the call arrived at, so the host binds no vault of its own.
     pub vault: Arc<Vault>,
     pub actor: &'a McpResolvedActor,
+    /// The gateway-bound execution session, never the STREAM connection.
+    pub off_record_session: Option<String>,
     /// The caller's handle onto the durable run.
     pub run_ref: &'a str,
     /// The REPL task the durable run carries out.
@@ -213,6 +215,15 @@ pub trait McpCodeModeProvider: Send + Sync {
 
     /// The backend the durable REPL generates each step against.
     fn backend(&self) -> &dyn LlmBackend;
+    /// The same unscoped run backend with its authenticated model-call caller.
+    /// None keeps the ordinary backend without recording a guessed caller.
+    fn backend_with_model_call_context(
+        &self,
+        _principal: EntityId,
+        _session: Option<String>,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
     /// The admission lease every generated step is charged to.
     fn lease(&self) -> &BudgetLease;
     /// A FRESH sandbox/REPL runtime for one run.
@@ -446,6 +457,10 @@ pub type PlannedMeter = Arc<
 pub type RunCompactionSeat =
     Arc<dyn Fn(CompactionHostBinding, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync>;
 
+/// Binds one authenticated MCP run's model-call evidence to its actual caller.
+pub(crate) type ModelCallBackend =
+    Arc<dyn Fn(EntityId, Option<String>) -> Arc<dyn LlmBackend> + Send + Sync>;
+
 /// Builds one reader child's backend over the host's model, its calls spent
 /// on the guard it is given and billed to the payer, when one is given.
 pub type ReaderMeter = Arc<
@@ -574,6 +589,11 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         let active = &self.active;
         let seats = Arc::clone(&self.seats);
         let write_actor = request.actor.write_actor();
+        let model_call_context = request
+            .actor
+            .auth
+            .as_ref()
+            .map(|_| (request.actor.actor_ref, request.off_record_session.clone()));
         let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
         let verbs = Arc::clone(&request.verbs);
         // The gated run source is HOST-derived: the caller's handle is a label
@@ -662,6 +682,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         &vault,
                         provider.as_ref(),
                         write_actor,
+                        model_call_context,
                         &run_ref,
                         &config,
                         verbs,
@@ -750,6 +771,7 @@ fn run_engine_native_code_mode(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     write_actor: WriteActor,
+    model_call_context: Option<(EntityId, Option<String>)>,
     run_ref: &str,
     config: &EngineExecutorConfig,
     verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
@@ -781,18 +803,33 @@ fn run_engine_native_code_mode(
         worlds,
     )
     .map_err(McpCodeExecutionError::RunBinding)?;
-    enter_engine_native_run(
-        vault,
-        provider,
-        &gated_write,
-        config,
-        compaction,
-        &reactor,
-        None,
-        seat.as_ref(),
-        // An `execute_code` run is no planned child.
-        None,
-    )
+    let model_call_backend = model_call_context.and_then(|(principal, session)| {
+        provider.backend_with_model_call_context(principal, session)
+    });
+    match model_call_backend.as_ref() {
+        Some(backend) => enter_on(
+            vault,
+            provider,
+            backend.as_ref(),
+            &gated_write,
+            config,
+            compaction,
+            &reactor,
+            seat.as_ref(),
+        ),
+        None => enter_engine_native_run(
+            vault,
+            provider,
+            &gated_write,
+            config,
+            compaction,
+            &reactor,
+            None,
+            seat.as_ref(),
+            // An `execute_code` run is no planned child.
+            None,
+        ),
+    }
     .map_err(|error| match error.provider_outage() {
         Some(retry_after) => McpCodeExecutionError::ProviderUnavailable { retry_after },
         None => match error {
