@@ -218,6 +218,12 @@ struct Nonces {
     /// The highest proof clock a record of this journal named, read from its
     /// records when it opens and carried into each record appended after.
     journal_high: u64,
+    /// The highest proof clock a spend this process journaled judged on: the
+    /// live proof clock reads at or above it until an owner's clock recovery
+    /// lets it go (review #4484 Astra round 2-3). Never seeded from the
+    /// journal's records, and kept apart from `journal_high`, which bounds
+    /// damaged records and never falls while a record remains.
+    live_high: u64,
 }
 
 impl Nonces {
@@ -348,6 +354,7 @@ impl Nonces {
             Ok(()) => {
                 self.journal_len += JOURNAL_RECORD_LEN as u64;
                 self.journal_high = high;
+                self.live_high = self.live_high.max(proof_now);
                 true
             }
             Err(error) => {
@@ -664,6 +671,12 @@ impl SpentNonces {
         if nonces.fenced {
             return false;
         }
+        // A spend journaled since this proof was judged on `clock` took a
+        // later proof clock: the writer's path judges this one afresh
+        // (review #4484 Astra round 3 P1).
+        if nonces.live_high > clock.now {
+            return false;
+        }
         nonces.leave_before(now);
         // A writer's spend whose transaction is decided left its row, when it
         // committed, for the snapshot below, which is taken after.
@@ -708,7 +721,7 @@ impl SpentNonces {
     /// ([`super::request_now_in_txn`]). 0 off this set's own process.
     pub(super) fn proof_high(&self) -> u64 {
         if self.in_own_process() {
-            self.lock().journal_high
+            self.lock().live_high
         } else {
             0
         }
@@ -718,7 +731,7 @@ impl SpentNonces {
     /// clock recovery set it back to the wall ([`Vault::recover_proof_clock`]).
     pub(super) fn forget_proof_high(&self) {
         if self.in_own_process() {
-            self.lock().journal_high = 0;
+            self.lock().live_high = 0;
         }
     }
 
