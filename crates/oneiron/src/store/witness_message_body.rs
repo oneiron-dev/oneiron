@@ -380,3 +380,78 @@ fn encoded_metadata_len(metadata: &Value) -> Option<usize> {
     rmpv::encode::write_value(&mut encoded, metadata).ok()?;
     Some(encoded.len())
 }
+
+/// The REPLICATED MESSAGE door (ONE-1686): CLOSED, on the evidence.
+///
+/// # What the replicated door actually carries
+///
+/// A MESSAGE that arrives over sync reaches `batch::apply_put` with
+/// `replicated = true`, a `write_envelope` of `None`, a `WindowKey` that is a
+/// calendar month (`YYYY-MM`), and a CRDT map key that is the entity id. The
+/// body itself is the six-axis transcript envelope and carries no signature,
+/// no signer key and no actor ref. `crate::write_envelope::WriteEnvelope` —
+/// the type that carries `WriteActor` provenance into a write — appears
+/// nowhere in `crate::sync`, and nothing on the replay path reads the row's
+/// `AuthoredBy` edge (edges materialize in a LATER pass than entities, so it
+/// is not even present when the body lands).
+///
+/// The kinds that DO admit remote rows carry their own proof inside the body:
+/// an AUTHORITY_LOG entry names its signer and is folded against this vault's
+/// roster; a REDACTION_AUDIT receipt carries an Ed25519 attestation bound to a
+/// mirrored lease. A MESSAGE envelope has no such half. There is no verified
+/// source actor or peer at this door to bind remote authorship to.
+///
+/// # Why that means closed, not narrowed
+///
+/// `check_witness_message_ceiling` is the ONLY authorization for a MESSAGE
+/// row, and its subject is an ACTOR: which actor may author which bucket,
+/// against the policy snapshot the write commits under. With no actor there is
+/// no ceiling to run, and admitting the row anyway would make sync a second,
+/// weaker MESSAGE authorization path — a peer (including a foreign vault whose
+/// blob `sync::selector::admit_federated_entity_blob` copies through verbatim,
+/// MESSAGE having no pinned admission arm there) could mint transcript rows in
+/// this vault's own voice. Every author bucket therefore fails closed, with the
+/// bucket named so the quarantine row says which forgery was attempted:
+///
+/// * `system` — the ENGINE'S own voice, carrying no `AuthoredBy` edge at all;
+///   permitted locally only by an owner-authored, actor-bound `auto` ceiling
+///   that no replicated envelope can present.
+/// * `user`/`companion` — attributed rows whose local counterpart is bound to
+///   a store-verified actor entity by an `AuthoredBy` edge the writing door
+///   mints in the same transaction. Replicated, there is no actor to bind and
+///   nothing downstream could tell an honest row from a forged one.
+///
+/// This narrows exactly ONE entity kind's remote door. Every other kind
+/// converges unchanged, and a local MESSAGE row already in LMDB is skipped by
+/// the byte-identical short-circuit in `sync::window::forward_rematerialize`
+/// before it ever reaches this door, so a healthy vault replaying its own
+/// mirror is untouched.
+///
+/// A row whose put carries an own-device lane that vouches for it meets
+/// the gate's `validate_own_device_witness_message_body` instead (FIX 9600). This door
+/// stays every other replay's: federated, recovered, or from no proven sender.
+///
+/// # Errors
+///
+/// [`RecordError::InvalidWitnessMessageBody`](crate::error::RecordError::InvalidWitnessMessageBody), always. `sync::quarantine` classifies
+/// the kind as a remote-op rejection, so the row is quarantined with its
+/// payload and the window continues; nothing partial is written, because the
+/// refusal precedes every store mutation in `apply_put`.
+pub(crate) fn validate_replicated_witness_message_body(body: &[u8]) -> Result<()> {
+    // The envelope floor runs FIRST even though the verdict is refusal either
+    // way: the quarantine row keeps the rejection reason, and "a peer shipped
+    // bytes that are not a transcript row at all" is a different operational
+    // fact from "a peer shipped a well-formed row it has no authority to
+    // author". It also keeps the floor where it belongs if a future protocol
+    // revision ever does carry a verified source actor here.
+    Err(match validate_canonical_witness_message_body(body)? {
+        WitnessMessageBodyAuthor::System => Error::Record(RecordError::InvalidWitnessMessageBody(
+            "a replicated MESSAGE may not claim the unattributed system author",
+        )),
+        WitnessMessageBodyAuthor::User | WitnessMessageBodyAuthor::Companion => {
+            Error::Record(RecordError::InvalidWitnessMessageBody(
+                "a replicated MESSAGE carries no local actor binding for its author",
+            ))
+        }
+    })
+}

@@ -28,10 +28,12 @@ pub use crate::store::row_birth::{
     RoomEvidence, RoomEvidenceRef, RowBirth, WithheldKey, WithheldRef, WithheldRole,
 };
 
-pub(crate) use crate::store::birth_record::{
-    trigger_is_live_in_txn, run_exists, stamp_row_birth_in_txn, stamp_birth_if_absent_in_txn, stamp_replicated_row_birth_in_txn, row_birth_in_txn, rows_born_from_in_txn, erase_row_birth_in_txn,
-};
 use crate::store::birth_record::{BIRTH_BY_TRIGGER, ROW_BIRTH};
+pub(crate) use crate::store::birth_record::{
+    erase_row_birth_in_txn, row_birth_in_txn, rows_born_from_in_txn, run_exists,
+    stamp_birth_if_absent_in_txn, stamp_replicated_row_birth_in_txn, stamp_row_birth_in_txn,
+    trigger_is_live_in_txn,
+};
 
 /// Erasing `actor` (FIX 6074): every birth that names it as its process
 /// actor goes, with its born-from index row, in the erase's own transaction,

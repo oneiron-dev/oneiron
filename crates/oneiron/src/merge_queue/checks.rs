@@ -2,9 +2,9 @@
 use super::check_inputs::QueueCheckReceipt;
 use super::{BatchState, CheckInvocation, CheckPhase, CheckReport, MergeQueue, Quarantine};
 use crate::{
-    store::contract_oracle::{ContractOracle, ContractVerdict, invalid},
     error::{Error, Result},
     git_wire::lock_repository,
+    store::contract_oracle::{ContractOracle, ContractVerdict, invalid},
 };
 
 impl MergeQueue<'_> {

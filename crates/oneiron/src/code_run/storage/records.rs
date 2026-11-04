@@ -580,11 +580,7 @@ impl Vault {
     /// the occurrence the scan marked only.
     pub fn code_run_secret_lift_proposals(&self) -> Result<Vec<CodeRunSecretLiftProposal>> {
         let rtxn = self.store.env.read_txn()?;
-        RAW_OUTPUT_SECRETS
-            .scan(&self.store, &rtxn)?
-            .into_iter()
-            .map(|(key, detector_reason)| lift_proposal(&key, detector_reason))
-            .collect()
+        self.code_run_secret_lift_proposals_in_txn(&rtxn)
     }
 
     /// Marks `at`, the occurrence `output` is, with the secret scan's
@@ -646,7 +642,10 @@ impl Vault {
 }
 
 /// The lift proposal of the secret mark at `key`.
-fn lift_proposal(key: &str, detector_reason: String) -> Result<CodeRunSecretLiftProposal> {
+pub(super) fn lift_proposal(
+    key: &str,
+    detector_reason: String,
+) -> Result<CodeRunSecretLiftProposal> {
     let (handle, occurrence) = ResultOccurrence::parse_mark_key(key)?;
     Ok(CodeRunSecretLiftProposal {
         suggested_secret_name: format!(

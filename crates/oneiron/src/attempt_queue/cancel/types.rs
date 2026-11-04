@@ -10,6 +10,7 @@
 
 use crate::attempt_queue::validate::validate_cancel_actor;
 use crate::error::Result;
+pub use crate::store::attempt_cancel::ATTEMPT_RUNTIME_ACTOR;
 pub use crate::store::attempt_cancel::{
     AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelReceiptKind, AttemptCancelState,
     AttemptCancellation, AttemptLanding, AttemptLandingReserve, AttemptResumePoint, CancelMode,
@@ -38,13 +39,6 @@ pub const SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD: u32 = 3;
 /// Fraction of the lease timeout after which the runtime may WARN a worker to
 /// land. Distinct from expiry: the warning asks, expiry forces.
 pub const LEASE_LANDING_WARNING_PERCENT: u64 = 80;
-
-/// Actor token reserved for runtime-authored rows.
-///
-/// Worker- and peer-facing cancel doors refuse it, so a worker cannot author a
-/// row that reads as if the runtime wrote it. It matches the run-tree
-/// projection's runtime actor so both surfaces name the runtime identically.
-pub const ATTEMPT_RUNTIME_ACTOR: &str = "runtime";
 
 impl LandingTrigger {
     /// Stable wire/render token.

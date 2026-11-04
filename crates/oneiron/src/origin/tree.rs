@@ -1,8 +1,8 @@
 //! Byte-preserving projection of complete Git trees. No worktree IO or ref writes.
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
-use crate::store::scan_count::ScanCount;
 use crate::store::EngineScan;
+use crate::store::scan_count::ScanCount;
 use std::collections::BTreeMap;
 
 /// One file's bytes a tree read holds in memory: a machine floor.

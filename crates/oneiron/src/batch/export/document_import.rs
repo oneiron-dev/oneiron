@@ -898,8 +898,12 @@ fn withhold_unborn_projects<R: Read + Seek>(
             .map(|at| EntityAt::decode(&at))
             .transpose()?
             .is_some_and(|at| at.entity_type == project_kind)
-            && crate::gate::project_depth::birth_for_project(&vault.store, txn, id)?.is_none()
-            && !crate::gate::project_depth::implicit_birth_applies(
+            && vault
+                .store
+                .gate_hooks
+                .birth_for_project(&vault.store, txn, id)?
+                .is_none()
+            && !vault.store.gate_hooks.implicit_birth_applies(
                 &vault.store,
                 txn,
                 vault.privacy_posture(),

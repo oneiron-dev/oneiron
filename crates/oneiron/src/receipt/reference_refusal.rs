@@ -40,8 +40,8 @@ use crate::error::Result;
 use crate::receipt::RefusalReason;
 use crate::write_envelope::WriteActor;
 
-pub(crate) use crate::store::reference_refusal::{ReferenceOutcome, ReferenceRefusalFacts};
 use crate::store::reference_refusal::receipt_id;
+pub(crate) use crate::store::reference_refusal::{ReferenceOutcome, ReferenceRefusalFacts};
 pub(super) use crate::store::reference_refusal::{binds, reference_refusal_receipt};
 
 /// Receipts each of `refusals`, `memory`'s writer's, as its own

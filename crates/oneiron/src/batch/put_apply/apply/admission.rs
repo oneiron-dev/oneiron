@@ -123,7 +123,8 @@ pub(super) fn admit_put<'a>(
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact
     // and is diagnosed fail-closed by the policy resolver, never defaulted away.
-    let normalized_policy = super::super::put_staging::normalized_policy_scope(entity_type, data);
+    let normalized_policy =
+        super::super::put_staging::normalized_policy_scope(store, entity_type, data);
     let data = normalized_policy.as_deref().unwrap_or(data);
     let project = stage_project_put(store, wtxn, id, entity_type, data, replicated, posture)?;
     let data = project.as_deref().unwrap_or(data);

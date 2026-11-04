@@ -170,7 +170,8 @@ pub struct Vault {
         std::sync::Mutex<std::collections::BTreeMap<crate::EntityId, Vec<crate::EntityId>>>,
     /// The backoff of each critical confirm whose timeout demotion keeps
     /// failing (FIX 12079). In memory only: a reopened vault tries each at once.
-    pub(crate) confirm_demotion_retries: crate::gate::ConfirmDemotionRetries,
+    pub(crate) confirm_demotion_retries:
+        oneiron_store::critical_confirm_retry::ConfirmDemotionRetries,
     /// The host's USD quote for launch statements (OF-532), installed once
     /// by [`Vault::install_launch_usd_prices`]. Empty: dollars are unknown.
     pub(crate) launch_usd_prices:

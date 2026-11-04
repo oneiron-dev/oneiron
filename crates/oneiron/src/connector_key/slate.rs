@@ -902,6 +902,43 @@ pub(in crate::connector_key) fn put_slate_in_txn(
     GRANT_SLATE.put(store, txn, &id, slate)
 }
 
+/// This table's actor scrub (FIX 9231 sibling): an erase of `actor` drops
+/// every holder row narrow and the holder facet narrow it stamped, in the
+/// erase's writer. Same drop, same reason as the overlay table: a narrow
+/// without its holder is meaningless.
+pub(crate) fn erase_grant_slate_holder_narrows_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let holder = actor.to_hex();
+    for (slate_id, mut slate) in GRANT_SLATE.scan(&vault.store, wtxn)? {
+        let mut changed = false;
+        for row in &mut slate.rows {
+            if row
+                .holder_narrow
+                .as_ref()
+                .is_some_and(|narrow| narrow.actor == holder)
+            {
+                row.holder_narrow = None;
+                changed = true;
+            }
+        }
+        if slate
+            .holder_facet_narrow
+            .as_ref()
+            .is_some_and(|narrow| narrow.actor == holder)
+        {
+            slate.holder_facet_narrow = None;
+            changed = true;
+        }
+        if changed {
+            GRANT_SLATE.put(&vault.store, wtxn, &slate_id, &slate)?;
+        }
+    }
+    Ok(())
+}
+
 impl Vault {
     /// Persists the typed admission artifact. Free text, partial rows, duplicate
     /// tools, and owner columns in the draft all fail before the first write.
