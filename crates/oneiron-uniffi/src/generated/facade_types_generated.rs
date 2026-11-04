@@ -53846,6 +53846,8 @@ pub enum FatalLlmError {
     LabelRead(LabelReadFailure),
     #[serde(rename = "ResponseErased")]
     ResponseErased,
+    #[serde(rename = "JobLost")]
+    JobLost,
 }
 
 /// `oneiron_model::llm::error::BudgetDenied`.
