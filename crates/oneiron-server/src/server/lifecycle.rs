@@ -106,6 +106,29 @@ pub(super) struct LifecycleJobKey {
 }
 
 impl SyncServer {
+    /// Both triggers use the same host admission and shutdown-held passes.
+    fn start_shared_leave_checks(&self, admit: &HousekeepingAdmission, requested_only: bool) {
+        if !self.housekeeping_passes.stopping()
+            && let Some(registry) = self.shared_envs.get()
+            && let Some(admission) = admit()
+        {
+            let now = unix_seconds_now();
+            let checks = if requested_only {
+                registry.requested_leave_checks(now)
+            } else {
+                registry.leave_check_round(now)
+            };
+            if !checks.is_empty() {
+                self.housekeeping_passes.hold(tokio::spawn(async move {
+                    let _admission = admission;
+                    for check in checks {
+                        let _ = check.await;
+                    }
+                }));
+            }
+        }
+    }
+
     // ─── Device-lease registry (ONE-1140, OD-3) ──────────────────────────
 
     /// Starts the periodic lifecycle loop. Each tick, the first at once,
@@ -139,6 +162,15 @@ impl SyncServer {
                 // the tick.
                 let woken = tokio::select! {
                     _ = interval.tick() => false,
+                    () = async {
+                        match server.shared_envs.get() {
+                            Some(registry) => registry.leave_check_requested().await,
+                            None => std::future::pending::<()>().await,
+                        }
+                    } => {
+                        server.start_shared_leave_checks(&admit, true);
+                        continue;
+                    }
                     () = server.vault().origin_mirror_wake().notified() => true,
                     // A committed queue write wakes the merge queue checker
                     // alone (FIX 6868, G2 PR2), on its own wake, never on
@@ -158,23 +190,7 @@ impl SyncServer {
                 // neither holds back the next tick's lease expiry, nor one
                 // the other.
                 server.start_housekeeping_pass(&admit).await;
-                // Leave checks use the existing public engine door, but their
-                // writes are host work too: acquire the same admission before
-                // spawning any and hold it until the whole round finishes.
-                if !server.housekeeping_passes.stopping()
-                    && let Some(registry) = server.shared_envs.get()
-                    && let Some(admission) = admit()
-                {
-                    let checks = registry.leave_check_round(unix_seconds_now());
-                    if !checks.is_empty() {
-                        server.housekeeping_passes.hold(tokio::spawn(async move {
-                            let _admission = admission;
-                            for check in checks {
-                                let _ = check.await;
-                            }
-                        }));
-                    }
-                }
+                server.start_shared_leave_checks(&admit, false);
                 if Instant::now() >= repositories_due
                     && server.start_repository_maintenance(&admit).await
                 {
