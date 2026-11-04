@@ -263,6 +263,16 @@ you want to act as instead.
 | `handle.vault.recall(query, opts?)` | `MemoryPack` |
 | `handle.vault.receipts(limit?, kinds?)` | `FacadeReceipt[]`: the gate decision ledger, or the receipts of the named kinds (`gate`, `hook`, `outbound`, ...) |
 
+Witness-read grants (`vault.connectors.read_grants.grant` and `.revoke`)
+keep earlier lifecycle generations. For kind `scoped_read`, `vault.receipts`
+projects a created receipt for each stored generation and a revoked receipt
+only when that generation was revoked. Witness receipt IDs are
+`scoped_read:<grant-hex>:v<generation-hex>:created` or `...:revoked`, with
+trigger `access_grant:<grant-hex>`; an ID stays the same when its generation
+becomes historical. This is unsigned audit metadata, not grant authority or
+proof of the owner's act. Erasure clears this history. Other receipt IDs and
+verbs are unchanged.
+
 `lensFrameEvent` and `closeLensFrame` are the two lens-card routes outside the
 facade (OF-181), not verbs. A card's frame lives only on the served host
 that rendered it (`vault.lenses.default`), so render the lens through a
