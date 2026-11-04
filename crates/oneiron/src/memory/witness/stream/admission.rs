@@ -16,6 +16,8 @@ use crate::memory::support::verify_actor_binding_in_txn;
 use crate::memory::{MemoryResult, WitnessReceipt, WitnessTurn, resolve_entity_ref};
 use crate::write_envelope::WriteActor;
 
+pub(super) mod parts;
+
 impl Memory<'_> {
     /// Whole-message atomic path: the existing witness ceiling, canonical bytes,
     /// topology, indexes and write receipt, with no stream state.

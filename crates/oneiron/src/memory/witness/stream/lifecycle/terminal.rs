@@ -128,18 +128,11 @@ fn terminal_write(
     // The created records the judged set does not prove, receipted once
     // the terminal lands (FIX 11034).
     let unproven = std::cell::Cell::new(Vec::new());
-    // A continuation never re-encodes its MESSAGE's envelope, so the stored
-    // birth parts survive with no write here and the terminal's parts argument
-    // is new-MESSAGE-only. Appending new parts on Continue is a separate,
-    // unsettled seam; no caller supplies them on a continuation.
-    debug_assert!(
-        parts.is_none() || !seed.continuation,
-        "a continuation terminal takes no new parts yet"
-    );
     let written: MessageStreamResult<()> = if seed.continuation {
         write_continuation_terminal(
             vault,
             state,
+            parts.as_deref(),
             assertions,
             gate,
             callback,

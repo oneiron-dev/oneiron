@@ -90,11 +90,11 @@ impl Memory<'_> {
     /// and gate semantics, with `parts` carried transiently into the new
     /// MESSAGE as birth facts. The witnessed text stays what the caller
     /// already saved through the stream; parts never enter the checkpoint,
-    /// the receipt, metadata or any other row, and Partial lands the same
-    /// ordered parts as Final. New-MESSAGE birth only: a continuation keeps
-    /// its stored birth parts, and appending new parts on Continue is a
-    /// separate, unsettled seam, so continuation streams keep the existing
-    /// finalizer. Internal until the server call-site wiring lands.
+    /// the receipt, metadata or any other row. On a continuation, `parts`
+    /// is only this generation's suffix: the stored prefix stays verbatim,
+    /// and the same writer appends the suffix with its text. An empty suffix
+    /// leaves today's text-only continuation unchanged. Internal until the
+    /// parts admission and server call-site wiring land.
     pub(crate) fn finalize_model_stream_parts_if(
         &self,
         handle: MessageStreamHandle,
@@ -103,13 +103,7 @@ impl Memory<'_> {
         assertions: &WitnessAssertions,
         admit: impl Fn(&heed::RwTxn<'_>) -> bool,
     ) -> MessageStreamResult<MessageStreamReceipt> {
-        self.finalize_model_stream_with_parts(
-            handle,
-            Some(parts),
-            finish_reason,
-            assertions,
-            admit,
-        )
+        self.finalize_model_stream_with_parts(handle, Some(parts), finish_reason, assertions, admit)
     }
 
     fn finalize_model_stream_with_parts(
