@@ -364,7 +364,7 @@ side_tables! {
         => crate::code_run::erase_type_diagnostics_actor_in_txn;
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
     /// id16(wait) + be64(generation).
-    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored [accepts: crate::code_run::code_run_wait_delivery_accepts_masked];
+    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored [accepts: crate::store::executor_wait_delivery::code_run_wait_delivery_accepts_masked];
     /// Who held each code-run wait's reply (FIX 5718): one row per run delivered a reply of the
     /// wait, at the generation it parked, naming the actor its run's replies are, or Erased once
     /// that actor's erase took them. It outlives the wait's waiter and delivery rows. The capsule

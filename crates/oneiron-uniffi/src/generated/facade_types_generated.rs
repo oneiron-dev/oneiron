@@ -7481,7 +7481,7 @@ pub struct BillingAccountFiling {
     pub account: String,
 }
 
-/// `oneiron::llm::run_admission::person_billing::FiledBillingAccount`.
+/// `oneiron::store::person_billing_account::FiledBillingAccount`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct FiledBillingAccount {
@@ -12001,7 +12001,7 @@ pub struct ScopedExport {
     pub records: Vec<ScopedExportRecord>,
 }
 
-/// `oneiron::store::embedding::InputKind`.
+/// `oneiron_store::embedding_vocabulary::InputKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum InputKind {
     #[serde(rename = "text")]
@@ -17852,7 +17852,7 @@ pub enum HookActorClass {
     System,
 }
 
-/// `oneiron::skill_hub::pack_catalog::hooks::HookPhase`.
+/// `oneiron::store::pack_hook_proposal::HookPhase`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum HookPhase {
     #[serde(rename = "pre")]
@@ -17863,7 +17863,7 @@ pub enum HookPhase {
     Fact,
 }
 
-/// `oneiron::skill_hub::pack_catalog::hooks::HookOutcomeKind`.
+/// `oneiron::store::pack_hook_proposal::HookOutcomeKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum HookOutcomeKind {
     #[serde(rename = "continue")]
@@ -17890,7 +17890,7 @@ pub enum HookOutcomeKind {
     Nothing,
 }
 
-/// `oneiron::skill_hub::pack_catalog::hooks::HookRenderClass`.
+/// `oneiron::store::pack_hook_proposal::HookRenderClass`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum HookRenderClass {
     #[serde(rename = "deterministic_eager")]
@@ -17899,7 +17899,7 @@ pub enum HookRenderClass {
     Generative,
 }
 
-/// `oneiron::skill_hub::pack_catalog::hooks::HookSelector`.
+/// `oneiron::store::pack_hook_proposal::HookSelector`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HookSelector {
@@ -51977,7 +51977,7 @@ pub struct PositiveRetireReceipt {
     pub retired: bool,
 }
 
-/// `oneiron::llm::step::public::ModelStepRetryPolicy`.
+/// `oneiron::store::model_step_submission::ModelStepRetryPolicy`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ModelStepRetryPolicy {
@@ -51985,7 +51985,7 @@ pub struct ModelStepRetryPolicy {
     pub max_attempts: u8,
 }
 
-/// `oneiron::llm::step::public::ModelStepSubmit`.
+/// `oneiron::store::model_step_submission::ModelStepSubmit`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ModelStepSubmit {
@@ -52022,6 +52022,8 @@ pub enum LlmCapability {
     ReasoningContentHistory,
     #[serde(rename = "token_logprobs")]
     TokenLogprobs,
+    #[serde(rename = "reasoning_summary")]
+    ReasoningSummary,
 }
 
 /// `oneiron_model::llm::error::UnsupportedCapability`.
@@ -52074,7 +52076,7 @@ pub enum FatalLlmError {
     JobLost,
 }
 
-/// `oneiron::llm::step::public::ModelStepFailureClass`.
+/// `oneiron::store::model_step_submission::ModelStepFailureClass`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ModelStepFailureClass {
     #[serde(rename = "retryable")]
@@ -52199,7 +52201,7 @@ pub enum LlmError {
     BudgetDenied(BudgetDenied),
 }
 
-/// `oneiron::llm::step::public::ModelStepFailure`.
+/// `oneiron::store::model_step_submission::ModelStepFailure`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ModelStepFailure {
     #[serde(rename = "class")]
@@ -52224,7 +52226,7 @@ pub struct ModelStepFailure {
     pub spent_usage: Option<LlmUsage>,
 }
 
-/// `oneiron::llm::step::public::ModelStepResult`.
+/// `oneiron::store::model_step_submission::ModelStepResult`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "status")]
 pub enum ModelStepResult {
@@ -53502,7 +53504,7 @@ pub enum AnonymousChatResponse {
     },
 }
 
-/// `oneiron::llm::registry::ModelWireFormat`.
+/// `oneiron::store::model_description_rows::ModelWireFormat`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ModelWireFormat {
     #[serde(rename = "openai-compat")]

@@ -637,6 +637,7 @@ pub(super) fn contract_context_pack_record(
     case: &FixtureCase,
     competitor: &CompetitorConfig,
     arm_report: &ArmReport,
+    secret_scan: &str,
 ) -> BeamResult<Option<ContextPackContractRecord>> {
     if manifest.outputs.is_none() || !competitor.arm.is_completed() {
         return Ok(None);
@@ -697,6 +698,7 @@ pub(super) fn contract_context_pack_record(
             contexts,
         },
         gold: record.gold.clone(),
+        secret_scan: secret_scan.to_owned(),
     }))
 }
 pub(super) fn contract_output_arm(record: &RunContractRecord, arm: ArmKind) -> ContractArm {

@@ -301,6 +301,7 @@ pub(crate) fn prune(
     // A standing hold keeps them all; the exclusion below reads it again. So
     // does a held prune (FIX 6705).
     if plan.prune_held || vault.legal_hold_keeps_backups()? {
+        payload_retention::settle(vault, plan, &[], Vec::new());
         return Ok(Vec::new());
     }
     checkpoint_fact::sweep(vault, plan);
@@ -380,6 +381,7 @@ pub(crate) fn prune(
     })?;
     // A standing hold keeps them all, acked or not.
     let Some(pruned) = pruned else {
+        payload_retention::settle(vault, plan, &[], Vec::new());
         return Ok(Vec::new());
     };
     handoff::check_backlog(vault, &plan.backlog_checked, &pending);
@@ -407,6 +409,7 @@ pub(crate) fn prune_deleted_vault_backups(
         return Ok(None);
     }
     if vault.legal_hold_keeps_backups()? {
+        payload_retention::settle(vault, plan, &[], Vec::new());
         return Ok(Some(Vec::new()));
     }
     let records = list(plan)?;
