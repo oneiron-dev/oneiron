@@ -140,6 +140,7 @@ impl ReviewDecisions<'_> {
     pub(super) fn review(
         &self,
         inputs: &[CriticReviewInput],
+        review_key: &[u8; 32],
         at: u64,
     ) -> Result<(Vec<CritiqueArtifact>, Vec<DecisionReceipt>)> {
         let mut findings = Vec::with_capacity(inputs.len());
@@ -173,10 +174,11 @@ impl ReviewDecisions<'_> {
                 &input.axis,
             ))
             .map_err(|_| invalid_critic_config("review artifact identity"))?;
-            // A project's review is its own artifact (FIX 6038); a vault
-            // review keeps the identity it has always had.
+            // The review key binds the exact catalogue and wording; project
+            // scope also stays explicit in each artifact (FIX 6038).
             let mut hasher = blake3::Hasher::new();
             hasher.update(&identity);
+            hasher.update(review_key);
             if let Some(project) = input.project {
                 hasher.update(project.as_bytes());
             }
