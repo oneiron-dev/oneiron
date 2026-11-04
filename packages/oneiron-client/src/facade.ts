@@ -1071,7 +1071,7 @@ export interface FacadeInputs {
   "vault.consolidation.enqueue": Facade.ConsolidationEnqueueRequest;
   "vault.consolidation.status": Facade.ConsolidationStatusRequest;
   "vault.consolidation.wake.status": Facade.ConsolidationWakeStatusRequest;
-  "vault.runs.step": unknown;
+  "vault.runs.step": Facade.SettledStepRequest;
   "vault.runs.checkpoint": Facade.CheckpointReadRequest;
   "vault.turn_programs.admission": Facade.TurnProgramAdmissionRequest;
   "vault.runs.program": Facade.ProgramRunRequest;
@@ -2294,7 +2294,7 @@ export interface FacadeResults {
   "vault.consolidation.enqueue": Facade.DreamerAttemptRef;
   "vault.consolidation.status": Facade.DreamerAttemptView | null;
   "vault.consolidation.wake.status": Facade.DreamerWakeView | null;
-  "vault.runs.step": unknown | null;
+  "vault.runs.step": Facade.SettledStepView | null;
   "vault.runs.checkpoint": Facade.CheckpointView | null;
   "vault.turn_programs.admission": Facade.TurnProgramAdmissionView | null;
   "vault.runs.program": Facade.ProgramRunView | null;
@@ -5816,7 +5816,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         /** Resumes one paused branch of a run by its attempt id: the vault owner resumes any branch, any other caller only a branch of a TASK it owns. A repeat answers already_resumed. */
         resume: (input: Facade.RunControlRequest, options?: O): FacadeReturns<"vault.runs.resume">[K] => invoke("vault.runs.resume", input, options, newInvocation()),
         /** Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work. */
-        step: (input: unknown, options?: O): FacadeReturns<"vault.runs.step">[K] => invoke("vault.runs.step", input, options, newInvocation()),
+        step: (input: Facade.SettledStepRequest, options?: O): FacadeReturns<"vault.runs.step">[K] => invoke("vault.runs.step", input, options, newInvocation()),
         /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
         checkpoint: (input: Facade.CheckpointReadRequest, options?: O): FacadeReturns<"vault.runs.checkpoint">[K] => invoke("vault.runs.checkpoint", input, options, newInvocation()),
         /** Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it. */

@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1220 facade rows, 4421 declarations.
-Inputs: 1146 of 1220 fully typed, 71 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read
-Results: 1045 of 1220 fully typed, 159 typed down to an opaque serde_json::Value leaf, 16 with a shape the generator could not read
-Opaque serde_json::Value leaves: 122; unread shapes: 6.
+Census: 1220 facade rows, 4427 declarations.
+Inputs: 1148 of 1220 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1054 of 1220 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -6614,12 +6614,17 @@ class SlimResumeStepRequestOutboundIntent(TypedDict):
     kind: Literal["outbound_intent"]
     intent_id: str
 SlimResumeStepRequest = SlimResumeStepRequestModel | SlimResumeStepRequestOutboundIntent
+StepProgression = Literal["started", "response_received", "logged", "finished"]
+class ModelStepCheckpoint(TypedDict):
+    progression: StepProgression
+    updated_ms: NotRequired[int | None]
+    claim_ref: NotRequired[str | None]
 SavedIntentState = Literal["pending", "done", "abandoned", "deferred"]
 class SavedResumeStepModel(TypedDict):
     kind: Literal["model"]
     attempt_id: str
     step_hash: str
-    checkpoint: Any
+    checkpoint: ModelStepCheckpoint
 class SavedResumeStepOutboundIntent(TypedDict):
     kind: Literal["outbound_intent"]
     step: SlimResumeStep
@@ -9884,12 +9889,15 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     delete: NotRequired[list[str]]
     hold: NotRequired[list[str]]
     reply_to: NotRequired[str | None]
+class VectorEvidenceFloors(TypedDict):
+    floor: float
+    strong: float
 class EmbeddingSpace(TypedDict):
     id: str
     dimensions: int
     accepts: list[InputKind]
     query_towers: list[InputKind]
-    evidence: NotRequired[Any | None]
+    evidence: NotRequired[VectorEvidenceFloors | None]
 class SpaceRefDeclared(TypedDict):
     declared: str
 SpaceRef = Literal["text_index"] | SpaceRefDeclared
@@ -16447,7 +16455,7 @@ class ModelStepReceipt(TypedDict):
     step_hash: str
     model: ModelId
     retry: ModelStepRetryPolicy
-    progression: NotRequired[Any | None]
+    progression: NotRequired[StepProgression | None]
     result: NotRequired[ModelStepResult | None]
 class ModelStepReceiptRequest(TypedDict):
     step_key: str
@@ -17365,13 +17373,14 @@ class AiVerdict(TypedDict):
 class GraphAskSelection(TypedDict):
     entity_type: int
     limit: int
+HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
 class GraphAskRequest(TypedDict):
     question: DecisionQuestion
     units: NotRequired[list[EntityId]]
     select: NotRequired[GraphAskSelection | None]
     ceiling: NotRequired[DecisionRung | None]
     unit_deadline_ms: NotRequired[int | None]
-    posture: NotRequired[str | None]
+    posture: NotRequired[HostingPrivacyPosture | None]
     criteria: NotRequired[QuestionCriteria[str] | None]
 SourceConflict = Literal["facet", "project", "world", "relationship", "scope_term", "principal", "unrepresentable"]
 class OmittedNeighbor(TypedDict):
@@ -17435,14 +17444,14 @@ class QuestionDefinition(TypedDict, Generic[Q]):
     binding: NotRequired[OutcomeBinding | None]
     criteria: NotRequired[QuestionCriteria[str]]
     audience: NotRequired[QuestionAudience]
-    posture: NotRequired[Any | None]
+    posture: NotRequired[HostingPrivacyPosture | None]
     media: NotRequired[QuestionMedia]
     deadline_ms: NotRequired[int | None]
     artifacts: NotRequired[list[ArtifactUnits]]
 DecisionQuestionInput = TypedDict("DecisionQuestionInput", {"text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 QuestionDefinitionInput = QuestionDefinition[DecisionQuestionInput]
 class QuestionCreateRequest(TypedDict):
-    definition: Any
+    definition: QuestionDefinitionInput
 QuestionAskerClass = Literal["human", "agent", "system"]
 class FrozenReadLane(TypedDict):
     credential: NotRequired[list[int] | None]
@@ -20171,6 +20180,18 @@ class DreamerWakeView(TypedDict):
     calls: NotRequired[list[DreamerWakeCallView]]
     next_cursor: NotRequired[str | None]
     live: NotRequired[DreamerWakeLiveView | None]
+class SettledStepRequest(TypedDict):
+    job_ref: str
+    step_hash: str
+class SettledStepView(TypedDict):
+    job_ref: str
+    run_id: NotRequired[str | None]
+    claim_ref: str
+    step_hash: str
+    model: ModelId
+    purpose: str
+    params_hash: str
+    response: LlmResponse
 class CheckpointReadRequest(TypedDict):
     run_ref: str
     from_step: NotRequired[int]
@@ -20330,7 +20351,7 @@ class SettledProgramStepView(TypedDict):
     result_digest: str
     result_ref: NotRequired[str | None]
     availability: ProgramResultAvailability
-    model_step: NotRequired[Any | None]
+    model_step: NotRequired[SettledStepView | None]
     body_base64: NotRequired[str | None]
 class ProgramCheckpointRequest(TypedDict):
     root: str
