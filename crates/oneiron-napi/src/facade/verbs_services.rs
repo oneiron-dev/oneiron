@@ -197,10 +197,9 @@ impl ActorScopedVault {
     }
 
     /// BM25 text query over the engine index, with the read's receipt. The
-    /// standard N-API query (8 KiB) and result (1,000) caps apply.
+    /// standard N-API result (1,000) cap applies.
     #[napi]
     pub fn query_bm25(&self, query: String, limit: u32) -> napi::Result<NapiLexicalHits> {
-        crate::validate_query_len(&query).map_err(caller_input_error)?;
         let limit = crate::parse_search_limit(limit).map_err(caller_input_error)?;
         let memory = self.facade()?;
         let hits = typed_row(
@@ -290,7 +289,6 @@ impl ActorScopedVault {
         token_budget: Option<f64>,
         reader_agent_ref: Option<String>,
     ) -> napi::Result<NapiMemoryPack> {
-        crate::validate_query_len(&query).map_err(caller_input_error)?;
         let limit = crate::parse_search_limit(limit).map_err(caller_input_error)?;
         let effort = RecallEffort::parse(&effort).ok_or_else(|| {
             caller_input_error(format!(

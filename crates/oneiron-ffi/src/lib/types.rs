@@ -6,8 +6,6 @@ use oneiron::{EdgeActorClass, EntityId, Memory, Vault};
 
 pub(super) const DEFAULT_FFI_SEARCH_LIMIT: u32 = 10;
 
-pub(super) const MAX_FFI_QUERY_BYTES: usize = 8 * 1024;
-
 pub(super) const MAX_FFI_DIMENSIONS: usize = 16_384;
 
 pub(super) const ENTITY_ID_LEN: usize = 16;
