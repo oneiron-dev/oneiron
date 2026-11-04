@@ -287,6 +287,11 @@ pub(crate) fn skill_library_view(
             return Err(MemoryError::bad_request("cyclic skill fork ancestry"));
         }
         let provenance = crate::msgpack_value_to_json(&child.provenance);
+        let (parent_document, parent_frontier) =
+            crate::write_envelope::skill_record::fork_parent_pin(&child)?
+                .map_or((None, None), |(document, frontier)| {
+                    (Some(document), Some(frontier))
+                });
         let parent_record = vault.get_skill_record(&parent)?;
         lineage.push(SkillForkLineage {
             parent,
@@ -294,9 +299,8 @@ pub(crate) fn skill_library_view(
                 .get("forkOfVersion")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned),
-            // The existing fork law retains a row/version, not a document pin.
-            parent_document: None,
-            parent_frontier: None,
+            parent_document,
+            parent_frontier,
             parent_available: parent_record.is_some(),
             hub_sources: vault.skill_hub_sources(&parent)?,
         });

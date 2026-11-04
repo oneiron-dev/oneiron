@@ -112,6 +112,32 @@ pub(crate) fn source_frontier_in_txn(
     Ok(Some(pin))
 }
 
+/// Capture the actual document and oplog frontier in the caller's snapshot.
+/// Unmigrated rows and builds without document materialization retain no pin.
+pub(crate) fn source_document_pin_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &crate::EntityId,
+) -> crate::Result<Option<(crate::EntityId, Vec<u8>)>> {
+    #[cfg(feature = "sync")]
+    {
+        if !storage::has_record_head(store, txn, entity)? {
+            return Ok(None);
+        }
+        let head = storage::head(store, txn, entity)?;
+        let doc = storage::load(store, txn, &head)?;
+        Ok(Some((
+            crate::EntityId::from_hex(&head.document)?,
+            doc.frontier(),
+        )))
+    }
+    #[cfg(not(feature = "sync"))]
+    {
+        let _ = (store, txn, entity);
+        Ok(None)
+    }
+}
+
 /// Resolve an active document's incarnation id in a caller-owned
 /// transaction, reading only its head row. An unmigrated row has none.
 pub(crate) fn source_incarnation_in_txn(
