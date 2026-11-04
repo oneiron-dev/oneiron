@@ -30,10 +30,11 @@ use crate::agent_dispatch::workflow_record::is_wrapper;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::claim::{ScopedRead, ScopedReadActorKey, decode_claim_body};
 use crate::context_projection::ResolvedContextProjection;
-use crate::dreamer_runner::decode_dreamer_attempt_payload;
+use crate::dreamer_runner::{DreamerTurnRole, decode_dreamer_attempt_payload, dreamer_turn_role};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_USER};
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::scan_check::{EngineScan, ScanCount};
@@ -203,6 +204,11 @@ impl RenderedWorkflowStepContext {
         let Some(speaker) = turn_field(&entries, TURN_SPEAKER_KEYS) else {
             return Ok(false);
         };
+        let bucket = match dreamer_turn_role(Some(speaker), &vault.config.assistant_display_names) {
+            DreamerTurnRole::User => WITNESS_AUTHOR_USER,
+            DreamerTurnRole::Assistant => WITNESS_AUTHOR_COMPANION,
+            _ => return Ok(false),
+        };
         let ids = vault.filtered_edge_peers(
             txn,
             EdgeDirection::In,
@@ -219,7 +225,7 @@ impl RenderedWorkflowStepContext {
             let Some(message) = decode_message(&bytes) else {
                 continue;
             };
-            if message.is_visible && message.author != "system" && message.author == speaker {
+            if message.is_visible && message.author == bucket {
                 visible.push((message.order, child, message.content, bytes));
             }
         }
