@@ -271,6 +271,10 @@ pub struct StoreCore {
     /// The engine's attempt queue operations, supplied by the open door with
     /// the delete guards.
     pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
+    /// The engine's voice bank response operations, supplied by the open door with
+    /// the delete guards.
+    #[cfg(unix)]
+    pub(crate) voice_bank_response: &'static dyn crate::store::StoreVoiceBankResponse,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,

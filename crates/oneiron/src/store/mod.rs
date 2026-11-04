@@ -178,6 +178,10 @@ mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
 pub(crate) mod attempt_operations;
 pub(crate) use attempt_operations::StoreAttemptOperations;
+#[cfg(unix)]
+pub(crate) mod voice_bank_response;
+#[cfg(unix)]
+pub(crate) use voice_bank_response::StoreVoiceBankResponse;
 pub(crate) mod actor_scrubs;
 pub use actor_scrubs::StoreActorScrubs;
 pub(crate) mod critical_confirm_record;

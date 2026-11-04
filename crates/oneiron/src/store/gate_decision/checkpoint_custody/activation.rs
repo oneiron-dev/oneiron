@@ -290,7 +290,14 @@ impl Store {
             let Some(family) = ResponseFamily::of_row(db, key, &value) else {
                 continue;
             };
-            let Some((carriage, _)) = family.scan(self.attempt_operations, key, &value).carriage()
+            let Some((carriage, _)) = family
+                .scan(
+                    self.attempt_operations,
+                    self.voice_bank_response,
+                    key,
+                    &value,
+                )
+                .carriage()
             else {
                 continue;
             };
