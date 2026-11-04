@@ -1,6 +1,6 @@
 //! Attribute/ESS binding and frozen signature-suite verification gates.
 
-use der::{Decode, Encode};
+use der::{Decode, referenced::OwnedToRef};
 
 use crate::api::{Sha256Digest, SignatureAlgorithm};
 use crate::error::{FatalCode, SealError, SealStage};
@@ -178,11 +178,7 @@ pub(crate) fn verify_signature_value(
     let digest = sha256(signing_input);
     let ok = match alg {
         SignatureAlgorithm::RsaPkcs1v15Sha256 => {
-            use rsa::pkcs8::DecodePublicKey;
-            let key = rsa::RsaPublicKey::from_public_key_der(
-                spki.to_der().map_err(|_| cms_err())?.as_slice(),
-            )
-            .map_err(|_| cms_err())?;
+            let key = rsa::RsaPublicKey::try_from(spki.owned_to_ref()).map_err(|_| cms_err())?;
             let scheme = rsa::Pkcs1v15Sign::new::<sha2::Sha256>();
             key.verify(scheme, &digest, signature).is_ok()
         }

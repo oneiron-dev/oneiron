@@ -20,36 +20,15 @@
 //! a wake.
 
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, PoisonError};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-/// The wake cell one vault handle owns. In memory only.
-#[derive(Debug, Default)]
-pub(crate) struct ClaimVadPayment {
-    wake: tokio::sync::Notify,
-    /// The claims the door handed over, in the order it handed them.
-    handed: Mutex<Vec<EntityId>>,
-    /// How many attached workers wait on the wake now.
-    workers: Arc<AtomicUsize>,
-}
-
-/// A host's claim VAD payment worker, attached to one vault until this is
-/// dropped ([`Vault::attach_claim_vad_payment_worker`]).
-#[derive(Debug)]
-#[must_use = "dropping it detaches the worker"]
-pub struct ClaimVadPaymentWorker {
-    workers: Arc<AtomicUsize>,
-}
-
-impl Drop for ClaimVadPaymentWorker {
-    fn drop(&mut self) {
-        self.workers.fetch_sub(1, Ordering::AcqRel);
-    }
-}
+pub(crate) use crate::store::claim_vad_payment::ClaimVadPayment;
+pub use crate::store::claim_vad_payment::ClaimVadPaymentWorker;
 
 impl Vault {
     /// What an attached worker waits on: a run of

@@ -235,7 +235,7 @@ impl Vault {
         let repair_receipt = self.store.clock.entity_id()?;
         let request_id = uuid::Uuid::from_bytes(self.store.clock.ulid()?).to_string();
         let recorded_at = self.store.clock.now_recorded_at();
-        let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
+        let identity = crate::store::install_identity::ensure_device_identity_in_txn(self, wtxn)?;
         let event = encode_corrupt_claim_repair_event(
             id,
             header.learned_at,
