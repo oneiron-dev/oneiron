@@ -150,6 +150,8 @@ impl Vault {
             crate::embed::erase_probe_sources_in_txn(self, wtxn, id)?;
         }
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
+        // Canonical blob reference must release while current body descriptor is still present.
+        crate::memory::release_asset_blob_in_txn(&self.store, wtxn, id)?;
         crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
         // Saved tags read the turn's messages through their PartOf edges, so
         // they go before the graph is torn down.
@@ -177,8 +179,11 @@ impl Vault {
             // custody they lifted, under this erase's act.
             crate::code_run::model_call::erase_message_model_calls_in_txn(self, wtxn, id, act)?;
         }
-        let had_refinement =
-            crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
+        let had_refinement = crate::store::claim_refinement_control::erase_claim_refinement_in_txn(
+            &self.store,
+            wtxn,
+            id,
+        )?;
         let had_merge_receipt =
             crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
         crate::conversation_dag::capture_before_erase(self, wtxn, id, true)?;
@@ -310,6 +315,8 @@ impl Vault {
             crate::embed::erase_probe_sources_in_txn(self, wtxn, id)?;
         }
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
+        // Canonical blob reference must release while current body descriptor is still present.
+        crate::memory::release_asset_blob_in_txn(&self.store, wtxn, id)?;
         crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
@@ -367,11 +374,18 @@ impl Vault {
             hint_had_vector | entity_had_vector | blob_cleanup.had_vector | room_had_vector;
 
         crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
-        let had_refinement =
-            crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
+        let had_refinement = crate::store::claim_refinement_control::erase_claim_refinement_in_txn(
+            &self.store,
+            wtxn,
+            id,
+        )?;
         let had_merge_receipt =
             crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
-        crate::skill_hub::remove_refinement_carrier_in_txn(&self.store, wtxn, id)?;
+        crate::store::skill_refinement_custody::remove_refinement_carrier_in_txn(
+            &self.store,
+            wtxn,
+            id,
+        )?;
         crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
         crate::comm::clear_pending_stop_for_delete(&self.store, wtxn, id)?;

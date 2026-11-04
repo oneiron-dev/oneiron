@@ -101,7 +101,7 @@ impl PrunedBodies {
             .flat_map(|digest| {
                 [
                     BODY_KEYS.key_bytes(digest),
-                    crate::code_run::code_run_body_row_key(digest),
+                    crate::store::result_body_rows::code_run_body_row_key(digest),
                 ]
             })
             .chain(
