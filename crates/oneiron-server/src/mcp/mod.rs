@@ -17,7 +17,9 @@ mod live_lease_backend;
 mod quickjs_provider;
 mod run_seats;
 #[cfg(feature = "code-sandbox-wasmtime")]
-pub use self::quickjs_provider::{McpQuickJsProvider, checked_in_quickjs_runtime};
+pub use self::quickjs_provider::{
+    McpQuickJsProvider, checked_in_quickjs_runtime, checked_in_quickjs_runtime_with_wall,
+};
 pub mod oauth_client;
 mod paging;
 pub mod qualification;
