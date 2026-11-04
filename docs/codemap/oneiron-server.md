@@ -485,7 +485,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/legal_hold_schema.rs` | src | s | 5 crate-vis | — | OpenAPI and raw JSON-schema shape for the engine-owned legal-hold notice |
 | `src/api/linear_push.rs` | src | s | 3 crate-vis | — | `POST /v1/core/linear/push`: a caller's own push of one TASK to Linear now (FIX 8788, FIX 9382) |
 | `src/api/llm.rs` | src | m | 7 crate-vis | — | Owner-authenticated raw inference |
-| `src/api/llm/decision_read.rs` | src | s | 3 crate-vis | — | `POST /v1/llm/decision_read`: the owner's probe of the house model's decision read |
+| `src/api/llm/decision_read.rs` | src | m | 3 crate-vis | — | `POST /v1/llm/decision_read`: the owner's probe of the house model's decision read |
 | `src/api/llm/decision_read/tests.rs` | test | s | 1 crate-vis | — | The owner's decision-read probe: owner-only, one read admitted and settled once on its meter, a failed check… |
 | `src/api/llm/defaults_submit.rs` | src | s | 4 crate-vis | — | `PUT /v1/llm/defaults` under the vault's policy power (FIX 8211) |
 | `src/api/llm/tests.rs` | test | L | — | — | — |
