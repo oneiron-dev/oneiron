@@ -7,6 +7,7 @@ use crate::api::{
     note_current,
 };
 use crate::error::SealError;
+use crate::memory::{MemoryLedger, SealMemoryRefusal};
 
 use super::super::{cms, pdf};
 use super::timestamp_evidence::{TimestampEvidence, TimestampKind, TimestampResult};
@@ -399,6 +400,8 @@ pub(super) fn unpadded_cms(contents: &[u8]) -> Option<&[u8]> {
 /// Verify one CAdES-detached signature dictionary. On a parseable envelope
 /// the CMS certificate set is recorded in `covered` so the DSS binding can
 /// require the validation material to speak about this chain (§7.5 step 3).
+/// The CMS parse, its certificates' copies and the signer chain are held on
+/// `memory` (FIX 12260); memory refused is `Err`, never a verdict.
 #[allow(clippy::too_many_lines)]
 pub(super) fn verify_cades_sig(
     bytes: &[u8],
@@ -407,7 +410,8 @@ pub(super) fn verify_cades_sig(
     anchors: &[pkix_chain::TrustAnchor],
     checks: &mut Checks,
     covered: &mut Vec<EmbeddedCert>,
-) -> CadesEvidence {
+    memory: &MemoryLedger,
+) -> Result<CadesEvidence, SealMemoryRefusal> {
     let br_ok = check_byte_range(bytes, e);
     checks.record(
         VerifyCheckKind::ByteRange,
@@ -425,7 +429,10 @@ pub(super) fn verify_cades_sig(
         None
     };
     let cms_der = unpadded_cms(&e.contents);
-    let parsed = cms_der.and_then(|d| cms::parse_cms(d).ok());
+    let parsed = cms_der
+        .and_then(|d| cms::parse_cms(d).ok())
+        .map(|parsed| parsed.held(memory))
+        .transpose()?;
     let env_ok = parsed.as_ref().is_some_and(|p| {
         p.content_oid == cms::OID_SIGNED_DATA.as_bytes()
             && p.econtent.is_none()
@@ -465,20 +472,23 @@ pub(super) fn verify_cades_sig(
             false,
             VerifyFindingCode::CertificatePathInvalid,
         );
-        let timestamp =
-            TimestampEvidence::NotEvaluated.project(TimestampKind::Signature, checks, covered);
-        return CadesEvidence {
+        let timestamp = TimestampEvidence::NotEvaluated.project(
+            TimestampKind::Signature,
+            checks,
+            covered,
+            memory,
+        )?;
+        return Ok(CadesEvidence {
             signer_chain: None,
             timestamp,
-        };
+        });
     };
-    covered.extend(
-        parsed
-            .certificates
-            .iter()
-            .filter_map(|d| EmbeddedCert::from_der(d)),
-    );
-    verify_signer(ctx, anchors, checks, &parsed, spans_digest, covered)
+    EmbeddedCert::extend_admitted(
+        covered,
+        parsed.certificates.iter().map(Vec::as_slice),
+        memory,
+    )?;
+    verify_signer(ctx, anchors, checks, &parsed, spans_digest, covered, memory)
 }
 
 /// Signer-level checks after the envelope parses: baseline attributes,
@@ -492,7 +502,8 @@ fn verify_signer(
     parsed: &cms::ParsedCms,
     spans_digest: Option<Sha256Digest>,
     covered: &mut Vec<EmbeddedCert>,
-) -> CadesEvidence {
+    memory: &MemoryLedger,
+) -> Result<CadesEvidence, SealMemoryRefusal> {
     let signer = &parsed.signer;
     let md = cms::check_baseline_attrs(signer).ok();
     checks.record(
@@ -532,15 +543,11 @@ fn verify_signer(
             false,
             VerifyFindingCode::CertificatePathInvalid,
         );
-        let timestamp = TimestampEvidence::for_signature(ctx.clock_ms, signer, anchors).project(
-            TimestampKind::Signature,
-            checks,
-            covered,
-        );
-        return CadesEvidence {
+        let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered, memory)?;
+        return Ok(CadesEvidence {
             signer_chain: None,
             timestamp,
-        };
+        });
     };
     let cert_der = &parsed.certificates[idx];
     let alg = cms::cert_signature_algorithm(cert_der);
@@ -562,21 +569,12 @@ fn verify_signer(
         sig_ok,
         VerifyFindingCode::SignatureMismatch,
     );
-    let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered);
-    let chain_ders: Vec<Vec<u8>> = std::iter::once(cert_der.clone())
-        .chain(
-            parsed
-                .certificates
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| *i != idx)
-                .map(|(_, c)| c.clone()),
-        )
-        .collect();
-    CadesEvidence {
+    let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered, memory)?;
+    let chain_ders = cms::chain_copy(&parsed.certificates, idx, memory)?;
+    Ok(CadesEvidence {
         signer_chain: Some(chain_ders),
         timestamp,
-    }
+    })
 }
 
 /// Validate the optional `signatureTimeStampToken` unsigned attribute.
@@ -591,11 +589,13 @@ fn verify_ts_token(
     anchors: &[pkix_chain::TrustAnchor],
     checks: &mut Checks,
     covered: &mut Vec<EmbeddedCert>,
-) -> TimestampResult {
-    TimestampEvidence::for_signature(clock_ms, signer, anchors).project(
+    memory: &MemoryLedger,
+) -> Result<TimestampResult, SealMemoryRefusal> {
+    TimestampEvidence::for_signature(clock_ms, signer, anchors, memory)?.project(
         TimestampKind::Signature,
         checks,
         covered,
+        memory,
     )
 }
 
@@ -607,7 +607,9 @@ fn verify_ts_token(
 /// DSS evidence freshness only when the ByteRange provably covers the final
 /// /DSS revision (`dss_revision_end`). The genTime is bounded against the
 /// verify clock (`clock_ms`): a future-dated token past the documented skew
-/// is rejected, never clamped.
+/// is rejected, never clamped. The token's parse, decodes and copies are
+/// held on `memory` (FIX 12260); memory refused is `Err`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn verify_doc_ts(
     bytes: &[u8],
     e: &SigEntry,
@@ -616,7 +618,8 @@ pub(super) fn verify_doc_ts(
     is_last: bool,
     covered: &mut Vec<EmbeddedCert>,
     clock_ms: u64,
-) -> TimestampResult {
+    memory: &MemoryLedger,
+) -> Result<TimestampResult, SealMemoryRefusal> {
     let br_ok = check_byte_range(bytes, e);
     checks.record(
         VerifyCheckKind::ByteRange,
@@ -640,9 +643,6 @@ pub(super) fn verify_doc_ts(
                 }
                 tail.is_empty()
             });
-    TimestampEvidence::for_document(bytes, e, anchors, clock_ms, br_ok && covers_end).project(
-        TimestampKind::Document,
-        checks,
-        covered,
-    )
+    TimestampEvidence::for_document(bytes, e, anchors, clock_ms, br_ok && covers_end, memory)?
+        .project(TimestampKind::Document, checks, covered, memory)
 }
