@@ -2,7 +2,7 @@
 
 use super::validation::consume_preflight_decisions;
 use super::*;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
 
