@@ -30,7 +30,7 @@ use oneiron::code_run::model_call::{
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
-use oneiron::llm::run_admission::RunAdmission;
+use oneiron::llm::run_admission::{RunAdmission, WorkPhysical};
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{
@@ -640,6 +640,15 @@ impl StepRunner {
             .models
             .funded_run(run_id, guard, payer)
             .sourced(sources.clone());
+        let run = run.with_work_context({
+            let mut context = run.work_context();
+            context.physical = if request.envelope.host_keyless {
+                WorkPhysical::KeylessOwnServer
+            } else {
+                WorkPhysical::Paid
+            };
+            context
+        });
         // The admitted request is the step's replay capsule (FIX 3028),
         // finalized with the rung that answers it. A capture that fails
         // leaves none and never fails the step.
