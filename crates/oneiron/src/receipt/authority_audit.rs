@@ -530,7 +530,7 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 affected_grants: action
                     .affected_grants
                     .iter()
-                    .map(EntityId::to_hex)
+                    .map(|id| id.to_hex())
                     .collect(),
                 ..OpFields::default()
             },

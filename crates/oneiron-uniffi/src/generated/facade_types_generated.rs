@@ -4903,7 +4903,7 @@ pub enum TaskHandle {
     },
 }
 
-/// `oneiron::attempt_queue::types::AttemptId`.
+/// `oneiron::store::attempt_id::AttemptId`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttemptId {
     #[serde(rename = "bytes")]
@@ -6789,7 +6789,7 @@ pub struct FanoutSlotTerminal {
     pub finished_at: u64,
 }
 
-/// `oneiron::attempt_queue::types::AttemptState`.
+/// `oneiron::store::attempt_state::AttemptState`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AttemptState {
     #[serde(rename = "Queued")]
@@ -15688,7 +15688,7 @@ pub enum InboxExceptionClass {
     PluginInstall,
 }
 
-/// `oneiron::receipt::kernel::ReceiptKind`.
+/// `oneiron::store::receipt_row::ReceiptKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ReceiptKind {
     #[serde(rename = "outbound")]
@@ -15719,7 +15719,7 @@ pub enum ReceiptKind {
     TaskLifecycle,
 }
 
-/// `oneiron::receipt::kernel::ReceiptRecord`.
+/// `oneiron::store::receipt_row::ReceiptRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ReceiptRecord {
     #[serde(rename = "receipt_id")]
@@ -15756,7 +15756,7 @@ pub struct ReceiptRecord {
     pub fields: Option<std::collections::HashMap<String, String>>,
 }
 
-/// `oneiron::receipt::kernel::ReceiptView`.
+/// `oneiron::store::receipt_row::ReceiptView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ReceiptView {
     #[serde(rename = "component")]
@@ -32740,7 +32740,7 @@ pub struct ConsentRegistryQuery {
     pub include_revoked: Option<bool>,
 }
 
-/// `oneiron::consent::bound::ConsentDomain`.
+/// `oneiron::store::consent_bound::ConsentDomain`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ConsentDomain {
     #[serde(rename = "disclosure")]
@@ -42113,7 +42113,7 @@ pub struct MergeQueuePathView {
     pub verdict_ref: Option<String>,
 }
 
-/// `oneiron::contract_oracle::graph::AffectedTests`.
+/// `oneiron::store::contract_oracle::graph::AffectedTests`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AffectedTests {
     #[serde(rename = "packages")]
@@ -42181,7 +42181,7 @@ pub struct MergeQueueObserveRequest {
     pub batches: Vec<String>,
 }
 
-/// `oneiron::contract_oracle::types::CommandOutput`.
+/// `oneiron::store::contract_oracle::types::CommandOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CommandOutput {
     #[serde(rename = "status")]
@@ -42192,7 +42192,7 @@ pub struct CommandOutput {
     pub stderr: Vec<u8>,
 }
 
-/// `oneiron::contract_oracle::types::ContractDiff`.
+/// `oneiron::store::contract_oracle::types::ContractDiff`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ContractDiff {
     #[serde(rename = "RemovedPublicName")]
@@ -42233,7 +42233,7 @@ pub enum ContractDiff {
     },
 }
 
-/// `oneiron::contract_oracle::types::ContractVerdict`.
+/// `oneiron::store::contract_oracle::types::ContractVerdict`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ContractVerdict {
     #[serde(rename = "schema_version")]
@@ -56270,7 +56270,7 @@ pub struct WireCommitReceipt {
     pub superseded: Option<RecordRef>,
 }
 
-/// `oneiron::receipt::refusal_reason::RefusalReason`.
+/// `oneiron::store::reference_refusal::RefusalReason`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum WireRefusalReason {
     #[serde(rename = "INVENTED_REFERENCE")]
