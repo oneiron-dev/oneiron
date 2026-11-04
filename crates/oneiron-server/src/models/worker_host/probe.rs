@@ -38,7 +38,10 @@ use oneiron_driver::{WorkerProbe, WorkerProbeFuture, WorkerSpec};
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
-use super::super::http::{KeyStyle, MAX_REPLY_BYTES, ProviderHttp};
+use super::super::ModelHostBudgets;
+use super::super::http::{
+    KeyStyle, MAX_REPLY_BYTES, ProviderHttp, charge_read, holding_chat_replies,
+};
 use super::bundle::sha256_hex;
 use super::launch_manifest::{LaunchRecord, LaunchSlot};
 use crate::config::models::{ProviderConfig, ProviderKind};
@@ -221,12 +224,19 @@ impl HouseProbe {
         }
         let path = format!("/{}.json", alias.manifest.as_str());
         let manifest = match http.get_native_within(&path, MAX_REPLY_BYTES).await {
-            Ok(reply) if (200..300).contains(&reply.status) => verify_llama(
-                &reply.body,
-                alias.manifest.as_str(),
-                &alias.epoch,
-                &self.wire_model,
-            ),
+            Ok(reply) => {
+                let _held = charge_read(reply.body.len());
+                if (200..300).contains(&reply.status) {
+                    verify_llama(
+                        &reply.body,
+                        alias.manifest.as_str(),
+                        &alias.epoch,
+                        &self.wire_model,
+                    )
+                } else {
+                    None
+                }
+            }
             _ => None,
         };
         let Some(identity) = manifest else {
@@ -260,8 +270,18 @@ impl WorkerProbe for HouseProbe {
                 Err(_) => return WorkerReadiness::Unverified { observed: None },
             };
             match expected.kind {
-                WorkerKind::Exl3 => self.exl3(http, expected).await,
-                WorkerKind::LlamaCpp => self.llama(http, expected).await,
+                WorkerKind::Exl3 | WorkerKind::LlamaCpp => {
+                    // A shared worker belongs to no vault; each qualification
+                    // owns its default line rather than capturing the first vault.
+                    let budgets = ModelHostBudgets::unhosted();
+                    holding_chat_replies(&budgets, async {
+                        match expected.kind {
+                            WorkerKind::Exl3 => self.exl3(http, expected).await,
+                            _ => self.llama(http, expected).await,
+                        }
+                    })
+                    .await
+                }
                 WorkerKind::VoxCpm2 | WorkerKind::Asr => {
                     let launch = self.launch();
                     super::media_worker::probe(http, &self.wire_model, expected, launch.as_ref())
