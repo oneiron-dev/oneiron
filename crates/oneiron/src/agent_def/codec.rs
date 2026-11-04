@@ -7,7 +7,6 @@ use super::decode::{
     decode_connectors, decode_mcp_refs, decode_memory_profile, decode_skill_dependencies,
     encode_mcp_ref, text_value, validate_agent_definition,
 };
-use super::manifest::system_agent_manifest;
 use super::models::{decode_agent_models, decode_compaction_model, encode_agent_models};
 use super::refusal::{decode_refusal_dial, encode_refusal_dial};
 use super::types::{
@@ -32,6 +31,8 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::llm::ModelTierRef;
 use crate::skill::SkillDependency;
 use rmpv::Value;
+
+pub(crate) use crate::store::agent_manifest::legacy_logical_id_row;
 
 mod value;
 use self::value::decode_agent_definition_value;
@@ -224,16 +225,6 @@ pub(crate) fn validate_agent_definition_update(
         )));
     }
     Ok(())
-}
-
-/// The pinned row id a legacy `sys.*` wire string maps to, or `None` when the
-/// string names no seeded row. The ONE map both legacy decoders share.
-pub(crate) fn legacy_logical_id_row(logical_id: &str) -> Result<Option<EntityId>> {
-    Ok(system_agent_manifest()?
-        .definitions
-        .iter()
-        .find(|seed| seed.logical_id == logical_id)
-        .map(|seed| seed.entity_id.0))
 }
 
 fn encode_skill_dependency(dependency: &SkillDependency) -> Value {
