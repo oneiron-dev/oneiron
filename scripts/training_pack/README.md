@@ -2,8 +2,9 @@
 
 `worker.py` trains one binary head for one exact detector question on a frozen, pinned
 Oneironer encoder: the producer the engine's `QuestionHeadTrainer` connector invokes
-(`[models.training.connectors.<name>]`, docs/ops/run-with-models.md). No owner prepare door,
-evaluator, runtime loader or detector consumer exists for it yet. It calls no model
+(`[models.training.connectors.<name>]`, docs/ops/run-with-models.md). The owner prepare/authorize doors exist. A native Candle question-head reader now
+reproduces the exported checkpoint's token windows and raw probe logits before the
+connector result is recorded. No held-out evaluator or live detector consumer exists yet. It calls no model
 service, teacher or network, uploads nothing, runs no remote code and downloads no model.
 Its receipt is producer evidence, not a `HeldOutResult`, `TrainingRun`, owner swap or serving
 readiness; the released stack is a pinned *candidate* base, not a promise of detector
@@ -135,6 +136,8 @@ with hex becoming `[u8; 32]`. `settings`, `harness`, `receipt` (the whole file) 
 
 - L08-B: consented per-target ingress, the source-family split and the
   held-out/calibration/comparison receipt (temperature and Brier fit on validation).
-- The owner prepare/authorize doors for a Question run, on L08-B's ingress (FIX 8237).
-- PR2: an exact Candle Local runtime reproducing this renderer, windowing, pooling, head and
-  the receipt's probe logits, plus live approve/revoke. Swap owner-only, auto-deploy off.
+- A host held-out evaluator, including truthful calibration and its task-specific verdict;
+  native probe parity is not a held-out quality measurement.
+- A live detector consumer and its approve/revoke path. The native reader is independent
+  of the extraction slot and does not bind a role or deploy a question head. Swap remains
+  owner-only, auto-deploy off.
