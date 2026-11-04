@@ -62,6 +62,8 @@ both bindings and their export-census tests in one change.
 - `vault.personas.export`
 - `vault.personas.edit`
 - `self.memory.diary.query`
+- `self.memory.pads.read`
+- `self.memory.pads.admin_reads`
 - `cancel`
 - `steer`
 - `describe`
@@ -104,6 +106,7 @@ both bindings and their export-census tests in one change.
 - `vault.finalize_stream`
 - `vault.cancel_stream`
 - `vault.message_stream_partial`
+- `vault.message_streams.refused`
 - `vault.messages.durability`
 - `vault.witness`
 - `vault.claims.upsert`
@@ -375,6 +378,8 @@ both bindings and their export-census tests in one change.
 - `vault.federation.connect.disconnect`
 - `vault.federation.connect.export`
 - `vault.federation.connect.rejoin`
+- `vault.federation.connect.world_privacy.export`
+- `vault.federation.connect.world_privacy.receive`
 - `vault.trusted_contacts.name`
 - `vault.trusted_contacts.list`
 - `vault.trusted_contacts.consent`
@@ -525,6 +530,7 @@ both bindings and their export-census tests in one change.
 - `vault.connectors.calls.approve_once`
 - `vault.consent.deny`
 - `vault.consent.create_standing_grant`
+- `vault.consent.create_auto_weave_grant`
 - `vault.consent.registry`
 - `vault.consent.failure_signals_held`
 - `vault.consent.revoke`

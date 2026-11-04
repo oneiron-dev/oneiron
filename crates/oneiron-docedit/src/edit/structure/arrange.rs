@@ -15,8 +15,8 @@ mod verify;
 use super::super::media::related;
 use super::super::xml::{self, A, P, R};
 use super::{
-    A16, NewGroup, Plan, SHAPE_CREATION_EXT, StructureEdit, check, end_of, highest_id, mint_guid,
-    position, shape_tree, timing,
+    A16, NewGroup, Plan, SHAPE_CREATION_EXT, ShapeId, StructureEdit, check, end_of, highest_id,
+    mint_guid, position, shape_tree, timing,
 };
 use crate::deck::{DeckView, ShapeKind, ShapeView, SlideView};
 use crate::edit::{EditRefusal, Effect, Xfrm};

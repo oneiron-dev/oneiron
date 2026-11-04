@@ -82,8 +82,7 @@ const MAX_KEYED_PATH: usize = 256;
 /// The longest folder a source names.
 const MAX_FOLDER_BYTES: usize = 4096;
 
-/// The most include patterns one source keeps, and the longest of them.
-const MAX_INCLUDES: usize = 64;
+/// The longest include pattern one source keeps.
 const MAX_INCLUDE_BYTES: usize = 512;
 
 /// An attached folder: what the owner attached, and when it was last read.
@@ -276,13 +275,15 @@ impl Vault {
         if folder.trim().is_empty() || folder.len() > MAX_FOLDER_BYTES {
             return Err(invalid("a folder source names its folder"));
         }
-        if include.len() > MAX_INCLUDES
-            || include
-                .iter()
-                .any(|pattern| pattern.trim().is_empty() || pattern.len() > MAX_INCLUDE_BYTES)
+        // No pattern count refuses an attachment (rule 5, FIX 9476, FIX 9986):
+        // every valid pattern is retained; only a blank or oversize pattern
+        // refuses.
+        if include
+            .iter()
+            .any(|pattern| pattern.trim().is_empty() || pattern.len() > MAX_INCLUDE_BYTES)
         {
             return Err(invalid(
-                "a folder source's include patterns are blank or too many",
+                "a folder source's include patterns are blank or too long",
             ));
         }
         self.note_kind(kind)?;

@@ -11,11 +11,13 @@
 //!   nothing; it only arms a *question*. [`outcome_from_machine_evidence`] takes
 //!   no clock, and the check-in wake carries no outcome.
 //! * **Cancellation has two homes.** Imported cancellation and feed absence are
-//!   CAL-00's `calendar.status` under the all-live-inbound-passports law and
-//!   never touch this predicate. Only an explicit lifecycle cancellation
-//!   established BEFORE the start records `cancelled_pre_start` here. This layer
-//!   writes one home and READS both: a check-in that consulted only its own
-//!   predicate would ask about a meeting the feed already called off.
+//!   CAL-00's `calendar.status` under the all-live-inbound-passports law. Only
+//!   an explicit cancellation established BEFORE the start — a lifecycle
+//!   cancellation, or an imported `METHOD:CANCEL`, `STATUS:CANCELLED` or
+//!   provider tombstone, citing its status claim — records
+//!   `cancelled_pre_start` here; absence alone never does. This layer writes
+//!   one home and READS both: a check-in that consulted only its own predicate
+//!   would ask about a meeting the feed already called off.
 //! * **The card has two independent doors.** An answer records an
 //!   owner-attested outcome; a recording drop stores a blob and infers nothing.
 //!   CAL-08 may later turn that blob into machine evidence.
@@ -61,9 +63,6 @@ use crate::vault::Vault;
 /// this layer owns the predicate's semantics; `calendar::claims` imports it for
 /// the family table and the structural validator.
 pub const PREDICATE_CALENDAR_EVENT_OUTCOME: &str = "calendar.event_outcome";
-
-/// Default grace between an EVENT's scheduled end and the check-in wake.
-pub const DEFAULT_OUTCOME_GRACE_SECS: u64 = 30 * 60;
 
 /// Opaque reason tag the host echoes back when the check-in wake fires.
 pub const OUTCOME_CHECK_IN_REASON_TAG: &str = "calendar.event_outcome.check_in";
@@ -152,11 +151,13 @@ pub struct EventOutcomeClaimValue {
 
 /// One piece of explicit machine evidence about an EVENT.
 ///
-/// Imported cancellation and feed absence are deliberately NOT arms here: they
-/// belong to CAL-00's `calendar.status` under the multi-source law, where a
-/// single source's absence supersedes only its own passport. `evidence_ref` is
-/// the caller's audit anchor — the ratified three-field wire value carries no
-/// evidence slot, so it never rides the claim.
+/// Feed absence is deliberately NOT an arm here: it belongs to CAL-00's
+/// `calendar.status` under the multi-source law, where a single source's
+/// absence supersedes only its own passport. An explicit imported
+/// cancellation arrives as [`Self::CancelReceived`], citing the status claim
+/// that recorded it. `evidence_ref` is the audit anchor: the ratified
+/// three-field wire value carries no evidence slot, so it rides the claim's
+/// evidence ([`record_machine_event_outcome`]), never the value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MachineOutcomeEvidence {
     /// An explicit lifecycle cancellation for this EVENT.
@@ -179,6 +180,19 @@ pub enum MachineOutcomeEvidence {
         evidence_ref: EntityId,
         observed_at: u64,
     },
+}
+
+impl MachineOutcomeEvidence {
+    /// The audit anchor this evidence cites.
+    #[must_use]
+    pub const fn evidence_ref(&self) -> EntityId {
+        match *self {
+            Self::CancelReceived { evidence_ref, .. }
+            | Self::Transcript { evidence_ref, .. }
+            | Self::JoinTelemetry { evidence_ref, .. }
+            | Self::ExplicitNoShow { evidence_ref, .. } => evidence_ref,
+        }
+    }
 }
 
 /// The signals that decide whether an EVENT is meeting-class.
@@ -276,12 +290,13 @@ pub fn record_event_outcome(
     source: ClaimSource,
 ) -> Result<EntityId> {
     vault.with_write_txn_grouped(|txn| {
-        record_event_outcome_in_txn(vault, txn, event_ref, value, source)
+        record_event_outcome_in_txn(vault, txn, event_ref, value, source, None)
     })
 }
 
 mod conditional;
 use conditional::record_event_outcome_in_txn;
+pub use conditional::record_machine_event_outcome;
 pub(crate) use conditional::{record_event_outcome_as_in_txn, record_lifecycle_outcome_in_txn};
 
 /// Reads the EVENT's live outcome claim.
@@ -416,22 +431,43 @@ pub struct OutcomeCheckInWake {
 /// not meeting-class.
 ///
 /// The engine owns no timer: this only describes the wake the host is asked to
-/// deliver. `_event_ref` is unused at this layer — the wake carries id, instant,
-/// and tag only, and the recheck at due time takes the EVENT explicitly — but it
-/// stays in the ratified signature so the host call sites do not move when the
-/// contract `WakeEntry` becomes available.
+/// deliver, `grace_secs` after the EVENT's end; the host passes the vault's
+/// grace ([`outcome_grace_secs`]). `_event_ref` is unused at this layer — the
+/// wake carries id, instant, and tag only, and the recheck at due time takes the
+/// EVENT explicitly — but it stays in the signature so the host call sites do
+/// not move when the contract `WakeEntry` becomes available.
 #[must_use]
 pub fn plan_outcome_check_in(
     wake_id: String,
     _event_ref: EntityId,
     event_end_utc: u64,
     signals: MeetingClassSignals,
+    grace_secs: u64,
 ) -> Option<OutcomeCheckInWake> {
     is_meeting_class(signals).then(|| OutcomeCheckInWake {
         id: wake_id,
-        at_utc: event_end_utc.saturating_add(DEFAULT_OUTCOME_GRACE_SECS),
+        at_utc: event_end_utc.saturating_add(grace_secs),
         reason_tag: OUTCOME_CHECK_IN_REASON_TAG.to_owned(),
     })
+}
+
+/// The vault's grace between an EVENT's scheduled end and its check-in, in
+/// seconds: the `calendar_outcome_grace_seconds` policy row the manifest
+/// resolves, else the shipped 1,800.
+///
+/// # Errors
+///
+/// Storage errors from reading the policy manifests.
+pub fn outcome_grace_secs(vault: &Vault) -> Result<u64> {
+    let rtxn = vault.store.env.read_txn()?;
+    outcome_grace_secs_in_txn(vault, &rtxn)
+}
+
+pub(in crate::calendar) fn outcome_grace_secs_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<u64> {
+    Ok(crate::gate::resolve_policy_manifest(&vault.store, rtxn)?.calendar_outcome_grace_seconds())
 }
 
 /// One check-in wake the host has delivered as due.
@@ -449,8 +485,8 @@ pub struct DueOutcomeCheckIn {
 
 /// Rechecks meeting class and current state for one due wake.
 ///
-/// A due wake is not a card. Three things can have changed in the half hour
-/// since it was planned, and all three are re-read here rather than trusted:
+/// A due wake is not a card. Three things can have changed in the grace since
+/// it was planned, and all three are re-read here rather than trusted:
 ///
 /// * the EVENT may have stopped being meeting-class;
 /// * an outcome may have arrived during the grace window — the card would ask a
@@ -461,7 +497,7 @@ pub struct DueOutcomeCheckIn {
 ///   how a meeting went that the feed already said was called off.
 ///
 /// Suppressing the card mints nothing. A cancelled EVENT's outcome stays
-/// `unknown` unless separate evidence establishes one — only a lifecycle
+/// `unknown` unless separate evidence establishes one — only an explicit
 /// cancellation seen BEFORE the start earns `cancelled_pre_start`, and that goes
 /// through [`outcome_from_machine_evidence`].
 ///

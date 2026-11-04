@@ -8,10 +8,11 @@ use super::document::{NoteDocument, invalid};
 use super::document_store::{load, persist_replica};
 use super::sync_rows::SYNC_DS_E;
 use super::{NotePin, NoteSpanResolution};
+use crate::claim::selector_world::SyncSelectorWorld;
+use crate::note::frame_envelope::NoteStateEnvelope;
 use crate::side_table::HexId;
-use crate::sync::documents::note_state::NoteStateEnvelope;
-use crate::sync::transport::document_sub_tags;
-use crate::sync::{SyncSelector, SyncSelectorWorld};
+use crate::store::document_frame_tags::document_sub_tags;
+use crate::sync::SyncSelector;
 use crate::{EntityId, FederationGrantScope, Result, Vault};
 
 pub(super) fn admit_pin_disclosure(
@@ -27,8 +28,9 @@ pub(super) fn admit_pin_disclosure(
     let claim = vault
         .get_claim_in_txn(txn, &pin.claim)?
         .ok_or_else(|| invalid("citation claim missing"))?;
-    let identity = crate::federation::selector_range_of(crate::registry::ENTITY_TYPE_CLAIM)
-        .ok_or_else(|| invalid("citation claim outside selector"))?;
+    let identity =
+        oneiron_authority::federation::selector_range_of(crate::registry::ENTITY_TYPE_CLAIM)
+            .ok_or_else(|| invalid("citation claim outside selector"))?;
     if !position.bands.contains(&identity) {
         return Err(invalid("citation claim outside selector"));
     }
@@ -94,6 +96,7 @@ pub(crate) fn import_note_from_authority(
         head,
         seq,
         seal: carried,
+        overrides: carried_overrides,
         document: bytes,
     } = NoteStateEnvelope::decode(id, bytes)?;
     vault.with_write_txn_grouped(|txn| {
@@ -120,7 +123,7 @@ pub(crate) fn import_note_from_authority(
         let staged = match kind {
             document_sub_tags::STATE => loro::LoroDoc::new(),
             document_sub_tags::UPDATE => {
-                crate::sync::loro_support::doc_from_snapshot(&previous.snapshot()?)?
+                crate::store::loro_document::doc_from_snapshot(&previous.snapshot()?)?
             }
             _ => return Err(invalid("invalid NOTE authority frame")),
         };
@@ -128,6 +131,9 @@ pub(crate) fn import_note_from_authority(
         // A seal and the state it froze land together, judged before the
         // head moves (FIX 2401).
         let frozen = seal::admit_frame(vault, txn, id, carried.as_ref(), head, new_head, &staged)?;
+        // The NOTE's own overrides ride its frames (FIX 3819): they
+        // decode, validate and land with the state in this same write.
+        super::overrides::install_frame_overrides_in_txn(vault, txn, &id, carried_overrides)?;
         // The imported document is measured as a load is (rule 5, FIX
         // 10342): a crossing raises a check and the import goes on.
         if let Err(error) = super::scan::measure_document(

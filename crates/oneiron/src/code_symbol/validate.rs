@@ -6,9 +6,8 @@ use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 
 use super::types::{
-    CODE_SYMBOL_KIND_MAX_BYTES, CODE_SYMBOL_MANIFEST_MAX_CHUNKS, CODE_SYMBOL_MANIFEST_MAX_SYMBOLS,
-    CODE_SYMBOL_NAME_MAX_BYTES, CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES, CodeChunk,
-    CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision,
+    CODE_SYMBOL_KIND_MAX_BYTES, CODE_SYMBOL_NAME_MAX_BYTES, CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES,
+    CodeChunk, CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision,
 };
 use crate::error::CodeError;
 
@@ -34,17 +33,6 @@ pub(super) fn validate_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Re
             "GitHub repo_ref commit must match manifest commit_hash",
         )));
     }
-    if manifest.chunks.len() > CODE_SYMBOL_MANIFEST_MAX_CHUNKS {
-        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-            "chunk manifest exceeds 100000 entries",
-        )));
-    }
-    if manifest.symbols.len() > CODE_SYMBOL_MANIFEST_MAX_SYMBOLS {
-        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-            "symbol manifest exceeds 100000 entries",
-        )));
-    }
-
     let mut previous_chunk: Option<&CodeChunk> = None;
     for chunk in &manifest.chunks {
         validate_chunk(chunk)?;

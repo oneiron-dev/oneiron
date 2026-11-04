@@ -49,7 +49,9 @@
 
 mod expansion;
 mod keys;
+mod reseed;
 
+pub(crate) use self::expansion::expand_window_shifting_gaps;
 pub use self::expansion::{expand_master_window, expand_window};
 pub use self::keys::{
     SeriesDtStart, SeriesExceptionKey, exception_identity, mask_master_exceptions,

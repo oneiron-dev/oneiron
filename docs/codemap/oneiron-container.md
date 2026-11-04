@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/bin/oneiron-browser-relay.rs` | src | s | — | — | Fenced stdio carrier for a browser that speaks CDP only over TCP |
 | `src/bin/oneiron-fence.rs` | src | s | — | — | Engine-mounted Linux fence launcher, not a development runner |
-| `src/cli_env.rs` | src | s | 1 fn · 1 crate-vis | — | The container CLI's environment beyond `PATH`: the `HOME` and `XDG_RUNTIME_DIR` its host binds once for the… |
+| `src/cli_env.rs` | src | s | 2 fn · 1 crate-vis | — | The container CLI's environment beyond `PATH`: the `HOME` and `XDG_RUNTIME_DIR` its host binds once for the… |
 | `src/egress.rs` | src | s | 3 struct · 2 enum · 1 trait · 2 fn | EgressRelay, HttpRequest, HttpResponse, LoopbackOperation, LoopbackRefusal, LoopbackRefusalReason | Host-owned transport |
 | `src/host_net_floor.rs` | src | s | 2 struct · 1 trait · 4 fn · 3 const | HostNetFloor, HostNetPermit, UnmeteredFloor | The host's floor for a guest's network work (FIX 5978, FIX 5979) |
 | `src/image_release.rs` | src | m | 2 struct · 4 enum · 8 fn · 16 const · 4 re-export | ImageReleaseFact, ImageReleaseObservation, ImageSignaturePolicy, ManifestObservation, ReleaseAdmission, ReleaseDocuments | Signed guest-image releases (FIX 8253, OS-IMAGE phase 1c): the release manifest, ONE signature-verifier… |

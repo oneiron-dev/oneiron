@@ -12,7 +12,7 @@ use crate::{EntityId, TimeRange, Vault, error::Result};
 
 /// Marker (engine version string) that the built-in connector packs have been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_PACK_BUILTIN_SEED);
-const PACKS: [(&str, &str); 6] = [
+const PACKS: [(&str, &str); 7] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/PACK.md"),
@@ -37,11 +37,15 @@ const PACKS: [(&str, &str); 6] = [
         "native_mail",
         include_str!("../../../../../packs/builtin/native_mail/PACK.md"),
     ),
+    (
+        "telegram",
+        include_str!("../../../../../packs/builtin/telegram/PACK.md"),
+    ),
 ];
 /// Each built-in pack's guided setup skill (OF-378), at the folder its
 /// PACK.md `setup` names. It ships in the same exact source, so the owner
 /// reads it while the connector is still a Candidate.
-const SETUP_SKILLS: [(&str, &str); 6] = [
+const SETUP_SKILLS: [(&str, &str); 7] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/skills/setup/SKILL.md"),
@@ -65,6 +69,10 @@ const SETUP_SKILLS: [(&str, &str); 6] = [
     (
         "native_mail",
         include_str!("../../../../../packs/builtin/native_mail/skills/setup/SKILL.md"),
+    ),
+    (
+        "telegram",
+        include_str!("../../../../../packs/builtin/telegram/skills/setup/SKILL.md"),
     ),
 ];
 const SETUP_SKILL_PATH: &str = "skills/setup/SKILL.md";
@@ -220,6 +228,9 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
         };
         admission::PACK_CANDIDATE.put(&vault.store, &mut txn, &receipt.content_hash, &receipt)?;
     }
+    // The first-party weave lens pack has no connector to qualify: it
+    // installs Active with this seed (FIX 1524).
+    super::lenses::seed_weave_lens_pack_in_txn(vault, &mut txn)?;
     SEEDED.put(&vault.store, &mut txn, &(), &version)?;
     txn.commit()?;
     Ok(())

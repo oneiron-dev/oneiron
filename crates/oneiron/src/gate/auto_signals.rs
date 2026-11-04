@@ -1,6 +1,6 @@
 //! Receipt-derived rate and failure streak supplied to the existing auto checker.
 //! There is no trip threshold, demotion, durable counter, or reset operation here.
-use crate::llm::AutoCheckSignals;
+use crate::claim_check::AutoCheckSignals;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
 use crate::{Error, Result};

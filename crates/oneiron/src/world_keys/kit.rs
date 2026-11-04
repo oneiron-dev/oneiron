@@ -30,6 +30,8 @@
 //! confirms it ([`Vault::confirm_world_kit`]); only the request's door
 //! refuses it.
 
+mod settle;
+
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -46,18 +48,26 @@ use super::{
 use crate::authority::AuthorityEntryHash;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::recovery::{
-    CodeKeeping, KitCoverage, KitError, KitId, KitIssue, KitMachine, KitManifest, KitPassphrase,
-    KitPiece, KitPiecePair, KitSecretKind, PieceHome, RestoredKitSecret, issue_recovery_root_kit,
-    restore_kit,
-};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
+use crate::{
+    recovery::{issue_recovery_root_kit, restore_kit},
+    store::recovery_kit::{
+        CodeKeeping, KitCoverage, KitError, KitId, KitIssue, KitMachine, KitManifest,
+        KitPassphrase, KitPiece, KitPiecePair, KitSecretKind, PieceHome, RestoredKitSecret,
+    },
+};
 
 /// The label of the vault key's escrow wrap to the current world kit's root.
 pub const WORLD_KIT_ESCROW: &str = "world-kit";
 
 const KITS: SideTable<String, StoredKit, Named> = SideTable::new(&side_table::RECOVERY_KIT);
+
+/// The drawn kits whose pending row never committed and whose pending piece
+/// a best-effort delete could not remove, named until a settle's sweep
+/// deletes each piece (FIX 12202). Key: [`kit_key`]; the row holds the kit id.
+pub(super) const UNLISTED_KITS: SideTable<String, KitId, Named> =
+    SideTable::new(&side_table::RECOVERY_KIT_UNLISTED_SWEEP);
 
 /// The passphrase piece's Argon2id cost, as the inventory keeps it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +101,12 @@ pub struct StoredKit {
     /// The kit confirmed after this one. Its pieces still rebuild its own
     /// seed: a replaced kit is not a revoked one.
     pub replaced_by: Option<KitId>,
+    /// The kits this one's confirm replaced whose pending piece this install
+    /// may still keep: a crash before that confirm's settle leaves them, and
+    /// the keystore cannot list its slots. The next settle here deletes each
+    /// and takes it off the list (FIX 12135). Empty while the kit is
+    /// pending, and always for a data-key kit.
+    pub stale_pending_pieces: Vec<KitId>,
     /// The root request whose activation issued this kit, by its signed
     /// authority-log entry; `None` for a kit issued at this install's own
     /// kit door, and for a data-key kit (FIX 5585). No confirm reads it.
@@ -196,7 +212,7 @@ pub struct IssuingRequest {
     pub status: OwnerWorkStatus,
 }
 
-fn kit_key(id: KitId) -> String {
+pub(super) fn kit_key(id: KitId) -> String {
     id.0.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -354,7 +370,7 @@ impl Vault {
         .map_err(kit_refused)?;
         drop(prepared);
         if store.is_some() {
-            self.settle_pending_kit_pieces(&[]);
+            self.settle_pending_kit_pieces(None);
         }
         let manifest = kit.manifest().clone();
         let pair = KitPiecePair::Pending(manifest.kit_id);
@@ -424,6 +440,7 @@ impl Vault {
             created_at: self.instant_in_txn(txn)?.secs(),
             confirmed_at: None,
             replaced_by: None,
+            stale_pending_pieces: Vec::new(),
             issued_for,
         };
         KITS.put(&self.store, txn, &key, &row)
@@ -438,8 +455,8 @@ impl Vault {
     /// data key needs it held on this handle: the new wrap replaces the old
     /// kit's, so a locked key refuses the confirm before anything is written.
     /// Once it commits, this machine's piece of the kit leaves its pending
-    /// key slots for the current ones, and the kits it replaced keep none
-    /// pending (FIX 11977, 12046).
+    /// key slots for the current ones while the kit is still current, and
+    /// the kits it replaced keep none pending (FIX 11977, 12046, 12136).
     pub fn confirm_world_kit(
         &self,
         owner: &AuthenticatedOwner,
@@ -456,7 +473,7 @@ impl Vault {
             self.activate_owner_root_with(owner, prepared, carry, |txn| {
                 self.confirm_kit_rows_in_txn(txn, &transition, &row)
             })?;
-        self.settle_pending_kit_pieces(&replaced);
+        self.settle_pending_kit_pieces(Some(row.kit));
         transition.finish()?;
         Ok(ConfirmedWorldKit {
             kit: row.kit,
@@ -493,7 +510,9 @@ impl Vault {
 
     /// A kit confirm's own rows, in the activation's transaction once the
     /// new root stands: its row confirmed, the kits it replaces, and the
-    /// vault key's `world-kit` escrow wrap to its root.
+    /// vault key's `world-kit` escrow wrap to its root. Its row names each
+    /// replaced kit with a `ThisMachine` home, whose pending piece a failed
+    /// move may have left here, for the next settle to delete (FIX 12135).
     pub(super) fn confirm_kit_rows_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -507,6 +526,9 @@ impl Vault {
             if other.kit_id != kit && other.current() {
                 other.replaced_by = Some(kit);
                 replaced.push(other.kit_id);
+                if other.homes.contains(&PieceHome::ThisMachine) {
+                    row.stale_pending_pieces.push(other.kit_id);
+                }
                 KITS.put(&self.store, txn, &other_key, &other)?;
             }
         }

@@ -8,7 +8,8 @@
 //! the highest revision this end ever sent, a digest cache keyed by the
 //! local file's stamp, and the state of a file whose put the other end
 //! refused as `digest_mismatch` (FIX 11075), and a copy kept when the origin
-//! retired a version this end never agreed on (FIX 11074). A record outlives its member
+//! retired a version this end never agreed on (FIX 11074), and each such copy
+//! the owner kept aside (FIX 11985). A record outlives its member
 //! as a tombstone, so a late replay never brings a retired file back; none
 //! is aged out or evicted. The next transfer id is `next-transfer`.
 //! Every record is read into memory when the end starts.
@@ -102,6 +103,30 @@ pub(super) struct MemberRecord {
     /// a turn sent it.
     #[serde(default)]
     pub(super) notice: Option<Diverged>,
+    /// Each diverged copy the owner kept, moved aside under its side name:
+    /// on the end that holds it, and on the guest as the host holds it
+    /// (FIX 11985). An entry goes once its side copy is removed.
+    #[serde(default)]
+    pub(super) aside: Vec<KeptAside>,
+}
+
+/// A diverged copy the owner kept, moved aside under its side name
+/// ([`super::local::aside_name`]) on `held_by`'s end (FIX 11985).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct KeptAside {
+    pub(super) held_by: VmOutboxSide,
+    pub(super) held: Version,
+    /// The side copy's name, relative to its kind's root.
+    pub(super) aside: String,
+    /// When the owner's keep was carried out, in Unix milliseconds.
+    pub(super) kept_at_ms: u64,
+    /// On the guest, for a host copy: the owner had it removed, and the
+    /// host is told at each turn until it answers.
+    #[serde(default)]
+    pub(super) removing: bool,
+    /// Why the last removal of the side copy did not go through.
+    #[serde(default)]
+    pub(super) failed: Option<String>,
 }
 
 /// A copy of a member the carrier never agreed on, kept when the member's
@@ -117,8 +142,9 @@ pub(super) struct Diverged {
     /// named one.
     pub(super) retired: Option<String>,
     /// The owner's answer once given: on `diverged`, a removal of the
-    /// host's copy still being carried; on `notice`, the answer the host is
-    /// told of.
+    /// host's copy still being carried, or, on the host's own copy, a keep
+    /// whose move aside failed, carried once the copy blocks the guest's
+    /// next put (FIX 11986); on `notice`, the answer the host is told of.
     #[serde(default)]
     pub(super) answer: Option<DivergedAnswer>,
 }

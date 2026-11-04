@@ -154,7 +154,7 @@ impl Vault {
         since: Option<FactPositionHex>,
         cursor: Option<HookReplayCursor>,
         limit: usize,
-    ) -> Result<(HookReplayEntryPage, Option<Vec<EntityId>>)> {
+    ) -> Result<(HookReplayEntryPage, Vec<EntityId>)> {
         let (binding_id, row) = self
             .pack_hook_bindings()?
             .into_iter()
@@ -171,12 +171,10 @@ impl Vault {
         )?;
         // The binding was read from its stored row, so it is one of the rows
         // the answer stands on (FIX 4710).
-        let rows = rows.map(|mut rows| {
-            rows.push(binding_id);
-            rows.sort_unstable();
-            rows.dedup();
-            rows
-        });
+        let mut rows = rows;
+        rows.push(binding_id);
+        rows.sort_unstable();
+        rows.dedup();
         Ok((page, rows))
     }
 
@@ -197,7 +195,7 @@ impl Vault {
         since: Option<FactPositionHex>,
         cursor: Option<HookReplayCursor>,
         limit: usize,
-    ) -> Result<(HookReplayEntryPage, Option<Vec<EntityId>>)> {
+    ) -> Result<(HookReplayEntryPage, Vec<EntityId>)> {
         let limit = limit.clamp(1, MAX_REPLAY_ENTRIES);
         let body = self.bound_body(row);
         let other_kind =

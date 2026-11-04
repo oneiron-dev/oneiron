@@ -79,7 +79,7 @@ pub(crate) struct SealConfig {
 
 impl SealConfig {
     /// The `ONEIRON_SEAL_*` environment.
-    fn from_env() -> Self {
+    pub(crate) fn from_env() -> Self {
         let text = |(name, _): SettingName| std::env::var(name).ok().filter(|v| !v.is_empty());
         Self {
             key: env_path(KEY),
@@ -112,18 +112,7 @@ const PER_TICK: usize = 8;
 /// fetch row does not ask twice.
 const FETCH_MAX_BYTES: u64 = u64::MAX;
 
-/// Starts the seal worker on the server's runtime, every tick admitted, on
-/// the environment's seal settings. It seals on the server's organ host,
-/// the one the mesh listener offers.
-pub(crate) fn spawn(server: Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
-    spawn_admitted(
-        server,
-        crate::server::admit_every_pass(),
-        SealConfig::from_env(),
-    )
-}
-
-/// [`spawn`] under a host's freeze (a managed host that reaps its vault): a
+/// Starts the seal worker under a host's freeze (a managed host that reaps its vault): a
 /// tick runs only when `admit` lets it, and holds what it was given until
 /// its seals are written. It seals on `seal`, the vault's own settings.
 pub(crate) fn spawn_admitted(

@@ -61,6 +61,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.personas.export", post(facade_route))
         .route("/vault.personas.edit", post(facade_route))
         .route("/self.memory.diary.query", post(facade_route))
+        .route("/self.memory.pads.read", post(facade_route))
+        .route("/self.memory.pads.admin_reads", post(facade_route))
         .route("/cancel", post(facade_route))
         .route("/steer", post(facade_route))
         .route("/describe", post(facade_route))
@@ -103,6 +105,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.finalize_stream", post(facade_route))
         .route("/vault.cancel_stream", post(facade_route))
         .route("/vault.message_stream_partial", post(facade_route))
+        .route("/vault.message_streams.refused", post(facade_route))
         .route("/vault.messages.durability", post(facade_route))
         .route("/vault.witness", post(facade_route))
         .route("/vault.claims.upsert", post(facade_route))
@@ -401,6 +404,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.federation.connect.disconnect", post(facade_route))
         .route("/vault.federation.connect.export", post(facade_route))
         .route("/vault.federation.connect.rejoin", post(facade_route))
+        .route(
+            "/vault.federation.connect.world_privacy.export",
+            post(facade_route),
+        )
+        .route(
+            "/vault.federation.connect.world_privacy.receive",
+            post(facade_route),
+        )
         .route("/vault.trusted_contacts.name", post(facade_route))
         .route("/vault.trusted_contacts.list", post(facade_route))
         .route("/vault.trusted_contacts.consent", post(facade_route))
@@ -581,6 +592,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.connectors.calls.approve_once", post(facade_route))
         .route("/vault.consent.deny", post(facade_route))
         .route("/vault.consent.create_standing_grant", post(facade_route))
+        .route("/vault.consent.create_auto_weave_grant", post(facade_route))
         .route("/vault.consent.registry", post(facade_route))
         .route("/vault.consent.failure_signals_held", post(facade_route))
         .route("/vault.consent.revoke", post(facade_route))

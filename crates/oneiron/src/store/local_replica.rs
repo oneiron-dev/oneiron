@@ -52,17 +52,16 @@ use crate::ports::{
 use crate::registry;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-use crate::sync::WindowKey;
-use crate::sync::bridge::format_edge_key;
-use crate::sync::loro_support::{
-    TombstoneIndex, doc_from_snapshot, import_doc, map_contains_binary,
-};
-use crate::sync::residence::residence_window_for_blob;
-use crate::sync::window_rows::{
+use crate::store::loro_document::{doc_from_snapshot, import_doc, map_contains_binary};
+use crate::store::window_rows::{
     OFF_RECORD_PROMOTE_PICKUP, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
     WINDOW_UPDATE, WindowEntityKey,
 };
+use crate::sync::bridge::format_edge_key;
+use crate::sync::loro_support::TombstoneIndex;
+use crate::sync::residence::residence_window_for_blob;
 use crate::temporal::TimeRange;
+use crate::window_key::WindowKey;
 
 /// Unacknowledged local text-document frames (`qd:e:{id}:{seq}`), read for
 /// presence only.
@@ -233,10 +232,10 @@ pub(crate) fn remove_local_replica_window_in_txn(
         remove_member(store, txn, &edges, id, &mut report)?;
     }
     if report.vectors > 0 {
-        crate::hnsw::increment_vector_version(store, txn)?;
+        crate::store::vector_index::increment_vector_version(store, txn)?;
     }
     if !report.removed.is_empty() {
-        crate::ppr::increment_graph_version(store, txn)?;
+        crate::store::graph_version::increment_graph_version(store, txn)?;
     }
     if report.remaining == 0 {
         remove_window_rows(store, txn, window, &mut report)?;
@@ -496,12 +495,7 @@ pub(crate) fn owe_promoted_turn_in_txn(
     txn: &mut RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
-    crate::tagging::mark_turn_in_txn(
-        vault,
-        txn,
-        *turn,
-        crate::memory::extraction::ExtractionWork::Bulk,
-    )?;
+    crate::tagging::mark_turn_in_txn(vault, txn, *turn, crate::store::ExtractionWork::Bulk)?;
     crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)
 }
 
@@ -538,7 +532,7 @@ fn remove_member(
     // Thread meta reads the RepliesTo edges, so it is marked dirty first.
     crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, txn, *id)?;
     crate::task_verb::index_owner_fact(store, txn, id, None)?;
-    crate::bm25::deindex_text(store, txn, id)?;
+    crate::store::text_index::deindex_text(store, txn, id)?;
     crate::vault::entity_revision::remove_entity_revisions(store, txn, id)?;
     crate::batch::delete_from_phonetic_postings(store, txn, id)?;
     crate::code_symbol::delete_code_symbol_manifest_in_txn(store, txn, id)?;
@@ -551,10 +545,12 @@ fn remove_member(
         store.short_ids_reverse.delete(txn, id.as_bytes())?;
     }
     if header.entity_type == registry::ENTITY_TYPE_SKILL
-        && let Ok(record) = crate::skill::decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])
+        && let Ok(record) = crate::write_envelope::skill_record::decode_skill_record(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )
         && let Some(content_hash) = record.content_hash
     {
-        crate::skill_hub::maintain_skill_content_hash_index_for_delete(
+        crate::store::skill_content_index::maintain_skill_content_hash_index_for_delete(
             store,
             txn,
             id,
@@ -576,9 +572,9 @@ fn remove_member(
     crate::dreamer_runner::deindex_dreamer_milestone_claim(store, txn, id)?;
     crate::llm::deindex_dreamer_step_claim(store, txn, id)?;
     // Both read the stored row, so they run before it goes.
-    crate::ingest::reindex_identity_hints(store, txn, id, None)?;
+    crate::store::identity_hints::reindex_identity_hints(store, txn, id, None)?;
     crate::ports::reindex_named_entities(store, txn, id, None)?;
-    crate::ingest::invalidate_blob_fingerprint(store, txn, id)?;
+    crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, txn, id)?;
     crate::claim::remove_claim_projection_index(store, txn, *id)?;
     // A demoted epoch summary keeps its place in its session's count, so a
     // local mint never numbers under it (OF-013).

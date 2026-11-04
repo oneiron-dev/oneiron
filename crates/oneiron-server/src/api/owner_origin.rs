@@ -202,7 +202,7 @@ async fn cut_origin_authority(
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<CutOriginAuthority>,
 ) -> Result<Json<OriginAuthority>, EnvelopedApiError> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let row = blocking(move || {
         let vault = server.vault();
@@ -219,7 +219,9 @@ async fn cut_origin_authority(
                     .id
             }
         };
-        Ok(vault.set_served_origin_authority(
+        // The proof is revalidated where the row commits (FIX 8214).
+        Ok(vault.set_served_origin_authority_as_owner(
+            &owner,
             &request.repo,
             request.expected_epoch,
             request.residence,
@@ -282,10 +284,11 @@ async fn set_origin_mirror(
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<SetOriginMirror>,
 ) -> Result<Json<OriginMirrorTarget>, EnvelopedApiError> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let row = blocking(move || {
-        Ok(server.vault().set_served_origin_mirror(
+        Ok(server.vault().set_served_origin_mirror_as_owner(
+            &owner,
             &request.repo,
             OriginMirrorTargetInput {
                 url: request.url,
@@ -315,12 +318,14 @@ async fn set_origin_mirror_strategy(
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<SetOriginMirrorStrategy>,
 ) -> Result<Json<OriginMirrorTarget>, EnvelopedApiError> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let row = blocking(move || {
-        Ok(server
-            .vault()
-            .set_served_origin_mirror_strategy(&request.repo, request.sync_strategy)?)
+        Ok(server.vault().set_served_origin_mirror_strategy_as_owner(
+            &owner,
+            &request.repo,
+            request.sync_strategy,
+        )?)
     })
     .await?;
     Ok(Json(row))
@@ -338,11 +343,13 @@ async fn clear_origin_mirror(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<RepoQuery>, QueryRejection>,
 ) -> Result<Json<ClearedOriginMirror>, EnvelopedApiError> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let RepoQuery { repo } = query_params(query)?;
     let cleared = blocking(move || {
         Ok(ClearedOriginMirror {
-            cleared: server.vault().clear_served_origin_mirror(&repo)?,
+            cleared: server
+                .vault()
+                .clear_served_origin_mirror_as_owner(&owner, &repo)?,
             repo,
         })
     })
@@ -355,8 +362,13 @@ async fn push_origin_mirror(
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<RepoQuery>,
 ) -> Result<Json<OriginMirrorRun>, EnvelopedApiError> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let RepoQuery { repo } = payload.read(&server).await?;
-    let run = blocking(move || Ok(server.vault().push_served_origin_mirror(&repo)?)).await?;
+    let run = blocking(move || {
+        Ok(server
+            .vault()
+            .push_served_origin_mirror_as_owner(&owner, &repo)?)
+    })
+    .await?;
     Ok(Json(run))
 }

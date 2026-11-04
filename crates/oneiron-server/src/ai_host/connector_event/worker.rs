@@ -2,7 +2,9 @@
 //! off the Dreamer pass on a blocking thread of the reply worker. It reuses
 //! the kept body or makes the one admitted chat-role call for it, keeps the
 //! words, dispatches through the recorded pipeline, and returns a result
-//! naming the outcome and the units the model calls actually spent.
+//! naming the outcome and the units the model calls actually spent. Each job
+//! ends with a communication projector pass, so the exchange's touches
+//! become the counterparty's last contact.
 //!
 //! The exchange is the agent's memory (FIX 2404): the message, and the kept
 //! reply once it reaches the channel, are witnessed into their conversation,
@@ -55,7 +57,19 @@ pub(crate) fn run_connector_reply_job(
     if let Err(error) = answer(server, runtime, job, &mut result) {
         result.fault(&error);
     }
+    project_comm_touches(server.vault());
     result
+}
+
+/// Runs one communication projector pass after a job: the message's inbound
+/// touch, recorded when it was admitted, and the reply's delivered send
+/// receipt become the counterparty's `comm.last_touch`. A pass that fails is
+/// logged and leaves the job's result as it is; the next pass projects what
+/// this one left.
+fn project_comm_touches(vault: &oneiron::Vault) {
+    if let Err(error) = oneiron::comm::run_comm_projector(vault) {
+        tracing::warn!(%error, "communication projector pass failed after a connector reply");
+    }
 }
 
 fn answer(

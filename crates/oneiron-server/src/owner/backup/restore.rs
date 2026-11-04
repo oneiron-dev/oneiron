@@ -10,10 +10,9 @@ use oneiron::VaultPageSeal;
 use oneiron::recovery::checkpoint::{
     CheckpointKey, CustodyRecovery, HostOrderHolds, SideRestoreSource,
 };
-use oneiron::world_keys::VaultKeyUnlock;
 use serde::Serialize;
 
-use super::super::stamp::{file_stamp, now_unix_ms};
+use super::super::stamp::{file_stamp, now_unix_ms, parse_file_stamp};
 use super::rehearse::{Owned, SharedPathWarning, shared_path_warning};
 use super::{kind_counts, sync_dir};
 
@@ -52,6 +51,11 @@ pub(crate) struct Restored {
     /// (PAD-1), each as the engine words it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) pad_object_notes: Vec<String>,
+    /// Staging directories earlier interrupted restores of this vault left
+    /// beside it (FIX 2706), each left whole where it is and named here so
+    /// it is not lost track of.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) staging_notes: Vec<String>,
 }
 
 /// Restores `backup` over the stopped vault at `vault_path`.
@@ -71,8 +75,8 @@ pub(crate) struct Restored {
 /// directory after it is reported in `durability_warning`, never as an error
 /// that would hide where the previous vault went.
 ///
-/// The backup opens with `keystore`, the install's configured one, or the
-/// platform's at its defaults when there is none.
+/// The backup opens with `keystore`, the install's configured one; with
+/// none it refuses, naming the platform backend (FIX 12225).
 pub(crate) fn restore_over(
     backup: &Path,
     vault_path: &Path,
@@ -102,12 +106,9 @@ pub(super) fn restore_over_syncing(
     sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<Restored> {
     // This install's keystore unlocks the key from the device wrap the backup
-    // carries, and trusts the signers it holds.
-    let open_key = |vault_path: &Path| match keystore {
-        Some(keystore) => CheckpointKey::unlock(backup, &VaultKeyUnlock::Device(keystore.as_ref()))
-            .map(|key| key.trusting_device(keystore)),
-        None => CheckpointKey::unlock_on_this_device(backup, vault_path),
-    };
+    // carries, and trusts the signers it holds; with none it refuses (FIX 12225).
+    let open_key =
+        |_vault_path: &Path| CheckpointKey::unlock_on_this_device(backup, keystore.as_ref());
     restore_over_with(
         backup,
         vault_path,
@@ -145,6 +146,9 @@ fn restore_over_with(
         .ok_or_else(|| anyhow::anyhow!("vault path {} has no name", vault_path.display()))?
         .to_string_lossy()
         .into_owned();
+    // Earlier interrupted restores left their staging beside the vault; name
+    // them before this restore makes its own (FIX 2706).
+    let staging_notes = interrupted_restore_staging(vault_path, &name);
     // The backup opens before anything is made.
     let key = open_key(vault_path.as_path())
         .map_err(|error| anyhow::anyhow!("backup {} does not open: {error:#}", backup.display()))?;
@@ -321,7 +325,79 @@ fn restore_over_with(
             .iter()
             .map(ToString::to_string)
             .collect(),
+        staging_notes,
     })
+}
+
+/// One note for each staging directory an earlier interrupted restore of
+/// this vault left beside it (FIX 2706), oldest first. A restore that dies
+/// mid-flight leaves `.<name>.restore-<stamp>` holding a whole vault: before
+/// its atomic exchange that is the restored copy, after it the previous
+/// vault, its archive rename never run. Either way the vault at its own
+/// path is the live one and the staged one is left whole where it is:
+/// nothing here opens, moves or removes it. A later process cannot yet tell
+/// the two apart without the engine naming which environment is the
+/// previous one, so finishing the archive rename waits for that; until
+/// then the note keeps the staged vault from being lost track of. Never
+/// fails the restore that reports it.
+fn interrupted_restore_staging(vault_path: &Path, name: &str) -> Vec<String> {
+    let Some(parent) = vault_path.parent() else {
+        return Vec::new();
+    };
+    let entries = match std::fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                parent = %parent.display(),
+                "could not look for staging left by an interrupted restore"
+            );
+            return Vec::new();
+        }
+    };
+    let prefix = format!(".{name}.restore-");
+    let mut found: Vec<(u64, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        let Some(stamp) = file_name.strip_prefix(&prefix) else {
+            continue;
+        };
+        let Some(stamp_ms) = parse_file_stamp(stamp) else {
+            continue;
+        };
+        // The staging directory itself, never a symlink to one.
+        if !matches!(entry.file_type(), Ok(kind) if kind.is_dir()) {
+            continue;
+        }
+        found.push((stamp_ms, entry.path()));
+    }
+    found.sort_unstable();
+    found
+        .into_iter()
+        .map(|(_, staging)| {
+            let note = if staging.join("vault").join("data.mdb").is_file() {
+                format!(
+                    "an earlier interrupted restore left a whole vault in its staging \
+                     directory {}; the vault at {} is the live one, and the staged one \
+                     is left whole where it is",
+                    staging.display(),
+                    vault_path.display()
+                )
+            } else {
+                format!(
+                    "an earlier interrupted restore left its staging directory {} \
+                     without a whole vault in it; the staging directory is left \
+                     where it is",
+                    staging.display()
+                )
+            };
+            tracing::warn!(staging = %staging.display(), "{note}");
+            note
+        })
+        .collect()
 }
 
 /// What a restore where no vault was made.

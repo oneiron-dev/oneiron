@@ -6,6 +6,7 @@ use rmpv::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum PolicyValueKey {
     ArtifactAnswerQuietSeconds,
+    CalendarOutcomeGraceSeconds,
     CommOptOutPosture,
     DreamerRetryParkSeconds,
     EscalationStandingRulings,
@@ -25,6 +26,7 @@ impl PolicyValueKey {
     fn parse(value: &str) -> Option<Self> {
         match value {
             "artifact_answer_quiet_seconds" => Some(Self::ArtifactAnswerQuietSeconds),
+            "calendar_outcome_grace_seconds" => Some(Self::CalendarOutcomeGraceSeconds),
             "comm_opt_out_posture" => Some(Self::CommOptOutPosture),
             "dreamer_retry_park_seconds" => Some(Self::DreamerRetryParkSeconds),
             "escalation_standing_rulings" => Some(Self::EscalationStandingRulings),
@@ -45,6 +47,7 @@ impl PolicyValueKey {
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::ArtifactAnswerQuietSeconds => "artifact_answer_quiet_seconds",
+            Self::CalendarOutcomeGraceSeconds => "calendar_outcome_grace_seconds",
             Self::CommOptOutPosture => "comm_opt_out_posture",
             Self::DreamerRetryParkSeconds => "dreamer_retry_park_seconds",
             Self::EscalationStandingRulings => "escalation_standing_rulings",
@@ -80,8 +83,10 @@ impl PolicyValueKey {
             // ledger and miner read their thresholds with no world or project
             // (FIX 9802, 9809). A sitting closes on the vault's clock until
             // trusted session axes exist (FIX 8600), and the served runners read
-            // their try caps on the vault's rows (FIX 7748).
+            // their try caps on the vault's rows (FIX 7748). A calendar EVENT
+            // carries no world placement, so its check-in grace is the vault's.
             Self::ArtifactAnswerQuietSeconds
+            | Self::CalendarOutcomeGraceSeconds
             | Self::CommOptOutPosture
             | Self::DreamerRetryParkSeconds
             | Self::EscalationStandingRulings
@@ -123,6 +128,7 @@ impl PolicyPrecedence {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PolicyValue {
     ArtifactAnswerQuietSeconds(u64),
+    CalendarOutcomeGraceSeconds(u64),
     CommOptOutPosture(crate::gate::resolution::CommOptOutPosture),
     DreamerRetryParkSeconds(u64),
     EscalationStandingRulings(u64),
@@ -145,6 +151,11 @@ impl PolicyValue {
             // row asks.
             (Self::ArtifactAnswerQuietSeconds(a), Self::ArtifactAnswerQuietSeconds(b)) => {
                 Self::ArtifactAnswerQuietSeconds(a.max(b))
+            }
+            // A longer grace never asks about a meeting sooner than any
+            // trusted row asks.
+            (Self::CalendarOutcomeGraceSeconds(a), Self::CalendarOutcomeGraceSeconds(b)) => {
+                Self::CalendarOutcomeGraceSeconds(a.max(b))
             }
             (Self::CommOptOutPosture(a), Self::CommOptOutPosture(b)) => {
                 Self::CommOptOutPosture(a.restrict(b))
@@ -205,6 +216,7 @@ impl PolicyValue {
         match self {
             Self::CommOptOutPosture(value) => value.as_str().to_owned(),
             Self::ArtifactAnswerQuietSeconds(value)
+            | Self::CalendarOutcomeGraceSeconds(value)
             | Self::DreamerRetryParkSeconds(value)
             | Self::EscalationStandingRulings(value)
             | Self::MinerRecurrenceReceipts(value)
@@ -398,6 +410,10 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                             PolicyValue::ArtifactAnswerQuietSeconds(raw.as_u64().filter(
                                 |seconds| *seconds <= ARTIFACT_ANSWER_QUIET_CEILING_SECONDS,
                             )?)
+                        }
+                        // Any grace is the owner's: zero asks once the meeting ends.
+                        PolicyValueKey::CalendarOutcomeGraceSeconds => {
+                            PolicyValue::CalendarOutcomeGraceSeconds(raw.as_u64()?)
                         }
                         PolicyValueKey::CommOptOutPosture => {
                             PolicyValue::CommOptOutPosture(match raw.as_str()? {
@@ -600,22 +616,6 @@ fn retry_park_seconds(raw: &Value) -> Option<u64> {
     raw.as_u64().filter(|seconds| *seconds > 0)
 }
 
-/// The shipped pause before a later wake pass resumes a Dreamer Retry park
-/// as the same try (Engine 10-21, FIX 8716).
-fn shipped_default_dreamer_retry_park_seconds() -> u64 {
-    let defaults: serde_json::Value =
-        serde_json::from_str(include_str!("policy_value_defaults.json"))
-            .expect("valid shipped policy defaults");
-    defaults
-        .as_array()
-        .expect("shipped policy rows")
-        .iter()
-        .find(|row| row["key"] == "dreamer_retry_park_seconds" && row["scope"]["level"] == "vault")
-        .and_then(|row| row["value"].as_u64())
-        .filter(|value| *value > 0)
-        .expect("shipped Dreamer retry park pause")
-}
-
 /// The shipped consecutive-try cap for a try-cap `key` (FIX 7748): three
 /// resident-run tries, five workflow-step tries.
 pub(super) fn shipped_default_max_tries(key: &str) -> u64 {
@@ -630,27 +630,6 @@ pub(super) fn shipped_default_max_tries(key: &str) -> u64 {
         .and_then(|row| row["value"].as_u64())
         .filter(|value| *value > 0)
         .expect("shipped consecutive-try cap")
-}
-
-impl super::resolution::PolicyManifestResolution {
-    /// How long a Dreamer Retry park waits before a later wake pass resumes
-    /// it as the same try, in store-clock seconds (FIX 8716): the vault's
-    /// row, else the shipped one. A fail-closed manifest reads the shipped
-    /// row, since a pause grants nothing.
-    pub(crate) fn dreamer_retry_park_seconds(&self) -> u64 {
-        let fallback = shipped_default_dreamer_retry_park_seconds();
-        match self
-            .resolved_policy_value(
-                PolicyValueKey::DreamerRetryParkSeconds,
-                &PolicyEvaluationScope::default(),
-                PolicyValue::DreamerRetryParkSeconds(fallback),
-            )
-            .value
-        {
-            PolicyValue::DreamerRetryParkSeconds(seconds) => seconds,
-            _ => unreachable!("typed policy key"),
-        }
-    }
 }
 
 /// The longest rest a cooldown row may name: a provider's monthly window.

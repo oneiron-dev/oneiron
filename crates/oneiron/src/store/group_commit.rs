@@ -68,9 +68,10 @@ use heed::{RoTxn, RwTxn};
 
 use crate::Vault;
 use crate::error::Error;
-use crate::learning_setting::{
-    GROUP_COMMIT_MAX_WRITES, GROUP_COMMIT_WINDOW_MS, SettingSpec, setting_value_in_txn,
-};
+use crate::learning_setting::setting_value_in_txn;
+use crate::store::setting_seed::GROUP_COMMIT_MAX_WRITES;
+use crate::store::setting_seed::GROUP_COMMIT_WINDOW_MS;
+use crate::store::setting_seed::SettingSpec;
 
 use super::legal_hold::RefusalBatch;
 use super::{Store, StoreCore, active_write_txn_depth};
@@ -912,7 +913,11 @@ impl Store {
         E: From<Error>,
     {
         let mut txn = self.env.write_txn()?;
-        match write(&mut txn) {
+        let rows = {
+            let _known_index = crate::secret_custody::known_index_scope(); // (FIX 12210)
+            write(&mut txn)
+        };
+        match rows {
             Rows::Commit(value) => {
                 txn.commit().map_err(Error::from)?;
                 Ok(value)
@@ -1107,6 +1112,7 @@ impl Store {
         E: From<Error>,
     {
         let attempt = self.begin_refusal_attempt();
+        let _known_index = crate::secret_custody::known_index_scope(); // (FIX 12210)
         let staged = match self.env.nested_write_txn(parent) {
             Err(err) => Staged::Dropped(Err(E::from(Error::from(err)))),
             Ok(mut child) => match catch_unwind(AssertUnwindSafe(|| write(&mut child))) {

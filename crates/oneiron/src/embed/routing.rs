@@ -1,8 +1,8 @@
 //! Which embedder a leased row goes to, by the verdict of the reconciler's
-//! rung on it (FIX 10009). One verdict serves both roles: a rung beside an
-//! on-device primary sends what it allows off this device and embeds the
-//! rest at home; a rung that is the primary itself sends what it allows and
-//! leaves the rest pending.
+//! rung on it (FIX 10009) and the row's per-world model order (FIX 11768).
+//! One verdict serves both roles: a rung beside an on-device primary sends
+//! what it allows off this device and embeds the rest at home; a rung that is
+//! the primary itself sends what it allows and leaves the rest pending.
 
 use super::{
     EgressDecision, EmbedRoute, LeaseBatch, PendingEmbeddingInput, PendingEmbeddingReconciler,
@@ -28,29 +28,39 @@ impl PendingEmbeddingReconciler {
     /// row a device-local world keeps, it takes the primary as before.
     pub(super) fn rung_route(
         &self,
+        txn: &heed::RoTxn<'_>,
         input: &PendingEmbeddingInput,
         device_local: bool,
         batch: &mut LeaseBatch,
-    ) -> Option<(EmbedRoute, u64)> {
+    ) -> crate::Result<Option<(EmbedRoute, u64)>> {
         let primary = (EmbedRoute::Local, self.lease_duration_ms);
         let Some(rung) = &self.remote_rung else {
-            return Some(primary);
+            return Ok(Some(primary));
         };
         if device_local {
-            return Some(primary);
+            return Ok(Some(primary));
         }
+        let carried = crate::settings::carried_worlds_in(&self.vault.store, txn, &input.entity_id)?;
+        let model_routes = self
+            .vault
+            .world_model_routes_in_txn(txn, carried.worlds.clone())?;
+        let world_admits = match &model_routes {
+            crate::authority::WorldModelRoutes::Inherit => true,
+            crate::authority::WorldModelRoutes::Ordered(_) => {
+                !carried.unknown && model_routes.admits(&rung.offer_id())
+            }
+        };
         let decision = rung.predicate.decide(input);
         match decision {
             EgressDecision::Allow => {}
             EgressDecision::Deny => batch.egress_denied += 1,
             EgressDecision::NoVerdict => batch.egress_no_verdict += 1,
         }
-        match (self.rung_role, decision) {
-            (RungRole::Fallback, EgressDecision::Allow) => {
-                Some((EmbedRoute::Remote, rung.lease_duration_ms))
-            }
-            (RungRole::Fallback, _) | (RungRole::Primary, EgressDecision::Allow) => Some(primary),
-            (RungRole::Primary, EgressDecision::Deny | EgressDecision::NoVerdict) => None,
-        }
+        let allowed = decision == EgressDecision::Allow && world_admits;
+        Ok(match (self.rung_role, allowed) {
+            (RungRole::Fallback, true) => Some((EmbedRoute::Remote, rung.lease_duration_ms)),
+            (RungRole::Fallback, false) | (RungRole::Primary, true) => Some(primary),
+            (RungRole::Primary, false) => None,
+        })
     }
 }

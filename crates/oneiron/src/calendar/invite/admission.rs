@@ -256,6 +256,7 @@ pub(crate) fn admit_calendar_invite_in_txn(
             actor,
             event_ref,
             &payload.recipient,
+            payload.method,
         )?,
     })
 }

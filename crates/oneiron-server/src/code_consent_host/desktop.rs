@@ -60,8 +60,7 @@ pub(super) fn resume_answered_desktop(
 /// armed for it, and what it came to: its answer; a refusal for a desktop
 /// that is gone or a target that changed; or, for an act whose input was
 /// sent and whose window did not read after, an unknown delivery with its
-/// receipt (a desktop keeps no sent receipt today, so that arm is a
-/// refusal until it does).
+/// receipt (FIX 12134).
 fn run_held_act(
     server: &SyncServer,
     vault: &Vault,
@@ -135,6 +134,7 @@ fn held_press(action: &CodeConsentBrowserAction) -> Option<HeldPress> {
         name: action.name.clone(),
         locator: action.locator.clone(),
         page: action.page.clone(),
+        audience: action.audience.clone(),
         tab: action.tab.clone(),
         document: action.document.clone(),
         generation: action.session.clone(),

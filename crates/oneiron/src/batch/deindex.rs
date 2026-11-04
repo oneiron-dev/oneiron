@@ -151,6 +151,8 @@ pub(crate) fn deindex_entity(
     crate::skill_hub::erase_claim_refinement_in_txn(store, wtxn, id)?;
     crate::skill_hub::erase_refinement_custody_in_txn(store, wtxn, id)?;
     crate::skill_hub::remove_refinement_carrier_in_txn(store, wtxn, id)?;
+    // OF-272: the write unit re-keys the identity a deleted head leaves.
+    crate::channel_identity::note_claim_delete_for_rekey(store, wtxn, id, None)?;
     let (mut had_vector, mut had_graph_mutation, mut neighbors) =
         deindex_lexical_query_hints_for_target(store, wtxn, id)?;
 
@@ -203,6 +205,8 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::workspace_roster::guard_goal_delete(store, wtxn, *id)?;
     crate::federation::reject_ruling_delete(store, wtxn, id)?;
     crate::claim::history_store::reject_machine_history_delete(store, wtxn, id)?;
+    // A carried history read no longer stands for a deleted control (FIX 4296).
+    crate::claim::history_seal::scatter_index_seal_for_delete(store, wtxn, id)?;
     crate::workspace_roster::reject_audience_edit_delete(store, wtxn, id)?;
     // The shared physical tear is reached by facade deletes, public batch
     // deletes and lexical-hint cascades. Every one must erase claim decisions
@@ -260,7 +264,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::task_verb::index_owner_fact(store, wtxn, id, None)?;
     crate::task_verb::forget_task_mirror(store, wtxn, *id)?;
     crate::task_verb::forget_symbols(store, wtxn, *id)?;
-    crate::bm25::deindex_text(store, wtxn, id)?;
+    crate::store::text_index::deindex_text(store, wtxn, id)?;
     crate::vault::entity_revision::remove_entity_revisions(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
     crate::code_revision::delete_code_revision_lifecycle_in_txn(store, wtxn, id)?;
@@ -316,8 +320,10 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::compaction::raise_epoch_floor_in_txn(store, wtxn, &entity_record)?;
     if entity_type == ENTITY_TYPE_SKILL {
         let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
-        if let Some(content_hash) = crate::skill::decode_skill_record(body)?.content_hash {
-            crate::skill_hub::maintain_skill_content_hash_index_for_delete(
+        if let Some(content_hash) =
+            crate::write_envelope::skill_record::decode_skill_record(body)?.content_hash
+        {
+            crate::store::skill_content_index::maintain_skill_content_hash_index_for_delete(
                 store,
                 wtxn,
                 id,
@@ -326,7 +332,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
         }
     }
     crate::channel_identity::clear_assignment_for_delete(store, wtxn, id, entity_type)?;
-    let mut cleanup = crate::affect::VadAnnotationCleanup::default();
+    let mut cleanup = crate::write_envelope::vad_annotation::VadAnnotationCleanup::default();
     crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,
         wtxn,
@@ -344,9 +350,9 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
 
     crate::dreamer_runner::deindex_dreamer_milestone_claim(store, wtxn, id)?;
     crate::llm::deindex_dreamer_step_claim(store, wtxn, id)?;
-    crate::ingest::reindex_identity_hints(store, wtxn, id, None)?;
+    crate::store::identity_hints::reindex_identity_hints(store, wtxn, id, None)?;
     crate::ports::reindex_named_entities(store, wtxn, id, None)?;
-    crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
+    crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, id)?;
     TRUSTED_MANIFEST_ORIGIN.delete(store, wtxn, &HexId(*id))?;
     SEEDED_MANIFEST_CONFIDENCE.delete(store, wtxn, &HexId(*id))?;
     crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
@@ -385,7 +391,7 @@ pub(crate) fn drop_seeded_actor_row(
     crate::vault::entity_revision::remove_entity_revisions(store, wtxn, id)?;
     delete_short_id_rows_for_id(store, wtxn, id)?;
     crate::federation::record_scope::retire_stamp(store, wtxn, *id)?;
-    crate::ingest::reindex_identity_hints(store, wtxn, id, None)?;
+    crate::store::identity_hints::reindex_identity_hints(store, wtxn, id, None)?;
     crate::ports::reindex_named_entities(store, wtxn, id, None)?;
     store.port_remove_entity_row(wtxn, id)?;
     Ok(())

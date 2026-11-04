@@ -6,13 +6,13 @@
 //! dependency or capacity blocks it. A successful grant atomically reserves
 //! incremental bytes in the device ledger and lives until terminal release
 //! or reap. Unknown capacity admits and records under the lead ruling.
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
-use oneiron::llm::{AdmissionGrant, ResourceClass, WorkClass, WorkPriority};
+use oneiron::llm::{AdmissionGrant, ResourceClass, WorkClass, WorkPhysical, WorkPriority};
 use tokio::sync::Notify;
 
 use super::inference_device::{
@@ -35,6 +35,8 @@ pub struct WorkRequest {
     pub worker_id: String,
     pub resource: ResourceClass,
     pub class: WorkClass,
+    /// This call's own host-attested custody; never inherited from a parent.
+    pub physical: WorkPhysical,
     pub priority: WorkPriority,
     pub deadline: Option<Instant>,
     pub envelope: WorkEnvelope,
@@ -54,6 +56,7 @@ impl WorkRequest {
             worker_id: worker_id.into(),
             resource,
             class: DEFAULT_WORK_CLASS,
+            physical: WorkPhysical::Paid,
             priority: WorkPriority::default(),
             deadline: DEFAULT_DEADLINE,
             envelope: WorkEnvelope::default(),
@@ -318,6 +321,7 @@ impl DeviceAdmission {
             request.class = parent.request.class;
             request.deadline = parent.request.deadline;
             request.cancel = fresh_cancel(&parent.request.cancel);
+            // Physical custody is per-call, never inherited.
         }
         request.parent = parent;
         if state.reaping.contains(&request.worker_id) {
@@ -437,6 +441,7 @@ impl DeviceAdmission {
                     ticket.request.class = parent.class;
                     ticket.request.deadline = parent.deadline;
                     ticket.request.cancel = fresh_cancel(&parent.cancel);
+                    // Physical custody is per-call, never inherited.
                     ticket.request.parent = Some(parent_id);
                     ticket.blocked_by = Some(parent_id);
                 }
@@ -502,6 +507,16 @@ impl DeviceAdmission {
     /// Fit, else idle unload, then an approved smaller profile, then wait.
     /// Unknown capacity has already admitted inside `grant`.
     pub fn resolve_pressure(self: &Arc<Self>, ticket: &WorkTicket) -> PressureDecision {
+        self.resolve_pressure_excluding(ticket, &BTreeSet::new())
+    }
+
+    /// One pressure pass, excluding victims already tried. A victim must be
+    /// idle both in its executor row and across its tickets and load holds.
+    pub fn resolve_pressure_excluding(
+        self: &Arc<Self>,
+        ticket: &WorkTicket,
+        tried: &BTreeSet<String>,
+    ) -> PressureDecision {
         match self.grant(ticket) {
             Ok(Some(grant)) => return PressureDecision::Grant(grant),
             Err(stop) => return PressureDecision::Stop(stop),
@@ -521,6 +536,13 @@ impl DeviceAdmission {
                 executor.idle
                     && (UNLOAD_EXTERNAL || !executor.external)
                     && executor.worker_id != ticket.request.worker_id
+                    && !tried.contains(&executor.worker_id)
+                    && !state
+                        .tickets
+                        .values()
+                        .any(|ticket| ticket.request.worker_id == executor.worker_id)
+                    && !state.load_waiters.contains_key(&executor.worker_id)
+                    && !self.ledger.has_hold(&load_holder(&executor.worker_id))
             })
             .map(|executor| executor.worker_id.clone());
         if let Some(worker) = idle {

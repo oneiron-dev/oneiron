@@ -7,7 +7,8 @@
 //! extraction namespace (the nightly parent when the attempt has one, so
 //! its children and retry chunks share it; else the first try of the
 //! attempt's retry lineage, so a fresh `retry_of` try keeps the ids its
-//! original minted, FIX 7579), the
+//! original minted, FIX 7579, that first try pinned when each retry is
+//! minted so no compaction moves it, FIX 9350), the
 //! exposure axes the source is admitted under, the normalized name, and
 //! the declaration's canonical mention anchor: the smallest of its sources,
 //! with the byte range of the name's first exact occurrence in the text the
@@ -28,7 +29,12 @@ use crate::dreamer_consolidation::executor::extraction::ExtractedPerson;
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::entity_id::derived_domains::DREAMER_PERSON;
 use crate::error::Result;
+use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
+
+/// Each Dreamer retry's lineage origin, pinned at its mint (FIX 9350).
+const LINEAGE_ORIGIN: SideTable<AttemptId, AttemptId, Named> =
+    SideTable::new(&side_table::DREAMER_LINEAGE_ORIGIN);
 
 /// Where one extraction's people are minted: the parent extraction it
 /// belongs to and the exposure axes its sources are admitted under. The
@@ -74,25 +80,37 @@ impl MintNamespace {
 }
 
 /// The try `attempt`'s retry lineage began at (FIX 7579): `attempt` itself
-/// when it retries none. Each `retry_of` hop is followed while its row
-/// reads, so every try of one lineage names the same first try, and the
-/// people a reply declares in the original and in a fresh retry bind one
-/// id. A compaction relinks `retry_of` past the tries it folds; a lineage
-/// whose first try it folded begins at its oldest kept try. A cycle ends
-/// where it closes.
+/// when it retries none. A retry's origin is the one pinned at its mint
+/// (FIX 9350); otherwise each `retry_of` hop is followed while its row
+/// reads, stopping at a try whose origin is pinned. So every try of one
+/// lineage names the same first try, and the people a reply declares in
+/// the original and in a fresh retry bind one id, even after a compaction
+/// relinks `retry_of` past the first try it folds. A cycle ends where it
+/// closes.
 ///
 /// # Errors
 ///
-/// The queue's read errors.
+/// The queue's and the pin's read errors.
 pub(in crate::dreamer_consolidation) fn original_try(
     vault: &Vault,
     attempt: AttemptId,
 ) -> Result<AttemptId> {
-    let queue = AttemptQueue::new(vault);
     let txn = vault.store.env.read_txn()?;
+    origin_in_txn(vault, &txn, attempt)
+}
+
+/// [`original_try`] read in `txn`.
+fn origin_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, attempt: AttemptId) -> Result<AttemptId> {
+    let queue = AttemptQueue::new(vault);
     let mut seen = BTreeSet::from([*attempt.as_bytes()]);
     let mut first = attempt;
-    while let Some(record) = queue.get_in_txn(&txn, first)? {
+    loop {
+        if let Some(origin) = LINEAGE_ORIGIN.get(&vault.store, txn, &first)? {
+            return Ok(origin);
+        }
+        let Some(record) = queue.get_in_txn(txn, first)? else {
+            break;
+        };
         let Some(previous) = record.retry_of else {
             break;
         };
@@ -102,6 +120,23 @@ pub(in crate::dreamer_consolidation) fn original_try(
         first = previous;
     }
     Ok(first)
+}
+
+/// Pins `successor`'s lineage origin as it is minted to retry `source`
+/// (FIX 9350): `source`'s origin, read in the minting `txn` while its
+/// lineage is whole. A compaction relinks `retry_of`, never this pin.
+///
+/// # Errors
+///
+/// The queue's and the pin's read and write errors.
+pub(crate) fn pin_lineage_origin_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    source: AttemptId,
+    successor: AttemptId,
+) -> Result<()> {
+    let origin = origin_in_txn(vault, txn, source)?;
+    LINEAGE_ORIGIN.put(&vault.store, txn, &successor, &origin)
 }
 
 /// One declaration's binding.

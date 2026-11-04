@@ -3,7 +3,7 @@
 //! sealed admission and the stamp it leaves on the push's evidence, intent
 //! and recovery.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use rmpv::Value;
@@ -168,10 +168,11 @@ impl GitPushArm {
 }
 
 /// What one admitted push stands on: the arm, the pusher, the Grant and the
-/// repo it names, the checkout of a lease push, and the credential's
-/// revocable identity. The admission evidence records it, the intent keeps
-/// it, and recovery rebuilds the stamp from it rather than from a bare
-/// principal. It holds no secret bytes.
+/// repo it names, the checkout of a lease push, the Grant that admitted each
+/// of its ref moves at the final writer, and the credential's revocable
+/// identity. The admission evidence records it, the intent keeps it, and
+/// recovery rebuilds the stamp from it rather than from a bare principal. It
+/// holds no secret bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct GitPushStamp {
     pub(super) arm: GitPushArm,
@@ -187,6 +188,11 @@ pub(crate) struct GitPushStamp {
     pub(super) checkout: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) class: Option<u8>,
+    /// A checkout push's ref moves, each by its full ref name, with the
+    /// Grant (hex) that admitted it at the final writer (FIX 7138): any
+    /// live Grant of the pusher's over this repo, `grant` or another.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) ref_grants: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) slip: Option<[u8; 32]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -206,10 +212,22 @@ impl GitPushStamp {
             anchor: None,
             checkout: None,
             class: None,
+            ref_grants: BTreeMap::new(),
             slip: caller.credential.slip,
             revoked_marker: caller.credential.revoked_marker.clone(),
             binding: caller.credential.binding,
         }
+    }
+
+    /// Names [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY)
+    /// as the pusher where the stamp names `actor`, for a retained journal
+    /// row an erase reaches (FIX 8806); `true` when it did.
+    pub(crate) fn erase_principal(&mut self, actor: &EntityId) -> bool {
+        let named = self.principal == actor.to_hex();
+        if named {
+            crate::receipt::ERASED_CALL_IDENTITY.clone_into(&mut self.principal);
+        }
+        named
     }
 
     pub(super) fn naming(mut self, grant: EntityId, repo: GitPushRepo, anchor: String) -> Self {
@@ -217,6 +235,15 @@ impl GitPushStamp {
         self.repo = Some(repo);
         self.anchor = Some(anchor);
         self
+    }
+
+    /// Records the Grant that admitted each ref move at the final writer,
+    /// as [`Vault::recheck_git_push_in_txn`] answered them (FIX 7138).
+    pub(crate) fn record_ref_grants(&mut self, admitted: &BTreeMap<String, EntityId>) {
+        self.ref_grants = admitted
+            .iter()
+            .map(|(git_ref, grant)| (git_ref.clone(), grant.to_hex()))
+            .collect();
     }
 
     /// The served repository's name this push was admitted on (FIX 7608

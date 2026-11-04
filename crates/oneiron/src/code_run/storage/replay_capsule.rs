@@ -42,6 +42,11 @@ pub(crate) use self::start_parts::{
 /// Capsules. Key: id16(attempt) + be64(lease generation) + be64(step).
 const CAPSULES: SideTable<(EntityId, u64, u64), StepReplayCapsule, Named> =
     SideTable::new(&side_table::CODE_RUN_REPLAY_CAPSULE);
+/// Whether a masked copy of a `CODE_RUN_REPLAY_CAPSULE` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn code_run_replay_capsule_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StepReplayCapsule, Named>(bytes)
+}
 
 /// Fork rows. Key: hash32(attempt receipt, skill, axis) + the row's name.
 const FORKS: SideTable<([u8; 32], String), ForkRow, Named> =

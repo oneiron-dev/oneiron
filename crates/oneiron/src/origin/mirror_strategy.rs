@@ -180,6 +180,22 @@ impl Vault {
         Ok(row)
     }
 
+    /// [`Self::set_served_origin_mirror_strategy`] as the caller's owner
+    /// proof, revalidated in the transaction that changes it (FIX 8214).
+    pub fn set_served_origin_mirror_strategy_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        repo_name: &str,
+        strategy: OriginMirrorSyncStrategy,
+    ) -> Result<OriginMirrorTarget> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        let row = self.set_served_origin_mirror_strategy_in_txn(&mut txn, repo_name, strategy)?;
+        txn.commit()?;
+        self.wake_origin_mirrors();
+        Ok(row)
+    }
+
     /// The strategy setter, in the transaction its owner proof is checked in.
     /// `EntityNotFound` when the repository has no mirror.
     pub(crate) fn set_served_origin_mirror_strategy_in_txn(

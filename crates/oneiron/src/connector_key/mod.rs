@@ -11,6 +11,7 @@
 //! fill them without re-versioning the schema.
 
 mod accounting;
+pub mod budget_class;
 mod channel_subscription;
 mod charter;
 mod codec;
@@ -72,6 +73,7 @@ pub use self::setup::{
     NATIVE_MAIL_JMAP_CHECK, PACK_CONNECTION_ACTOR_CLASS, PACK_SETUP_ALLOW_ASK_DOOR,
     PACK_SETUP_ALLOW_ASK_QUEUE, PackConnectionCheck, PackConnectionEvidence,
     PackConnectionVerifier, PackSetupOwnerAsk, ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK,
+    TELEGRAM_GET_ME_CHECK,
 };
 pub use self::txn::ConnectorKeyGeneration;
 

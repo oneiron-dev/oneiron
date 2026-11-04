@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{ArtifactView, BlobArtifactBody, BlobVersionProvenance};
 use crate::edge::EdgeActorClass;
-use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::provenance::made_by::MadeBy;
+use crate::memory::Memory;
 use crate::temporal::TimeRange;
+use crate::write_envelope::provenance::made_by::MadeBy;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// A new artifact and the bytes of its first version.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -256,6 +256,20 @@ fn step_replay(attempt: Option<&str>, request: &MediaRequest) -> Option<MediaRep
     attempt.and_then(|a| MediaReplayKey::step(a.to_owned(), request).ok())
 }
 
+/// The replay key a run's call sent as `key` for `request` (FIX 11615),
+/// inside the run's own partition: its name under `run:`, which no owner's
+/// call shares (FIX 2962 keeps owner keys in [`OWNER_REPLAY_PARTITION`]);
+/// none without a key, or with an empty one. Two runs that send one key
+/// keep two answers, one per run, as two HTTP credentials do.
+fn run_replay(
+    run: &RunAdmission,
+    key: Option<String>,
+    request: &MediaRequest,
+) -> Option<MediaReplayKey> {
+    let key = key.filter(|key| !key.is_empty())?;
+    MediaReplayKey::caller(format!("run:{}", run.run()), key, request).ok()
+}
+
 /// The spend scope a pumped entry's metered attempt spends under, which its
 /// entry's meter is opened from (FIX 11496, L06-A 07:17): `attempt` is the
 /// value the pump bound to the entry's door, decoded to its id, and the
@@ -286,8 +300,12 @@ pub(crate) async fn ai_media_for_run(
     attempt: Option<&str>,
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
+    let key = input.idempotency_key.clone();
     let (request, voices) = prepare(server, operation, input)?;
-    let replay = step_replay(attempt, &request);
+    // A pumped run's attempt step key still wins when the call has one, as
+    // before; a run or code-mode caller no attempt keys is deduped by the
+    // key it sent, in its run's partition (FIX 11615).
+    let replay = step_replay(attempt, &request).or_else(|| run_replay(run, key, &request));
     rendered(server, operation, request, voices, Some(run), None, replay).await
 }
 
@@ -428,7 +446,9 @@ pub(crate) async fn ai_video_for_agent_run(
 }
 
 /// A run's video job on `run`, or on a guard of `scope`'s own when a spend
-/// scope funds it (FIX 11496); its step key comes from `attempt` alone.
+/// scope funds it (FIX 11496); its replay key is its attempt's step key
+/// when it has one, else the caller key the submit sent, in its run's
+/// partition (FIX 11615).
 async fn submit_run_video(
     server: &SyncServer,
     run: &RunAdmission,
@@ -437,8 +457,9 @@ async fn submit_run_video(
     input: AiCallRequest,
     actor: Option<EntityId>,
 ) -> MemoryResult<AiVideoTicket> {
+    let key = input.idempotency_key.clone();
     let (request, _) = prepare(server, AiOperation::Video, input)?;
-    let replay = step_replay(attempt, &request);
+    let replay = step_replay(attempt, &request).or_else(|| run_replay(run, key, &request));
     let media = server.ai.model_runtime().media();
     let submitted = match scope {
         Some(scope) => {

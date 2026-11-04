@@ -116,6 +116,16 @@ pub(crate) fn spawn_self_host(
     server: &Arc<SyncServer>,
     config: &ServeConfig,
 ) -> Vec<tokio::task::JoinHandle<()>> {
+    spawn_self_host_admitted(server, config, crate::server::admit_every_pass())
+}
+
+/// [`spawn_self_host`] under a host's deletion gate (FIX 12008): the
+/// outbox's passes and the shipper's run only while `admit` lets them.
+pub(crate) fn spawn_self_host_admitted(
+    server: &Arc<SyncServer>,
+    config: &ServeConfig,
+    admit: HousekeepingAdmission,
+) -> Vec<tokio::task::JoinHandle<()>> {
     let shipper = config.publisher_training_self_host_shipper;
     let Some(dir) = config.publisher_training_outbox_dir.clone() else {
         if shipper {
@@ -138,7 +148,7 @@ pub(crate) fn spawn_self_host(
         .map(|intake| Arc::new(Descriptor::new(Arc::clone(intake))));
     let mut handles = vec![worker::spawn(
         Arc::clone(server),
-        crate::server::admit_every_pass(),
+        Arc::clone(&admit),
         dir.clone(),
         Placement::SelfHost,
         descriptor.clone(),
@@ -146,7 +156,7 @@ pub(crate) fn spawn_self_host(
     if let (Some(intake), Some(descriptor)) = (intake, descriptor) {
         handles.push(shipper::spawn(
             Arc::clone(server),
-            crate::server::admit_every_pass(),
+            admit,
             dir,
             intake,
             descriptor,

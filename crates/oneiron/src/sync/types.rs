@@ -35,149 +35,15 @@ pub struct LocalUpdate {
     pub update_bytes: Vec<u8>,
 }
 
-/// Whose message a live partial is (FIX 9537), from its stream's own seed:
-/// the conversation its MESSAGE lands in and the stream's generation. A
-/// host judges where the partial may go by this, never by the frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MessagePresenceScope {
-    pub message: crate::EntityId,
-    pub conversation: crate::EntityId,
-    pub generation: crate::EntityId,
-    /// The stream ended: the frame deletes its partial.
-    pub cleared: bool,
-}
+pub use crate::memory::message_presence::{MessagePresenceScope, ScopedPresenceFrame};
 
-/// An all-devices partial's presence frame, with its scope.
-#[derive(Debug, Clone)]
-pub struct ScopedPresenceFrame {
-    /// The frame, `TAG_EPHEMERAL` first, as the device lane carries it.
-    pub frame: Vec<u8>,
-    pub scope: MessagePresenceScope,
-}
-
-/// A window key identifying a base or world-scoped monthly Doc.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct WindowKey(String);
-
-impl WindowKey {
-    /// Creates a new window key from a "YYYY-MM" string.
-    ///
-    /// Panics on malformed input.
-    pub fn new(key: impl Into<String>) -> Self {
-        let key = key.into();
-        assert!(
-            parse_window_key_str(&key).is_some(),
-            "malformed window key {key:?}; expected YYYY-MM with year >= 1970 and month 01-12"
-        );
-        Self(key)
-    }
-
-    /// Creates a new window key from a "YYYY-MM" string, returning `None`
-    /// on malformed input.
-    ///
-    /// Non-panicking counterpart to [`WindowKey::new`] for wire-derived keys
-    /// (the server-side chokepoint for client-supplied window keys).
-    pub fn try_new(key: impl Into<String>) -> Option<Self> {
-        let key = key.into();
-        parse_window_key_str(&key)?;
-        Some(Self(key))
-    }
-
-    #[cfg(test)]
-    pub(super) fn new_unchecked_for_test(key: impl Into<String>) -> Self {
-        Self(key.into())
-    }
-
-    /// Creates a window key from a Unix timestamp (seconds).
-    ///
-    /// Timestamps at or beyond year 10000 are clamped to the last
-    /// representable window, `"9999-12"`: the ARCH-0023b window-key format is
-    /// `YYYY-MM` (exactly 7 bytes), so a larger year would produce a key that
-    /// `parse_window_key_str` rejects everywhere — `sync_state` rows written
-    /// under such a key become unreachable through validated read paths,
-    /// `SyncQueue::push` refuses it, and the wire encoders assert on it.
-    /// `learned_at` is caller-supplied, so this conversion must stay total
-    /// and bounded.
-    pub fn from_timestamp(ts: u64) -> Self {
-        // Delegates to the always-compiled deletion module so the `pt:`
-        // pending-tombstone marker (written even in non-`sync` builds,
-        // ONE-1132) addresses EXACTLY the window this key would name.
-        Self(crate::deletion::window_label_from_timestamp(ts))
-    }
-
-    /// World-scoped key for a timestamp. Base rows continue to use `from_timestamp`.
-    pub fn for_world(ts: u64, world: crate::EntityId) -> Self {
-        Self::for_month_world(&Self::from_timestamp(ts), world)
-    }
-
-    /// Address a world in the same month as an existing key.
-    pub fn for_month_world(month: &Self, world: crate::EntityId) -> Self {
-        Self(format!("{}@{}", &month.0[..7], world.to_hex()))
-    }
-
-    /// World axis, or `None` for the shared base partition.
-    pub fn world(&self) -> Option<crate::EntityId> {
-        self.0
-            .split_once('@')
-            .and_then(|(_, hex)| crate::EntityId::from_hex(hex).ok())
-    }
-
-    /// Returns the key string.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// Returns the start timestamp (first second of the month) as Unix seconds.
-    /// Returns `None` for pre-1970 dates (negative Unix timestamps).
-    pub fn start_timestamp(&self) -> Option<u64> {
-        let (year, month) = self.parse_year_month()?;
-        date_to_unix(year, month, 1)
-    }
-
-    /// Returns the end timestamp (first second of the next month) as Unix seconds.
-    /// Returns `None` for pre-1970 dates (negative Unix timestamps).
-    pub fn end_timestamp(&self) -> Option<u64> {
-        let (year, month) = self.parse_year_month()?;
-        let (next_year, next_month) = if month == 12 {
-            (year + 1, 1)
-        } else {
-            (year, month + 1)
-        };
-        date_to_unix(next_year, next_month, 1)
-    }
-
-    /// Returns the previous month's `WindowKey`.
-    pub fn previous_month(&self) -> Option<WindowKey> {
-        let (year, month) = self.parse_year_month()?;
-        let (prev_year, prev_month) = if month == 1 {
-            (year - 1, 12)
-        } else {
-            (year, month - 1)
-        };
-        if prev_year < 1970 {
-            return None;
-        }
-        Some(match self.world() {
-            Some(world) => WindowKey::for_month_world(
-                &WindowKey(format!("{prev_year:04}-{prev_month:02}")),
-                world,
-            ),
-            None => WindowKey(format!("{prev_year:04}-{prev_month:02}")),
-        })
-    }
-
-    fn parse_year_month(&self) -> Option<(i32, u32)> {
-        parse_window_key_str(&self.0)
-    }
-}
-
-pub(crate) fn parse_window_key_str(key: &str) -> Option<(i32, u32)> {
-    crate::deletion::parse_window_label(key)
-}
+pub use crate::window_key::WindowKey;
+pub(crate) use crate::window_key::parse_window_key_str;
 
 /// The ledger-plane partition axis: only CLAIM and WORLD_KEY_PAD bodies and a
-/// world's key wrap entries name a world. Other entity families, a world's
-/// settings entries included, remain in the shared base window.
+/// world's side entries (its key wraps and the joins over its side leaves)
+/// name a world. Other entity families, a world's settings entries included,
+/// remain in the shared base window.
 pub(crate) fn entity_world(raw: &[u8]) -> crate::error::Result<Option<crate::EntityId>> {
     use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
     // ITEM11_LIVE_PAD_CARRIER: a live pad rides its world's month windows. A
@@ -188,9 +54,9 @@ pub(crate) fn entity_world(raw: &[u8]) -> crate::error::Result<Option<crate::Ent
     let header =
         EntityMetadataHeader::parse(raw).ok_or(crate::Error::CorruptedIndex("entity metadata"))?;
     if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
-        // A world's key wraps ride its month windows, to its readers only (FIX
-        // 3871). An entry that does not decode stays in the base window.
-        return Ok(authority_wrap_world(raw));
+        // A world's side entries ride its month windows, to its readers only
+        // (FIX 3871). An entry that does not decode stays in the base window.
+        return Ok(authority_side_entry_world(raw));
     }
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Ok(None);
@@ -198,10 +64,14 @@ pub(crate) fn entity_world(raw: &[u8]) -> crate::error::Result<Option<crate::Ent
     Ok(crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?.world)
 }
 
-/// The world whose key wraps the AUTHORITY_LOG row `raw` carries
-/// (`authority::side_world`); `None` for any other row, a world's settings
-/// entry included, and for an entry that does not decode.
-pub(crate) fn authority_wrap_world(raw: &[u8]) -> Option<crate::EntityId> {
+/// The world of the AUTHORITY_LOG row `raw` when the row is one of that
+/// world's side entries (`authority::side_world`), which places the row in
+/// the world's month windows, to its readers only. It covers both kinds of
+/// side entry: the world's key wraps (FIX 3871), and the joins a carrier
+/// stages over the world's side leaves (FIX 11868). `None` for any other
+/// row, a world's settings entry included, and for an entry that does not
+/// decode.
+pub(crate) fn authority_side_entry_world(raw: &[u8]) -> Option<crate::EntityId> {
     use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
     if EntityMetadataHeader::parse(raw)?.entity_type != crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         return None;
@@ -517,12 +387,6 @@ pub(crate) fn tombstone_residence_in(
     })
 }
 
-impl std::fmt::Display for WindowKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
 /// Generates the Doc GUID for a window.
 pub fn window_doc_guid(user_id: &str, key: &WindowKey) -> String {
     format!("vault:{user_id}:w:{key}")
@@ -533,54 +397,8 @@ pub fn root_doc_guid(user_id: &str) -> String {
     format!("vault:{user_id}")
 }
 
-fn is_leap_year(year: i32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-}
-
-/// Convert year/month/day to Unix timestamp (seconds).
-///
-/// Returns `None` for pre-1970 dates where the result would be negative.
-fn date_to_unix(year: i32, month: u32, day: u32) -> Option<u64> {
-    // Days from 1970-01-01 to the given date
-    let mut days: i64 = 0;
-
-    // Years
-    for y in 1970..year {
-        days += if is_leap_year(y) { 366 } else { 365 };
-    }
-    // Handle years before 1970
-    for y in year..1970 {
-        days -= if is_leap_year(y) { 366 } else { 365 };
-    }
-
-    // Months within the target year
-    let month_days = [
-        31,
-        if is_leap_year(year) { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    for &d in &month_days[..(month as usize - 1)] {
-        days += d as i64;
-    }
-
-    // Days within the month
-    days += (day as i64) - 1;
-
-    if days < 0 {
-        return None;
-    }
-
-    Some((days * 86_400) as u64)
-}
+#[cfg(test)]
+use crate::window_key::date_to_unix;
 
 #[cfg(test)]
 mod tests {

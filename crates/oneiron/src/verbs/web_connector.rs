@@ -1,6 +1,8 @@
 //! Embedded-owner projection of the web connector's switch and usage doors (FIX 11598).
 use crate::memory::{Memory, MemoryResult};
-use crate::web_connector::{WebConnectorSetting, WebConnectorUsagePage, WebConnectorUsageRead};
+use crate::settings::web_connector::{
+    WebConnectorSetting, WebConnectorUsagePage, WebConnectorUsageRead,
+};
 
 pub fn read_web_connector_setting(memory: &Memory<'_>) -> MemoryResult<WebConnectorSetting> {
     Ok(memory

@@ -1,16 +1,18 @@
 //! Per-agent file views over codebase blobs, with one owned shared service set.
 use crate::build_cache::{ActionResult, BuildAction, BuildCache, BuildCacheResult, CachedBuildLeg};
-use crate::checkout::CheckoutTaskClass;
 use crate::codebase::CodebaseSnapshotMount;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Named, SideTable};
+use crate::store::checkout_task::CheckoutTaskClass;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod erase;
 mod language_server;
 mod run;
+pub use erase::{collect_after_delete, collect_after_sweep, collect_erased_views};
 pub use language_server::{LanguageServer, SharedLanguageServer, StdioLanguageServer};
 pub(crate) use run::{repo_view_receipts_in_txn, view_receipt_in_txn};
 

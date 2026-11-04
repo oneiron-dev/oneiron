@@ -32,7 +32,32 @@ pub(super) fn desktop_scroll_proof_policy(snapshot: &Snapshot) -> Option<[u8; 32
     Some(*hasher.finalize().as_bytes())
 }
 
+/// Whether an act's input whose call failed, after the guest took
+/// `delivered` of its calls, has an unknown outcome (FIX 12257, the
+/// desktop twin of the browser's `unknown_outcome_policy`, FIX 10426): a
+/// later input call failed after earlier delivery, so the input may have
+/// taken effect, wholly or in part — a `type` with clear makes three
+/// input calls, and its select-all may stand while its text never went.
+/// The act's closure performs input calls only, so every failure past
+/// delivery lands one, a refusal included: a cleared field stays cleared
+/// when its text call answers stale. With none delivered, this partial-input
+/// row keeps today's answer and lands no receipt; a single sent but
+/// unacknowledged call is outside its scope.
+fn unknown_outcome_policy(_error: &BrowserError, delivered: u64) -> bool {
+    delivered > 0
+}
+
 impl DesktopSession {
+    /// A new effect verb keeps no earlier verb's unread receipt (FIX
+    /// 12134), as a browser session's verb entry clears it: a stale one is
+    /// never stamped on this verb's stop.
+    pub(super) fn begin_verb(&mut self) {
+        self.unread = None;
+        self.input_sent = false;
+        self.input_unknown = false;
+        self.input_delivered.set(0);
+    }
+
     /// Runs `act` on the desktop as `read` saw it, then returns the settled
     /// window as an edit of `base`, or whole when the act opened a window in
     /// front: that window is where the next step reads, and the move is kept
@@ -45,10 +70,20 @@ impl DesktopSession {
         base: &Base,
         act: impl FnOnce(&Self) -> Result<(), BrowserError>,
     ) -> Result<Observation, BrowserError> {
+        self.begin_verb();
         let windows: Vec<WindowKey> = self.listed()?.into_iter().map(|w| w.key).collect();
         let before = print_of(read)?;
         let start = Instant::now();
-        act(self)?;
+        let acted = act(self);
+        // Sent: a failure from here on leaves the effect standing (FIX
+        // 12134).
+        self.input_sent = acted.is_ok();
+        // A call of the input failed after the guest took part of it: the
+        // effect may stand, its outcome unknown (FIX 12257).
+        self.input_unknown = acted
+            .as_ref()
+            .is_err_and(|error| unknown_outcome_policy(error, self.input_delivered.get()));
+        acted?;
         self.settle(before, start)?;
         let listed = self.listed()?;
         if let Some(opened) = front(&listed, |window| !windows.contains(&window.key)) {
@@ -72,6 +107,90 @@ impl DesktopSession {
         observation: &mut Observation,
         started: Instant,
     ) {
+        let receipt = self.land(
+            verb,
+            target,
+            effect_class,
+            press,
+            &observation.url,
+            &observation.title,
+            None,
+            None,
+            started,
+        );
+        observation.receipt = Some(receipt);
+    }
+
+    /// An effect verb's act answer (FIX 12134, the desktop twin of the
+    /// browser session's FIX 8010 rule): an input the guest took stands
+    /// even when settling or reading the window after it failed. Its
+    /// receipt lands then, naming the window as the act's read `read` saw
+    /// it and the failure's code, kept for the host to take once through
+    /// `sent_receipt`; the input is never sent again. An input whose own
+    /// call failed after the guest took one of its calls lands the same
+    /// receipt, its outcome `unknown` (FIX 12257). A failure before the
+    /// send lands none.
+    pub(super) fn sent(
+        &mut self,
+        verb: &str,
+        read: &Snapshot,
+        target: Option<&Row>,
+        effect_class: Option<&str>,
+        press: PressMode,
+        started: Instant,
+        answer: Result<Observation, BrowserError>,
+    ) -> Result<Observation, BrowserError> {
+        match answer {
+            Ok(mut observation) => {
+                self.receipt(verb, target, effect_class, press, &mut observation, started);
+                Ok(observation)
+            }
+            Err(error) => {
+                if self.input_sent || self.input_unknown {
+                    let title = self
+                        .secrets
+                        .mask_known(&read.title)
+                        .unwrap_or_else(|| read.title.clone());
+                    let receipt = self.land(
+                        verb,
+                        target,
+                        effect_class,
+                        press,
+                        &url_of(&read.app, read.key),
+                        &title,
+                        Some(error.code().to_owned()),
+                        self.input_unknown.then_some(ReceiptOutcome::Unknown),
+                        started,
+                    );
+                    self.unread = Some(receipt);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Lands `verb`'s receipt, as the window it left at `url`/`title`
+    /// (shown, so a secret rides it by its handle alone), in the session's
+    /// receipts and the host's evidence; `result_unread` names the failure
+    /// of the read after a sent input (FIX 12134), where there was one,
+    /// and `outcome` what the receipt knows of the act's outcome where
+    /// its input was not sent whole (FIX 12257).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is one fact a receipt keeps"
+    )]
+    fn land(
+        &mut self,
+        verb: &str,
+        target: Option<&Row>,
+        effect_class: Option<&str>,
+        press: PressMode,
+        url: &str,
+        title: &str,
+        result_unread: Option<String>,
+        outcome: Option<ReceiptOutcome>,
+        started: Instant,
+    ) -> EffectReceipt {
         self.receipt_seq += 1;
         // Never compared: each receipt's screenshot is a capture of its own.
         let (screenshot, capture_id) = self
@@ -85,8 +204,8 @@ impl DesktopSession {
         let mut receipt = EffectReceipt {
             seq: self.receipt_seq,
             verb: verb.to_owned(),
-            url: observation.url.clone(),
-            title: observation.title.clone(),
+            url: url.to_owned(),
+            title: title.to_owned(),
             target: target.map(|row| row.target.clone()),
             target_name: target.map(|row| row.name.clone()),
             target_locator: target.map(|row| row.locator.clone()),
@@ -105,11 +224,12 @@ impl DesktopSession {
             action: None,
             source_url: None,
             source_origin: None,
+            audience: None,
             source_title: None,
             tab: None,
             result_tab: None,
-            result_unread: None,
-            outcome: None,
+            result_unread,
+            outcome,
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(started),
         };
@@ -134,7 +254,7 @@ impl DesktopSession {
             self.receipt_sink = Some(sink);
         }
         self.receipts.push(receipt.clone());
-        observation.receipt = Some(receipt);
+        receipt
     }
 
     /// Holds `png`, showing `frame`, under its content ref, with its
@@ -181,22 +301,23 @@ impl DesktopSession {
     }
 
     /// Types `text` into the field `typing` names, under the press its
-    /// line breaks take (a Return sends): the class and press it ran under,
-    /// and the settled window.
+    /// line breaks take (a Return sends): the settled window, receipted as
+    /// every type is (its type began at `started`).
     pub(super) fn enter(
         &mut self,
         typing: &Typing<'_>,
         row: &Row,
         text: &str,
         operands: &Value,
-    ) -> Result<(Option<&'static str>, PressMode, Observation), BrowserError> {
+        started: Instant,
+    ) -> Result<Observation, BrowserError> {
         // A line break can press Return, and a Return sends.
         let class = text
             .contains(|c: char| c == '\n' || c == '\r')
             .then_some(EFFECT_SEND);
         let press = self.press_or_hold("type", operands, class, Some(row), typing.read)?;
         let (pid, token) = (typing.read.key.pid, typing.token);
-        let observation = self.act(typing.read, typing.base, |session| {
+        let acted = self.act(typing.read, typing.base, |session| {
             let refused = |error: ToolError| refusal(error, Some(typing.target));
             if typing.clear {
                 for (key, modifiers) in [("a", vec!["ctrl"]), ("backspace", Vec::new())] {
@@ -217,8 +338,8 @@ impl DesktopSession {
                     .map_err(refused)?;
             }
             Ok(())
-        })?;
-        Ok((class, press, observation))
+        });
+        self.sent("type", typing.read, Some(row), class, press, started, acted)
     }
 
     /// The element token of the row `target` names, as read now.

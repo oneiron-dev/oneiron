@@ -160,6 +160,9 @@ pub struct OriginPublishReview {
     pub paths: u64,
     pub pages: u64,
     pub lfs_bytes: OriginPublishLfsBytes,
+    /// Whether a path's Git bytes are not UTF-8, so its text here is lossy
+    /// and a Grant's path bounds cannot judge it (FIX 10003).
+    pub lossy_paths: bool,
 }
 
 /// Why a request ended without publishing.

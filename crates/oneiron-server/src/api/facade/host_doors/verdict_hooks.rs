@@ -12,7 +12,7 @@ use oneiron::runtime_hooks::HookVerdict;
 use oneiron::task_verb::sdk::{AiVerdict, AiVerdictRequest, HooksReplayPage, HooksReplayRequest};
 
 use super::support::{
-    Listed, MaybeListed, asking, credential_listing, internal, owner_proof, read_beside, refused,
+    Listed, asking, credential_listing, internal, owner_proof, read_beside, refused,
 };
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -88,16 +88,16 @@ pub(crate) async fn ai_verdict(
 /// the hook sandbox serve runs its hooks on. A dry run: nothing lands. A fact
 /// no run pinned previews a generative hook's verdicts on serve's own ladder.
 /// Beside it, the binding, its body's source, each entry's fact and every
-/// row a replayed read served ([`oneiron::Vault::hooks_replay_listing`]);
-/// `None` once an entry heard a verdict whose evidence rows are not known.
+/// row a replayed read served ([`oneiron::Vault::hooks_replay_listing`]).
+/// Every listed row is named; an empty list means no rows.
 pub(crate) async fn vault_hooks_replay(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: HooksReplayRequest,
-) -> MaybeListed<HooksReplayPage> {
+) -> Listed<HooksReplayPage> {
     match vault_hooks_replay_answer(server, auth, input).await {
         Ok((replayed, rows)) => (Ok(replayed), rows),
-        Err(refusal) => (Err(refusal), Some(Vec::new())),
+        Err(refusal) => (Err(refusal), Vec::new()),
     }
 }
 
@@ -106,7 +106,7 @@ pub(super) async fn vault_hooks_replay_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: HooksReplayRequest,
-) -> MemoryResult<(HooksReplayPage, Option<Vec<EntityId>>)> {
+) -> MemoryResult<(HooksReplayPage, Vec<EntityId>)> {
     let owner = owner_proof(auth, server, "vault.hooks.replay")?;
     vault_hooks_replay_as_owner(server, owner, input).await
 }
@@ -118,7 +118,7 @@ pub(crate) async fn vault_hooks_replay_as_owner(
     server: &Arc<SyncServer>,
     owner: oneiron::consent::AuthenticatedOwner,
     input: HooksReplayRequest,
-) -> MemoryResult<(HooksReplayPage, Option<Vec<EntityId>>)> {
+) -> MemoryResult<(HooksReplayPage, Vec<EntityId>)> {
     let verdict = replay_verdict(server);
     let server = Arc::clone(server);
     crate::api::facade::clock_ingress::run_blocking(move || {

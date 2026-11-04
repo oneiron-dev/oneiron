@@ -37,6 +37,11 @@ const REGISTRY_ROW: StoredRows = StoredRows;
 /// Bounded recent benchmark-score change history for one model. Key: string (model id) + NUL.
 const SCORE_DIFFS: SideTable<String, Vec<ModelScoreDiff>, LegacyJson> =
     SideTable::new(&side_table::LLM_SCORE_DIFFS);
+/// Whether a masked copy of a `LLM_SCORE_DIFFS` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn llm_score_diffs_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<Vec<ModelScoreDiff>, LegacyJson>(bytes)
+}
 
 /// The `SCORE_DIFFS` key for `model`: its id, NUL-terminated, exactly as the pre-migration byte
 /// key spelled it.

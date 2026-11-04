@@ -97,6 +97,7 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "lease.revoke",
     "usage.event",
     "usage.rollup",
+    "booking.quarantine_restore",
 ];
 
 pub(crate) const CAPABILITY_MODES: &[&str] = &["flash", "thinking", "pro", "ultra"];

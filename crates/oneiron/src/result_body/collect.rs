@@ -2,7 +2,7 @@
 
 use std::time::SystemTime;
 
-use super::files::{BodyEntry, body_entries, remove_unnamed, sync_dir, unlink_body};
+use super::files::{BodyEntry, RemoveOutcome, body_entries, remove_unnamed, sync_dir, unlink_body};
 use super::{
     RAW_OUTPUT_ROWS, RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, raw_output_handle, unowned_mark_key,
 };
@@ -235,10 +235,10 @@ impl Vault {
                     if !self.entry_unnamed_in_txn(txn, entry, sealed)? {
                         continue;
                     }
-                    if remove_unnamed(dir, entry, now, &self.result_body_pins)? {
-                        went += 1;
-                    } else if self.result_body_pins.unless_pinned(&entry.digest, || ()).is_none() {
-                        kept += 1;
+                    match remove_unnamed(dir, entry, now, &self.result_body_pins)? {
+                        RemoveOutcome::Removed => went += 1,
+                        RemoveOutcome::Pinned => kept += 1,
+                        RemoveOutcome::Skipped => {}
                     }
                 }
                 Ok((went, kept))

@@ -33,7 +33,7 @@ pub(crate) struct FolderTarget {
     spec: TargetSpec,
     /// The floor its files claim their room on first: a backup's landing
     /// disk's (FIX 5858). `None` claims nothing.
-    room: Option<Box<dyn crate::recovery::checkpoint::RecoveryWriteBudget>>,
+    room: Option<Box<dyn crate::store::recovery_write_budget::RecoveryWriteBudget>>,
 }
 
 impl FolderTarget {
@@ -50,7 +50,7 @@ impl FolderTarget {
     /// name, retried by the next pass, and refuses nothing else.
     pub(crate) fn claiming(
         mut self,
-        room: Box<dyn crate::recovery::checkpoint::RecoveryWriteBudget>,
+        room: Box<dyn crate::store::recovery_write_budget::RecoveryWriteBudget>,
     ) -> Self {
         self.room = Some(room);
         self

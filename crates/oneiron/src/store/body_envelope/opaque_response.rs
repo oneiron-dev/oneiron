@@ -187,6 +187,7 @@ impl ErasedResponseDisposition {
             ResponseFamily::StepState => "an LLM step's state",
             ResponseFamily::Replay => "a code run's replay record",
             ResponseFamily::Http => "an HTTP idempotency entry",
+            ResponseFamily::InvocationClaim => "an invocation claim",
             ResponseFamily::MediaJob => "a media job",
             ResponseFamily::WaitDelivery => "a wait's delivered reply",
             ResponseFamily::WaitSettled => "a wait's settled reply",

@@ -71,10 +71,9 @@ impl WorkspaceGraph {
         let resolve = metadata
             .resolve
             .ok_or_else(|| invalid("Cargo metadata must include resolve graph"))?;
+        // Every member builds into the graph, however many (FIX 9769); the
+        // input's byte bound above is the memory floor.
         let members: BTreeSet<_> = metadata.workspace_members.into_iter().collect();
-        if members.len() > 10_000 {
-            return Err(invalid("workspace exceeds oracle limit"));
-        }
         let mut roots = BTreeMap::new();
         let mut targets = BTreeMap::new();
         for package in metadata

@@ -22,8 +22,7 @@ pub use usage::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// The connector name a `connector.call` names to reach this connector.
-pub const WEB_CONNECTOR_NAME: &str = "web";
+pub use crate::settings::web_connector::WEB_CONNECTOR_NAME;
 /// The effector a user's own provider key is bound to in custody.
 pub const WEB_CONNECTOR_EFFECTOR: &str = "connector:web";
 /// The environment variable that holds the deploy's backend Tavily key. The
@@ -38,33 +37,7 @@ pub const SNIPPET_MAX_CHARS: usize = 300;
 /// A fetched page's text cap in characters.
 pub const FETCH_CONTENT_MAX_CHARS: usize = 50_000;
 
-/// The connector's two tools.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WebTool {
-    Search,
-    Fetch,
-}
-
-impl WebTool {
-    /// The tool a `connector.call` names, if it is one of the two.
-    #[must_use]
-    pub fn parse(tool: &str) -> Option<Self> {
-        match tool {
-            "search" => Some(Self::Search),
-            "fetch" => Some(Self::Fetch),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Search => "search",
-            Self::Fetch => "fetch",
-        }
-    }
-}
+pub use crate::settings::web_connector::WebTool;
 
 /// `search`'s input: a bare query string, or this object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -126,13 +126,7 @@ impl PinnedWalk<'_, '_> {
                             "repo snapshot symlink target must be UTF-8",
                         ))
                     })?;
-                    self.entries.push(StoredRepoSnapshotEntry {
-                        path,
-                        kind: StoredRepoSnapshotEntryKind::Symlink,
-                        executable: false,
-                        content: Vec::new(),
-                        symlink_target: Some(target),
-                    });
+                    self.entries.push(self.custody.symlink(path, target));
                 }
                 mode if mode & MODE_TYPE_MASK == MODE_REGULAR => {
                     let content = self.wire.read_object(self.repo, &entry.oid)?;

@@ -296,3 +296,7 @@ impl HistorySkips {
         self.unreadable += unreadable;
     }
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::ledger::ingest_history_ledger_accepts_masked;

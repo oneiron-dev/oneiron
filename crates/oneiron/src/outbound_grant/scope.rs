@@ -4,6 +4,7 @@ use super::codec::{
     canonical_non_empty_str, canonical_scoped_server, invalid_grant, is_mcp_channel,
     is_send_class_verb, non_empty_str, non_empty_string, refs_match,
 };
+use super::verb_class::verb_in_class;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::genui::GrantMintIntentScope;
@@ -56,11 +57,11 @@ pub(super) const SEND_VERB_CLASS: &str = "send";
 pub enum StandingOutboundGrantScope {
     /// Always allow matching sends to one contact/counterparty.
     Contact { contact_ref: String },
-    /// Always allow matching sends for one outbound verb class.
+    /// Always allow every verb in one outbound verb class.
     VerbClass { verb_class: String },
     /// Always allow matching sends on one channel.
     Channel { channel: String },
-    /// Bundle approval for one brief and verb class.
+    /// Bundle approval for every verb in one verb class, inside one brief.
     BriefVerbClass {
         brief_ref: String,
         verb_class: String,
@@ -206,14 +207,16 @@ impl StandingOutboundGrantScope {
         }
         match self {
             Self::ArtifactPublish { .. } => false,
-            // A send to this contact, never another verb aimed at them: an
-            // invite is a send, a share or a provision is not.
+            // A send-class verb to this contact, never another verb aimed at
+            // them: an invite is a send, a share or a provision is not.
             Self::Contact { contact_ref } => {
                 (is_send_class_verb(verb) || verb.trim() == crate::calendar::CALENDAR_INVITE_VERB)
                     && counterparty
                         .is_some_and(|counterparty| refs_match(contact_ref, counterparty))
             }
-            Self::VerbClass { verb_class } => verb_class.trim() == verb.trim(),
+            // The stored class resolves its members at this call; its own
+            // literal spelling is one of them.
+            Self::VerbClass { verb_class } => verb_in_class(verb_class, verb),
             Self::Channel {
                 channel: grant_channel,
             } => grant_channel.trim() == channel.trim() && is_send_class_verb(verb),
@@ -221,7 +224,7 @@ impl StandingOutboundGrantScope {
                 brief_ref: grant_brief,
                 verb_class,
             } => {
-                verb_class.trim() == verb.trim()
+                verb_in_class(verb_class, verb)
                     && brief_ref.is_some_and(|brief_ref| refs_match(grant_brief, brief_ref))
             }
             // A page grant covers one admitted invite, never a verb: the

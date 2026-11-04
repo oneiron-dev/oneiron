@@ -12,7 +12,13 @@ pub(in crate::calendar) fn occurrences(
         return Ok(Vec::new());
     }
     let Some(occurrence) = row.occurred else {
-        return Ok(Vec::new());
+        // A lone floating or all-day EVENT falls within its civil span; a
+        // series has no anchored start to expand from.
+        return Ok(row
+            .wall_span
+            .filter(|_| row.facts.series().is_none())
+            .into_iter()
+            .collect());
     };
     let Some(master) = row.facts.series() else {
         return Ok(vec![occurrence]);

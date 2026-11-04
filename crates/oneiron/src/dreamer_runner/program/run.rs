@@ -698,16 +698,17 @@ struct ActorSteps {
 }
 
 /// The steps under each code run `actor`'s attempt stamps name, read on
-/// `txn`. A key that does not decode names no step and is left as it is.
+/// `txn`; the stamps by their actor index (FIX 5735). A stamp that does not
+/// decode names no actor. A key that does not decode names no step and is
+/// left as it is.
 fn actor_steps_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: &EntityId,
 ) -> Result<ActorSteps> {
     let mut code_runs = BTreeSet::new();
-    for row in ATTEMPT.iter_raw_from(vault, txn, &[])? {
-        let (_, bytes) = row?;
-        if let Ok(stamp) = ATTEMPT.decode_value(&bytes)
+    for attempt in super::index::actor_attempts_in_txn(vault, txn, actor)? {
+        if let Some(stamp) = ATTEMPT.get_lenient(vault, txn, &attempt)?
             && stamp.actor == *actor
         {
             code_runs.insert(turn_program_code_run(&stamp.admission)?);

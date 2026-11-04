@@ -21,11 +21,12 @@ use super::paths::{
 use super::retained_reasons::{RetainedReasons, bounded_verdict_line};
 use super::secret_marks::{ReceiveSecretMarks, ReceiveSecretMarksBuilder, ReceiveSeen};
 use crate::Vault;
-use crate::codebase::RepoRef;
-use crate::credential_door::{CredentialDoorService, DoorScanVerdict, PushedBlob};
+use crate::credential_door::{CredentialDoorService, DoorScanVerdict};
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName};
 use crate::origin::lfs::LfsPushedPointer;
+use crate::receive_scan::PushedBlob;
+use crate::store::code_snapshot::RepoRef;
 
 /// What the door answered while the objects were quarantined.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -517,11 +518,18 @@ impl<'a> BlobScan<'a> {
             .pre_receive_scan(self.repo, std::slice::from_ref(blob))
         {
             Ok(DoorScanVerdict::Clean) => {}
-            // A refused hit keeps today's reasons and prepares no mark.
+            // A refused hit keeps today's reasons and prepares no mark. Each
+            // carries its value-free lift advice and custody name (FIX 8805).
             Ok(DoorScanVerdict::Rejected { proposals, hits }) => {
                 debug_assert_eq!(proposals.len(), hits.len());
                 for proposal in &proposals {
-                    let reason = || format!("{}: {}", proposal.path, proposal.reason);
+                    let reason = || {
+                        format!(
+                            "{}: {}; lift the secret into the vault as `{}` and replace it \
+                             with a reference to that name",
+                            proposal.path, proposal.reason, proposal.suggested_secret_name
+                        )
+                    };
                     self.reasons.push_with(reason);
                 }
             }

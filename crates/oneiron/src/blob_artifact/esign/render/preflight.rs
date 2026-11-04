@@ -1,6 +1,9 @@
 //! Exact xref framing and lossless object-stream expansion before rewriting.
 //! Each stream decodes under its own bound; nothing is summed over the file.
-use super::streams::decoded;
+//! An inspection's host admits the memory each table, decode and snapshot
+//! takes before it is allocated ([`super::admitted`], FIX 8065).
+use super::admitted::{Stage, btree_entry_bytes};
+use super::streams::decoded_admitted;
 use super::*;
 use lopdf::xref::XrefEntry;
 mod dictionary;
@@ -10,7 +13,12 @@ struct Frame {
     entries: BTreeMap<u32, XrefEntry>,
     revisions: Vec<usize>,
     bound: StreamBound,
+    /// The frame's own stage: `entries` is freed when the load returns.
+    stage: Stage,
 }
+
+/// What one xref entry takes in a table of them.
+const XREF_ENTRY_BYTES: usize = btree_entry_bytes::<u32, XrefEntry>();
 
 /// Neutralize ObjStm before lopdf eagerly inflates it. We expand it ourselves
 /// with exact Flate checks and exact object indexes.
@@ -22,7 +30,9 @@ fn defer_object_streams(object: &mut Object) {
     }
 }
 
-pub(super) fn load(bytes: &[u8], bound: StreamBound) -> Result<Document> {
+/// The strict parse of `bytes`, each allocation its tables, decodes and
+/// snapshots make admitted first by `stage`, which outlives the document.
+pub(super) fn load(bytes: &[u8], bound: StreamBound, stage: &Stage) -> Result<Document> {
     let start = bytes
         .windows(9)
         .rposition(|v| v == b"startxref")
@@ -38,18 +48,32 @@ pub(super) fn load(bytes: &[u8], bound: StreamBound) -> Result<Document> {
         entries: BTreeMap::new(),
         revisions: Vec::new(),
         bound,
+        stage: stage.nested(),
     };
     frame.read(bytes, offset)?;
     // Inspect superseded revisions too: rewriting must not erase a prior seal.
     // Each snapshot is the input plus a short startxref trailer, read one at a
-    // time, however many revisions the file carries.
-    for previous in frame.revisions.iter().skip(1) {
-        let mut snapshot = bytes.to_vec();
-        snapshot.extend_from_slice(format!("\nstartxref\n{previous}\n%%EOF\n").as_bytes());
-        let old = load_objects(&snapshot, bound)?;
-        reject_signatures(&old)?;
+    // time into one buffer, however many revisions the file carries; each
+    // earlier revision's load gives its memory back before the next.
+    {
+        let snapshots = stage.nested();
+        let mut snapshot = Vec::new();
+        for previous in frame.revisions.iter().skip(1) {
+            let trailer = format!("\nstartxref\n{previous}\n%%EOF\n");
+            let size = bytes.len() + trailer.len();
+            snapshot.clear();
+            if size > snapshot.capacity() {
+                snapshots.admit(size)?;
+                snapshot.reserve_exact(size);
+            }
+            snapshot.extend_from_slice(bytes);
+            snapshot.extend_from_slice(trailer.as_bytes());
+            let revision = snapshots.nested();
+            let old = load_objects(&snapshot, bound, &revision)?;
+            reject_signatures(&old)?;
+        }
     }
-    let document = load_objects(bytes, bound)?;
+    let document = load_objects(bytes, bound, stage)?;
     for (id, entry) in &frame.entries {
         match entry {
             XrefEntry::Normal { generation, .. } => {
@@ -66,7 +90,7 @@ pub(super) fn load(bytes: &[u8], bound: StreamBound) -> Result<Document> {
     Ok(document)
 }
 
-fn load_objects(bytes: &[u8], bound: StreamBound) -> Result<Document> {
+fn load_objects(bytes: &[u8], bound: StreamBound, stage: &Stage) -> Result<Document> {
     let mut doc = Document::load_mem_with_options(
         bytes,
         LoadOptions {
@@ -77,6 +101,8 @@ fn load_objects(bytes: &[u8], bound: StreamBound) -> Result<Document> {
             }),
             // lopdf's bound is per stream, as ours is.
             max_decompressed_size: Some(bound.0),
+            // lopdf's object tables, stream copies and decodes.
+            decode_admission: stage.decode_admission(),
             ..Default::default()
         },
     )
@@ -96,7 +122,9 @@ fn load_objects(bytes: &[u8], bound: StreamBound) -> Result<Document> {
         .collect();
     for id in ids {
         let stream = doc.get_object(id)?.as_stream()?;
-        let decoded = decoded(stream, bound)?;
+        // The decoded stream is freed once its objects are expanded.
+        let expansion = stage.nested();
+        let decoded = decoded_admitted(stream, bound, &expansion)?;
         let first = natural(stream.dict.get(b"First")?)?;
         // N is checked against the header's own tokens below, so no count
         // is reserved ahead of them.
@@ -206,6 +234,8 @@ impl Frame {
     fn section(&mut self, bytes: &[u8], offset: usize) -> Result<Vec<usize>> {
         self.revisions.push(offset);
         let part = &bytes[offset..];
+        // The section's own table and stream, freed once it is read.
+        let table = self.stage.nested();
         let mut entries = BTreeMap::new();
         let trailer = if part.starts_with(b"xref") {
             let end = part
@@ -234,7 +264,7 @@ impl Frame {
                         Some("f") => XrefEntry::Free,
                         _ => return Err(PdfPreparationError::MalformedPdf),
                     };
-                    insert(&mut entries, id, entry)?;
+                    insert(&mut entries, id, entry, &table)?;
                 }
             }
             leading_dictionary(&part[end + 7..])?.0
@@ -267,7 +297,9 @@ impl Frame {
             if !trim_start(&after[length..]).starts_with(b"endstream") {
                 return Err(PdfPreparationError::MalformedPdf);
             }
-            let decoded = decoded(&Stream::new(dict.clone(), raw.to_vec()), self.bound)?;
+            table.admit(raw.len())?;
+            let stream = Stream::new(dict.clone(), raw.to_vec());
+            let decoded = decoded_admitted(&stream, self.bound, &table)?;
             let widths = dict
                 .get(b"W")?
                 .as_array()?
@@ -334,7 +366,7 @@ impl Frame {
                         },
                         _ => return Err(PdfPreparationError::MalformedPdf),
                     };
-                    insert(&mut entries, id, entry)?;
+                    insert(&mut entries, id, entry, &table)?;
                 }
             }
             if cursor != decoded.len() {
@@ -366,7 +398,10 @@ impl Frame {
                     return Err(PdfPreparationError::MalformedPdf);
                 }
             }
-            self.entries.entry(id).or_insert(entry);
+            if let std::collections::btree_map::Entry::Vacant(slot) = self.entries.entry(id) {
+                self.stage.admit(XREF_ENTRY_BYTES)?;
+                slot.insert(entry);
+            }
         }
         let mut chained = Vec::new();
         for key in [b"XRefStm".as_slice(), b"Prev"] {
@@ -385,8 +420,14 @@ fn subsection(count: usize) -> Result<()> {
     }
     Ok(())
 }
-fn insert(entries: &mut BTreeMap<u32, XrefEntry>, id: usize, entry: XrefEntry) -> Result<()> {
+fn insert(
+    entries: &mut BTreeMap<u32, XrefEntry>,
+    id: usize,
+    entry: XrefEntry,
+    table: &Stage,
+) -> Result<()> {
     let id = u32::try_from(id).map_err(|_| PdfPreparationError::Limit)?;
+    table.admit(XREF_ENTRY_BYTES)?;
     if entries.insert(id, entry).is_some() {
         return Err(PdfPreparationError::MalformedPdf);
     }

@@ -3,7 +3,6 @@
 use crate::ports::{EdgeStoreRead, EntityStoreRead};
 use rmpv::Value;
 
-use crate::affect::Vad;
 use crate::batch::BatchOp;
 use crate::claim::{
     COREFERENCE_PACT_ID_LEN, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
@@ -16,6 +15,13 @@ use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
+use oneiron_contracts::affect::Vad;
+
+mod consolidated;
+pub use consolidated::unlink_consolidated_same_as;
+pub(crate) use consolidated::{
+    ConsolidatedSameAs, check_consolidated_same_as, put_consolidated_same_as_in_txn,
+};
 
 // ---------------------------------------------------------------------------
 // Cross-vault coreference (FED-07, ONE-1414).

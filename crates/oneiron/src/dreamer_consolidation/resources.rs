@@ -11,9 +11,11 @@ use super::conflict::{
 };
 use super::wake_plan::PreparedWake;
 
+mod nightly_link_grant;
 mod parts;
 mod pins;
 mod prior;
+pub(super) use nightly_link_grant::require_nightly_link_write;
 pub(super) use pins::{BranchPins, OwnedPins};
 pub(super) use prior::standing;
 pub(super) mod signals;
@@ -32,12 +34,13 @@ use crate::claim::{
 use crate::dreamer_runner::dreamer_turn_role;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::federation::record_scope::disclosure_scope_for_stored_row;
-use crate::llm::{LlmResponse, Scope, ScopeResource, StepEffectBinding};
+use crate::model_step_effect::StepEffectBinding;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
 use crate::write_envelope::WriteActor;
 use crate::{Result, Vault};
+use oneiron_model::llm::{LlmResponse, Scope, ScopeResource};
 pub use write::ScopedConsolidationWrite;
 pub(crate) use write::{ConsolidationFence, RowRevision};
 
@@ -210,12 +213,12 @@ impl<'a> BranchResources<'a> {
     pub(super) fn evidence_versions(
         &self,
         ids: &[EntityId],
-    ) -> Vec<crate::llm::decision::EvidenceVersion> {
+    ) -> Vec<crate::model_decision::EvidenceVersion> {
         ids.iter()
             .filter_map(|id| {
                 self.sources
                     .get(id)
-                    .map(|pin| crate::llm::decision::EvidenceVersion {
+                    .map(|pin| crate::model_decision::EvidenceVersion {
                         id: *id,
                         body_hash: pin.body_hash,
                     })

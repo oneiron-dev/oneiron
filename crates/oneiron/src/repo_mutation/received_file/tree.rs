@@ -9,10 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::super::git::{run_git, validate_relative_repo_path};
 use super::super::proposal::{RepoProposedFile, invalid};
 use super::super::queue::PreparedCommitFile;
-use super::super::snapshot::{
-    SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntry, StoredRepoSnapshotEntryKind,
-    encode_snapshot,
-};
+use super::super::snapshot::{SnapshotCustody, StoredRepoSnapshot, encode_snapshot};
 use super::super::support::{path_arg, utf8_trimmed};
 use super::super::types::RepoForkHash;
 use super::super::worktree::{create_queue_worktree, remove_queue_worktree};
@@ -25,14 +22,7 @@ const MODE_EXECUTABLE: u32 = 0o100_755;
 
 static RECEIVED_BLOB_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-/// One entry of a received bundle's tree change: its path, its exact new
-/// bytes (`None` removes it) and its Git mode once present.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ReceivedTreeEdit {
-    pub(crate) path: String,
-    pub(crate) content: Option<Vec<u8>>,
-    pub(crate) mode: u32,
-}
+pub(crate) use crate::store::repo_proposal_record::ReceivedTreeEdit;
 
 /// The tree change a received bundle's files make: removals first, then
 /// additions, so a file/directory transition never finds its way blocked.
@@ -245,17 +235,14 @@ pub(in crate::repo_mutation) fn received_post_snapshot(
         let Some(content) = &edit.content else {
             continue;
         };
+        // A symlink's target is kept under custody as the captured
+        // checkout keeps it (FIX 8840), so the hashes agree.
         post.entries.push(if edit.mode == MODE_SYMLINK {
-            StoredRepoSnapshotEntry {
-                path: edit.path.clone(),
-                kind: StoredRepoSnapshotEntryKind::Symlink,
-                executable: false,
-                content: Vec::new(),
-                symlink_target: Some(
-                    String::from_utf8(content.clone())
-                        .map_err(|_| Error::InvalidClaimBody("symlink target must be UTF-8"))?,
-                ),
-            }
+            custody.symlink(
+                edit.path.clone(),
+                String::from_utf8(content.clone())
+                    .map_err(|_| Error::InvalidClaimBody("symlink target must be UTF-8"))?,
+            )
         } else {
             custody.file(
                 edit.path.clone(),

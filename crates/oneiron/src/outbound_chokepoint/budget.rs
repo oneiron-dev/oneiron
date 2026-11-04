@@ -5,7 +5,8 @@
 //! refuse rather than suspend is not denied, records no decision and charges
 //! nothing, and comes back naming
 //! [`crate::linear_sync::LINEAR_RATE_WINDOW_REASON`]. FIX 8689 adds the Spend
-//! a preauthorizing row reserves before the call.
+//! a preauthorizing row reserves before the call. FIX 7948 adds the same wait
+//! for a send whose sender's envelope window is full.
 
 use super::types::OutboundEffectResult;
 use crate::Vault;
@@ -66,6 +67,32 @@ pub(super) fn rate_window_result(
     intent_id: IntentId,
     next_eligible_at: u64,
 ) -> OutboundEffectResult {
+    paced_result(
+        intent_id,
+        next_eligible_at,
+        crate::linear_sync::LINEAR_RATE_WINDOW_REASON,
+    )
+}
+
+/// A send whose sender's envelope window is full (FIX 7948), waiting in that
+/// envelope's line until `wait.next_eligible_at` as a rate-window mutation
+/// waits: its grants allowed it, no decision is recorded, nothing is charged
+/// and no ledger row is written. Its place is kept until `wait.deadline`; it
+/// names its reason and asks no one for a press.
+pub(super) fn envelope_window_result(
+    intent_id: IntentId,
+    wait: &crate::outbound_grant::ChannelIdentityWindowWait,
+) -> OutboundEffectResult {
+    paced_result(
+        intent_id,
+        wait.next_eligible_at,
+        crate::outbound_grant::CHANNEL_IDENTITY_WINDOW_WAIT_REASON,
+    )
+}
+
+/// An unsent, unrecorded and uncharged effect that waits until
+/// `next_eligible_at`, naming `reason`.
+fn paced_result(intent_id: IntentId, next_eligible_at: u64, reason: &str) -> OutboundEffectResult {
     OutboundEffectResult {
         resolution: None,
         dispatch: IntentDispatchResult {
@@ -78,7 +105,7 @@ pub(super) fn rate_window_result(
         },
         gate_decision_id: None,
         gate_outcome: Some(GateOutcome::Allow.as_str().to_owned()),
-        gate_reason_codes: vec![crate::linear_sync::LINEAR_RATE_WINDOW_REASON.to_owned()],
+        gate_reason_codes: vec![reason.to_owned()],
         gate_receipt_reasons: Vec::new(),
         budget_charge: None,
         dedupe_suppressed: false,

@@ -164,7 +164,7 @@ impl Vault {
                 return Ok(());
             };
             let (_, doc) = self.loro_body(&txn, artifact, source.kind, Some(at))?;
-            self.typed_body_unmarked_in_txn(&txn, &doc)?
+            self.typed_body_unmarked_in_txn(&txn, artifact, &doc)?
         };
         if !unmarked {
             return Ok(());
@@ -279,7 +279,7 @@ impl Vault {
 
     /// Open a fork of the live body at its head for `actor`'s machine work in
     /// the run `run_root`, whose approve-all scope then covers it. A DOCX or
-    /// XLSX fork joins `proposal`, an unsettled proposal on this artifact, or
+    /// XLSX fork joins `proposal`, an unsettled proposal by id, or
     /// opens its own under the fork's id. A deck fork joins no proposal; it
     /// lands through the deck merge door.
     pub fn open_office_body_fork(
@@ -455,18 +455,18 @@ impl Vault {
             loro_kind(&self.store, wtxn, artifact)?;
             let proposal = consent::proposal_of(&self.store, wtxn, artifact, fork)?;
             let reviewed = [ReviewedFork {
+                artifact: *artifact,
                 fork: *fork,
+                head: expected_head.to_vec(),
                 fork_head: expected_fork.to_vec(),
             }];
             let request = ProposalSettleRequest {
                 verdict: SettleVerdict::Accept,
                 scope: None,
-                head: expected_head,
                 reviewed: &reviewed,
                 reason: None,
             };
-            let (_, landed) =
-                consent::settle_in_txn(self, wtxn, artifact, &proposal, &request, actor)?;
+            let (_, landed) = consent::settle_in_txn(self, wtxn, &proposal, None, &request, actor)?;
             Ok(landed
                 .into_iter()
                 .next()
@@ -564,6 +564,7 @@ impl Vault {
                 recalc: recalc
                     .as_ref()
                     .map(|stamp| recalc_label(stamp, request.zone)),
+                recalc_zone: Some(request.zone.clone()),
                 effects,
             };
             EXPORTS.put(
@@ -677,25 +678,14 @@ impl Vault {
                 })?;
             return Ok(Some((bytes, changes.len(), None, Vec::new())));
         }
-        let changes = xlsx::changes(&xlsx::read(&base)?, &xlsx::read(&live)?)?;
-        if changes.is_empty() {
-            return Ok(None);
-        }
-        let limits = self.docedit_package_limits()?;
-        let projected = project_xlsx(
-            &self.body_source(artifact, head)?,
-            &changes,
-            limits,
-            &crate::office_body::document_resources(),
+        self.project_xlsx_body(
+            artifact,
+            head,
+            &xlsx::read(&base)?,
+            &xlsx::read(&live)?,
+            at,
+            zone,
         )
-        .map_err(|error| {
-            super::document_error(
-                error.resource(),
-                "the body could not be projected onto its package",
-            )
-        })?;
-        let (bytes, recalc) = recalc_xlsx(&projected.bytes, limits, at, zone)?;
-        Ok(Some((bytes, changes.len(), recalc, projected.effects)))
     }
 
     /// The imported version, checked against the hash the import recorded.

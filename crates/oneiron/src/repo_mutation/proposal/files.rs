@@ -7,29 +7,7 @@ use super::{RepoProposal, RepoProposalOperation, invalid};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-/// One reviewed file of a proposal. An ordinary operation's file has its
-/// bytes and no source; a received bundle's names its source operation
-/// and its exact Git state change, and `None` bytes remove it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RepoProposedFile {
-    pub path: String,
-    pub content: Option<Vec<u8>>,
-    pub source_operation: Option<EntityId>,
-    pub metadata_edit: Option<crate::code_document::CodeFileMetadataEdit>,
-}
-
-impl RepoProposedFile {
-    /// An ordinary operation's one file.
-    #[must_use]
-    pub fn ordinary(path: String, content: Vec<u8>) -> Self {
-        Self {
-            path,
-            content: Some(content),
-            source_operation: None,
-            metadata_edit: None,
-        }
-    }
-}
+pub use crate::store::repo_proposal_record::RepoProposedFile;
 
 impl RepoProposal {
     /// The one file an ordinary operation changes, with its bytes. A
@@ -87,6 +65,19 @@ impl RepoProposal {
     #[must_use]
     pub fn paths(&self) -> Vec<&str> {
         self.files.iter().map(|file| file.path.as_str()).collect()
+    }
+
+    /// Whether it is a received bundle whose every file names the source
+    /// operation it was accepted from: a queue overlap hands it off like a
+    /// whole-file proposal (FIX 9976).
+    #[must_use]
+    pub(crate) fn is_source_bound_received(&self) -> bool {
+        self.received_candidate().is_some()
+            && !self.files.is_empty()
+            && self
+                .files
+                .iter()
+                .all(|file| file.source_operation.is_some() && file.metadata_edit.is_some())
     }
 
     /// The oplog subject it lands under: an ordinary file's path, a

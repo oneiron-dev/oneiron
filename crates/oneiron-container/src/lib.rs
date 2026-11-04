@@ -7,7 +7,7 @@ mod host_net_floor;
 pub mod image_release;
 mod relay_protocol;
 mod transport;
-pub use cli_env::set_cli_env;
+pub use cli_env::{apply_cli_env_to_command, set_cli_env};
 pub use egress::{
     EgressRelay, HttpRequest, HttpResponse, LoopbackOperation, LoopbackRefusal,
     LoopbackRefusalReason,

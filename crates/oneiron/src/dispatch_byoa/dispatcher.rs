@@ -8,10 +8,10 @@ use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, EnqueueAttempt, EnqueueOutcome,
 };
-use crate::checkout::{CheckoutFactSink, CheckoutLeaseAct, CheckoutLeaseService, CheckoutLiveness};
+use crate::checkout::CheckoutLeaseAct;
 use crate::code_sandbox::SandboxBoundaryContract;
 use crate::code_sandbox::microvm::ExecutionBudget;
-use crate::entity_id::bytes_to_hex_lower;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::limit_ask::EngineLimit;
 use crate::llm::{BudgetLease, LlmBackend, LlmError, LlmRequest};
 
@@ -41,7 +41,7 @@ use super::seat::{
     HostedSeatBound, OnSeatSpent, RunnerSeatPolicy, RunnerWork, SeatIdentity, SeatRoute, SeatSpent,
     hosted_seat_bound, spent_seat_in,
 };
-use super::seat_quota::{record_seat_quota_in_txn, seat_quota_id};
+use super::seat_quota::{record_seat_quota_by_id_in_txn, seat_quota_id};
 use super::validate::{
     encode_execution_transcript, encoded_json_len, validate_cli_sandbox, validate_connector,
     validate_endpoint, validate_execution_budget, validate_exhaust,
@@ -441,13 +441,21 @@ where
                 return Ok(route);
             }
             let seat = capture_seat_in_txn(self.vault, wtxn, policy, &receipt, seat)?;
-            let ran = match seat {
-                Some(index) => Some(policy.seat(index)?),
-                None => None,
+            // Charge the identity that ran even when its seat was removed:
+            // the current seat, else the capture hop's frozen quota (FIX 11984).
+            let quota = match seat {
+                Some(index) => seat_quota_id(policy.seat(index)?)?,
+                None => EntityId::from_bytes(
+                    capture_hop_seat_quota_in_txn(self.vault, wtxn, &receipt)?.1,
+                )?,
             };
-            if let Some(ran) = ran {
-                record_seat_quota_in_txn(self.vault, wtxn, ran, &receipt.attempt, spent.as_ref())?;
-            }
+            record_seat_quota_by_id_in_txn(
+                self.vault,
+                wtxn,
+                quota,
+                &receipt.attempt,
+                spent.as_ref(),
+            )?;
             let Some(spent) = spent else {
                 return Ok(SeatRoute::Settled(receipt));
             };
@@ -656,18 +664,16 @@ where
     /// boundary, once the run's pinned job is staged there. The checkout's
     /// custody is judged at the vault's time in one short writer before
     /// staging, and again at terminal capture; no LMDB write lock is held
-    /// meanwhile. `_checkouts` is kept for the host's call; custody is read
-    /// from the vault in that writer.
+    /// meanwhile.
     ///
     /// # Errors
     /// Refuses stale leases, missing/expired checkouts, invalid budgets and a
     /// pinned job with no stager, or propagates the stager's or the sandbox's
     /// refusal (its spool's disk floor and deadline among them).
-    pub fn execute_cli<C: ByoaCliExecutor, F: CheckoutFactSink, L: CheckoutLiveness>(
+    pub fn execute_cli<C: ByoaCliExecutor>(
         &mut self,
         fence: &ByoaExecutionFence,
         budget: ExecutionBudget,
-        _checkouts: &CheckoutLeaseService<'_, F, L>,
         executor: &mut C,
         now: u64,
     ) -> ByoaResult<ByoaExhaust> {

@@ -81,7 +81,9 @@ impl PromotionRejection {
             outcome.rejected_kinds.push((id, kind));
         }
         if let Some((gate_outcome, reason_codes)) = self.gate {
-            outcome.rejected_gates.push((id, gate_outcome, reason_codes));
+            outcome
+                .rejected_gates
+                .push((id, gate_outcome, reason_codes));
         }
         outcome.rejected.push((id, self.reason));
     }
@@ -470,7 +472,7 @@ pub(super) fn promote_one_answering(
             crate::own_rate::count_in_txn(
                 &vault.store,
                 wtxn,
-                crate::own_rate::OwnRateKind::AutoWrite,
+                crate::store::own_rate_record::OwnRateKind::AutoWrite,
                 run.agent_actor.entity_ref(),
                 vault.store.clock.now_recorded_at(),
                 auto_write_rate,

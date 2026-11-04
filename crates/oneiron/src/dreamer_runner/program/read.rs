@@ -1,5 +1,6 @@
 //! A turn program's reads (DOOR-141 PR3a, FIX 4382): what admitting a
-//! landed turn's wakes decided, where one program's run stands, and one
+//! landed turn's wakes decided and the wakes it still owes, held ones with
+//! their hold (`owed`, FIX 12172), where one program's run stands, and one
 //! settled step's exact result; PR3b adds the resume checkpoint its
 //! restarter reads (`checkpoint`).
 //!
@@ -15,6 +16,7 @@
 
 mod answer;
 mod checkpoint;
+mod owed;
 mod views;
 
 use std::collections::BTreeSet;
@@ -26,10 +28,14 @@ use crate::attempt_queue::{AttemptId, AttemptResultRef, AttemptState};
 use crate::dreamer_runner::{DreamerAttemptStatus, DreamerParkedAttemptRecord, DreamerRunnerStore};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, ErrorKind, Result};
-use crate::llm::{CallerSettledStep, settled_step_for_caller};
+use crate::llm::settled_step_for_caller;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
+use crate::model_step_record::CallerSettledStep;
 use crate::{EdgeActorClass, Vault};
+use crate::{
+    attempt_queue::run_tree_view::{RunTreeNode, RunTreeStatus},
+    run_tree::RunTreeAdapter,
+};
 
 use super::run::{
     RunState, StepIssue, StepState, TurnProgramRun, TurnProgramStep, actor_gone_in_txn,
@@ -39,31 +45,33 @@ use super::types::{ProgramRecipePin, TurnProgramAdmissionRecord, TurnProgramAtte
 use super::{ADMISSION, ATTEMPT};
 
 use self::answer::{ReceiptAnswer, answer_body_base64, receipt_answer_in_txn};
+use self::owed::{owed_wake_item, owed_wakes_in_txn};
 
 pub use self::checkpoint::program_checkpoint;
 pub use self::views::{
-    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointConsentView,
-    ProgramCheckpointHeadView, ProgramCheckpointRequest, ProgramCheckpointView,
-    ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
-    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
-    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
-    SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
-    TurnProgramAdmissionRequest, TurnProgramAdmissionView,
+    OwedWakeHoldView, ProgramAdmissionOutcomeView, ProgramCheckpointCallView,
+    ProgramCheckpointConsentView, ProgramCheckpointHeadView, ProgramCheckpointRequest,
+    ProgramCheckpointView, ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView,
+    ProgramQueueView, ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest,
+    ProgramRunStateView, ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView,
+    ProgramTryView, SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
+    TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
 };
 
 /// Items a page carries when the request names no limit, and the most one
 /// carries.
 const PAGE_LIMIT: u32 = 64;
 /// Decoded admissions one page of [`turn_program_admission`] examines at
-/// most. An admission is keyed by its identity, not its turn, so a turn's
-/// admissions are found by a bounded scan that goes on from its cursor.
+/// most. A turn's admissions are read by their turn index (FIX 5838), in
+/// admission order from the page's cursor.
 const ADMISSION_SCAN_ROWS: usize = 256;
 
 /// Reads the admissions the wakes of one landed turn decided, one page at a
 /// time: each one the caller reads (it is the waking actor, or the verified
 /// owner), with the turn, its conversation and the pinned SKILL withheld
-/// unless they read on the caller's own lane. `None` when the first page
-/// finds none.
+/// unless they read on the caller's own lane. The first page also lists the
+/// wakes the turn still owes those programs, each held one with its hold's
+/// reason and expiry (FIX 12172). `None` when the first page finds neither.
 ///
 /// # Errors
 ///
@@ -94,27 +102,40 @@ pub fn turn_program_admission(
         limit,
     };
     let (records, next, undecodable) = admissions_of_turn_in_txn(vault, &txn, &page, &caller)?;
+    let owed = if cursor.is_none() {
+        owed_wakes_in_txn(vault, &txn, turn, registration, &caller)?
+    } else {
+        Vec::new()
+    };
     drop(txn);
-    if records.is_empty() && next.is_none() && cursor.is_none() {
+    if records.is_empty() && owed.is_empty() && next.is_none() && cursor.is_none() {
         return Ok(None);
     }
     let readable = readable_on_lane(
         memory,
-        records.iter().flat_map(|record| {
-            [
-                Some(record.wake.turn.turn),
-                Some(record.wake.turn.conversation),
-                record.definition.as_ref().map(|pin| pin.skill),
-            ]
-            .into_iter()
-            .flatten()
-        }),
+        records
+            .iter()
+            .flat_map(|record| {
+                [
+                    Some(record.wake.turn.turn),
+                    Some(record.wake.turn.conversation),
+                    record.definition.as_ref().map(|pin| pin.skill),
+                ]
+                .into_iter()
+                .flatten()
+            })
+            .chain((!owed.is_empty()).then_some(turn)),
     )?;
+    let turn_reads = readable.contains(&turn);
     Ok(Some(TurnProgramAdmissionView {
         turn_ref: turn.to_hex(),
         admissions: records
             .into_iter()
             .map(|record| admission_item(record, &readable))
+            .collect(),
+        owed: owed
+            .into_iter()
+            .map(|wake| owed_wake_item(wake, turn_reads))
             .collect(),
         next_cursor: next.map(|key| bytes_to_hex_lower(&key)),
         undecodable_admission_rows_examined: undecodable,
@@ -414,17 +435,22 @@ fn admissions_of_turn_in_txn(
     page: &TurnPage,
     caller: &Caller,
 ) -> Result<(Vec<TurnProgramAdmissionRecord>, Option<[u8; 32]>, u64)> {
-    let start = page
-        .cursor
-        .as_ref()
-        .map_or(Bound::Unbounded, Bound::Excluded);
+    let from = (page.turn, page.cursor.unwrap_or([0; 32]));
+    let to = (page.turn, [0xFF; 32]);
+    let start = match page.cursor {
+        Some(_) => Bound::Excluded(&from),
+        None => Bound::Included(&from),
+    };
     let mut matched = Vec::new();
     let mut examined = 0_usize;
     let mut last = None;
     let (mut undecodable, mut pending) = (0_u64, 0_u64);
-    for row in ADMISSION.iter_range(vault, txn, start, Bound::Unbounded)? {
-        let (key, record) = match row {
-            Ok(row) => row,
+    let rows = super::index::TURN_ADMISSION.iter_range(vault, txn, start, Bound::Included(&to))?;
+    for row in rows {
+        let ((_, key), ()) = row?;
+        let record = match ADMISSION.get(vault, txn, &key) {
+            Ok(Some(record)) => record,
+            Ok(None) => continue,
             Err(error) if error.kind() == ErrorKind::SideTableRow => {
                 pending = pending.saturating_add(1);
                 continue;

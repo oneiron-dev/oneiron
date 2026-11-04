@@ -30,6 +30,7 @@ use super::constants::{
 use super::store::DreamerRunnerStore;
 use super::types::{DreamerDurableMilestone, DreamerMilestoneClaim, DreamerMilestoneKind};
 
+mod claim_index;
 #[cfg(feature = "sync")]
 mod verified_read;
 
@@ -208,7 +209,7 @@ fn stamp_agent_dispatch_milestone(
         // later in status decoding; the milestone stamp is not the door.
         return Ok(milestone);
     };
-    if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+    if payload.attempt_type != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
         return Ok(milestone);
     }
     let Some(agent_id) = crate::agent_dispatch::agent_dispatch_payload_agent_id(&payload) else {
@@ -254,6 +255,7 @@ pub(crate) fn index_dreamer_milestone_claim_for_put(
     learned_at: u64,
 ) -> Result<()> {
     deindex_dreamer_milestone_claim(store, wtxn, claim_id)?;
+    claim_index::index_milestone_claim_in_txn(store, wtxn, claim_id, body)?;
 
     let Some(milestone) = dreamer_milestone_from_claim_body(claim_id, body, learned_at) else {
         return Ok(());
@@ -334,7 +336,7 @@ fn dreamer_milestone_attribution_is_bound(
         );
         return false;
     };
-    if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+    if payload.attempt_type != crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE {
         return true;
     }
     let Some(expected) = crate::agent_dispatch::agent_dispatch_payload_agent_id(&payload) else {
@@ -468,6 +470,7 @@ pub(crate) fn deindex_dreamer_milestone_claim(
     wtxn: &mut heed::RwTxn<'_>,
     claim_id: &EntityId,
 ) -> Result<()> {
+    claim_index::deindex_milestone_claim_in_txn(store, wtxn, claim_id)?;
     let Some(candidate_key) = MILESTONE_INDEX_CLAIM.get(store, &*wtxn, claim_id)? else {
         return Ok(());
     };

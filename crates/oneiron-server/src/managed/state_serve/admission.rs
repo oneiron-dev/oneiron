@@ -36,9 +36,14 @@ use crate::server::{HousekeepingAdmission, PassControl};
 pub(super) enum WriteKind {
     /// The owner's foreground work: a served request other than a read, a
     /// held MCP socket's receipt, a voice call or live voice session, a
-    /// device sync connection, a relay delete, a mutating ctl request, or an
-    /// agent run.
+    /// relay delete, a mutating ctl request, or an agent run.
     OwnerWrite,
+    /// A device sync connection's run between freezes, and each model
+    /// catalog refresh it makes (WILL-PLAN L14 row 14). Not among the writes
+    /// a freeze counts in flight, as a live connection is always running:
+    /// the freeze pauses it, and a reap waits for it to end before it
+    /// judges the vault quiet.
+    DeviceSync,
     /// A tagging pass.
     BackgroundTagging,
     /// A Dreamer pass, and the home timer, drafts and fallback timers its
@@ -60,6 +65,11 @@ impl WriteKind {
             Self::BackgroundTagging | Self::Dreamer | Self::BackgroundOther
         )
     }
+
+    /// Whether a reap waits for it to end once frozen.
+    fn waited_for(self) -> bool {
+        self.background() || self == Self::DeviceSync
+    }
 }
 
 /// The admitted writes in flight, by kind.
@@ -70,12 +80,15 @@ pub(super) struct InFlightCounts {
     pub(super) dreamer: u64,
     pub(super) background_other: u64,
     pub(super) backup: u64,
+    /// Device sync runs and catalog refreshes: outside [`Self::total`].
+    pub(super) device_sync: u64,
 }
 
 impl InFlightCounts {
     fn of(&mut self, kind: WriteKind) -> &mut u64 {
         match kind {
             WriteKind::OwnerWrite => &mut self.owner_write,
+            WriteKind::DeviceSync => &mut self.device_sync,
             WriteKind::BackgroundTagging => &mut self.background_tagging,
             WriteKind::Dreamer => &mut self.dreamer,
             WriteKind::BackgroundOther => &mut self.background_other,
@@ -83,7 +96,8 @@ impl InFlightCounts {
         }
     }
 
-    /// Every write in flight.
+    /// Every counted write in flight; a device sync run is not counted, as
+    /// it pauses for the freeze (`live_sync_writer` covers it, FIX 5127).
     pub(super) fn total(&self) -> u64 {
         self.owner_write + self.background() + self.backup
     }
@@ -91,6 +105,12 @@ impl InFlightCounts {
     /// The background passes in flight.
     pub(super) fn background(&self) -> u64 {
         self.background_tagging + self.dreamer + self.background_other
+    }
+
+    /// What a reap waits for once frozen: the background passes and device
+    /// sync.
+    pub(super) fn waited_for(&self) -> u64 {
+        self.background() + self.device_sync
     }
 
     /// As an idle reap's answer carries them: backups among the other.
@@ -114,6 +134,9 @@ struct Gate {
     owner: bool,
     /// The current epoch both causes read as: `managed || owner`.
     epoch: watch::Sender<bool>,
+    /// The managed freeze alone, for the process's life, as device sync
+    /// reads its pause (the epoch also carries the owner's cause).
+    frozen: watch::Sender<bool>,
     in_flight: InFlightCounts,
 }
 
@@ -123,6 +146,7 @@ impl Default for Gate {
             managed: false,
             owner: false,
             epoch: watch::channel(false).0,
+            frozen: watch::channel(false).0,
             in_flight: InFlightCounts::default(),
         }
     }
@@ -131,8 +155,8 @@ impl Default for Gate {
 /// A managed vault's write admission.
 pub(super) struct Admission {
     gate: Mutex<Gate>,
-    /// Bumped as each background pass's admission drops, so a wait for
-    /// them looks again.
+    /// Bumped as each admission a reap waits for drops (a background pass,
+    /// a device sync run or refresh), so a wait for them looks again.
     ended: watch::Sender<u64>,
     /// The vault's deletion marker, which the deletion gate reads outside
     /// the freeze's lock.
@@ -161,7 +185,7 @@ impl Drop for Admitted {
         let count = gate.in_flight.of(self.kind);
         *count = count.saturating_sub(1);
         drop(gate);
-        if self.kind.background() {
+        if self.kind.waited_for() {
             self.admission
                 .ended
                 .send_modify(|ended| *ended = ended.wrapping_add(1));
@@ -186,6 +210,7 @@ impl Admission {
         let mut gate = self.gate();
         gate.managed = true;
         gate.epoch.send_replace(true);
+        gate.frozen.send_replace(true);
         gate.in_flight
     }
 
@@ -196,7 +221,13 @@ impl Admission {
         if gate.managed {
             gate.managed = false;
             gate.epoch = watch::channel(gate.owner).0;
+            gate.frozen.send_replace(false);
         }
+    }
+
+    /// The managed freeze, `true` while frozen, across every epoch.
+    pub(super) fn frozen(&self) -> watch::Receiver<bool> {
+        self.gate().frozen.subscribe()
     }
 
     /// Sets the owner's own Dreamer pause cause: no new pass starts, and the
@@ -333,6 +364,26 @@ impl ManagedState {
         Arc::new(move || state.admit_background(kind))
     }
 
+    /// Admits a new voice call (FIX 12039) or public live voice session
+    /// (FIX 12053): an `OwnerWrite` for its whole length, as a served
+    /// write. Once the vault's deletion marker is present no new call or
+    /// session is admitted, logged once; one in flight runs on under the
+    /// freeze as today. Every other `OwnerWrite` stays as
+    /// [`Self::admit_background`] leaves it.
+    pub(super) fn admit_voice_call(&self) -> Option<Box<dyn Send>> {
+        if self.admission.deletion.stops_pass(self.server.vault()) {
+            return None;
+        }
+        self.admit_pass(WriteKind::OwnerWrite)
+    }
+
+    /// [`Self::admit_voice_call`] as the admission the voice loop takes per
+    /// call, and each new live voice session takes at its start.
+    pub(super) fn voice_admission(self: &Arc<Self>) -> HousekeepingAdmission {
+        let state = Arc::clone(self);
+        Arc::new(move || state.admit_voice_call())
+    }
+
     /// The admission of a pass a deleted vault still runs (FIX 11710): a
     /// backup schedule tick, whose whole pass reaches the drop of the
     /// vault's backups at their deadline, and a custody publication pass,
@@ -343,6 +394,33 @@ impl ManagedState {
     pub(super) fn backup_admission(self: &Arc<Self>) -> HousekeepingAdmission {
         let state = Arc::clone(self);
         Arc::new(move || state.admit_pass(WriteKind::BackgroundOther))
+    }
+
+    /// The reap freeze this vault's device sync works under (FIX 5127):
+    /// each run and refresh admitted as [`WriteKind::DeviceSync`], refused
+    /// while frozen and never by the deletion gate, and the freeze its run
+    /// pauses on.
+    pub(super) fn device_sync_freeze(&self) -> crate::device_sync::ReapFreeze {
+        let admission = Arc::clone(&self.admission);
+        crate::device_sync::ReapFreeze::new(
+            Arc::new(move || {
+                let admitted = admission.admit(WriteKind::DeviceSync)?;
+                Some(Box::new(admitted) as Box<dyn Send>)
+            }),
+            self.admission.frozen(),
+        )
+    }
+
+    /// Waits until no device sync run or refresh is in flight, or until
+    /// `deadline`: once frozen, each ends as soon as it sees the freeze.
+    pub(super) async fn device_sync_paused(&self, deadline: tokio::time::Instant) {
+        let mut ended = self.admission.ended();
+        while self.admission.in_flight().device_sync > 0 {
+            tokio::select! {
+                _ = ended.changed() => {}
+                () = tokio::time::sleep_until(deadline) => return,
+            }
+        }
     }
 
     /// [`Self::background_admission`] with the reap freeze as the pause

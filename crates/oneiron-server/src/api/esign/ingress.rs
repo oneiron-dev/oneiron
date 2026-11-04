@@ -187,12 +187,15 @@ pub(super) async fn spooled<T: Send + 'static>(
 /// An admitted editor POST's `body` (FIX 5618), spooled whole as a ceremony
 /// body is and handed to `read` on the same worker. Its size is measured
 /// against `row` as it spools: the first piece past the row's bound asks the
-/// vault owner ([`oneiron::Vault::measure_limit`], once per request), and the
-/// body keeps spooling. No envelope stands behind the editor's computation,
-/// so no sender is asked and no document is charged.
+/// vault owner, naming `owner`, the owner or co-owner whose editor token ran
+/// the computation, when its credential names one
+/// ([`oneiron::Vault::measure_limit_for`], once per request, FIX 5702), and
+/// the body keeps spooling. No envelope stands behind the editor's
+/// computation, so no sender is asked and no document is charged.
 pub(super) async fn editor_spooled<T: Send + 'static>(
     server: &Arc<SyncServer>,
     row: EngineLimit,
+    owner: Option<oneiron::EntityId>,
     headers: &HeaderMap,
     body: Body,
     read: impl FnOnce(File, u64) -> T + Send + 'static,
@@ -201,7 +204,7 @@ pub(super) async fn editor_spooled<T: Send + 'static>(
     let mut asked = false;
     let measure = move |bytes| {
         if !asked {
-            asked = vault.measure_limit(row, bytes).is_some();
+            asked = vault.measure_limit_for(row, bytes, owner).is_some();
         }
     };
     spool_whole(server, headers, body, measure, read).await

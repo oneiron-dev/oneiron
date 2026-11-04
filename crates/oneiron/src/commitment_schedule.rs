@@ -24,10 +24,12 @@
 //!   sleeps, or owns a thread. `Vault::reconcile_commitment_schedule` is the
 //!   sole production projector and it runs INSIDE a driver deadline read.
 //!
-//! Rrule decodes but never evaluates in v1. Expansion is the calendar layer's
-//! job ([`CAL_RRULE_ROUTE`]); a second parser vendored here is precisely the
-//! fork the shared vocabulary exists to prevent, so the arm returns
-//! [`ScheduleError::RruleNotImplemented`] and names the route instead.
+//! Rrule expansion is the calendar layer's job ([`CAL_RRULE_ROUTE`]); a second
+//! parser vendored here is precisely the fork the shared vocabulary exists to
+//! prevent. The projector expands an rrule series through that one expander,
+//! with the series claim's valid-time start as the rule's DTSTART. The pure
+//! [`next_due`] holds no claim, so its rrule arm still returns
+//! [`ScheduleError::RruleNotImplemented`] and names the route.
 //!
 //! Glossary: this [`Schedule`] is the commitment recurrence (when an obligation
 //! falls due). It is not the wake `Schedule` of `oneiron_vault_contract::wake`,
@@ -49,26 +51,25 @@ use crate::calendar::CalendarError;
 use crate::calendar::tz::{WallTime, utc_to_wall, wall_to_utc};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::commitment::CommitmentStatus;
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::entity_id::derived_domains::{COMMITMENT_INSTANCE, COMMITMENT_PROJECTION_ACTOR};
+use crate::entity_id::derived_domains::COMMITMENT_INSTANCE;
 use crate::temporal::TimeRange;
-use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 
 /// Default projection lead: one day before the due instant.
 pub const DEFAULT_LEAD: u64 = 86_400;
 
-/// Upper bound on a [`Schedule::Quota`] count. A quota is a promise, not a
-/// batch job; a four-figure count is a caller bug, and minting one window's
-/// worth of instances in a single transaction makes the bound load-bearing.
-pub const COMMITMENT_QUOTA_MAX_COUNT: u32 = 100;
+/// Quota slots one projection pass mints for one window. A larger quota mints
+/// the rest in later passes, each through a `Project` row naming its next
+/// slot, so one promise of many openings never holds the projector's
+/// transaction for the whole window and every other series gets its turn.
+pub const COMMITMENT_QUOTA_SLOTS_PER_PASS: u32 = 100;
 
 /// Version of the MessagePack payload written into `CommitmentRecord.schedule`.
 pub const COMMITMENT_SCHEDULE_PAYLOAD_SCHEMA_VERSION: u64 = 1;
 
-/// Where an rrule schedule must be expanded. Named, not implemented: the
-/// engine's one recurrence expander lives at this path (ONE-1785), and the
-/// future route calls it rather than vendoring a second parser.
+/// Where an rrule schedule is expanded: the engine's one recurrence expander
+/// (ONE-1785), which the projector calls rather than vendoring a second parser.
 pub const CAL_RRULE_ROUTE: &str = "oneiron::calendar::expand_window";
 
 /// Byte bound on every string inside a schedule payload (tz names, rrule text).
@@ -104,8 +105,9 @@ pub enum ScheduleError {
     /// never saturated — an additive overflow is a typed refusal.
     #[error("commitment schedule arithmetic overflow")]
     ArithmeticOverflow,
-    /// The schedule is an rrule. It decoded fine; evaluating it is the
-    /// calendar layer's job and v1 does not route there yet.
+    /// The schedule is an rrule asked of the pure evaluator. It decoded fine;
+    /// expanding it needs the series claim's start, which only the projector
+    /// holds, and the calendar layer's expander.
     #[error("rrule schedules are expanded by {route}, not by the commitment evaluator")]
     RruleNotImplemented {
         /// The calendar entry point that owns expansion.
@@ -341,16 +343,7 @@ impl CommitmentInstanceOutcome {
     }
 }
 
-/// The pinned System actor for engine projection writes.
-///
-/// Derived, not minted (`EntityId::derive` over a fixed domain): the
-/// projector's identity must survive a reopen and be the same on every device.
-pub fn commitment_projection_actor() -> crate::Result<WriteActor> {
-    Ok(WriteActor::new(
-        EntityId::derive(COMMITMENT_PROJECTION_ACTOR, &[])?,
-        EdgeActorClass::System,
-    ))
-}
+pub use crate::write_envelope::commitment_actor::commitment_projection_actor;
 
 /// The pinned envelope every projected instance is written under: System actor,
 /// `Generated` source, a fixed provenance string, and `Auto` approval.
@@ -487,9 +480,11 @@ fn next_quota_due(
     Ok(Some(following.end))
 }
 
+/// Every positive count is a promise the projector keeps, in passes of
+/// [`COMMITMENT_QUOTA_SLOTS_PER_PASS`] slots.
 pub(crate) fn validate_quota_count(count: u32) -> ScheduleResult<()> {
-    if count == 0 || count > COMMITMENT_QUOTA_MAX_COUNT {
-        return Err(ScheduleError::Invalid("quota count exceeds maximum"));
+    if count == 0 {
+        return Err(ScheduleError::Invalid("quota count must be positive"));
     }
     Ok(())
 }

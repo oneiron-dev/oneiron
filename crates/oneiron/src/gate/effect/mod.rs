@@ -20,7 +20,7 @@ pub(crate) use self::effect_contacts::{
 };
 pub(crate) use self::effect_grants::live_grant_covering_effect_in_txn;
 use self::effect_grants::{
-    channel_identity_envelope_reservation_in_txn, standing_outbound_grant_for_effect,
+    channel_identity_envelope_admission_in_txn, standing_outbound_grant_for_effect,
     touch_standing_outbound_grant_in_txn,
 };
 pub(crate) use self::effect_pair::{PairAdmission, check_external_effect_policy_pair};
@@ -58,7 +58,7 @@ pub(crate) struct ExternalEffectBudgetTarget {
 pub(crate) enum ApprovalContext {
     Observe,
     FirstAdmission,
-    Retry(crate::outbound_intent_ledger::AdmittedApproval),
+    Retry(crate::consent::approval_proof::AdmittedApproval),
     /// The first admission of a held effect a code consent wait owns
     /// (DOOR-079 1a): its one-shot approval is the one the wait's answer
     /// minted under the wait's binding digest, which the admission writer
@@ -81,6 +81,10 @@ pub(crate) struct ExternalEffectGovernance {
     /// OF-374: the sender row's envelope slot covering this send, spent only
     /// when the decision is recorded as an admitting Allow.
     envelope_reservation: Option<crate::outbound_grant::ChannelIdentityGrantReservation>,
+    /// FIX 7948: the place in its envelope's line a send meets at a full
+    /// window when that envelope is all that covers it. The chokepoint keeps
+    /// it in place of an admission; nothing records it as one.
+    envelope_wait: Option<crate::outbound_grant::ChannelIdentityGrantRetention>,
     budget_target: Option<ExternalEffectBudgetTarget>,
     scoped_capability: Option<connector_key::ScopedCapabilityProvenance>,
 }

@@ -498,7 +498,8 @@ pub(crate) fn stamp_program_attempt(
             actor_class: row.wake.authority.class_byte(),
             receipt_id: row.receipt_id,
         },
-    )
+    )?;
+    super::index::index_attempt_in_txn(vault, txn, actor, record.id)
 }
 
 /// A program attempt's milestones carry its waking actor and no other: the

@@ -38,11 +38,13 @@ const LARGEST_PAGE: u64 = 32 * 1024;
 /// The room in memory one chunk exchange takes past its request's decoded
 /// selector, and the least either half of the memory row holds: sixteen
 /// times the 8 MiB frame it reads whole. Its frame and its decoded request;
-/// its manifest's row (within a frame, or it is not read) as read and as the
-/// two window docs its selector is judged in hold it, twice each; and its
-/// reply, the manifest read again (as stored, decoded and encoded), the
-/// chunks it carries and its encoding. Its selector is decoded, and gone,
-/// before the manifest is read ([`Transfers::exchange_room`]).
+/// a frame of its manifest's row (a larger row's copies past the frame are
+/// charged when its worker names the object: [`Transfers::charge_exchange_manifest`],
+/// FIX 9032) as read and as the two window docs its selector is judged in
+/// hold it, twice each; and its reply, the manifest read again (as stored,
+/// decoded and encoded), the chunks it carries and its encoding. Its
+/// selector is decoded, and gone, before the manifest is read
+/// ([`Transfers::exchange_room`]).
 pub(crate) const LFS_MEMORY_ROOM: u64 = 16 * FRAME;
 
 /// The frame a chunk exchange reads whole.
@@ -68,6 +70,12 @@ pub(super) const READ_ROOM: u64 = 1024 * 1024;
 /// as read, its body, its references decoded, and their encoding as its id is
 /// checked, counted generously.
 const MANIFEST_COPIES: u64 = 4;
+
+/// Copies of its manifest's row a chunk exchange holds at once, past the
+/// frame [`LFS_MEMORY_ROOM`] already counts: as read, in each of the two
+/// window docs its selector is judged in, twice each, and in its reply as
+/// stored, decoded and encoded. Counted generously, as the room's are.
+const EXCHANGE_MANIFEST_COPIES: u64 = 8;
 
 /// A pair of a read's room in memory and its transfer permit, taken in that
 /// order and held together until the read's last byte is handed on.
@@ -365,6 +373,38 @@ impl Transfers {
     pub(super) fn exchange_room(declared: Option<u64>) -> u64 {
         let request = declared.map_or(FRAME, |declared| declared.min(FRAME));
         LFS_MEMORY_ROOM.saturating_add(request.saturating_mul(DECODED_PER_BYTE))
+    }
+
+    /// The line LFS reads take their room on, lent to a chunk exchange's
+    /// worker so it can charge its manifest's copies (below) on the hold it
+    /// already has.
+    pub(super) fn lfs_reads_line(&self) -> Arc<ByteLine> {
+        Arc::clone(&self.lfs_reads)
+    }
+
+    /// Charges a chunk exchange's hold (taken at [`Self::exchange_room`] =
+    /// `room`) for the copies of a manifest whose row is `row` bytes past
+    /// the frame the room counts (FIX 9032). The exchange names its object
+    /// only once its worker decodes the request, holding its transfer
+    /// permit, and no permit holder waits for the reads line (the lock
+    /// order [`crate::byte_line`] names), so the copies are charged, never
+    /// waited for: past the line's free bytes the line owes them and the
+    /// row asks ([`ByteLine::charge`]).
+    pub(super) fn charge_exchange_manifest(
+        line: &ByteLine,
+        questions: &LimitQuestions,
+        held: &mut HeldBytes,
+        room: u64,
+        row: u64,
+    ) {
+        let extra = row
+            .saturating_sub(FRAME)
+            .saturating_mul(EXCHANGE_MANIFEST_COPIES);
+        if extra == 0 {
+            return;
+        }
+        let target = usize::try_from(room.saturating_add(extra)).unwrap_or(usize::MAX);
+        line.charge(held, target, questions);
     }
 
     /// The room a download or a verify of `oid` takes: its manifest's row,

@@ -5,8 +5,13 @@ use std::ops::Range;
 /// Where [`super::mnemonic`] finds each recovery phrase in `text`: one span
 /// per accepted run, from its first word's start to its last word's end, the
 /// separators between them included. It reads what [`super::mnemonic`] reads,
-/// tracking each word's byte offset.
+/// tracking each word's byte offset. Text without a phrase-long run of list
+/// words holds no span and stops at once, as [`super::mnemonic`] does: every
+/// span is such a run (speed).
 pub(crate) fn mnemonic_spans(text: &str) -> Vec<Range<usize>> {
+    if !super::phrase_run::holds_list_word_run(text) {
+        return Vec::new();
+    }
     let mut scan = Scan::default();
     scan.feed(text);
     scan.finish();

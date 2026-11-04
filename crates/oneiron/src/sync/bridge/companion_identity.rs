@@ -2,7 +2,6 @@
 
 use loro::LoroDoc;
 
-use crate::affect::Vad;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, encode_edge_value,
@@ -16,6 +15,7 @@ use crate::sync::quarantine::{
 };
 use crate::sync::quota;
 use crate::{Error, Result, Vault};
+use oneiron_contracts::affect::Vad;
 
 /// Shared fail-closed ingest door for replicated type-76 identity-topology
 /// event records (ARCH-0023b single-writer stream class, AUTHORITY_LOG
@@ -316,7 +316,8 @@ pub(super) fn ensure_entity_materialized_from_crdt(
         // A hydrated TASK reaches board subscribers after the same commit.
         Some(crate::registry::ENTITY_TYPE_TASK) => {
             if let Some(id) = step.written() {
-                crate::batch::queue_task_updates(vault, wtxn, [id]);
+                let announce = crate::context_board::task_for_announcement(&blob, id);
+                crate::batch::queue_task_updates(vault, wtxn, [announce]);
             }
         }
         _ => {}

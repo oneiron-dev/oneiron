@@ -10,6 +10,7 @@ mod policy;
 #[cfg(feature = "sync")]
 mod presence;
 mod reader;
+mod refused;
 mod reply_assertions;
 mod storage;
 #[cfg(test)]
@@ -23,6 +24,7 @@ pub use api_types::*;
 pub use completion::MessageCompletion;
 pub(crate) use completion::message_completion_in_txn;
 pub use lifecycle::MessageStreamPump;
+pub use refused::StreamRecoveryRefusal;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use storage::Seed;
@@ -38,6 +40,9 @@ pub(crate) struct MessageStreamRuntime {
     entries: Mutex<BTreeMap<EntityId, Arc<Mutex<State>>>>,
     /// The fair line past the vault's message-stream row.
     line: crate::live_rows::LiveLine,
+    /// The refusals the vault's last open met replaying surviving seeds
+    /// (FIX 11933), which the owner reads.
+    refused: Mutex<Vec<StreamRecoveryRefusal>>,
     #[cfg(feature = "sync")]
     pub(crate) presence: presence::StreamPresence,
 }
@@ -46,6 +51,7 @@ impl Default for MessageStreamRuntime {
         Self {
             entries: Mutex::new(BTreeMap::new()),
             line: crate::live_rows::LiveLine::new(crate::live_rows::LiveRow::MessageStreams),
+            refused: Mutex::new(Vec::new()),
             #[cfg(feature = "sync")]
             presence: presence::StreamPresence::default(),
         }

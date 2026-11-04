@@ -109,7 +109,7 @@ impl Store {
                         .get(ENTITY_BODY_OFFSET..)
                         .ok_or(Error::CorruptedIndex("pending gate consent"))?;
                     Some(crate::inbox::inbox_claim_hash(
-                        &crate::claim::decode_claim_body(body, true)?,
+                        &crate::write_envelope::claim_body::decode_claim_body(body, true)?,
                     )?)
                 }
             }
@@ -428,7 +428,7 @@ impl Store {
         crate::housekeeping::note_wake_in_txn(
             self,
             wtxn,
-            crate::housekeeping::HousekeepingSweep::CriticalConfirmExpiry,
+            crate::store::housekeeping_schedule::HousekeepingSweep::CriticalConfirmExpiry,
             binding.expires_at,
         )
     }

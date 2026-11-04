@@ -30,7 +30,7 @@ pub const CODE_SYMBOL_CHUNK_KEYS: [&str; 5] = [
     "producing_operations",
 ];
 
-pub const CODE_SYMBOL_REVISION_KEYS: [&str; 8] = [
+pub const CODE_SYMBOL_REVISION_KEYS: [&str; 10] = [
     "path",
     "name",
     "kind",
@@ -39,6 +39,8 @@ pub const CODE_SYMBOL_REVISION_KEYS: [&str; 8] = [
     "provenance_claim_id",
     "source_session",
     "producing_operations",
+    "document",
+    "ordinal",
 ];
 
 pub const CODE_SYMBOL_ENTITY_BODY_KEYS: [&str; 8] = [
@@ -80,6 +82,10 @@ pub(super) const KEY_PROVENANCE_CLAIM_ID: &str = CODE_SYMBOL_REVISION_KEYS[5];
 
 pub(super) const KEY_SOURCE_SESSION: &str = CODE_SYMBOL_REVISION_KEYS[6];
 
+pub(super) const KEY_DOCUMENT: &str = CODE_SYMBOL_REVISION_KEYS[8];
+
+pub(super) const KEY_ORDINAL: &str = CODE_SYMBOL_REVISION_KEYS[9];
+
 pub(super) const KEY_SCHEMA_VERSION: &str = CODE_SYMBOL_ENTITY_BODY_KEYS[0];
 
 pub(super) const KEY_REPO_KEY: &str = CODE_SYMBOL_ENTITY_BODY_KEYS[1];
@@ -105,7 +111,7 @@ pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<
         .chunks
         .iter()
         .map(|chunk| {
-            Ok(Value::Map(vec![
+            Value::Map(vec![
                 (Value::from(KEY_PATH), Value::from(chunk.path.as_str())),
                 (
                     Value::from(KEY_START_LINE),
@@ -121,16 +127,16 @@ pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<
                 ),
                 (
                     Value::from("producing_operations"),
-                    encode_operations(&chunk.producing_operations)?,
+                    encode_operations(&chunk.producing_operations),
                 ),
-            ]))
+            ])
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Vec<_>>();
     let symbols = manifest
         .symbols
         .iter()
         .map(|symbol| {
-            Ok(Value::Map(vec![
+            Value::Map(vec![
                 (Value::from(KEY_PATH), Value::from(symbol.path.as_str())),
                 (Value::from(KEY_NAME), Value::from(symbol.name.as_str())),
                 (Value::from(KEY_KIND), Value::from(symbol.kind.as_str())),
@@ -163,11 +169,21 @@ pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<
                 ),
                 (
                     Value::from("producing_operations"),
-                    encode_operations(&symbol.producing_operations)?,
+                    encode_operations(&symbol.producing_operations),
                 ),
-            ]))
+                (
+                    Value::from(KEY_DOCUMENT),
+                    symbol
+                        .document
+                        .map_or(Value::Nil, |document| Value::Binary(document.to_vec())),
+                ),
+                (
+                    Value::from(KEY_ORDINAL),
+                    Value::Integer(u64::from(symbol.ordinal).into()),
+                ),
+            ])
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Vec<_>>();
     let value = Value::Map(vec![
         (
             Value::from(KEY_REPO_REF),
@@ -386,6 +402,8 @@ pub(super) fn decode_code_symbol_revision(value: &Value) -> Result<CodeSymbolRev
     let mut provenance_claim_id: Option<Option<EntityId>> = None;
     let mut source_session: Option<Option<String>> = None;
     let mut producing_operations = Vec::new();
+    let mut document: Option<Option<[u8; 32]>> = None;
+    let mut ordinal: Option<u32> = None;
     let mut seen = [false; CODE_SYMBOL_REVISION_KEYS.len()];
 
     for (key, value) in entries {
@@ -462,12 +480,25 @@ pub(super) fn decode_code_symbol_revision(value: &Value) -> Result<CodeSymbolRev
                 });
             }
             "producing_operations" => producing_operations = decode_operations(value)?,
+            KEY_DOCUMENT => {
+                document = Some(match value {
+                    Value::Nil => None,
+                    _ => Some(binary_32(value, "document")?),
+                });
+            }
+            KEY_ORDINAL => ordinal = Some(u32_from_value(value, "ordinal")?),
             _ => unreachable!("index resolved from CODE_SYMBOL_REVISION_KEYS"),
         }
     }
 
     let symbol = CodeSymbolRevision {
         producing_operations,
+        document: document.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "missing required symbol revision key document",
+        )))?,
+        ordinal: ordinal.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "missing required symbol revision key ordinal",
+        )))?,
         path: path.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required symbol revision key path",
         )))?,
@@ -617,13 +648,10 @@ pub(super) fn sha256_bytes(bytes: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-fn encode_operations(ops: &[CodeProducingOperation]) -> Result<Value> {
-    if ops.len() > 1024 {
-        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-            "operation chain exceeds cap",
-        )));
-    }
-    Ok(Value::Array(
+/// The whole chain, however long (FIX 9718): its writer counts the longest
+/// in a scan check, never a refusal.
+fn encode_operations(ops: &[CodeProducingOperation]) -> Value {
+    Value::Array(
         ops.iter()
             .map(|op| {
                 // An erased actor's slot is nil (FIX 4476).
@@ -636,13 +664,12 @@ fn encode_operations(ops: &[CodeProducingOperation]) -> Result<Value> {
                 Value::Array(vec![operation, actor, turn, activity, intent])
             })
             .collect(),
-    ))
+    )
 }
 
 fn decode_operations(value: &Value) -> Result<Vec<CodeProducingOperation>> {
     let entries = value
         .as_array()
-        .filter(|v| v.len() <= 1024)
         .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "invalid operation chain",
         )))?;

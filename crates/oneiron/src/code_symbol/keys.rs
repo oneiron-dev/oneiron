@@ -25,24 +25,51 @@ pub(super) const MANIFEST: SideTable<EntityId, CodeSymbolManifest, Raw> =
     SideTable::new(&side_table::CODE_SYMBOL_MANIFEST);
 
 /// Index of symbol revisions by repo/path/name/fingerprint, empty marker value. Key (after the
-/// table's own prefix): string(repo_ref) "\x00" string(path) "\x00" string(name) "\x00"
-/// hash32(fingerprint) "\x00" id16 — spelled by [`code_symbol_revision_index_key`] /
-/// [`code_symbol_revision_index_prefix`], not decoded field-by-field (a text field is never split
-/// back out of its NUL separator).
+/// table's own prefix): sha256(domain, repo_ref, path, name, fingerprint) "\x00" id16, a fixed
+/// 49 bytes (FIX 9721) — spelled by [`code_symbol_revision_index_key`] /
+/// [`code_symbol_revision_index_prefix`], never decoded back into its fields.
 pub(super) const REVISION_INDEX: SideTable<Vec<u8>, (), Raw> =
     SideTable::new(&side_table::CODE_SYMBOL_REVISION_INDEX);
 
+/// The symbol's id, by its repo, file document, name, kind and ordinal
+/// (ARCH-0050, FIX 7809): a rename keeps the document and an edit above the
+/// symbol keeps the rest, so neither moves the notes attached to it. Its
+/// path, fingerprint and version stay revision data. A revision naming no
+/// document is on the one its path's first op births.
 pub fn code_symbol_entity_id(repo_ref: &RepoRef, symbol: &CodeSymbolRevision) -> Result<EntityId> {
     validate_symbol_shape(symbol)?;
+    let repo = repo_identity_key(repo_ref);
+    let document = symbol
+        .document
+        .unwrap_or_else(|| crate::code_document::code_document_genesis_id(&repo, &symbol.path, 0));
     EntityId::derive(
         CODE_SYMBOL_ENTITY,
         &[
-            repo_identity_key(repo_ref).as_bytes(),
-            symbol.path.as_bytes(),
+            repo.as_bytes(),
+            &document,
             symbol.name.as_bytes(),
             symbol.kind.as_bytes(),
-            &symbol.fingerprint,
+            &symbol.ordinal.to_be_bytes(),
         ],
+    )
+}
+
+/// The file document `path` of `repo_ref` is, read in `txn`: the document
+/// a symbol extracted from it is a span on (FIX 7809).
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn code_symbol_document_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    repo_ref: &RepoRef,
+    path: &str,
+) -> Result<[u8; 32]> {
+    crate::code_document::code_document_identity_in_txn(
+        store,
+        txn,
+        &repo_identity_key(repo_ref),
+        path,
     )
 }
 
@@ -90,20 +117,24 @@ pub(super) fn repo_identity_key(repo_ref: &RepoRef) -> String {
 }
 
 /// [`REVISION_INDEX`]'s key for one (repo_ref, path, name, fingerprint) group, without the
-/// trailing id: the scan prefix [`lookup_code_symbol_blame`](super::storage) walks.
+/// trailing id: the scan prefix [`lookup_code_symbol_blame`](super::storage) walks. A
+/// domain-separated digest of the group, so a field-valid manifest never meets LMDB's key-size
+/// limit however long its fields (FIX 9721); the reader re-checks every field in the manifest
+/// each row names.
 pub(super) fn code_symbol_revision_index_prefix(
     repo_ref: &RepoRef,
     path: &str,
     name: &str,
     fingerprint: &[u8; CODE_SYMBOL_FINGERPRINT_LEN],
 ) -> Vec<u8> {
-    let repo_ref = repo_ref.canonical();
-    let mut key =
-        Vec::with_capacity(repo_ref.len() + path.len() + name.len() + fingerprint.len() + 4);
-    push_index_text(&mut key, &repo_ref);
-    push_index_text(&mut key, path);
-    push_index_text(&mut key, name);
-    key.extend_from_slice(fingerprint);
+    let mut hasher = Sha256::new();
+    hasher.update(b"oneiron.code_symbol.revision_index.v1\0");
+    hash_text_field(&mut hasher, &repo_ref.canonical());
+    hash_text_field(&mut hasher, path);
+    hash_text_field(&mut hasher, name);
+    hasher.update(fingerprint);
+    let mut key = Vec::with_capacity(32 + 1 + 16);
+    key.extend_from_slice(&hasher.finalize());
     key.push(0);
     key
 }
@@ -118,11 +149,6 @@ pub(super) fn code_symbol_revision_index_key(
     let mut key = code_symbol_revision_index_prefix(repo_ref, path, name, fingerprint);
     key.extend_from_slice(id.as_bytes());
     key
-}
-
-pub(super) fn push_index_text(key: &mut Vec<u8>, text: &str) {
-    key.extend_from_slice(text.as_bytes());
-    key.push(0);
 }
 
 pub(super) fn id_from_index_key(

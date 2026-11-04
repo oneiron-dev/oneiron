@@ -3,6 +3,7 @@ mod types;
 pub use types::*;
 
 use super::{Memory, MemoryError, MemoryResult};
+use crate::authority::consolidation_evidence::ConsolidationEvidenceEnvelope;
 use crate::claim::{ClaimApprovalStatus, ClaimReadStatus, ClaimSource, ScopedRead};
 use crate::commitment::{self, CommitmentRecord, FulfillmentSource};
 use crate::commitment_schedule::{
@@ -10,7 +11,7 @@ use crate::commitment_schedule::{
     ScheduleError,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
+use crate::dreamer_consolidation::encode_consolidation_evidence;
 use crate::entity_id::EntityId;
 use crate::{Error, TimeRange};
 use rmpv::Value;
@@ -117,9 +118,12 @@ impl Memory<'_> {
         if lane.graph_ask_raw_in_txn(txn, id)?.is_none() {
             return Err(unavailable());
         }
+        // `id` stays the commitment's identity; its current status and body
+        // sit at the head of its status chain.
+        let head = self.vault.commitment_head_in_txn(txn, id)?;
         let body = self
             .vault
-            .get_claim_in_txn(txn, id)?
+            .get_claim_in_txn(txn, &head)?
             .ok_or_else(unavailable)?;
         let record = commitment::decode_commitment_claim(&body)?.ok_or_else(unavailable)?;
         self.produced_from([*id]);
@@ -135,7 +139,10 @@ impl Memory<'_> {
         let (body, record) = self.commitment_record_in(lane, txn, id)?;
         let payload =
             CommitmentSchedulePayload::decode(&record.schedule).map_err(schedule_error)?;
-        let raw = self.vault.get_raw_in(txn, id)?.ok_or_else(unavailable)?;
+        // The status chain's head carries the times of the commitment's
+        // current status (FIX 9726); `id` stays the view's identity.
+        let head = self.vault.commitment_head_in_txn(txn, id)?;
+        let raw = self.vault.get_raw_in(txn, &head)?.ok_or_else(unavailable)?;
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("commitment claim header"))?;
         let refs = evidence_refs(&body)?;

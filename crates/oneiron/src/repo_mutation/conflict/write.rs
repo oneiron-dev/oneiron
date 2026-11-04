@@ -13,7 +13,6 @@
 use std::sync::atomic::Ordering;
 
 use crate::Vault;
-use crate::affect::Vad;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN, encode_claim_body};
 use crate::codebase::RepoRef;
@@ -25,7 +24,9 @@ use crate::merge_queue::{QueueConflictLink, QueueStageOverlap};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::repo_mutation::RepoConflictClaim;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::temporal::TimeRange;
+use oneiron_contracts::affect::Vad;
 
 use super::super::conflict_value::{
     RepoConflictOpenValue, decode_repo_conflict_open_value, normalize_repo_conflict_paths,
@@ -70,28 +71,70 @@ pub(super) fn put_engine_repo_conflict_claim_checked(
                 && existing.lifecycle == ClaimLifecycleStatus::Active
                 && existing.value == body.value
             {
+                // Recording a held conflict again asks again for its TASK,
+                // under the owner's authority as it reads now (FIX 8830).
+                if let Some(owner) = reconciliation_owner
+                    && vault.repo_reconciliation_task_in_txn(&wtxn, id)?.is_none()
+                    && reconciliation_task_in_txn(
+                        vault,
+                        &mut wtxn,
+                        id,
+                        branch_subject,
+                        &body.value,
+                        owner,
+                        learned_at,
+                    )?
+                    .is_some()
+                {
+                    wtxn.commit()?;
+                }
                 return Ok(id);
             }
         }
     }
     put_claim_in_txn(vault, &mut wtxn, claim_id, branch_subject, data, learned_at)?;
     if let Some(owner) = reconciliation_owner {
-        let value = decode_repo_conflict_open_value(&body.value)?;
-        let conflict = RepoConflictClaim {
+        // Below the owner's Auto ceiling the claim is kept and its
+        // reconciliation held, told to the owner; the ceiling is never
+        // widened (FIX 8830).
+        reconciliation_task_in_txn(
+            vault,
+            &mut wtxn,
             claim_id,
-            subject: branch_subject,
-            repo_ref: value.repo_ref,
-            branch: value.branch,
-            base_tree: value.base_tree,
-            ours_tree: value.ours_tree,
-            theirs_tree: value.theirs_tree,
-            conflicted_paths: value.conflicted_paths,
-            proposals: value.proposals,
-        };
-        vault.create_repo_reconciliation_task_in_txn(&mut wtxn, &conflict, owner, learned_at)?;
+            branch_subject,
+            &body.value,
+            owner,
+            learned_at,
+        )?;
     }
     wtxn.commit()?;
     Ok(claim_id)
+}
+
+/// The reconciliation TASK of the open conflict `claim_id`, minted for
+/// `owner` in this writer, or `None` while the owner's ceiling holds it.
+fn reconciliation_task_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim_id: EntityId,
+    subject: EntityId,
+    value: &rmpv::Value,
+    owner: EntityId,
+    now: u64,
+) -> Result<Option<EntityId>> {
+    let value = decode_repo_conflict_open_value(value)?;
+    let conflict = RepoConflictClaim {
+        claim_id,
+        subject,
+        repo_ref: value.repo_ref,
+        branch: value.branch,
+        base_tree: value.base_tree,
+        ours_tree: value.ours_tree,
+        theirs_tree: value.theirs_tree,
+        conflicted_paths: value.conflicted_paths,
+        proposals: value.proposals,
+    };
+    vault.create_repo_reconciliation_task_in_txn(wtxn, &conflict, owner, now)
 }
 
 /// Every source proposal, as the caller read it, is still stored unchanged.
@@ -208,6 +251,16 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
     let data = encode_claim_body(&body)?;
     let learned_at = now_secs();
     let mut wtxn = vault.store.env.write_txn()?;
+    // Every shared path is kept; past the threshold row the host is asked
+    // whether everything is okay (rule 5, FIX 8831).
+    let mut count = ScanCount::start(
+        &vault.store,
+        &wtxn,
+        EngineScan::RepoConflictPaths,
+        subject.as_bytes(),
+    )?;
+    count.rows(value.conflicted_paths.len());
+    count.defer(&vault.store);
     if !admission.holds_in_txn(vault, &wtxn, overlap)? {
         return Err(Error::ConcurrentWrite(
             "the queue reconciliation admission no longer holds",
@@ -236,8 +289,8 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
             (id, true)
         }
     };
-    let task = match vault.repo_reconciliation_task_in_txn(&wtxn, claim_id)? {
-        Some(task) => Some(task),
+    let (task, held) = match vault.repo_reconciliation_task_in_txn(&wtxn, claim_id)? {
+        Some(task) => (Some(task), None),
         None if open => {
             let conflict = RepoConflictClaim {
                 claim_id,
@@ -250,16 +303,19 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
                 conflicted_paths: value.conflicted_paths,
                 proposals: value.proposals,
             };
-            vault.create_queue_reconciliation_task_in_txn(
+            match vault.create_queue_reconciliation_task_in_txn(
                 &mut wtxn, &conflict, admission, learned_at,
-            )?
+            )? {
+                Ok(task) => (Some(task), None),
+                Err(held) => (None, Some(held)),
+            }
         }
-        None => None,
+        None => (None, None),
     };
     let link = QueueConflictLink {
         conflict: claim_id,
         branch_subject: subject,
-        held: (task.is_none() && open).then(|| QueueReconciliationAdmission::TASK_HELD.to_owned()),
+        held,
         task,
         sources: overlap.sources.clone(),
         batches: overlap.batches.clone(),
@@ -275,7 +331,9 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
 impl Vault {
     /// Asks again for the TASK of a held queue handoff, under its admission
     /// as current policy reads it now: the same open claim and the same
-    /// index, never a second claim. Nothing is written while it stays held.
+    /// index, never a second claim. Nothing is written while it stays held
+    /// for the same reason; a hold whose reason moved (a Grant that no
+    /// longer covers it, FIX 7308) is written on every batch's link.
     ///
     /// # Errors
     /// A store failure or an admission that no longer answers the overlap.
@@ -310,14 +368,22 @@ impl Vault {
             conflicted_paths: value.conflicted_paths,
             proposals: value.proposals,
         };
-        let Some(task) = self.create_queue_reconciliation_task_in_txn(
+        let task = match self.create_queue_reconciliation_task_in_txn(
             &mut wtxn,
             &conflict,
             admission,
             now_secs(),
-        )?
-        else {
-            return Ok(link.clone());
+        )? {
+            Ok(task) => task,
+            Err(held) if link.held.as_deref() == Some(held.as_str()) => return Ok(link.clone()),
+            Err(held) => {
+                let mut moved = link.clone();
+                moved.held = Some(held);
+                attach(&mut wtxn, &moved)?;
+                wtxn.commit()?;
+                self.store.notify_attempt_observers();
+                return Ok(moved);
+            }
         };
         let mut retried = link.clone();
         retried.task = Some(task);

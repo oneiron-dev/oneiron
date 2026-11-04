@@ -215,6 +215,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::RECEIPT_FAMILY_INDEX_VERSION, CONTENT),
     // A restore never rolls back which kit is current, or revives a replaced one.
     (&t::RECOVERY_KIT, LIVE),
+    // A restore never revives an already-swept unlisted kit's name (FIX 12202).
+    (&t::RECOVERY_KIT_UNLISTED_SWEEP, LIVE),
     (&t::IDENTITY_REDIRECT, CONTENT),
     (&t::REPO_CONFLICT_RECONCILIATION_INDEX, CONTENT),
     (&t::REPO_DERIVED_INDEX_COPY, CONTENT),

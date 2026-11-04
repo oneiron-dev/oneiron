@@ -97,8 +97,10 @@ impl Vault {
         let contact = self
             .get_counterparty_contact(contact_ref)?
             .ok_or(Error::EntityNotFound)?;
-        let identity =
-            self.get_channel_identity(&contact.identity_ref)?
+        // The channel and address are the identity's facts (OF-272): a
+        // corrected address is the one the ledger names.
+        let facts =
+            self.channel_identity_facts(&contact.identity_ref)?
                 .ok_or(Error::CorruptedIndex(
                     "counterparty contact channel identity",
                 ))?;
@@ -112,8 +114,8 @@ impl Vault {
                 contact_ref: *contact_ref,
                 identity_ref: contact.identity_ref,
                 counterparty: contact.counterparty,
-                channel: identity.channel().to_owned(),
-                address_or_handle: identity.address_or_handle().to_owned(),
+                channel: facts.channel,
+                address_or_handle: facts.address_or_handle,
             },
             owed_by_them,
             owed_to_them,

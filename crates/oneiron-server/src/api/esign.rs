@@ -11,6 +11,7 @@ mod editor_budget;
 pub(crate) mod hold_worker;
 mod ingress;
 pub(crate) mod notice_worker;
+mod parse_lease;
 mod presentation;
 #[cfg(unix)]
 pub(crate) mod seal_worker;
@@ -274,7 +275,7 @@ async fn image(
         };
         // A peak past u64 fits no machine: the lease refuses it at its floor.
         let peak = plan.peak_bytes(bytes).unwrap_or(u64::MAX);
-        let lease = match memory.lease(peak, Instant::now() + ingress::MEMORY_WAIT) {
+        let mut lease = match memory.lease(peak, Instant::now() + ingress::MEMORY_WAIT) {
             Ok(lease) => lease,
             Err(refusal) => return ImageUpload::Memory(refusal),
         };
@@ -282,6 +283,12 @@ async fn image(
             Ok(image) => image,
             Err(unread) => return ImageUpload::Unread(unread),
         };
+        // The read bytes are held now, so the live reading is not charged
+        // them twice while the lease lives (FIX 9345). Only what was read
+        // is named allocated; the peak's decode and re-encode room stays
+        // pending on the lease until the upload returns.
+        let read = u64::try_from(image.len()).unwrap_or(u64::MAX);
+        lease.materialized(read, read);
         match vault.upload_esign_signature_image(&token, &image) {
             Ok(image_ref) => ImageUpload::Stored(image_ref),
             Err(_) => ImageUpload::Refused,

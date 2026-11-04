@@ -18,7 +18,7 @@ use zip::write::FileOptions;
 use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter};
 
 use super::{Budget, Walked, encode_failed, hidden_member, over_budget, unreadable};
-use crate::secret_custody::MemberStep;
+use crate::file_secret_marks::MemberStep;
 
 /// The end-of-central-directory record, and the ZIP64 locator and record.
 const END: &[u8] = b"PK\x05\x06";

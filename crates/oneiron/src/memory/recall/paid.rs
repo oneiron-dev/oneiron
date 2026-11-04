@@ -38,7 +38,7 @@ use super::{Effort, MemoryPack, RecallScope};
 use crate::batch::export::write_door_refuses_body;
 use crate::claim::{ClaimBody, ClaimReadStatus};
 use crate::entity_id::EntityId;
-use crate::llm::BudgetLease;
+use crate::memory::RecallRequest;
 use crate::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, MEMORY_CODE_NOT_FOUND, Memory,
     MemoryError, MemoryResult,
@@ -46,7 +46,8 @@ use crate::memory::{
 use crate::rerank::crossencoder::PreparedCrossEncoder;
 use crate::rerank::{RerankCandidate, Reranker};
 use crate::retrieval_depth::{RecallExecution, RecallMediaSeed, RetrievalDeadline};
-use crate::task_verb::sdk::{RecallDoor, RecallRequest};
+use crate::task_verb::recall_door::RecallDoor;
+use oneiron_model::llm::BudgetLease;
 
 mod lineage;
 
@@ -129,6 +130,8 @@ pub struct RerankDocument<'a> {
 /// leaves, and the recall ranks by fusion.
 pub struct RerankEgress<'a> {
     vault: &'a crate::Vault,
+    /// The routes the sent rows' worlds allow, in their owner's order.
+    model_routes: crate::authority::WorldModelRoutes,
     /// Each row sent with words, and the world its item names at the
     /// revision scored; `None` when the host's model runs on this device,
     /// which is sent every row.
@@ -137,6 +140,12 @@ pub struct RerankEgress<'a> {
 }
 
 impl RerankEgress<'_> {
+    /// The model routes the worlds of the rows sent with words allow.
+    #[must_use]
+    pub fn model_routes(&self) -> &crate::authority::WorldModelRoutes {
+        &self.model_routes
+    }
+
     /// Whether the block's texts may still leave this device: the device-only
     /// verdict, run again now, keeps none of the rows sent with words. It
     /// reads as the first verdict did, under the store's flag lock and
@@ -341,7 +350,7 @@ impl Memory<'_> {
         budget: Option<Duration>,
         embedding: Option<&[f32]>,
         media: &[RecallMediaSeed<'_>],
-        query_affect: Option<crate::affect::Vad>,
+        query_affect: Option<oneiron_contracts::affect::Vad>,
         door: &RecallDoor<'_>,
         fallback: Option<&MemoryPack>,
         host: &dyn RecallRerankHost,
@@ -664,10 +673,10 @@ impl Memory<'_> {
         } else {
             let with_words: Vec<(EntityId, Option<EntityId>)> = block
                 .iter()
-                .zip(pinned_worlds)
+                .zip(&pinned_worlds)
                 .zip(&texts)
                 .filter(|(_, text)| !text.is_empty())
-                .map(|((candidate, world), _)| (candidate.id, world))
+                .map(|((candidate, world), _)| (candidate.id, *world))
                 .collect();
             let kept = kept_on_device(self.vault, &with_words)?;
             for (candidate, text) in block.iter().zip(&mut texts) {
@@ -682,8 +691,19 @@ impl Memory<'_> {
                     .collect(),
             )
         };
+        // Only the worlds of texts the host actually reads decide its rungs:
+        // rows sent empty are no model input, and base reality inherits.
+        let model_routes = self.vault.world_model_routes(
+            block
+                .iter()
+                .zip(&pinned_worlds)
+                .zip(&texts)
+                .filter(|(_, text)| !text.is_empty())
+                .filter_map(|((_, world), _)| *world),
+        )?;
         let egress = RerankEgress {
             vault: self.vault,
+            model_routes,
             sent,
             refused: AtomicBool::new(false),
         };
