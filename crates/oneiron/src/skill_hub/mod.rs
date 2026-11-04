@@ -42,9 +42,6 @@ pub use claim_refinement::{
     ClaimRefinementMergeAsk, ClaimRefinementMergeDisposition, ClaimRefinementMergeReceipt,
     LocalClaimRefinement,
 };
-pub(crate) use claim_refinement::{
-    claim_refinement_scope_exists_in_txn, erase_claim_refinement_in_txn,
-};
 pub use decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions, claim_replay_filled_state};
 pub(crate) use default_hub::MODEL_PACK_SUBTREE;
 pub use default_hub::{
