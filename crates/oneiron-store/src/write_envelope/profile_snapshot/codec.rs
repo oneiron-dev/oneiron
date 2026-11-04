@@ -10,9 +10,9 @@ use super::record::{
     MAX_COMPACT_BYTES, MAX_NARRATIVE_BYTES, MAX_TEXT_BYTES, PSYCH_PROFILE_BODY_KEYS,
     PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus,
 };
+use crate::write_envelope::claim_body::unit_interval_f32;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, RecordError, Result};
-use crate::write_envelope::claim_body::unit_interval_f32;
 
 mod source_pages;
 pub use self::source_pages::PSYCH_PROFILE_SOURCE_IDS_PER_CODEC_PAGE;
