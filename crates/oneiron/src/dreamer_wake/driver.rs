@@ -40,10 +40,12 @@ use crate::error::Result;
 use oneiron_model::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID, BUDGET_PLAN_PROMPT_TEMPLATE,
     BUDGET_PLAN_PROMPT_TEMPLATE_ID, BudgetGuard, BudgetSignalDeliveryChannel, BudgetSteeringSignal,
-    BudgetThreshold,
+    BudgetThreshold, WorkCancel,
 };
 
-use super::deadline::{DREAMER_WRAP_UP_NOTICE_PERCENT, WakeCancellation, WakePassDeadline};
+use super::deadline::{
+    DREAMER_WRAP_UP_NOTICE_PERCENT, WakeCancellation, WakePassDeadline, sync_wake_cancel,
+};
 use super::settlement::admitted_lease;
 #[cfg(feature = "sync")]
 use super::types::WakeProgressLane;
@@ -115,6 +117,12 @@ pub struct DreamerWakeDriver<'a> {
     claim_authoring: ClaimAuthoringSelection,
     /// The material this pass's `host.wake` pre-hooks added (FIX 8722).
     hook_material: Vec<String>,
+    /// The device-work cancellation the pass lends its attempts (FIX 11963):
+    /// each attempt admits under a clone, and the pass trips it beside the
+    /// wake flag at its checkpoints, so in-flight device work aborts with
+    /// the pass. Concurrent workers share it: each clones this same token
+    /// (FIX 11963), so a wake ask trips every worker's checkpoints alike.
+    pub(super) device_cancel: WorkCancel,
     #[cfg(feature = "sync")]
     pub(super) progress: Option<WakeProgressLane<'a>>,
 }
@@ -138,9 +146,16 @@ impl<'a> DreamerWakeDriver<'a> {
             contribution_host: None,
             claim_authoring: ClaimAuthoringSelection::None,
             hook_material: Vec::new(),
+            device_cancel: WorkCancel::new(),
             #[cfg(feature = "sync")]
             progress: None,
         }
+    }
+
+    /// The device-work cancellation this pass lends its attempts (FIX 11963).
+    #[must_use]
+    pub fn device_cancel(&self) -> &WorkCancel {
+        &self.device_cancel
     }
 
     /// The material this pass's `host.wake` pre-hooks added, in order, each
@@ -563,6 +578,10 @@ impl<'a> DreamerWakeDriver<'a> {
                 }
             }
 
+            // Pre-dispatch sync (FIX 11963): a wake ask raised while the
+            // attempt above admitted trips the device work its dispatch
+            // admits under, before the executor runs.
+            sync_wake_cancel(cancel, &self.device_cancel);
             let cancel_requested = cancel.is_cancelled();
             // What the attempt's own run line charged, read outside the
             // executor's future (SCAN C012): an attempt that never
