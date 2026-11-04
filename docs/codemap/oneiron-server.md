@@ -1163,7 +1163,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/wire.rs` | src | m | 15 crate-vis | — | Version-8 app envelopes |
 | `src/logging.rs` | src | s | 1 re-export · 4 crate-vis | — | What the binaries write to their log sinks, and the panic hook |
 | `src/logging/tests.rs` | test | s | 4 crate-vis | — | — |
-| `src/machine.rs` | src | m | 28 crate-vis | — | What this machine has: cores, memory, descriptors, free disk |
+| `src/machine.rs` | src | m | 29 crate-vis | — | What this machine has: cores, memory, descriptors, free disk |
+| `src/machine/organ.rs` | src | s | 1 crate-vis | — | Organ-host machine-floor leases |
 | `src/main.rs` | src | s | — | — | — |
 | `src/managed/args.rs` | src | m | 1 struct · 2 enum · 1 const · 1 re-export · 2 crate-vis | ManagedArgs, ManagedError, SettingsRefusal | Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals |
 | `src/managed/args/policy.rs` | src | m | 1 crate-vis | — | The managed argv allowlist: what managed mode does with each `ServeArgs` field, and the refusal of every… |
@@ -1397,7 +1398,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/worker_host/session/lifecycle.rs` | src | m | 10 crate-vis | — | The host's side of each served vault's snapshot lifecycle (DESIGN-V2 §7 "On vault lock", V2-R3): the port a… |
 | `src/models/worker_host/session/park.rs` | src | m | 6 crate-vis | — | Parking (DESIGN-V2 §7 residency, V2-R3): an idle session's published checkpoint exported from its worker… |
 | `src/models/worker_host/session/policy.rs` | src | s | 13 crate-vis | — | The coordinator's calls, one fn or constant each: which workers get sessions, which calls may use one, what… |
-| `src/models/worker_host/session/registry.rs` | src | m | 29 crate-vis | — | The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that… |
+| `src/models/worker_host/session/registry.rs` | src | m | 33 crate-vis | — | The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that… |
 | `src/models/worker_host/session/restore.rs` | src | m | 2 crate-vis | — | Restore (DESIGN-V2 §7 residency, V2-R3): a kept snapshot imported into a fresh session for an admitted turn… |
 | `src/models/worker_host/session/turn.rs` | src | m | 1 crate-vis | — | A turn on a session: the session for its key reused or created, a working branch forked at the frontier the… |
 | `src/oauth_relay.rs` | src | L | 7 crate-vis | — | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
@@ -1458,7 +1459,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/backup/payload_retention.rs` | src | s | 3 crate-vis | — | Checkpoint payload retention beside a vault's backups (KS7-5): each backup's kept-generation inventory lands… |
 | `src/owner/backup/rehearse.rs` | src | m | 14 crate-vis | — | Rehearsals of one vault's backups: restored into a scratch copy beside the live vault, opened, checked and… |
 | `src/owner/backup/relay_hold.rs` | src | s | 4 crate-vis | — | The relay delete guard over one vault's backup holds (FIX 1488): the adapter L14's relay locker delete takes… |
-| `src/owner/backup/restore.rs` | src | m | 11 crate-vis | — | Restores of one vault's backups: over the stopped vault, where no vault is yet, and the activation of the… |
+| `src/owner/backup/restore.rs` | src | L | 11 crate-vis | — | Restores of one vault's backups: over the stopped vault, where no vault is yet, and the activation of the… |
 | `src/owner/backup/scratch.rs` | src | s | 3 crate-vis | — | The mark a rehearsal's scratch copy carries when it is deleted afterwards, and the start-up sweep of those a… |
 | `src/owner/backup/tests.rs` | test | m | — | — | — |
 | `src/owner/backup/write_budget.rs` | src | s | 16 crate-vis | — | The floor uploads keep, lent to this vault's backups and rehearsals (FIX 5479) |
@@ -1592,7 +1593,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/wave_door.rs` | src | s | 3 crate-vis | — | The wave door (OF-427, ARCH-0068 RC5): `tasks.wave` cuts an epic TASK into a wave of TASKs through a planner… |
 | `src/server/web_fetch.rs` | src | s | 1 fn · 1 crate-vis | — | The host owns renderer configuration; acquisition itself stays in the engine |
 | `src/server/web_fetch/headless.rs` | src | m | 2 crate-vis | — | The host's headless browser rung (FIX 7122): one fresh browser guest per render, from the host's `[browser]`… |
-| `src/server/web_fetch/headless/body.rs` | src | s | 5 crate-vis | — | A headless answer's decoded body, held inline up to a small bound and in an anonymous temporary file past it |
+| `src/server/web_fetch/headless/body.rs` | src | s | 6 crate-vis | — | A headless answer's decoded body, held inline up to a small bound and in an anonymous temporary file past it |
 | `src/server/web_fetch/headless/handler.rs` | src | s | 4 crate-vis | — | A render's custody of its pages' requests (FIX 7122, FIX 7332): each HTTP(S) request the browser pauses (a… |
 | `src/server/web_fetch/headless/relay.rs` | src | s | 2 crate-vis | — | A render's relay (FIX 7333): every connection and datagram the guest's sockets reach for off the guest's own… |
 | `src/server/windows.rs` | src | s | 9 crate-vis | — | Window serving: snapshots, exports, and the local-change broadcast bridge |
