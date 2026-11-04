@@ -76,6 +76,9 @@ pub fn document_frame_withheld_for(vault: &Vault, peer: PeerMachine, frame: &[u8
     ) {
         return false;
     }
+    if document.kind == document_sub_tags::WAITED_OUT {
+        return crate::sync::transport::decode_document_waited_out(document.payload).is_err();
+    }
     (|| -> Result<bool> {
         let _accepting = vault.device_only_acceptance();
         let txn = vault.store.env.read_txn()?;
