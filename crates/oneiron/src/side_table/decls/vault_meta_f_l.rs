@@ -311,7 +311,7 @@ side_tables! {
     /// only: never prompt text, tokens, tensors, credentials or keys. Key: id16 (the catalog id,
     /// drawn at random).
     INFERENCE_SNAPSHOT_CATALOG: VaultMeta b"inference_snapshot:catalog:v1:" Named Engine
-        => crate::inference_snapshot::erase_actor_in_txn;
+        => crate::store::snapshot_catalog::erase_actor_in_txn;
     /// One conversation's kept snapshots, by catalog id, so a restore reads
     /// only its conversation's rows (FIX 11286): conversation id16 + catalog
     /// id16, empty markers, written in the row's own transaction.

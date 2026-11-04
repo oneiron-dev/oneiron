@@ -7,20 +7,13 @@
 //! stored counters are a function of the persisted children and of nothing
 //! else — no clock, no insertion order, no peer-supplied value.
 
-use crate::EdgeKind;
-use crate::ports::EdgeStoreRead;
-use crate::ports::EntityStoreRead;
 
-use heed::RwTxn;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
-use crate::registry::ENTITY_TYPE_TASK;
-use crate::store::Store;
+use crate::error::Result;
 use crate::temporal::TimeRange;
 
 pub use crate::write_envelope::task_body::TaskRole;
@@ -29,10 +22,6 @@ pub(crate) use crate::write_envelope::task_body::{
     reject_public_streak_fields, rewrite_habit_streak_fields, streak_from_checkin_days,
     strip_streak_fields, task_role_from_body_bytes,
 };
-
-/// UTC day-bucket width. `occurred_start / STREAK_DAY_SECS` is the whole
-/// normalization: integer division, no calendar, no local zone, no "today".
-const STREAK_DAY_SECS: u64 = 86_400;
 
 #[cfg(test)]
 pub(crate) fn task_body_for_test(role: TaskRole) -> Vec<u8> {
@@ -46,55 +35,7 @@ pub(crate) fn task_body_for_test(role: TaskRole) -> Vec<u8> {
     bytes
 }
 
-/// Recomputes one Habit's counters from its persisted check-in children and
-/// rewrites the stored body, inside the caller's transaction.
-///
-/// The caller has already established that `habit_id` is a stored Habit-role
-/// TASK. Children qualify only as `ENTITY_TYPE_TASK` with role `HabitCheckin`,
-/// decoded from the FINAL `edges_in` state of this transaction — so a batch
-/// that adds and removes the same edge sees what it left behind, not what it
-/// staged. Any error here propagates and aborts the whole transaction,
-/// including the check-in entity and the `ChildOf` edge that triggered it.
-pub(crate) fn recompute_habit_streak_in_txn(
-    store: &Store,
-    wtxn: &mut RwTxn<'_>,
-    habit_id: &EntityId,
-) -> Result<HabitStreak> {
-    let mut days = Vec::new();
-    for entry in store.port_edges(
-        wtxn,
-        habit_id,
-        crate::ports::EdgeDirection::In,
-        Some(EdgeKind::ChildOf),
-        None,
-    )? {
-        let edge_row = entry?;
-        let child = edge_row.target;
-        let Some(raw) = store
-            .port_entity_record(wtxn, &child)?
-            .map(|row| row.encode())
-        else {
-            continue;
-        };
-        let Some(header) = EntityMetadataHeader::parse(&raw) else {
-            return Err(Error::CorruptedIndex("entity header"));
-        };
-        if header.entity_type != ENTITY_TYPE_TASK
-            || task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])?
-                != TaskRole::HabitCheckin
-        {
-            continue;
-        }
-        days.push(header.occurred_start / STREAK_DAY_SECS);
-    }
-
-    let streak = streak_from_checkin_days(days)?;
-
-    crate::ports::EntityStoreMaintenance::port_habit_streak_materialize(
-        store, wtxn, habit_id, streak,
-    )?;
-    Ok(streak)
-}
+pub(crate) use crate::store::habit_streak::recompute_habit_streak_in_txn;
 
 impl Vault {
     /// Appends an immutable TASK/HabitCheckin child under a Habit-role TASK.

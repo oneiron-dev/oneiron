@@ -7,7 +7,7 @@ use super::{
     ReviewExplainerEscalation, ReviewExplainerOutput, ReviewExplainerReceipt,
 };
 use crate::attempt_queue::{AttemptId, AttemptRecord, ReadSetProducer};
-use crate::inference_context::HostInferenceContext;
+use oneiron_store::inference_context::HostInferenceContext;
 use crate::{EntityId, Error, Vault};
 use oneiron_model::llm::{
     BudgetDenied, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
