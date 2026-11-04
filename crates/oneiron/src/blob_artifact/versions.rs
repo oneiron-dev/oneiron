@@ -349,6 +349,7 @@ impl Vault {
             actor,
             learned_at,
             fork_base,
+            None,
         )
         .map(BlobArtifactAppendOutcome::Proposed)
     }

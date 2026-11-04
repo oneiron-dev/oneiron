@@ -255,6 +255,7 @@ impl Vault {
                     ForkStatus::Pending,
                     request.at,
                     &lineage,
+                    None,
                 )?;
                 let outcome = TextUpdateOutcome::RewriteFork {
                     fork: id,
@@ -283,6 +284,7 @@ impl Vault {
                     ForkStatus::Pending,
                     request.at,
                     &lineage,
+                    None,
                 )?;
                 let outcome = TextUpdateOutcome::ProposedFork {
                     fork: id,

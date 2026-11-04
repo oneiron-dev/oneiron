@@ -141,6 +141,9 @@ pub struct CanonicalDocumentFork {
     pub proposal_opener_lineage: Vec<[u8; 32]>,
     pub read_refs: Vec<[u8; 16]>,
     pub keep: Option<String>,
+    /// The delta receipt id this rework answered (FIX 11967).
+    #[serde(default)]
+    pub delta_receipt: Option<String>,
 }
 
 /// Durable proof of one owner purge, bound to the versions it named.

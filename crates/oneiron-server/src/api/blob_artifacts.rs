@@ -786,6 +786,7 @@ pub(super) async fn propose_deck(
                         reader,
                         actor,
                         now,
+                        None,
                     )
                     .map(|pending| Ok(json!(pending)))
                     .map_err(failed)
@@ -843,7 +844,7 @@ pub(super) async fn propose_output(
         let vault = server.vault();
         let reader = made_by_reader(vault, &auth, output.made_by.as_ref())?;
         vault
-            .propose_native_output(&id, &output, reader, actor, vault.now_recorded_at())
+            .propose_native_output(&id, &output, reader, actor, vault.now_recorded_at(), None)
             .map_err(|error| core_engine_error("native output proposal failed", error))
     })
     .await?;
