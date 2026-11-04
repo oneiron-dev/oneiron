@@ -135,7 +135,9 @@ pub(crate) use sweep_queue::{
     decode_withdrawn_generation_row, encode_withdrawn_generation_job_value,
     raise_withdrawn_generation_fence_in_txn, withdrawn_generation_cutoffs_in_txn,
 };
-pub(crate) use timeline::{deletion_window_for_row, row_deletion_marked};
+pub(crate) use timeline::{
+    deletion_window_for_row, deletion_window_for_row_known, marked_row_deleted, row_deletion_marked,
+};
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use tombstone::ROW_DELETION_FENCE_BACKFILLED;
 #[cfg(test)]

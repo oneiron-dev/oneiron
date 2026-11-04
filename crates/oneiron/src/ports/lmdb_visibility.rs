@@ -47,7 +47,11 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
         {
             return Ok(state);
         }
-        let state = deletion_state_read(self, txn, id)?;
+        let markers = kept.and_then(|key| deletion_markers(self, txn, key));
+        let state = match markers.as_deref() {
+            Some(markers) => deletion_state_known(self, txn, id, markers)?,
+            None => deletion_state_read(self, txn, id)?,
+        };
         if let Some(key) = kept {
             DELETION_MEMO.with(|memo| memo.borrow_mut().put(key, *id, state));
         }
@@ -93,6 +97,269 @@ fn deletion_state_read(
     })
 }
 
+/// [`deletion_state_read`] with the snapshot's marker rows already in
+/// `markers`: the same reads in the same order, the marker point reads
+/// answered from memory. The row itself, its window and a pending walk are
+/// still read per row.
+fn deletion_state_known(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    markers: &DeletionMarkers,
+) -> Result<DeletionState> {
+    let archived = markers.archived.contains(id);
+    let stale = markers.stale.contains(id)
+        || (markers.walk_pending
+            && super::dependent_walk::pending_withdrawal_in(dbs, txn, id)?.is_some());
+    let deleted = archived || removed_known(dbs, txn, id, markers)?;
+    Ok(DeletionState {
+        archived,
+        deleted,
+        stale,
+    })
+}
+
+/// [`removed_in_txn`] with the snapshot's marker rows in `markers`.
+fn removed_known(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    markers: &DeletionMarkers,
+) -> Result<bool> {
+    let raw = dbs.entities().get(txn, id.as_bytes())?;
+    let marked = markers.hard_deleted.contains(id) || markers.fenced.contains(id);
+    Ok(
+        crate::deletion::marked_row_deleted(marked, id, raw.as_deref())?
+            || markers.port_tombstones.contains(id)
+            || match raw {
+                Some(raw) => {
+                    let window = crate::deletion::deletion_window_for_row_known(
+                        dbs,
+                        txn,
+                        id,
+                        &raw,
+                        &|month: &str| -> Result<bool> { Ok(markers.world_pending(month)) },
+                    )?;
+                    markers.pending_at(&window, id)
+                }
+                None => false,
+            },
+    )
+}
+
+/// Most marker rows one recall loads into [`DeletionMarkers`]. Past it the
+/// recall reads each row's markers by point reads, as without the sets; the
+/// cap bounds the load, never an answer.
+const MAX_RECALL_DELETION_MARKERS: usize = 4_096;
+
+/// Recalls on this thread that skip loading a store's marker sets after a
+/// load of that store passed [`MAX_RECALL_DELETION_MARKERS`].
+const MARKER_RELOAD_AFTER_RECALLS: u64 = 32;
+
+/// Every marker row of one committed snapshot that a row's deletion state
+/// asks for by id, read with one prefix scan per family: archive (`ac:`),
+/// hard delete (`dt:`), row fence (`df:`), the ports tombstone and stale
+/// marks, and pending tombstones (`pt:`). A set holds exactly the ids a point
+/// read of that family would find, so a row's answer is the same.
+struct DeletionMarkers {
+    archived: std::collections::HashSet<EntityId>,
+    hard_deleted: std::collections::HashSet<EntityId>,
+    fenced: std::collections::HashSet<EntityId>,
+    port_tombstones: std::collections::HashSet<EntityId>,
+    stale: std::collections::HashSet<EntityId>,
+    /// The `pt:` key suffixes, `<window>:<hex id>`, in byte order.
+    pending: Vec<Vec<u8>>,
+    /// Whether any dependent walk is pending ([`super::dependent_walk::any_pending_walk`]).
+    walk_pending: bool,
+}
+
+impl DeletionMarkers {
+    /// The sets of the snapshot `txn` reads, or `None` past
+    /// [`MAX_RECALL_DELETION_MARKERS`] rows or where a pending tombstone key
+    /// does not decode, which a point read of a month's world windows reports.
+    fn load(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Option<Self>> {
+        let mut rows = 0usize;
+        let Some(archived) = hex_marker_ids(dbs, txn, DeletionMarker::Archive, &mut rows)? else {
+            return Ok(None);
+        };
+        let Some(hard_deleted) = hex_marker_ids(dbs, txn, DeletionMarker::HardDelete, &mut rows)?
+        else {
+            return Ok(None);
+        };
+        let Some(fenced) = hex_marker_ids(dbs, txn, DeletionMarker::RowFence, &mut rows)? else {
+            return Ok(None);
+        };
+        let Some(port_tombstones) =
+            vault_meta_ids(dbs, txn, super::integrity::TOMBSTONE, &mut rows)?
+        else {
+            return Ok(None);
+        };
+        let Some(stale) = vault_meta_ids(dbs, txn, super::integrity::STALE, &mut rows)? else {
+            return Ok(None);
+        };
+        let mut pending = Vec::new();
+        for row in crate::deletion::PENDING_TOMBSTONE.iter_raw_from(dbs, txn, &[])? {
+            let (key, _) = row?;
+            rows += 1;
+            if rows > MAX_RECALL_DELETION_MARKERS
+                || <crate::deletion::PendingTombstoneKey as side_table::SideKey>::decode_key(&key)
+                    .is_none()
+            {
+                return Ok(None);
+            }
+            pending.push(key);
+        }
+        pending.sort_unstable();
+        Ok(Some(Self {
+            archived,
+            hard_deleted,
+            fenced,
+            port_tombstones,
+            stale,
+            pending,
+            walk_pending: super::dependent_walk::any_pending_walk(dbs, txn)?,
+        }))
+    }
+
+    /// Whether any world window of `month` holds a pending tombstone, as
+    /// `port_has_world_pending_tombstone` reads it.
+    fn world_pending(&self, month: &str) -> bool {
+        let worlds = format!("{month}@");
+        let at = self
+            .pending
+            .partition_point(|key| key.as_slice() < worlds.as_bytes());
+        self.pending
+            .get(at)
+            .is_some_and(|key| key.starts_with(worlds.as_bytes()))
+    }
+
+    /// Whether the window `window` holds a pending tombstone of `id`.
+    fn pending_at(&self, window: &str, id: &EntityId) -> bool {
+        if self.pending.is_empty() {
+            return false;
+        }
+        let key = format!("{window}:{}", id.to_hex());
+        self.pending
+            .binary_search_by(|row| row.as_slice().cmp(key.as_bytes()))
+            .is_ok()
+    }
+}
+
+/// The id whose canonical lower-case hex is `hex`, the only id a point read
+/// of a hex-keyed marker at `hex` answers for.
+fn canonical_hex_id(hex: &[u8]) -> Option<EntityId> {
+    if hex.len() != 32 {
+        return None;
+    }
+    let nibble = |digit: u8| match digit {
+        b'0'..=b'9' => Some(digit - b'0'),
+        b'a'..=b'f' => Some(digit - b'a' + 10),
+        _ => None,
+    };
+    let mut bytes = [0u8; 16];
+    for (byte, pair) in bytes.iter_mut().zip(hex.chunks_exact(2)) {
+        *byte = (nibble(pair[0])? << 4) | nibble(pair[1])?;
+    }
+    Some(EntityId::from_bytes_unchecked(bytes))
+}
+
+/// The ids a hex-keyed `marker` family holds, counting each row in `rows`;
+/// `None` once `rows` passes [`MAX_RECALL_DELETION_MARKERS`].
+fn hex_marker_ids(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    marker: DeletionMarker,
+    rows: &mut usize,
+) -> Result<Option<std::collections::HashSet<EntityId>>> {
+    let mut ids = std::collections::HashSet::new();
+    for row in marker_table(marker).iter_raw_from(dbs, txn, &[])? {
+        let (hex, _) = row?;
+        *rows += 1;
+        if *rows > MAX_RECALL_DELETION_MARKERS {
+            return Ok(None);
+        }
+        // Any other key spelling is one no point read asks for.
+        if let Some(id) = canonical_hex_id(&hex) {
+            ids.insert(id);
+        }
+    }
+    Ok(Some(ids))
+}
+
+/// The ids under `prefix` in `vault_meta`, keyed `prefix` + the id's 16
+/// bytes, counting each row in `rows`; `None` once `rows` passes
+/// [`MAX_RECALL_DELETION_MARKERS`].
+fn vault_meta_ids(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    prefix: &[u8],
+    rows: &mut usize,
+) -> Result<Option<std::collections::HashSet<EntityId>>> {
+    let mut ids = std::collections::HashSet::new();
+    for row in dbs.vault_meta().prefix_iter(txn, prefix)? {
+        let (key, _) = row?;
+        *rows += 1;
+        if *rows > MAX_RECALL_DELETION_MARKERS {
+            return Ok(None);
+        }
+        // A key of another length is one no point read asks for.
+        if let Some(bytes) = key
+            .get(prefix.len()..)
+            .and_then(|id| <[u8; 16]>::try_from(id).ok())
+        {
+            ids.insert(EntityId::from_bytes_unchecked(bytes));
+        }
+    }
+    Ok(Some(ids))
+}
+
+/// The marker sets of the snapshot `key` names, loaded on the first deletion
+/// read of a recall there, or `None` where that recall reads markers per row.
+/// A load error is never kept as an answer: the row reads run instead and
+/// report their own.
+fn deletion_markers(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    key: (usize, usize),
+) -> Option<std::rc::Rc<DeletionMarkers>> {
+    let known = DELETION_MEMO.with(|memo| {
+        let memo = memo.borrow();
+        match &memo.markers {
+            MarkerSlot::Ready(markers) => Some(Some(std::rc::Rc::clone(markers))),
+            MarkerSlot::PerRow => Some(None),
+            MarkerSlot::Unloaded => memo
+                .overflowed
+                .is_some_and(|(store, at)| {
+                    store == key.0
+                        && memo.generation.wrapping_sub(at) < MARKER_RELOAD_AFTER_RECALLS
+                })
+                .then_some(None),
+        }
+    });
+    if let Some(known) = known {
+        return known;
+    }
+    let (markers, overflowed) = match DeletionMarkers::load(dbs, txn) {
+        Ok(Some(markers)) => (Some(std::rc::Rc::new(markers)), false),
+        Ok(None) => (None, true),
+        Err(_) => (None, false),
+    };
+    DELETION_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.at != Some((key.0, key.1, true)) {
+            return;
+        }
+        memo.markers = match &markers {
+            Some(markers) => MarkerSlot::Ready(std::rc::Rc::clone(markers)),
+            None => MarkerSlot::PerRow,
+        };
+        if overflowed {
+            memo.overflowed = Some((key.0, memo.generation));
+        }
+    });
+    markers
+}
+
 thread_local! {
     /// The deletion states one recall on this thread has read
     /// ([`deletion_memo_scope`]).
@@ -116,6 +383,22 @@ struct DeletionMemo {
     /// whether that snapshot may keep states.
     at: Option<(usize, usize, bool)>,
     states: std::collections::HashMap<EntityId, DeletionState>,
+    /// The marker sets of the snapshot kept ([`deletion_markers`]).
+    markers: MarkerSlot,
+    /// The store whose marker load last passed the cap, and the generation
+    /// it did; outlives scopes, so the next recalls there skip the load.
+    overflowed: Option<(usize, u64)>,
+}
+
+/// Where the kept snapshot's marker sets stand.
+#[derive(Default)]
+enum MarkerSlot {
+    /// No deletion read has asked for them yet.
+    #[default]
+    Unloaded,
+    Ready(std::rc::Rc<DeletionMarkers>),
+    /// This snapshot reads markers per row: past the cap, or the load failed.
+    PerRow,
 }
 
 impl DeletionMemo {
@@ -164,6 +447,7 @@ impl Drop for DeletionMemoScope {
             if memo.scopes == 0 {
                 memo.at = None;
                 memo.states.clear();
+                memo.markers = MarkerSlot::Unloaded;
             }
         });
     }
@@ -210,6 +494,7 @@ fn deletion_memo_key(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Option<(usize, 
             return keeps.then_some(key);
         }
         memo.states.clear();
+        memo.markers = MarkerSlot::Unloaded;
         let committed = std::thread::scope(|scope| {
             scope
                 .spawn(|| env.read_txn().ok().map(|committed| committed.id()))
