@@ -17,9 +17,9 @@ use super::{
     INCOMING, IncomingCooperativeDeletion, MAX_REASON_CODE_LEN, hex, invalid,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::deletion::SafeDeleteReason;
 use crate::deletion::{LegalHold, LegalHoldKind, LegalHoldTarget};
 use crate::edge::EdgeActorClass;
-use crate::memory::SafeDeleteReason;
 use crate::store::legal_hold::{self as hold_store, HoldActor};
 use crate::{EntityId, Error, Result, Vault};
 

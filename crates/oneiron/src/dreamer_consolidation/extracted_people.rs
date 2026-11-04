@@ -16,10 +16,10 @@ use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_rol
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::ScopeResource;
 use crate::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use oneiron_model::llm::ScopeResource;
 
 mod bindings;
 pub(crate) use bindings::pin_lineage_origin_in_txn;
@@ -29,7 +29,7 @@ pub(super) fn mint_extracted_people(
     vault: &Vault,
     people: &PersonBindings,
     working_set: &[EntityId],
-    scope: &crate::llm::Scope,
+    scope: &oneiron_model::llm::Scope,
     now: u64,
     deadline: Option<&WakePassDeadline>,
     fence: Option<&ConsolidationFence>,

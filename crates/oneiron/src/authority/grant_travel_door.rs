@@ -12,8 +12,8 @@
 //! success.
 
 use crate::error::{Error, Result};
-use crate::share_travel::TravelChoice;
 use crate::{EntityId, TimeRange, Vault};
+use oneiron_authority::share_travel::TravelChoice;
 
 use super::*;
 

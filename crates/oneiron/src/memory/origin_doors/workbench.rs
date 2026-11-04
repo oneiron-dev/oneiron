@@ -16,7 +16,6 @@ use super::workbench_types::{
 };
 use super::{Memory, MemoryResult};
 use crate::EntityId;
-use crate::code_revision::{CodeImportManifest, CodeRevision};
 use crate::codebase::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
@@ -25,6 +24,7 @@ use crate::git_wire::GitWire;
 use crate::memory::merge_queue_doors::MergeQueuePointersView;
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
+use crate::store::{code_import_manifest::CodeImportManifest, code_revision_record::CodeRevision};
 
 /// A served repository as the reads resolve it: its anchor, its stored
 /// local folder and the object store that folder proves.

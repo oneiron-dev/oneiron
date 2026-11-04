@@ -56,7 +56,15 @@ pub(crate) fn qualify_connector(
     };
     if probes {
         host::with_credential(vault, catalog.record.secret_ref.as_deref(), &name, |auth| {
-            probe(vault, &catalog, &endpoint, &revision, auth, &request.kit)
+            probe(
+                vault,
+                owner,
+                &catalog,
+                &endpoint,
+                &revision,
+                auth,
+                &request.kit,
+            )
         })
         .map_err(engine)??;
     }
@@ -116,18 +124,18 @@ fn attest_connector(
         })
         .map_err(engine)??;
     let now = unix_seconds_now();
-    vault
-        .stage_connector_manifest(
-            &catalog.key,
-            resolved,
-            &revision,
-            &OwnerAttestedManifestQualifier { owner },
-            now,
-        )
-        .map_err(engine)?;
     let record = if staged {
-        vault.attest_staged_connector_slate(owner, &catalog.key, &revision, now)
+        vault.attest_staged_connector_slate(owner, &catalog.key, resolved, &revision, now)
     } else {
+        vault
+            .stage_connector_manifest(
+                &catalog.key,
+                resolved,
+                &revision,
+                &OwnerAttestedManifestQualifier { owner },
+                now,
+            )
+            .map_err(engine)?;
         vault.attest_connector_key(owner, &catalog.key, &revision, now)
     }
     .map_err(engine)?;
@@ -179,11 +187,12 @@ fn listed_as_stamped(
     Ok(resolved)
 }
 
-/// Stages the resolved manifest under the suite, then runs the suite again
-/// to activate the key, or to swap in its staged slate: two full runs on
-/// the one surface the owner stamped.
+/// Qualifies the resolved manifest and slate on the surface the owner stamped.
+/// A staged expansion changes routing only after both suites pass, when its
+/// manifest and slate commit together.
 fn probe(
     vault: &Vault,
+    owner: &AuthenticatedOwner,
     catalog: &Catalog,
     endpoint: &str,
     revision: &str,
@@ -206,19 +215,22 @@ fn probe(
         plan: &staged_plan,
         oracle: kit,
     };
-    vault
-        .stage_connector_manifest(&catalog.key, resolved, revision, &suite, now)
-        .map_err(engine)?;
     let qualified = if catalog.record.staged_slate_ref.is_some() {
         vault.qualify_staged_connector_slate(
+            owner,
             &catalog.key,
+            resolved,
             revision,
+            &suite,
             &connector,
             &kit.plan_for_run(),
             kit,
             now,
         )
     } else {
+        vault
+            .stage_connector_manifest(&catalog.key, resolved, revision, &suite, now)
+            .map_err(engine)?;
         vault.qualify_connector_key(
             &catalog.key,
             revision,

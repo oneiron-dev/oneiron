@@ -14,23 +14,30 @@
 
 mod annotation_hold;
 mod borrowed_lease;
+pub mod browser_admission;
 mod budget_hold;
 mod cancel;
 mod completion;
+pub mod dispatch_payload;
 mod encoding;
 mod engine;
 mod executor;
 mod fanout_hold;
 mod index;
 mod kind_payload_erase;
+pub mod maintenance_predicate;
 mod observe;
 mod payload_erase;
 mod payload_rebind;
 mod ports;
 mod read_set;
 mod result;
+pub mod run_signal;
 mod settlement;
+pub mod skill_edit_cycle;
+pub mod source_rows;
 mod telemetry;
+pub mod turn_action_kind;
 mod types;
 mod validate;
 #[cfg(test)]
@@ -75,7 +82,7 @@ pub(crate) use kind_payload_erase::erase_kind_payloads_in_txn;
 pub(crate) use payload_erase::{
     attempt_payload_family, attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
     erase_attempt_payload_actor_in_txn, erase_attempt_payload_actors_in_txn,
-    retire_attempt_payload_in_txn,
+    erase_model_step_failure_reasons_in_txn, retire_attempt_payload_in_txn,
 };
 #[cfg(test)]
 pub(crate) fn encode_signal_record(record: &AttemptRecord) -> crate::Result<Vec<u8>> {
@@ -119,7 +126,7 @@ pub(crate) fn admission_order(record: &AttemptRecord) -> Option<(u64, [u8; 16])>
 /// for a bounded trace history). No content-side cleanup proposes such a row,
 /// and no scan of another kind reads one.
 pub(crate) fn owner_retained_kind(kind: &str) -> bool {
-    kind == crate::tagging::TAGGING_MARKER_KIND
+    kind == crate::config::tagging::TAGGING_MARKER_KIND
 }
 
 /// The first byte of every owner-retained row's id: those rows sit at the
@@ -161,3 +168,7 @@ pub(crate) fn check_owner_retained_range(kind: &str, id: &AttemptId) -> crate::R
         ))
     }
 }
+
+pub mod companion_task;
+
+pub mod run_tree_view;

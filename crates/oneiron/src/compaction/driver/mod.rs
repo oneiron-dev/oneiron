@@ -4,12 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::agent_def::{CompactionOwnership, MemoryProfile};
 use crate::context_pack::SerializedContextPack;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
+use crate::{agent_def::MemoryProfile, store::agent_record::CompactionOwnership};
 
 mod integration;
 mod live_fork;
@@ -116,7 +116,7 @@ pub trait CompactionBackend: Send + Sync {
     /// can park; `summary_token_budget` sizes the room the capture leaves.
     fn capture_live_fork(
         &self,
-        _live: &crate::LlmRequest,
+        _live: &oneiron_model::llm::LlmRequest,
         _summary_token_budget: u64,
     ) -> Option<
         std::result::Result<
@@ -327,7 +327,7 @@ pub struct CompactionProduct {
     /// mint only the summary prose.
     pub summary_text: String,
     /// Why the model stopped; only a natural stop passes the gate.
-    pub finish: crate::FinishReason,
+    pub finish: oneiron_model::llm::FinishReason,
     /// Measured wall time of THIS compact call — the latency half of the
     /// margin law.
     pub latency: Duration,
@@ -950,7 +950,7 @@ impl CompactionDriver {
 fn snapshot_watermark(vault: &Vault) -> Result<CompactionWatermark> {
     let watermark = crate::dreamer_consolidation::read_watermark(
         vault,
-        crate::dreamer_runner::DreamerConsolidationScope::Micro,
+        crate::store::consolidation_scope::DreamerConsolidationScope::Micro,
     )?;
     Ok(CompactionWatermark {
         learned_at: watermark.last_learned_at,

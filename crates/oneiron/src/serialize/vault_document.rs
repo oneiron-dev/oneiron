@@ -47,6 +47,9 @@ pub(crate) struct DocumentTail {
     /// archive with their edges.
     pub(crate) unlogged: BTreeSet<EntityId>,
     pub(crate) secrets_included: bool,
+    /// FIX 12066: the custody secrets only the fold knows here, named for
+    /// their holders: the manifest lists them.
+    pub(crate) fold_only_secrets: Vec<EntityId>,
     /// OF-370: the vault's embedding setup, when this export carries it.
     pub(crate) embedding_setup: Option<ExportEmbeddingSetup>,
     /// The rows this export is derived from, as a host lists them beside it
@@ -71,7 +74,7 @@ pub(crate) struct DocumentWriter<'v> {
     /// Each agent's birth-source ASSET, kept as it passes.
     birth_sources: BTreeSet<EntityId>,
     agents: Vec<ExportEntity>,
-    skills: Vec<(EntityId, crate::skill::SkillRecord)>,
+    skills: Vec<(EntityId, crate::write_envelope::skill_record::SkillRecord)>,
     knowledge: Vec<ExportEntity>,
     birth_bodies: BTreeMap<EntityId, ExportBody>,
     /// Each result body's row by digest, nulled and with its file detached.
@@ -262,8 +265,8 @@ impl<'v> DocumentWriter<'v> {
                     blake3: withheld.is_none().then(|| hex(&output.raw_blake3)),
                     bytes: output.raw_len,
                     kind: match output.kind {
-                        crate::code_run::CodeRunOutputKind::Text => "text",
-                        crate::code_run::CodeRunOutputKind::Binary => "binary",
+                        crate::store::result_manifest::CodeRunOutputKind::Text => "text",
+                        crate::store::result_manifest::CodeRunOutputKind::Binary => "binary",
                     }
                     .to_owned(),
                     lines: output.lines,
@@ -491,6 +494,7 @@ impl<'v> DocumentWriter<'v> {
             files: Vec::new(),
             diary_holds: tail.diary_holds,
             secrets_included: tail.secrets_included,
+            fold_only_secrets: Vec::new(),
             embedding_setup_withheld,
             side_rows_withheld: self.side_withheld,
         };
@@ -499,6 +503,12 @@ impl<'v> DocumentWriter<'v> {
         let mut manifest: WholeVaultDocumentManifest =
             serde_json::from_value(nulled(&manifest, "manifest", 1)?)
                 .map_err(|_| encode_failed())?;
+        // Ids only, added after the pass as the member lists are (FIX 12066).
+        manifest.fold_only_secrets = tail
+            .fold_only_secrets
+            .iter()
+            .map(EntityId::to_hex)
+            .collect();
         let sink = match self.cut {
             ExportCut::Archive => {
                 manifest.records = self
@@ -548,9 +558,9 @@ impl<'v> DocumentWriter<'v> {
                 .body
                 .to_bytes()
                 .ok()
-                .and_then(|bytes| crate::claim::decode_claim_body(&bytes, false).ok())
+                .and_then(|bytes| crate::write_envelope::claim_body::decode_claim_body(&bytes, false).ok())
                 .is_some_and(|claim| {
-                    matches!(claim.subject, crate::claim::ClaimSubject::Entity(id)
+                    matches!(claim.subject, crate::write_envelope::claim_body::ClaimSubject::Entity(id)
                         if self.agent_ids.contains(&id))
                 })
     }

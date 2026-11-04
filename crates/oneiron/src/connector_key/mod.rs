@@ -11,6 +11,7 @@
 //! fill them without re-versioning the schema.
 
 mod accounting;
+pub mod budget_class;
 mod channel_subscription;
 mod charter;
 mod codec;
