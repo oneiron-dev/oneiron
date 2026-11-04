@@ -6,6 +6,7 @@
 
 pub mod authority;
 pub mod channel_address;
+pub mod claim_history_handoff;
 pub mod channel_identity_manifest;
 pub mod channel_identity_shape;
 pub mod credential_door;

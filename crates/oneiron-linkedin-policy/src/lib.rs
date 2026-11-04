@@ -1,5 +1,5 @@
 //! LinkedIn seat policy values consumed by outbound admission.
-use crate::error::{Error, Result};
+use oneiron_contracts::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 
 mod seat;
@@ -29,10 +29,10 @@ pub const LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS: u32 = 180;
 /// Upper bound for human-cadence jitter between sends.
 pub const LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS: u32 = 900;
 
-pub(crate) const LINKEDIN_SEAT_VERB_CATALOG: &[&str] =
+pub const LINKEDIN_SEAT_VERB_CATALOG: &[&str] =
     &[LINKEDIN_SEND_DM_VERB, LINKEDIN_CONNECT_REQUEST_VERB];
 
-pub(crate) const MAX_LINKEDIN_SESSION_REF_BYTES: usize = 512;
+pub const MAX_LINKEDIN_SESSION_REF_BYTES: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -180,7 +180,7 @@ impl LinkedInSandboxHostConfig {
     }
 }
 
-pub(crate) fn bounded_ref(
+pub fn bounded_ref(
     value: String,
     blank_message: &'static str,
     too_long_message: &'static str,
@@ -193,7 +193,7 @@ pub(crate) fn bounded_ref(
     )
 }
 
-pub(crate) fn vault_scoped_secret_ref(value: String) -> Result<String> {
+pub fn vault_scoped_secret_ref(value: String) -> Result<String> {
     let value = bounded_ref(
         value,
         "LinkedIn session cookie secret ref must be non-empty",
@@ -207,7 +207,7 @@ pub(crate) fn vault_scoped_secret_ref(value: String) -> Result<String> {
     Ok(value)
 }
 
-pub(crate) fn normalize_non_blank(
+pub fn normalize_non_blank(
     value: String,
     max_bytes: usize,
     blank_message: &'static str,
