@@ -51361,6 +51361,8 @@ pub enum RetryableLlmError {
     StreamCut,
     #[serde(rename = "TransportFault")]
     TransportFault(TransportFault),
+    #[serde(rename = "DeviceAdmissionStopped")]
+    DeviceAdmissionStopped,
 }
 
 /// `oneiron_model::llm::error::BudgetDenied`.
