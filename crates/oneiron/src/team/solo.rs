@@ -52,6 +52,9 @@ pub fn record_solo_receipt(vault: &Vault, attempt: AttemptId, now: u64) -> Resul
     };
     let txn = vault.store.env.read_txn()?;
     let attribution = crate::receipt::attempt_pack_attribution_in_txn(&vault.store, &txn, attempt)?;
+    if !super::run_binding::team_starts_in_txn(vault, &txn, attempt)?.is_empty() {
+        return Ok(false);
+    }
     // The solo gate: bound solo attribution, else a ran agent dispatch with
     // no team (covers bind-failure runs; a run that ran is a row). The run
     // ran when its executor stamped the try or the try left a result.
