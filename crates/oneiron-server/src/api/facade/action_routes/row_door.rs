@@ -296,8 +296,8 @@ impl FacadeRowDoor {
         let Ok(body) = serde_json::to_vec(&call.input) else {
             return Ok(Err(refused()));
         };
-        let Ok(mut request) = axum::http::Request::post(format!("/{}", call.verb.as_str()))
-            .body(Body::from(body))
+        let Ok(mut request) =
+            axum::http::Request::post(format!("/{}", call.verb.as_str())).body(Body::from(body))
         else {
             return Ok(Err(refused()));
         };

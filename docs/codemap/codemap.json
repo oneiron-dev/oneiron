@@ -3410,7 +3410,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthorityCheckpointAttestation",
@@ -3421,7 +3421,7 @@
      "purpose": "Checkpoint v2 attestations (OF-469): an eligible root attests one authority checkpoint image with two…",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 13,
       "struct": 3
      }
@@ -10934,21 +10934,6 @@
      "path": "src/build_cache/tests/hit_metadata.rs",
      "purpose": "—",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "SealedBundleGeneration"
-     ],
-     "path": "src/bundle_generations.rs",
-     "purpose": "Bundle generation identity, upload cadence and retirement selection",
-     "surface": {
-      "const": 3,
-      "crate-vis": 1,
-      "fn": 4,
-      "struct": 1
-     }
     },
     {
      "bucket": "s",
@@ -25435,7 +25420,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 28,
+      "crate-vis": 26,
       "enum": 2,
       "fn": 7,
       "struct": 2
@@ -25682,14 +25667,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RoomParty"
+      "RoomParty",
+      "RoomPartyEntry"
      ],
      "path": "src/disclosure/room_party.rs",
      "purpose": "The term one room member brings to the room's meet (ARCH-0067 §8: \"the grants behind the people and agents…",
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 2
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -43088,8 +43075,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 210,
-      "re-export": 94
+      "mod": 209,
+      "re-export": 95
      }
     },
     {
@@ -51165,219 +51152,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AnswerActor"
-     ],
-     "path": "src/model_decision/answer_actor.rs",
-     "purpose": "An answer actor identity, including its erased state",
-     "surface": {
-      "crate-vis": 2,
-      "enum": 1,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "QuestionFamily"
-     ],
-     "path": "src/model_decision/catalogue.rs",
-     "purpose": "The engine's registered typed-question families, in one place",
-     "surface": {
-      "const": 50,
-      "fn": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/model_decision/codec.rs",
-     "purpose": "Canonical entity references for typed-decision wire records",
-     "surface": {
-      "crate-vis": 10
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/model_decision/mod.rs",
      "purpose": "Model-independent typed decision vocabulary and pure policy values",
      "surface": {
-      "crate-vis": 3,
-      "mod": 2,
-      "re-export": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "BandMode",
-      "DecisionBandEnforceRequest",
-      "DecisionBandLearnRequest",
-      "DecisionBandPolicy",
-      "DecisionBandReadRequest",
-      "LearnedBand",
-      "PersonThreshold",
-      "Reversibility",
-      "ThinkThreshold"
-     ],
-     "path": "src/model_decision/policy.rs",
-     "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
-     "surface": {
-      "const": 1,
-      "enum": 2,
-      "fn": 11,
-      "struct": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "PairedAnswer",
-      "ProviderCapability",
-      "ProviderDecision"
-     ],
-     "path": "src/model_decision/provider.rs",
-     "purpose": "Provider answer values, capabilities, and score-level rules",
-     "surface": {
-      "const": 3,
-      "crate-vis": 4,
-      "fn": 3,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/model_decision/questions/mod.rs",
-     "purpose": "Graph-question recipe and outcome vocabulary",
-     "surface": {
-      "re-export": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "GraphQuestionInput",
-      "GraphQuestionRef"
-     ],
-     "path": "src/model_decision/questions/recipe.rs",
-     "purpose": "Graph-question identities and explicit evidence joins",
-     "surface": {
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CalibrationPair",
-      "OmittedNeighbor",
-      "OutcomeBinding",
-      "OutcomeLabel",
-      "OutcomeSource",
-      "OutcomeWindowClose",
-      "QuestionActivation",
-      "QuestionAudience",
-      "QuestionMedia",
-      "QuestionScheduleHead",
-      "RefreshPolicy",
-      "SourceConflict",
-      "WindowOutcome"
-     ],
-     "path": "src/model_decision/questions/records.rs",
-     "purpose": "Standing-question outcome, refresh, and evidence values",
-     "surface": {
       "crate-vis": 1,
-      "enum": 5,
-      "fn": 1,
-      "struct": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "AskAct",
-      "HolderKind",
-      "RoleRank"
-     ],
-     "path": "src/model_decision/roles.rs",
-     "purpose": "Actor-free role ranks, ask acts, and holder kinds",
-     "surface": {
-      "enum": 3,
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "SlideReviewLimits",
-      "SlideReviewPolicy",
-      "SlideReviewPolicyRow",
-      "SlideReviewPrecedence",
-      "SlideReviewRoute"
-     ],
-     "path": "src/model_decision/slides_policy.rs",
-     "purpose": "Manifest-backed operating limits for the artifact judgment adapter",
-     "surface": {
-      "enum": 2,
-      "fn": 8,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/model_decision/state.rs",
-     "purpose": "Caller-prepared decision state fitting",
-     "surface": {
-      "fn": 4
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "AnswerContract",
-      "DecisionAnswer",
-      "DecisionBand",
-      "DecisionClass",
-      "DecisionDial",
-      "DecisionQuestion",
-      "DecisionQuestionInput",
-      "DecisionRung",
-      "DecisionTime",
-      "EvidenceVersion",
-      "HostRuleRef",
-      "HumanAskReason",
-      "ImageBox",
-      "ImagePoint",
-      "PairedReading",
-      "PersonChangedAnswer",
-      "ProviderPin",
-      "Reasoning",
-      "ReasoningCause",
-      "StateCut",
-      "StopCause"
-     ],
-     "path": "src/model_decision/types.rs",
-     "purpose": "Typed decision questions, answer contracts, and measurement values",
-     "surface": {
-      "crate-vis": 4,
-      "enum": 8,
-      "fn": 13,
-      "struct": 13
+      "re-export": 1
      }
     },
     {
@@ -63256,7 +63036,7 @@
      "surface": {
       "crate-vis": 12,
       "fn": 9,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 2,
       "type": 1
      }
@@ -86368,15 +86148,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "WindowKey"
-     ],
+     "notable": [],
      "path": "src/window_key.rs",
      "purpose": "Monthly CRDT window keys and their timestamp conversion",
      "surface": {
-      "crate-vis": 3,
-      "fn": 10,
-      "struct": 1
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -90708,13 +90485,6 @@
      "layout": "file+dir",
      "purpose": "Explicit account-scoped immutable build results"
     },
-    "bundle_generations": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Bundle generation identity, upload cadence and retirement selection"
-    },
     "calendar": {
      "files": 74,
      "impl_vault": true,
@@ -91458,9 +91228,9 @@
      "purpose": "Model-role bindings and calibrated verdict values"
     },
     "model_decision": {
-     "files": 13,
+     "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "Model-independent typed decision vocabulary and pure policy values"
     },
@@ -92179,9 +91949,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 141,
+   "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6357,
+   "source_files": 6344,
    "test_files": 900
   },
   "oneiron-android": {
@@ -126859,6 +126629,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SealedBundleGeneration"
+     ],
+     "path": "src/bundle_generations.rs",
+     "purpose": "Bundle generation identity, upload cadence and retirement selection",
+     "surface": {
+      "const": 4,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ConnectorKeyStatus"
      ],
      "path": "src/connector_key_status.rs",
@@ -126908,7 +126692,221 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 5
+      "mod": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnswerActor"
+     ],
+     "path": "src/model_decision/answer_actor.rs",
+     "purpose": "An answer actor identity, including its erased state",
+     "surface": {
+      "enum": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QuestionFamily"
+     ],
+     "path": "src/model_decision/catalogue.rs",
+     "purpose": "The engine's registered typed-question families, in one place",
+     "surface": {
+      "const": 50,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_decision/codec.rs",
+     "purpose": "Canonical entity references for typed-decision wire records",
+     "surface": {
+      "fn": 7,
+      "mod": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_decision/mod.rs",
+     "purpose": "Model-independent typed decision vocabulary and pure policy values",
+     "surface": {
+      "mod": 3,
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BandMode",
+      "DecisionBandEnforceRequest",
+      "DecisionBandLearnRequest",
+      "DecisionBandPolicy",
+      "DecisionBandReadRequest",
+      "LearnedBand",
+      "PersonThreshold",
+      "Reversibility",
+      "ThinkThreshold"
+     ],
+     "path": "src/model_decision/policy.rs",
+     "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 11,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PairedAnswer",
+      "ProviderCapability",
+      "ProviderDecision"
+     ],
+     "path": "src/model_decision/provider.rs",
+     "purpose": "Provider answer values, capabilities, and score-level rules",
+     "surface": {
+      "const": 3,
+      "fn": 7,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_decision/questions/mod.rs",
+     "purpose": "Graph-question recipe and outcome vocabulary",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphQuestionInput",
+      "GraphQuestionRef"
+     ],
+     "path": "src/model_decision/questions/recipe.rs",
+     "purpose": "Graph-question identities and explicit evidence joins",
+     "surface": {
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalibrationPair",
+      "OmittedNeighbor",
+      "OutcomeBinding",
+      "OutcomeLabel",
+      "OutcomeSource",
+      "OutcomeWindowClose",
+      "QuestionActivation",
+      "QuestionAudience",
+      "QuestionMedia",
+      "QuestionScheduleHead",
+      "RefreshPolicy",
+      "SourceConflict",
+      "WindowOutcome"
+     ],
+     "path": "src/model_decision/questions/records.rs",
+     "purpose": "Standing-question outcome, refresh, and evidence values",
+     "surface": {
+      "enum": 5,
+      "fn": 2,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AskAct",
+      "HolderKind",
+      "RoleRank"
+     ],
+     "path": "src/model_decision/roles.rs",
+     "purpose": "Actor-free role ranks, ask acts, and holder kinds",
+     "surface": {
+      "enum": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SlideReviewLimits",
+      "SlideReviewPolicy",
+      "SlideReviewPolicyRow",
+      "SlideReviewPrecedence",
+      "SlideReviewRoute"
+     ],
+     "path": "src/model_decision/slides_policy.rs",
+     "purpose": "Manifest-backed operating limits for the artifact judgment adapter",
+     "surface": {
+      "enum": 2,
+      "fn": 8,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/model_decision/state.rs",
+     "purpose": "Caller-prepared decision state fitting",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AnswerContract",
+      "DecisionAnswer",
+      "DecisionBand",
+      "DecisionClass",
+      "DecisionDial",
+      "DecisionQuestion",
+      "DecisionQuestionInput",
+      "DecisionRung",
+      "DecisionTime",
+      "EvidenceVersion",
+      "HostRuleRef",
+      "HumanAskReason",
+      "ImageBox",
+      "ImagePoint",
+      "PairedReading",
+      "PersonChangedAnswer",
+      "ProviderPin",
+      "Reasoning",
+      "ReasoningCause",
+      "StateCut",
+      "StopCause"
+     ],
+     "path": "src/model_decision/types.rs",
+     "purpose": "Typed decision questions, answer contracts, and measurement values",
+     "surface": {
+      "enum": 8,
+      "fn": 17,
+      "struct": 13
      }
     },
     {
@@ -126949,9 +126947,30 @@
       "fn": 1,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowKey"
+     ],
+     "path": "src/window_key.rs",
+     "purpose": "Monthly CRDT window keys and their timestamp conversion",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 15,
+      "struct": 1
+     }
     }
    ],
    "modules": {
+    "bundle_generations": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Bundle generation identity, upload cadence and retirement selection"
+    },
     "connector_key_status": {
      "files": 1,
      "impl_vault": false,
@@ -126973,6 +126992,13 @@
      "layout": "file",
      "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor"
     },
+    "model_decision": {
+     "files": 13,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Model-independent typed decision vocabulary and pure policy values"
+    },
     "model_step_record": {
      "files": 1,
      "impl_vault": false,
@@ -126986,11 +127012,18 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Pushed-blob scan inputs, value-free hits, and the receive-pack effector name"
+    },
+    "window_key": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Monthly CRDT window keys and their timestamp conversion"
     }
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 6,
+   "source_files": 21,
    "test_files": 0
   },
   "oneiron-uniffi": {

@@ -20,7 +20,8 @@ use oneiron::memory::extraction::{
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill::{LoadedSkillPack, MeasuredSkillPack};
 use oneiron::skill_optimize::{
-    EvalArmPin, EvalMeasurement, EvalSeat, EvalTaskInput, MeasurementUnavailable, seat_model_role,
+    EvalArmPin, EvalMeasurement, EvalSeat, EvalTaskInput, HeldOutReplayNotes,
+    MeasurementUnavailable, seat_model_role,
 };
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, LlmError, LlmMessage, LlmMessageRole,
