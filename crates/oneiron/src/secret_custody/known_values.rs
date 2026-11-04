@@ -56,7 +56,7 @@ use crate::ports::ShortIdStoreRead;
 use crate::store::{KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, Store};
 use crate::vault::Vault;
 
-pub(super) use self::forms::decodings;
+pub(super) use self::forms::{decodings, occurrences};
 pub(crate) use self::writer_index::known_index_scope;
 
 /// The shortest value matched exactly: every non-empty value (FIX 5270). An
