@@ -174,7 +174,10 @@ impl Vault {
         // An erased actor's receipts and rows keep their times, not who acted (FIX 812).
         // A soft delete's headerless purge keeps them: delete restores, erase is one-way (FIX 6640).
         if erase {
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id, act)?;
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
+                act,
+            )?;
             // Erase-only: an erased MESSAGE's model-call rows go with the
             // custody they lifted, under this erase's act.
             crate::code_run::model_call::erase_message_model_calls_in_txn(self, wtxn, id, act)?;
@@ -458,7 +461,7 @@ impl Vault {
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         }
 
-        crate::claim::remove_claim_projection_index(&self.store, wtxn, *id)?;
+        crate::store::claim_projection::remove_claim_projection_index(&self.store, wtxn, *id)?;
         crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         // An epoch summary keeps its keyframe, so the next mint numbers above it.
