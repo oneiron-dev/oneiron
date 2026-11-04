@@ -5,6 +5,7 @@ use super::{
     RunCompactionSeat,
 };
 use crate::ai_host::live_lease::LiveLeaseState;
+use oneiron::agent_def::AgentModel;
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::code_run::{
     CodeRunDeterminism, CompactionHostBinding, GatedActorWrite, ReaderJob, ScopedChildHosts,
@@ -131,7 +132,10 @@ fn injected_meter(
     receipts: Arc<dyn RunReceiptSink>,
 ) -> ReaderMeter {
     Arc::new(
-        move |meter: BudgetGuard, payer: Option<PayerPerson>, _lease: Option<LiveLeaseState>| {
+        move |meter: BudgetGuard,
+              payer: Option<PayerPerson>,
+              _lease: Option<LiveLeaseState>,
+              _listed: Vec<AgentModel>| {
             Arc::new(InjectedRuns::funded(
                 Arc::clone(&backend),
                 meter,
@@ -463,23 +467,25 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         &self,
         meter: BudgetGuard,
         payer: Option<PayerPerson>,
+        listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         self.reader_meter
             .as_ref()
-            .map(|build| build(meter, payer, None))
+            .map(|build| build(meter, payer, None, listed))
     }
     fn reader_backend_with_lease(
         &self,
         meter: BudgetGuard,
         payer: Option<PayerPerson>,
         lease: Option<LiveLeaseState>,
+        listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         if self.injected.is_some() {
             return None;
         }
         self.reader_meter
             .as_ref()
-            .map(|build| build(meter, payer, lease))
+            .map(|build| build(meter, payer, lease, listed))
     }
     fn host_meter(&self) -> Option<BudgetGuard> {
         self.host_meter.clone()
