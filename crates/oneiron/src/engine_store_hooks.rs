@@ -6,12 +6,25 @@ use oneiron_authority::federation::Sensitivity;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::{Store, StoreDeleteGuards, StoreHooks, StoreScopeStamps};
+use std::collections::{BTreeSet, HashSet};
+
+use crate::analyzer::MultilingualAnalyzer;
+use crate::config::{HostingPrivacyPosture, VaultConfig};
+use crate::edge::EdgeKind;
+use crate::store::{
+    GateDecisionId, Store, StoreDeleteGuards, StoreHooks, StoreProjectWrites, StoreRecordHooks,
+    StoreScopeStamps,
+};
+use crate::temporal::TimeRange;
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::ClaimBody;
 
 /// The hooks every vault's store opens with.
 pub(crate) const ENGINE_STORE_HOOKS: StoreHooks = StoreHooks {
     delete_guards: &EngineDeleteGuards,
     scope_stamps: &EngineScopeStamps,
+    project_writes: &EngineProjectWrites,
+    record_hooks: &EngineRecordHooks,
 };
 
 /// The engine's delete guards.
@@ -19,6 +32,12 @@ pub(crate) struct EngineDeleteGuards;
 
 /// The engine's record-scope stamp hooks.
 pub(crate) struct EngineScopeStamps;
+
+/// The engine's project write hooks.
+pub(crate) struct EngineProjectWrites;
+
+/// The engine's record hooks.
+pub(crate) struct EngineRecordHooks;
 
 impl StoreDeleteGuards for EngineDeleteGuards {
     fn reject_audience_edit_delete(
@@ -142,5 +161,252 @@ impl StoreScopeStamps for EngineScopeStamps {
 
     fn has_stored_position(&self, store: &Store, txn: &RoTxn<'_>, id: EntityId) -> Result<bool> {
         crate::federation::record_scope::has_stored_position(store, txn, id)
+    }
+}
+
+impl StoreProjectWrites for EngineProjectWrites {
+    fn refresh_project_frontiers(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        posture: HostingPrivacyPosture,
+        touched: &BTreeSet<EntityId>,
+    ) -> Result<()> {
+        crate::workspace_roster::refresh_project_frontiers(store, txn, posture, touched)
+    }
+
+    fn reconcile_project_rooms(
+        &self,
+        store: &Store,
+        config: &VaultConfig,
+        analyzer: &MultilingualAnalyzer,
+        trusted: bool,
+        txn: &mut RwTxn<'_>,
+        touched: &BTreeSet<EntityId>,
+    ) -> Result<()> {
+        crate::workspace_roster::reconcile_project_rooms(
+            store, config, analyzer, trusted, txn, touched,
+        )
+    }
+
+    fn validate_local_leader_chat_turns(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        turns: &BTreeSet<EntityId>,
+    ) -> Result<()> {
+        crate::workspace_roster::validate_local_leader_chat_turns(store, txn, turns)
+    }
+
+    fn capture_project_put(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: EntityId,
+        kind: u8,
+        data: &[u8],
+    ) -> Result<Vec<(EntityId, Vec<u8>)>> {
+        crate::workspace_roster::capture_project_put(store, txn, id, kind, data)
+    }
+
+    fn guard_goal_claim_put(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: EntityId,
+        incoming: Option<&ClaimBody>,
+        bytes: &[u8],
+        replicated: bool,
+    ) -> Result<()> {
+        crate::workspace_roster::guard_goal_claim_put(store, txn, id, incoming, bytes, replicated)
+    }
+
+    fn guard_goal_pointer_put(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: EntityId,
+        bytes: &[u8],
+        replicated: bool,
+    ) -> Result<()> {
+        crate::workspace_roster::guard_goal_pointer_put(store, txn, id, bytes, replicated)
+    }
+
+    fn normalize_project_body(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: EntityId,
+        bytes: &[u8],
+        posture: HostingPrivacyPosture,
+    ) -> Result<Vec<u8>> {
+        crate::workspace_roster::normalize_project_body(store, txn, id, bytes, posture)
+    }
+
+    fn validate_project_body(&self, id: EntityId, bytes: &[u8]) -> Result<Vec<EntityId>> {
+        crate::workspace_roster::validate_project_body(id, bytes)
+    }
+
+    fn validate_project_transition(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: EntityId,
+        kind: u8,
+        bytes: &[u8],
+        posture: HostingPrivacyPosture,
+    ) -> Result<()> {
+        crate::workspace_roster::validate_project_transition(store, txn, id, kind, bytes, posture)
+    }
+
+    fn note_project_proof(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: EntityId,
+        kind: u8,
+        data: &[u8],
+    ) -> Result<()> {
+        crate::workspace_roster::note_project_proof(store, txn, id, kind, data)
+    }
+
+    fn validate_room_body(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: EntityId,
+        data: &[u8],
+    ) -> Result<()> {
+        crate::workspace_roster::validate_room_body(store, txn, id, data)
+    }
+
+    fn root_project_in(&self, store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>> {
+        crate::workspace_roster::root_project_in(store, txn)
+    }
+
+    fn project_mint_gate_refs_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+    ) -> Result<HashSet<GateDecisionId>> {
+        crate::workspace_roster::project_mint_gate_refs_in_txn(vault, txn)
+    }
+}
+
+impl StoreRecordHooks for EngineRecordHooks {
+    fn redact_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: EntityId,
+        now: u64,
+    ) -> Result<Vec<EntityId>> {
+        crate::identity_topology::redact_actor_in_txn(vault, wtxn, actor, now)
+    }
+
+    fn redact_author_attribution_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        target: EntityId,
+        now: u64,
+    ) -> Result<Vec<EntityId>> {
+        crate::identity_topology::redact_author_attribution_in_txn(vault, wtxn, target, now)
+    }
+
+    fn validate_identity_topology_event_body_bytes(&self, data: &[u8]) -> Result<()> {
+        crate::identity_topology::validate_identity_topology_event_body_bytes(data)
+    }
+
+    fn forget_claim_reassignments_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        claim: &EntityId,
+    ) -> Result<()> {
+        crate::identity_topology::forget_claim_reassignments_in_txn(store, wtxn, claim)
+    }
+
+    fn identity_topology_shell_sources_for_store_in_txn(
+        &self,
+        store: &Store,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<BTreeSet<EntityId>>> {
+        crate::identity_topology::identity_topology_shell_sources_for_store_in_txn(store, rtxn, id)
+    }
+
+    fn actor_for_txn(&self, vault: &crate::Vault, txn: &RoTxn<'_>) -> Result<Option<WriteActor>> {
+        crate::federation::actor_for_txn(vault, txn)
+    }
+
+    fn split_recipient_copies_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+        pact_id: &[u8; 32],
+        worlds: &[EntityId],
+        epoch_cutoff: u64,
+        records: &[EntityId],
+    ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+        crate::federation::courtesy_scope::split_recipient_copies_in_txn(
+            vault,
+            txn,
+            pact_id,
+            worlds,
+            epoch_cutoff,
+            records,
+        )
+    }
+
+    fn validate_federation_grant_body_bytes(&self, bytes: &[u8]) -> Result<()> {
+        crate::federation::validate_federation_grant_body_bytes(bytes)
+    }
+
+    fn guard_ruling_overwrite(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        kind: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Result<()> {
+        crate::federation::guard_ruling_overwrite(store, txn, id, kind, occurred, learned_at, data)
+    }
+
+    fn note_authority_row(&self) {
+        crate::federation::note_authority_row()
+    }
+
+    fn reject_audience_edit_unlink(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::reject_audience_edit_unlink(store, txn, src, kind, tgt)
+    }
+
+    fn record_thread_admits_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+        id: EntityId,
+        actor: EntityId,
+    ) -> Result<bool> {
+        crate::workspace_roster::record_thread_admits_in(vault, txn, id, actor)
+    }
+
+    fn erase_audience_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_audience_actor_in_txn(vault, wtxn, actor)
     }
 }
