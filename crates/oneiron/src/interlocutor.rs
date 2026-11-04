@@ -673,6 +673,15 @@ impl Vault {
                                 record.first_touch,
                             )?
                         }
+                        // FIX 9142 (L02 YES 12:33): Active-but-unadmitted
+                        // withholds the member hex (skip the push) instead of
+                        // stamping Unknown. No record or Revoked keeps
+                        // today's Unknown stamp below.
+                        Some((_, record))
+                            if record.status == CounterpartyContactStatus::Active =>
+                        {
+                            continue;
+                        }
                         _ => Interlocutor::unknown(counterparty.clone(), false),
                     }
                 }

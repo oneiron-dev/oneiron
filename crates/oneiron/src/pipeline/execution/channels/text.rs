@@ -253,6 +253,9 @@ impl PipelineBuilder<'_> {
                             filter_all,
                             matches_scope: &mut retry_exact_posting_matches_scope,
                             private_note_ids: inputs.private_note_ids,
+                            recency: inputs
+                                .recency
+                                .map(crate::config::bm25::Bm25RecencyConfig::table_default),
                         },
                     )?
                 };
@@ -371,6 +374,9 @@ impl PipelineBuilder<'_> {
                         filter_all,
                         matches_scope: &mut exact_posting_matches_scope,
                         private_note_ids: inputs.private_note_ids,
+                        recency: inputs
+                            .recency
+                            .map(crate::config::bm25::Bm25RecencyConfig::table_default),
                     },
                 )?
             };
