@@ -128,6 +128,16 @@ impl CapabilityBinding {
             && expires_at <= self.hard_expires_at
     }
 }
+/// The deadline signing and delivery links live until: the owner-selected
+/// token cap when the draft sets one, else the document's deadline. A cap
+/// past the document's deadline changes nothing; an unset cap is today's
+/// deadline. Recipient signing windows are untouched.
+pub(super) fn capability_expires_at(document: &EsignDocument) -> u64 {
+    document
+        .token_expires_at
+        .map(|cap| cap.min(document.expires_at))
+        .unwrap_or(document.expires_at)
+}
 /// Every link indexed for `recipient` of `document`, in mint order.
 fn recipient_bindings(
     vault: &Vault,
@@ -204,7 +214,8 @@ pub(crate) fn recipient_capability_unrevoked_in(
         .any(|(_, cap)| cap.revoked_at.is_none()))
 }
 /// Mints a fresh link for one delivery lease (FIX 5238 option 3): its
-/// `hard_expires_at` is the document's deadline, and `deliver` is the
+/// `hard_expires_at` is the resolved capability deadline
+/// ([`capability_expires_at`]), and `deliver` is the
 /// exporter's digest of the content delivered with it, kept beside the
 /// lease as the only trace of the link's delivery. An earlier link minted
 /// for the same lease, one an export never finished, keeps working but no
@@ -287,14 +298,11 @@ pub(super) fn mint_draft_capabilities_in(
         return Err(invalid("tokens are minted before send"));
     }
     let now = vault.now_recorded_at();
+    let deadline = capability_expires_at(&state.document);
     let mut issued = Vec::new();
     for recipient in &state.document.recipients {
         let held = recipient_bindings(vault, txn, document, &recipient.id)?;
-        if !rotate
-            && held
-                .iter()
-                .any(|(_, cap)| cap.usable_until(state.document.expires_at, now))
-        {
+        if !rotate && held.iter().any(|(_, cap)| cap.usable_until(deadline, now)) {
             continue;
         }
         // A rotation, or a recipient whose every link lapsed: each
@@ -309,7 +317,7 @@ pub(super) fn mint_draft_capabilities_in(
         let row = CapabilityBinding {
             document: document.to_hex(),
             recipient: recipient.id.clone(),
-            hard_expires_at: state.document.expires_at,
+            hard_expires_at: deadline,
             revoked_at: None,
             delivery: None,
         };

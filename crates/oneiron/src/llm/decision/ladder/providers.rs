@@ -8,6 +8,7 @@ use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionImage, DecisionQuestion, DecisionRung,
     HostRuleRef, PairedReading, ProviderPin,
 };
+use crate::llm::run_admission::RunAdmission;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
 use serde_json::Value;
@@ -31,6 +32,10 @@ pub struct DecisionCall<'a> {
     /// A provider with a native deadline gets [`RetrievalDeadline::decision_time_left`], and
     /// its client waits no longer.
     pub deadline: &'a RetrievalDeadline,
+    /// The caller's run, when the call is metered on it (FIX 10443): a provider that
+    /// spends admits on this run, sourced with the call's evidence, instead of a run of
+    /// its own. `None` keeps today's own mint/carry behavior.
+    pub run: Option<&'a RunAdmission>,
 }
 
 impl DecisionCall<'_> {
@@ -51,6 +56,9 @@ pub struct DecisionPack<'a> {
     pub audio: &'a [DecisionAudio],
     pub state: &'a Value,
     pub deadline: &'a RetrievalDeadline,
+    /// The caller's run, when the pack is metered on it (FIX 10443): as
+    /// [`DecisionCall::run`], carried into each question's call.
+    pub run: Option<&'a RunAdmission>,
 }
 
 impl<'a> DecisionPack<'a> {
@@ -63,6 +71,7 @@ impl<'a> DecisionPack<'a> {
             audio: self.audio,
             state: self.state,
             deadline: self.deadline,
+            run: self.run,
         })
     }
 }
@@ -102,6 +111,12 @@ pub trait DecisionProvider: Send + Sync {
     /// price over the units it reads); none when the host knows none. The receipt of an
     /// answer it gives carries it (ARCH-0076, "Cost").
     fn cost_per_thousand(&self) -> Option<f64> {
+        None
+    }
+    /// The provider's own wire budget for the call's serialized state, in bytes,
+    /// when the provider itself reports one; else `None` (unknown). A provider
+    /// that knows only tokens answers `None`: bytes convert to nothing here.
+    fn state_budget_bytes(&self) -> Option<usize> {
         None
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
@@ -199,6 +214,10 @@ pub trait DecisionModel: Send + Sync {
     fn cost_per_thousand(&self) -> Option<f64> {
         None
     }
+    /// See [`DecisionProvider::state_budget_bytes`].
+    fn state_budget_bytes(&self) -> Option<usize> {
+        None
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// See [`DecisionProvider::decide_pack`].
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
@@ -248,6 +267,9 @@ impl DecisionProvider for ModelDecisionProvider {
     }
     fn cost_per_thousand(&self) -> Option<f64> {
         self.model.cost_per_thousand()
+    }
+    fn state_budget_bytes(&self) -> Option<usize> {
+        self.model.state_budget_bytes()
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)

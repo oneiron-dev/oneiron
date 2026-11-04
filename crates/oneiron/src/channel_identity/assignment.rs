@@ -582,6 +582,9 @@ pub(crate) fn clear_assignment_for_delete(
     crate::channel_identity_provider::mailbox_skipped::drop_skipped_messages_in_txn(
         store, txn, id,
     )?;
+    crate::channel_identity_provider::native_mail::drop_native_mail_skipped_messages_in_txn(
+        store, txn, id,
+    )?;
     let holds_address = match store.port_entity_record(txn, id)? {
         Some(row) => match decode_channel_identity_body(&row.body) {
             Ok(row) => !row.is_delegated(),

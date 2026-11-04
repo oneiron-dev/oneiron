@@ -34,8 +34,8 @@ use crate::sync::{SyncSelector, WindowKey, authorize_sync_selector};
 use crate::{EntityId, Error, FederationGrantScope, Result, Vault};
 use oneiron_model::llm::NormalizedBurstInputs;
 
-pub(crate) use queue::expire_retained_work;
 pub(in crate::sync) use queue::{DeferredWork, WorkKind};
+pub(crate) use queue::{earliest_retained_deadline, expire_retained_work};
 
 /// An admitted update as review evidence: each part it lands as, with the
 /// window that part imports into, in import order (FIX 3662).

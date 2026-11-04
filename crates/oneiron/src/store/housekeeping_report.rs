@@ -150,6 +150,12 @@ pub enum SweepWork {
         /// Bodies dropped as already fixed, inline, or gone.
         dropped: u64,
     },
+    AnnotationBodyAnchors {
+        /// Comment heads stamped, moved, landed on an export or detached.
+        moved: u64,
+        /// Artifacts whose comments could not be moved; each is tried again.
+        failed: u64,
+    },
 }
 
 impl SweepWork {
@@ -162,7 +168,9 @@ impl SweepWork {
                 .jobs_failed
                 .saturating_add(work.obligations_undecodable),
             Self::SecretLift(work) => work.failed,
-            Self::ClaimVadDebt { failed, .. } | Self::BodyLineIndexRebuild { failed, .. } => failed,
+            Self::ClaimVadDebt { failed, .. }
+            | Self::BodyLineIndexRebuild { failed, .. }
+            | Self::AnnotationBodyAnchors { failed, .. } => failed,
             _ => 0,
         }
     }
@@ -203,6 +211,7 @@ impl SweepWork {
                 failed,
                 dropped,
             } => rebuilt == 0 && failed == 0 && dropped == 0,
+            Self::AnnotationBodyAnchors { moved, failed } => moved == 0 && failed == 0,
         }
     }
 }

@@ -1,6 +1,7 @@
 //! One organ process's life: the child, the cell its descendants are fenced
-//! in (FIX 7887), the kernel limits that grow with what its own buffers are
-//! granted (FIX 6194), and the way to end it all.
+//! in (FIX 7887), a third-party organ's scratch dir (FIX 7885), the kernel
+//! limits that grow with what its own buffers are granted (FIX 6194), and
+//! the way to end it all.
 
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
@@ -10,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use super::{OrganProcess, lock};
 use crate::budget::NativeLimits;
-use crate::sandbox::Cell;
+use crate::sandbox::{Cell, Scratch};
 
 /// The child and the way to end it, shared with the reader thread so
 /// either side can end and reap it.
@@ -26,6 +27,8 @@ pub(super) struct Lifeline {
     /// The cgroup every process the organ starts is in, when this host
     /// could make one.
     cell: Mutex<Option<Cell>>,
+    /// A third-party organ's scratch dir, removed once the organ is reaped.
+    scratch: Mutex<Option<Scratch>>,
     /// The kernel's data and file-size limits, when the host keeps them in
     /// step with what the organ's own buffers are granted.
     limits: Option<Limits>,
@@ -46,6 +49,7 @@ impl Lifeline {
         child: Child,
         socket: UnixStream,
         cell: Option<Cell>,
+        scratch: Option<Scratch>,
         limits: Option<u64>,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -54,6 +58,7 @@ impl Lifeline {
             reaped: AtomicBool::new(false),
             socket,
             cell: Mutex::new(cell),
+            scratch: Mutex::new(scratch),
             limits: limits.map(|base| Limits {
                 base,
                 granted: Mutex::new(0),
@@ -95,6 +100,8 @@ impl Lifeline {
         *slot = None;
         // Removed now if it is empty, else at the next start or end.
         drop(lock(&self.cell).take());
+        // The scratch dir goes with the organ, all it left there included.
+        drop(lock(&self.scratch).take());
         self.reaped.store(true, Ordering::SeqCst);
     }
 

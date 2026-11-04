@@ -14,12 +14,12 @@ use std::path::Path;
 use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
 
-use oneiron::Vault;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::training_pack::{
-    CheckpointFileKind, CheckpointFilePin, SourcePin, TrainOutput, TrainRequest, TrainingConnector,
-    TrainingFuture, TrainingPlan,
+    CheckpointFileKind, CheckpointFilePin, PollFuture, SourcePin, TrainOutput, TrainRequest,
+    TrainingConnector, TrainingFuture, TrainingPlan,
 };
+use oneiron::{EntityId, Vault};
 use serde_json::Value;
 
 use super::wire::{
@@ -132,6 +132,46 @@ impl QuestionHeadTrainer {
         wire::decode_output(facts, &expected, &job.join(OUTPUT_DIR), &receipt)
     }
 
+    /// A read-only status check by the job directory's `(run, spec)`
+    /// identity: the terminal receipt reread through the same checks when
+    /// present, or `None` while the job is unknown or still running. It
+    /// never starts work, and a missing receipt is `None`, never an error.
+    /// A concurrent duplicate completion stays safe through
+    /// `complete_training_pack` idempotence.
+    fn poll_job(
+        &self,
+        run: EntityId,
+        spec_blake3: [u8; 32],
+    ) -> oneiron::Result<Option<TrainOutput>> {
+        let Some(stored) = self.vault.training_run(&run)? else {
+            return Ok(None);
+        };
+        if stored.spec_blake3 != spec_blake3 {
+            return Ok(None);
+        }
+        let job =
+            self.connector
+                .jobs_root
+                .join(format!("{}-{}", run.to_hex(), blake3_hex(&spec_blake3)));
+        if !job.join(OUTPUT_DIR).join(RECEIPT_FILE).is_file() {
+            return Ok(None);
+        }
+        let training_jsonl = self.vault.read_training_artifact(&stored.corpus.training)?;
+        let reference = stored.admission_ref();
+        let request = TrainRequest {
+            run,
+            spec_blake3,
+            plan: stored.plan,
+            compute: stored.compute,
+            training_jsonl,
+            training_blake3: stored.corpus.training.blake3,
+            detector: stored.corpus.detector,
+        };
+        let facts = JobFacts::of(&request, &reference)?;
+        let base = base_files(&request.plan.starting_checkpoint.files)?;
+        self.reread(&facts, &base, &job).map(Some)
+    }
+
     /// Makes the run's private job directory and writes the starting files
     /// and the training rows into it.
     fn stage(
@@ -204,6 +244,12 @@ impl TrainingConnector for QuestionHeadTrainer {
         admission: &'a RunAdmission,
     ) -> TrainingFuture<'a> {
         Box::pin(self.train_job(request, admission.run().to_owned()))
+    }
+
+    fn poll<'a>(&'a self, run: &EntityId, spec_blake3: &[u8; 32]) -> PollFuture<'a> {
+        let run = *run;
+        let spec_blake3 = *spec_blake3;
+        Box::pin(async move { self.poll_job(run, spec_blake3) })
     }
 }
 

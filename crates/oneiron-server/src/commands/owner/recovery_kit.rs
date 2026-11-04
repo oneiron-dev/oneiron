@@ -223,6 +223,8 @@ struct Confirmed {
     /// The vault key's `world-kit` escrow wrap to this kit's root; none when
     /// the vault has no key yet.
     vault_key_wrap: Option<WrapView>,
+    /// The root committed but the sealed page-seal mirror still needs repair.
+    mirror_pending: bool,
 }
 
 fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
@@ -269,6 +271,7 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
             .collect(),
         replaced: confirmed.replaced.iter().copied().map(kit_id).collect(),
         vault_key_wrap: confirmed.escrow.map(|info| WrapView::of(&vault_id, info)),
+        mirror_pending: confirmed.mirror_pending,
     })
 }
 

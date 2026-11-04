@@ -256,6 +256,11 @@ pub(crate) async fn start_desktop_workers(
         Arc::clone(&sync_server),
         admitted(),
     ));
+    // Due meeting prep packs and check-ins reach the owners' INBOX (FIX 12004).
+    workers.push(crate::calendar_host::spawn_calendar_card_pass(
+        Arc::clone(&sync_server),
+        crate::server::admit_every_pass(),
+    ));
     // Checked built-in channels and their provider webhooks (OF-519).
     workers.push(crate::builtin_host::spawn(&sync_server, admitted()));
     // Past the vault's deletion these two run on, to let its backups go at

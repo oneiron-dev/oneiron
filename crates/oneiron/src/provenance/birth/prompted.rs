@@ -8,7 +8,7 @@
 
 use heed::RoTxn;
 
-use super::row_birth_in_txn;
+use super::{RowBirth, row_birth_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::ManifestDbs;
@@ -24,16 +24,21 @@ pub(crate) fn prompt_sources_in_txn(
     row: &EntityId,
 ) -> Result<Vec<EntityId>> {
     Ok(row_birth_in_txn(store, txn, row)?
-        .map(|birth| {
-            birth
-                .made_by
-                .inputs
-                .into_iter()
-                .filter(|input| input.role == MadeByInputRole::Prompt)
-                .map(|input| input.row)
-                .collect()
-        })
+        .map(|birth| prompt_sources_of_birth(&birth))
         .unwrap_or_default())
+}
+
+/// Prompt inputs named by `birth` itself, with no store read: for a pending
+/// birth not yet stamped. Pure; FIX 11000 anchor capture uses it to prove a
+/// claim's pending prompt sources from batch state.
+pub(crate) fn prompt_sources_of_birth(birth: &RowBirth) -> Vec<EntityId> {
+    birth
+        .made_by
+        .inputs
+        .iter()
+        .filter(|input| input.role == MadeByInputRole::Prompt)
+        .map(|input| input.row)
+        .collect()
 }
 
 /// Whether `row` may stand as a prompt input of a birth stamped here: a row

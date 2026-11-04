@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
@@ -34,8 +35,8 @@ use oneiron_container::{
 use serde::{Deserialize, Serialize};
 
 use super::tree::{
-    FRAME_DONE, FRAME_HEADER, FRAME_INPUTS, FRAME_RESULT, FRAME_STDERR, FRAME_STDOUT, Sent,
-    read_frame, send_tree, write_frame,
+    FRAME_DONE, FRAME_HEADER, FRAME_INPUTS, FRAME_OUTPUT, FRAME_RESULT, FRAME_STDERR, FRAME_STDOUT,
+    Sent, read_frame, send_tree, write_frame,
 };
 use crate::config::{CheckerBackend, MergeQueueCheckerConfig};
 
@@ -52,6 +53,8 @@ const STOP_POLL: Duration = Duration::from_millis(500);
 pub(super) struct QueueCheckExecutor {
     config: MergeQueueCheckerConfig,
     backend: Option<Box<dyn MicroVmBackend>>,
+    /// Where each started guest is recorded until it ends (FIX 7233).
+    guests: Option<PathBuf>,
 }
 
 impl QueueCheckExecutor {
@@ -59,7 +62,15 @@ impl QueueCheckExecutor {
         Self {
             config,
             backend: None,
+            guests: None,
         }
+    }
+
+    /// Records each guest it starts under `dir` until that guest ends, so a
+    /// stopped host's guest is resolved by name on the next pass (FIX 7233).
+    pub(super) fn with_guest_records(mut self, dir: PathBuf) -> Self {
+        self.guests = Some(dir);
+        self
     }
 
     fn isolated_environment(&mut self) -> Result<QueueCheckEnvironment, QueueCheckNeed> {
@@ -195,6 +206,10 @@ impl QueueCheckExecutor {
             }
         };
         let started = transport.manifest.clone();
+        let record = self
+            .guests
+            .as_deref()
+            .and_then(|dir| record_guest(dir, &started));
         let mut lease = transport.lease;
         let driven = drive(
             transport.reader,
@@ -205,8 +220,12 @@ impl QueueCheckExecutor {
             stop,
         )?;
         let abandoned = lease.abandoned() || relay.abandoned.load(Ordering::Acquire);
-        // The guest ends with its lease, after its output is read.
+        // The guest ends with its lease, after its output is read; its
+        // record goes with it.
         drop(lease);
+        if let Some(record) = record {
+            let _removed = std::fs::remove_file(record);
+        }
         let manifest = relay
             .manifest
             .lock()
@@ -316,6 +335,42 @@ impl QueueCheckHost for QueueCheckExecutor {
     }
 }
 
+/// One started guest's record: what resolves it by name if its host stops
+/// before it ends (FIX 7233).
+#[derive(Serialize, Deserialize)]
+pub(super) struct GuestRecord {
+    pub(super) backend: String,
+    pub(super) runtime: String,
+    pub(super) generation: String,
+}
+
+/// The container a container backend names a session's guest.
+pub(super) fn guest_container_name(generation: &str) -> String {
+    format!("oneiron-guest-{generation}")
+}
+
+/// Writes `manifest`'s guest record under `dir`; `None` when it could not
+/// be written, and the check runs on.
+fn record_guest(dir: &Path, manifest: &SessionManifest) -> Option<PathBuf> {
+    let record = GuestRecord {
+        backend: manifest.backend.clone(),
+        runtime: manifest.runtime.clone(),
+        generation: manifest.generation.clone(),
+    };
+    let path = dir.join(&manifest.generation);
+    let written = std::fs::create_dir_all(dir).and_then(|()| {
+        let bytes = serde_json::to_vec(&record).map_err(io::Error::other)?;
+        std::fs::write(&path, bytes)
+    });
+    match written {
+        Ok(()) => Some(path),
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "a queue check guest record was not written");
+            None
+        }
+    }
+}
+
 fn unavailable(detail: String) -> QueueCheckExecution {
     QueueCheckExecution::Held(QueueCheckHold::new(
         QueueCheckHoldReason::ExecutorUnavailable,
@@ -335,6 +390,8 @@ fn interrupted(detail: &str) -> QueueCheckExecution {
 struct Header<'h> {
     version: u8,
     scratch: &'h str,
+    /// The pinned commit the guest's object store names as HEAD (FIX 7228).
+    commit: &'h str,
     commands: Vec<HeaderCommand<'h>>,
     contract_outputs: Vec<HeaderCommand<'h>>,
 }
@@ -344,6 +401,8 @@ struct HeaderCommand<'h> {
     name: Option<&'h str>,
     argv: &'h [String],
     env: &'h BTreeMap<String, String>,
+    /// The output files the helper reads back after it runs (FIX 7235).
+    declared_outputs: &'h [String],
 }
 
 /// One command result the helper reports.
@@ -376,9 +435,11 @@ fn drive(
     inputs: &QueueCheckInputs,
     stop: &dyn Fn() -> bool,
 ) -> oneiron::Result<QueueCheckExecution> {
+    let commit = invocation.target.commit();
     let header = Header {
         version: 1,
         scratch: CHECK_SCRATCH,
+        commit,
         commands: inputs
             .commands
             .iter()
@@ -386,6 +447,7 @@ fn drive(
                 name: None,
                 argv: &command.argv,
                 env: &command.env_allowlist,
+                declared_outputs: &command.declared_outputs,
             })
             .collect(),
         contract_outputs: inputs
@@ -395,6 +457,7 @@ fn drive(
                 name: Some(name.as_str()),
                 argv: &command.argv,
                 env: &command.env_allowlist,
+                declared_outputs: &command.declared_outputs,
             })
             .collect(),
     };
@@ -402,7 +465,7 @@ fn drive(
     if write_frame(writer.as_mut(), FRAME_HEADER, &header).is_err() {
         return Ok(interrupted("the check helper closed before its header"));
     }
-    let sent = match send_tree(writer.as_mut(), invocation.tree)? {
+    let sent = match send_tree(writer.as_mut(), invocation.tree, commit)? {
         Sent::Tree(digest) => digest,
         Sent::Closed(error) => {
             return Ok(interrupted(&format!(
@@ -466,6 +529,9 @@ struct Collected {
     pending: Option<(ResultFrame, Option<Vec<u8>>)>,
     commands: Vec<QueueCommandReceipt>,
     contract_outputs: BTreeMap<String, QueueCommandReceipt>,
+    /// The contract command reported last, whose declared outputs follow;
+    /// `None` after a phase command.
+    last_contract: Option<String>,
     missing: Option<String>,
     inputs: Option<InputsFrame>,
 }
@@ -493,6 +559,7 @@ impl Collected {
                 };
                 self.push(result, stdout, payload)?;
             }
+            FRAME_OUTPUT => self.output(&payload)?,
             FRAME_INPUTS => {
                 self.inputs = Some(
                     serde_json::from_slice(&payload)
@@ -501,6 +568,24 @@ impl Collected {
             }
             _ => return Err("the check helper sent an unknown frame".to_owned()),
         }
+        Ok(())
+    }
+
+    /// One declared output file of the command reported last (FIX 7235).
+    fn output(&mut self, payload: &[u8]) -> Result<(), String> {
+        let malformed = || "the check helper sent an unreadable output".to_owned();
+        let (length, rest) = payload.split_at_checked(4).ok_or_else(malformed)?;
+        let length = u32::from_be_bytes(length.try_into().map_err(|_| malformed())?) as usize;
+        let (path, bytes) = rest.split_at_checked(length).ok_or_else(malformed)?;
+        let path = String::from_utf8(path.to_vec()).map_err(|_| malformed())?;
+        let receipt = match &self.last_contract {
+            Some(name) => self.contract_outputs.get_mut(name),
+            None => self.commands.last_mut(),
+        };
+        let Some(receipt) = receipt.filter(|_| self.pending.is_none()) else {
+            return Err("the check helper sent an output out of order".to_owned());
+        };
+        receipt.declared_outputs.insert(path, bytes.to_vec());
         Ok(())
     }
 
@@ -519,14 +604,17 @@ impl Collected {
             signal: result.signal,
             stdout,
             stderr,
+            declared_outputs: BTreeMap::new(),
         };
         match (result.kind.as_str(), result.index, &result.name) {
             ("phase", Some(index), _) if index == self.commands.len() => {
                 self.commands.push(receipt(Vec::new()));
+                self.last_contract = None;
             }
             ("contract", _, Some(name)) => {
                 self.contract_outputs
                     .insert(name.clone(), receipt(Vec::new()));
+                self.last_contract = Some(name.clone());
             }
             _ => return Err("the check helper sent a result out of order".to_owned()),
         }

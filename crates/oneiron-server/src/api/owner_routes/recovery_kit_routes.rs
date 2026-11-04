@@ -23,7 +23,7 @@ use axum::routing::{get, post};
 use oneiron::recovery::checkpoint::CustodyAnchorRoot;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, host, owner, owner_error};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, host, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -40,6 +40,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/recovery-kit",
                 summary: "The kits this vault issued, the current one, and each private world's no-kit state here.",
                 row: None,
+                shape: None,
             },
             get(status),
         ),
@@ -49,6 +50,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/custody-anchor",
                 summary: "One custody lineage's current anchor record in this server's custody anchor root (query `vault`, 64 hex, and `namespace`, 32 hex): a position and a tag, never a key; `record` is null while it has none.",
                 row: None,
+                shape: None,
             },
             get(read_anchor),
         ),
@@ -58,6 +60,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/custody-anchor",
                 summary: "Makes `record` (hex) its lineage's current anchor record while the current one is still the one whose BLAKE3 is `expected` (64 hex; null when none): `advanced` is false when another writer moved it first, and an advance that does not extend the anchored position is refused.",
                 row: None,
+                shape: Some(RestShape::json(
+                    anchor_advance_body_schema,
+                    anchor_advance_schema,
+                )),
             },
             post(advance_anchor),
         ),
