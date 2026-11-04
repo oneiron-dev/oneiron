@@ -322,6 +322,10 @@ fn deletion_markers(
     txn: &RoTxn<'_>,
     key: (usize, usize),
 ) -> Option<std::rc::Rc<DeletionMarkers>> {
+    // bench-only (L15-LEAD, never merge): L15_TRY=no_deletion_markers reads markers per row, as before.
+    if crate::stage_timing::try_on("no_deletion_markers") {
+        return None;
+    }
     let known = DELETION_MEMO.with(|memo| {
         let memo = memo.borrow();
         match &memo.markers {
