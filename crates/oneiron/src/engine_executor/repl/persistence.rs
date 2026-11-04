@@ -227,7 +227,7 @@ impl EngineNativeExecutor<'_> {
                     )?
             }
             result => result?,
-        }
+        };
         // The run parks on the step's wait; a reply already delivered
         // resumes it at its next entry.
         if let Some(EngineExecutorStatus::Waiting(wait)) = &terminal_status {

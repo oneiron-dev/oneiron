@@ -886,7 +886,11 @@ fn map_project_root<R: Read + Seek>(
     let Ok(kind) = vault.project_type_byte() else {
         return Ok(None);
     };
-    let Some(target) = crate::workspace_roster::root_project_in(&vault.store, txn)? else {
+    let Some(target) = vault
+        .store
+        .project_writes
+        .root_project_in(&vault.store, txn)?
+    else {
         return Ok(None);
     };
     let mut source = None;
@@ -994,7 +998,7 @@ fn omit_project_revisions<R: Read + Seek>(
     vault: &Vault,
     archive: &mut IndexedArchive<'_, R>,
 ) -> Result<()> {
-    let Some(kind) = crate::workspace_roster::project_revision_type(&vault.store) else {
+    let Some(kind) = crate::store::project_kind::project_revision_type(&vault.store) else {
         return Ok(());
     };
     let mut after = None;
@@ -1190,9 +1194,7 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             .forked_from
             .into_iter()
             .collect(),
-        ENTITY_TYPE_CONVERSATION => crate::workspace_roster::project_room_dependency(bytes)
-            .into_iter()
-            .collect(),
+        ENTITY_TYPE_CONVERSATION => super::project_room_dependency(bytes).into_iter().collect(),
         ENTITY_TYPE_WORKFLOW => {
             let definition = crate::store::workflow_definition::decode_workflow(bytes)?;
             definition

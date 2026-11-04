@@ -406,7 +406,7 @@ impl Vault {
             // not change. The only replaced bytes are text -> head pointer.
             self.store
                 .port_entity_document_pointer_put(txn, entity, &pointer)?;
-            crate::federation::record_scope::restamp_document_pointer(
+            self.store.scope_stamps.restamp_document_pointer(
                 &self.store,
                 txn,
                 *entity,
@@ -624,7 +624,7 @@ pub(super) fn move_pointer(
     rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields))
         .map_err(|_| invalid("document pointer encoding"))?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    crate::federation::record_scope::restamp_document_pointer(
+    store.scope_stamps.restamp_document_pointer(
         store,
         txn,
         *entity,

@@ -327,12 +327,17 @@ impl DreamerWakeDriver<'_> {
                 ) {
                     report.sources_truncated = report.sources_truncated.saturating_add(1);
                 }
+                // Pre-dispatch sync (FIX 11963), as a serial dispatch:
+                // a wake ask raised while the window filled trips the
+                // device work these attempts are about to admit under.
+                sync_wake_cancel(cancel, &self.device_cancel);
                 window_args.push((
                     &slot.admitted,
                     WakeAttemptContext {
                         vault: self.vault,
                         deadline: &self.deadline,
                         cancel: Some(cancel),
+                        device_cancel: Some(self.device_cancel.clone()),
                         budget_id: &slot.line,
                         now_ms: input.now.saturating_mul(1_000),
                         prepared_wake: Some(prepared_wake),
