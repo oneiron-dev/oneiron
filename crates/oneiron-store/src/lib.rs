@@ -6,6 +6,7 @@ pub mod config;
 pub mod connector_key_status;
 pub mod conversation_record;
 pub mod core_write;
+pub mod embedding_vocabulary;
 pub mod file_secret_marks;
 pub mod identity_hints;
 pub mod index_keys;
