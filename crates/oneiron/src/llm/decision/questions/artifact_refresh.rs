@@ -13,6 +13,7 @@
 //! question's principal's, on the question's dial and clock, through the host's decider;
 //! an artifact or file the principal cannot read is not asked.
 
+use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 mod ask_selection;
@@ -364,11 +365,13 @@ impl Asking<'_> {
                 if remaining.is_empty() {
                     remaining = SheetRowSelection::range(rows.start.row, rows.end.row);
                 }
-                if baseline != observed || stamp.live != observed_live {
+                // Keep advances the pending-proposal baseline, not the
+                // snapshot that completed rows were actually read from.
+                if stamp.versions != observed || stamp.live != observed_live {
                     let mut changed = self.changed_units(
                         artifact,
                         &selection,
-                        &baseline,
+                        &stamp.versions,
                         &observed,
                         &stamp.live,
                     )?;
