@@ -5,6 +5,7 @@ use crate::{
     Vault,
     entity_id::EntityId,
     error::Result,
+    share_travel::AgentPackTravelProjection,
     skill::{SkillContentHash, SkillLifecycle},
     skill_hub::{HubFile, HubPackage, HubPin, HubRef},
     temporal::TimeRange,
@@ -40,9 +41,26 @@ pub(super) fn bundled_skill_packages(source: &PackSource) -> Result<Vec<(String,
             .or_default()
             .push(HubFile::new(relative, file.content.clone()));
     }
+    let travelling = source
+        .files
+        .iter()
+        .find(|file| file.path == "policy.md")
+        .filter(|file| super::agent_facets::is_travel_policy(&file.content))
+        .map(|_| AgentPackTravelProjection::from_files(&source.files))
+        .transpose()?;
     groups
         .into_iter()
-        .map(|(folder, files)| Ok((folder, super::super::folder::package_from_files(files)?)))
+        .map(|(folder, files)| {
+            if let Some(projection) = &travelling {
+                let skill = projection
+                    .skills
+                    .iter()
+                    .find(|skill| skill.content_hash == folder)
+                    .ok_or_else(|| invalid("travelling pack skill folder is not in skills.json"))?;
+                return Ok((folder, skill.package()?));
+            }
+            Ok((folder, super::super::folder::package_from_files(files)?))
+        })
         .collect()
 }
 
@@ -75,6 +93,17 @@ impl Vault {
                 TimeRange { start: at, end: at },
                 at,
             )?;
+            let holder = self.read_skill_record_in_txn(txn, &id)?;
+            if holder.desc != package.record.desc
+                || holder.version != package.record.version
+                || holder.dependencies != package.record.dependencies
+                || holder.role != package.record.role
+                || holder.call != package.record.call
+            {
+                return Err(invalid(
+                    "travelling pack skill conflicts with the installed skill portable metadata",
+                ));
+            };
             if !held {
                 self.revive_removed_pack_skill_in_txn(txn, &id, &source.manifest.name, at)?;
             }

@@ -1,6 +1,6 @@
 //! Credential-bound adapters over the engine's anchored annotation lifecycle.
 
-use super::anchor_text::{anchor_text, unit_texts};
+use super::anchor_text::{UnitFormat, anchor_text, unit_texts};
 use super::codec::decode_thread_head;
 use super::wire::{
     AnnotationAnchorView, AnnotationAssignRequest, AnnotationBriefView, AnnotationCommentRequest,
@@ -10,7 +10,6 @@ use super::wire::{
 };
 use super::{ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationThread, Locator, TaskBrief};
 use crate::blob_artifact::{ArtifactKind, ArtifactRefRequest};
-use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryError, MemoryResult, resolve_entity_ref};
@@ -44,7 +43,7 @@ impl Memory<'_> {
         let unsupported = |kind| ArtifactUnitsView::Unsupported {
             artifact_id: artifact,
             kind,
-            reason: "this kind has no office annotation unit adapter".to_owned(),
+            reason: "this kind has no annotation unit adapter".to_owned(),
         };
         if kind == ArtifactKind::Code {
             return Ok(unsupported(kind));
@@ -53,7 +52,7 @@ impl Memory<'_> {
             .vault()
             .export_blob_artifact_as_raw(&artifact, input.version, self.secret_sight()?)?
             .ok_or_else(|| MemoryError::not_found("artifact version not found"))?;
-        let Ok(format) = OfficeFormat::from_media_type(&file.media_type) else {
+        let Some(format) = UnitFormat::from_media_type(&file.media_type) else {
             return Ok(unsupported(file.kind));
         };
         let limits = {
@@ -98,6 +97,7 @@ impl Memory<'_> {
             version: anchor.version,
             locator: (&anchor.locator).into(),
             quote: anchor_text(&file.bytes, &anchor.locator, &limits)?,
+            body: anchor.body.as_ref().map(Into::into),
         })
     }
 
@@ -113,12 +113,15 @@ impl Memory<'_> {
             .export_blob_artifact_as_raw(&artifact, input.version, self.secret_sight()?)?
             .ok_or_else(|| MemoryError::not_found("artifact version not found"))?;
         let locator = Locator::try_from(&input.locator)?;
-        let format = OfficeFormat::from_media_type(&file.media_type)?;
+        let format = UnitFormat::from_media_type(&file.media_type).ok_or_else(|| {
+            MemoryError::bad_request("locator format does not match the artifact")
+        })?;
         let matches = matches!(
             (format, &locator),
-            (OfficeFormat::Docx, Locator::Docx { .. })
-                | (OfficeFormat::Xlsx, Locator::Xlsx { .. })
-                | (OfficeFormat::Pptx, Locator::Pptx { .. })
+            (UnitFormat::Docx, Locator::Docx { .. })
+                | (UnitFormat::Xlsx, Locator::Xlsx { .. })
+                | (UnitFormat::Pptx, Locator::Pptx { .. })
+                | (UnitFormat::Html, Locator::Html { .. })
         );
         if !matches {
             return Err(MemoryError::bad_request(
@@ -186,7 +189,8 @@ impl Memory<'_> {
         let origin = self.annotation_origin(&thread)?;
         let resolution = if thread.drift.is_some() {
             AnnotationResolution::Drifted
-        } else if thread.anchor == origin {
+        } else if thread.anchor.version == origin.version && thread.anchor.locator == origin.locator
+        {
             AnnotationResolution::Pinned
         } else {
             AnnotationResolution::Mapped

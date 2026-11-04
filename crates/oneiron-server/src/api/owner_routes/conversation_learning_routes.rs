@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::world_privacy_routes::holder;
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::{CoreAuth, CoreScope};
@@ -71,6 +71,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/conversation-learning",
                 summary: "The vault's \"Learn from my conversations\" setting, for a live member, delegate or guest (the owner, or another live person on their own human slip): on, allow_opt_out, the revision to present back as seen, any conflict, the act in force, set_by (the admin, 32 hex) and the one line a member's surface shows while it is on. While on, everything in the vault counts, people, agents and guests alike; private worlds never do.",
                 row: None,
+                shape: None,
             },
             get(view),
         ),
@@ -80,6 +81,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/conversation-learning",
                 summary: "The vault's admin (its live owner, or a shared vault's owner or admin holding the workspace-settings power) sets it: body {on, allow_opt_out, seen}, both flags required (a body missing one is a 400). Off until turned on; turning it off stops new sharing and withdraws nothing already shared. A stale seen (64 hex) is a conflict; anyone else is refused.",
                 row: None,
+                shape: Some(RestShape::json(
+                    set_learning_body_schema,
+                    learning_reply_schema,
+                )),
             },
             put(set),
         ),
@@ -89,6 +94,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/conversation-learning/me",
                 summary: "The caller's own opt-out, as the person their proof names: leave_out, whether the vault allows opt-outs now (allowed), the revision to present back as seen, any conflict and the act in force.",
                 row: None,
+                shape: None,
             },
             get(own_view),
         ),
@@ -98,6 +104,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/conversation-learning/me",
                 summary: "The caller leaves their own messages out of training, or lets them back in: body {leave_out, seen}, leave_out required. Refused (409) while the vault does not allow opt-outs. It stops new sharing of their messages and withdraws nothing already shared. A stale seen (64 hex) is a conflict.",
                 row: None,
+                shape: Some(RestShape::json(set_own_body_schema, own_reply_schema)),
             },
             put(set_own),
         ),
@@ -107,6 +114,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/conversation-learning/receipts",
                 summary: "One page of the caller's own publisher training receipts, as the person their proof names: each submission carrying their words with its source, worlds, local custody, the intake's last receipt (stored, excluded, removal_pending, removed or rejected), the runs that used it, the withdrawal note and times. Never another person's rows. Pass the page's next back as after (34 hex) for the rest.",
                 row: None,
+                shape: None,
             },
             get(receipts),
         ),

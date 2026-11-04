@@ -36,8 +36,8 @@ pub struct DecisionImage {
 }
 
 impl DecisionImage {
-    /// A call's images: uniquely named, PNG or JPEG, each inside its byte bound. A name is
-    /// a plain state key of ASCII letters, digits and `_`.
+    /// A call's images: uniquely named PNG or JPEG; encoded size is no refusal (FIX 11234).
+    /// A name is a plain state key of ASCII letters, digits and `_`.
     pub fn validate_all(images: &[Self]) -> LlmResult<()> {
         let mut names = BTreeSet::new();
         for image in images {
@@ -49,7 +49,6 @@ impl DecisionImage {
                     .all(|b| b.is_ascii_alphanumeric() || b == b'_')
                 || !names.insert(image.name.as_str())
                 || image.image.bytes.is_empty()
-                || image.image.bytes.len() > MAX_DECISION_IMAGE_BYTES
                 || image.format().is_none()
             {
                 return Err(FatalLlmError::InvalidRequest.into());

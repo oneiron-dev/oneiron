@@ -19,12 +19,11 @@ use std::collections::HashMap;
 use oneiron_docedit::{DocxAnchorBlock, docx_anchor_blocks};
 use serde::{Deserialize, Serialize};
 
-use super::anchor_text::{TextLimits, anchor_text, find_text, remap_span};
+use super::anchor_text::{TextLimits, UnitFormat, anchor_text, find_text, html_blocks, remap_span};
 use super::codec::{ThreadHead, decode_locator, encode_locator};
 use super::model::{AnnotationThread, Locator, ReanchorOutcome, ReanchorSummary};
 use super::threads::thread_from_head;
 use crate::Vault;
-use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, Named, SideTable};
@@ -194,7 +193,7 @@ impl DocxReanchor {
         else {
             return ReanchorOutcome::Drifted;
         };
-        let Some(paired) = pair_paragraph(before, after, index, self.shares_ids) else {
+        let Some(paired) = pair_paragraph(before, after, index, self.shares_ids, false) else {
             return ReanchorOutcome::Drifted;
         };
         let new = &after.blocks[paired];
@@ -212,24 +211,138 @@ impl DocxReanchor {
     }
 }
 
+/// The HTML side of one sweep: both versions' visible blocks and their
+/// producer ids. Structural ids fall back to the ordinary text pairing.
+pub(super) struct HtmlReanchor {
+    before: Option<Paragraphs>,
+    after: Option<Paragraphs>,
+    shares_ids: bool,
+}
+
+impl HtmlReanchor {
+    pub(super) fn load(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        artifact: &EntityId,
+        from: u64,
+        to: u64,
+        threads: &[AnnotationThread],
+    ) -> Result<Option<Self>> {
+        if !threads.iter().any(|thread| {
+            thread.anchor.version == from
+                && !thread.is_drifted()
+                && matches!(thread.anchor.locator, Locator::Html { .. })
+        }) {
+            return Ok(None);
+        }
+        let body = vault
+            .get_blob_artifact_in_txn(txn, artifact)?
+            .ok_or(Error::EntityNotFound)?;
+        if !matches!(
+            UnitFormat::from_media_type(&body.media_type),
+            Some(UnitFormat::Html)
+        ) {
+            return Ok(None);
+        }
+        let read = |version| -> Result<Option<Paragraphs>> {
+            let Some(bytes) = vault.read_blob_artifact_version_in_txn(txn, artifact, version)?
+            else {
+                return Ok(None);
+            };
+            let blocks = html_blocks(&bytes)?.map(|blocks| {
+                Paragraphs::new(
+                    blocks
+                        .into_iter()
+                        .map(|block| DocxAnchorBlock {
+                            para_id: block.explicit.then_some(block.part_id.clone()),
+                            block_id: block.part_id,
+                            text: block.text,
+                        })
+                        .collect(),
+                )
+            });
+            Ok(blocks)
+        };
+        let (before, after) = (read(from)?, read(to)?);
+        let shares_ids = match (&before, &after) {
+            (Some(before), Some(after)) => before.ids.keys().any(|id| after.ids.contains_key(id)),
+            _ => false,
+        };
+        Ok(Some(Self {
+            before,
+            after,
+            shares_ids,
+        }))
+    }
+
+    pub(super) fn rebind(&self, locator: &Locator) -> ReanchorOutcome {
+        let Locator::Html {
+            part_id,
+            char_start,
+            char_end,
+        } = locator
+        else {
+            return ReanchorOutcome::Drifted;
+        };
+        let (Some(before), Some(after)) = (&self.before, &self.after) else {
+            return ReanchorOutcome::Drifted;
+        };
+        let Some(index) = before
+            .blocks
+            .iter()
+            .position(|block| block.block_id == *part_id)
+        else {
+            return ReanchorOutcome::Drifted;
+        };
+        let Some(paired) = pair_paragraph(before, after, index, self.shares_ids, true) else {
+            return ReanchorOutcome::Drifted;
+        };
+        let new = &after.blocks[paired];
+        if after
+            .blocks
+            .iter()
+            .filter(|block| block.block_id == new.block_id)
+            .count()
+            != 1
+        {
+            return ReanchorOutcome::Drifted;
+        }
+        match remap_span(
+            &before.blocks[index].text,
+            &new.text,
+            *char_start,
+            *char_end,
+        )
+        .and_then(|(start, end)| Locator::html(new.block_id.clone(), start, end).ok())
+        {
+            Some(locator) => ReanchorOutcome::Mapped(locator),
+            None => ReanchorOutcome::Drifted,
+        }
+    }
+}
+
 fn pair_paragraph(
     before: &Paragraphs,
     after: &Paragraphs,
     index: usize,
     shares_ids: bool,
+    strict_producer_ids: bool,
 ) -> Option<usize> {
-    // A paraId one paragraph alone carries on each side is its identity;
-    // gone from the new version, the paragraph was deleted. Two carrying it
-    // there prove nothing, so the text decides.
-    let id = before.blocks[index]
-        .para_id
-        .as_deref()
-        .filter(|id| shares_ids && before.only(id).is_some());
-    if let Some(id) = id {
-        match after.ids.get(id).map_or(0, Vec::len) {
-            0 => return None,
-            1 => return after.only(id),
-            _ => {}
+    // An explicit producer id pairs only on a unique exact match on both
+    // sides. The strict (HTML) door drifts a renamed or duplicated id and
+    // never lets text re-pin it; the DOCX door keeps its prior pairing,
+    // where regenerated paraIds fall back to the text decision.
+    if let Some(id) = before.blocks[index].para_id.as_deref() {
+        if strict_producer_ids {
+            before.only(id)?;
+            return after.only(id);
+        }
+        if shares_ids && before.only(id).is_some() {
+            match after.ids.get(id).map_or(0, Vec::len) {
+                0 => return None,
+                1 => return after.only(id),
+                _ => {}
+            }
         }
     }
     let found = pair_by_text(&before.blocks, &after.blocks, index)?;
@@ -380,7 +493,11 @@ impl Vault {
         let body = self
             .get_blob_artifact(artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        let format = OfficeFormat::from_media_type(&body.media_type)?;
+        let format = UnitFormat::from_media_type(&body.media_type).ok_or_else(|| {
+            Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                "unsupported annotation media type",
+            ))
+        })?;
         let bytes = self
             .read_blob_artifact_version(artifact_id, head.version)?
             .ok_or(Error::EntityNotFound)?;
@@ -581,6 +698,7 @@ impl Vault {
             state: thread.state,
             locator,
             drift: None,
+            body: None,
         };
         let new_head_id = self.write_thread_head_in_txn(
             wtxn,

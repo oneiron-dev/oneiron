@@ -45,6 +45,12 @@ pub enum DurableStepError {
     Canonical(#[from] serde_json::Error),
     #[error(transparent)]
     Fallback(#[from] FallbackError),
+    /// A deterministic-fallback run failed after corrective attempts spent units.
+    #[error("deterministic fallback failure after spent corrective attempts: {source}")]
+    SpentFallback {
+        source: FallbackError,
+        usage: Box<LlmUsage>,
+    },
     /// NEW steps are refused once the wake pass enters its graceful-wrap
     /// finalize window (ONE-1305); memoized hits still return.
     #[error("durable step refused: wake pass is in its finalize window")]

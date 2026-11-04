@@ -997,7 +997,6 @@ fn step_state_hash_frames_variable_length_boundaries() {
     let left = JsCodeModeStepOutcome {
         done: false,
         observation: "observed".to_owned(),
-        console: String::new(),
         outputs: vec![
             JsCodeModeOutput::new("a", b"bc".to_vec()),
             JsCodeModeOutput::new("def", Vec::new()),
@@ -1006,7 +1005,6 @@ fn step_state_hash_frames_variable_length_boundaries() {
     let right = JsCodeModeStepOutcome {
         done: false,
         observation: "observed".to_owned(),
-        console: String::new(),
         outputs: vec![
             JsCodeModeOutput::new("ab", b"c".to_vec()),
             JsCodeModeOutput::new("de", b"f".to_vec()),

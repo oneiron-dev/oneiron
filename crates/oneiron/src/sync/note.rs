@@ -11,7 +11,9 @@ mod materialize;
 mod mirror;
 mod scrub;
 mod workflows;
-pub(crate) use scrub::{deleted, deleted_elsewhere};
+pub(crate) use scrub::{
+    deleted, deleted_elsewhere, deleted_elsewhere_under_lock, scrub_missed_note_deletes,
+};
 
 pub(crate) use materialize::apply;
 pub(crate) use mirror::{copy_judged, copy_selected, refresh, refresh_for};
@@ -25,7 +27,7 @@ use crate::{EntityId, Vault, error::Result};
 use loro::{LoroDoc, LoroValue, ValueOrContainer};
 use std::collections::{BTreeMap, BTreeSet};
 
-const FORMAT_KEY: &str = "@note-sync";
+use crate::deletion::window_document_format::FORMAT_KEY;
 const FORMAT: &[u8] = b"proposal-values-v3";
 /// The explainer a bundle that lost a member keeps, as the erase leaves it:
 /// it can quote what left.
@@ -48,10 +50,7 @@ pub(crate) struct State {
     bundles: BTreeMap<EntityId, BundleCarrier>,
 }
 
-pub(crate) fn is_native(doc: &LoroDoc) -> bool {
-    matches!(doc.get_value(), LoroValue::Map(roots) if roots.contains_key("documents"))
-        && doc.get_map("documents").get(FORMAT_KEY).is_some()
-}
+pub(crate) use crate::deletion::window_document_format::is_native;
 
 pub(crate) fn validate(doc: &LoroDoc) -> Result<State> {
     let mut state = codec::read(doc)?;

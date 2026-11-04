@@ -683,12 +683,6 @@ pub(crate) fn code_run_inline_body_of_row<'v>(
     }
 }
 
-/// Whether a raw result body row holds its body inline, whoever holds the
-/// body.
-pub(crate) fn code_run_row_inline(value: &[u8]) -> bool {
-    matches!(split_row(value), Some((STORED_INLINE, _)))
-}
-
 /// Whether the result body row of `digest` holds its body on its own: a raw
 /// output no descriptor holds (FIX 5399b). Another holder's release of the
 /// same bytes neither queues nor collects it. `false` with no row.

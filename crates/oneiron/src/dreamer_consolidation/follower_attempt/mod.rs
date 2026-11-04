@@ -332,7 +332,9 @@ impl ConsolidationExecutor<'_> {
                 )));
             }
             Err(error) if output::refused_request(&error) => {
-                if let DurableStepError::SpentLlm { usage, .. } = &error {
+                if let DurableStepError::SpentLlm { usage, .. }
+                | DurableStepError::SpentFallback { usage, .. } = &error
+                {
                     charges.record_usage(usage);
                 }
                 return hand_back(leg, work, charges);
@@ -513,7 +515,9 @@ impl ConsolidationExecutor<'_> {
             // A fold the provider refuses as a request cannot shrink the
             // prefix: every owed span goes back to its own rung.
             Err(error) if output::refused_request(&error) => {
-                if let DurableStepError::SpentLlm { usage, .. } = &error {
+                if let DurableStepError::SpentLlm { usage, .. }
+                | DurableStepError::SpentFallback { usage, .. } = &error
+                {
                     charges.record_usage(usage);
                 }
                 hand_back_owed(leg, charges)
