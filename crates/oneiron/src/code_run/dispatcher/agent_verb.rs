@@ -239,6 +239,8 @@ impl HostSelfDispatcher<'_> {
             true,
             site.run_id,
         )?;
+        // The replay row is persisted; the door releases what the answer held (FIX 10633).
+        door.answer_recorded();
         Ok(outcome)
     }
 
