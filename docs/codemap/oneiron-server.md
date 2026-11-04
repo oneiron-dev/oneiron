@@ -264,7 +264,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/parse_lease.rs` | src | s | 2 crate-vis | — | A PDF inspection's parse on this machine's memory (FIX 8065): the editor's geometry door, the anonymous one… |
 | `src/api/esign/presentation.rs` | src | m | 8 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | m | 3 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
-| `src/api/facade.rs` | src | m | 33 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | m | 34 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | m | 16 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/action_routes/execution.rs` | src | s | 4 crate-vis | — | How one action runs (OF-181): the principal its call reads as, and the driver thread it runs on with its… |
 | `src/api/facade/action_routes/row_door.rs` | src | m | 4 crate-vis | — | The verb door of one action call (OF-181), split from its parent: each verb-table row runs as its own… |
@@ -441,7 +441,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/skill_default_doors.rs` | src | s | 4 crate-vis | — | The owner's first-hub and bootstrap reads and explicit defaults re-import |
 | `src/api/facade/skill_doors.rs` | src | m | 13 crate-vis | — | Selected-message conversion and the owner's skill library, through the same facade and MCP doors |
 | `src/api/facade/skill_execution_doors.rs` | src | m | 4 crate-vis | — | Skill calls on the caller's attached run and owner-anchored pack outcomes |
-| `src/api/facade/slim_doors.rs` | src | s | 5 crate-vis | — | Owner-bound lifecycle doors; each transport reaches the same engine transaction |
+| `src/api/facade/slim_doors.rs` | src | s | 6 crate-vis | — | Owner-bound lifecycle doors; each transport reaches the same engine transaction |
 | `src/api/facade/standing_doors.rs` | src | s | 6 crate-vis | — | Standing-block configuration and per-agent dreaming choice, with the caller's own proof (BOARD-04) |
 | `src/api/facade/stream_recovery_doors.rs` | src | s | 1 crate-vis | — | The stream seeds the vault's open could not replay (FIX 11933), read under the caller's own owner credential |
 | `src/api/facade/streamed_claims.rs` | src | s | 1 crate-vis | — | A door's invocation claim held through a streamed reply (FIX 2004): the reply is saved for each duplicate… |
@@ -557,7 +557,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/memory_reason/quality_tests.rs` | test | s | — | — | — |
 | `src/api/memory_reason/render.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/message_result.rs` | src | s | 2 crate-vis | — | `POST /v1/core/messages/{message}/result`: the result a MESSAGE carries in place of an answer too large to… |
-| `src/api/mod.rs` | src | m | 55 crate-vis | — | HTTP query routes for web dashboard access |
+| `src/api/mod.rs` | src | m | 56 crate-vis | — | HTTP query routes for web dashboard access |
 | `src/api/off_record_rooms.rs` | src | m | 12 crate-vis | — | Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10) |
 | `src/api/openai_proxy/choices.rs` | src | s | 10 crate-vis | — | FIX 8188, 8189: every choice a call asks for, on the caller's own clock |
 | `src/api/openai_proxy/exchange.rs` | src | s | 2 crate-vis | — | The exchange a call proposes back (FIX 8188, 8192): the newest user text, every answer the caller got and… |
@@ -1088,7 +1088,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/connection/dispatch_error.rs` | src | s | 1 crate-vis | — | The close a dispatched frame's handler error ends its connection with, apart from the loop so each file… |
 | `src/handler/connection/run.rs` | src | m | 1 crate-vis | — | The single-owner connection event loop: one socket's protocol hello, its root snapshot, then every frame it… |
 | `src/handler/document_copy.rs` | src | s | 1 crate-vis | — | A marked source's edit notice, delivered to the sockets that hold its document by its copy id (FIX 10730… |
-| `src/handler/documents.rs` | src | m | 8 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
+| `src/handler/documents.rs` | src | L | 8 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
 | `src/handler/ephemeral.rs` | src | s | 5 crate-vis | — | Ephemeral presence lane: validation, hub budget, and canonical fan-out frames |
 | `src/handler/ephemeral/message_scope.rs` | src | s | 3 crate-vis | — | Where a message's live partials go (FIX 9537) |
 | `src/handler/federation.rs` | src | s | 2 crate-vis | — | Authenticated selector fetches with durable defer and current-grant replay |

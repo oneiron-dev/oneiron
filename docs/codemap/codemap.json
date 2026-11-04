@@ -2198,7 +2198,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -2208,7 +2208,8 @@
      "path": "src/artifact_hosting/publication_sync/parts.rs",
      "purpose": "Bounded publication parts (FIX 9575)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 10,
+      "fn": 1
      }
     },
     {
@@ -22349,7 +22350,7 @@
      "purpose": "PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 16,
       "struct": 4
@@ -61422,7 +61423,17 @@
      "path": "src/room_codec.rs",
      "purpose": "Room row part codecs without the sync feature (FIX 12405)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/room_codec/offer_parts.rs",
+     "purpose": "Large Offer wording rides as parts; its actor fields stay editable inline",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -88089,7 +88100,7 @@
      "path": "src/workspace_roster/rooms/replica.rs",
      "purpose": "OF-522: a room's turn rows on the owner's other machines",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -91134,10 +91145,10 @@
      "purpose": "ONE-207: the retrieval half of the effort dial"
     },
     "room_codec": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Room row part codecs without the sync feature (FIX 12405)"
     },
     "run_tree": {
@@ -91570,7 +91581,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6383,
+   "source_files": 6384,
    "test_files": 895
   },
   "oneiron-android": {
@@ -111641,7 +111652,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -113411,7 +113422,7 @@
      "path": "src/api/facade/slim_doors.rs",
      "purpose": "Owner-bound lifecycle doors; each transport reaches the same engine transaction",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -114561,7 +114572,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 55
+      "crate-vis": 56
      }
     },
     {
@@ -120275,7 +120286,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/handler/documents.rs",
@@ -127228,7 +127239,7 @@
     "handler": {
      "files": 36,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "WebSocket upgrade handler and connection lifecycle"
     },
@@ -127499,7 +127510,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 43,
+   "over_bar": 44,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1521,
    "test_files": 182
