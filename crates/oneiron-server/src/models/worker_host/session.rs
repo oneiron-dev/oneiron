@@ -37,6 +37,8 @@
 #[cfg(unix)]
 mod commit;
 #[cfg(unix)]
+mod host_ram;
+#[cfg(unix)]
 mod lifecycle;
 #[cfg(unix)]
 mod park;

@@ -281,6 +281,7 @@ async fn lock_vault(vault: VaultRef, bound: Duration) -> SnapshotRelease {
     let started = Instant::now();
     let deadline = tokio::time::Instant::now() + bound;
     let host_copies = registry::host_copies(&vault);
+    super::host_ram::drop_vault(&vault);
     let mut owed: BTreeMap<(String, String), (InferenceWorker, u64)> = BTreeMap::new();
     let mut releases = JoinSet::new();
     for (target, place) in registry::retire_vault(&vault) {
@@ -371,6 +372,7 @@ fn invalidate(vault: VaultRef, ids: &[EntityId]) {
     if ids.is_empty() {
         return;
     }
+    super::host_ram::drop_vault(&vault);
     let retired = registry::retire_vault(&vault);
     if retired.is_empty() {
         return;

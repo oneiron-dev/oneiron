@@ -363,6 +363,54 @@ impl Vault {
         Ok(Some((record, plaintext)))
     }
 
+    /// Authorizes a restore from the host's retained plaintext for `id`:
+    /// returns its current reusable row only while the custody key is live
+    /// and `admission` still holds. The caller keeps the verified immutable
+    /// bytes for that id and rechecks its turn's authority before and after
+    /// import. No body is read or decrypted, and no key is returned.
+    ///
+    /// # Errors
+    /// Storage and custody faults.
+    pub fn authorize_inference_snapshot_ram(
+        &self,
+        admission: &SnapshotAdmission,
+        id: &SnapshotId,
+    ) -> Result<Option<SnapshotRecord>> {
+        let store = &self.store;
+        if !self.snapshot_admission_holds(admission) {
+            return Ok(None);
+        }
+        let record = {
+            // Keep retirement off the key between the row and key reads,
+            // just as the disk-backed read does.
+            let wtxn = store.env.write_txn()?;
+            let record = match CATALOG.get(store, &wtxn, id) {
+                Ok(Some(record)) if record.reusable() => record,
+                Ok(_) => return Ok(None),
+                Err(_) => {
+                    drop(wtxn);
+                    self.retire_inference_snapshot(id)?;
+                    return Ok(None);
+                }
+            };
+            match store.read_inference_snapshot_key(&wtxn, &id.0) {
+                Ok(Some(wrapped)) => wrapped.retire(),
+                Ok(None) => return Ok(None),
+                Err(_) => {
+                    drop(wtxn);
+                    self.retire_inference_snapshot(id)?;
+                    return Ok(None);
+                }
+            }
+            record
+        };
+        if !self.snapshot_admission_holds(admission) {
+            return Ok(None);
+        }
+        self.note_inference_snapshot_reuse(id)?;
+        Ok(Some(record))
+    }
+
     /// `record`'s plaintext: `Some(None)` when its body is missing, does not
     /// open or does not match the row, and `None` while the key is locked.
     fn open_body(
