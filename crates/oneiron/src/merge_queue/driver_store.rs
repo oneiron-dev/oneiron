@@ -19,7 +19,7 @@ use super::{
     QueueDriveOutcome, QueueDriveStatus, QueueDriveView, QueueRevisionLink, QueueSurvivorLink,
 };
 use crate::Vault;
-use crate::contract_oracle::invalid;
+use crate::store::contract_oracle::invalid;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWireRepo, lock_repository};
 use crate::store::code_snapshot::RepoRef;
