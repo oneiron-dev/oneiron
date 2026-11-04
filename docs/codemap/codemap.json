@@ -66269,7 +66269,7 @@
      "path": "src/skill_attribution/causes.rs",
      "purpose": "The labels the attribution judge settled on each attempt's terminal outcome, kept whatever their subject…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "struct": 1
      }
     },
@@ -71880,6 +71880,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/linear_task_revision.rs",
+     "purpose": "The tracker mirror's revision rows for a typed TASK (`LINEAR_TASK_REVISION`, `LINEAR_TASK_DIRTY`…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/local_queue_budget.rs",
      "purpose": "Byte accounting for bounded device-local queues, separate from verdict/rate policy",
      "surface": {
@@ -71951,7 +71961,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 85,
+      "crate-vis": 87,
       "mod": 81,
       "re-export": 31
      }
@@ -73199,6 +73209,16 @@
      "surface": {
       "crate-vis": 14,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/skill_attribution_causes.rs",
+     "purpose": "The ledger of the labels the attribution judge settled on each attempt's terminal outcome…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -79425,7 +79445,7 @@
      "path": "src/task_verb/linear_store.rs",
      "purpose": "Vault storage for the tracker mirror: replicated fields, local OCC and CAS links",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 6,
       "struct": 1
      }
@@ -89979,7 +89999,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 359,
+     "files": 361,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90219,7 +90239,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6255,
+   "source_files": 6257,
    "test_files": 898
   },
   "oneiron-android": {
