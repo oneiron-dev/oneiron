@@ -593,20 +593,17 @@ impl OrganProcess {
     /// last, so a pair that does not jointly fit ends instead of stalling
     /// past the deadline. Waits on the call's clock until the deadline;
     /// [`FrameError::Withdrawn`] once `stopped` says the frame is not
-    /// wanted. Returns the send's lease with the frames' own bytes, which
-    /// the caller gives back once they are sent ([`CallRoom::release_native`],
-    /// FIX 12437): the value half stays until the call ends.
+    /// wanted.
     fn book(
         &self,
         msg: &ToOrgan,
         room: &CallRoom,
         clock: Clock<'_>,
         stopped: &dyn Fn() -> bool,
-    ) -> Result<(Lease, u64), FrameError> {
-        let body_len = frame_body_len(msg)?;
-        let frame = book_send(&self.frames, room.waits(), body_len, stopped)?;
+    ) -> Result<Lease, FrameError> {
+        let frame = book_send(&self.frames, room.waits(), frame_body_len(msg)?, stopped)?;
         reserve_read(room, msg, clock.deadline(), stopped)?;
-        Ok((frame, body_len))
+        Ok(frame)
     }
 
     /// Sends the answer to call `id`'s ask; `false` when it is dropped
@@ -644,8 +641,8 @@ impl OrganProcess {
     ) -> Result<Option<u64>, FrameError> {
         let dropped = || grant.revoked() || self.inbox.holding_answerable(id).is_none();
         // Room for the frame first, before it waits for the writer.
-        let (_frame, body_len) = match self.book(answer, room, clock, &dropped) {
-            Ok(booked) => booked,
+        let _frame = match self.book(answer, room, clock, &dropped) {
+            Ok(frame) => frame,
             Err(FrameError::Withdrawn) => return Ok(None),
             Err(err) => return Err(err),
         };
@@ -677,9 +674,6 @@ impl OrganProcess {
         match send_frame_if(&writer, answer, fds, limit, deadline, still, started) {
             Ok(len) => {
                 self.sent_frame(len);
-                // The answer's bytes are gone: its transient frames' room
-                // goes back, its value's stays until the call ends (FIX 12437).
-                room.release_native(body_len);
                 Ok(Some(len))
             }
             Err(FrameError::Withdrawn) => Ok(None),
@@ -798,17 +792,9 @@ impl OrganProcess {
         let unwanted = || grant.revoked() || !self.is_alive();
         let sent = self
             .book(&call, room, clock, &unwanted)
-            .and_then(|(_frame, body_len)| {
-                self.send(&call, fds, self.max_call_frame, clock.deadline())
-                    .map(|len| (len, body_len))
-            });
+            .and_then(|_frame| self.send(&call, fds, self.max_call_frame, clock.deadline()));
         match sent {
-            Ok((len, body_len)) => {
-                // The call's bytes are gone: its transient frames' room goes
-                // back, its value's stays until the call ends (FIX 12437).
-                room.release_native(body_len);
-                asks.frame_sent(len);
-            }
+            Ok(len) => asks.frame_sent(len),
             // Withdrawn while it waited for room: nothing left.
             Err(FrameError::Withdrawn) if grant.revoked() => return Err(CallFailure::Revoked),
             Err(FrameError::Withdrawn) => return Err(CallFailure::Crashed),

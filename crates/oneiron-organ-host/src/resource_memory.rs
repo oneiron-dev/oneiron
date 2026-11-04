@@ -40,6 +40,10 @@ pub trait FloorLease: Send {
         stopped: &dyn Fn() -> bool,
     ) -> Result<(), FloorRefusal>;
 
+    /// Gives back at most `bytes` previously reserved by this lease. Never
+    /// waits; used to roll back growth whose budget admission failed.
+    fn shrink(&mut self, bytes: u64);
+
     /// [`Self::grow`] with no deadline: only `stopped` ends the wait.
     ///
     /// # Errors
