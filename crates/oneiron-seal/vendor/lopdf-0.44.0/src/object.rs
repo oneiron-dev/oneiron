@@ -1,3 +1,8 @@
+// The crate denies `unsafe_code`; this module alone allows it for the two
+// audited helpers behind the stack-safe `Object` destructor below (FIX
+// 8446). Every `unsafe` block carries its own SAFETY note.
+#![allow(unsafe_code)]
+
 use crate::decode_admission::{self, DecodeAdmission, DecodeAdmissionError};
 use crate::encodings;
 use crate::encodings::cmap::ToUnicodeCMap;
@@ -35,7 +40,13 @@ pub struct Stream {
 }
 
 /// Basic PDF object types defined in an enum.
-#[derive(Clone, PartialEq)]
+///
+/// `Clone` and `Drop` are stack-safe by hand below (FIX 8446): the iterative
+/// parser keeps dictionaries and arrays of any depth, so copying or dropping
+/// one — including a discarded `stream`-first alternative — must not recurse
+/// through the native stack. Both walk with an explicit heap stack and keep
+/// element and entry order identical to the derived implementations.
+#[derive(PartialEq)]
 pub enum Object {
     Null,
     Boolean(bool),
@@ -47,6 +58,245 @@ pub enum Object {
     Dictionary(Dictionary),
     Stream(Stream),
     Reference(ObjectId),
+}
+
+impl Drop for Object {
+    /// Iterative destruction (FIX 8446): the parser keeps graphs of any
+    /// depth, so dropping one — including a discarded `stream`-first
+    /// alternative or a bare scalar — must neither recurse nor re-enter this
+    /// destructor through a scope-exit drop. Containers are stolen into
+    /// [`ManuallyDrop`] frames, walked by index, and freed only after every
+    /// entry was neutralized to `Null`, whose own destruction is a no-op
+    /// that terminates. Byte buffers drop flat; no owned `Object` is ever
+    /// dropped below except a proven `Null`.
+    fn drop(&mut self) {
+        use std::mem::ManuallyDrop;
+
+        enum Frame {
+            Arr(ManuallyDrop<Vec<Object>>, usize),
+            Map(ManuallyDrop<Dictionary>, usize),
+        }
+
+        /// Overwrite `place` with `Null` without dropping the old value: its
+        /// buffers were stolen just before, so the forgotten shell holds
+        /// nothing.
+        ///
+        /// # Safety
+        /// `place` is a live, aligned `Object` the caller may write.
+        unsafe fn neutralize(place: *mut Object) {
+            // SAFETY: the caller owns `place` exclusively (see `steal` and
+            // the walk loop), and the old value's buffers were stolen just
+            // before, so the forgotten shell holds nothing to free twice.
+            unsafe { std::ptr::write(place, Object::Null) };
+        }
+
+        /// Steal the buffers of the value at `place` and push composite
+        /// children as frames. Address-stable: every container keeps its
+        /// heap buffer until its own frame completes.
+        ///
+        /// # Safety
+        /// As for `neutralize`, plus: no other reference to the value is
+        /// live across the call.
+        unsafe fn steal(place: *mut Object, stack: &mut Vec<Frame>) {
+            // SAFETY: the caller holds no other reference across the call;
+            // every address pushed comes from a container whose heap buffer
+            // outlives its frame (freed only at frame completion).
+            let obj = unsafe { &mut *place };
+            enum Stolen {
+                Arr(ManuallyDrop<Vec<Object>>),
+                Map(ManuallyDrop<Dictionary>),
+                Done,
+            }
+            let stolen = match obj {
+                Object::Array(items) => Stolen::Arr(ManuallyDrop::new(std::mem::take(items))),
+                Object::Dictionary(dict) => Stolen::Map(ManuallyDrop::new(std::mem::take(dict))),
+                Object::Stream(stream) => {
+                    std::mem::drop(std::mem::take(&mut stream.content));
+                    Stolen::Map(ManuallyDrop::new(std::mem::take(&mut stream.dict)))
+                }
+                Object::Name(bytes) | Object::String(bytes, _) => {
+                    std::mem::drop(std::mem::take(bytes));
+                    Stolen::Done
+                }
+                Object::Null
+                | Object::Boolean(_)
+                | Object::Integer(_)
+                | Object::Real(_)
+                | Object::Reference(_) => Stolen::Done,
+            };
+            match stolen {
+                Stolen::Arr(items) => stack.push(Frame::Arr(items, 0)),
+                Stolen::Map(dict) => stack.push(Frame::Map(dict, 0)),
+                Stolen::Done => {}
+            }
+            // SAFETY: `place` is exclusively borrowed above (`obj`), whose
+            // borrow ended with the `stolen` move; the shell is quarantined
+            // in a `ManuallyDrop` frame or holds no buffer (see arm).
+            unsafe { neutralize(place) };
+        }
+
+        let mut stack: Vec<Frame> = Vec::new();
+        // SAFETY: `self` is borrowed for the destructor's whole run, so no
+        // other reference exists; the root shell ends as `Null` below.
+        unsafe { steal(self as *mut Object, &mut stack) };
+        loop {
+            let next: Option<*mut Object> = match stack.last_mut() {
+                Some(Frame::Arr(items, index)) => items.get_mut(*index).map(|child| {
+                    *index += 1;
+                    child as *mut Object
+                }),
+                // Keys stay put: at frame completion the map drops
+                // flat `Vec<u8>` keys beside neutralized `Null` values.
+                // (`(**dict).0`: through the frame's `ManuallyDrop` to the
+                // dictionary's index map.)
+                Some(Frame::Map(dict, index)) => (**dict).0.get_index_mut(*index).map(|(_, value)| {
+                    *index += 1;
+                    value as *mut Object
+                }),
+                None => break,
+            };
+            match next {
+                // The borrow on the frame ended with the address above; the
+                // address still points into its frame's live heap buffer.
+                // SAFETY: as in `steal`.
+                Some(place) => unsafe { steal(place, &mut stack) },
+                None => match stack.pop() {
+                    // Every entry is `Null` now: these drops terminate.
+                    Some(Frame::Arr(items, _)) => {
+                        std::mem::drop(ManuallyDrop::into_inner(items));
+                    }
+                    Some(Frame::Map(dict, _)) => {
+                        std::mem::drop(ManuallyDrop::into_inner(dict));
+                    }
+                    None => {}
+                },
+            }
+        }
+    }
+}
+
+impl Clone for Object {
+    /// Iterative deep clone: the walk emits post-order build events with an
+    /// explicit stack and replays them, so no nesting level recurses. Entry
+    /// and element order match the derived clone exactly.
+    fn clone(&self) -> Self {
+        let mut tasks = vec![CloneTask::Obj(self)];
+        let mut events: Vec<CloneEvent> = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                CloneTask::Obj(Object::Array(items)) => {
+                    tasks.push(CloneTask::MakeArray(items.len()));
+                    for child in items.iter().rev() {
+                        tasks.push(CloneTask::Obj(child));
+                    }
+                }
+                CloneTask::Obj(Object::Dictionary(dict)) => {
+                    tasks.push(CloneTask::Dict(dict));
+                }
+                CloneTask::Dict(dict) => {
+                    let mut keys = Vec::with_capacity(dict.len());
+                    let mut values = Vec::with_capacity(dict.len());
+                    for (key, value) in dict.0.iter() {
+                        keys.push(key.clone());
+                        values.push(value);
+                    }
+                    tasks.push(CloneTask::MakeDict(keys));
+                    for value in values.into_iter().rev() {
+                        tasks.push(CloneTask::Obj(value));
+                    }
+                }
+                CloneTask::Obj(Object::Stream(stream)) => {
+                    tasks.push(CloneTask::MakeStream(
+                        stream.content.clone(),
+                        stream.allows_compression,
+                        stream.start_position,
+                    ));
+                    tasks.push(CloneTask::Dict(&stream.dict));
+                }
+                CloneTask::MakeArray(len) => events.push(CloneEvent::MakeArray(len)),
+                CloneTask::MakeDict(keys) => events.push(CloneEvent::MakeDict(keys)),
+                CloneTask::MakeStream(content, allows, pos) => {
+                    events.push(CloneEvent::MakeStream(content, allows, pos));
+                }
+                // Composites take their own arms above; leaves copy below.
+                CloneTask::Obj(leaf) => events.push(CloneEvent::Ready(clone_leaf(leaf))),
+            }
+        }
+        assemble_clone(events)
+    }
+}
+
+enum CloneTask<'a> {
+    Obj(&'a Object),
+    Dict(&'a Dictionary),
+    MakeArray(usize),
+    MakeDict(Vec<Vec<u8>>),
+    MakeStream(Vec<u8>, bool, Option<usize>),
+}
+
+enum CloneEvent {
+    Ready(Object),
+    MakeArray(usize),
+    MakeDict(Vec<Vec<u8>>),
+    MakeStream(Vec<u8>, bool, Option<usize>),
+}
+
+/// One leaf copied field by field — byte buffers clone flat — without ever
+/// calling `Object::clone`, so no depth recurses here either.
+fn clone_leaf(leaf: &Object) -> Object {
+    match leaf {
+        Object::Null => Object::Null,
+        Object::Boolean(value) => Object::Boolean(*value),
+        Object::Integer(value) => Object::Integer(*value),
+        Object::Real(value) => Object::Real(*value),
+        Object::Name(name) => Object::Name(name.clone()),
+        Object::String(bytes, format) => Object::String(bytes.clone(), *format),
+        Object::Reference(id) => Object::Reference(*id),
+        Object::Array(_) | Object::Dictionary(_) | Object::Stream(_) => {
+            unreachable!("composites take their own CloneTask arms")
+        }
+    }
+}
+
+/// Replay post-order build events into the cloned graph.
+fn assemble_clone(events: Vec<CloneEvent>) -> Object {
+    let mut values: Vec<Object> = Vec::new();
+    for event in events {
+        match event {
+            CloneEvent::Ready(object) => values.push(object),
+            CloneEvent::MakeArray(len) => {
+                let children = values.split_off(values.len() - len);
+                values.push(Object::Array(children));
+            }
+            CloneEvent::MakeDict(keys) => {
+                let children = values.split_off(values.len() - keys.len());
+                let mut dict = Dictionary::new();
+                for (key, value) in keys.into_iter().zip(children) {
+                    dict.set(key, value);
+                }
+                values.push(Object::Dictionary(dict));
+            }
+            CloneEvent::MakeStream(content, allows, pos) => {
+                let dict = match values.pop() {
+                    Some(mut object) => match &mut object {
+                        Object::Dictionary(dict) => std::mem::take(dict),
+                        _ => Dictionary::new(),
+                    },
+                    None => Dictionary::new(),
+                };
+                values.push(Object::Stream(Stream {
+                    dict,
+                    content,
+                    allows_compression: allows,
+                    start_position: pos,
+                }));
+            }
+        }
+    }
+    let mut values = values.into_iter();
+    let cloned = values.next().unwrap_or(Object::Null);
+    debug_assert!(values.next().is_none());
+    cloned
 }
 
 /// String objects can be written in two formats.
@@ -374,6 +624,14 @@ impl Dictionary {
         V: Into<Object>,
     {
         self.0.insert(key.into(), value.into());
+    }
+
+    pub(crate) fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+
+    pub(crate) fn try_reserve(&mut self, additional: usize) -> bool {
+        self.0.try_reserve(additional).is_ok()
     }
 
     pub fn len(&self) -> usize {
