@@ -386,6 +386,21 @@ impl Vault {
         signature: &[u8],
         nonce: &[u8],
     ) -> Result<VerifiedSlip> {
+        // bench-only (L15-LEAD, never merge): L15_TRY=nonce_deferred stages the
+        // admission and its nonce row in the group's open write and answers
+        // before the shared commit and its data sync, as a deferred call
+        // receipt does.
+        if crate::stage_timing::try_on("nonce_deferred") {
+            let _l15 = crate::stage_timing::stage("server.nonce_admit");
+            return self.store.group_write_deferred_commit(|txn| {
+                let _active_write_txn = crate::store::active_write_txn_guard();
+                match self.admit_capability_slip_request_in_txn(txn, slip, timestamp, signature, nonce) {
+                    Ok(verified) => crate::store::Rows::Commit(verified),
+                    Err(error) => crate::store::Rows::Discard(Err(error)),
+                }
+            });
+        }
+        let _l15 = crate::stage_timing::stage("server.nonce_admit");
         let mut txn = self.store.env.write_txn()?;
         let verified =
             self.admit_capability_slip_request_in_txn(&mut txn, slip, timestamp, signature, nonce)?;
