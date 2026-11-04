@@ -218,6 +218,7 @@ pub(crate) mod graph_version;
 pub(crate) mod known_value_index;
 pub(crate) mod l2_evidence;
 pub mod receipt_identity;
+pub(crate) mod result_body_erasure;
 pub mod retrieval_deadline;
 pub mod retrieval_signal;
 pub mod row_birth;
