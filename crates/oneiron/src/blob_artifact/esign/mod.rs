@@ -90,6 +90,7 @@ pub use signature_revision::SEAL_CONTENTS_LADDER;
 mod reseal;
 
 mod public_read;
+pub use public_read::EsignLeasedReadError;
 
 mod artifact_actor;
 pub(crate) use artifact_actor::actor as artifact_machine;

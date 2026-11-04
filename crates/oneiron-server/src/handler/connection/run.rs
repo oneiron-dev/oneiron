@@ -520,7 +520,16 @@ pub(super) async fn handle_connection(
                     );
                     break;
                 }
-                if let Err(error) = server.vault().resume_from_slim_on_inbound() {
+                let lifecycle_observation = match &msg {
+                    SyncMessage::Rpc(payload) => crate::livequery::decode_rpc_call(payload)
+                        .is_ok_and(|(request, _)| {
+                            crate::api::is_slim_lifecycle_observation(&request.method)
+                        }),
+                    _ => false,
+                };
+                if !lifecycle_observation
+                    && let Err(error) = server.vault().resume_from_slim_on_inbound()
+                {
                     tracing::warn!(
                         conn_id,
                         kind = ?error.kind(),
