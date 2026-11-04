@@ -455,21 +455,24 @@ pub(crate) async fn rpc_reply(
     request: RpcRequest,
     context: SocketCallContext,
 ) -> Result<RpcReply, ProtocolError> {
-    let mut call = RpcCall::captured(server, &request);
-    let room_note = context.room_note_call(server, auth, &request.method, &request.params);
-    let (result, attempt) = call_receipt::attempt_witnessed(rpc::claimed(
-        server,
-        auth,
-        &context,
-        &request.method,
-        request.params,
-    ))
-    .await;
-    call.attempt = attempt;
-    // OF-063: judged on arrival and again before the receipt is written, so
-    // a session closed mid-call keeps its call's exception.
-    call.anonymous = room_note || context.anonymous(server, auth);
-    RpcReply::answer(server, auth, call, request.request_id, result)
+    crate::api::answer_hold::until_encoded(async move {
+        let mut call = RpcCall::captured(server, &request);
+        let room_note = context.room_note_call(server, auth, &request.method, &request.params);
+        let (result, attempt) = call_receipt::attempt_witnessed(rpc::claimed(
+            server,
+            auth,
+            &context,
+            &request.method,
+            request.params,
+        ))
+        .await;
+        call.attempt = attempt;
+        // OF-063: judged on arrival and again before the receipt is written, so
+        // a session closed mid-call keeps its call's exception.
+        call.anonymous = room_note || context.anonymous(server, auth);
+        RpcReply::answer(server, auth, call, request.request_id, result)
+    })
+    .await
 }
 
 /// A page size a scoped view asks for, or `default`, within the facade's

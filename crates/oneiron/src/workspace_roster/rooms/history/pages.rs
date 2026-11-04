@@ -165,7 +165,12 @@ impl Memory<'_> {
         )?;
         let edits = self.audience_edits_among(turns)?;
         Ok(super::super::liveness::project_in_room(
-            turns, &edits, &tasks, fold, room,
+            turns,
+            reach.held(),
+            &edits,
+            &tasks,
+            fold,
+            room,
         )?)
     }
 
@@ -315,7 +320,14 @@ impl Memory<'_> {
         // A private thread's audience and walk-ins, for a reader in it
         // (FIX 6381).
         let edits = self.audience_edits_among(turns)?;
-        let thread = super::super::liveness::project_target(turns, &edits, &tasks, handle, fold)?;
+        let thread = super::super::liveness::project_target(
+            turns,
+            reach.held(),
+            &edits,
+            &tasks,
+            handle,
+            fold,
+        )?;
         self.with_thread_audience(room, handle, thread)
     }
 }
