@@ -1,7 +1,7 @@
 //! Validate source identities, facet/body agreement and explicit archive-only omissions.
 use super::archive_index::{self, IndexedArchive, Loc, Section, Tag, edge_key};
 use super::*;
-use crate::agent_def::KnowledgeFormat;
+use crate::batch::export::agent_knowledge_format::KnowledgeFormat;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{

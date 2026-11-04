@@ -5,6 +5,7 @@ pub use credential_filter::{
     write_door_refuses_claim,
 };
 pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
+pub(crate) mod agent_knowledge_format;
 mod archive_index;
 mod archive_project;
 mod archive_read;
