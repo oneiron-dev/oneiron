@@ -466,6 +466,9 @@ impl Vault {
                 super::supersession_provenance::write_companion(
                     self, txn, id, &old, &body, &old_body, &envelope, now,
                 )?;
+                super::supersession_provenance::settle_coaching_in_txn(
+                    self, txn, id, &old, &body, &envelope, closer, now,
+                )?;
                 decision
             }
             action => {
