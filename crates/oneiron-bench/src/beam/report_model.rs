@@ -205,6 +205,9 @@ pub(super) struct ContextPackContractRecord {
     pub(super) pack: ContractPack,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) gold: Option<ContractGold>,
+    /// This benchmark run's Oneiron-vault secret-scan mode (`scan-on`/`scan-off`),
+    /// read from the actual vault — not a claim about any competitor's own scanner.
+    pub(super) secret_scan: String,
 }
 #[derive(Debug, Serialize)]
 pub(super) struct ContractPack {
@@ -335,6 +338,9 @@ pub(super) struct CompetitorReport {
     pub(super) card: CompetitorCardConfig,
     pub(super) costs: CostBreakdownReport,
     pub(super) scoring: ScoreReport,
+    /// This benchmark run's Oneiron-vault secret-scan mode (`scan-on`/`scan-off`),
+    /// read from the actual vault — not a claim about any competitor's own scanner.
+    pub(super) secret_scan: String,
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
