@@ -344,7 +344,9 @@ impl ResponseFamily {
         match self {
             Self::ProgramStep => crate::dreamer_runner::program_step_carriage(value),
             Self::StepState => crate::llm::step_state_carriage(value),
-            Self::StepClaim => crate::llm::step_claim_carriage(value),
+            Self::StepClaim => {
+                crate::store::model_step_response_carriage::step_claim_carriage(value)
+            }
             Self::Replay => crate::code_run::replay_carriage(value),
             Self::Http => crate::store::http_scan(value),
             Self::InvocationClaim => crate::store::invocation_claim_scan(value),
