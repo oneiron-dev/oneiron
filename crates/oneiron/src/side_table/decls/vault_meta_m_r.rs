@@ -47,6 +47,11 @@ side_tables! {
     MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::llm::model_stream_accepts_masked];
     /// Named entity secondary index. Key: byte + (u64be|id16) + id16.
     PORTS_NAMED_ENTITY_INDEX: VaultMeta b"named_entity:v1:" Raw;
+    /// Native mail messages an inbox poll set aside after their own failure stopped it poll after
+    /// poll, and at most one per identity still stopping it, short of that count: the identity and
+    /// mailbox, the server's message id, the reason, the polls and when. Node-local, as the cursor
+    /// is. Key: id16 (identity) + bytes32 (sha256 of the message id).
+    NATIVE_MAIL_MAILBOX_SKIPPED: VaultMeta b"native_mail:mailbox_skipped:v1:" Named;
     /// Saved oplog version-vector floor an authority rebase cannot cross past a scrub. Key:
     /// hex32(id).
     NOTE_ERASE_AUTHORITY_FLOOR: VaultMeta b"note.erase/authority-floor/" Raw;
@@ -349,6 +354,10 @@ side_tables! {
     SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.
     SKILL_HUB_PACK_CANDIDATE: VaultMeta b"pack.candidate.v1/" LegacyJson;
+    /// An agent hook's ask for a binding wider than its ceiling, and the owner's settlement
+    /// (ARCH-0080 §10). Key: id16(binding claim).
+    SKILL_HUB_PACK_HOOK_PROPOSAL: VaultMeta b"pack.hook-proposal.v1/" Named
+        => crate::skill_hub::pack_catalog::scrub_hook_proposal_actor_in_txn;
     /// Installed knowledge-pack receipt, keyed by pack name. Key: string.
     SKILL_HUB_PACK_INSTALL: VaultMeta b"pack.install.v1/" LegacyJson;
     /// Index from a claim predicate name to the pack name that owns it (exclusivity check). Key:

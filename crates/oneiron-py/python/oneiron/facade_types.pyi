@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1220 facade rows, 4429 declarations.
-Inputs: 1148 of 1220 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1054 of 1220 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1223 facade rows, 4435 declarations.
+Inputs: 1151 of 1223 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1056 of 1223 fully typed, 167 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -5032,6 +5032,7 @@ class InboxLensDiaryReview(TypedDict):
     reader: str
     reader_class: str
     reason: str
+AgentInboxReadState = Literal["new", "open", "later", "done"]
 class InboxLensRow(TypedDict):
     item_id: str
     kind: InboxLensKind
@@ -5049,6 +5050,7 @@ class InboxLensRow(TypedDict):
     diary_review: NotRequired[InboxLensDiaryReview | None]
     sender: NotRequired[str | None]
     widening: NotRequired[ConsultWidening | None]
+    read_state: NotRequired[AgentInboxReadState | None]
 class InboxConcernGroup(TypedDict):
     agent: str
     items: list[str]
@@ -5148,6 +5150,27 @@ class InboxGroupResolutionShape(TypedDict):
     kind: Literal["shape"]
     receipt: ShapeApplyReceipt
 InboxGroupResolution = InboxGroupResolutionDreamer | InboxGroupResolutionShape
+class InboxItemRequest(TypedDict):
+    item_id: str
+class InboxItemMessage(TypedDict):
+    identity: str
+    channel: str
+    payload_ref: str
+    occurred_at: int
+    text: str
+    claims_not_instructions: bool
+class InboxItemView(TypedDict):
+    item: InboxLensRow
+    messages: list[InboxItemMessage]
+    notification: NotRequired[NotificationRow | None]
+    lens: NotRequired[GeneratedLens | None]
+class InboxItemMarked(TypedDict):
+    item_id: str
+    read_state: AgentInboxReadState
+    until: NotRequired[int | None]
+class InboxItemLaterRequest(TypedDict):
+    item_id: str
+    until: NotRequired[int | None]
 class HubPinSemver(TypedDict):
     type: Literal["semver"]
     value: str
@@ -5927,6 +5950,7 @@ class ConnectorPackView(TypedDict):
     status: str
     consent_required: bool
     stamped: bool
+    staged: bool
     manifest: SlateManifest
     rows: list[SlateRow]
     qualification: NotRequired[ConnectorQualificationReceipt | None]
@@ -11625,7 +11649,11 @@ class ArtifactPublishRequest(TypedDict):
     occurred_at: int
 class ArtifactPublishApproval(TypedDict):
     effect_digest: str
-ArtifactPublishVerbStatus = Literal["proposed", "published"]
+class ArtifactPublishVerbStatusPacedBody(TypedDict):
+    retry_at: int
+class ArtifactPublishVerbStatusPaced(TypedDict):
+    paced: ArtifactPublishVerbStatusPacedBody
+ArtifactPublishVerbStatus = Literal["proposed", "published"] | ArtifactPublishVerbStatusPaced
 class ArtifactPointer(TypedDict):
     artifact: str
     channel: ArtifactPointerChannel
@@ -21250,6 +21278,8 @@ class OutboundScheduleRequest(TypedDict):
     job_ref: NotRequired[str | None]
     occurred_at: NotRequired[int | None]
     mention: NotRequired[MentionProvenance | None]
+    selection: NotRequired[ChannelSelectionRequest | None]
+    counterparty_class: NotRequired[str | None]
 class SummaryPathBranch(TypedDict):
     branch: str
 class SummaryPathBranchSpanBody(TypedDict):
