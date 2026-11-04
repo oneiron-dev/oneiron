@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use zeroize::Zeroizing;
 
-use crate::batch::BatchOp;
-use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::batch_op::BatchOp;
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::error::{Error, Result};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use super::journal::JournalScope;
 use super::journal::{
     JournalEntry, JournalRole, PromotePlan, PublishedEntry, journal_entry_in_closure,
@@ -18,21 +18,21 @@ use super::keyspace::{
 };
 use super::overlay::Lease;
 use super::short_id::parse_session_short_id_value;
-use crate::error::OffRecordError;
+use oneiron_contracts::error::OffRecordError;
 
 /// A generation-stamped, structurally shared overlay read view.
-pub(crate) struct OverlaySnapshot {
+pub struct OverlaySnapshot {
     pub(super) state: Arc<OverlayState>,
     pub(super) lease: Lease,
 }
 
-pub(crate) enum SnapshotLookup {
+pub enum SnapshotLookup {
     Passthrough,
     Tombstone,
     Present(Vec<u8>),
 }
 
-pub(crate) enum SnapshotMergeRow {
+pub enum SnapshotMergeRow {
     Single {
         key: Vec<u8>,
         value: Option<Vec<u8>>,
@@ -46,19 +46,19 @@ pub(crate) enum SnapshotMergeRow {
 }
 
 /// [`OverlaySnapshot::staged_rows`].
-pub(crate) struct StagedRows {
-    pub(crate) clear_base: bool,
-    pub(crate) rows: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+pub struct StagedRows {
+    pub clear_base: bool,
+    pub rows: Vec<(Vec<u8>, Option<Vec<u8>>)>,
 }
 
-pub(crate) struct SnapshotMergePlan {
-    pub(crate) clear_base: bool,
-    pub(crate) deleted_keys: BTreeSet<Vec<u8>>,
-    pub(crate) rows: Vec<SnapshotMergeRow>,
+pub struct SnapshotMergePlan {
+    pub clear_base: bool,
+    pub deleted_keys: BTreeSet<Vec<u8>>,
+    pub rows: Vec<SnapshotMergeRow>,
 }
 
 impl OverlaySnapshot {
-    pub(crate) fn lookup_single(&self, keyspace: OverlayKeyspace, key: &[u8]) -> SnapshotLookup {
+    pub fn lookup_single(&self, keyspace: OverlayKeyspace, key: &[u8]) -> SnapshotLookup {
         match self.state.keyspaces[keyspace.slot()].as_ref() {
             KeyspaceState::Single { clear_base, rows } => match rows.get(key) {
                 Some(OverlayValue::Present(value)) => SnapshotLookup::Present(value.clone()),
@@ -72,7 +72,7 @@ impl OverlaySnapshot {
 
     /// What this snapshot stages in a single-valued keyspace: whether it
     /// cleared base, and each row, `None` for a tombstone over base.
-    pub(crate) fn staged_rows(&self, keyspace: OverlayKeyspace) -> StagedRows {
+    pub fn staged_rows(&self, keyspace: OverlayKeyspace) -> StagedRows {
         match self.state.keyspaces[keyspace.slot()].as_ref() {
             KeyspaceState::Single { clear_base, rows } => StagedRows {
                 clear_base: *clear_base,
@@ -94,7 +94,7 @@ impl OverlaySnapshot {
         }
     }
 
-    pub(crate) fn merge_plan(
+    pub fn merge_plan(
         &self,
         keyspace: OverlayKeyspace,
         include_key: impl Fn(&[u8]) -> bool,
@@ -150,7 +150,7 @@ impl OverlaySnapshot {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn merge_rows(
         &self,
         keyspace: OverlayKeyspace,
@@ -213,8 +213,8 @@ impl OverlaySnapshot {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn row_count(&self, keyspace: OverlayKeyspace) -> usize {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn row_count(&self, keyspace: OverlayKeyspace) -> usize {
         self.merge_rows(keyspace, Vec::new()).len()
     }
 
@@ -223,7 +223,7 @@ impl OverlaySnapshot {
     /// Tombstones are excluded: a masked base row is not an overlay row. Used
     /// by close's PRE-close census, which must count what is about to
     /// evaporate while it is still observable.
-    pub(crate) fn live_row_count(
+    pub fn live_row_count(
         &self,
         keyspace: OverlayKeyspace,
         include_key: impl Fn(&[u8]) -> bool,
@@ -251,7 +251,7 @@ impl OverlaySnapshot {
     ///
     /// Edge-only entries under the same roles do not count: a `PartOf` or
     /// `DerivedFrom` edge is not an entity that stopped existing.
-    pub(crate) fn transcript_entity_put_count(&self) -> usize {
+    pub fn transcript_entity_put_count(&self) -> usize {
         self.state
             .journal
             .iter()
@@ -267,7 +267,7 @@ impl OverlaySnapshot {
     }
 
     /// Read view of the typed journal, in staging order.
-    pub(crate) fn journal_entries(&self) -> &[PublishedEntry] {
+    pub fn journal_entries(&self) -> &[PublishedEntry] {
         &self.state.journal
     }
 
@@ -295,7 +295,7 @@ impl OverlaySnapshot {
     /// A turn with no materialized TURN put has nothing to promote and is
     /// refused: promotion replays a subgraph, and a closure with no turn body
     /// is not one.
-    pub(crate) fn plan_promotion(&self, turn: EntityId) -> Result<PromotePlan> {
+    pub fn plan_promotion(&self, turn: EntityId) -> Result<PromotePlan> {
         self.plan_promotion_where(turn, |_| true)
     }
 
@@ -303,7 +303,7 @@ impl OverlaySnapshot {
     /// admits. A copy of a room's talk (ARCH-0052 D5) keeps what the room
     /// showed: the rows it leaves out never reach base, and they stay in the
     /// journal, unsaved, until the room closes.
-    pub(crate) fn plan_promotion_where(
+    pub fn plan_promotion_where(
         &self,
         turn: EntityId,
         keep: impl Fn(&JournalEntry) -> bool,
@@ -325,7 +325,7 @@ impl OverlaySnapshot {
     /// that adds them to the turn in base: the closure entries `keep` admits
     /// of a turn whose TURN is no longer in the journal. Refused when the
     /// journal holds nothing of the turn.
-    pub(crate) fn plan_append_where(
+    pub fn plan_append_where(
         &self,
         turn: EntityId,
         keep: impl Fn(&JournalEntry) -> bool,
@@ -397,8 +397,8 @@ impl OverlaySnapshot {
         Ok(plan)
     }
 
-    #[cfg(test)]
-    pub(crate) fn journal_ops(&self, scope: JournalScope) -> Vec<BatchOp> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn journal_ops(&self, scope: JournalScope) -> Vec<BatchOp> {
         self.state
             .journal
             .iter()
@@ -408,7 +408,7 @@ impl OverlaySnapshot {
     }
 
     #[cfg(test)]
-    pub(crate) fn bytes_used(&self) -> usize {
+    pub fn bytes_used(&self) -> usize {
         self.state.bytes_used
     }
 }

@@ -55518,54 +55518,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/overlay_db/accessors.rs",
-     "purpose": "ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors",
-     "surface": {
-      "crate-vis": 34
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/overlay_db/iters.rs",
-     "purpose": "Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str)",
-     "surface": {
-      "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/overlay_db/merge.rs",
-     "purpose": "Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and…",
-     "surface": {
-      "crate-vis": 15
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/overlay_db/mod.rs",
-     "purpose": "Per-database accessor seam for the session write-overlay (ARCH-0052, D2)",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/overlay_db/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -61243,7 +61195,7 @@
      "path": "src/result_body/collect.rs",
      "purpose": "The result body collector: released bodies first, then orphan files",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1
      }
@@ -61255,7 +61207,7 @@
      "path": "src/result_body/files.rs",
      "purpose": "Body directory work for the collector, done through the directory's descriptor: nothing here follows a link",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -65095,164 +65047,6 @@
      "kind": "test",
      "notable": [],
      "path": "src/session_lifecycle/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/session_overlay/hygiene_tests.rs",
-     "purpose": "Allocation-boundary teardown observer for session-owned buffers",
-     "surface": {
-      "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/journal.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 18
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/keyspace.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 14
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/mod.rs",
-     "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/held.rs",
-     "purpose": "What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)…",
-     "surface": {
-      "crate-vis": 7
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/lifecycle.rs",
-     "purpose": "Overlay lifecycle state machine, leases, seal/rearm/close",
-     "surface": {
-      "crate-vis": 17
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/mod.rs",
-     "purpose": "Ephemeral in-memory write overlay for one live session (ARCH-0052, D1)",
-     "surface": {
-      "crate-vis": 7
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/repo_projection.rs",
-     "purpose": "Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a…",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/retained.rs",
-     "purpose": "The memory a room's overlay actually retains, the bytes its host's retained-memory line is charged (FIX…",
-     "surface": {
-      "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/retire.rs",
-     "purpose": "Promoted-closure retirement reusing the store's index-key builders",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/rows.rs",
-     "purpose": "Row staging, preflight, budget checks, read probes",
-     "surface": {
-      "crate-vis": 13
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/overlay/segment.rs",
-     "purpose": "Txn segment install, leases, commit/apply guards",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/route.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/short_id.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/session_overlay/snapshot.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 18
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/session_overlay/tests.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -90166,13 +89960,6 @@
      "layout": "dir",
      "purpose": "Device-local durable intent ledger for effectful outbound calls"
     },
-    "overlay_db": {
-     "files": 5,
-     "impl_vault": false,
-     "largest_src_bucket": "m",
-     "layout": "dir",
-     "purpose": "Per-database accessor seam for the session write-overlay (ARCH-0052, D2)"
-    },
     "own_rate": {
      "files": 1,
      "impl_vault": true,
@@ -90438,13 +90225,6 @@
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
-    },
-    "session_overlay": {
-     "files": 16,
-     "impl_vault": false,
-     "largest_src_bucket": "m",
-     "layout": "dir",
-     "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)"
     },
     "settings": {
      "files": 11,
@@ -90778,8 +90558,8 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6308,
-   "test_files": 898
+   "source_files": 6290,
+   "test_files": 895
   },
   "oneiron-android": {
    "files": [
@@ -122309,7 +122089,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "MediaRow",
@@ -126650,7 +126430,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 42,
+   "over_bar": 43,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1518,
    "test_files": 182
@@ -127175,7 +126955,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 27
+      "mod": 29
      }
     },
     {
@@ -127435,6 +127215,75 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OverlayDb",
+      "OverlayStrDb"
+     ],
+     "path": "src/overlay_db/accessors.rs",
+     "purpose": "ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 30,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OverlayDupValues",
+      "OverlayIter",
+      "OverlayPrefix",
+      "OverlayRange",
+      "OverlayRevRange",
+      "OverlayStrIter",
+      "OverlayStrPrefix"
+     ],
+     "path": "src/overlay_db/iters.rs",
+     "purpose": "Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str)",
+     "surface": {
+      "enum": 7,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MergedPrefixRows",
+      "MergedRows",
+      "PrefetchedMergedRows",
+      "StrMergedRows"
+     ],
+     "path": "src/overlay_db/merge.rs",
+     "purpose": "Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and…",
+     "surface": {
+      "crate-vis": 11,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/overlay_db/mod.rs",
+     "purpose": "Per-database accessor seam for the session write-overlay (ARCH-0052, D2)",
+     "surface": {
+      "mod": 3,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/overlay_db/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -127509,6 +127358,210 @@
       "struct": 3,
       "trait": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [
+      "ObservedAllocator",
+      "ShortIdScratch"
+     ],
+     "path": "src/session_overlay/hygiene_tests.rs",
+     "purpose": "Allocation-boundary teardown observer for session-owned buffers",
+     "surface": {
+      "enum": 1,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "JournalEntry",
+      "JournalRole",
+      "JournalScope",
+      "PromotePlan",
+      "PublishedEntry"
+     ],
+     "path": "src/session_overlay/journal.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 9,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OverlayKeyspace"
+     ],
+     "path": "src/session_overlay/keyspace.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/mod.rs",
+     "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)",
+     "surface": {
+      "mod": 7,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/held.rs",
+     "purpose": "What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SessionOverlay"
+     ],
+     "path": "src/session_overlay/overlay/lifecycle.rs",
+     "purpose": "Overlay lifecycle state machine, leases, seal/rearm/close",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/mod.rs",
+     "purpose": "Ephemeral in-memory write overlay for one live session (ARCH-0052, D1)",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "mod": 7,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/repo_projection.rs",
+     "purpose": "Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/retained.rs",
+     "purpose": "The memory a room's overlay actually retains, the bytes its host's retained-memory line is charged (FIX…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/retire.rs",
+     "purpose": "Promoted-closure retirement reusing the store's index-key builders",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/rows.rs",
+     "purpose": "Row staging, preflight, budget checks, read probes",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TxnSegmentGuard"
+     ],
+     "path": "src/session_overlay/overlay/segment.rs",
+     "purpose": "Txn segment install, leases, commit/apply guards",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RouteTarget",
+      "SessionWriteRoute"
+     ],
+     "path": "src/session_overlay/route.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/short_id.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OverlaySnapshot",
+      "SnapshotLookup",
+      "SnapshotMergePlan",
+      "SnapshotMergeRow",
+      "StagedRows"
+     ],
+     "path": "src/session_overlay/snapshot.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 12,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/session_overlay/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -128736,6 +128789,13 @@
      "layout": "file",
      "purpose": "Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages"
     },
+    "overlay_db": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Per-database accessor seam for the session write-overlay (ARCH-0052, D2)"
+    },
     "receive_scan": {
      "files": 1,
      "impl_vault": false,
@@ -128770,6 +128830,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Secret custody floor and binding vocabulary used by the store layer"
+    },
+    "session_overlay": {
+     "files": 16,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)"
     },
     "store_clock": {
      "files": 3,
@@ -128809,8 +128876,8 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 125,
-   "test_files": 1
+   "source_files": 143,
+   "test_files": 4
   },
   "oneiron-uniffi": {
    "files": [
