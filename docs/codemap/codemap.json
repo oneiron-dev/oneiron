@@ -17020,17 +17020,22 @@
      "notable": [
       "ModelCallDigests",
       "ModelCallInputPart",
+      "ModelCallKind",
       "ModelCallPartRef",
       "ModelCallReasoningPart",
-      "ModelCallRecord"
+      "ModelCallRecord",
+      "NativeReadDigests",
+      "NativeReadFailure",
+      "NativeReadOutcome"
      ],
      "path": "src/code_run/model_call.rs",
      "purpose": "Per-model-call evidence and replay records (FIX 12516)",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
-      "enum": 2,
-      "fn": 9,
-      "struct": 3
+      "enum": 5,
+      "fn": 10,
+      "struct": 4
      }
     },
     {
@@ -43892,14 +43897,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/llm/decision/ladder/runner.rs",
      "purpose": "Decision ladder runner",
      "surface": {
-      "crate-vis": 2,
-      "fn": 6
+      "crate-vis": 3,
+      "fn": 8
      }
     },
     {
@@ -45489,7 +45494,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/execute.rs",
@@ -69246,7 +69251,7 @@
      "path": "src/skill_optimize/decisions.rs",
      "purpose": "Skill judgments on the shared typed-decision ladder",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 4,
       "re-export": 1,
       "struct": 1
@@ -92174,7 +92179,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 139,
+   "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6357,
    "test_files": 900
@@ -108894,7 +108899,7 @@
      "path": "src/ai_host/eval_measurement/legs.rs",
      "purpose": "The legs' exact-model calls: each arm on its own one-model ladder, as a call of the seat's role, under one…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 13
      }
     },
     {
@@ -108914,7 +108919,17 @@
      "path": "src/ai_host/eval_measurement/score.rs",
      "purpose": "A leg's blind score: the replay judge's `response_score` question on the task, the answer, the case's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/eval_measurement/seat_score.rs",
+     "purpose": "Fixed-code scorers for seat-native legs",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -113180,7 +113195,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/llm/decision_read.rs",
@@ -119045,13 +119060,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/embedder/admitted.rs",
      "purpose": "An endpoint embedder's requests under run admission (ARCH-0053 `#run-admission`): the primary endpoint's and…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -119259,7 +119274,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -126279,7 +126294,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 105,
+     "files": 106,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -126792,7 +126807,7 @@
    },
    "over_bar": 42,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1516,
+   "source_files": 1517,
    "test_files": 182
   },
   "oneiron-spawn": {
