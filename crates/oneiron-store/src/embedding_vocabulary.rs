@@ -60,6 +60,18 @@ impl InputKind {
     }
 }
 
+/// A media query's kind is the engine's input kind of the same name.
+impl From<oneiron_contracts::code_run::vault_read::MediaQueryKind> for InputKind {
+    fn from(kind: oneiron_contracts::code_run::vault_read::MediaQueryKind) -> Self {
+        use oneiron_contracts::code_run::vault_read::MediaQueryKind;
+        match kind {
+            MediaQueryKind::Text => Self::Text,
+            MediaQueryKind::Image => Self::Image,
+            MediaQueryKind::Audio => Self::Audio,
+        }
+    }
+}
+
 pub const TEXT_HASH_LEN: usize = 32;
 
 /// The family of device an embedding vector was computed on.
