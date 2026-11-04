@@ -344,6 +344,7 @@ both bindings and their export-census tests in one change.
 - `vault.members.leave`
 - `vault.members.invitations`
 - `vault.members.accept`
+- `vault.members.accept_with_credential`
 - `vault.members.decline`
 - `vault.members.withdraw_invitation`
 - `vault.shared.object`
