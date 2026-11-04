@@ -172,9 +172,7 @@ pub struct SharedLeaveReceipt {
     pub kept_entities: u64,
     /// Whether the purge ran to its final pass. Every pass persists its own
     /// state, so a crash between passes leaves this false and the next
-    /// confirmation resumes; receipts written before this field existed
-    /// read false and finish one idempotent pass.
-    #[serde(default)]
+    /// confirmation resumes.
     pub purge_complete: bool,
 }
 
@@ -320,6 +318,9 @@ fn confirm_leave(
     };
     let (mut receipt, mut complete) = vault.with_write_txn_grouped(|wtxn| {
         if let Some(mut receipt) = LEAVE_RECEIPTS.get(&vault.store, wtxn, &notice.receipt_id)? {
+            if receipt.purge_complete {
+                return Ok((receipt, true));
+            }
             // Confirmed before: finish the purge an interrupted call left.
             let complete = purge(wtxn, &mut receipt)?;
             return Ok((receipt, complete));
