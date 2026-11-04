@@ -16,15 +16,12 @@
 //! erased marker, which the strict reader answers `ResponseErased` (FIX
 //! 9390). No other row of the queue is taken for a dispatch's.
 
-use std::borrow::Cow;
-
 use super::super::encoding::{decode_record, encode_record};
 use super::super::types::{AttemptId, AttemptRecord};
 use super::{TextOwner, dispatch_payload_actor, erase_dispatch_payload_text};
 use crate::entity_id::EntityId;
-use crate::error::Result;
 use crate::store::attempt_payload_route::attempt_payload_family;
-use crate::store::{ResponseCarriage, ResponseScan, Store};
+use crate::store::{ResponseCarriage, ResponseScan};
 
 /// The queue row `key` holding `raw`, decoded; `None` for one that does not.
 fn record_of(key: &[u8], raw: &[u8]) -> Option<AttemptRecord> {
@@ -64,26 +61,4 @@ pub(crate) fn attempt_payload_owners(key: &[u8], raw: &[u8]) -> Vec<EntityId> {
         .and_then(|record| dispatch_payload_actor(&record))
         .into_iter()
         .collect()
-}
-
-/// Leaves the live row `key` its text-free form `stub` in `wtxn`: an
-/// activation's prune of a row whose instance its source retired. Its
-/// archive mark follows it when it bound the row as it stood.
-///
-/// # Errors
-///
-/// Storage errors, and a key that is no attempt's.
-pub(crate) fn retire_attempt_payload_in_txn(
-    store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    key: &[u8],
-    stub: &[u8],
-) -> Result<()> {
-    let id = AttemptId::from_bytes(key)?;
-    let before = store.attempt_records.get(wtxn, key)?.map(Cow::into_owned);
-    store.attempt_records.put(wtxn, key, stub)?;
-    if let Some(before) = before {
-        crate::vault_cleanup::refresh_archived_attempt_in_txn(store, wtxn, id, &before, stub)?;
-    }
-    Ok(())
 }
