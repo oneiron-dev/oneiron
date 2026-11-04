@@ -15,7 +15,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use oneiron::BudgetLease;
-use oneiron::code_run::model_call::{NativeReadFailure, NativeReadOutcome};
+use oneiron::code_run::model_call::{NativeReadFailure, NativeReadOutcome, NativeReadRunSource};
 use oneiron::llm::run_admission::{CallOutcome, RunAdmission};
 use oneiron::llm::{
     FatalLlmError, LabelReadFailure, LabelReadRequest, LabelReadout, LabelSet, LlmError, LlmUsage,
@@ -189,6 +189,7 @@ pub(super) async fn decision_read(
             principal,
             session,
             no_record_at_arrival,
+            NativeReadRunSource::Probe,
         );
         read_retained(&door, &request, reserve, &run, &present, capture.as_ref())
     })

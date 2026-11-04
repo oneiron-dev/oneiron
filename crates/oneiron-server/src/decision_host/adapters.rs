@@ -9,7 +9,7 @@ use oneiron::llm::routing::DescriptionNotes;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::skill_hub::claim_replay_filled_state;
 
-use super::native_capture::HouseReadObserver;
+use super::native_capture::{HouseReadObserver, HouseReadRun};
 
 use super::{
     Arc, AutoCheckCandidate, AutoCheckNotes, BudgetLease, CallOutcome, DecisionAnswer,
@@ -56,13 +56,23 @@ impl DecisionReadGate for HouseGate {
         // A read that went out and failed keeps its reservation as spend.
         let outcome = match &gated {
             GatedRead::NotStarted => CallOutcome::Answered(&unread),
-            GatedRead::Read(Ok(answer)) => CallOutcome::Answered(&answer.usage),
-            GatedRead::Read(Err(_)) => CallOutcome::Failed,
+            GatedRead::Read(Ok(answer))
+            | GatedRead::ReadOnRun {
+                read: Ok(answer), ..
+            } => CallOutcome::Answered(&answer.usage),
+            GatedRead::Read(Err(_)) | GatedRead::ReadOnRun { read: Err(_), .. } => {
+                CallOutcome::Failed
+            }
         };
         if let Err(denied) = permit.settle(outcome) {
             tracing::error!(%denied, "a house decision read's settlement was refused");
         }
-        Ok(gated)
+        Ok(match gated {
+            GatedRead::NotStarted => GatedRead::NotStarted,
+            GatedRead::Read(read) | GatedRead::ReadOnRun { read, .. } => {
+                GatedRead::ReadOnRun { read, run }
+            }
+        })
     }
 }
 
@@ -108,8 +118,13 @@ impl DecisionReadGate for RunHouseGate<'_> {
         // A read that went out and failed keeps its reservation as spend.
         let outcome = match &gated {
             GatedRead::NotStarted => CallOutcome::Answered(&unread),
-            GatedRead::Read(Ok(answer)) => CallOutcome::Answered(&answer.usage),
-            GatedRead::Read(Err(_)) => CallOutcome::Failed,
+            GatedRead::Read(Ok(answer))
+            | GatedRead::ReadOnRun {
+                read: Ok(answer), ..
+            } => CallOutcome::Answered(&answer.usage),
+            GatedRead::Read(Err(_)) | GatedRead::ReadOnRun { read: Err(_), .. } => {
+                CallOutcome::Failed
+            }
         };
         if let Err(denied) = permit.settle(outcome) {
             tracing::error!(%denied, "a house decision read's settlement was refused");
@@ -145,7 +160,7 @@ impl DecisionProvider for HouseRead {
                 gate: &self.gate,
                 run: run.sourced(Some(call.evidence.to_vec())),
             };
-            let observer = HouseReadObserver::new(self, &gate.run);
+            let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return DecisionReadProvider::new(
                 self.pin.clone(),
                 self.reader.as_ref(),
@@ -156,7 +171,8 @@ impl DecisionProvider for HouseRead {
             .observed_by(&observer)
             .decide(call);
         }
-        self.provider()?.decide(call)
+        let observer = HouseReadObserver::new(self, HouseReadRun::HouseGate);
+        self.provider()?.observed_by(&observer).decide(call)
     }
 
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
@@ -166,7 +182,7 @@ impl DecisionProvider for HouseRead {
                 gate: &self.gate,
                 run: run.sourced(Some(pack.evidence.to_vec())),
             };
-            let observer = HouseReadObserver::new(self, &gate.run);
+            let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return DecisionReadProvider::new(
                 self.pin.clone(),
                 self.reader.as_ref(),
@@ -177,7 +193,8 @@ impl DecisionProvider for HouseRead {
             .observed_by(&observer)
             .decide_pack(pack);
         }
-        self.provider()?.decide_pack(pack)
+        let observer = HouseReadObserver::new(self, HouseReadRun::HouseGate);
+        self.provider()?.observed_by(&observer).decide_pack(pack)
     }
 }
 

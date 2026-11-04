@@ -290,6 +290,15 @@ pub enum NativeReadOutcome {
     },
 }
 
+/// The actual admission source of a native read, not a caller or payer guess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeReadRunSource {
+    Probe,
+    Caller,
+    HouseGate,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelCallKind {
@@ -299,6 +308,7 @@ pub enum ModelCallKind {
         finish_reason: crate::FinishReason,
     },
     LabelRead {
+        run_source: NativeReadRunSource,
         digests: NativeReadDigests,
         revision: String,
         outcome: NativeReadOutcome,
@@ -453,8 +463,8 @@ impl ErasedForm for ModelCallRecord {
                     };
                 }
             }
-            // A native row keeps its hash, revision and failure; only provider
-            // usage is scrubbed, and unknown stays unknown.
+            // A native row keeps its source, hash, revision and failure; only
+            // provider usage is scrubbed, and unknown stays unknown.
             ModelCallKind::LabelRead { outcome, .. } => match outcome {
                 NativeReadOutcome::Completed { usage } => {
                     usage.raw_provider = Default::default();
