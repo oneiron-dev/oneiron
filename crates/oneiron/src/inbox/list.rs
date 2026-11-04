@@ -16,7 +16,8 @@ use super::actions::NotificationAction;
 use super::notification::{
     NotificationBody, NotificationKind, NotificationSource, decode_notification_body,
 };
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::ports::{ClaimReadStatus};
+use crate::claim::{ScopedRead};
 use crate::entity_id::EntityId;
 use crate::inbox::notification_recipient::{
     NotificationRecipientScope, notification_body_json, notification_recipient_scope,

@@ -15,7 +15,7 @@ use crate::store::attempt_id::AttemptId;
 use crate::deletion::DeleteReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
+use crate::store::receipt_row::{ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
 use crate::side_table::{self, Raw, SideTable};
 use rmpv::Value;
 use std::collections::BTreeMap;

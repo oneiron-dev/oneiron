@@ -17,7 +17,7 @@ use crate::gate::{
 };
 use crate::outbound::OutboundDispatchPipeline;
 use crate::ports::EntityStoreRead;
-use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+use crate::store::receipt_row::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::{ArtifactFamilyKindId, artifact_family_kind_of};
 use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,

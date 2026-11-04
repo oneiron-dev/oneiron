@@ -436,7 +436,7 @@ pub(super) fn stage_claim_projection(
         if !replicated {
             crate::entity_doc::retain_fresh_claim_citations_in_txn(store, wtxn, &id, body)?;
         }
-        crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
+        crate::store::claim_projection::maintain_claim_projection_index(store, wtxn, id, body)?;
         crate::claim::history_store::maintain_machine_history_index(store, wtxn, id, body)?;
     }
     Ok(())
