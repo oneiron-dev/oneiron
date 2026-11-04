@@ -17,6 +17,7 @@ use super::{
 };
 use crate::api::{Counter, SealResourceLimits};
 use crate::memory::SealMemoryRefusal;
+use crate::native::held_bytes;
 use lopdf::{
     Document, ObjectId,
     xref::{XrefEntry, XrefType},
@@ -352,6 +353,9 @@ pub(crate) fn analyze(
         return Err(RevisionAnalysisError::Limit);
     }
     let _analysis = limits.observed.enter();
+    // One parse pass for the analysis, and one inside it per revision: each
+    // document drops before its pass does (FIX 8448).
+    let _pass = limits.memory.pass();
     let final_doc = strict(bytes, limits)?;
     let ends = revision_ends(bytes, &final_doc, limits)
         .map_err(RevisionAnalysisError::Memory)?
@@ -366,6 +370,7 @@ pub(crate) fn analyze(
     for end in ends {
         prefix_work = prefix_work.saturating_add(end);
         limits.observed.note(Counter::PrefixBytes, prefix_work);
+        let _revision_pass = limits.memory.pass();
         let doc = strict(&bytes[..end], limits)?;
         let xref_offset = usize::try_from(
             last_startxref(&bytes[..end]).map_err(|_| RevisionAnalysisError::Framing)?,
@@ -379,6 +384,12 @@ pub(crate) fn analyze(
             .map(|prior: &RevisionFact| prior.xref_offset);
         let (definitions, lexed) =
             definitions(&bytes[..end], previous_end, end, &doc, xref_offset, limits)?;
+        // The facts keep the definitions: charged to the operation as they
+        // are built (FIX 8452).
+        limits
+            .memory
+            .admit::<ObjectDefinition>(definitions.capacity())
+            .map_err(RevisionAnalysisError::Memory)?;
         work = work.saturating_add(lexed);
         if definitions.iter().any(|d| {
             d.byte_span.start >= d.byte_span.end

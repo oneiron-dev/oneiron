@@ -8,6 +8,8 @@ use super::revision_facts::RevisionAnalysisError;
 use super::{decode, walk};
 use crate::api::{Counter, SealResourceLimits};
 use crate::error::{FatalCode, InputInvalidCode, SealError, SealStage};
+use crate::memory::LedgerHold;
+use crate::native::held_bytes;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum XrefStyle {
@@ -15,8 +17,10 @@ pub(crate) enum XrefStyle {
     Stream,
 }
 
-/// Trailer/xref state needed to append one incremental revision.
-#[derive(Debug, Clone)]
+/// Trailer/xref state needed to append one incremental revision. It keeps
+/// clones of the document's objects, held on the operation's ledger until
+/// it drops (FIX 12260); it has no clone of its own.
+#[derive(Debug)]
 pub(crate) struct RevisionState {
     pub limits: SealResourceLimits,
     pub max_obj: u32,
@@ -33,6 +37,27 @@ pub(crate) struct RevisionState {
     pub first_page_annots: Vec<Object>,
     pub root_dict: Dictionary,
     pub acroform_dict: Option<Dictionary>,
+    /// Reserved for a ledger hold on the clones above; none: their memory
+    /// is admitted when they are built (see [`revision_state`]).
+    _held: Option<LedgerHold>,
+}
+
+impl RevisionState {
+    /// What the clones it keeps of the document's objects allocate.
+    fn held_bytes(&self) -> usize {
+        [
+            self.id.as_deref().map_or(0, held_bytes::array),
+            held_bytes::array(&self.acroform_fields),
+            held_bytes::dictionary(&self.first_page_dict),
+            held_bytes::array(&self.first_page_annots),
+            held_bytes::dictionary(&self.root_dict),
+            self.acroform_dict
+                .as_ref()
+                .map_or(0, held_bytes::dictionary),
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add)
+    }
 }
 
 /// Prepared input: validated bytes plus the revision state.
@@ -362,8 +387,10 @@ pub(super) fn revision_state(
         first_page_annots,
         root_dict: root_dict.clone(),
         acroform_dict,
+        _held: None,
     })
 }
+
 
 /// §7.1 rule 2: reject malformed or repaired xref structures. Every
 /// uncompressed in-use xref entry must point at its object header; a reader
@@ -411,6 +438,23 @@ pub(crate) fn validate_prepared(
     if !bytes.starts_with(b"%PDF-") {
         return Err(input_invalid(InputInvalidCode::NotPdf));
     }
+    let state = checked_state(bytes, limits)?;
+    // The prepared copy is the seal's own buffer: reserved before it is made.
+    limits
+        .memory
+        .admit::<u8>(bytes.len())
+        .map_err(|refusal| refusal.seal_error(SealStage::InputValidation))?;
+    Ok(PreparedInput {
+        bytes: bytes.to_vec(),
+        state,
+    })
+}
+
+/// The strict load of a prepared input, its checks, and its revision state,
+/// in one parse pass (FIX 8448): the document and its decodes' buffers drop
+/// before the pass does, so the seal's later parses reuse their memory.
+fn checked_state(bytes: &[u8], limits: &SealResourceLimits) -> Result<RevisionState, SealError> {
+    let _pass = limits.memory.pass();
     let doc = load_strict(bytes, limits).map_err(|err| {
         err.seal_error(SealStage::InputValidation, || {
             input_invalid(InputInvalidCode::MalformedXref)
@@ -460,6 +504,8 @@ pub(crate) fn reparse_revision(
     limits: &SealResourceLimits,
 ) -> Result<RevisionState, SealError> {
     let _analysis = limits.observed.enter();
+    // One parse pass: the document drops before it does (FIX 8448).
+    let _pass = limits.memory.pass();
     let doc = load_strict(bytes, limits).map_err(|err| {
         err.seal_error(SealStage::PdfIncrementalUpdate, || {
             fatal_pdf(FatalCode::PdfInvariantFailed)

@@ -27,7 +27,7 @@ use crate::load_options::{FilterFunc, LoadOptions};
 use crate::object_stream::ObjectStream;
 use crate::parser;
 use crate::xref::XrefEntry;
-use crate::{Dictionary, Document, Error, IncrementalDocument, Object, ObjectId, Result};
+use crate::{Dictionary, Document, Error, IncrementalDocument, Object, ObjectId, Result, Stream};
 
 #[cfg(not(feature = "async"))]
 impl Document {
@@ -1292,8 +1292,11 @@ impl Reader<'_> {
         let mut already_seen = HashSet::new();
         // The container is this call's own copy, and so is its object stream:
         // both move rather than being cloned.
-        let mut container_stream = match self.get_object(container_id, &mut already_seen)? {
-            Object::Stream(stream) => stream,
+        let mut owned = self.get_object(container_id, &mut already_seen)?;
+        let mut container_stream = match &mut owned {
+            Object::Stream(stream) => {
+                std::mem::replace(stream, Stream::new(Dictionary::new(), Vec::new()))
+            }
             other => {
                 return Err(Error::ObjectType {
                     expected: "Stream",

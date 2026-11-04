@@ -198,6 +198,7 @@ impl Acceptance {
                 author: WitnessAuthor::Companion,
                 message_type: "text".to_owned(),
                 content,
+                parts: None,
                 metadata: Some(serde_json::Value::Object(metadata)),
                 is_visible: true,
                 order: 0,
