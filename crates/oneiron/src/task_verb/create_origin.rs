@@ -49,7 +49,7 @@ const ORIGINS: SideTable<[u8; 16], TaskCreateOrigin, Named> =
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TaskCreateOrigin {
-    /// `None`: a root create, with or without an origin conversation.
+    /// `None`: a root create, with its caller origin and optional conversation.
     parent_attempt: Option<AttemptId>,
     project_ref: Option<EntityId>,
     run_id: Option<String>,
@@ -74,6 +74,19 @@ pub(super) struct TaskCreateOriginIdentity<'a> {
 }
 
 impl TaskCreateOrigin {
+    /// A root create's witness: no creator, but the surface's caller origin
+    /// and optional conversation, frozen at first admission (FIX 4973).
+    pub(super) fn root(memory: &Memory) -> Self {
+        Self {
+            parent_attempt: None,
+            project_ref: None,
+            run_id: None,
+            origin_conversation: memory.origin_conversation(),
+            team: None,
+            caller_origin: memory.caller_origin(),
+        }
+    }
+
     /// The unchanged creator identity used by proposal and wave dedupe.
     /// A new caller-only root witness stays the same unstamped root ask.
     pub(super) fn intent_identity(&self) -> Option<TaskCreateOriginIdentity<'_>> {
@@ -165,14 +178,7 @@ pub(crate) fn task_create_origin_in_txn(
     binding: Option<&HostBinding>,
 ) -> MemoryResult<Option<TaskCreateOrigin>> {
     let Some(binding) = binding else {
-        return Ok(Some(TaskCreateOrigin {
-            parent_attempt: None,
-            project_ref: None,
-            run_id: None,
-            origin_conversation: memory.origin_conversation(),
-            team: None,
-            caller_origin: memory.caller_origin(),
-        }));
+        return Ok(Some(TaskCreateOrigin::root(memory)));
     };
     let (record, input) = creator_run_in(memory.vault(), txn, binding.parent())?;
     if !record.state.is_running()
@@ -319,24 +325,26 @@ pub(super) fn proposal_origin_in(
     Ok(ORIGINS.get(&vault.store, txn, proposal_ref.as_bytes())?)
 }
 
-fn wave_plan_key(attempt: AttemptId) -> MemoryResult<[u8; 16]> {
+fn wave_plan_key(attempt: AttemptId) -> crate::Result<[u8; 16]> {
     Ok(*EntityId::derive(WAVE_PLAN_ORIGIN_DOMAIN, &[attempt.as_bytes()])?.as_bytes())
 }
 
 /// Witnesses the creator a wave planning attempt's cut lands under, in the
-/// enqueue's transaction.
+/// enqueue's transaction. First admission freezes: only the enqueue that
+/// mints the attempt writes; a retry keeps the first witness.
 pub(super) fn put_wave_plan_origin_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     attempt: AttemptId,
     origin: &TaskCreateOrigin,
-) -> MemoryResult<()> {
+) -> crate::Result<()> {
     ORIGINS.put(&vault.store, wtxn, &wave_plan_key(attempt)?, origin)?;
     Ok(())
 }
 
-/// The creator a wave planning attempt was queued under; `None`: a
-/// host-created plan, whose TASKs stay roots.
+/// The creator a wave planning attempt was queued under; `None`: a native
+/// vault plan with no witness, whose TASKs stay roots. A root witness
+/// carries its caller origin and optional conversation (FIX 4973).
 pub(super) fn wave_plan_origin_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
