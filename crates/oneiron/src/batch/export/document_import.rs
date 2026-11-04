@@ -994,7 +994,7 @@ fn omit_project_revisions<R: Read + Seek>(
     vault: &Vault,
     archive: &mut IndexedArchive<'_, R>,
 ) -> Result<()> {
-    let Some(kind) = crate::workspace_roster::project_revision_type(&vault.store) else {
+    let Some(kind) = crate::store::project_kind::project_revision_type(&vault.store) else {
         return Ok(());
     };
     let mut after = None;

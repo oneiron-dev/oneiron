@@ -14,11 +14,11 @@ pub(crate) use crate::store::loro_document::{
     copy_binary_root_map, map_contains_binary, map_delete, map_get_bytes, map_insert_bytes,
 };
 
+#[cfg(test)]
+pub(crate) use crate::store::loro_tombstones::TOMBSTONE_KEY_PARSES;
 pub(crate) use crate::store::loro_tombstones::{
     TombstoneIndex, tombstone_map_contains_id, tombstone_values_for_id,
 };
-#[cfg(test)]
-pub(crate) use crate::store::loro_tombstones::TOMBSTONE_KEY_PARSES;
 
 pub(super) use crate::store::loro_document::{
     map_for_each_value_bytes, map_for_each_value_bytes_deferring,
