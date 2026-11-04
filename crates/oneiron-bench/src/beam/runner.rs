@@ -243,6 +243,9 @@ pub(super) fn run_loaded_cases(
     loaded: &LoadedDataset,
 ) -> BeamResult<(Vec<CaseReport>, Vec<ContextPackContractRecord>)> {
     let scorer = FixedBeamScorer;
+    // The run's own vault mode is truthful on every emitted row of this run:
+    // the comparison ran under this vault.
+    let secret_scan = super::util::scan_stamp(vault)?;
     let cases_by_id: BTreeMap<&str, &FixtureCase> = loaded
         .cases
         .iter()
@@ -275,9 +278,14 @@ pub(super) fn run_loaded_cases(
                 ));
             }
             let arm_report = adapter_for(competitor.arm).run(vault, loaded, case)?;
-            if let Some(row) =
-                contract_context_pack_record(manifest, loaded, case, competitor, &arm_report)?
-            {
+            if let Some(row) = contract_context_pack_record(
+                manifest,
+                loaded,
+                case,
+                competitor,
+                &arm_report,
+                &secret_scan,
+            )? {
                 pack_rows.push(row);
             }
             let scoring = scorer.score(case, competitor, &arm_report);
@@ -293,6 +301,7 @@ pub(super) fn run_loaded_cases(
                 card: card.clone(),
                 costs,
                 scoring,
+                secret_scan: secret_scan.clone(),
             });
         }
         let (competitors, appendix, dropped) = partition_competitors(competitors);
