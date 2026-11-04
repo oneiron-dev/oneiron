@@ -51,6 +51,7 @@ pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
         SecretsCommand::Unbind(args) => emit(&unbind_secret(*args)?),
         SecretsCommand::Pending(args) => pending_custody(*args),
         SecretsCommand::ImportSupplement(args) => emit(&import_supplement(*args)?),
+        SecretsCommand::ShowSupplement(args) => emit(&show_supplement(*args)?),
     }
 }
 
@@ -276,6 +277,19 @@ fn import_supplement(
         &read.request,
         &sealed,
     )?)
+}
+
+/// Reads one export secret supplement through the engine door `GET
+/// /v1/core/export-secret-supplements/{request}` uses, as the local owner
+/// (FIX 12296): the request's entry on the command line, the same supplement
+/// the `GET` returns. It reads nothing from stdin.
+fn show_supplement(
+    args: crate::cli::SecretShowSupplementArgs,
+) -> anyhow::Result<oneiron::authority::ExportSecretSupplement> {
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "GET /v1/core/export-secret-supplements/{request}")?;
+    let owner = local_owner(&vault)?;
+    Ok(export_supplement::show(&vault, &owner, &args.request)?)
 }
 
 /// Revokes a secret through the engine door `POST /v1/owner/secrets/revoke`
