@@ -32,24 +32,6 @@ use crate::store::{
 };
 use references::AssetBodyRef;
 
-/// Whether the stored row `raw` of `id` is a file-plane ASSET's. Always
-/// `false` while the file plane is off.
-///
-/// # Errors
-///
-/// [`asset_body_file_of_row`]'s errors.
-pub(crate) fn file_row_in_txn(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    id: &EntityId,
-    raw: &[u8],
-) -> Result<bool> {
-    if !ASSET_FILE_PLANE {
-        return Ok(false);
-    }
-    Ok(asset_body_file_of_row(store, txn, id.as_bytes(), raw)?.is_some())
-}
-
 /// The logical echo test: whether `carried` holds inline the body the
 /// file-plane ASSET row `stored` of `id` keeps in its file. The metadata
 /// header must be the same bytes, and the carried body's BLAKE3 and length

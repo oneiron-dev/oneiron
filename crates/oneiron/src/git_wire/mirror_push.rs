@@ -134,6 +134,9 @@ pub(super) fn configure(command: &mut Command, egress: &MirrorEgress) {
         ("push.recurseSubmodules", "no"),
         ("submodule.recurse", "false"),
     ];
+    // Git-LFS objects go to the mirror from the vault's own store through
+    // the engine's batch client once the refs are out (FIX 919), never
+    // through a git-lfs hook.
     command
         .env("GIT_ALLOW_PROTOCOL", "https")
         .env("GIT_PROTOCOL_FROM_USER", "0")

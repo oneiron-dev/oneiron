@@ -73,6 +73,19 @@ const GATE_BUNDLE_REF_PREFIX: &str = "bundle:";
 /// Provenance stamped on the envelope every member replay rides.
 const GATE_BUNDLE_PROVENANCE: &str = "gate-consent-bundle-resolve";
 
+/// Appends a reviewed run's outcome with every claim member's newest kept
+/// read context and the member refs that couple each member's erase to it.
+pub(crate) fn append_reviewed_run_decision_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &mut GateDecisionRecord,
+    run: &str,
+    members: &[EntityId],
+) -> Result<()> {
+    record.context = decision_context::bundle(vault, wtxn, run, members);
+    decision_context::append(vault, wtxn, record, members)
+}
+
 impl Vault {
     pub fn review_session_bundle(
         &self,
@@ -147,6 +160,7 @@ impl Vault {
                         defer_metrics_until_commit: true,
                         transition: None,
                         owner_authored: None,
+                        pending_prompt: None,
                     },
                     &policy,
                     GateWriteMode {
@@ -863,6 +877,7 @@ fn replay_gate_consent_bundle_member(
             defer_metrics_until_commit: true,
             transition: None,
             owner_authored: None,
+            pending_prompt: None,
         },
         policy,
         GateWriteMode {

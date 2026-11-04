@@ -280,6 +280,13 @@ impl From<Error> for MemoryError {
                 message,
                 &["Refresh the resource, merge local changes, then retry."],
             ),
+            // FIX 12023 W0: the process that serves the vault spends its
+            // request nonces; no change to the request helps here.
+            ErrorKind::VaultServedElsewhere => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &["Send the request to the process that serves this vault."],
+            ),
             // The vault holds too little authority history to fold (OF-469):
             // an import of what it names closes the gap; no request changes.
             ErrorKind::AuthorityHistoryRequired => Self::new(

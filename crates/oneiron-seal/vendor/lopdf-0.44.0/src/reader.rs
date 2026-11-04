@@ -6,6 +6,7 @@ use std::convert::TryInto;
 use std::fs::File;
 #[cfg(not(feature = "async"))]
 use std::io::Read;
+use std::mem::size_of;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -607,6 +608,9 @@ impl Reader<'_> {
             }
 
             let (prev_xref, prev_trailer) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
+            if let Some(admission) = self.decode_admission.as_deref() {
+                decode_admission::admit_btree::<u32, XrefEntry>(admission, prev_xref.entries.len())?;
+            }
             xref.merge(prev_xref);
 
             let prev_xref_stream_start = trailer.remove(b"XRefStm");
@@ -616,6 +620,9 @@ impl Reader<'_> {
                 }
 
                 let (prev_xref, _) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
+                if let Some(admission) = self.decode_admission.as_deref() {
+                    decode_admission::admit_btree::<u32, XrefEntry>(admission, prev_xref.entries.len())?;
+                }
                 xref.merge(prev_xref);
             }
 
@@ -803,6 +810,8 @@ impl Reader<'_> {
     pub fn read(mut self, filter_func: Option<FilterFunc>) -> Result<Document> {
         let offset = self.buffer.windows(5).position(|w| w == b"%PDF-").unwrap_or(0);
         self.buffer = &self.buffer[offset..];
+        // With an admission, every object the load parses is charged to it (FIX 8446).
+        let _scope = decode_admission::ParseScope::enter(self.decode_admission.as_ref());
 
         // The document structure can be expressed in PEG as:
         //   document <- header indirect_object* xref trailer xref_start
@@ -838,7 +847,7 @@ impl Reader<'_> {
             }
 
             let (prev_xref, prev_trailer) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
-            xref.merge(prev_xref);
+            xref.merge_admitted(prev_xref, self.decode_admission.as_deref())?;
 
             // Read xref stream in hybrid-reference file
             let prev_xref_stream_start = trailer.remove(b"XRefStm");
@@ -848,7 +857,7 @@ impl Reader<'_> {
                 }
 
                 let (prev_xref, _) = parser::xref_and_trailer(&self.buffer[prev as usize..], &self)?;
-                xref.merge(prev_xref);
+                xref.merge_admitted(prev_xref, self.decode_admission.as_deref())?;
             }
 
             prev_xref_start = prev_trailer.get(b"Prev").cloned().ok();
@@ -882,6 +891,19 @@ impl Reader<'_> {
     }
 
     fn load_encrypted_document(&mut self, _filter_func: Option<FilterFunc>) -> Result<()> {
+        if let Some(admission) = self.decode_admission.as_deref() {
+            let bytes = self
+                .document
+                .reference_table
+                .entries
+                .len()
+                .checked_mul(size_of::<(u32, XrefEntry)>())
+                .ok_or(DecodeAdmissionError::MemoryFloor {
+                    needed: u64::MAX,
+                    available: 0,
+                })?;
+            admission.admit(bytes)?;
+        }
         // First, extract all raw object bytes without parsing
         let entries: Vec<_> = self
             .document
@@ -897,6 +919,9 @@ impl Reader<'_> {
             match entry {
                 XrefEntry::Normal { offset, .. } => match self.extract_raw_object(offset as usize) {
                     Ok((obj_id, raw_bytes)) => {
+                        if let Some(admission) = self.decode_admission.as_deref() {
+                            admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Vec<u8>>())?;
+                        }
                         self.raw_objects.insert(obj_id, raw_bytes);
                     }
                     // A refused admission ends the load; an unreadable object is skipped, as before.
@@ -905,6 +930,9 @@ impl Reader<'_> {
                 },
                 XrefEntry::Compressed { container, index } => {
                     // Store compressed object info for later processing
+                    if let Some(admission) = self.decode_admission.as_deref() {
+                        decode_admission::reserve(admission, &mut object_streams, 1)?;
+                    }
                     object_streams.push((obj_num, container, index));
                 }
                 XrefEntry::Free | XrefEntry::UnusableFree => {
@@ -937,6 +965,9 @@ impl Reader<'_> {
                 match self.parse_raw_object(raw_bytes) {
                     Ok((id, mut obj)) => {
                         let _ = encryption::decrypt_object(state, *obj_id, &mut obj);
+                        if let Some(admission) = self.decode_admission.as_deref() {
+                            admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                        }
                         self.document.objects.insert(id, obj);
                     }
                     Err(err @ Error::DecodeAdmission(_)) => return Err(err),
@@ -944,25 +975,31 @@ impl Reader<'_> {
                 }
             }
 
-            let mut streams_to_process: std::collections::HashMap<u32, Vec<(u32, u16)>> =
-                std::collections::HashMap::new();
+            let mut streams_to_process: BTreeMap<u32, Vec<(u32, u16)>> = BTreeMap::new();
+            if let Some(admission) = self.decode_admission.as_deref() {
+                decode_admission::admit_btree::<u32, Vec<(u32, u16)>>(admission, object_streams.len())?;
+            }
             for (obj_num, container_id, index) in object_streams {
-                streams_to_process
-                    .entry(container_id)
-                    .or_default()
-                    .push((obj_num, index));
+                let bucket = streams_to_process.entry(container_id).or_default();
+                if let Some(admission) = self.decode_admission.as_deref() {
+                    decode_admission::reserve(admission, &mut *bucket, 1)?;
+                }
+                bucket.push((obj_num, index));
             }
 
             for (container_id, objects_in_stream) in streams_to_process {
                 if let Some(container_obj) = self.document.objects.get_mut(&(container_id, 0))
                     && let Ok(stream) = container_obj.as_stream_mut()
                 {
-                    match ObjectStream::new_admitted(stream, self.max_decompressed_size, self.decode_admission.as_deref()) {
+                    match ObjectStream::new_admitted(stream, self.max_decompressed_size, self.decode_admission.as_ref()) {
                         Ok(mut object_stream) => {
                             // Each object number is listed once, so its object moves out instead of being copied.
                             for (obj_num, _index) in objects_in_stream {
                                 let obj_id = (obj_num, 0);
                                 if let Some(obj) = object_stream.objects.remove(&obj_id) {
+                                    if let Some(admission) = self.decode_admission.as_deref() {
+                                        admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                                    }
                                     self.document.objects.insert(obj_id, obj);
                                 }
                             }
@@ -1003,6 +1040,20 @@ impl Reader<'_> {
         let refuse = |err: DecodeAdmissionError| {
             refused.lock().unwrap().get_or_insert(err);
         };
+
+        if let Some(admission) = self.decode_admission.as_deref() {
+            let mut normal = 0usize;
+            let mut compressed = 0usize;
+            for entry in self.document.reference_table.entries.values() {
+                if entry.is_normal() {
+                    normal += 1;
+                } else if entry.is_compressed() {
+                    compressed += 1;
+                }
+            }
+            decode_admission::admit_btree::<ObjectId, Object>(admission, normal)?;
+            decode_admission::admit_btree::<u32, u32>(admission, compressed)?;
+        }
 
         // Build a map of which container each compressed object belongs to
         // according to the xref. This prevents stale ObjStm copies (e.g., from
@@ -1054,7 +1105,7 @@ impl Reader<'_> {
                         let obj_stream = match ObjectStream::new_admitted(
                             stream,
                             self.max_decompressed_size,
-                            self.decode_admission.as_deref(),
+                            self.decode_admission.as_ref(),
                         ) {
                             Ok(obj_stream) => obj_stream,
                             Err(Error::DecodeAdmission(err)) => {
@@ -1066,8 +1117,17 @@ impl Reader<'_> {
                         let container_id = object_id.0;
                         let mut object_streams = object_streams.lock().unwrap();
                         if let Some(filter_func) = filter_func {
-                            let objects: BTreeMap<(u32, u16), Object> = obj_stream
-                                .objects
+                            let stream_objects = obj_stream.objects;
+                            if let Some(admission) = self.decode_admission.as_deref() {
+                                if let Err(err) = decode_admission::admit_btree::<(u32, u16), Object>(
+                                    admission,
+                                    stream_objects.len(),
+                                ) {
+                                    refuse(err);
+                                    return None;
+                                }
+                            }
+                            let objects: BTreeMap<(u32, u16), Object> = stream_objects
                                 .into_iter()
                                 .filter(|((obj_num, _), _)| {
                                     compressed_obj_containers
@@ -1076,16 +1136,38 @@ impl Reader<'_> {
                                 })
                                 .filter_map(|(object_id, mut object)| filter_func(object_id, &mut object))
                                 .collect();
-                            object_streams.extend(objects);
+                            for (id, obj) in objects {
+                                if let Some(admission) = self.decode_admission.as_deref() {
+                                    if let Err(err) = decode_admission::reserve(admission, &mut *object_streams, 1) {
+                                        refuse(err);
+                                        return None;
+                                    }
+                                }
+                                object_streams.push((id, obj));
+                            }
                         } else {
-                            object_streams.extend(obj_stream.objects.into_iter().filter(|((obj_num, _), _)| {
+                            for (id, obj) in obj_stream.objects.into_iter().filter(|((obj_num, _), _)| {
                                 compressed_obj_containers
                                     .get(obj_num)
                                     .is_none_or(|&c| c == container_id)
-                            }));
+                            }) {
+                                if let Some(admission) = self.decode_admission.as_deref() {
+                                    if let Err(err) = decode_admission::reserve(admission, &mut *object_streams, 1) {
+                                        refuse(err);
+                                        return None;
+                                    }
+                                }
+                                object_streams.push((id, obj));
+                            }
                         }
                     } else if stream.content.is_empty() {
                         let mut zero_length_streams = zero_length_streams.lock().unwrap();
+                        if let Some(admission) = self.decode_admission.as_deref() {
+                            if let Err(err) = decode_admission::reserve(admission, &mut *zero_length_streams, 1) {
+                                refuse(err);
+                                return None;
+                            }
+                        }
                         zero_length_streams.push(object_id);
                     }
                 }
@@ -1120,8 +1202,13 @@ impl Reader<'_> {
             return Err(err.into());
         }
 
+        let pending = object_streams.into_inner().unwrap();
+        if let Some(admission) = self.decode_admission.as_deref() {
+            decode_admission::admit_btree::<ObjectId, Object>(admission, pending.len())?;
+        }
+
         // Only add entries, but never replace entries
-        for (id, entry) in object_streams.into_inner().unwrap() {
+        for (id, entry) in pending {
             self.document.objects.entry(id).or_insert(entry);
         }
 
@@ -1214,7 +1301,7 @@ impl Reader<'_> {
         let mut object_stream = ObjectStream::new_admitted(
             &mut container_stream,
             self.max_decompressed_size,
-            self.decode_admission.as_deref(),
+            self.decode_admission.as_ref(),
         )?;
         object_stream.objects.remove(&id).ok_or(Error::MissingXrefEntry)
     }
@@ -1257,11 +1344,21 @@ impl Reader<'_> {
             if self.raw_objects.is_empty() {
                 let offset = self.get_offset(encrypt_ref)?;
                 let (_, encrypt_obj) = self.read_object(offset as usize, Some(encrypt_ref), &mut HashSet::new())?;
+                if let Some(admission) = self.decode_admission.as_deref() {
+                    admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                }
                 self.document.objects.insert(encrypt_ref, encrypt_obj);
-            } else if let Some(raw_bytes) = self.raw_objects.get(&encrypt_ref)
-                && let Ok((_, obj)) = self.parse_raw_object(raw_bytes)
-            {
-                self.document.objects.insert(encrypt_ref, obj);
+            } else if let Some(raw_bytes) = self.raw_objects.get(&encrypt_ref) {
+                match self.parse_raw_object(raw_bytes) {
+                    Ok((_, obj)) => {
+                        if let Some(admission) = self.decode_admission.as_deref() {
+                            admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                        }
+                        self.document.objects.insert(encrypt_ref, obj);
+                    }
+                    Err(err @ Error::DecodeAdmission(_)) => return Err(err),
+                    Err(_) => {}
+                }
             }
         }
         Ok(())

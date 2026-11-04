@@ -63,6 +63,7 @@ mod explicit;
 mod ledger;
 mod policy;
 mod receipts;
+mod scope_erase;
 mod storage;
 mod types;
 
@@ -81,6 +82,7 @@ pub use self::policy::{
 pub(crate) use self::policy::{accept_standing_policy_at, maybe_propose_standing_policy_at};
 pub(crate) use self::receipts::escalation_receipts;
 pub use self::receipts::{is_escalation_receipt, is_standing_policy_receipt};
+pub(crate) use self::scope_erase::erase_escalation_scope_in_txn;
 pub use self::types::{
     EscalationReceipt, EscalationRuling, EscalationStats, EscalationTrigger, StandingPolicy,
     StandingPolicyStatus,

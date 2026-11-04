@@ -11,8 +11,158 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `src/attempt_id.rs` | src | s | 1 struct · 3 fn | AttemptId | Stable queued-attempt identifiers and their raw storage representation |
+| `src/batch_op.rs` | src | s | 1 enum | BatchOp | The batch op vocabulary: one write a batch applies, as the engine's batch builder records it |
+| `src/bundle_generations.rs` | src | s | 1 struct · 5 fn · 4 const | SealedBundleGeneration | Bundle generation identity, upload cadence and retirement selection |
+| `src/checkpoint_host_recipient.rs` | src | s | 1 struct · 1 enum · 3 fn | HostHoldsRecipient, HostHoldsSealing | Host recipient and sealing policy for checkpoint legal-hold members |
+| `src/config.rs` | src | m | 3 struct · 7 fn · 5 mod · 2 re-export | Bm25RankProfile, HnswConfig, VaultConfig | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
+| `src/config/bm25.rs` | src | s | 3 struct · 2 enum · 5 fn · 1 const | Bm25Config, Bm25Formula, Bm25RecencyConfig, FieldConfig, FieldLengthPolicy | Rank-profile config: field/channel params, formula, recency, defaults |
+| `src/config/community_graph/codec.rs` | src | s | 1 struct · 9 fn | CommunitySnapshot | Snapshot and membership encode/decode with strict guards |
+| `src/config/community_graph/detection.rs` | src | m | 1 struct · 9 fn | Graph | Graph projection and Leiden/CPM partition detection |
+| `src/config/community_graph/mod.rs` | src | s | 4 mod · 6 re-export | — | Pure community graph projection, snapshot codecs and configuration |
+| `src/config/community_graph/refresh.rs` | src | s | 4 fn | — | Refresh policy, affected-set expansion and read-side cache view |
+| `src/config/community_graph/types.rs` | src | s | 9 struct · 3 fn · 1 type · 7 const · 1 re-export | CommunityCacheMeta, CommunityEdge, CommunityGraphInput, CommunityId, CommunityMembership, CommunityProjection, CommunityQueryView, CommunityRefreshReport +1 | Community constants, error, ids, config and shared shells |
+| `src/config/context_spec.rs` | src | s | 1 struct · 2 enum · 8 fn · 9 const | ChatProjection, ContextSpec, MemoryProjection | The `ContextSpec` descriptor, its bounds, normalization, and structural validation |
+| `src/config/retrieval_affect.rs` | src | s | 1 struct · 3 fn · 3 const | AffectRetrievalPolicy | Per-vault read-side affect retrieval policy |
+| `src/config/tagging.rs` | src | s | 2 struct · 1 enum · 9 fn · 7 const | TaggingMarkerConfig, TaggingMode, TaggingTraceHistory | Tagging marker configuration and identity validation |
 | `src/connector_key_status.rs` | src | s | 1 enum · 2 fn | ConnectorKeyStatus | Connector-key lifecycle status and its pinned wire strings |
+| `src/consolidation_reader.rs` | src | s | 1 enum · 1 fn · 1 const | ConsolidationReader | The readers that consolidate a claim: the vocabulary the engine's consolidation check and the store layer's… |
+| `src/conversation_record.rs` | src | s | 7 struct · 4 enum · 3 fn · 1 const | AddressMode, AppendFailure, AppendRecord, AppendedRecord, DagPage, DagPageRequest, DagReplyTarget, QuoteSpan +3 | Door inputs and snapshot results |
+| `src/core_write/batch.rs` | src | s | 4 struct · 1 enum | CoreBatchCommit, CoreBatchEntityInput, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt | The `vault.batch` row's input and receipt types (OF-181) |
+| `src/core_write/conversations.rs` | src | s | 3 struct · 1 fn | ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt | The `vault.conversations.create` and `vault.conversations.turns.create` rows' input and receipt types (OF-181) |
+| `src/core_write/dag.rs` | src | s | 3 struct · 1 enum · 1 fn | CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt | The `vault.conversations.records.append` row's input and receipt types (OF-181) and the append door's input… |
+| `src/core_write/mod.rs` | src | s | 1 mod · 4 re-export | — | Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages… |
+| `src/core_write/shape.rs` | src | m | 2 struct · 2 enum · 14 fn · 5 const | AnnouncementAuthority, CoreWriteRefusal, CoreWriteTextField, CoreWriteTimes | The shape every core entity write shares: its id, its interval, its announcement-normalized body and its… |
+| `src/critical_confirm_retry.rs` | src | s | 2 struct · 3 fn · 1 type · 2 const | ConfirmDemotionRetries, ConfirmDemotionRetry | The expiry walk's backoff state for a timeout demotion that keeps failing (FIX 12079): a row whose demotion… |
+| `src/embedding_vocabulary.rs` | src | s | 1 struct · 2 enum · 7 fn · 2 const | EmbeddingDevice, EmbeddingProvenance, InputKind | Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and… |
+| `src/esign_rate_thresholds.rs` | src | s | 1 struct | EsignRateThresholds | The e-sign send-rate thresholds a policy manifest resolves to |
+| `src/file_secret_marks.rs` | src | s | 1 struct · 2 enum · 5 fn · 2 type · 2 const | KeySpan, MemberStep, SecretSight | Value-free file-mask paths, read visibility, and byte-span transformations |
+| `src/graph_version.rs` | src | s | 3 fn · 1 const | — | The graph version counter in `hnsw_meta`, which PPR caches are keyed and validated by, and its little-endian… |
+| `src/identity_hints.rs` | src | s | 1 fn | — | Per-kind declared identity fields (human-facing identity hints) |
+| `src/index_keys.rs` | src | s | 3 fn | — | Byte layouts of the edge, temporal and type index keys |
 | `src/key_material.rs` | src | s | 1 struct · 1 enum · 4 fn | WorldKeyDestroyCause, WorldKeyDestruction | Guarded key derivation, OS entropy, and the world-key refusal constructor |
-| `src/lib.rs` | src | s | 4 mod | — | The store layer of the oneiron engine |
+| `src/lib.rs` | src | s | 37 mod | — | The store layer of the oneiron engine |
+| `src/long_interval.rs` | src | s | 1 const | — | The occurrence span past which a stored record is a long interval |
+| `src/manifest_origin_keys.rs` | src | s | 2 fn | — | The row keys of a policy manifest's trusted-origin and seeded-confidence side tables, spelled for the… |
+| `src/model_decision/answer_actor.rs` | src | s | 1 enum · 4 fn | AnswerActor | An answer actor identity, including its erased state |
+| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 50 const | QuestionFamily | The engine's registered typed-question families, in one place |
+| `src/model_decision/codec.rs` | src | s | 7 fn · 3 mod | — | Canonical entity references for typed-decision wire records |
+| `src/model_decision/mod.rs` | src | s | 3 mod · 9 re-export | — | Model-independent typed decision vocabulary and pure policy values |
+| `src/model_decision/policy.rs` | src | s | 7 struct · 2 enum · 11 fn · 1 const | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +1 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
+| `src/model_decision/provider.rs` | src | s | 3 struct · 7 fn · 3 const | PairedAnswer, ProviderCapability, ProviderDecision | Provider answer values, capabilities, and score-level rules |
+| `src/model_decision/questions/mod.rs` | src | s | 2 re-export | — | Graph-question recipe and outcome vocabulary |
+| `src/model_decision/questions/recipe.rs` | src | s | 2 struct | GraphQuestionInput, GraphQuestionRef | Graph-question identities and explicit evidence joins |
+| `src/model_decision/questions/records.rs` | src | s | 8 struct · 5 enum · 2 fn | CalibrationPair, OmittedNeighbor, OutcomeBinding, OutcomeLabel, OutcomeSource, OutcomeWindowClose, QuestionActivation, QuestionAudience +5 | Standing-question outcome, refresh, and evidence values |
+| `src/model_decision/roles.rs` | src | s | 3 enum · 1 fn | AskAct, HolderKind, RoleRank | Actor-free role ranks, ask acts, and holder kinds |
+| `src/model_decision/slides_policy.rs` | src | m | 3 struct · 2 enum · 8 fn | SlideReviewLimits, SlideReviewPolicy, SlideReviewPolicyRow, SlideReviewPrecedence, SlideReviewRoute | Manifest-backed operating limits for the artifact judgment adapter |
+| `src/model_decision/state.rs` | src | s | 4 fn | — | Caller-prepared decision state fitting |
+| `src/model_decision/types.rs` | src | m | 13 struct · 8 enum · 17 fn | AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionQuestionInput, DecisionRung +13 | Typed decision questions, answer contracts, and measurement values |
 | `src/model_step_record.rs` | src | s | 4 struct · 4 enum · 8 fn · 9 const | CallerSettledStep, DreamerTrapKind, DreamerTrapState, ModelStepCheckpoint, SettledStepRequest, SettledStepView, StepProgression, TrapRef | Durable model-step claim vocabulary and progression values |
+| `src/overlay_bookkeeping.rs` | src | s | 3 const | — | Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages |
+| `src/overlay_db/accessors.rs` | src | m | 2 struct · 30 fn · 2 crate-vis | OverlayDb, OverlayStrDb | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
+| `src/overlay_db/iters.rs` | src | s | 7 enum · 1 fn | OverlayDupValues, OverlayIter, OverlayPrefix, OverlayRange, OverlayRevRange, OverlayStrIter, OverlayStrPrefix | Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str) |
+| `src/overlay_db/merge.rs` | src | m | 4 struct · 11 crate-vis | MergedPrefixRows, MergedRows, PrefetchedMergedRows, StrMergedRows | Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and… |
+| `src/overlay_db/mod.rs` | src | s | 3 mod · 1 re-export | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
+| `src/overlay_db/tests.rs` | test | s | — | — | — |
+| `src/policy_scoped_grant.rs` | src | s | 1 struct | PolicyScopedGrant | One scoped grant row of a policy manifest, as the manifest fold decodes it |
+| `src/project_depth_record.rs` | src | s | 2 struct · 2 fn · 1 const | ProjectBirthOwnerProof, ProjectDepthBirth | A project's depth birth record, as a POLICY_MANIFEST contribution carries it |
+| `src/proposal_observation_record.rs` | src | s | 1 struct | ProposalPolicySource | The policy source behind a proposal submission's advisory threshold, as the proposal observation records it |
 | `src/receive_scan.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 const | PushedBlob, ReceiveBlobKind, ReceiveScanHit | Pushed-blob scan inputs, value-free hits, and the receive-pack effector name |
+| `src/retained_memory.rs` | src | s | 1 trait | RetainedCharge | Host-owned retained-memory accounting for in-memory storage |
+| `src/run_write_token.rs` | src | s | 1 struct · 5 fn | RunWriteToken | A leased agent run's write identity, as the engine's run-write envelope carries it with each write |
+| `src/secret_manifest.rs` | src | m | 2 struct · 3 fn · 1 const | SecretManifest, SecretManifestEntry | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
+| `src/secret_record.rs` | src | s | 3 struct · 1 trait · 7 fn · 1 const · 1 re-export | SecretBinding, SecretCustodyFloor, SecretCustodyFloorSource, TierBand | Secret custody floor and binding vocabulary used by the store layer |
+| `src/session_overlay/hygiene_tests.rs` | test | s | 1 struct · 1 enum · 7 fn | ObservedAllocator, ShortIdScratch | Allocation-boundary teardown observer for session-owned buffers |
+| `src/session_overlay/journal.rs` | src | m | 4 struct · 1 enum · 9 fn · 4 crate-vis | JournalEntry, JournalRole, JournalScope, PromotePlan, PublishedEntry | — |
+| `src/session_overlay/keyspace.rs` | src | m | 1 enum · 1 fn · 12 crate-vis | OverlayKeyspace | — |
+| `src/session_overlay/mod.rs` | src | s | 7 mod · 5 re-export | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
+| `src/session_overlay/overlay/held.rs` | src | s | 7 crate-vis | — | What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)… |
+| `src/session_overlay/overlay/lifecycle.rs` | src | m | 1 struct · 7 fn · 9 crate-vis | SessionOverlay | Overlay lifecycle state machine, leases, seal/rearm/close |
+| `src/session_overlay/overlay/mod.rs` | src | s | 1 fn · 7 mod · 2 re-export · 4 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
+| `src/session_overlay/overlay/repo_projection.rs` | src | s | 1 fn | — | Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a… |
+| `src/session_overlay/overlay/retained.rs` | src | s | 8 crate-vis | — | The memory a room's overlay actually retains, the bytes its host's retained-memory line is charged (FIX… |
+| `src/session_overlay/overlay/retire.rs` | src | s | 1 fn | — | Promoted-closure retirement reusing the store's index-key builders |
+| `src/session_overlay/overlay/rows.rs` | src | m | 12 fn · 1 crate-vis | — | Row staging, preflight, budget checks, read probes |
+| `src/session_overlay/overlay/segment.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | TxnSegmentGuard | Txn segment install, leases, commit/apply guards |
+| `src/session_overlay/route.rs` | src | s | 1 struct · 1 enum · 6 fn | RouteTarget, SessionWriteRoute | — |
+| `src/session_overlay/short_id.rs` | src | s | 1 fn · 5 crate-vis | — | — |
+| `src/session_overlay/snapshot.rs` | src | m | 3 struct · 2 enum · 12 fn · 1 crate-vis | OverlaySnapshot, SnapshotLookup, SnapshotMergePlan, SnapshotMergeRow, StagedRows | — |
+| `src/session_overlay/tests.rs` | test | m | — | — | — |
+| `src/store_clock.rs` | src | m | 2 struct · 2 trait · 20 fn · 1 const · 1 mod | Clock, IdGen, LeaseRenewal, StoreClock | Per-store clock and id source |
+| `src/store_clock/lease_journal.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | LeaseJournal | The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A) |
+| `src/store_clock/tests.rs` | test | s | — | — | The store clock's reads, observed through what a caller gets back |
+| `src/vault_page_seal.rs` | src | s | 3 struct · 1 enum · 17 fn · 1 const | SealOrigin, VaultDataKey, VaultPageSeal, WrapDigest | The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under… |
+| `src/window_key.rs` | src | s | 1 struct · 15 fn · 1 crate-vis | WindowKey | Monthly CRDT window keys and their timestamp conversion |
+| `src/world_pad_codec.rs` | src | s | 1 struct · 1 enum · 17 fn | PadBody, WorldKeyPad | The world-key pad row codec (KS-5, FIX 5686): a pad, a pad row's deterministic id, and a pad row body in its… |
+| `src/write_envelope.rs` | src | m | 5 struct · 48 fn · 6 const · 31 mod · 3 re-export | ClaimCandidate, MachineWriteSignature, SourceLineage, WriteEnvelope, WriteProvenance | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
+| `src/write_envelope/actor_predicate.rs` | src | s | 1 fn · 4 const | — | Learned actor claim predicate vocabulary |
+| `src/write_envelope/actor_tokens.rs` | src | s | 2 fn | — | Stored actor-class wire tokens |
+| `src/write_envelope/affect_trigger.rs` | src | m | 2 struct · 20 fn · 1 const · 1 crate-vis | AffectTriggerValue, VadDelta | Affect trigger claim codec: encoders, strict and lenient decoders, and shared scalar validators |
+| `src/write_envelope/carry_forward.rs` | src | s | 1 struct · 1 enum · 5 fn | CarryForwardClaim, CarryForwardKind | Confidence-gated forward commitments, separate from belief consolidation and the commitment ledger |
+| `src/write_envelope/channel_identity/keys.rs` | src | s | 39 const | — | Pinned ChannelIdentity schema versions, body key sets, claim predicates, and byte bounds |
+| `src/write_envelope/channel_identity/mod.rs` | src | s | 1 fn · 1 mod | — | Channel-identity claim predicates and pinned wire keys |
+| `src/write_envelope/claim_body/codec.rs` | src | m | 2 fn | — | The pinned MessagePack codec for type-0 (CLAIM) bodies: the canonical encoder and the single fail-closed… |
+| `src/write_envelope/claim_body/evidence_refs.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 const · 1 crate-vis | CursorSpan, EvidenceKind, EvidenceRef | Typed document citations a claim's evidence carries (ARCH-0032, FIX 904): the [`EvidenceRef`] vocabulary… |
+| `src/write_envelope/claim_body/lexical_query_hint.rs` | src | s | 1 struct · 4 fn · 4 const | LexicalQueryHintValue | Codec primitives for `core.lexical.query_hint` side records |
+| `src/write_envelope/claim_body/made_by.rs` | src | s | 1 enum · 3 fn | MadeByClass | The provenance class a stored claim offers to readers |
+| `src/write_envelope/claim_body/mod.rs` | src | m | 4 struct · 1 enum · 5 fn · 10 const · 2 mod · 11 re-export · 1 crate-vis | ClaimBody, ClaimSubject, SessionClaimBundle, SessionClaimBundleClaim, SessionClaimBundleMember | The stored CLAIM body, its MessagePack codec, scope stamps and citations |
+| `src/write_envelope/claim_body/relationship_scope.rs` | src | s | 6 fn · 1 type | — | CLAIM relationship scope sets (ARCH-0022): the relationship key holds everything (`all`), a set of… |
+| `src/write_envelope/claim_body/scope.rs` | src | s | 1 fn · 1 crate-vis | — | The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed… |
+| `src/write_envelope/claim_body/scope_stamp.rs` | src | s | 5 fn · 1 const · 1 re-export | — | Stable CLAIM scope identifiers and their MessagePack representation |
+| `src/write_envelope/claim_body/source_trust.rs` | src | s | 1 struct · 4 enum · 6 fn · 5 const · 1 crate-vis | ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung, ClaimSuccession, MapValue | CLAIM scope-map values used by write envelopes and stored-body codecs |
+| `src/write_envelope/claim_predicate.rs` | src | s | 3 struct · 5 enum · 7 fn · 32 const | ExpressionKeigo, ExpressionPreferenceChange, ExpressionPreferenceKind, ExpressionPreferenceOrigin, ExpressionPreferenceSet, ExpressionPreferenceValue, ExpressionPreferenceWriteResult, ExpressionRegister | Predicate grammar and the engine-owned predicate vocabulary used by stored claims |
+| `src/write_envelope/claim_vad.rs` | src | s | 3 struct · 4 fn · 1 const | ClaimVadConsolidation, ClaimVadReappraisal, ClaimVadTurnEvidence | Claim-level VAD evidence aggregation: turn-evidence refs, mean VAD, and consolidation result types |
+| `src/write_envelope/cohort_claims/codec.rs` | src | m | 16 fn · 27 const | — | MessagePack codecs, write-door validator, and map/key/token toolkit |
+| `src/write_envelope/cohort_claims/ladder.rs` | src | m | 7 struct · 3 enum · 6 fn · 1 const | ExternalStageEvidenceHook, NoShowRecoveryRule, PromotionMode, ReplyCode, ReplyDisposition, ReplyRouteRule, StageDefinition, StageEvidence +2 | Pure stage-ladder schema types, validation, and ladder-query helpers |
+| `src/write_envelope/cohort_claims/mod.rs` | src | s | 4 mod · 3 re-export | — | Cohort membership, stage, contact suppression and jurisdiction claim vocabulary |
+| `src/write_envelope/cohort_claims/snooze_policy.rs` | src | s | 1 struct · 1 fn | SnoozePolicyData | Declarative pause dials carried by cohort records |
+| `src/write_envelope/cohort_claims/suppression.rs` | src | s | 2 struct · 1 enum | SuppressionCause, SuppressionInput, SuppressionReceipt | Restrictive contact-suppression inputs, causes and receipts |
+| `src/write_envelope/cohort_claims/types.rs` | src | m | 10 struct · 5 enum · 11 fn · 9 const | BounceKind, CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue, ClaimClassDescriptorRow, CommBounceValue, CommDoNotContactValue +7 | CRM-pack claim predicates, value types, token enums, and descriptor table |
+| `src/write_envelope/commitment_actor.rs` | src | s | 1 fn | — | Deterministic identity used by commitment projection writes |
+| `src/write_envelope/commitment_transition.rs` | src | s | 2 fn · 1 const | — | Commitment successor identity rules |
+| `src/write_envelope/communication.rs` | src | s | 1 struct · 4 enum · 5 fn · 1 type · 21 const | ClaimClassDescriptorRow, CommClearOptOutOutcome, CommError, SendOverrideMatch, SendOverrideScope | Communication predicate, error, send-override and descriptor-row vocabulary |
+| `src/write_envelope/communication_record.rs` | src | m | 2 enum · 18 fn · 2 const | CommEventKind, CommRecord | Communication event, gate and receipt wire values and their strict MessagePack codec |
+| `src/write_envelope/companion_subject.rs` | src | s | 1 struct · 4 enum · 16 fn | CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKey | Typed companion task domain: scopes, PERSON/relationship subjects, and task keys |
+| `src/write_envelope/companion_task_kind.rs` | src | s | 1 enum · 2 fn | CompanionTaskKind | Companion background task family strings |
+| `src/write_envelope/coping_outcome.rs` | src | m | 3 struct · 1 enum · 18 fn · 1 const | CopingOutcomeRecord, CopingOutcomeUpdate, CopingOutcomeValue, CopingStrategy | Coping outcome records and canonical claim value codec |
+| `src/write_envelope/counterparty_fields.rs` | src | s | 4 const | — | Counterparty contact body keys and disclosure field profiles |
+| `src/write_envelope/effect_digest.rs` | src | s | 1 struct · 3 fn | EffectDigest | Engine-emitted effect digest value |
+| `src/write_envelope/identity_pair.rs` | src | s | 6 fn · 3 const | — | Symmetric identity-pair claim vocabulary and structural validation |
+| `src/write_envelope/identity_reputation.rs` | src | m | 3 struct · 4 enum · 16 fn · 17 const | EmailReputationWebhookSignal, IdentityAttestationTier, IdentityReputation, IdentityReputationSignal, IdentityReputationStatus, IdentitySendRateClamp, IdentityWarmupStage | Sender reputation values, wire predicates, and pure claim validation |
+| `src/write_envelope/learning_predicate.rs` | src | s | 1 fn · 5 const · 1 re-export | — | The measured-state claim family and its namespace classifier |
+| `src/write_envelope/person_identity.rs` | src | s | 3 fn | — | Identity-bearing facet classification and canonical PERSON body maps |
+| `src/write_envelope/profile_snapshot/codec.rs` | src | s | 11 fn · 1 re-export | — | Canonical MessagePack encode/decode and field validation helpers |
+| `src/write_envelope/profile_snapshot/codec/source_pages.rs` | src | s | 1 const · 4 crate-vis | — | The paged source frames of a PSYCH_PROFILE body (FIX 10054, Rule 5): a size bound is a codec frame, never a… |
+| `src/write_envelope/profile_snapshot/keys.rs` | src | s | 1 struct · 1 fn | PsychProfileKey | Stable Person x Facet x World addressing and entity-id derivation |
+| `src/write_envelope/profile_snapshot/mod.rs` | src | s | 3 mod · 5 re-export | — | Profile snapshot records, addressing and canonical MessagePack codec |
+| `src/write_envelope/profile_snapshot/record.rs` | src | s | 3 struct · 3 enum · 6 fn · 18 const · 2 crate-vis | PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileStaleReason, PsychProfileState | Snapshot record types, projections, and constructors/validators |
+| `src/write_envelope/provenance/actor_stamp.rs` | src | s | 1 struct | ActorStamp | Opaque actor stamp identity |
+| `src/write_envelope/provenance/actor_substrate.rs` | src | s | 6 fn · 1 const | — | Actor-class validation and model substrate codec |
+| `src/write_envelope/provenance/codec.rs` | src | m | 1 struct · 5 fn | EdgeProvenanceClaimBody | Edge-provenance value record and its fail-closed MessagePack gate |
+| `src/write_envelope/provenance/edge_lifecycle.rs` | src | s | 2 struct · 5 fn | ProvenancePrecedence, StoredProvenanceClaim | Edge provenance precedence and pure record lifecycle values |
+| `src/write_envelope/provenance/edge_ref.rs` | src | s | 1 struct · 1 enum · 4 fn · 14 const | EdgeRef, SupersessionStatus | Pinned predicate, body-key vocabulary, EdgeRef addressing, and supersession status |
+| `src/write_envelope/provenance/entity_ref_wire.rs` | src | s | 2 fn | — | Validated hexadecimal entity references in provenance receipts |
+| `src/write_envelope/provenance/made_by.rs` | src | s | 3 struct · 3 enum · 3 fn · 1 re-export | MadeBy, MadeByInput, MadeByInputRole, MadeByPredicate, MadeByProcess, MadeByTrigger | Rule A provenance vocabulary shared by text commits and retrieval |
+| `src/write_envelope/provenance/mod.rs` | src | s | 8 mod · 4 re-export | — | Edge provenance and derivation record vocabulary and codecs |
+| `src/write_envelope/provenance/text_commit.rs` | src | s | 2 struct · 1 fn | RowProvenance, TextCommitReceipt | Durable per-commit text provenance |
+| `src/write_envelope/skill_record/admission.rs` | src | s | 1 fn | — | Pure runtime admission invariant over one stored skill record |
+| `src/write_envelope/skill_record/codec.rs` | src | m | 5 fn | — | MessagePack encode and decode for SKILL bodies and dependencies |
+| `src/write_envelope/skill_record/identity.rs` | src | s | 1 struct · 6 fn · 3 const | SkillContentHash | Canonical skill identity: content hash, tree hash, and hub cross-check |
+| `src/write_envelope/skill_record/lifecycle.rs` | src | s | 2 enum · 7 fn | SkillGovernanceTier, SkillLifecycle | SKILL lifecycle machine and governance-tier axis |
+| `src/write_envelope/skill_record/mod.rs` | src | s | 7 mod · 9 re-export · 1 crate-vis | — | Stored skill records, canonical identity, call contracts and pure validation |
+| `src/write_envelope/skill_record/record.rs` | src | s | 2 struct · 7 fn · 23 const | SkillDependency, SkillRecord | SKILL record types with pinned wire keys and size bounds |
+| `src/write_envelope/skill_record/resident.rs` | src | s | 2 fn · 1 const | — | Immutable resident ownership encoded in a skill record |
+| `src/write_envelope/skill_record/role.rs` | src | s | 1 struct · 1 enum · 2 fn · 3 crate-vis | SkillCallContract, SkillRole | Skill roles and the executable call contract |
+| `src/write_envelope/skill_record/validate.rs` | src | s | 5 fn | — | SKILL record-shape invariants and the update gate |
+| `src/write_envelope/skill_source/files.rs` | src | s | 1 struct · 1 enum · 1 fn | HubFile, SkillPackageFormat | Exact skill source files and their declared metadata format |
+| `src/write_envelope/skill_source/hub_record.rs` | src | m | 3 struct · 4 enum · 16 fn · 3 const | HubPin, HubRef, HubSyncPolicy, SkillHubKind, SkillHubRecord, SkillHubTrustTier, TrackedHubRef | Hub and pinned skill reference vocabulary |
+| `src/write_envelope/skill_source/mod.rs` | src | s | 2 mod · 2 re-export | — | Hub reference records and exact skill source file vocabulary |
+| `src/write_envelope/skill_source/support.rs` | src | s | 8 fn · 1 const | — | Bounded hub value parsing helpers |
+| `src/write_envelope/subject_record.rs` | src | s | 1 struct · 2 enum · 10 fn · 2 const · 1 re-export | ActorSubjectAnchor, PersonSubstrate, SubjectKind | Subject identity and substrate vocabulary with pure claim-shape validation |
+| `src/write_envelope/task_body.rs` | src | s | 1 struct · 1 enum · 9 fn · 4 const | HabitStreak, TaskRole | TASK roles, canonical body fields, and deterministic check-in streak values |
+| `src/write_envelope/thread_claim/codec.rs` | src | s | 7 fn · 7 crate-vis | — | — |
+| `src/write_envelope/thread_claim/mod.rs` | src | m | 5 struct · 1 enum · 15 fn · 16 const · 1 re-export · 5 crate-vis | CanonicalMessageId, StickyMaskDecision, ThreadMask, ThreadPassport, ThreadPassportInput, ThreadPassportResolution | Email thread claim vocabulary, canonical message identities and value codecs |
+| `src/write_envelope/vad_annotation.rs` | src | s | 1 struct · 4 fn · 1 const | VadAnnotationCleanup | VAD annotation claim values, stable ids, and cleanup result data |
+| `src/write_envelope/validation.rs` | src | s | 1 fn | — | Write-envelope shape validation |
+| `src/write_envelope/voice_segment.rs` | src | s | 2 fn · 7 const | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
+| `src/write_envelope/world_access_predicates.rs` | src | s | 2 const | — | World-access authority claim predicates |

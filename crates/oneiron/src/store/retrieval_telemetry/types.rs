@@ -7,10 +7,10 @@ use uuid::Uuid;
 
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::pipeline::Signal;
 use crate::retrieval_quality::{
     ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality, RetrievalQualityReport,
 };
+use crate::store::retrieval_signal::Signal;
 
 use super::run_store::RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT;
 

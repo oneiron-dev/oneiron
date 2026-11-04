@@ -6,8 +6,9 @@
 //! env one orphan collection, due an hour later at the earliest: by then
 //! every file the purge left unnamed is past the collector's grace. Each
 //! housekeeping pass that finds it due, a handle's first pass included, runs
-//! one bounded collector pass, and so does a connection opening on the env,
-//! on a blocking thread of its own. A body a reader pinned, a page that may
+//! one bounded collector pass, and so does a connection running on the env,
+//! under the host's admission, on a blocking thread of its own. A body a
+//! reader pinned, a page that may
 //! have more, or a fault keeps the row for a later pass; a pass that finds no
 //! more to collect drops it. Nothing waits on it: not the leave, its
 //! response, nor a connection's open.
@@ -80,12 +81,16 @@ pub(crate) fn collect_left_env_bodies(vault: &Vault) {
     }
 }
 
-/// [`collect_left_env_bodies`] as a connection on the env opens: when the
-/// env's owed collection is due, the pass runs on a blocking thread of its
-/// own, so the open never fails, waits or blocks for it. A due time that does
-/// not read is warned, and outside a runtime the pass is left to
-/// housekeeping.
-pub(crate) fn collect_left_env_bodies_at_open(vault: &Arc<Vault>) {
+/// [`collect_left_env_bodies`] as a connection on the env runs: when the
+/// env's owed collection is due, a task of its own waits for `admission`,
+/// the host's admission for one round off the loop (FIX 12036), and runs the
+/// pass on a blocking thread while it holds it, so the run never fails,
+/// waits or blocks for it. A due time that does not read is warned, and
+/// outside a runtime the pass is left to housekeeping.
+pub(crate) fn collect_left_env_bodies_admitted<G: Send + 'static>(
+    vault: &Arc<Vault>,
+    admission: impl Future<Output = G> + Send + 'static,
+) {
     let due = match left_env_body_collect_due_at(vault) {
         Ok(due_at) => due_at.is_some_and(|due_at| due_at <= crate::unix_seconds_now()),
         Err(error) => {
@@ -101,7 +106,10 @@ pub(crate) fn collect_left_env_bodies_at_open(vault: &Arc<Vault>) {
     };
     if due {
         let vault = Arc::clone(vault);
-        drop(runtime.spawn_blocking(move || collect_left_env_bodies(&vault)));
+        drop(runtime.spawn(async move {
+            let _admitted = admission.await;
+            let _ = tokio::task::spawn_blocking(move || collect_left_env_bodies(&vault)).await;
+        }));
     }
 }
 

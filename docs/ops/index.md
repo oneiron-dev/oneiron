@@ -5,7 +5,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 
 - [Your vault: where it lives, backups, restore, export, one-act approvals](owner-actions.md) —
   `oneiron doctor`, `backup`, `restore --rehearse`, `restore`, `export`, `secret-scan`,
-  `import`, `runs`, `learning-settings`, `widen-proposals`, and the `/v1/owner` routes.
+  `import`, `files`, `runs`, `learning-settings`, `widen-proposals`, and the `/v1/owner` routes.
 - [Owner custody commands](owner-custody.md) — `--unlock` for every vault-key command, a
   restore's `--wrap-to`, `secrets bind`/`unbind`, the kit push on a running server, credentials a
   restore left pending, `secrets import-supplement` for an export's secret supplements, and a

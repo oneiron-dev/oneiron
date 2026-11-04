@@ -171,6 +171,12 @@ impl ArtifactPublishVerbRequest {
 pub enum ArtifactPublishVerbStatus {
     Proposed,
     Published,
+    /// A full count-bound budget window paces the publish (FIX 12156):
+    /// nothing was recorded, charged or published. Bring it back at
+    /// `retry_at`, Unix seconds on the engine's clock.
+    Paced {
+        retry_at: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

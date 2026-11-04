@@ -29,7 +29,9 @@ use serde::{Deserialize, Serialize};
 use super::codec::{RECORD, settlement_key_parts};
 use super::pending::{PENDING, PendingProposalView};
 use super::receipts::{already_settled, manifest_ref, settlement_receipt_record};
-use super::records::{SettleConsent, SettleOutcomeKind, SettleSelectOutcome, SettlementRecord};
+use super::records::{
+    SettleConsent, SettleOutcomeKind, SettleSelectOutcome, SettledReview, SettlementRecord,
+};
 use crate::Vault;
 use crate::anchored_annotation::ReanchorSummary;
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
@@ -38,7 +40,7 @@ use crate::edit_roundtrip::paragraph_review::carry_paragraph_judgments;
 use crate::edit_roundtrip::pptx::PptxAuthor;
 use crate::edit_roundtrip::slides_review::{
     SlideNow, SlideRenderer, SlideReviewError, SlideReviewImage, SlideReviewLabels,
-    SlideReviewRequest, SlideReviewUnit, carry_slide_judgments, deck_slides_now,
+    SlideReviewRequest, SlideReviewUnit, carry_slide_judgments, deck_slides_now, review_copy_bytes,
 };
 use crate::edit_roundtrip::{
     ArtifactAsk, CellRef, CellValue, EditOp, EditProposal, FolderAsk, FolderItem, OfficeFormat,
@@ -48,8 +50,7 @@ use crate::edit_roundtrip::{
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::{
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
-    TypedDecision,
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, TypedDecision,
 };
 use crate::office_body::LivePin;
 use crate::provenance::made_by::MadeBy;
@@ -888,12 +889,14 @@ impl Vault {
             Ok((head, record))
         })?;
         let receipt = settlement_receipt_record(*artifact, &record)?;
+        let receipt = self.with_withdrawn_units(*artifact, &record, receipt)?;
         Ok(SettleSelectOutcome {
             stranded_proposal: None,
-            receipt: self.with_withdrawn_units(*artifact, &record, receipt)?,
+            receipt,
             version: head,
             reanchor: ReanchorSummary::default(),
             reconciliation: None,
+            review: SettledReview::of(record),
         })
     }
 
@@ -1084,7 +1087,7 @@ impl Vault {
         let mut read = None;
         let woke = self.reask(wake, actor, decider, dial, policy, renderer, now, &mut read);
         // A wake that asked nothing (a replay, or no unit left) logs no ask.
-        let asked = !matches!(woke, Ok((Reasked::Nothing, _)));
+        let asked = !matches!(woke, Ok((Reasked::Nothing, _) | (Reasked::Replay, _)));
         let committed = woke.and_then(|(reasked, reask_ref)| {
             self.commit_reask(wake, &key, actor, now, reasked, &reask_ref, read.as_deref())
         });
@@ -1110,8 +1113,8 @@ impl Vault {
     /// Commits what a wake's ask made in ONE transaction (FIX 9174): its
     /// proposal, held for Keep under `reask_ref`; its entry in the standing
     /// question's ask log; and the wake's marks (each asked unit woken, the
-    /// ref listed, the hold cleared). A wake that asked nothing (a replay of
-    /// one already asked) marks the wake alone and logs no ask.
+    /// ref listed, the hold cleared). A replay marks nothing and logs no
+    /// ask; a terminal ask with no unit left retires the wake and logs no ask.
     #[expect(clippy::too_many_arguments)]
     fn commit_reask(
         &self,
@@ -1123,9 +1126,14 @@ impl Vault {
         reask_ref: &str,
         read: Option<&[(EntityId, u64)]>,
     ) -> Result<Option<PendingProposalView>> {
-        let (asked, proposal, unit_receipts) = match reasked {
-            Reasked::Nothing => (false, None, Vec::new()),
-            Reasked::Asked { proposal, units } => (true, proposal, units),
+        let (asked, proposal, unit_receipts, read_rows, retire) = match reasked {
+            Reasked::Nothing => (false, None, Vec::new(), Vec::new(), true),
+            Reasked::Replay => (false, None, Vec::new(), Vec::new(), false),
+            Reasked::Asked {
+                proposal,
+                units,
+                read_rows,
+            } => (true, proposal, units, read_rows, false),
         };
         // The carried envelope is admitted through the principal's own read,
         // inside the asking version's saved lane, as the fresh proposal waits
@@ -1149,14 +1157,14 @@ impl Vault {
         let units: Vec<&WithdrawnUnit> = wake.answers.iter().map(|answer| &answer.unit).collect();
         self.with_write_txn(|wtxn| {
             let proposed = match &proposal {
-                Some(proposal) => Some(self.retain_edit_proposal_in_txn(
+                Some(proposal) => Some(self.retain_edit_proposal_with_reads_in_txn(
                     wtxn,
                     &wake.artifact,
                     proposal,
                     wake.made_by.as_ref(),
                     lane.as_ref(),
-                    actor,
-                    now,
+                    (actor, now),
+                    &read_rows,
                 )?),
                 None => None,
             };
@@ -1172,9 +1180,18 @@ impl Vault {
             let Some(mut row) = WITHDRAWALS.get(&self.store, wtxn, key)? else {
                 return Ok(proposed);
             };
-            for answer in &mut row.answers {
-                if answer.woken_at.is_none() && units.contains(&&answer.unit) {
-                    answer.woken_at = Some(now);
+            // A replay marks nothing: its first ask already covered the
+            // evaluation. Any evaluation that ran — a real ask, or a
+            // terminal one with no unit left — retires this wake's own
+            // units. Only units present in this wake's snapshot are marked:
+            // newly appended units stay due for their own evaluation, and
+            // a later fresh wake covering them retires or asks them in turn,
+            // so no expired deadline can pump forever (FIX 9826).
+            if asked || retire {
+                for answer in &mut row.answers {
+                    if answer.woken_at.is_none() && units.contains(&&answer.unit) {
+                        answer.woken_at = Some(now);
+                    }
                 }
             }
             if !row
@@ -1214,20 +1231,12 @@ impl Vault {
         let live = self
             .office_body_pin(&wake.artifact)?
             .map_or_else(String::new, |pin| format!(":{}", pin.commits));
-        let reask_ref = format!(
-            "reask:{}:{}{live}",
-            &blake3::hash(wake.proposal_ref.as_bytes()).to_hex()[..16],
-            head.version
-        );
-        // A wake that asked but was not marked asks nothing again.
-        if self.pending_proposal(&wake.artifact, &reask_ref)?.is_some()
-            || self
-                .blob_artifact_settlement(&wake.artifact, &reask_ref)?
-                .is_some()
-        {
-            return Ok((Reasked::Nothing, reask_ref));
-        }
         // What this ask reads, for its standing question's log (FIX 9174).
+        // The withdrawn unit set and its current source revisions also name
+        // the ref (FIX 9826): a new withdrawal while the destination head
+        // stays put asks under its own ref instead of reusing an earlier
+        // reask ref, so its evaluation is never skipped and no unit is marked
+        // woken without one.
         let files: Vec<EntityId> = wake
             .answers
             .iter()
@@ -1239,6 +1248,23 @@ impl Vault {
         let mut versions = self.observed_versions(&wake.artifact, &files)?;
         if let Some(first) = versions.first_mut() {
             first.1 = head.version;
+        }
+        let units: Vec<&WithdrawnUnit> = wake.answers.iter().map(|answer| &answer.unit).collect();
+        let binding = serde_json::to_vec(&(&units, &versions))
+            .map_err(|_| Error::InvariantViolation("reask binding encoding"))
+            .map(|bytes| blake3::hash(&bytes).to_hex()[..16].to_string())?;
+        let reask_ref = format!(
+            "reask:{}:{}{live}:{binding}",
+            &blake3::hash(wake.proposal_ref.as_bytes()).to_hex()[..16],
+            head.version
+        );
+        // A wake that asked but was not marked asks nothing again.
+        if self.pending_proposal(&wake.artifact, &reask_ref)?.is_some()
+            || self
+                .blob_artifact_settlement(&wake.artifact, &reask_ref)?
+                .is_some()
+        {
+            return Ok((Reasked::Replay, reask_ref));
         }
         *read = Some(versions);
         let ask = ArtifactAsk {
@@ -1268,7 +1294,7 @@ impl Vault {
         {
             return Ok((Reasked::Nothing, reask_ref));
         }
-        let (proposal, units) = match &wake.shape {
+        let (proposal, units, read_rows) = match &wake.shape {
             ReaskShape::SheetRows {
                 sheet,
                 answer_col,
@@ -1309,7 +1335,7 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units)
+                (run.proposal, units, run.read_rows)
             }
             ReaskShape::FolderItems {
                 sheet,
@@ -1358,7 +1384,7 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units)
+                (run.proposal, units, run.read_rows)
             }
             ReaskShape::Paragraphs { author, labels } => {
                 let blocks: Vec<String> = wake
@@ -1382,7 +1408,7 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units)
+                (run.proposal, units, run.read_rows)
             }
             ReaskShape::Slides { author, labels } => {
                 let bytes = self
@@ -1413,6 +1439,10 @@ impl Vault {
                         "the slide renderer returned the wrong number of images".to_owned(),
                     ));
                 }
+                // The review's own copy of the images is admitted first, and
+                // given back once it is done (FIX 8244).
+                let copies = review_copy_bytes(&images);
+                renderer.admit(copies)?;
                 let units: Vec<SlideReviewUnit> = targets
                     .into_iter()
                     .zip(images)
@@ -1430,8 +1460,9 @@ impl Vault {
                     author,
                     dial,
                     resident_dial: None,
-                    // The vault re-imposes its stored policy's limits.
-                    limits: SlideReviewLimits::default(),
+                    // The vault's stored policy row runs: a wake narrows none
+                    // of it (FIX 9336).
+                    limits: crate::blob_artifact::SlideReviewLimitsInput::default().limits(),
                     policy,
                     reversibility: Reversibility::ReversibleRead,
                     labels,
@@ -1444,24 +1475,31 @@ impl Vault {
                     at: now.saturating_mul(1000),
                 };
                 let shown = live.as_ref().map(|(pin, deck)| (pin, deck.as_slice()));
-                let run = self
-                    .review_blob_artifact_slides_at(
-                        &wake.artifact,
-                        head.version,
-                        &bytes,
-                        shown,
-                        &request,
-                    )
-                    .map_err(|error| match error {
-                        SlideReviewError::Vault(error) => error,
-                        other => Error::InvalidConfig(other.to_string()),
-                    })?;
+                let run = self.review_blob_artifact_slides_at(
+                    &wake.artifact,
+                    head.version,
+                    &bytes,
+                    shown,
+                    &request,
+                );
+                renderer.materialized(copies, 0);
+                let run = run.map_err(|error| match error {
+                    SlideReviewError::Vault(error) => error,
+                    other => Error::InvalidConfig(other.to_string()),
+                })?;
                 // Standing artifact questions never ask slides, so a slide re-ask
                 // logs nowhere; it carries no unit receipts.
-                (run.proposal, Vec::new())
+                (run.proposal, Vec::new(), run.read_rows)
             }
         };
-        Ok((Reasked::Asked { proposal, units }, reask_ref))
+        Ok((
+            Reasked::Asked {
+                proposal,
+                units,
+                read_rows,
+            },
+            reask_ref,
+        ))
     }
 
     /// The refs the wakes of `proposal_ref`'s withdrawn answers asked again under, for a
@@ -1523,13 +1561,17 @@ impl Vault {
 
 /// What a wake's ask made, before anything commits (FIX 9174).
 enum Reasked {
-    /// Nothing was asked: a replay of a wake already asked, or no unit left.
+    /// No unit was left to ask: the wake retires with no ask logged.
     Nothing,
+    /// A replay of a wake already asked under this ref: nothing is marked.
+    Replay,
     /// The ask ran: its answers' proposal, none when no unit was answered,
-    /// and the units it left without an answer, as the first ask keeps them.
+    /// the units it left without an answer, as the first ask keeps them,
+    /// and the rows its reads picked, which the proposal keeps (FIX 9312).
     Asked {
         proposal: Option<EditProposal>,
         units: Vec<crate::llm::decision::questions::ArtifactUnitReceipt>,
+        read_rows: Vec<EntityId>,
     },
 }
 

@@ -484,7 +484,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
         Ok(policy.actor_ceiling(actor_class, Some(actor_ref))
-            == crate::gate::PolicyApprovalCeiling::Proposed)
+            == crate::store::policy_record::PolicyApprovalCeiling::Proposed)
     }
 
     /// Returns pending Gate consent proposals grouped by Dreamer run id.

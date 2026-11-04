@@ -1,5 +1,5 @@
 //! Owner-authenticated raw inference. Host injection is explicit and absent by default.
-use crate::models::{CallDeadline, OfferLadder, RawInference};
+use crate::models::{CallDeadline, ModelCallBinding, OfferLadder, RawInference};
 
 pub(super) mod decision_read;
 mod defaults_submit;
@@ -13,8 +13,13 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::StreamExt;
+use oneiron::code_run::ReadWorldUnknown;
+use oneiron::code_run::model_call::{
+    MODEL_CALL_SCHEMA, ModelCallInputPart, ModelCallKind, ModelCallReasoningPart, ModelCallRecord,
+    model_call_digests, record_model_call_in_txn,
+};
 use oneiron::llm::run_admission::{RunAdmission, RunDenied};
-use oneiron::{LlmError, LlmRequest, LlmStreamEvent};
+use oneiron::{LlmError, LlmRequest, LlmResponse, LlmStreamEvent};
 use std::sync::Arc;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -251,21 +256,152 @@ fn admit_owner(
     raw.call(request, server.run_receipts())
         .ok_or_else(|| Box::new(refusal(StatusCode::BAD_REQUEST, "invalid_request")))
 }
+/// Best-effort record of one completed model call, off the reply path. Missing
+/// provider fields stay unknown; no receipt, route or read-world is invented.
+pub(crate) fn record_raw_response(
+    vault: &oneiron::Vault,
+    ladder: &OfferLadder,
+    run: &RunAdmission,
+    request: &LlmRequest,
+    response: &LlmResponse,
+    binding: Option<&ModelCallBinding>,
+    no_record: bool,
+) {
+    if no_record {
+        tracing::debug!("model-call record skipped: off-record session or room");
+        return;
+    }
+    let digests = match model_call_digests(request) {
+        Ok(digests) => digests,
+        Err(error) => {
+            tracing::warn!(%error, "model-call request digests failed");
+            return;
+        }
+    };
+    // A recorded call's exact answering binding travels with its answer
+    // (FIX 12743) and bypasses the requested-ladder lookup; a call that
+    // names none leaves the route explicitly unknown, never a false pin.
+    let (rung, route) = match binding {
+        Some(binding) => (binding.rung.clone(), binding.route.clone()),
+        None => ladder.model_call_binding(None),
+    };
+    let mut source_rows = run.source_rows().unwrap_or_default();
+    source_rows.extend(
+        response
+            .reply_assertions
+            .cited
+            .iter()
+            .map(|record| record.id),
+    );
+    source_rows.sort_unstable();
+    source_rows.dedup();
+    let input_parts = if source_rows.is_empty() {
+        vec![ModelCallInputPart::Unknown {
+            reason: "model-call request sources were not captured".to_owned(),
+        }]
+    } else {
+        Vec::new()
+    };
+    let call_metadata = response.usage.call_metadata.as_ref();
+    let record = ModelCallRecord {
+        schema: MODEL_CALL_SCHEMA,
+        attempt: run.instance(),
+        lease_generation: u64::from(run.revision()),
+        call_index: 1,
+        kind: ModelCallKind::Generate {
+            digests,
+            usage: response.usage.clone(),
+            finish_reason: response.finish_reason.clone(),
+        },
+        route,
+        rung,
+        issuing_login: None,
+        organization: None,
+        project: None,
+        credential_id: None,
+        response_id: call_metadata.and_then(|metadata| metadata.response_id.clone()),
+        thread_id: None,
+        previous_response_id: call_metadata
+            .and_then(|metadata| metadata.previous_response_id.clone()),
+        store: call_metadata.and_then(|metadata| metadata.store),
+        endpoint: call_metadata.map(|metadata| metadata.endpoint),
+        captured_at: vault.now_recorded_at(),
+        receipt_ref: None,
+        actor: run.principal(),
+        produced_pending: false,
+        tool_rounds: false,
+        rounds_truncated: false,
+        replay_of: None,
+        source_rows,
+        produced_rows: response
+            .reply_assertions
+            .created
+            .iter()
+            .map(|record| record.id)
+            .collect(),
+        input_parts,
+        reasoning: response
+            .message
+            .content
+            .iter()
+            .filter_map(|part| ModelCallReasoningPart::from_terminal(part, None, None))
+            .collect(),
+        read_world_epoch: None,
+        read_worlds: None,
+        read_world_unknown: vec![ReadWorldUnknown::Uncaptured],
+        tools_present: !request.tools.is_empty(),
+        summary_requested: false,
+        erased: false,
+    };
+    if let Err(error) =
+        vault.with_write_txn_grouped(|txn| record_model_call_in_txn(vault, txn, &record))
+    {
+        tracing::warn!(%error, "model-call record failed");
+    }
+}
+
 async fn generate(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    headers: axum::http::HeaderMap,
     Json(mut request): Json<LlmRequest>,
 ) -> Response {
     let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
     };
+    let session = super::call_receipt::request_session_ref(&headers).map(str::to_owned);
+    let principal = super::call_receipt::request_principal(&auth);
+    let no_record_at_arrival = server
+        .vault()
+        .model_call_keeps_no_record_for(session.as_deref(), principal);
+    // The authenticated caller acted to start this call: the run names it
+    // as initiator (attribution only), so its evidence row carries an
+    // actor its erase can find. Owner-grade callers bind none, as before.
+    let run = run.initiated_by(principal);
     // The caller's own connection is the raw call's deadline (FIX 8213).
+    // generate_recorded_by takes the request by value; the record keeps its own copy.
+    let record_request = request.clone();
     match ladder
-        .generate_by(&run, request, None, &|| true, CallDeadline::Open)
+        .generate_recorded_by(&run, request, None, &|| true, CallDeadline::Open)
         .await
     {
-        Ok(response) => Json(response).into_response(),
+        Ok((response, binding)) => {
+            let no_record = no_record_at_arrival
+                || server
+                    .vault()
+                    .model_call_keeps_no_record_for(session.as_deref(), principal);
+            record_raw_response(
+                server.vault(),
+                &ladder,
+                &run,
+                &record_request,
+                &response,
+                Some(&binding),
+                no_record,
+            );
+            Json(response).into_response()
+        }
         Err(e) => failure(e),
     }
 }
@@ -284,19 +420,30 @@ async fn send_error(
 async fn stream(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    headers: axum::http::HeaderMap,
     Json(mut request): Json<LlmRequest>,
 ) -> Response {
     let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
     };
+    let session = super::call_receipt::request_session_ref(&headers).map(str::to_owned);
+    let principal = super::call_receipt::request_principal(&auth);
+    let no_record_at_arrival = server
+        .vault()
+        .model_call_keeps_no_record_for(session.as_deref(), principal);
+    // Same initiator binding as the raw generate path above.
+    let run = run.initiated_by(principal);
     // The first rung is admitted here, so a refused call answers before the
     // stream starts. Each rung settles itself; a stream the client leaves
     // ends its call, and a started rung keeps its reservation as spend.
-    let mut source = match ladder.stream_by(&run, request, None, CallDeadline::Open) {
-        Ok(source) => source,
-        Err(e) => return failure(e),
-    };
+    // stream_recorded_by takes the request by value; the record keeps its own copy.
+    let record_request = request.clone();
+    let (mut source, mut binding) =
+        match ladder.stream_recorded_by(&run, request, None, CallDeadline::Open) {
+            Ok(opened) => opened,
+            Err(e) => return failure(e),
+        };
     let (send, receive) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
     tokio::spawn(async move {
         loop {
@@ -312,6 +459,42 @@ async fn stream(
                 }
             };
             let done = matches!(event, LlmStreamEvent::Done { .. });
+            // A completed call's evidence lands before its terminal line
+            // goes out: a client gone at delivery still leaves its record.
+            if done
+                && let LlmStreamEvent::Done {
+                    message,
+                    usage,
+                    finish_reason,
+                    reply_assertions,
+                    ..
+                } = &event
+            {
+                let response = LlmResponse {
+                    message: message.clone(),
+                    usage: usage.clone(),
+                    finish_reason: finish_reason.clone(),
+                    reply_assertions: reply_assertions.clone(),
+                    token_scores: None,
+                };
+                let no_record = no_record_at_arrival
+                    || server
+                        .vault()
+                        .model_call_keeps_no_record_for(session.as_deref(), principal);
+                // A recorded stream's exact answering binding travels beside
+                // its answer (FIX 12743); a stream that ended any other way
+                // leaves the route explicitly unknown, never a false pin.
+                let binding = binding.try_recv().ok();
+                record_raw_response(
+                    server.vault(),
+                    &ladder,
+                    &run,
+                    &record_request,
+                    &response,
+                    binding.as_ref(),
+                    no_record,
+                );
+            }
             match serde_json::to_vec(&event) {
                 Ok(mut bytes) => {
                     bytes.push(b'\n');
@@ -357,13 +540,20 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
 
     fn generate(
         &self,
-        _peer: oneiron::EntityId,
+        peer: oneiron::EntityId,
         mut request: LlmRequest,
     ) -> oneiron::LlmGenerateFuture<'static> {
         let server = Arc::clone(&self.0);
         Box::pin(async move {
             let (ladder, run) =
                 admit_owner(&server, &mut request).map_err(|refused| refused_error(&refused))?;
+            // The mesh peer is this call's authenticated principal, named
+            // as the run's initiator for attribution. A mesh call binds no
+            // session, so the vault's session no-record rule can never fire
+            // for it and would silently leak off-record peer work into the
+            // record: mesh calls record nothing until a verified no-record
+            // context crosses the mesh with the call.
+            let run = run.initiated_by(Some(peer));
             ladder
                 .generate_by(&run, request, None, &|| true, CallDeadline::Open)
                 .await

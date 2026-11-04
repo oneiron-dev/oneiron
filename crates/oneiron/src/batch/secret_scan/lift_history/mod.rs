@@ -50,10 +50,10 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, GateError, Result};
-use crate::secret_custody::KnownValues;
 use crate::secret_snapshot::SnapshotSecretLiftProposal;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::store::known_value_index::KnownValues;
 
 /// Rows one census page reads before the pass may stop.
 const LIFT_PAGE_ROWS: usize = 64;

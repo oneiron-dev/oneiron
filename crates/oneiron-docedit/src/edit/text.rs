@@ -25,6 +25,9 @@ use crate::retained_opc::Package;
 use build::{broken_run, insert_paragraphs, new_run};
 
 mod build;
+mod field_cut;
+
+pub(crate) use field_cut::cell_text_cut;
 
 /// U+000B: an `a:br` in paragraph text, as PowerPoint writes it.
 pub(crate) const BREAK: char = '\u{b}';

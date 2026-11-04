@@ -32,7 +32,8 @@ pub(super) const RENEGOTIATE_AT_ONCE: bool = true;
 impl SyncConnection {
     /// Resolves the mode at start, then on each wake whose committed home
     /// moved this machine in or out of the home, for the connection's whole
-    /// life. A federation lane keeps its configured mode and runs none.
+    /// life. A federation lane keeps its configured mode and runs none. Each
+    /// change holds the host's admission, a pause waited out (FIX 12036).
     pub(super) async fn run_residence_mode(
         &self,
         events: mpsc::UnboundedSender<SyncEvent>,
@@ -46,6 +47,8 @@ impl SyncConnection {
         loop {
             match crate::sync::residence::local_is_elected_home(&vault) {
                 Ok(is_home) if home != Some(is_home) => {
+                    // `follow_home` resolves the mode afresh past a pause.
+                    let _change = self.admit_round().await;
                     if let Err(error) = self.follow_home(&vault) {
                         let _ = events.send(SyncEvent::Error(format!(
                             "Residence mode refresh failed: {error}"
@@ -69,7 +72,8 @@ impl SyncConnection {
 
     /// Publishes the mode the committed home and the owner's stored choice
     /// resolve to now, when it differs from the one this connection runs.
-    /// A change to All drops the opened read caches first.
+    /// A change to All publishes first and then drops the opened read
+    /// caches, so no reader sees Thin with its caches gone (FIX 11114).
     fn follow_home(&self, vault: &Vault) -> crate::error::Result<()> {
         let mode = crate::sync::residence::resolve_residence_mode(
             vault,
@@ -78,14 +82,19 @@ impl SyncConnection {
         if mode == *self.mode.borrow() {
             return Ok(());
         }
-        if mode == SyncResidenceMode::All {
-            crate::sync::residence::prune_thin_items(vault, u64::MAX)?;
-        }
         self.mode.send_if_modified(|running| {
             let changed = *running != mode;
             *running = mode;
             changed
         });
+        if mode == SyncResidenceMode::All
+            && let Err(error) = crate::sync::residence::prune_thin_items(vault, u64::MAX)
+        {
+            tracing::warn!(
+                %error,
+                "residence mode is All with its opened read caches left; the next switch drops them"
+            );
+        }
         Ok(())
     }
 }

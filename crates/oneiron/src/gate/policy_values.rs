@@ -9,6 +9,8 @@ pub(super) enum PolicyValueKey {
     CalendarOutcomeGraceSeconds,
     CommOptOutPosture,
     DreamerRetryParkSeconds,
+    EsignRateDocumentThreshold,
+    EsignRateRecipientThreshold,
     EscalationStandingRulings,
     MinerRecurrenceReceipts,
     MinerRejectionWaitSeconds,
@@ -29,6 +31,8 @@ impl PolicyValueKey {
             "calendar_outcome_grace_seconds" => Some(Self::CalendarOutcomeGraceSeconds),
             "comm_opt_out_posture" => Some(Self::CommOptOutPosture),
             "dreamer_retry_park_seconds" => Some(Self::DreamerRetryParkSeconds),
+            "esign_rate_document_threshold" => Some(Self::EsignRateDocumentThreshold),
+            "esign_rate_recipient_threshold" => Some(Self::EsignRateRecipientThreshold),
             "escalation_standing_rulings" => Some(Self::EscalationStandingRulings),
             "miner_recurrence_receipts" => Some(Self::MinerRecurrenceReceipts),
             "miner_rejection_wait_seconds" => Some(Self::MinerRejectionWaitSeconds),
@@ -50,6 +54,8 @@ impl PolicyValueKey {
             Self::CalendarOutcomeGraceSeconds => "calendar_outcome_grace_seconds",
             Self::CommOptOutPosture => "comm_opt_out_posture",
             Self::DreamerRetryParkSeconds => "dreamer_retry_park_seconds",
+            Self::EsignRateDocumentThreshold => "esign_rate_document_threshold",
+            Self::EsignRateRecipientThreshold => "esign_rate_recipient_threshold",
             Self::EscalationStandingRulings => "escalation_standing_rulings",
             Self::MinerRecurrenceReceipts => "miner_recurrence_receipts",
             Self::MinerRejectionWaitSeconds => "miner_rejection_wait_seconds",
@@ -89,6 +95,8 @@ impl PolicyValueKey {
             | Self::CalendarOutcomeGraceSeconds
             | Self::CommOptOutPosture
             | Self::DreamerRetryParkSeconds
+            | Self::EsignRateDocumentThreshold
+            | Self::EsignRateRecipientThreshold
             | Self::EscalationStandingRulings
             | Self::MinerRecurrenceReceipts
             | Self::MinerRejectionWaitSeconds
@@ -104,135 +112,8 @@ impl PolicyValueKey {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PolicyPrecedence {
-    NestedNarrowing,
-    MostSpecific,
-}
-impl PolicyPrecedence {
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "nested_narrowing" => Some(Self::NestedNarrowing),
-            "most_specific" => Some(Self::MostSpecific),
-            _ => None,
-        }
-    }
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::NestedNarrowing => "nested_narrowing",
-            Self::MostSpecific => "most_specific",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PolicyValue {
-    ArtifactAnswerQuietSeconds(u64),
-    CalendarOutcomeGraceSeconds(u64),
-    CommOptOutPosture(crate::gate::resolution::CommOptOutPosture),
-    DreamerRetryParkSeconds(u64),
-    EscalationStandingRulings(u64),
-    MinerRecurrenceReceipts(u64),
-    MinerRejectionWaitSeconds(u64),
-    ProposalCheckThreshold(u64),
-    ProviderCooldownDefaultSeconds(u64),
-    ProviderCooldownMaxSeconds(u64),
-    ProviderCooldownMaxWaitSeconds(u64),
-    ResidentRunMaxTries(u64),
-    ScopePrecedence(PolicyPrecedence),
-    SessionIdleFloorSeconds(u64),
-    SessionLifetimeCeilingSeconds(u64),
-    WorkflowStepMaxTries(u64),
-}
-impl PolicyValue {
-    fn restrict(self, other: Self) -> Self {
-        match (self, other) {
-            // A longer quiet never wakes a proposer sooner than any trusted
-            // row asks.
-            (Self::ArtifactAnswerQuietSeconds(a), Self::ArtifactAnswerQuietSeconds(b)) => {
-                Self::ArtifactAnswerQuietSeconds(a.max(b))
-            }
-            // A longer grace never asks about a meeting sooner than any
-            // trusted row asks.
-            (Self::CalendarOutcomeGraceSeconds(a), Self::CalendarOutcomeGraceSeconds(b)) => {
-                Self::CalendarOutcomeGraceSeconds(a.max(b))
-            }
-            (Self::CommOptOutPosture(a), Self::CommOptOutPosture(b)) => {
-                Self::CommOptOutPosture(a.restrict(b))
-            }
-            // A longer pause never resumes a Retry park sooner than any
-            // trusted row asks.
-            (Self::DreamerRetryParkSeconds(a), Self::DreamerRetryParkSeconds(b)) => {
-                Self::DreamerRetryParkSeconds(a.max(b))
-            }
-            // More agreeing rulings or recurring receipts, or a longer quiet
-            // after a rejection, never proposes sooner than any trusted row
-            // asks.
-            (Self::EscalationStandingRulings(a), Self::EscalationStandingRulings(b)) => {
-                Self::EscalationStandingRulings(a.max(b))
-            }
-            (Self::MinerRecurrenceReceipts(a), Self::MinerRecurrenceReceipts(b)) => {
-                Self::MinerRecurrenceReceipts(a.max(b))
-            }
-            (Self::MinerRejectionWaitSeconds(a), Self::MinerRejectionWaitSeconds(b)) => {
-                Self::MinerRejectionWaitSeconds(a.max(b))
-            }
-            (Self::ProposalCheckThreshold(a), Self::ProposalCheckThreshold(b)) => {
-                Self::ProposalCheckThreshold(a.min(b))
-            }
-            // A longer rest never sends a call to a refusing provider sooner
-            // than any trusted row asks.
-            (Self::ProviderCooldownDefaultSeconds(a), Self::ProviderCooldownDefaultSeconds(b)) => {
-                Self::ProviderCooldownDefaultSeconds(a.max(b))
-            }
-            (Self::ProviderCooldownMaxSeconds(a), Self::ProviderCooldownMaxSeconds(b)) => {
-                Self::ProviderCooldownMaxSeconds(a.max(b))
-            }
-            // A call waits for a cooling chain no longer than every trusted
-            // row allows.
-            (Self::ProviderCooldownMaxWaitSeconds(a), Self::ProviderCooldownMaxWaitSeconds(b)) => {
-                Self::ProviderCooldownMaxWaitSeconds(a.min(b))
-            }
-            // A shorter idle floor or lifetime ceiling never keeps a sitting
-            // open longer than any trusted row allows.
-            (Self::SessionIdleFloorSeconds(a), Self::SessionIdleFloorSeconds(b)) => {
-                Self::SessionIdleFloorSeconds(a.min(b))
-            }
-            (Self::SessionLifetimeCeilingSeconds(a), Self::SessionLifetimeCeilingSeconds(b)) => {
-                Self::SessionLifetimeCeilingSeconds(a.min(b))
-            }
-            // A lower cap never retries past what any trusted row allows.
-            (Self::ResidentRunMaxTries(a), Self::ResidentRunMaxTries(b)) => {
-                Self::ResidentRunMaxTries(a.min(b))
-            }
-            (Self::WorkflowStepMaxTries(a), Self::WorkflowStepMaxTries(b)) => {
-                Self::WorkflowStepMaxTries(a.min(b))
-            }
-            _ => unreachable!("policy values for different keys never compose"),
-        }
-    }
-
-    pub(super) fn as_str(self) -> String {
-        match self {
-            Self::CommOptOutPosture(value) => value.as_str().to_owned(),
-            Self::ArtifactAnswerQuietSeconds(value)
-            | Self::CalendarOutcomeGraceSeconds(value)
-            | Self::DreamerRetryParkSeconds(value)
-            | Self::EscalationStandingRulings(value)
-            | Self::MinerRecurrenceReceipts(value)
-            | Self::MinerRejectionWaitSeconds(value)
-            | Self::ProposalCheckThreshold(value)
-            | Self::ProviderCooldownDefaultSeconds(value)
-            | Self::ProviderCooldownMaxSeconds(value)
-            | Self::ProviderCooldownMaxWaitSeconds(value)
-            | Self::ResidentRunMaxTries(value)
-            | Self::SessionIdleFloorSeconds(value)
-            | Self::SessionLifetimeCeilingSeconds(value)
-            | Self::WorkflowStepMaxTries(value) => value.to_string(),
-            Self::ScopePrecedence(value) => value.as_str().to_owned(),
-        }
-    }
-}
+mod value;
+pub(super) use value::{PolicyPrecedence, PolicyValue};
 
 /// The hierarchy is a precedence rule for policy, not the six-axis authority
 /// Scope lattice. The caller's context must come from trusted write facts.
@@ -277,15 +158,7 @@ impl PolicyRowScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct PolicyEvaluationScope {
-    pub(crate) world: Option<EntityId>,
-    pub(crate) project: Option<EntityId>,
-    pub(crate) subproject: Option<EntityId>,
-    pub(crate) thread: Option<EntityId>,
-    /// The caller has not been authorized to learn this world exists.
-    pub(crate) hidden_world: bool,
-}
+pub(crate) use crate::store::policy_record::PolicyEvaluationScope;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WhySource {
@@ -375,153 +248,160 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
     let Value::Array(rows) = value else {
         return None;
     };
-    let parsed: Vec<PolicyValueRow> =
-        rows.iter()
-            .map(|row| {
-                let Value::Map(entries) = row else {
-                    return None;
-                };
-                if !(4..=6).contains(&entries.len())
-                    || entries.iter().any(|(key, _)| {
-                        !matches!(
-                            key.as_str(),
-                            Some("row_ref" | "key" | "value" | "scope" | "why" | "override_parent")
-                        )
-                    })
-                {
-                    return None;
-                }
-                let row_ref = field(entries, "row_ref")?.as_str()?;
-                if row_ref.is_empty()
-                    || row_ref.len() > 96
-                    || !row_ref.bytes().all(|byte| {
-                        byte.is_ascii_lowercase()
-                            || byte.is_ascii_digit()
-                            || matches!(byte, b'.' | b'_' | b'-')
-                    })
-                {
-                    return None;
-                }
-                let key = PolicyValueKey::parse(field(entries, "key")?.as_str()?)?;
-                let raw = field(entries, "value")?;
-                let value =
-                    match key {
-                        PolicyValueKey::ArtifactAnswerQuietSeconds => {
-                            PolicyValue::ArtifactAnswerQuietSeconds(raw.as_u64().filter(
-                                |seconds| *seconds <= ARTIFACT_ANSWER_QUIET_CEILING_SECONDS,
-                            )?)
-                        }
-                        // Any grace is the owner's: zero asks once the meeting ends.
-                        PolicyValueKey::CalendarOutcomeGraceSeconds => {
-                            PolicyValue::CalendarOutcomeGraceSeconds(raw.as_u64()?)
-                        }
-                        PolicyValueKey::CommOptOutPosture => {
-                            PolicyValue::CommOptOutPosture(match raw.as_str()? {
-                                "escalate" => crate::gate::resolution::CommOptOutPosture::Escalate,
-                                "allow_with_receipt" => {
-                                    crate::gate::resolution::CommOptOutPosture::AllowWithReceipt
-                                }
-                                _ => return None,
-                            })
-                        }
-                        PolicyValueKey::DreamerRetryParkSeconds => {
-                            PolicyValue::DreamerRetryParkSeconds(retry_park_seconds(raw)?)
-                        }
-                        // A threshold of zero rulings or receipts is no
-                        // threshold; a zero wait re-proposes at the next pass.
-                        PolicyValueKey::EscalationStandingRulings => {
-                            PolicyValue::EscalationStandingRulings(raw.as_u64().filter(|v| *v > 0)?)
-                        }
-                        PolicyValueKey::MinerRecurrenceReceipts => {
-                            PolicyValue::MinerRecurrenceReceipts(raw.as_u64().filter(|v| *v > 0)?)
-                        }
-                        PolicyValueKey::MinerRejectionWaitSeconds => {
-                            PolicyValue::MinerRejectionWaitSeconds(raw.as_u64()?)
-                        }
-                        PolicyValueKey::ProposalCheckThreshold => {
-                            PolicyValue::ProposalCheckThreshold(raw.as_u64().filter(|v| *v > 0)?)
-                        }
-                        PolicyValueKey::ProviderCooldownDefaultSeconds => {
-                            PolicyValue::ProviderCooldownDefaultSeconds(cooldown_seconds(raw)?)
-                        }
-                        PolicyValueKey::ProviderCooldownMaxSeconds => {
-                            PolicyValue::ProviderCooldownMaxSeconds(cooldown_seconds(raw)?)
-                        }
-                        PolicyValueKey::ProviderCooldownMaxWaitSeconds => {
-                            PolicyValue::ProviderCooldownMaxWaitSeconds(raw.as_u64().filter(
-                                |seconds| *seconds <= PROVIDER_COOLDOWN_WAIT_CEILING_SECONDS,
-                            )?)
-                        }
-                        // A cap of zero tries runs nothing: each runner gets
-                        // at least one try.
-                        PolicyValueKey::ResidentRunMaxTries => {
-                            PolicyValue::ResidentRunMaxTries(raw.as_u64().filter(|v| *v > 0)?)
-                        }
-                        PolicyValueKey::ScopePrecedence => {
-                            PolicyValue::ScopePrecedence(PolicyPrecedence::parse(raw.as_str()?)?)
-                        }
-                        // A zero floor or ceiling would end every sitting at once.
-                        PolicyValueKey::SessionIdleFloorSeconds => {
-                            PolicyValue::SessionIdleFloorSeconds(raw.as_u64().filter(|v| *v > 0)?)
-                        }
-                        PolicyValueKey::SessionLifetimeCeilingSeconds => {
-                            let seconds = raw.as_u64().filter(|v| *v > 0)?;
-                            PolicyValue::SessionLifetimeCeilingSeconds(seconds)
-                        }
-                        PolicyValueKey::WorkflowStepMaxTries => {
-                            PolicyValue::WorkflowStepMaxTries(raw.as_u64().filter(|v| *v > 0)?)
-                        }
-                    };
-                let Value::Map(scope_entries) = field(entries, "scope")? else {
-                    return None;
-                };
-                let scope = match field(scope_entries, "level")?.as_str()? {
-                    "vault" if scope_entries.len() == 1 => PolicyRowScope::Vault,
-                    level @ ("world" | "project" | "sub_project" | "thread")
-                        if scope_entries.len() == 2 =>
-                    {
-                        let reference = field(scope_entries, "ref")?.as_str()?;
-                        let id = EntityId::from_hex(reference).ok()?;
-                        if id.to_hex() != reference {
-                            return None;
-                        }
-                        match level {
-                            "world" => PolicyRowScope::World(id),
-                            "project" => PolicyRowScope::Project(id),
-                            "sub_project" => PolicyRowScope::SubProject(id),
-                            _ => PolicyRowScope::Thread(id),
-                        }
-                    }
-                    _ => return None,
-                };
-                let why = parse_optional_why(entries)?;
-                let override_parent = match entries
-                    .iter()
-                    .filter(|(k, _)| k.as_str() == Some("override_parent"))
-                    .count()
-                {
-                    0 => false,
-                    1 => match field(entries, "override_parent")? {
-                        Value::Boolean(value) => *value,
-                        _ => return None,
-                    },
-                    _ => return None,
-                };
-                if override_parent
-                    && (key == PolicyValueKey::ScopePrecedence || scope == PolicyRowScope::Vault)
-                {
-                    return None;
-                }
-                Some(PolicyValueRow {
-                    row_ref: row_ref.to_owned(),
-                    key,
-                    value,
-                    scope,
-                    why,
-                    override_parent,
+    let parsed: Vec<PolicyValueRow> = rows
+        .iter()
+        .map(|row| {
+            let Value::Map(entries) = row else {
+                return None;
+            };
+            if !(4..=6).contains(&entries.len())
+                || entries.iter().any(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        Some("row_ref" | "key" | "value" | "scope" | "why" | "override_parent")
+                    )
                 })
+            {
+                return None;
+            }
+            let row_ref = field(entries, "row_ref")?.as_str()?;
+            if row_ref.is_empty()
+                || row_ref.len() > 96
+                || !row_ref.bytes().all(|byte| {
+                    byte.is_ascii_lowercase()
+                        || byte.is_ascii_digit()
+                        || matches!(byte, b'.' | b'_' | b'-')
+                })
+            {
+                return None;
+            }
+            let key = PolicyValueKey::parse(field(entries, "key")?.as_str()?)?;
+            let raw = field(entries, "value")?;
+            let value = match key {
+                PolicyValueKey::ArtifactAnswerQuietSeconds => {
+                    PolicyValue::ArtifactAnswerQuietSeconds(
+                        raw.as_u64()
+                            .filter(|seconds| *seconds <= ARTIFACT_ANSWER_QUIET_CEILING_SECONDS)?,
+                    )
+                }
+                // Any grace is the owner's: zero asks once the meeting ends.
+                PolicyValueKey::CalendarOutcomeGraceSeconds => {
+                    PolicyValue::CalendarOutcomeGraceSeconds(raw.as_u64()?)
+                }
+                PolicyValueKey::CommOptOutPosture => {
+                    PolicyValue::CommOptOutPosture(match raw.as_str()? {
+                        "escalate" => crate::gate::resolution::CommOptOutPosture::Escalate,
+                        "allow_with_receipt" => {
+                            crate::gate::resolution::CommOptOutPosture::AllowWithReceipt
+                        }
+                        _ => return None,
+                    })
+                }
+                PolicyValueKey::DreamerRetryParkSeconds => {
+                    PolicyValue::DreamerRetryParkSeconds(retry_park_seconds(raw)?)
+                }
+                PolicyValueKey::EsignRateDocumentThreshold => {
+                    PolicyValue::EsignRateDocumentThreshold(raw.as_u64().filter(|v| *v > 0)?)
+                }
+                PolicyValueKey::EsignRateRecipientThreshold => {
+                    PolicyValue::EsignRateRecipientThreshold(raw.as_u64().filter(|v| *v > 0)?)
+                }
+                // A threshold of zero rulings or receipts is no
+                // threshold; a zero wait re-proposes at the next pass.
+                PolicyValueKey::EscalationStandingRulings => {
+                    PolicyValue::EscalationStandingRulings(raw.as_u64().filter(|v| *v > 0)?)
+                }
+                PolicyValueKey::MinerRecurrenceReceipts => {
+                    PolicyValue::MinerRecurrenceReceipts(raw.as_u64().filter(|v| *v > 0)?)
+                }
+                PolicyValueKey::MinerRejectionWaitSeconds => {
+                    PolicyValue::MinerRejectionWaitSeconds(raw.as_u64()?)
+                }
+                PolicyValueKey::ProposalCheckThreshold => {
+                    PolicyValue::ProposalCheckThreshold(raw.as_u64().filter(|v| *v > 0)?)
+                }
+                PolicyValueKey::ProviderCooldownDefaultSeconds => {
+                    PolicyValue::ProviderCooldownDefaultSeconds(cooldown_seconds(raw)?)
+                }
+                PolicyValueKey::ProviderCooldownMaxSeconds => {
+                    PolicyValue::ProviderCooldownMaxSeconds(cooldown_seconds(raw)?)
+                }
+                PolicyValueKey::ProviderCooldownMaxWaitSeconds => {
+                    PolicyValue::ProviderCooldownMaxWaitSeconds(
+                        raw.as_u64()
+                            .filter(|seconds| *seconds <= PROVIDER_COOLDOWN_WAIT_CEILING_SECONDS)?,
+                    )
+                }
+                // A cap of zero tries runs nothing: each runner gets
+                // at least one try.
+                PolicyValueKey::ResidentRunMaxTries => {
+                    PolicyValue::ResidentRunMaxTries(raw.as_u64().filter(|v| *v > 0)?)
+                }
+                PolicyValueKey::ScopePrecedence => {
+                    PolicyValue::ScopePrecedence(PolicyPrecedence::parse(raw.as_str()?)?)
+                }
+                // A zero floor or ceiling would end every sitting at once.
+                PolicyValueKey::SessionIdleFloorSeconds => {
+                    PolicyValue::SessionIdleFloorSeconds(raw.as_u64().filter(|v| *v > 0)?)
+                }
+                PolicyValueKey::SessionLifetimeCeilingSeconds => {
+                    let seconds = raw.as_u64().filter(|v| *v > 0)?;
+                    PolicyValue::SessionLifetimeCeilingSeconds(seconds)
+                }
+                PolicyValueKey::WorkflowStepMaxTries => {
+                    PolicyValue::WorkflowStepMaxTries(raw.as_u64().filter(|v| *v > 0)?)
+                }
+            };
+            let Value::Map(scope_entries) = field(entries, "scope")? else {
+                return None;
+            };
+            let scope = match field(scope_entries, "level")?.as_str()? {
+                "vault" if scope_entries.len() == 1 => PolicyRowScope::Vault,
+                level @ ("world" | "project" | "sub_project" | "thread")
+                    if scope_entries.len() == 2 =>
+                {
+                    let reference = field(scope_entries, "ref")?.as_str()?;
+                    let id = EntityId::from_hex(reference).ok()?;
+                    if id.to_hex() != reference {
+                        return None;
+                    }
+                    match level {
+                        "world" => PolicyRowScope::World(id),
+                        "project" => PolicyRowScope::Project(id),
+                        "sub_project" => PolicyRowScope::SubProject(id),
+                        _ => PolicyRowScope::Thread(id),
+                    }
+                }
+                _ => return None,
+            };
+            let why = parse_optional_why(entries)?;
+            let override_parent = match entries
+                .iter()
+                .filter(|(k, _)| k.as_str() == Some("override_parent"))
+                .count()
+            {
+                0 => false,
+                1 => match field(entries, "override_parent")? {
+                    Value::Boolean(value) => *value,
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            if override_parent
+                && (key == PolicyValueKey::ScopePrecedence || scope == PolicyRowScope::Vault)
+            {
+                return None;
+            }
+            Some(PolicyValueRow {
+                row_ref: row_ref.to_owned(),
+                key,
+                value,
+                scope,
+                why,
+                override_parent,
             })
-            .collect::<Option<_>>()?;
+        })
+        .collect::<Option<_>>()?;
     let mut refs = std::collections::BTreeSet::new();
     if parsed.iter().any(|row| !refs.insert(row.row_ref.as_str())) {
         return None;

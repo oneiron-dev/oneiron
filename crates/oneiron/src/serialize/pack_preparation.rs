@@ -13,7 +13,7 @@ use crate::serialize::context_entity::ContextEntity;
 use crate::serialize::pack_accounting::TokenAllocation;
 use crate::serialize::pack_format::FieldProfile;
 use crate::serialize::pack_format::PackFormat;
-use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
+use crate::tokenizer::PackTokenizer;
 
 use super::field_profile_table::fields_for_profile;
 use super::item_budget::apply_item_budget_with_depth_limit;
@@ -31,8 +31,9 @@ pub(super) fn prepare_pack(
     pack: &ContextPack,
     config: &SerializeConfig,
     json_mode: bool,
+    tokenizer: PackTokenizer,
 ) -> PreparedPack {
-    prepare_pack_with_l2(pack, config, json_mode, true, false)
+    prepare_pack_with_l2(pack, config, json_mode, true, false, tokenizer)
 }
 
 fn prepare_pack_with_l2(
@@ -41,12 +42,12 @@ fn prepare_pack_with_l2(
     json_mode: bool,
     include_l2: bool,
     omitted_by_token_budget: bool,
+    tokenizer: PackTokenizer,
 ) -> PreparedPack {
     let l2_base = pack.l2_base.clone().filter(|summary| {
         include_l2
             && (config.max_item_tokens == 0
-                || crate::tokenizer::count_context_pack_tokens(&summary.body)
-                    <= config.max_item_tokens)
+                || tokenizer.count(&summary.body) <= config.max_item_tokens)
             && summary.fits_field_budget(config.max_field_chars)
     });
     let skip_budget = config.budget == 0;
@@ -63,7 +64,6 @@ fn prepare_pack_with_l2(
     // Counts the critical rows preparation sees, to judge its own cuts; the
     // pack's pre-cut count and overflow warning are restored after (FIX 9760).
     stats.critical_count = 0;
-    let tokenizer = DEFAULT_CONTEXT_PACK_TOKENIZER;
 
     let skip_evidence = l2_base
         .as_ref()
@@ -77,6 +77,7 @@ fn prepare_pack_with_l2(
             skip_evidence,
             config,
             json_mode,
+            tokenizer,
             value_depth_limit,
             &mut stats,
         ));
@@ -86,6 +87,7 @@ fn prepare_pack_with_l2(
             skip_evidence,
             config,
             json_mode,
+            tokenizer,
             value_depth_limit,
             &mut stats,
         ));
@@ -121,6 +123,7 @@ fn prepare_pack_with_l2(
             skip_evidence,
             config,
             json_mode,
+            tokenizer,
             value_depth_limit,
             &mut stats,
         ));
@@ -130,6 +133,7 @@ fn prepare_pack_with_l2(
             skip_evidence,
             config,
             json_mode,
+            tokenizer,
             value_depth_limit,
             &mut stats,
         ));
@@ -186,7 +190,7 @@ fn prepare_pack_with_l2(
     // Rebudget the original ranked rows if the prefix did not survive; typed
     // consumers keep those rows independently of serialized deduplication.
     if had_l2 && prepared.l2_base.is_none() {
-        return prepare_pack_with_l2(pack, config, json_mode, false, true);
+        return prepare_pack_with_l2(pack, config, json_mode, false, true, tokenizer);
     }
     prepared
 }
@@ -278,6 +282,7 @@ fn prepare_entities(
     skip_evidence: Option<&[EntityId]>,
     config: &SerializeConfig,
     json_mode: bool,
+    tokenizer: PackTokenizer,
     value_depth_limit: ValueDepthLimit,
     stats: &mut PackStats,
 ) -> Vec<PreparedEntity> {
@@ -328,7 +333,7 @@ fn prepare_entities(
                 if config.max_item_tokens != 0
                     && super::token_budget::estimate_entity_tokens_with_depth_limit(
                         &prepared,
-                        DEFAULT_CONTEXT_PACK_TOKENIZER,
+                        tokenizer,
                         value_depth_limit,
                     ) > config.max_item_tokens
                 {
@@ -339,6 +344,7 @@ fn prepare_entities(
                 &mut prepared,
                 config.max_item_tokens,
                 stats,
+                tokenizer,
                 value_depth_limit,
             );
             // Read whole once its fields are final: fields that read as a

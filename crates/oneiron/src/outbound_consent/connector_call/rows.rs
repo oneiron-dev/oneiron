@@ -67,6 +67,21 @@ impl Vault {
         if let Some(expired) = self.expire_connector_call_if_due(call_ref, &pending, now_ms())? {
             return Ok((expired, pending.source_rows));
         }
+        // A sweep-minted row has no trusted presentation context yet:
+        // only a matching live pass adopts it. The generic resume path
+        // holds still-pending rows instead of driving them at the
+        // route's secret; stored terminal outcomes returned above.
+        if pending.sweep_minted {
+            return Ok((
+                ConnectorCallOutcome::Held {
+                    call_ref: *call_ref,
+                    decision_ref: None,
+                    reasons: vec!["connector_call_not_adopted".to_owned()],
+                    approval_digest: None,
+                },
+                pending.source_rows,
+            ));
+        }
         self.drive_connector_call(Some(*call_ref), None, pending, host)
     }
 }

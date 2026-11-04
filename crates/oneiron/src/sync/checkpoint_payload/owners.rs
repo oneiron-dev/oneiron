@@ -29,19 +29,22 @@ use crate::sync::custody::CUSTODY_MAP;
 use crate::sync::document_pins::DOCUMENT_PINS_MAP;
 use crate::sync::ingest::{PEER_ORIGIN_MAP, admit_peer_origin_carrier};
 use crate::sync::message_docs::MESSAGE_DOCS_MAP;
+use crate::sync::repo_manifests::REPO_MANIFESTS_MAP;
 use crate::sync::room_facts::ROOM_FACTS_MAP;
 use crate::sync::room_turns::ROOM_TURNS_MAP;
 use crate::sync::row_birth::ROW_BIRTHS_MAP;
 use crate::sync::schema::ASSET_BODY_REFS_MAP;
+use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
 use crate::sync::withdrawn_cutoffs::{
     CarriedCutoff, EPOCH_FLOOR, WITHDRAWN_CUTOFFS_MAP, admit_withdrawn_cutoff_carrier,
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(super) const WINDOW_ROOTS: [&str; 19] = [
+pub(super) const WINDOW_ROOTS: [&str; 21] = [
     "entities",
     "edges",
     "tombstones",
+    HELD_EDIT_CAUSALITY_MAP,
     "retained_claim_worlds",
     ROW_BIRTHS_MAP,
     PEER_ORIGIN_MAP,
@@ -57,6 +60,7 @@ pub(super) const WINDOW_ROOTS: [&str; 19] = [
     ROOM_FACTS_MAP,
     DOCUMENT_PINS_MAP,
     MESSAGE_DOCS_MAP,
+    REPO_MANIFESTS_MAP,
     ASSET_BODY_REFS_MAP,
 ];
 
@@ -136,6 +140,7 @@ pub(crate) fn root_entry(
         ROOM_FACTS_MAP => crate::sync::room_facts::checkpoint::entry(key, value),
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::entry(key, value),
         MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::entry(key, value),
+        REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::entry(key, value),
         // KS-2 carries every ASSET byte, a by-reference body's too.
         ASSET_BODY_REFS_MAP => Placement::Dispatched(OtherClient::Body),
         _ => Placement::unclassified(None, SyncUnclassified::UnknownRoot),
@@ -165,6 +170,9 @@ fn binary(value: &[u8]) -> LoroValue {
 /// meets is asked, a deleted one's too.
 pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
     let class = match root {
+        // Only neutral deletes use this key. A value in this root still
+        // has no root_entry adapter and keeps the group whole.
+        HELD_EDIT_CAUSALITY_MAP if key == HELD_EDIT_CAUSALITY_KEY => KeyClass::Opaque,
         // A room row's part is filed under its digest (FIX 11790).
         ROOM_TURNS_MAP | ROOM_FACTS_MAP if is_part_key(key) => KeyClass::Digest,
         "entities"
@@ -191,6 +199,7 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         CUSTODY_MAP => crate::sync::custody::checkpoint::key_class(key),
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::key_class(key),
         MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::key_class(key),
+        REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::key_class(key),
         // A side row's key may spell a platform handle.
         ROOM_FACTS_MAP => KeyClass::Payload,
         _ => return Some(SyncUnclassified::UnknownRoot),

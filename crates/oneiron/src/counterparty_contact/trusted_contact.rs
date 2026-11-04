@@ -11,8 +11,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::trusted_contact_notice::{
-    TrustedContactNoticeAuthorization, consent_change_guard, inform_inboxes_in_txn,
-    stage_notice_in_txn,
+    TrustedContactNoticeAuthorization, consent_change_guard, erase_notices_naming_in_txn,
+    inform_inboxes_in_txn, stage_notice_in_txn, withdraw_policy_notice_in_txn,
 };
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -20,7 +20,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::policy_model::PolicyModelConfig;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::GateSystemNoticeRecord;
+use crate::store::{GateSystemNoticeRecord, Store};
 
 /// Key: (person, contact).
 pub(super) const RELATIONS: SideTable<(EntityId, EntityId), TrustedContact, Named> =
@@ -209,6 +209,88 @@ fn supersede_open_asks_in_txn(
     Ok(())
 }
 
+/// The open ask about `relation`'s naming, or a new one at `tier`: one open
+/// ask per naming, so a second crisis before the person answers is told to
+/// them, not asked twice.
+fn open_ask_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    relation: &TrustedContact,
+    tier: TrustedContactTier,
+    now: u64,
+) -> Result<EntityId> {
+    let open = ASKS
+        .scan(&vault.store, wtxn)?
+        .into_iter()
+        .find(|(_, ask)| {
+            ask.person == relation.person
+                && ask.contact == relation.contact
+                && ask.version == relation.version
+                && ask.is_open()
+        })
+        .map(|(key, _)| key);
+    if let Some(open) = open {
+        return Ok(open);
+    }
+    let ask = EntityId::now();
+    ASKS.put(
+        &vault.store,
+        wtxn,
+        &ask,
+        &TrustedContactAsk {
+            ask,
+            person: relation.person,
+            contact: relation.contact,
+            version: relation.version,
+            tier,
+            asked_at: now,
+            answer: None,
+            superseded: None,
+        },
+    )?;
+    Ok(ask)
+}
+
+/// Whether the person answered yes to an ask about this naming of `contact`,
+/// at `version`: that yes authorizes a notice for it whatever the dial.
+pub(super) fn naming_answered_yes_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+    contact: EntityId,
+    version: u64,
+) -> Result<bool> {
+    Ok(ASKS.scan(store, txn)?.into_iter().any(|(_, ask)| {
+        ask.person == person
+            && ask.contact == contact
+            && ask.version == version
+            && ask.answer.is_some_and(|answer| answer.yes)
+    }))
+}
+
+/// Takes every trusted-contact row naming `id` out with its erase (FIX
+/// 9775): each relation it is either side of, each ask about such a
+/// relation, and each notice staged to or about it, whose queued send is
+/// cancelled and whose payload is emptied. Nothing names any other entity,
+/// so its erase changes nothing here.
+pub(crate) fn erase_trusted_contact_rows_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    for (key, relation) in RELATIONS.scan(store, wtxn)? {
+        if relation.person == *id || relation.contact == *id {
+            RELATIONS.delete(store, wtxn, &key)?;
+        }
+    }
+    for (key, ask) in ASKS.scan(store, wtxn)? {
+        if ask.person == *id || ask.contact == *id {
+            ASKS.delete(store, wtxn, &key)?;
+        }
+    }
+    erase_notices_naming_in_txn(store, wtxn, id)
+}
+
 impl Vault {
     /// The person names `contact`, another live PERSON, as their trusted
     /// contact, reached on `reach`. The relation is not live until the
@@ -310,13 +392,39 @@ impl Vault {
     }
 
     /// The person changes whether they are asked first. It does not change what the
-    /// contact agreed to receive, so their consent stands.
+    /// contact agreed to receive, so their consent stands. The ask a change to
+    /// ask-first raises is told in the default notice words; see
+    /// [`Self::change_trusted_contact_dial`].
     pub fn set_trusted_contact_dial(
         &self,
         person: &AuthenticatedOwner,
         contact: EntityId,
         dial: TrustedContactDial,
     ) -> Result<TrustedContact> {
+        self.change_trusted_contact_dial(
+            person,
+            contact,
+            dial,
+            &PolicyModelConfig::default(),
+            crate::unix_seconds_now(),
+        )
+    }
+
+    /// The person changes whether they are asked first (FIX 9774). Turned to
+    /// ask-first, a notice a policy row authorized for this naming and not
+    /// yet sent is withdrawn, and the person is asked about it instead: the
+    /// ask lands in their inbox and the sending agent's, each body as
+    /// `config` words it. This waits for a send already under way, and no
+    /// send starts on the old dial once it returns.
+    pub fn change_trusted_contact_dial(
+        &self,
+        person: &AuthenticatedOwner,
+        contact: EntityId,
+        dial: TrustedContactDial,
+        config: &PolicyModelConfig,
+        now: u64,
+    ) -> Result<TrustedContact> {
+        let _order = consent_change_guard(self);
         self.with_write_txn(|wtxn| {
             let person = person.revalidate_person_in_txn(self, wtxn)?;
             let mut relation = RELATIONS
@@ -324,6 +432,20 @@ impl Vault {
                 .ok_or_else(|| not_a_party("no such trusted contact"))?;
             relation.dial = dial;
             RELATIONS.put(&self.store, wtxn, &(person, contact), &relation)?;
+            if dial == TrustedContactDial::AskFirst
+                && let Some(tier) = withdraw_policy_notice_in_txn(self, wtxn, &relation, now)?
+                && relation.is_live()
+            {
+                let ask = open_ask_in_txn(self, wtxn, &relation, tier, now)?;
+                let notices = crate::policy_model::trusted_contact_notices(
+                    TrustedContactFire {
+                        notified: 0,
+                        asked: 1,
+                    },
+                    config,
+                );
+                inform_inboxes_in_txn(self, wtxn, &relation, ask, &notices, now)?;
+            }
             Ok(relation)
         })
     }
@@ -505,40 +627,7 @@ impl Vault {
                 fire.notified += 1;
                 continue;
             }
-            // One open ask per naming: a second crisis before the person
-            // answers is told to them, not asked twice.
-            let open = ASKS
-                .scan(&self.store, wtxn)?
-                .into_iter()
-                .find(|(_, ask)| {
-                    ask.person == person
-                        && ask.contact == relation.contact
-                        && ask.version == relation.version
-                        && ask.is_open()
-                })
-                .map(|(key, _)| key);
-            let asked = match open {
-                Some(open) => open,
-                None => {
-                    let ask = EntityId::now();
-                    ASKS.put(
-                        &self.store,
-                        wtxn,
-                        &ask,
-                        &TrustedContactAsk {
-                            ask,
-                            person,
-                            contact: relation.contact,
-                            version: relation.version,
-                            tier,
-                            asked_at: now,
-                            answer: None,
-                            superseded: None,
-                        },
-                    )?;
-                    ask
-                }
-            };
+            let asked = open_ask_in_txn(self, wtxn, &relation, tier, now)?;
             let notices = told(TrustedContactFire {
                 notified: 0,
                 asked: 1,

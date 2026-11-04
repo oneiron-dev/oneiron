@@ -36,6 +36,12 @@ pub enum OneironStatus {
     /// pack's media needs the `ai.embed` rung its space names (OF-370).
     /// Retry without it, or on a server that serves that rung.
     ModelUnavailable = 8,
+    /// The owner's world recipient choice keeps the row from this answer
+    /// (`WORLD_RECIPIENT_LIMIT`, FIX 7463a).
+    WorldRecipientLimit = 9,
+    /// The row's world placement cannot be verified, so nothing is released
+    /// (`WORLD_PLACEMENT_UNVERIFIABLE`, FIX 7463a).
+    WorldPlacementUnverifiable = 10,
 }
 
 /// Borrowed byte/string input for arrays such as `dict_search_paths`.

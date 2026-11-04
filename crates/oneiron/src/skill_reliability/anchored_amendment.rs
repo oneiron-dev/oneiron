@@ -31,7 +31,10 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning::LearningCell;
 use crate::learning::evidence::cells_for_subject_in_txn;
-use crate::skill_attribution::{late_credit_receipt_in_txn, standing_credit_observation_in_txn};
+use crate::side_table::{self, Named, SideTable};
+use crate::skill_attribution::{
+    LateCreditReceipt, late_credit_receipt_in_txn, standing_credit_observation_in_txn,
+};
 
 /// One anchored pack-outcome observation held in a reliability cell,
 /// with the subject holding it and the attempt its stored context names.
@@ -183,4 +186,93 @@ fn matches_row(row: &EvidenceRow, evidence: &LearningEvidence) -> bool {
         && row.pack_attribution == evidence.pack_attribution
         && row.goal_revision == evidence.goal_revision
         && row.measurement_version == evidence.measurement_version
+}
+
+/// Mint the flipped loss for an amendment whose attempt has no anchored row
+/// to flip and no desired row (FIX 11676): the sealed credit's context gives
+/// the cell and provenance, the amendment's defect share the loss weight.
+/// `None` when no sealed credit for `attempt` names `skill` on this arm, no
+/// sealed credit matches the attempt's axis, or its attribution is gone. The
+/// receipt key is the credit's id, so re-minting
+/// replaces in place.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn mint_flipped_from_credit_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    executor: &str,
+    attempt: &str,
+    share: f32,
+) -> Result<Option<(LearningCell, LearningEvidence)>> {
+    const CREDIT: SideTable<String, LateCreditReceipt, Named> =
+        SideTable::new(&side_table::SKILL_ATTRIBUTION_LATE_CREDIT);
+    let mut candidates = Vec::new();
+    for (_, credit) in CREDIT.scan(&vault.store, txn)? {
+        if credit.attempt_receipt != attempt {
+            continue;
+        }
+        let Some(fields) = &credit.attribution else {
+            continue;
+        };
+        if fields.executor != executor {
+            continue;
+        }
+        // The sealed lists or the latest adjustment's effective subjects
+        // (REVIEW-4322 P1): a subject a later adjustment adds still mints its
+        // amendment loss here.
+        let mut names = credit.direct_subjects.contains(&Some(*skill))
+            || credit
+                .shares
+                .iter()
+                .any(|share| share.subject == Some(*skill));
+        if !names {
+            names = crate::skill_attribution::effective_credit_subjects_in_txn(
+                &vault.store,
+                txn,
+                &credit,
+            )?
+            .contains(skill);
+        }
+        if !names {
+            continue;
+        }
+        candidates.push(credit);
+    }
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let axis = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, attempt)?
+        .and_then(|receipt| receipt.fields.get("axis").cloned())
+        .unwrap_or_else(|| crate::skill_reliability::SKILL_OUTCOME_AXIS.to_owned());
+    candidates.retain(|candidate| candidate.axis == axis);
+    let Some(credit) = candidates.into_iter().next() else {
+        return Ok(None);
+    };
+    let Some(fields) = credit.attribution.clone() else {
+        return Ok(None);
+    };
+    let cell = LearningCell::new(LearningPredicate::Reliability, *skill)
+        .executor(fields.executor.clone())
+        .type_ref(fields.type_ref.clone())
+        .axis(credit.axis.clone())
+        .project(fields.project);
+    let mut evidence = LearningEvidence::anchored(
+        credit.receipt_id.clone(),
+        credit.at,
+        credit.anchor,
+        Observation::Success(false),
+    );
+    evidence.weight = f64::from(share);
+    evidence.judge.clone_from(&fields.judge);
+    evidence.on_judge_model = fields.judge.as_deref() == Some(fields.executor.as_str());
+    evidence.pack_attribution = Some(crate::receipt::PackLearningContext {
+        attempt_receipt: credit.attempt_receipt.clone(),
+        outcome_receipt: credit.outcome_receipt.clone(),
+        attribution: fields,
+    });
+    evidence.goal_revision.clone_from(&credit.goal_revision);
+    Ok(Some((cell, evidence)))
 }

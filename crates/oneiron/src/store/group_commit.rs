@@ -78,7 +78,7 @@ use super::{Store, StoreCore, active_write_txn_depth};
 
 mod detached;
 
-pub(crate) use detached::{AfterCommit, DetachedWrite};
+pub(crate) use detached::{AfterCommit, DetachedWrite, release_vault_handle};
 use detached::{DetachedGroup, DetachedWrites};
 
 /// Whose closure a write runs, which decides whether its group may go on
@@ -369,6 +369,19 @@ impl DeferredCommits {
                 .wait_while(counts, |now| now.settled < answered)
                 .unwrap_or_else(PoisonError::into_inner),
         );
+    }
+
+    /// [`Self::wait_settled`] until `deadline` at most: whether every write
+    /// answered when it began is settled by then.
+    fn wait_settled_until(&self, deadline: Instant) -> bool {
+        let counts = self.counts.lock().unwrap_or_else(PoisonError::into_inner);
+        let answered = counts.answered;
+        let timeout = deadline.saturating_duration_since(Instant::now());
+        let (counts, _) = self
+            .settled
+            .wait_timeout_while(counts, timeout, |now| now.settled < answered)
+            .unwrap_or_else(PoisonError::into_inner);
+        counts.settled >= answered
     }
 }
 
@@ -866,6 +879,20 @@ impl Store {
         self.group_commit.detached.wait_settled();
     }
 
+    /// [`Self::wait_for_deferred_commits`] until `deadline` at most (FIX 12023
+    /// W0, L02 10-31): `true` when the group commit of every deferred-commit
+    /// write answered so far, and of every detached write queued so far, is
+    /// decided by then. `false` when the deadline passed first, or on a
+    /// thread inside a write, which waits for none, as there.
+    pub(crate) fn wait_for_deferred_commits_until(&self, deadline: Instant) -> bool {
+        if active_write_txn_depth() > 0 {
+            return false;
+        }
+        self.take_writer_for_left_detached();
+        self.group_commit.deferred.wait_settled_until(deadline)
+            && self.group_commit.detached.wait_settled_until(deadline)
+    }
+
     /// [`Self::group_write`] for a write whose `Ok` keeps its rows and whose
     /// `Err` drops them.
     pub(crate) fn write_in_group<T>(
@@ -887,7 +914,7 @@ impl Store {
     {
         let mut txn = self.env.write_txn()?;
         let rows = {
-            let _known_index = crate::secret_custody::known_index_scope(); // (FIX 12210)
+            let _known_index = crate::store::known_value_index::known_index_scope(); // (FIX 12210)
             write(&mut txn)
         };
         match rows {
@@ -1085,7 +1112,7 @@ impl Store {
         E: From<Error>,
     {
         let attempt = self.begin_refusal_attempt();
-        let _known_index = crate::secret_custody::known_index_scope(); // (FIX 12210)
+        let _known_index = crate::store::known_value_index::known_index_scope(); // (FIX 12210)
         let staged = match self.env.nested_write_txn(parent) {
             Err(err) => Staged::Dropped(Err(E::from(Error::from(err)))),
             Ok(mut child) => match catch_unwind(AssertUnwindSafe(|| write(&mut child))) {

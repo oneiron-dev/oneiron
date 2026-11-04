@@ -9,8 +9,14 @@
 //! objects it re-emits keep every value and type: a real is written as the
 //! shortest decimal that reads back as the same real, never rounded.
 
-use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId, StringFormat};
+use lopdf::{
+    DecodeAdmission, DecodeAdmissionError, Dictionary, Document, LoadOptions, Object, ObjectId,
+    StringFormat,
+};
+use oneiron_docedit::resource::{Hold, ResourceRefusal, wide};
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use super::render::PdfPreparationError;
 use super::sealer::{EsignSealInput, EsignSignatureRevision};
@@ -23,6 +29,9 @@ mod tests;
 /// The contents ladder: the DER bytes each revision's hole holds.
 pub const SEAL_CONTENTS_LADDER: [usize; 3] = [64 * 1024, 128 * 1024, 256 * 1024];
 const BYTERANGE_DIGITS: usize = 20;
+/// A classic xref entry carries a ten-digit offset. No signature revision may
+/// address bytes past this format bound, however large the organ's CMS claim is.
+const MAX_CLASSIC_XREF_OFFSET: u64 = 9_999_999_999;
 /// The row bounding what one stream of the prepared PDF decodes to while
 /// the host reads it here: the host's per-stream codec bound (Rule 5, FIX
 /// 6287), past which the revisions are refused with this row named. The
@@ -72,11 +81,58 @@ impl EsignSealInput {
     }
 }
 
-/// The bytes the largest stream lopdf decoded while it read `doc` came to:
-/// an object stream's, which it leaves decoded in place, or a
-/// cross-reference stream's, decoded again here to be measured. Each
-/// decoded within the codec bound, or the read failed.
-fn largest_decoded_stream(doc: &Document, codec: usize) -> u64 {
+impl EsignSealInput {
+    /// Replaces the revisions with one fresh revision whose hole holds at
+    /// least `needed` DER bytes (FIX 6270): twice the largest written so far,
+    /// or `needed` to the next power of two when that is more, so a fresh
+    /// CMS a few bytes longer still fits. `false`, with nothing changed, when
+    /// `needed` already fits the largest: no larger revision would help.
+    ///
+    /// # Errors
+    /// As [`Self::measured`].
+    pub(crate) fn rewrite_larger(
+        &mut self,
+        operation_id: &str,
+        now_ms: u64,
+        codec_bytes: u64,
+        needed: u64,
+    ) -> Result<bool> {
+        let largest = self
+            .revisions
+            .iter()
+            .filter_map(|revision| {
+                let [_, open, close, _] = revision.byte_range;
+                close
+                    .checked_sub(open)?
+                    .checked_sub(2)
+                    .map(|digits| digits / 2)
+            })
+            .max()
+            .unwrap_or(0);
+        if needed <= largest {
+            return Ok(false);
+        }
+        let doubled = largest.checked_mul(2).ok_or(PdfPreparationError::Limit)?;
+        let next = needed
+            .checked_next_power_of_two()
+            .ok_or(PdfPreparationError::Limit)?;
+        let capacity = doubled.max(next);
+        if capacity > MAX_CLASSIC_XREF_OFFSET / 2 {
+            return Err(PdfPreparationError::Limit);
+        }
+        let capacity = usize::try_from(capacity).map_err(|_| PdfPreparationError::Limit)?;
+        let codec = usize::try_from(codec_bytes).unwrap_or(usize::MAX);
+        let (base, _) = Base::read(&self.pdf, codec)?;
+        self.revisions = vec![base.revision(self.pdf.len(), operation_id, now_ms, capacity)?];
+        Ok(true)
+    }
+}
+
+/// The largest uncompressed cross-reference stream's bytes, within `codec`.
+/// The load never decodes these, so the admission never sees them, while the
+/// old re-decode counted their length. A length read, never a decode.
+/// Over-codec streams count as nothing, as the re-decode's `.ok()` did.
+fn uncompressed_xref_bytes(doc: &Document, codec: usize) -> u64 {
     doc.objects
         .values()
         .filter_map(|object| object.as_stream().ok())
@@ -87,15 +143,12 @@ fn largest_decoded_stream(doc: &Document, codec: usize) -> u64 {
                 .ok()
                 .and_then(|kind| kind.as_name().ok());
             match kind {
-                Some(b"ObjStm") if !stream.is_compressed() => Some(stream.content.len()),
-                Some(b"ObjStm" | b"XRef") => stream
-                    .decompressed_content_with_limit(codec)
-                    .ok()
-                    .map(|content| content.len()),
+                Some(b"XRef") if !stream.is_compressed() && stream.content.len() <= codec => {
+                    Some(stream.content.len() as u64)
+                }
                 _ => None,
             }
         })
-        .map(|len| len as u64)
         .max()
         .unwrap_or(0)
 }
@@ -128,24 +181,97 @@ fn reference(object: &Object) -> Option<ObjectId> {
     }
 }
 
+/// The revision read's admission on the host's machine memory (6274): one
+/// hold, NOT a ledger. It admits every table, copy, and decode before it is
+/// allocated and records each finished decode's length. Admissions are never
+/// released on this base (lopdf admits only), so growth holds old+new
+/// together: correct, only more conservative. A process with no registered
+/// host reserves nothing, as before (measuring port).
+struct BaseAdmission {
+    state: Mutex<BaseAdmissionState>,
+    max_decoded: AtomicU64,
+}
+
+struct BaseAdmissionState {
+    hold: Hold,
+    /// Stays 0: this base's trait has no `release` to credit it (§4).
+    spare: u64,
+}
+
+impl BaseAdmission {
+    fn new(hold: Hold) -> Self {
+        Self {
+            state: Mutex::new(BaseAdmissionState { hold, spare: 0 }),
+            max_decoded: AtomicU64::new(0),
+        }
+    }
+
+    fn max_decoded(&self) -> u64 {
+        self.max_decoded.load(Ordering::Relaxed)
+    }
+}
+
+impl DecodeAdmission for BaseAdmission {
+    fn admit(&self, bytes: usize) -> std::result::Result<(), DecodeAdmissionError> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let bytes = wide(bytes);
+        let credit = state.spare.min(bytes);
+        state.spare -= credit;
+        let rest = bytes - credit;
+        if rest == 0 {
+            return Ok(());
+        }
+        state.hold.take(rest).map_err(|refusal| match refusal {
+            ResourceRefusal::MemoryFloor { needed, available } => {
+                DecodeAdmissionError::MemoryFloor { needed, available }
+            }
+            ResourceRefusal::Deadline => DecodeAdmissionError::Deadline,
+        })
+    }
+
+    fn decoded(&self, bytes: usize) {
+        self.max_decoded.fetch_max(wide(bytes), Ordering::Relaxed);
+    }
+}
+
 impl Base {
     /// The prepared PDF's base, and its largest decoded stream's bytes.
     fn read(pdf: &[u8], codec: usize) -> Result<(Self, u64)> {
+        // Declared before `doc`: reverse drop order keeps the hold alive
+        // while the tables, copies, and decodes it admitted live in `doc`.
+        let admission = Arc::new(BaseAdmission::new(
+            crate::office_body::document_resources().hold(),
+        ));
         let doc = Document::load_mem_with_options(
             pdf,
             LoadOptions {
                 strict: true,
-                max_decompressed_size: Some(codec),
+                max_decompressed_size: Some(codec), // KEPT: bound and admission compose
+                decode_admission: Some(Arc::clone(&admission) as Arc<dyn DecodeAdmission>),
                 ..LoadOptions::default()
             },
         )
-        .map_err(|error| match PdfPreparationError::from(error) {
-            PdfPreparationError::Limit => {
-                PdfPreparationError::StreamPastCodecBound(STREAM_CODEC_ROW)
-            }
-            other => other,
+        .map_err(|error| match error {
+            lopdf::Error::DecodeAdmission(DecodeAdmissionError::MemoryFloor {
+                needed,
+                available,
+            }) => PdfPreparationError::MemoryFloor { needed, available },
+            // Deadline, plus Cancelled defensively: nothing on this path
+            // cancels (no Cancelled source in the vendored load).
+            lopdf::Error::DecodeAdmission(_) => PdfPreparationError::Deadline,
+            other => match PdfPreparationError::from(other) {
+                PdfPreparationError::Limit => {
+                    PdfPreparationError::StreamPastCodecBound(STREAM_CODEC_ROW)
+                }
+                other => other,
+            },
         })?;
-        let stream_bytes = largest_decoded_stream(&doc, codec);
+        let stream_bytes = admission
+            .max_decoded()
+            .max(uncompressed_xref_bytes(&doc, codec));
         let prev_startxref = last_startxref(pdf)?;
         let at = usize::try_from(prev_startxref).map_err(malformed)?;
         if pdf.get(at..at.saturating_add(4)) != Some(b"xref".as_slice())
@@ -243,7 +369,14 @@ impl Base {
             .ok_or(PdfPreparationError::Limit)?;
         let sig_num = next_obj(&mut next)?;
         let field_num = next_obj(&mut next)?;
-        let (sig_body, br_rel, lt_rel) = sig_dict_body(&pdf_date(now_ms), capacity);
+        let hole_digits = capacity.checked_mul(2).ok_or(PdfPreparationError::Limit)?;
+        let reserve = hole_digits
+            .checked_add(4096)
+            .ok_or(PdfPreparationError::Limit)?;
+        if u64::try_from(reserve).unwrap_or(u64::MAX) > MAX_CLASSIC_XREF_OFFSET {
+            return Err(PdfPreparationError::Limit);
+        }
+        let (sig_body, br_rel, lt_rel) = sig_dict_body(&pdf_date(now_ms), capacity)?;
         let mut field = b"<< /FT /Sig /T ".to_vec();
         write_literal_string(&field_name(operation_id), &mut field);
         field.extend_from_slice(
@@ -266,7 +399,9 @@ impl Base {
         ));
         self.register_field(&mut objects, &mut next, field_num)?;
 
-        let mut out = Vec::with_capacity(capacity * 2 + 4096);
+        let mut out = Vec::new();
+        out.try_reserve_exact(reserve)
+            .map_err(|_| PdfPreparationError::Limit)?;
         if !self.pdf_ends_with_eol {
             out.push(b'\n');
         }
@@ -290,9 +425,20 @@ impl Base {
         let xref_offset = (base_len + out.len()) as u64;
         self.xref_table(&mut written, u64::from(max_used) + 1, &mut out);
         out.extend_from_slice(format!("startxref\n{xref_offset}\n%%EOF").as_bytes());
-        let gt = lt + 1 + capacity * 2;
+        let gt = lt
+            .checked_add(1)
+            .and_then(|value| value.checked_add(hole_digits))
+            .ok_or(PdfPreparationError::Limit)?;
+        let after_hole = gt.checked_add(1).ok_or(PdfPreparationError::Limit)?;
         let total = (base_len + out.len()) as u64;
-        let byte_range = [0, lt as u64, gt as u64 + 1, total - (gt as u64 + 1)];
+        let byte_range = [
+            0,
+            lt as u64,
+            after_hole as u64,
+            total
+                .checked_sub(after_hole as u64)
+                .ok_or(PdfPreparationError::Limit)?,
+        ];
         for (i, value) in byte_range[1..].iter().enumerate() {
             let at = br_at + i * (BYTERANGE_DIGITS + 1);
             let digits = format!("{value:0BYTERANGE_DIGITS$}");
@@ -378,8 +524,12 @@ fn next_obj(next: &mut u32) -> Result<u32> {
 
 /// The signature dictionary with a zero ByteRange and a `capacity`-byte
 /// hole, and the offsets of the ByteRange digits and the hole's `<`.
-fn sig_dict_body(date: &str, capacity: usize) -> (Vec<u8>, usize, usize) {
-    let mut body = Vec::with_capacity(capacity * 2 + 256);
+fn sig_dict_body(date: &str, capacity: usize) -> Result<(Vec<u8>, usize, usize)> {
+    let digits = capacity.checked_mul(2).ok_or(PdfPreparationError::Limit)?;
+    let reserve = digits.checked_add(256).ok_or(PdfPreparationError::Limit)?;
+    let mut body = Vec::new();
+    body.try_reserve_exact(reserve)
+        .map_err(|_| PdfPreparationError::Limit)?;
     body.extend_from_slice(b"<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /ETSI.CAdES.detached");
     body.extend_from_slice(b" /M ");
     write_literal_string(date, &mut body);
@@ -388,9 +538,9 @@ fn sig_dict_body(date: &str, capacity: usize) -> (Vec<u8>, usize, usize) {
     body.extend_from_slice(b"00000000000000000000 00000000000000000000 00000000000000000000");
     body.extend_from_slice(b"] /Contents <");
     let lt_rel = body.len() - 1;
-    body.extend(std::iter::repeat_n(b'0', capacity * 2));
+    body.extend(std::iter::repeat_n(b'0', digits));
     body.extend_from_slice(b"> >>");
-    (body, br_rel, lt_rel)
+    Ok((body, br_rel, lt_rel))
 }
 
 /// The field name the seal derives from its operation.

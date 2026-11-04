@@ -22,7 +22,7 @@ pub(super) fn stage_put_projections(
     project_revisions: Vec<(EntityId, Vec<u8>)>,
     portable_agent_source: Option<(EntityId, Vec<u8>)>,
 ) -> Result<AppliedPut> {
-    crate::skill_hub::stage_refinement_origin(
+    crate::store::skill_refinement_origin::stage_refinement_origin(
         store,
         wtxn,
         &fixed.id,
@@ -72,6 +72,7 @@ pub(super) fn stage_put_projections(
         let first_stored = observe_authority_put(
             store,
             wtxn,
+            &fixed.id,
             &key,
             dispatch.authority_entry_observation.as_ref(),
             dispatch.authority_entry_hash_pin.as_ref(),
@@ -106,20 +107,15 @@ pub(super) fn stage_put_projections(
     }
     // A row stored before this put takes no first position from it (FIX 11925).
     let row_put = if fixed.replicated {
-        crate::federation::record_scope::RowPut::Replicated
+        crate::batch::row_put::RowPut::Replicated
     } else if stored_before {
-        crate::federation::record_scope::RowPut::LocalReput
+        crate::batch::row_put::RowPut::LocalReput
     } else {
-        crate::federation::record_scope::RowPut::Birth
+        crate::batch::row_put::RowPut::Birth
     };
-    crate::federation::record_scope::stamp_put(
-        store,
-        wtxn,
-        fixed.id,
-        fixed.entity_type,
-        data,
-        row_put,
-    )?;
+    store
+        .scope_stamps
+        .stamp_put(store, wtxn, fixed.id, fixed.entity_type, data, row_put)?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_PERSON {
         super::super::super::person_substrate::ensure_person_substrate(
             store,
@@ -150,7 +146,7 @@ pub(super) fn stage_put_projections(
     // A workflow's `[limits]` rows ask only once every fallible step of its
     // put is staged (Rule 5).
     if let Some(definition) = dispatch.new_workflow.as_ref() {
-        crate::agent_def::workflow::measure_workflow_limits(&store.limit_watch, definition);
+        crate::store::workflow_definition::measure_workflow_limits(&store.limit_watch, definition);
     }
     Ok(AppliedPut {
         portable_agent_source,

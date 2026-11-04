@@ -263,13 +263,21 @@ pub(crate) fn conversation_of(
             ..
         } => {
             let owners = edge_ids(store, txn, record, EdgeKind::ChildOf, false, 2)?;
-            if owners.len() != 1 {
-                return Err(invalid("record needs exactly one conversation"));
+            // A Shell held here as its header alone reads as Live and keeps
+            // no ChildOf: its pin names its room (FIX 11803, L09 01:42).
+            if owners.is_empty()
+                && let Some(pin) = &pin
+            {
+                pin.room
+            } else {
+                if owners.len() != 1 {
+                    return Err(invalid("record needs exactly one conversation"));
+                }
+                if pin.as_ref().is_some_and(|pin| pin.room != owners[0]) {
+                    return Err(Error::CorruptedIndex("DAG room pin"));
+                }
+                owners[0]
             }
-            if pin.as_ref().is_some_and(|pin| pin.room != owners[0]) {
-                return Err(Error::CorruptedIndex("DAG room pin"));
-            }
-            owners[0]
         }
         LiveEntityRow::DeletedShell | LiveEntityRow::Absent => {
             pin.ok_or(Error::EntityNotFound)?.room

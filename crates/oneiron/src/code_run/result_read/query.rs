@@ -463,12 +463,13 @@ fn write_item(
     Ok(())
 }
 
-/// `query`: see the module. `handle` is the handle of the result `body`
-/// is of, which a range ref over one picked value names.
+/// `query`: see the module. `parent` is the owner's immutable occurrence
+/// ref, else the caller's own name or handle when the read is foreign, which
+/// a range ref over one picked value names.
 pub(super) fn query(
     body: &dyn ResultBody,
     reference: &str,
-    handle: &str,
+    parent: &str,
     input: Value,
     bounds: &ReadBounds<'_>,
     spill: Option<&mut BodySink>,
@@ -534,7 +535,7 @@ pub(super) fn query(
         value_end: 0,
     };
     match table {
-        None => document(body, reference, handle, &steps, picked, bounds),
+        None => document(body, reference, parent, &steps, picked, bounds),
         Some(delimiter) => table_rows(body, reference, &steps, delimiter, &cursor, picked, bounds),
     }
 }
@@ -543,7 +544,7 @@ pub(super) fn query(
 fn document(
     body: &dyn ResultBody,
     reference: &str,
-    handle: &str,
+    parent: &str,
     steps: &[Step],
     mut picked: Picked<'_>,
     bounds: &ReadBounds<'_>,
@@ -582,7 +583,7 @@ fn document(
     };
     if picked.stop == Some(Stop::Budget)
         && let Some(raw) = picked.oversized.take()
-        && let Some(paged) = page_value(body, handle, &raw, picked.value_end, bounds)?
+        && let Some(paged) = page_value(body, parent, &raw, picked.value_end, bounds)?
     {
         let mut reply = json!({
             "ref": reference,
@@ -604,7 +605,7 @@ fn document(
 }
 
 /// The one picked value `raw` too large for a reply, as a range ref over
-/// its own bytes in the body (`<handle>#<start>-<end>`, in the whole
+/// its own bytes in the body (`<parent>#<start>-<end>`, in the whole
 /// body's offsets) with its size and its first page, as `slice` reads it:
 /// the reader goes on with `slice` of that ref from the page's `next`. The
 /// parser had taken `end` bytes from the body when `raw` ended, one of them
@@ -613,7 +614,7 @@ fn document(
 /// neither is.
 fn page_value(
     body: &dyn ResultBody,
-    handle: &str,
+    parent: &str,
     raw: &RawValue,
     end: u64,
     bounds: &ReadBounds<'_>,
@@ -636,7 +637,7 @@ fn page_value(
     };
     let window = ValueWindow { body, start, len };
     let from = window.base();
-    let range_ref = format!("{handle}#{from}-{}", from + len);
+    let range_ref = format!("{parent}#{from}-{}", from + len);
     let page_bounds = ReadBounds {
         reply_bytes: bounds.reply_bytes.saturating_sub(REPLY_FIELD_BYTES),
         watch: bounds.watch,

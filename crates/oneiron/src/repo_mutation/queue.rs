@@ -81,7 +81,7 @@ pub(super) enum PreparedRepoMutationExecution {
     /// A file bundle's ONE staged commit and its exact tree change.
     FileBundle {
         commit: PreparedCommitFile,
-        edits: Vec<super::received_file::tree::ReceivedTreeEdit>,
+        edits: Vec<super::bundle::tree::BundleTreeEdit>,
     },
 }
 
@@ -175,6 +175,23 @@ impl Vault {
         proposal: EntityId,
         step: &super::reviewed_stack::StackStep,
     ) -> Result<RepoMutationOutcome> {
+        // The tested tree binds the reviewed bytes: a handle-bearing
+        // member resolves and lands alone (FIX 2938), never here.
+        if let Some(row) = self.repo_proposal(proposal)? {
+            super::proposal::resolve_handles::refuse_handle_bearing_row(&row)?;
+            // Round-8 (review P1): a resolved successor left Approved and
+            // unconsumed by a failed standalone landing carries plaintext, so
+            // it passes the handle-only guard above. Replay its mint-time
+            // custody admission here too: an unbound repo:landing or a revoked
+            // secret refuses typed instead of landing cached bytes through
+            // the stack.
+            if row.resolves.is_some() && row.operation_seq.is_none() {
+                let txn = self.store.env.read_txn()?;
+                super::proposal::resolve_handles::revalidate_resolved_successor_in_txn(
+                    self, &txn, &row,
+                )?;
+            }
+        }
         self.apply_repo_mutation_inner(request, Some(proposal), Some(step))
     }
 
@@ -695,10 +712,7 @@ pub(super) fn execute_repo_mutation(
         }
         RepoMutationOperation::ReceivedFiles { .. } => {
             super::received_file::require_received_files_execution(vault, request)?;
-            super::received_file::tree::apply_prepared_received_files(
-                repo_root,
-                execution.commit_file()?,
-            )?;
+            super::bundle::tree::apply_prepared_bundle_files(repo_root, execution.commit_file()?)?;
             Ok(None)
         }
         RepoMutationOperation::CommitFiles { .. } => {

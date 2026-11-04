@@ -140,6 +140,7 @@ mod slip_replay;
 mod slip_state;
 mod slip_vault;
 mod stale_roster;
+pub(crate) mod store_order;
 mod support_admission;
 mod support_grant;
 mod support_receipt;
@@ -348,8 +349,8 @@ pub use slip_renewal::{
     OwnerDeviceRenewalProof, RENEWAL_GRANT_AND_DEVICE, RENEWAL_K04, RENEWAL_LIFETIME,
     RENEWAL_PROOF_NOT_FRESH,
 };
-pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
+pub(crate) use slip_replay::{SpentNonces, refuse_moved_proof_freshness};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::{
     ConnectOffer, ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,

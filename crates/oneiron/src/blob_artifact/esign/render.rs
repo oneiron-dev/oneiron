@@ -108,6 +108,14 @@ pub enum PdfPreparationError {
     InvalidCanonicalUrl,
     #[error("PDF encoding failed")]
     Encoding,
+    /// The machine's memory floor refused the revision read: `needed` more
+    /// bytes past `available` at most (6274). Retryable, never malformed.
+    #[error("the machine's memory floor: {needed} bytes needed, {available} available")]
+    MemoryFloor { needed: u64, available: u64 },
+    /// The host's wait for memory ran out on the revision read (6274).
+    /// A caller may ask again. Never malformed.
+    #[error("the work's resource wait or deadline passed")]
+    Deadline,
 }
 impl From<lopdf::Error> for PdfPreparationError {
     fn from(error: lopdf::Error) -> Self {
@@ -258,7 +266,23 @@ pub fn prepare_esign_pdf_within(
         ids: BTreeMap::new(),
         active: BTreeSet::new(),
         bound,
+        copied_resources: BTreeMap::new(),
     };
+    // This item's fields by page, in document order: each page burns its own
+    // without reading every other page's (FIX 3810).
+    let mut page_fields: BTreeMap<u32, Vec<&EsignField>> = BTreeMap::new();
+    for field in request
+        .state
+        .document
+        .fields
+        .iter()
+        .filter(|f| f.item == request.item)
+    {
+        page_fields
+            .entry(field.geometry.page)
+            .or_default()
+            .push(field);
+    }
     let mut kids = Vec::new();
     let mut images = fields::BurnImages::default();
     let mut contents = PageContents::default();
@@ -294,7 +318,9 @@ pub fn prepare_esign_pdf_within(
             &mut out,
             &mut resources,
             geometry.display_box()?,
-            index as u32 + 1,
+            page_fields
+                .get(&(index as u32 + 1))
+                .map_or(&[][..], Vec::as_slice),
             &request,
             font,
             &mut images,

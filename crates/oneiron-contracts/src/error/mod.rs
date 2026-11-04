@@ -40,8 +40,8 @@ pub use self::store::{SideTableRowProblem, StoreError, VaultRootEntry, VaultRoot
 pub use self::sync::SyncError;
 #[cfg(feature = "sync")]
 pub use self::sync::{
-    SyncConfigField, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation,
-    SyncRollbackError, SyncSelectorValidation,
+    FederationReplayEnd, SyncConfigField, SyncEngineContext, SyncProtocolPruneScope,
+    SyncProtocolValidation, SyncRollbackError, SyncSelectorValidation,
 };
 
 /// Result type used throughout the crate.
@@ -176,6 +176,9 @@ pub enum ErrorKind {
     ReservedPredicate,
     SourceNotTrustedForAuto,
     GateWriteRejected,
+    /// The Gate allowed a share creation but a full budget window paces
+    /// it; the error names the instant to bring it back.
+    ShareCreatePaced,
     FamilyRequiresAutoGrant,
     ActorLacksClaimAuthority,
     GateConsentStale,
@@ -234,8 +237,6 @@ pub enum ErrorKind {
     SyncProtocolError,
     #[cfg(feature = "sync")]
     SyncEngineError,
-    #[cfg(feature = "sync")]
-    MaintenanceIngestQuotaExceeded,
     #[cfg(feature = "sync")]
     HeldFacetStampsFull,
     InvalidRedactionReceiptBody,
@@ -412,6 +413,9 @@ pub enum ErrorKind {
     EmbeddingTransformChanged,
     ArchivedVault,
     HostActionRequiresSupportGrant,
+    /// A nonce spend met the writer lease another process holds on the vault
+    /// (FIX 12023 W0).
+    VaultServedElsewhere,
 }
 
 /// What a host credential gets for an owner act where no host acts as a
@@ -526,6 +530,12 @@ pub enum Error {
     /// an owner act inside the vault takes the customer's support grant.
     #[error("{}", HOST_ACTION_REQUIRES_SUPPORT_GRANT_TEXT)]
     HostActionRequiresSupportGrant,
+    /// A request's nonce spend in a process that holds no writer lease on
+    /// the vault met the lease another process holds (FIX 12023 W0): that
+    /// process serves the vault and may have spent the nonce in memory, its
+    /// row not landed yet, so this one spends none beside it.
+    #[error("this vault is served by another process; send the request there")]
+    VaultServedElsewhere,
     /// Artifact-domain failure, see [`ArtifactError`].
     /// Transparent, so Display and `source()` are the leaf's.
     #[error(transparent)]
@@ -682,6 +692,7 @@ impl Error {
             Self::Refused(_) => ErrorKind::Refused,
             Self::LegalHold(_) => ErrorKind::LegalHold,
             Self::HostActionRequiresSupportGrant => ErrorKind::HostActionRequiresSupportGrant,
+            Self::VaultServedElsewhere => ErrorKind::VaultServedElsewhere,
             Self::Artifact(inner) => inner.kind(),
             Self::Claim(inner) => inner.kind(),
             Self::Code(inner) => inner.kind(),

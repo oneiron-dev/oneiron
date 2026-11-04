@@ -14,9 +14,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // image holds it, as the wakes its landing did record do.
     (&t::MEMORY_TURN_WAKE_UNPERSISTED, CONTENT),
     (&t::MERGE_QUEUE_BATCH, CONTENT),
+    // Derived beside each batch, restored with it (FIX 7067).
+    (&t::MERGE_QUEUE_BATCH_INDEX, CONTENT),
     // A restore never revives a revoked approval: the live one stands.
     (&t::MERGE_QUEUE_CHECK_CONFIG, LIVE),
     (&t::MERGE_QUEUE_CHECK_WORK, CONTENT),
+    // Derived beside each work row's receipts, restored with it (FIX 7349).
+    (&t::MERGE_QUEUE_RECEIPT_INDEX, CONTENT),
     // A restore never revives a cleared review policy: the live one stands.
     (&t::MERGE_QUEUE_REVIEW_POLICY, LIVE),
     (&t::MERGE_QUEUE_STATE, CONTENT),
@@ -28,6 +32,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MODEL_STEP_SUBMISSION, CONTENT),
     (&t::MODEL_STREAM, CONTENT),
     (&t::PORTS_NAMED_ENTITY_INDEX, CONTENT),
+    (&t::NATIVE_MAIL_MAILBOX_SKIPPED, CONTENT),
     (&t::NOTE_ERASE_AUTHORITY_FLOOR, CONTENT),
     (&t::NOTE_ERASE_PENDING, CONTENT),
     (&t::NOTE_ERASE_SOURCE, CONTENT),
@@ -52,11 +57,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::NOTE_TOMBSTONE_PROPOSAL, CONTENT),
     (&t::NOTE_TOMBSTONE_REVIEW, CONTENT),
     (&t::OFFICE_BODY_EXPORT, CONTENT),
+    (&t::OFFICE_BODY_EXPORT_AUTHOR, CONTENT),
     (&t::OFFICE_BODY_FORK, CONTENT),
     (&t::OFFICE_BODY_FORK_PROPOSAL, CONTENT),
     (&t::OFFICE_BODY_HEAD, CONTENT),
     (&t::OFFICE_BODY_ORACLE, CONTENT),
     (&t::OFFICE_BODY_PROPOSAL, CONTENT),
+    (&t::OFFICE_LIVE_EDIT_ASK_GROUP, CONTENT),
     (&t::OFF_RECORD_COPY_RECEIPT, CONTENT),
     (&t::OFF_RECORD_PROMOTE_RECEIPT, CONTENT),
     (&t::ORG_ADMIN_POLICY, ORG_ADMIN_GRANTS),
@@ -66,6 +73,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ORIGIN_CAS_INTENT, CONTENT),
     (&t::ORIGIN_CHANGE_RECEIPT, CONTENT),
     (&t::ORIGIN_CODE_OPERATIONS, CONTENT),
+    (&t::ORIGIN_CODE_PENDING, CONTENT),
+    (&t::ORIGIN_CODE_RESOLVED_TIP, CONTENT),
     (&t::ORIGIN_ENGINE_EXPORT, CONTENT),
     (&t::ORIGIN_KEEP_OWNER, CONTENT),
     (&t::ORIGIN_LFS_CDC_SEED, CONTENT),
@@ -85,6 +94,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ORIGIN_RECEIVE_PACK_EVIDENCE, CONTENT),
     (&t::ORIGIN_RECEIVE_PACK_INTENT, CONTENT),
     (&t::ORIGIN_RECEIVE_PACK_PROGRESS, CONTENT),
+    (&t::ORIGIN_RECEIVED_UPDATE, CONTENT),
     (&t::ORIGIN_SCAN_CHECK, LIVE),
     (&t::ORIGIN_SCAN_POLICY, LIVE),
     (&t::ORIGIN_VISIBLE_REF, CONTENT),
@@ -122,6 +132,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF, LIVE),
     (&t::SKILL_HUB_PACK_BUILTIN_SEED, CONTENT),
     (&t::SKILL_HUB_PACK_CANDIDATE, CONTENT),
+    // An ask stands with the binding claims it describes.
+    (&t::SKILL_HUB_PACK_HOOK_PROPOSAL, CONTENT),
     (&t::SKILL_HUB_PACK_INSTALL, CONTENT),
     (&t::SKILL_HUB_PACK_PREDICATE, CONTENT),
     (&t::SKILL_HUB_PACK_SETUP, LIVE),
@@ -223,6 +235,11 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_REDIRECT, CONTENT),
     (&t::REPO_CONFLICT_RECONCILIATION_INDEX, CONTENT),
     (&t::REPO_DERIVED_INDEX_COPY, CONTENT),
+    (&t::REPO_DERIVED_SOURCE_BLOB, CONTENT),
+    (&t::REPO_MANIFEST_BY_CODE, CONTENT),
+    // A restore never makes this machine a repo's refs writer again (FIX 6870).
+    (&t::REPO_MANIFEST_MINTED, LIVE),
+    (&t::REPO_MANIFEST, CONTENT),
     (&t::REPO_MUTATION_OPLOG, CONTENT),
     (&t::REPO_MUTATION_PROPOSAL, CONTENT),
     (&t::REPO_MUTATION_PROPOSAL_OP, CONTENT),

@@ -55,6 +55,7 @@ impl Vault {
         signature: &[u8],
         request_nonce: &[u8],
     ) -> Result<(EntityId, Vec<(u64, RemovalExportCopy)>)> {
+        let _spend_guard = crate::authority::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let person =
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
@@ -101,6 +102,7 @@ impl Vault {
         version: u64,
     ) -> Result<bool> {
         let receipt = EntityId::from_hex(receipt_id)?;
+        let _spend_guard = crate::authority::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let person =
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;

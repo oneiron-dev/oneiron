@@ -73,11 +73,11 @@ pub(crate) fn result_cards_in(
 ) -> Result<(Vec<Value>, usize)> {
     let mut cards = Vec::new();
     for binding in record.bindings.iter().rev().skip(skip).take(limit) {
-        let Some(output) = record
-            .outputs
-            .iter()
-            .find(|output| output.handle == binding.handle && is_result_output_path(&output.path))
-        else {
+        let Some(output) = record.outputs.iter().find(|output| {
+            output.handle == binding.handle
+                && (binding.path.is_empty() || output.path == binding.path)
+                && is_result_output_path(&output.path)
+        }) else {
             continue;
         };
         let mut card = card(storage, record.run_id, output, Some(binding.name.as_str()))?;
@@ -130,7 +130,7 @@ pub(crate) fn read_result_in(
             }
             selected
         }
-        _ => resolve(outputs, &live, &target.reference),
+        _ => resolve(run_id, outputs, &live, &target.reference),
     };
     let Some((output, name)) = selected else {
         return Ok(unknown_handle(&live));

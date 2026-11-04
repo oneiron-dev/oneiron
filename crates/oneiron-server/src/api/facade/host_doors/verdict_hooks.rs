@@ -69,6 +69,7 @@ pub(crate) async fn ai_verdict(
                 // A facade caller's verdict bills the vault owner.
                 None,
                 &mut evidence,
+                auth.off_record_session(),
             );
             Ok((verdict, evidence))
         })

@@ -24,9 +24,10 @@ use crate::file_secret_marks::KeyPlaces;
 use crate::file_secret_marks::KeySpan;
 use crate::file_secret_marks::MemberStep;
 use crate::secret_custody::KeptValues;
-use crate::secret_custody::{KnownValues, MASKED_FILE_BAND, MaskedFile};
-use crate::secret_custody::{masked_file_in_txn, put_masked_file_in_txn};
 use crate::store::Store;
+use crate::store::file_key_masks::{MASKED_FILE_BAND, MaskedFile};
+use crate::store::file_key_masks::{masked_file_in_txn, put_masked_file_in_txn};
+use crate::store::known_value_index::KnownValues;
 
 /// One known value a file's mark does not cover yet: the member that holds
 /// it (none for the file's own bytes), its span there, and its record.
@@ -59,11 +60,9 @@ pub(super) fn unmarked_known(
             .iter()
             .find(|(at, _)| at.as_slice() == path)
             .map_or(&[][..], |(_, spans)| spans.as_slice());
-        for hit in known.spans(leaf) {
+        for hit in known.spans_except(leaf, &keep) {
             let (start, end) = (offset(hit.span.start)?, offset(hit.span.end)?);
-            if held.iter().any(|&(from, to)| from < end && start < to)
-                || leaf.get(hit.span.clone()).is_none_or(&keep)
-            {
+            if held.iter().any(|&(from, to)| from < end && start < to) {
                 continue;
             }
             found.push(KnownMark {
@@ -132,7 +131,9 @@ pub(crate) fn remark_known_file_in_txn(
         return Ok(false);
     };
     put_masked_file_in_txn(store, wtxn, &hash, &mark)?;
-    crate::federation::record_scope::restrict_stamp_in_txn(store, wtxn, *record, MASKED_FILE_BAND)?;
+    store
+        .scope_stamps
+        .restrict_stamp_in_txn(store, wtxn, *record, MASKED_FILE_BAND)?;
     Ok(true)
 }
 

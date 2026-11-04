@@ -57,7 +57,9 @@ impl EdgeStoreMaintenance for Store {
             crate::skill_attribution::note_direct_derivation_in_txn(self, txn, *source, *target);
         }
         if changed {
-            crate::ppr::invalidate_ppr_for_edge(self, txn, source, target)?;
+            crate::store::ppr_cache_invalidation::invalidate_ppr_for_edge(
+                self, txn, source, target,
+            )?;
         }
         Ok(changed)
     }
@@ -153,7 +155,12 @@ impl super::EdgeStoreReadiness for crate::Vault {
         self.store
             .edges_in
             .put(txn, &Store::encode_edge_key(&to, kind, &from), &value)?;
-        crate::ppr::invalidate_ppr_for_edge(&self.store, txn, &from, &to)?;
+        crate::store::ppr_cache_invalidation::invalidate_ppr_for_edge(
+            &self.store,
+            txn,
+            &from,
+            &to,
+        )?;
         crate::store::graph_version::increment_graph_version(&self.store, txn)
     }
     fn port_blocks_remove(
@@ -173,7 +180,12 @@ impl super::EdgeStoreReadiness for crate::Vault {
             .edges_in
             .delete(txn, &Store::encode_edge_key(&to, kind, &from))?;
         if existed {
-            crate::ppr::invalidate_ppr_for_edge(&self.store, txn, &from, &to)?;
+            crate::store::ppr_cache_invalidation::invalidate_ppr_for_edge(
+                &self.store,
+                txn,
+                &from,
+                &to,
+            )?;
             crate::store::graph_version::increment_graph_version(&self.store, txn)?;
         }
         Ok(existed)

@@ -25,7 +25,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::memory::erase_stream_seeds_in_txn,
     crate::conversation::erase_chat_breakpoints_in_txn,
     crate::store::legal_hold::erase_in_txn,
-    crate::workspace_roster::erase_room_side_rows,
+    erase_room_side_rows,
     crate::task_verb::erase_report_journal_in_txn,
     crate::task_verb::erase_lifecycle_receipts_in_txn,
     crate::vault_cleanup::erase_in_txn,
@@ -33,7 +33,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 10460: the queue copy of a public model step's failure text.
     // First: it reads the step's terminal claim out of the live submission
     // row, which the submission scrub below replaces with Erased.
-    crate::attempt_queue::erase_model_step_failure_reasons_in_txn,
+    crate::store::attempt_operations::erase_model_step_failure_reasons_in_txn,
     // FIX 9929: a public model step's kept request and result.
     crate::llm::erase_submissions_in_txn,
     // FIX 10089: every verdict memo the erased row is a source of.
@@ -49,6 +49,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 9752: a fitted section install's receipt, with the skill or the
     // install claim it names.
     crate::context_board::erase_section_fit_receipts_in_txn,
+    // FIX 6870: a CODE anchor's repo manifests, aliases and minted markers.
+    crate::origin::erase_repo_manifests_in_txn,
     // FIX 9949: an uploaded or generated ASSET's reference to its bytes.
     crate::memory::release_asset_blob_in_txn,
     // FIX 10219: a subject's recognition prints, samples and active pointer.
@@ -67,14 +69,53 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::feedback::erase_handoff_in_txn,
     // FIX 9636: an erased booking EVENT's receipt intake and invite addresses.
     crate::booking::lifecycle::erase_booking_receipt_carriers_in_txn,
+    // FIX 9876: an imported MESSAGE's text hash in the history import ledger.
+    crate::ingest::history::erase_message_in_txn,
+    // FIX 9775: a PERSON's trusted-contact relations, asks and staged notices.
+    crate::counterparty_contact::erase_trusted_contact_rows_in_txn,
+    // FIX 11952: a TASK's comm receipt-import skip marker.
+    crate::comm::erase_skipped_send_receipt_in_txn,
+    // FIX 12004: meeting cards whose EVENT or copied source row is erased.
+    crate::calendar::inbox_card::erase_inbox_cards_in_txn,
+    // FIX 11815: an agent hook's proposal, by the binding claim it widens.
+    crate::store::pack_hook_proposal::erase_hook_proposal_in_txn,
     // FIX 11965: the stamp tokens the record's document names.
     crate::provenance::erase_actor_stamp_uses_in_txn,
     #[cfg(feature = "sync")]
-    crate::sync::selector::erase_carried_born_with_in_txn,
+    erase_carried_born_with_in_txn,
     // FIX 7998: retained federation and maintenance copies of the row.
     #[cfg(feature = "sync")]
-    crate::sync::federation_burst::erase_retained_copies_in_txn,
+    erase_retained_copies_in_txn,
 ];
+
+/// The room side-row eraser slot: the engine's, through the store's hooks.
+fn erase_room_side_rows(store: &Store, wtxn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+    store.record_hooks.erase_room_side_rows(store, wtxn, id)
+}
+
+/// The carried born-with eraser slot: the engine's, through the store's hooks.
+#[cfg(feature = "sync")]
+fn erase_carried_born_with_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store
+        .sync_hooks
+        .erase_carried_born_with_in_txn(store, wtxn, id)
+}
+
+/// The retained-copies eraser slot: the engine's, through the store's hooks.
+#[cfg(feature = "sync")]
+fn erase_retained_copies_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store
+        .sync_hooks
+        .erase_retained_copies_in_txn(store, wtxn, id)
+}
 
 /// Runs before the record's body and edges go. `physical` is false for a soft
 /// erase, which keeps the shell's topology (redirects, claim reassignment).
@@ -93,8 +134,10 @@ pub(crate) fn tear_derived_rows_in_txn(
         erase(store, wtxn, id)?;
     }
     if physical {
-        crate::identity_topology::forget_claim_reassignments_in_txn(store, wtxn, id)?;
-        crate::identity_redirect::forget_deleted_in_txn(store, wtxn, id)?;
+        store
+            .record_hooks
+            .forget_claim_reassignments_in_txn(store, wtxn, id)?;
+        crate::store::identity_redirect_rows::forget_deleted_in_txn(store, wtxn, id)?;
     }
     Ok(())
 }

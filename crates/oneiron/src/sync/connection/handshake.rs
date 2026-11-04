@@ -18,8 +18,10 @@ use crate::sync::window::UpdateVerdict;
 use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
 use super::server_close::ServerClose;
-use super::session::{FullResyncMarker, WsSink, WsSource};
+use super::session::{FullResyncMarker, WsSink};
 use super::{LocalUpdate, LoopExit, SyncConnection};
+
+mod acks;
 
 impl SyncConnection {
     /// Queue-overflow check, run between reconnect attempts.
@@ -122,6 +124,8 @@ impl SyncConnection {
         client: SyncClient,
         shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) -> crate::error::Result<()> {
+        // Under the host's admission, set by now (FIX 12036).
+        self.collect_left_env_bodies();
         let directives = self.run_residence_directives(client.event_tx.clone());
         let home_handoff = self.run_home_handoff(client.event_tx.clone());
         let residence_mode = self.run_residence_mode(client.event_tx.clone());
@@ -145,6 +149,11 @@ impl SyncConnection {
         // The host topology is authoritative even before the first socket
         // attempt, and its watcher remains active during reconnect backoff.
         // There is no fallback election on transport loss or cancellation.
+        // Its first election holds the host's admission (FIX 12036).
+        let mut left_rx = self.left.subscribe();
+        let Some(first_election) = self.admit_or_stop(&mut shutdown_rx, &mut left_rx).await else {
+            return Ok(());
+        };
         let _topology_watcher = self
             .config
             .client_config
@@ -157,18 +166,20 @@ impl SyncConnection {
                     self.config.client_config.residence_home_route.clone(),
                     self.config.client_config.server_url.clone(),
                     event_tx.clone(),
+                    self.batch_admission.clone(),
                 )
             })
             .transpose()?;
+        drop(first_election);
 
         // Observer A → outbound wiring: while attached, persisted local
         // updates arrive on `local_rx` below.
         let (local_tx, mut local_rx) = mpsc::unbounded_channel::<LocalUpdate>();
+        let mut debounce_buffer = Vec::new();
         let attachment = self.manager.outbound().attach(local_tx);
 
         let mut backoff_ms = self.config.client_config.reconnect_initial_ms;
         let mut promotion_rx = self.manager.subscribe_promotions();
-        let mut left_rx = self.left.subscribe();
         let mut mode_rx = self.mode.subscribe();
         self.running.send_replace(true);
 
@@ -178,6 +189,13 @@ impl SyncConnection {
             if *left_rx.borrow_and_update() {
                 break;
             }
+            // The connect is one exchange under the host's admission; a
+            // paused host is waited out before the dial (FIX 12036).
+            let Some(connect_batch) = self.admit_or_stop(&mut shutdown_rx, &mut left_rx).await
+            else {
+                let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                break;
+            };
             // A residence-mode switch takes effect at this connect's hello.
             client.config.residence_mode = *mode_rx.borrow_and_update();
             // Attempt connection
@@ -192,6 +210,7 @@ impl SyncConnection {
                     break;
                 }
             };
+            drop(connect_batch);
             let mut renegotiate = false;
             match connected {
                 Ok(ws_stream) => {
@@ -207,6 +226,7 @@ impl SyncConnection {
                             &mut client,
                             &event_tx,
                             &mut local_rx,
+                            &mut debounce_buffer,
                             &mut promotion_rx,
                             &mut shutdown_rx,
                         )
@@ -252,7 +272,7 @@ impl SyncConnection {
             }
 
             // Check for queue overflow → re-bootstrap
-            self.handle_queue_overflow_check(&mut client, &event_tx, self.queue.is_full());
+            self.admitted_overflow_check(&mut client, &event_tx).await;
             if renegotiate {
                 continue;
             }
@@ -274,6 +294,18 @@ impl SyncConnection {
             }
         }
 
+        // Leave-only single try (OF-158): a confirmed leave publishes and
+        // clears its remaining run buffer here too, before `running=false`;
+        // the steady leave arm already cleared its own, so this adds 0 then.
+        // Non-leave shutdown stays thaw-waiting, as before.
+        if *self.left.borrow() {
+            self.queue_on_exit(&mut self.batch_gate(), &mut debounce_buffer)
+                .await;
+            self.publish_leave_unqueued(&mut debounce_buffer);
+        } else {
+            self.queue_on_shutdown(&mut self.batch_gate(), &mut debounce_buffer)
+                .await;
+        }
         self.manager.outbound().detach(attachment);
         self.running.send_replace(false);
         Ok(())
@@ -551,63 +583,6 @@ impl SyncConnection {
         }
 
         Ok(ws_stream)
-    }
-
-    /// A home acknowledgment is sent only after persistence. A missing ACK
-    /// leaves every unconfirmed queue row intact for the next reconnect. The
-    /// wait ends once every row of `sent` is acknowledged or cleared; a row
-    /// never sent is never acknowledged, and one queued before them keeps
-    /// them queued for a later clear.
-    async fn wait_residence_acks(
-        &self,
-        write: &mut WsSink,
-        read: &mut WsSource,
-        client: &mut SyncClient,
-        sent: &[QueuedUpdate],
-    ) -> Result<(), String> {
-        let sent: BTreeSet<u64> = sent.iter().map(|update| update.seq).collect();
-        let budgets = self
-            .manager
-            .vault()
-            .residence_operation_budgets()
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "residence policy unavailable".to_string())?;
-        // Rows a device-only world keeps here were never sent.
-        self.clear_residence_acks(client)?;
-        tokio::time::timeout(Duration::from_millis(budgets.ack_timeout_ms), async {
-            while self
-                .queue
-                .drain_updates()
-                .map_err(|e| e.to_string())?
-                .iter()
-                .any(|update| {
-                    sent.contains(&update.seq) && !client.residence_acks.contains_key(&update.seq)
-                })
-            {
-                let message = read
-                    .next()
-                    .await
-                    .ok_or_else(|| "home closed before residence ACK".to_string())?
-                    .map_err(|e| e.to_string())?;
-                if let Message::Binary(data) = message {
-                    for response in client
-                        .handle_server_message(&data)
-                        .map_err(|e| e.to_string())?
-                        .into_iter()
-                        .filter(|frame| !client.frame_withheld(frame))
-                    {
-                        write
-                            .send(Message::Binary(response.into()))
-                            .await
-                            .map_err(|e| e.to_string())?;
-                    }
-                    self.clear_residence_acks(client)?;
-                }
-            }
-            Ok::<(), String>(())
-        })
-        .await
-        .map_err(|_| "home residence acknowledgment timed out".to_string())?
     }
 
     /// Sends queued rows the way Phase 3 replays them, importing each into the

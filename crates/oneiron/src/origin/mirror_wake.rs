@@ -19,6 +19,11 @@
 //! published refs and green pointer its last settled run saw, so a pass
 //! over an unchanged repository reads no green evidence. In memory only: a
 //! restarted host reads everything once.
+//!
+//! The same vault-owned cell carries the merge queue drain's own wake (FIX
+//! 7306): a committed queue write, check request, check result, conflict
+//! handoff or received push wakes that drain alone, never another attempt
+//! commit, and its lifecycle tick repairs a wake that was missed.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -36,6 +41,8 @@ pub(crate) struct OriginMirrorWake {
     notify: tokio::sync::Notify,
     deferred: AtomicBool,
     seen: Mutex<HashMap<EntityId, String>>,
+    /// The merge queue drain's wake (FIX 7306).
+    merge_queue: tokio::sync::Notify,
 }
 
 impl Vault {
@@ -48,6 +55,17 @@ impl Vault {
     /// Wakes the mirror pushes now.
     pub fn wake_origin_mirrors(&self) {
         self.origin_mirror_wake.notify.notify_one();
+    }
+
+    /// What the host's merge queue drain waits on beside its lifecycle tick:
+    /// a pass starts when a write the drain reads committed (FIX 7306).
+    pub fn merge_queue_wake(&self) -> &tokio::sync::Notify {
+        &self.origin_mirror_wake.merge_queue
+    }
+
+    /// Wakes the merge queue drain now, after a write it reads committed.
+    pub(crate) fn wake_merge_queue(&self) {
+        self.origin_mirror_wake.merge_queue.notify_one();
     }
 
     /// Keeps a wake for the pass that runs now to hand on when it ends.
@@ -75,10 +93,12 @@ impl Vault {
     }
 
     /// A publication reached its terminal state: a published one moved its
-    /// ref.
+    /// ref, and a received push the merge queue drain takes in is
+    /// Published now (FIX 7306).
     pub(crate) fn note_origin_publication_finished(&self, record: &OriginPublicationRecord) {
         if record.status == OriginPublicationStatus::Published {
             self.note_origin_ref_moved(record.ref_name.as_str());
+            self.wake_merge_queue();
         }
     }
 

@@ -153,7 +153,7 @@ impl Store {
         }
         // Project revisions are engine-written history (decision 8): no
         // public door writes one, whichever byte this vault registered.
-        if crate::workspace_roster::is_project_revision_type(self, entity_type) {
+        if crate::store::project_kind::is_project_revision_type(self, entity_type) {
             return Err(crate::error::RecordError::ProjectRevisionWrite.into());
         }
         self.validate_entity_type(entity_type)

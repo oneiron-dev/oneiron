@@ -14,13 +14,18 @@ pub fn read_xlsx_cells(
     let mut sheets = Vec::with_capacity(book.worksheets.len());
     for name in &book.order {
         if let Some(part) = book.worksheets.get(name) {
-            let (cells, locked, _) = book.sheet(part)?;
+            // One parse serves the cells and the lines (FIX 9081).
+            let tree = parse(&book.package, part)?;
+            let (cells, locked, _) = book.sheet_in(part, &tree)?;
+            let (rows, columns) = super::insert::sheet_lines(&tree)?;
             sheets.push(XlsxSheet {
                 name: name.clone(),
                 cells,
                 locked,
                 tables: book.tables(part)?,
                 visibility: book.visibility.get(name).copied().unwrap_or_default(),
+                rows,
+                columns,
             });
         }
     }
@@ -39,7 +44,15 @@ impl Book {
     /// writable; a member whose moved text would leave the sheet stays
     /// read-only.
     pub(super) fn sheet(&self, part: &str) -> Result<(Vec<XlsxCell>, Vec<XlsxArea>, SharedGroups)> {
-        let tree = parse(&self.package, part)?;
+        self.sheet_in(part, &parse(&self.package, part)?)
+    }
+
+    /// [`Self::sheet`] over worksheet `part` parsed as `tree`.
+    fn sheet_in(
+        &self,
+        part: &str,
+        tree: &XmlTree,
+    ) -> Result<(Vec<XlsxCell>, Vec<XlsxArea>, SharedGroups)> {
         let mut cells = Vec::new();
         let mut areas = Vec::new();
         let mut seen = HashSet::new();
@@ -256,7 +269,7 @@ impl Book {
                     .children(list)
                     .filter(|(_, node)| node.is(SML, "tableColumn"))
                 {
-                    columns.push(column.attr("name").unwrap_or_default().to_owned());
+                    columns.push(decode_escapes(column.attr("name").unwrap_or_default()));
                     calculated.push(
                         table
                             .children(at)

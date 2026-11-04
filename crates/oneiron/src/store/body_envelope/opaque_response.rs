@@ -182,7 +182,7 @@ impl ErasedResponseDisposition {
             key_bytes = key.len(),
             "a read met the erased marker of a response that never decoded"
         );
-        crate::code_run::response_erased_error(match family {
+        crate::store::result_body_erasure::response_erased_error(match family {
             ResponseFamily::ProgramStep => "a program step's kept body",
             ResponseFamily::StepState => "an LLM step's state",
             ResponseFamily::Replay => "a code run's replay record",

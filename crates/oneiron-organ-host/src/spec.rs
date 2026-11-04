@@ -6,13 +6,14 @@ use std::time::Duration;
 
 use oneiron::EntityId;
 use oneiron::secret_custody::SecretSight;
-use oneiron_organ_protocol::{DEFAULT_FRAME_LIMIT, Hash32, TypedBody};
+use oneiron_organ_protocol::{DEFAULT_FRAME_LIMIT, Hash32, TypedBody, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::budget::BudgetConfig;
 
-/// Whose code an organ is. Third-party organs need filesystem confinement,
-/// which no platform has yet, so the host refuses them.
+/// Whose code an organ is. A third-party organ runs only inside a
+/// filesystem fence (Landlock on Linux, Seatbelt on macOS, FIX 7885); a
+/// host with none refuses it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrganTier {
     FirstParty,
@@ -48,13 +49,13 @@ pub struct OrganSpec {
     pub memory_bytes: u64,
     /// What one call books from the shared budget.
     pub call_memory_bytes: u64,
-    /// The largest frame the host sends one call before the
-    /// `organ_call_frame_bytes` row asks. Frames cross under the wire's own
-    /// `u32` length alone (Rule 5).
+    /// The largest message the host sends one call before the
+    /// `organ_call_frame_bytes` row asks. A message takes as many frames as
+    /// it needs (Rule 5).
     pub max_call_frame: u32,
-    /// The largest frame the organ sends back for one call before the
-    /// `organ_reply_frame_bytes` row asks; read whole under the wire's own
-    /// `u32` length, with budget room made for it before it is read.
+    /// The largest message the organ sends back for one call before the
+    /// `organ_reply_frame_bytes` row asks; read whole, across as many frames
+    /// as it takes, with budget room made for each frame before it is read.
     pub max_reply_frame: u32,
     /// The bytes one reply's outputs hold together, inline and region,
     /// before the `organ_output_bytes` row asks; never a refusal (Rule 5).
@@ -74,6 +75,14 @@ pub struct OrganSpec {
     pub max_ask_bytes: u64,
     /// Where a granted `net.fetch` may go.
     pub fetch: FetchGrant,
+    /// What a third-party organ's fence lets it read besides the system's
+    /// own files and its program: dirs, each with all under it, or files.
+    /// A pack build is its program alone, and inputs cross as sealed
+    /// regions on its socket, so a pack organ names none. It writes only
+    /// its own scratch dir, which the host makes for each process and
+    /// removes as it ends; outputs cross as sealed regions too. A
+    /// first-party organ is not fenced and ignores it.
+    pub read_dirs: Vec<PathBuf>,
 }
 
 /// One ask verb an install grant names.
@@ -156,6 +165,7 @@ impl OrganSpec {
                 max_bytes: 8 * 1024 * 1024,
                 ..FetchGrant::default()
             },
+            read_dirs: Vec::new(),
         }
     }
 }
@@ -238,7 +248,7 @@ pub struct OrganCall {
     pub organ: String,
     pub verb: String,
     pub schema: u32,
-    pub args: rmpv::Value,
+    pub args: Value,
     pub body: Option<TypedBody>,
     /// The vault inputs, each with the sight its caller reads it under.
     pub inputs: Vec<SightedInput>,

@@ -6,6 +6,7 @@
     ("random-bytes", "oneiron.random.bytes"),
     ("output-text", "oneiron.output.text"),
     ("output-bytes", "oneiron.output.bytes"),
+    ("store-bytes", "oneiron.store.bytes"),
     ("proposal-open", "oneiron.propose.open"),
     ("proposal-chunk", "oneiron.propose.chunk"),
     ("proposal-close", "oneiron.propose.close"),

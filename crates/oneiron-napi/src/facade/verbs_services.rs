@@ -437,6 +437,8 @@ impl ActorScopedVault {
             occurred_at: ts_opt_to_engine(draft.occurred_at, "occurred_at")
                 .map_err(caller_input_error)?,
             mention: mention_to_engine(draft.mention).map_err(caller_input_error)?,
+            selection: None,
+            counterparty_class: None,
         };
         let memory = self.facade()?;
         let receipt = typed_row(&memory, "connector.outbound.schedule", request, |input| {

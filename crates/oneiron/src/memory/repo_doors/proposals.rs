@@ -35,7 +35,8 @@ use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::merge_queue::{
-    MergeBatch, MergeFile, MergeProposal, MergeQueue, RepoQueueOrder, RepoQueuePredecessor,
+    MergeBatch, MergeFile, MergeFileExpected, MergeProposal, MergeQueue, RepoQueueOrder,
+    RepoQueuePredecessor,
 };
 use crate::repo_mutation::mount::RepoMountRef;
 use crate::task_verb::SymbolLease;
@@ -59,6 +60,12 @@ pub const REPO_REVIEW_POLICY_REQUIRED: &str = "repo_review_policy_required";
 /// The code a run's proposal answers while its host holds no witness of the
 /// model request the run is serving. No author is made up.
 pub const REPO_PROVENANCE_REQUIRED: &str = "repo_provenance_required";
+
+/// The code a run's proposal answers when its work's pinned base no longer
+/// captures as it did at open: the host's snapshot custody changed between
+/// them, so the base's hash moved (FIX 7070). The work is kept; a fresh
+/// work opens at the base as custody keeps it now.
+pub const REPO_WORK_BASE_CHANGED: &str = "repo_work_base_changed";
 
 /// The host's review policy for a run's proposals. A host binds it; no
 /// guest field reaches it. The stock one holds every proposal to the
@@ -246,6 +253,14 @@ impl Memory<'_> {
         };
         let green = GitOid::parse_hex(own.stamp.base_green.as_str())?;
         let base = self.vault.capture_repo_snapshot_at_commit(&repo, &green)?;
+        if base.fork_hash != own.stamp.base_snapshot {
+            return Err(MemoryError::new(
+                REPO_WORK_BASE_CHANGED,
+                "this work's pinned base no longer captures as it did at open: snapshot custody \
+                 changed since",
+                &["Open a fresh work at the current green and propose the change there."],
+            ));
+        }
         let sources = sources(&own.stamp)?;
         let request = RepoMutationRequest::new(
             RepoRef::LocalFolder {
@@ -286,8 +301,16 @@ impl Memory<'_> {
                     Ok(Ok(()))
                 })?;
         let proposal = proposed.map_err(refusal_error)?;
+        // The answer names the proposal (its `repo.proposed_diff` journal
+        // claim's id), its session and its provenance claim: send-time
+        // admission judges each of them (FIX 7069).
         Ok(RepoRunAnswer {
-            rows: vec![own.stamp.repo],
+            rows: vec![
+                own.stamp.repo,
+                proposal.id,
+                proposal.session,
+                proposal.provenance_claim,
+            ],
             output: RepoProposalSubmitOutput {
                 proposal: proposal.id,
                 work: input.work,
@@ -401,7 +424,12 @@ impl Memory<'_> {
         let batch = formed.map_err(refusal_error)?;
         let (entry, blockers) =
             self.repo_entry_view(binding, &queue, batch, self.vault.now_recorded_at())?;
+        // Each queued proposal, its session and its provenance claim are
+        // served rows too, so send-time admission judges them (FIX 7069).
         let mut answer_rows = vec![own.stamp.repo];
+        for row in &rows {
+            answer_rows.extend([row.id, row.session, row.provenance_claim]);
+        }
         answer_rows.extend(blockers);
         Ok(RepoRunAnswer {
             rows: answer_rows,
@@ -503,7 +531,9 @@ impl Memory<'_> {
             .vault
             .mount_repo_ref(&pointer, RepoMountRef::Fork(row.pre_action_fork_hash))?;
         let (path, content) = row.ordinary_file()?;
-        let expected = base.read_file(path)?.map(<[u8]>::to_vec);
+        let expected = base
+            .read_file(path)?
+            .map(|bytes| MergeFileExpected::Bytes(bytes.to_vec()));
         Ok(MergeProposal {
             id: row.id.to_hex(),
             base_green: base_green.to_owned(),

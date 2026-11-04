@@ -134,7 +134,6 @@ pub(crate) fn copy_repo_projection_objects(
     facts: &RepoMarkFacts,
     store_id: EntityId,
     release: Option<&RepoProjectionRelease>,
-    now: u64,
 ) -> Result<RepoProjectionCopy> {
     let mut copy = RepoProjectionCopy::default();
     let mut copied: HashSet<ObjectKey> = HashSet::new();
@@ -146,7 +145,6 @@ pub(crate) fn copy_repo_projection_objects(
         facts,
         store_id,
         release,
-        now,
     };
     for tip in tips {
         let root = (tip.clone(), None);
@@ -191,7 +189,6 @@ struct Walk<'a, 'w> {
     facts: &'a RepoMarkFacts,
     store_id: EntityId,
     release: Option<&'a RepoProjectionRelease>,
-    now: u64,
 }
 
 /// A walk level for `original` at `occurrence`: what it names, its bytes
@@ -303,9 +300,9 @@ impl Walk<'_, '_> {
                 (self.wire.project_structural(&object, &copies)?, Vec::new())
             }
         };
-        let copy_id =
-            self.wire
-                .write_retained_object(self.copy_store, payload.object(), self.now)?;
+        let copy_id = self
+            .wire
+            .write_projection_object(self.copy_store, payload.object())?;
         if payload.changed() {
             copy.changed.insert(done.key(), copy_id.clone());
             for (edge, key) in &children {

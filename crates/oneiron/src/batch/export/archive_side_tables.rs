@@ -104,7 +104,7 @@ fn lent_tables() -> Vec<LentSideTable> {
     tables.extend(crate::origin::lfs::archive_lfs_tables());
     tables.extend(crate::codebase::archive_codebase_tables());
     tables.extend(crate::code_revision::archive_revision_tables());
-    tables.push(crate::code_revision::archive_promotion_table());
+    tables.push(crate::store::code_revision_record::tables::archive_promotion_table());
     tables.push(crate::code_revision::archive_proposal_table());
     tables.extend(crate::code_document::archive_document_tables());
     tables.extend(crate::store::code_memory_values::archive_code_memory_tables());

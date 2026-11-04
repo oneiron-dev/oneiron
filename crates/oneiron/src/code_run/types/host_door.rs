@@ -241,6 +241,13 @@ pub trait AgentVerbDoor: Send + Sync {
     /// own. A door that states no receipt ignores it.
     fn replay_row_receipt(&self, _receipt: &str) {}
 
+    /// The run recorded the write's replay row for the answer this door
+    /// just gave (FIX 10633): a door that keeps what its answer holds
+    /// until then releases it now. A door that keeps nothing ignores it.
+    /// A door whose read answers keep no replay row instead releases when
+    /// its next call starts, once the run holds the previous answer.
+    fn answer_recorded(&self) {}
+
     /// Sends the run's answer to the questions one of its connector calls
     /// waits on (`connector.answer`, ONE-2510), for the run's own caller:
     /// the door checks it under the original call's grant and principal, and

@@ -9,6 +9,7 @@ pub(crate) mod actor_erase;
 mod document_candidate_types;
 mod document_candidates;
 mod document_ingress;
+pub(crate) mod git_ref_change;
 pub use document_candidate_types::{
     CodePushCandidateState, CodePushCandidateView, ReceivedCandidateRef, ReceivedRefIngress,
     ReceivedRefSource,
@@ -37,11 +38,18 @@ mod mirror_run;
 mod mirror_status;
 pub mod mirror_strategy;
 mod mirror_wake;
+pub(crate) use mirror_census::history_lfs_objects;
 pub(crate) use mirror_wake::OriginMirrorWake;
 pub mod publish;
+pub(crate) mod receive_scan_verdict;
 pub mod registration;
 mod repo_import;
 pub(crate) use repo_import::{ImportedCodeRepo, ServedImportSource};
+mod repo_manifest;
+#[cfg(feature = "sync")]
+pub(crate) use repo_manifest::RepoManifestMerge;
+pub(crate) use repo_manifest::erase_repo_manifests_in_txn;
+pub use repo_manifest::{REPO_MANIFEST_VERSION, RepoManifest, RepoPortableId};
 pub mod residence;
 pub mod secret_manifest;
 pub(crate) mod secret_marks;

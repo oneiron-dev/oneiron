@@ -29,6 +29,21 @@ pub(super) const NOTE_RECEIPT: SideTable<EntityId, NoteLandingReceipt, Named> =
 /// Durable NOTE fork/proposal-basis row. Key: id16(fork id).
 pub(super) const NOTE_FORK: SideTable<EntityId, NoteFork, Named> =
     SideTable::new(&side_table::NOTE_FORK);
+
+/// Whether the stored fork already decided (accepted or rejected): a folder
+/// row holding its proposal open re-checks this on every rescan, so a
+/// decided fork's row settles instead of preserving a stale landed hash
+/// (REVIEW-4381 P1). A missing fork reads as still open.
+pub(crate) fn note_fork_decided(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(NOTE_FORK
+        .get(&vault.store, txn, id)?
+        .is_some_and(|fork| fork.decided))
+}
+
 /// Durable NOTE proposal bundle. Key: id16(bundle id).
 pub(super) const NOTE_PROPOSAL_BUNDLE: SideTable<EntityId, NoteReviewBundle, Named> =
     SideTable::new(&side_table::NOTE_PROPOSAL_BUNDLE);
@@ -313,7 +328,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         schema_manifest: super::CanonicalSchemaManifest {
             oneiron_schema_version: crate::store::STORAGE_ABI_VERSION,
             loro_version: "1.13.9".to_owned(),
-            container_schema_version: 2,
+            container_schema_version: 3,
             analyzer_manifest_blake3: [0; 32],
         },
         suppressed_tasks: Vec::new(),

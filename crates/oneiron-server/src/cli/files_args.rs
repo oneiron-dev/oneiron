@@ -41,7 +41,8 @@ pub struct FilesAttachArgs {
     /// Also never open what matches, by an entry's name or its path under
     /// the folder. Repeatable; added to the default exclusions (hidden
     /// entries, version control, dependency and build folders, credential
-    /// stores and key files).
+    /// stores and key files). The `vault.files.sources.attach` verb's
+    /// `exclude` replaces the default list instead.
     #[arg(long)]
     pub exclude: Vec<String>,
 

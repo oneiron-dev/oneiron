@@ -27,7 +27,7 @@ pub use candidate_decisions::{
 use std::cell::Cell;
 
 use super::authorship::*;
-use super::{Memory, MemoryResult};
+use super::{Memory, MemoryError, MemoryResult};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::consent::bundle_projection::GateConsentBundleAction;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
@@ -344,21 +344,21 @@ impl Memory<'_> {
                 return Err(not_approved().into());
             }
             SettlementApplied::ImportReviewPending(staged) => {
+                let members = [marker, staged.staged];
                 let mut receipt = decision(
                     actor,
                     KIND,
                     "pending",
                     REASON,
-                    Some(marker),
+                    None,
                     marker.as_bytes().to_vec(),
                     now,
                 );
-                receipt.context =
-                    decision_context::answering_claim(self.vault, &*txn, marker, None);
+                let (context, claim_refs) =
+                    decision_context::answering_members(self.vault, &*txn, &members, marker, None)?;
+                receipt.context = context;
                 receipt.grant_ref = grant_ref;
-                self.vault
-                    .store
-                    .append_gate_decision_in_txn(txn, &receipt)?;
+                decision_context::append(self.vault, txn, &receipt, &claim_refs)?;
                 return Ok(ConflictSettleOutcome::ImportReviewPending {
                     staged,
                     receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
@@ -377,40 +377,53 @@ impl Memory<'_> {
                         .owe_settled_claim_vads_in_txn(txn, &[approved.claim])?;
                 }
                 *consolidate = approved.dreamer_run.then_some(approved.claim);
+                let members = [marker, approved.claim];
                 let mut record = decision(
                     actor,
                     APPROVAL_KIND,
                     "approved",
                     APPROVAL_REASON,
-                    Some(approved.claim),
+                    None,
                     [marker, selector, approved.claim]
                         .iter()
                         .flat_map(|id| *id.as_bytes())
                         .collect(),
                     now,
                 );
-                record.context =
-                    decision_context::answering_claim(self.vault, &*txn, approved.claim, None);
+                let (context, claim_refs) = decision_context::answering_members(
+                    self.vault,
+                    &*txn,
+                    &members,
+                    approved.claim,
+                    None,
+                )?;
+                record.context = context;
                 record.grant_ref.clone_from(&grant_ref);
-                self.vault.store.append_gate_decision_in_txn(txn, &record)?;
+                decision_context::append(self.vault, txn, &record, &claim_refs)?;
                 Some(format!("gate:{}", record.decision_id.to_hex()))
             }
             (Some(_), _) => return Err(not_approved().into()),
         };
+        let mut members = Vec::with_capacity(conflict.members.len() + settled.superseded.len() + 3);
+        members.push(marker);
+        members.extend(conflict.members.iter().copied());
+        members.extend(settled.superseded.iter().copied());
+        members.push(settled.resolved);
+        decision_context::add_resolved_kept(self.vault, &*txn, &mut members, settled.resolved)?;
         let mut receipt = decision(
             actor,
             KIND,
             "approved",
             REASON,
-            Some(settled.resolved),
+            None,
             marker.as_bytes().to_vec(),
             now,
         );
-        receipt.context = decision_context::answering_claim(self.vault, &*txn, marker, None);
+        let (context, claim_refs) =
+            decision_context::answering_members(self.vault, &*txn, &members, marker, None)?;
+        receipt.context = context;
         receipt.grant_ref = grant_ref;
-        self.vault
-            .store
-            .append_gate_decision_in_txn(txn, &receipt)?;
+        decision_context::append(self.vault, txn, &receipt, &claim_refs)?;
         Ok(ConflictSettleOutcome::Settled(ConflictSettleReceipt {
             marker,
             settlement,
@@ -518,20 +531,53 @@ impl Memory<'_> {
             self.conflict_review_owner(txn, owner)?;
             let actor = WriteActor::new(self.actor, self.actor_class);
             let reverted = revert_settlement_in_txn(self.vault, txn, resolved, actor, now)?;
+            // FIX 11002: a HoldBoth/Dismiss revert restores nothing, so its
+            // bundle would bind only resolved+marker and erases of the
+            // original members could not discover it. Union the original
+            // settlement's complete member refs first.
+            let settlement_refs = self.vault.store.settlement_bundle_member_refs_in_txn(
+                &*txn,
+                resolved.as_bytes(),
+                KIND,
+            )?;
+            let mut members = Vec::with_capacity(
+                3 + reverted.restored.len()
+                    + reverted.copied.len() * 2
+                    + reverted.left_closed.len()
+                    + usize::from(reverted.retracted.is_some())
+                    + settlement_refs.len(),
+            );
+            members.push(resolved);
+            members.push(reverted.marker);
+            for member in settlement_refs {
+                members.push(EntityId::from_bytes(member).map_err(MemoryError::from)?);
+            }
+            members.extend(reverted.restored.iter().copied());
+            for (member, copy) in &reverted.copied {
+                members.push(*member);
+                members.push(*copy);
+            }
+            members.extend(reverted.left_closed.iter().copied());
+            members.extend(reverted.retracted);
+            decision_context::add_resolved_kept(self.vault, &*txn, &mut members, resolved)?;
             let mut receipt = decision(
                 actor,
                 REVERT_KIND,
                 "approved",
                 REVERT_REASON,
-                Some(resolved),
+                None,
                 reverted.marker.as_bytes().to_vec(),
                 now,
             );
-            receipt.context =
-                decision_context::answering_claim(self.vault, &*txn, resolved, Some(KIND));
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &receipt)?;
+            let (context, claim_refs) = decision_context::answering_members(
+                self.vault,
+                &*txn,
+                &members,
+                resolved,
+                Some(KIND),
+            )?;
+            receipt.context = context;
+            decision_context::append(self.vault, txn, &receipt, &claim_refs)?;
             Ok(ConflictRevertReceipt {
                 resolved,
                 reverted,

@@ -134,6 +134,11 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::commitment::validate_commitment_claim_structure(&body)?;
     } else if crate::calendar::claims::is_calendar_claim_predicate(&body.predicate) {
         crate::calendar::claims::validate_calendar_claim_structure(&body)?;
+    } else if crate::comm::is_compiled_generic_claim_predicate(&body.predicate) {
+        // A class the build compiles as `generic` is checked against its own
+        // descriptor (ARCH-0057's one registry arm), ahead of the family
+        // arms below.
+        crate::comm::check_claim_against_compiled_descriptor(&body)?;
     } else if crate::write_envelope::cohort_claims::is_campaign_pack_claim_predicate(
         &body.predicate,
     ) {

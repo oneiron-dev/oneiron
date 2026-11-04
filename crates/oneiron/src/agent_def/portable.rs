@@ -2,6 +2,7 @@
 use super::portable_knowledge::{KnowledgeFormat, encode_agent_knowledge};
 use super::{AgentDefinition, encode_agent_definition};
 use crate::batch::export::ExportEntity;
+pub(crate) use crate::batch::export::agent_knowledge_selection::select_agent_knowledge;
 use crate::claim::{ClaimSubject, decode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -66,22 +67,6 @@ pub(crate) fn resolve_agent_skill_refs(
         });
     }
     Some(refs)
-}
-
-/// A selected-knowledge facet includes only ordinary claims directly ABOUT this
-/// definition. Reserved actor/control claims are not portable authority.
-pub(crate) fn select_agent_knowledge(id: &EntityId, claims: &[ExportEntity]) -> Vec<ExportEntity> {
-    claims
-        .iter()
-        .filter(|row| {
-            row.body
-                .to_bytes()
-                .ok()
-                .and_then(|b| decode_claim_body(&b, false).ok())
-                .is_some_and(|claim| claim.subject == ClaimSubject::Entity(*id))
-        })
-        .cloned()
-        .collect()
 }
 
 pub(crate) fn agent_pack_files(
@@ -213,7 +198,10 @@ pub(crate) fn agent_pack_files_travelling(
         {
             return Err(refused());
         }
-        skills.push(AgentPackSkill::from_package(dependency, package)?);
+        let skill = AgentPackSkill::from_package(dependency, package)?;
+        // A binary file's InvalidConfig already names the skill and path;
+        // preserve it instead of collapsing it into `refused` (FIX 3276).
+        skills.push(skill);
     }
     let mut selected = select_agent_knowledge(id, claims);
     selected.sort_by(|a, b| a.id.cmp(&b.id));

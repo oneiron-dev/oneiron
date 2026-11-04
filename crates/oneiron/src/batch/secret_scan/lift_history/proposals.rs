@@ -41,10 +41,11 @@ const AUTO_CLOSE: [LiftCloseReason; 3] = [
 
 /// The found-key answers that settle a key for good, part of the auto-close
 /// call: a grant leaves the value live where the record keeps it.
-const ANSWERS: [FoundKeyAction; 3] = [
+const ANSWERS: [FoundKeyAction; 4] = [
     FoundKeyAction::Rotate,
     FoundKeyAction::Delete,
     FoundKeyAction::NotASecret,
+    FoundKeyAction::KeptAsText,
 ];
 
 /// `closed_by` of a proposal that closed on its own.
@@ -371,7 +372,7 @@ fn receipt_in_txn(
         actor_class: "human".into(),
         actor_ref: Some(actor.to_hex()),
         content_kind: CLOSE_CONTENT_KIND.into(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
+        policy_manifest_version: crate::store::policy_record::POLICY_SCHEMA_VERSION.into(),
         claim_id: None,
         grant_ref: None,
         diff_handle: blake3::hash(row_key).as_bytes().to_vec(),

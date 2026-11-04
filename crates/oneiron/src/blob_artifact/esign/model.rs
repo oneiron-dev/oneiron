@@ -111,6 +111,12 @@ pub struct EsignDocument {
     pub title: String,
     pub sequential: bool,
     pub expires_at: u64,
+    /// Optional owner-selected deadline for signing and delivery links: when
+    /// set, capabilities expire at `min(token_expires_at, expires_at)`; when
+    /// unset, they expire at `expires_at`. Set on the draft alongside the
+    /// document deadline; it never moves recipient signing windows.
+    #[serde(default)]
+    pub token_expires_at: Option<u64>,
     pub items: Vec<EsignItem>,
     pub recipients: Vec<EsignRecipient>,
     pub fields: Vec<EsignField>,
@@ -154,6 +160,29 @@ pub struct RecipientState {
     pub access: AccessStatus,
     pub expires_at: u64,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EsignAuthenticationMethod {
+    Bearer,
+    Person,
+    Agent,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EsignSigningIntent {
+    Direct,
+    HeldAllow,
+}
+/// The accepted act's evidence, kept apart from the platform's seal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningEvidence {
+    pub authentication_method: EsignAuthenticationMethod,
+    /// No disclosure artifact exists yet; absence is recorded, not invented.
+    pub disclosure_version: Option<String>,
+    pub consent: bool,
+    pub intent: EsignSigningIntent,
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EsignEvent {
@@ -164,12 +193,21 @@ pub enum EsignEvent {
     Viewed {
         recipient: String,
     },
+    /// A valid capability verified an agent's access (FIX 7855 round 2):
+    /// human-Viewed evidence stays human-only, while agent field saves and
+    /// sign acts land on this instead of inventing Viewed. Sets access only.
+    AccessVerified {
+        recipient: String,
+    },
     FieldSaved {
         signature: SignatureRow,
     },
     Signed {
         recipient: String,
         next: Option<String>,
+        evidence: EsignSigningEvidence,
+        /// Frozen item ids and versions to which this act consented.
+        items: Vec<EsignItem>,
     },
     Declined {
         recipient: String,
@@ -203,6 +241,7 @@ impl EsignEvent {
             Self::Drafted { .. } => DRAFT_PREDICATE,
             Self::Sent => "esign.sent",
             Self::Viewed { .. } => "esign.viewed",
+            Self::AccessVerified { .. } => "esign.access_verified",
             Self::FieldSaved { .. } => "esign.field",
             Self::Signed { .. } => "esign.signed",
             Self::Declined { .. } => "esign.declined",

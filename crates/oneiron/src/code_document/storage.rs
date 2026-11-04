@@ -62,6 +62,13 @@ pub(super) struct HeadRow {
     pub(super) receipts: Vec<ReceiptRow>,
 }
 
+impl HeadRow {
+    /// The head state's document, checked against its frontier.
+    pub(super) fn doc(&self) -> Result<LoroDoc> {
+        checked_snapshot(&self.state)
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ReceiptRow {

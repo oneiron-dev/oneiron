@@ -2,7 +2,7 @@
 
 use super::validation::consume_preflight_decisions;
 use super::*;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
 
@@ -39,6 +39,7 @@ pub(super) fn apply_claim_candidate_arm(
         .masked_claims
         .get_mut(&id)
         .and_then(VecDeque::pop_front);
+    let pending_prompt = super::pending_prompt_for(&state.births, &id);
     let applied = apply_claim_candidate(
         store,
         config,
@@ -55,6 +56,7 @@ pub(super) fn apply_claim_candidate_arm(
             indexing: put_options.indexing,
             write_policy: state.write_policy.as_ref(),
             owner_authored: gate_mode.owner_authored.as_ref(),
+            pending_prompt,
         },
         pre_mask,
     )?;

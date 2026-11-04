@@ -16,8 +16,7 @@ use super::stack_floor::below_stack_floor;
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
     RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path, is_result_output_path,
-    recoverable_output_path, result_handle_json, result_read_path, store_result_output_path,
-    write_json,
+    recoverable_output_path, result_handle_json, store_result_output_path, write_json,
 };
 use super::types::{
     CallableProgram, EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeRuntime,
@@ -69,11 +68,20 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The step's result as the guest streams it, written into the run's
     /// body store frame by frame.
     streamed: StreamedOutputs,
-    /// The run's earlier results stored as bodies (bridge results and
-    /// stored values), which the guest may read back.
+    /// The run's earlier results stored as bodies (bridge results, stored
+    /// values, observations and runtime files), which the guest may read
+    /// back.
     results: Vec<CodeRunRawOutput>,
     /// This step's results stored as bodies, for the record.
     pub(super) captured: Vec<CodeRunRawOutput>,
+    /// The run's durable outputs when this step's host started: the base
+    /// its stores' ordinals count from.
+    output_ordinal_base: usize,
+    /// The recorded store paths this step's replayed stores already reused,
+    /// oldest first: a resumed entry replays each earlier store onto its
+    /// original ordinal, so the same bytes stored twice stay two outputs,
+    /// and only a store of new bytes allocates a fresh ordinal.
+    replayed_stores: Vec<String>,
     /// The run's result names, as its record holds them.
     bindings: Vec<CodeRunResultBinding>,
     /// The names this step bound or rebound, in order, for the record.
@@ -167,6 +175,8 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             streamed: StreamedOutputs::default(),
             results: Vec::new(),
             captured: Vec::new(),
+            output_ordinal_base: 0,
+            replayed_stores: Vec::new(),
             bindings: Vec::new(),
             bound: Vec::new(),
             receipts: Vec::new(),
@@ -238,6 +248,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             .filter(|output| is_result_output_path(&output.path))
             .cloned()
             .collect();
+        self.output_ordinal_base = super::store::store_ordinal_base(record);
         // Its steps' type diagnostics kept whole, read as its results are
         // (FIX 8277).
         if let ExecutorStorage::Canonical(vault) = storage {

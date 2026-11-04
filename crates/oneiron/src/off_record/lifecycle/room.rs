@@ -307,7 +307,7 @@ impl OffRecordSession<'_> {
     ) -> Result<OffRecordTalk> {
         let room = self.require_in_room(person)?;
         let mut state = self.recording_state()?;
-        let gathered = self.gather_talk(&state)?;
+        let mut gathered = self.gather_talk(&state)?;
         // Who hears the export is read with the sight that admits it, and so
         // is whether its taker owns this vault (FIX 6427), and each thread
         // the copy carries, while the stretch is held (FIX 6681).
@@ -315,6 +315,22 @@ impl OffRecordSession<'_> {
             let txn = self.vault.store.env.read_txn()?;
             let windows = self.sight_in_txn(&txn, room, person, credential)?;
             let owner = crate::memory::owner_copy_in_txn(self.vault, &txn, person);
+            if !owner {
+                let view = self.read_view()?;
+                for (turn, root) in &gathered.roots {
+                    let turn = EntityId::from_bytes(*turn)?;
+                    if !crate::workspace_roster::thread_turn_readable_with_read_in(
+                        self.vault,
+                        &view.read(),
+                        &txn,
+                        *root,
+                        turn,
+                        &[person],
+                    )? {
+                        gathered.turns.remove(&turn);
+                    }
+                }
+            }
             let (turns, roots) = gathered.finish_with_roots(Some(windows.as_slice()), self, &txn);
             let hearing = Hearing::in_txn(self.vault, &txn, Some(room));
             (turns, roots, hearing, owner)

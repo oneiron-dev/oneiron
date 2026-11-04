@@ -35,6 +35,7 @@
 //! owner's erase leaves the fixed marker there (`model_step`, FIX 10460).
 
 mod asker;
+mod connector_reply;
 mod model_step;
 mod project_brief;
 mod requester;
@@ -78,10 +79,7 @@ use super::types::{AttemptId, AttemptRecord};
 pub(crate) use self::model_step::erase_model_step_failure_reasons_in_txn;
 
 // FIX 7115: the payload text in checkpoint images, a row-held response.
-pub(crate) use self::response::{
-    attempt_payload_family, attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
-    retire_attempt_payload_in_txn,
-};
+pub(crate) use self::response::attempt_row_opaque;
 
 /// The input member that holds the AGENT_DEF snapshot.
 const KEY_DEFINITION: &str = AGENT_DISPATCH_INPUT_KEYS[4];
@@ -117,7 +115,7 @@ enum TextOwner {
 /// Who owns `record`'s dispatch text: its target AGENT_DEF, the actor the
 /// dispatch runs as. `None` for a row that is no agent dispatch, or whose
 /// input does not decode: it names no owner.
-fn dispatch_payload_actor(record: &AttemptRecord) -> Option<EntityId> {
+pub(crate) fn dispatch_payload_actor(record: &AttemptRecord) -> Option<EntityId> {
     let input = record_dispatch_input(record)?;
     agent_dispatch_actor(&input)
         .ok()
@@ -184,6 +182,13 @@ fn erase_dispatch_payload_text(record: &mut AttemptRecord, owner: TextOwner) -> 
     }
     record.payload = encode_dreamer_attempt_payload(&payload)?;
     Ok(true)
+}
+
+/// [`erase_dispatch_payload_text`] for the dispatch target's text: what a
+/// checkpoint image carries of a dispatch's row in its place (the store's
+/// response scan, through its attempt operations).
+pub(crate) fn erase_dispatch_payload_text_target(record: &mut AttemptRecord) -> Result<bool> {
+    erase_dispatch_payload_text(record, TextOwner::Target)
 }
 
 /// The AGENT_DEF body in `value` without its instructions key; every other
@@ -275,6 +280,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     let mut rewrites = Vec::new();
     let mut byoa = ByoaRows::default();
     let mut reply_jobs = Vec::new();
+    let mut reply_body_events = BTreeSet::new();
     for row in store.attempt_records.iter(txn)? {
         let (key, raw) = row?;
         let Ok(id) = AttemptId::from_bytes(&key) else {
@@ -283,6 +289,11 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
         let Ok(mut record) = decode_record(&raw, id) else {
             continue;
         };
+        if let Some(event_id) =
+            connector_reply::frozen_connector_event_id_for_erase(&record, actors)
+        {
+            reply_body_events.insert(event_id);
+        }
         if record.kind == TURN_ACTION_ATTEMPT_KIND {
             // A turn action keeps the slip its requester's request was
             // admitted on; the requester's erase takes it out, in every
@@ -331,6 +342,11 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     // artifact's own rules (FIX 7502).
     crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs, actors)?;
     crate::outbound::erase_connector_reply_results_in_txn(store, txn, &reply_jobs)?;
+    crate::outbound::erase_connector_reply_bodies_for_events_in_txn(
+        store,
+        txn,
+        &reply_body_events,
+    )?;
     // A bound TASK's tries pin its arguments and goal (CUA E4): they go with
     // the TASK, archived tries' too.
     crate::task_verb::erase_task_workflows_in_txn(store, txn, actors)?;
@@ -682,7 +698,7 @@ fn erase_byoa_payload(
 /// actor keeps the text. Read in the writer's transaction. A marker that cannot be read,
 /// or a payload that cannot be rewritten, leaves `record` as it was and is
 /// logged without its content: the fence never fails the write it stands in.
-pub(super) fn scrub_hard_erased_payload_in_txn(
+pub(crate) fn scrub_hard_erased_payload_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     record: &mut AttemptRecord,

@@ -36,6 +36,8 @@
 //! in place of the route's own secret, through the same door for the same
 //! effector; the door rechecks the record's binding at each send. A call under
 //! a secret grant (FIX 4313) redeems the grant at its door at each send.
+//! Every door reads the call's durable issuer binding again before the
+//! credential leaves, and a row an issuer change holds sends nothing (FIX 9303).
 //! Whatever selected it, everything the connector says is cleared of the
 //! value a send presented inside its door, with those bytes (`presenting`):
 //! a `self.use` send declares elicitation as any other does, and its
@@ -70,6 +72,7 @@ use crate::connector_elicitation::{
 };
 use crate::server::SyncServer;
 
+mod json_wire;
 mod live_exchange;
 mod presenting;
 mod remote_task;
@@ -77,9 +80,10 @@ mod reply_read;
 mod resume;
 mod sent;
 mod stream_pump;
-use live_exchange::{Continuation, KeptWire, LiveSession, hand_over, post_json};
+use json_wire::{KeptWire, post_json};
+use live_exchange::{Continuation, LiveSession, hand_over};
 use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
-use reply_read::{Reply, StreamEvent, open_reply, read_reply};
+use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
 pub(crate) use resume::resume_exchanges;
 use sent::Sent;
@@ -151,6 +155,8 @@ pub struct ServedConnectorCallHost {
     resume: Option<RoundResume>,
     /// The remote task the last send's connector accepted it as (FIX 7960).
     remote_task: Option<RemoteTaskHandle>,
+    /// The hold the last send met at its door, until taken (FIX 9303).
+    held: Option<&'static str>,
 }
 
 impl ServedConnectorCallHost {
@@ -201,6 +207,7 @@ impl ServedConnectorCallHost {
             presentation: None,
             resume: None,
             remote_task: None,
+            held: None,
         })
     }
 
@@ -231,14 +238,17 @@ impl ServedConnectorCallHost {
         };
         // The setting is read before the exchange starts.
         let elicitation = self.declared(call, &view);
-        let Some(exchange) = Exchange::new(&self.client, &view, elicitation) else {
+        let Some(exchange) = Exchange::new(&self.client, &view, &self.vault, elicitation) else {
             return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
         };
         let Some(presenting) = presenting else {
             return Sent::not_sent(OutboundFailureKind::Rejected, None);
         };
+        // The door reads the call's issuer binding again (FIX 9303).
+        let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
+        let row = key_ref.as_ref().map(|key_ref| (key_ref, view.tool()));
         // A grant the send refuses answers as its typed refusal, not TransportNotStarted (FIX 6673).
-        presenting.send(&self.vault, &exchange, presented)
+        presenting.send(&self.vault, &exchange, row, presented)
     }
 
     /// The elicitation this send declares, or `None`: a call the engine
@@ -312,6 +322,7 @@ impl OutboundResultSender for ServedConnectorCallHost {
         self.awaiting = sent.awaiting;
         self.resume = sent.resume;
         self.remote_task = sent.remote_task;
+        self.held = sent.held;
         OutboundTransportResult {
             outcome: sent.outcome,
             raw_result: RawOutboundResult::new(sent.body, sent.error, None, None),
@@ -360,6 +371,10 @@ impl ConnectorCallHost for ServedConnectorCallHost {
 
     fn take_sent_presentation(&mut self) -> Option<SentPresentation> {
         self.presentation.take()
+    }
+
+    fn take_send_hold(&mut self) -> Option<&'static str> {
+        self.held.take()
     }
 
     fn take_awaiting_input(&mut self) -> Option<ConnectorAwaitingInput> {
@@ -489,29 +504,6 @@ fn retry_questions(message: &Value) -> Option<(Vec<ConnectorQuestion>, Option<Ke
     ))
 }
 
-/// A `tools/call` answer as the tool's reply: its result, or the JSON-RPC
-/// error it answered with; `None` when it carries neither.
-fn tool_result(message: &Value) -> Option<UntrustedToolResult> {
-    if let Some(error) = message.get("error") {
-        return Some(UntrustedToolResult {
-            content: Value::Array(Vec::new()),
-            structured_content: None,
-            is_error: true,
-            rpc_error: Some(error.clone()),
-        });
-    }
-    let result = message.get("result")?;
-    Some(UntrustedToolResult {
-        content: result
-            .get("content")
-            .cloned()
-            .unwrap_or_else(|| Value::Array(Vec::new())),
-        structured_content: result.get("structuredContent").cloned(),
-        is_error: result.get("isError").and_then(Value::as_bool) == Some(true),
-        rpc_error: None,
-    })
-}
-
 /// What a send that declares elicitation keeps a question with.
 struct Declared<'a> {
     capability: Value,
@@ -536,6 +528,10 @@ struct Exchange<'a> {
     tool_headers: HeaderMap,
     /// The elicitation this send declares, if any.
     elicitation: Option<Declared<'a>>,
+    /// The call's issuer binding, kept independently of elicitation: a
+    /// send without elicitation still rechecks the hold before it answers
+    /// a server request with the kept header.
+    issuer: Option<(&'a Arc<Vault>, EntityId, &'a str)>,
 }
 
 impl<'a> Exchange<'a> {
@@ -543,6 +539,7 @@ impl<'a> Exchange<'a> {
     fn new(
         client: &'a reqwest::blocking::Client,
         view: &'a FrozenToolCallView,
+        vault: &'a Arc<Vault>,
         elicitation: Option<Declared<'a>>,
     ) -> Option<Self> {
         let revision = view.protocol_revision()?;
@@ -572,6 +569,10 @@ impl<'a> Exchange<'a> {
             ),
             tool_headers,
             elicitation,
+            issuer: view
+                .key_ref()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .map(|key_ref| (vault, key_ref, view.tool())),
         })
     }
 
@@ -581,6 +582,24 @@ impl<'a> Exchange<'a> {
         match &self.elicitation {
             Some(declared) => json!({ "elicitation": declared.capability }),
             None => json!({}),
+        }
+    }
+
+    /// Rechecks the issuer before a session sends with its kept credential.
+    fn check_issuer(&self) -> Result<(), Sent> {
+        let Some((vault, key_ref, tool)) = &self.issuer else {
+            return Ok(());
+        };
+        match vault.connector_issuer_hold(key_ref, tool) {
+            Ok(None) => Ok(()),
+            Ok(Some(reason)) => Err(Sent::held(reason)),
+            Err(error) => {
+                tracing::warn!(%error, "connector issuer binding not read");
+                Err(Sent::not_sent(
+                    OutboundFailureKind::TransportNotStarted,
+                    None,
+                ))
+            }
         }
     }
 
@@ -638,6 +657,9 @@ impl<'a> Exchange<'a> {
             session,
             auth,
         };
+        if let Err(held) = self.check_issuer() {
+            return held;
+        }
         let notification = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
         match live.post(&notification, Some(HANDSHAKE_TIMEOUT)).send() {
             Ok(response) if response.status().is_success() => {}
@@ -663,6 +685,9 @@ impl<'a> Exchange<'a> {
             .elicitation
             .as_ref()
             .is_some_and(|declared| declared.intake == Intake::Stream);
+        if let Err(held) = self.check_issuer() {
+            return held;
+        }
         let posted = live
             .post(&call, (!asks_on_stream).then_some(CALL_TIMEOUT))
             .headers(self.tool_headers.clone())
@@ -678,7 +703,10 @@ impl<'a> Exchange<'a> {
         };
         // The session ends with the call; a live question's worker took it
         // and ends it with the questions.
-        if let Some(live) = live {
+        if let Some(mut live) = live {
+            if self.check_issuer().is_err() {
+                live.forget_credential();
+            }
             live.end();
         }
         sent
@@ -726,7 +754,24 @@ impl<'a> Exchange<'a> {
                     let question = declared.and_then(|_| stream_question(&request));
                     let (Some(declared), Some(question)) = (declared, question) else {
                         match live.as_ref() {
-                            Some(live) => live.refuse(request),
+                            Some(live) => match self.elicitation.as_ref() {
+                                Some(declared) => live.refuse_unless_held(
+                                    request,
+                                    declared.vault,
+                                    &declared.binding.key_ref,
+                                    &declared.binding.tool,
+                                ),
+                                // A keyed call without elicitation still rechecks
+                                // the issuer hold before its refusal goes out
+                                // with the kept header; a keyless call keeps
+                                // the plain refusal.
+                                None => match &self.issuer {
+                                    Some((vault, key_ref, tool)) => {
+                                        live.refuse_unless_held(request, vault, key_ref, tool)
+                                    }
+                                    None => live.refuse(request),
+                                },
+                            },
                             None => zeroize_json(request),
                         }
                         continue;

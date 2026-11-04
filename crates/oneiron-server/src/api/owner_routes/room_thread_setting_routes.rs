@@ -14,7 +14,7 @@ use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::act_surface_admitted;
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
@@ -28,6 +28,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/settings/room-threads",
                 summary: "The owner's two room-thread switches, as they read now.",
                 row: None,
+                shape: None,
             },
             get(read),
         ),
@@ -37,6 +38,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/settings/room-threads",
                 summary: "Sets either switch, or both, and answers the two as they now read.",
                 row: None,
+                shape: Some(RestShape::json(
+                    room_thread_change_body_schema,
+                    room_thread_settings_schema,
+                )),
             },
             post(put),
         ),

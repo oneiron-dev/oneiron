@@ -26,8 +26,8 @@ use super::code_check::{CheckedDoor, ProgramAdmission, ProgramCheck, TypeFeedbac
 use super::host::executor_boundary_contract;
 use super::store::{
     RECOVERABLE_OUTPUT_CHUNK_BYTES, executed_output_path, is_result_output_path,
-    observation_output_path, recoverable_output_path, result_read_path, script_output_path,
-    source_map_output_path, validate_runtime_outputs,
+    observation_output_path, recoverable_output_path, script_output_path, source_map_output_path,
+    validate_runtime_outputs,
 };
 use super::types::{JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome};
 use super::wire::heal_executor_reply;
@@ -54,22 +54,15 @@ pub struct ArmTypeFeedback<'f> {
 }
 
 /// The outputs of `prefix`, a run's row as a step starts, that the step's
-/// program may read back: the run's results, and the observation of each
-/// step before it.
+/// program may read back: the run's results (observations and runtime files
+/// included).
 pub(crate) fn shadow_readable_outputs(prefix: &CodeRunReplayRecord) -> Vec<CodeRunRawOutput> {
-    let mut readable: Vec<CodeRunRawOutput> = prefix
+    prefix
         .outputs
         .iter()
         .filter(|output| is_result_output_path(&output.path))
         .cloned()
-        .collect();
-    for seq in 0..prefix.step_checkpoints.len() as u64 {
-        let path = observation_output_path(seq);
-        if let Some(output) = prefix.outputs.iter().find(|output| output.path == path) {
-            readable.push(output.clone());
-        }
-    }
-    readable
+        .collect()
 }
 
 /// Runs `prepared`'s captured step in an arm whose bodies are in `store`,
@@ -241,7 +234,6 @@ fn arm_reads(prepared: &PreparedShadowStep) -> ArmReads {
         .collect();
     ArmReads {
         recoverable,
-        result_path: result_read_path,
         chunk_bytes: RECOVERABLE_OUTPUT_CHUNK_BYTES,
     }
 }

@@ -9,9 +9,9 @@ mod receipt;
 mod runner;
 use receipt::QualificationEvidence;
 pub use receipt::{
-    CONNECTOR_QUALIFICATION_SUITE, ConnectorQualificationReceipt,
-    OWNER_ATTESTED_QUALIFICATION_SUITE, PROXY_ADMISSION_QUALIFICATION_SUITE,
-    SETUP_CHECK_QUALIFICATION_SUITE,
+    BUILTIN_PROBE_QUALIFICATION_SUITE, CONNECTOR_QUALIFICATION_SUITE,
+    ConnectorQualificationReceipt, OWNER_ATTESTED_QUALIFICATION_SUITE,
+    PROXY_ADMISSION_QUALIFICATION_SUITE, SETUP_CHECK_QUALIFICATION_SUITE,
 };
 pub(crate) use runner::qualify_connector_with_schemas;
 pub use runner::{qualify_connector, validate_headers};

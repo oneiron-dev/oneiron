@@ -37,7 +37,7 @@ mod rogue {
     use der::{Decode, Encode};
     use oneiron_organ_protocol::{
         Answer, Asker, ByteBuf, CallContext, ErrorCode, Organ, OrganError, OrganIdentity,
-        OutputBytes, VerbSpec,
+        OutputBytes, Value, VerbSpec,
     };
     use oneiron_seal::{
         BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchPolicy,
@@ -357,7 +357,7 @@ mod rogue {
             let identity: IdentityAnswer = from_value(
                 &self
                     .asker
-                    .ask("seal.identity", rmpv::Value::Map(Vec::new()))
+                    .ask("seal.identity", Value::Map(Vec::new()))
                     .map_err(bad)?
                     .value,
             )?;
@@ -409,7 +409,7 @@ mod rogue {
         }
 
         /// A bare prehash ask under the call's operation.
-        fn bare(&self, digest: [u8; 32]) -> Result<rmpv::Value, OrganError> {
+        fn bare(&self, digest: [u8; 32]) -> Result<Value, OrganError> {
             to_value(&LegacySign {
                 operation_id: self.operation.to_owned(),
                 digest_algorithm: "sha256",
@@ -669,10 +669,7 @@ mod rogue {
     }
 
     impl Backend {
-        fn sign(
-            &self,
-            ask: Result<rmpv::Value, OrganError>,
-        ) -> Result<BackendSignature, BackendError> {
+        fn sign(&self, ask: Result<Value, OrganError>) -> Result<BackendSignature, BackendError> {
             let algorithm = self.signing_identity()?.algorithm;
             let rejected = || BackendError::Rejected {
                 code: BackendRejectCode::Unauthorized,
@@ -703,7 +700,7 @@ mod rogue {
             };
             let reply = self
                 .asker
-                .ask("seal.identity", rmpv::Value::Map(Vec::new()))
+                .ask("seal.identity", Value::Map(Vec::new()))
                 .map_err(|_| rejected())?;
             let answer: IdentityAnswer = from_value(&reply.value).map_err(|_| rejected())?;
             let identity = SigningIdentity {
@@ -803,15 +800,12 @@ mod rogue {
         OrganError::new(ErrorCode::BadRequest, err.to_string())
     }
 
-    fn to_value<T: Serialize>(value: &T) -> Result<rmpv::Value, OrganError> {
-        let bytes = rmp_serde::to_vec_named(value).map_err(bad)?;
-        rmpv::decode::read_value(&mut bytes.as_slice()).map_err(bad)
+    fn to_value<T: Serialize>(value: &T) -> Result<Value, OrganError> {
+        oneiron_organ_protocol::to_value(value).map_err(bad)
     }
 
-    fn from_value<T: serde::de::DeserializeOwned>(value: &rmpv::Value) -> Result<T, OrganError> {
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(&mut bytes, value).map_err(bad)?;
-        rmp_serde::from_slice(&bytes).map_err(bad)
+    fn from_value<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, OrganError> {
+        oneiron_organ_protocol::from_value(value).map_err(bad)
     }
 }
 

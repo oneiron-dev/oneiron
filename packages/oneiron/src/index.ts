@@ -1095,6 +1095,10 @@ export class Oneiron {
         /** The owner marks or clears one skill governance tier; the mark changes no instruction content or version. */
         set: (input: Facade.SkillGovernanceSetRequest): Facade.SkillGovernanceView => this.#call(() => this.#client.vaultSkillsGovernanceSet(input) as Facade.SkillGovernanceView),
       },
+      callable: {
+        /** The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing. */
+        amend: (input: Facade.CallableAmendRequest): Facade.CallableAmendReceipt => this.#call(() => this.#client.vaultSkillsCallableAmend(input) as Facade.CallableAmendReceipt),
+      },
       /** Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner. */
       pack_receipt: (input: Facade.SkillPackReceiptRequest): Facade.SkillPackReceipt => this.#call(() => this.#client.vaultSkillsPackReceipt(input) as Facade.SkillPackReceipt),
       outcomes: {
@@ -1938,6 +1942,8 @@ export class Oneiron {
       }),
     },
     secrets: {
+      /** The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged. */
+      code_run_lifts: (input: Facade.CodeRunSecretLiftRequest): Facade.CodeRunSecretLiftStatus => this.#call(() => this.#client.vaultSecretsCodeRunLifts(input) as Facade.CodeRunSecretLiftStatus),
       /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
       lift_history: (input: Facade.SecretLiftRequest): Facade.SecretLiftStatus => this.#call(() => this.#client.vaultSecretsLiftHistory(input) as Facade.SecretLiftStatus),
       /** The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call. */
@@ -3230,6 +3236,12 @@ export class Oneiron {
       }),
       /** Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page. */
       lens: (input: Facade.InboxLensRequest): Facade.InboxLensPage => this.#call(() => this.#client.selfInboxLens(input) as Facade.InboxLensPage),
+      /** Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done. */
+      get: (input: Facade.InboxItemRequest): Facade.InboxItemView => this.#call(() => this.#client.selfInboxGet(input) as Facade.InboxItemView),
+      /** Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it. */
+      done: (input: Facade.InboxItemRequest): Facade.InboxItemMarked => this.#call(() => this.#client.selfInboxDone(input) as Facade.InboxItemMarked),
+      /** Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it. */
+      later: (input: Facade.InboxItemLaterRequest): Facade.InboxItemMarked => this.#call(() => this.#client.selfInboxLater(input) as Facade.InboxItemMarked),
     },
     /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
     message: (input: Facade.MessagePersonRequest): Facade.MessagePersonReceipt => this.#call(() => this.#client.selfMessage(input) as Facade.MessagePersonReceipt),

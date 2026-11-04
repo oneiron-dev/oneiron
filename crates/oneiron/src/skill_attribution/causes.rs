@@ -10,40 +10,16 @@
 //! health reads it by the exact terminal pack receipt a finding's attempt
 //! sealed.
 
-use serde::{Deserialize, Serialize};
-
 use super::judge_supersession::displacing_revision_in_txn;
 use super::types::{AttributionVerdict, OutcomeEvidence};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, SideTable};
+use crate::store::skill_attribution_causes::{CAUSES, CauseRow};
 
 /// Domain of a cause's source id: one id per terminal receipt and evidence
 /// sequence.
 const SOURCE_DOMAIN: &[u8] = b"oneiron:skill-attribution-cause:v1";
-
-/// One settled label. Key: blake3 of the terminal pack receipt id, then the
-/// evidence sequence.
-const CAUSES: SideTable<([u8; 32], u64), CauseRow, Named> =
-    SideTable::new(&side_table::SKILL_ATTRIBUTION_CAUSE);
-
-/// [`CAUSES`]'s stored row. The label is the judge's stable wire token.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CauseRow {
-    source: EntityId,
-    sequence: u64,
-    receipt: String,
-    /// `None` once the actor is erased: the label stays with its receipt.
-    actor: Option<EntityId>,
-    /// `None` once the skill is erased (FIX 8265), as the actor's slot.
-    skill: Option<EntityId>,
-    label: String,
-    share: f32,
-    judge_revision: Option<String>,
-    at: u64,
-}
 
 /// One label the judge settled on an attempt's terminal outcome evidence, as
 /// read back. A label is a fact about one evidence row: an `environment`
@@ -171,40 +147,6 @@ pub(crate) fn attempt_attribution_causes(
         });
     }
     Ok(causes)
-}
-
-/// Forgets erased `entity` on every cause row that names it, in the erase's
-/// own write: an actor it executed or a skill it loaded (FIX 8265), each slot
-/// nil, and the label stays with its receipt, as a call receipt keeps its row
-/// and drops its identity. A later projection keeps the row's identity slots
-/// as they are held ([`put_attribution_cause_in_txn`]), so it never names
-/// either again.
-///
-/// # Errors
-///
-/// Storage and codec errors.
-pub(crate) fn erase_attribution_cause_entity_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    entity: &EntityId,
-) -> Result<()> {
-    let mut erased = Vec::new();
-    for row in CAUSES.iter_from(&vault.store, wtxn, &[])? {
-        let (key, row) = row?;
-        if row.actor == Some(*entity) || row.skill == Some(*entity) {
-            erased.push((key, row));
-        }
-    }
-    for (key, mut row) in erased {
-        if row.actor == Some(*entity) {
-            row.actor = None;
-        }
-        if row.skill == Some(*entity) {
-            row.skill = None;
-        }
-        CAUSES.put(&vault.store, wtxn, &key, &row)?;
-    }
-    Ok(())
 }
 
 fn receipt_key(receipt: &str) -> [u8; 32] {

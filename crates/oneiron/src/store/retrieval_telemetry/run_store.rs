@@ -6,9 +6,9 @@ use heed::{RoTxn, RwTxn};
 
 use crate::batch::secret_scan;
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
-use crate::scan_check::ScanCount;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::EngineScan;
+use crate::store::scan_count::ScanCount;
 #[cfg(test)]
 use crate::store::test_hooks;
 use crate::store::{
@@ -531,6 +531,8 @@ impl Store {
         &self,
         run_id: RetrievalRunId,
     ) -> Result<Vec<RetrievalOutcomeRecord>> {
+        // A run finalized through the detached door may not have landed yet.
+        self.wait_for_deferred_commits();
         let rtxn = self.env.read_txn()?;
         if !RETRIEVAL_RUN.contains(self, &rtxn, &run_id)?
             || RETRIEVAL_RUN_PROVISIONAL.contains(self, &rtxn, &run_id)?

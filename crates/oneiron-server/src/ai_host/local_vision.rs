@@ -211,7 +211,11 @@ impl DecisionModel for LocalVisionModel {
         let time_left = call.deadline.decision_time_left();
         // The call's input is its question over the state its producer built
         // from the access-checked evidence: those rows, complete (FIX 6990).
-        let run = self.run.sourced(Some(call.evidence.to_vec()));
+        // A call that carries its caller's run spends on it (FIX 10443).
+        let run = match call.run {
+            Some(run) => run.sourced(Some(call.evidence.to_vec())),
+            None => self.run.sourced(Some(call.evidence.to_vec())),
+        };
         // A rested offer is waited for within the call's own time, not the
         // vault's longest wait.
         let response = self.runtime.block_on(async {

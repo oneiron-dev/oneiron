@@ -391,7 +391,7 @@ fn require_campaign_person(
     )?;
     if active && record.definition.lifecycle != CampaignLifecycle::Active {
         return Err(MemoryError::bad_request(
-            "an archived campaign cannot advance stages",
+            "a campaign that is not active (draft, paused or archived) cannot advance stages",
         ));
     }
     if memory.vault.get_entity_type_in_txn(txn, &person)?

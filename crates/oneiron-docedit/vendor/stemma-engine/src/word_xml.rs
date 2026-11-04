@@ -19,6 +19,18 @@ fn is_xml_whitespace(character: char) -> bool {
     matches!(character, ' ' | '\t' | '\r' | '\n')
 }
 
+/// Whether `character` is legal in XML 1.0 content or attribute values.
+/// Numeric references decode past the reader, so `&#x1;` must fail here;
+/// the replaced parser rejected it (FIX 6131 review).
+fn is_xml_char(character: char) -> bool {
+    matches!(
+        character,
+        '\u{9}' | '\u{A}' | '\u{D}' | '\u{20}'..='\u{D7FF}'
+            | '\u{E000}'..='\u{FFFD}'
+            | '\u{10000}'..='\u{10FFFF}'
+    )
+}
+
 /// Return the active character content of one WordprocessingML text leaf.
 ///
 /// XML parsers retain the raw character buffer regardless of `xml:space`, but
@@ -617,22 +629,65 @@ fn element_from_start(
                 reason: format!("attribute value unescape failed: {e}"),
             })?
             .into_owned();
+        // Numeric references decode past the reader: reject characters XML
+        // 1.0 forbids, the way the replaced parser did (FIX 6131 review).
+        if value.chars().any(|ch| !is_xml_char(ch)) {
+            return Err(WordXmlError::QuickXml {
+                position: reader.buffer_position(),
+                reason: "illegal XML character in attribute value".to_string(),
+            });
+        }
 
         if key.as_ref() == "xmlns" {
-            // Default namespace declaration.
-            ns_decls.push((
-                String::new(),
-                canonicalize_ooxml_namespace(&value).into_owned(),
-            ));
+            // Default namespace declaration. The xmlns namespace itself is
+            // never declarable, on a default binding either (FIX 6131
+            // review); the XML namespace as a default is legal and stays.
+            let uri = canonicalize_ooxml_namespace(&value).into_owned();
+            // Neither reserved namespace is declarable on a default binding;
+            // the replaced parser rejected both (FIX 6131 review).
+            if uri == XMLNS || uri == XML_URI {
+                return Err(WordXmlError::QuickXml {
+                    position: reader.buffer_position(),
+                    reason: "a reserved namespace must not be declared".to_string(),
+                });
+            }
+            ns_decls.push((String::new(), uri));
             continue;
         }
         let (akey_prefix, akey_local) = split_qname(key);
         if akey_prefix.as_deref() == Some("xmlns") {
-            // `xmlns:foo` -> declares prefix `foo`.
-            ns_decls.push((
-                akey_local,
-                canonicalize_ooxml_namespace(&value).into_owned(),
-            ));
+            // `xmlns:foo` -> declares prefix `foo`. Reserved prefixes are
+            // validated like xmltree/xml-rs: `xmlns` is never declarable,
+            // and `xml` must keep its fixed URI.
+            if akey_local == "xmlns" {
+                return Err(WordXmlError::QuickXml {
+                    position: reader.buffer_position(),
+                    reason: "reserved namespace prefix 'xmlns' must not be declared".to_string(),
+                });
+            }
+            let uri = canonicalize_ooxml_namespace(&value).into_owned();
+            // The xmlns namespace is never declarable, and only the xml
+            // prefix may bind the XML namespace (FIX 6131 review).
+            if uri == XMLNS {
+                return Err(WordXmlError::QuickXml {
+                    position: reader.buffer_position(),
+                    reason: "the 'xmlns' namespace must not be declared".to_string(),
+                });
+            }
+            if akey_local == "xml" {
+                if uri != XML_URI {
+                    return Err(WordXmlError::QuickXml {
+                        position: reader.buffer_position(),
+                        reason: format!("reserved prefix 'xml' bound to wrong URI: {uri}"),
+                    });
+                }
+            } else if uri == XML_URI {
+                return Err(WordXmlError::QuickXml {
+                    position: reader.buffer_position(),
+                    reason: "only the 'xml' prefix may bind the XML namespace".to_string(),
+                });
+            }
+            ns_decls.push((akey_local, uri));
             continue;
         }
 
@@ -658,6 +713,12 @@ fn element_from_start(
     // first, then the inherited scope.
     let elem_prefix_str = prefix.as_deref().unwrap_or("");
     let namespace = resolve_in_frame_then_scope(&frame, scope, elem_prefix_str);
+    if prefix.is_some() && namespace.is_none_or(|uri| uri.is_empty()) {
+        return Err(WordXmlError::QuickXml {
+            position: reader.buffer_position(),
+            reason: format!("undeclared namespace prefix: {elem_prefix_str}"),
+        });
+    }
 
     // Resolve attribute namespace URIs. Unprefixed attributes are NOT in any
     // namespace (per XML Namespaces — the default namespace does not apply to
@@ -667,6 +728,23 @@ fn element_from_start(
     for (mut an, val) in plain_attrs {
         if let Some(ref p) = an.prefix {
             an.namespace = resolve_in_frame_then_scope(&frame, scope, p).map(str::to_string);
+            if an.namespace.as_deref().is_none_or(|uri| uri.is_empty()) {
+                return Err(WordXmlError::QuickXml {
+                    position: reader.buffer_position(),
+                    reason: format!("undeclared namespace prefix: {p}"),
+                });
+            }
+        }
+        // Two prefixes bound to the same URI still name one expanded
+        // attribute; the replaced parser rejected the duplicate (FIX 6131
+        // review).
+        if attributes.keys().any(|existing| {
+            existing.namespace == an.namespace && existing.local_name == an.local_name
+        }) {
+            return Err(WordXmlError::QuickXml {
+                position: reader.buffer_position(),
+                reason: "duplicate attribute".to_string(),
+            });
         }
         attributes.insert(an, val);
     }
@@ -765,6 +843,9 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
         config.expand_empty_elements = false;
         // We validate structure ourselves; mismatched ends are a parse error.
         config.check_end_names = true;
+        // A `--` inside a comment is malformed; the replaced parser rejected
+        // it, so keep the reader's comment check on (FIX 6131 review).
+        config.check_comments = true;
     }
 
     // Stack of partially built elements. `stack.last_mut()` is the open parent.
@@ -774,6 +855,14 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
     let mut root: Option<Element> = None;
 
     let mut buf = Vec::new();
+    // An XML declaration is only legal once, before the document element.
+    // Anything else (a second declaration, or one mid-document) is malformed.
+    let mut decl_seen = false;
+    // Prolog content before the root: comments, PIs and whitespace text are
+    // dropped, but a declaration after any of them is malformed (it is only
+    // legal as the first construct). Tracked separately because the dropped
+    // constructs leave no trace on the stack or root (FIX 6131 review).
+    let mut prolog_seen = false;
     loop {
         let event = reader
             .read_event_into(&mut buf)
@@ -802,18 +891,49 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
             }
             Event::Text(t) => {
                 // Raw text, EOLs untouched. It holds no references: quick-xml
-                // reports each one as a `GeneralRef` event.
-                // Top-level text (outside the root) is whitespace between the
-                // XML declaration and the root; xml-rs dropped it, so do we.
-                push_text(&mut stack, &t);
+                // reports each one as a `GeneralRef` event. Whitespace outside
+                // the root is dropped; any other character data is malformed.
+                // Dropped prolog whitespace still counts: a declaration after
+                // it is malformed (FIX 6131 review).
+                if stack.is_empty() {
+                    if t.as_ref().chars().any(|ch| !is_xml_whitespace(ch)) {
+                        return Err(WordXmlError::QuickXml {
+                            position: reader.buffer_position(),
+                            reason: "character data outside the document element".to_string(),
+                        });
+                    }
+                    prolog_seen = true;
+                }
+                // Raw text is already decoded: reject characters XML 1.0
+                // forbids, the way the replaced parser did (FIX 6131 review).
+                let text: &str = &t;
+                if text.chars().any(|ch| !is_xml_char(ch)) {
+                    return Err(WordXmlError::QuickXml {
+                        position: reader.buffer_position(),
+                        reason: "illegal XML character in text".to_string(),
+                    });
+                }
+                push_text(&mut stack, text);
             }
             Event::GeneralRef(r) => {
                 // Decode the reference (&amp; &#x41; ...) — the xmltree writer
                 // will re-escape on output, so the stored value must be decoded.
                 let text = resolve_general_ref(&r, &reader)?;
+                if stack.is_empty() {
+                    return Err(WordXmlError::QuickXml {
+                        position: reader.buffer_position(),
+                        reason: "character data outside the document element".to_string(),
+                    });
+                }
                 push_text(&mut stack, &text);
             }
             Event::CData(c) => {
+                if stack.is_empty() {
+                    return Err(WordXmlError::QuickXml {
+                        position: reader.buffer_position(),
+                        reason: "CDATA outside the document element".to_string(),
+                    });
+                }
                 if let Some(parent) = stack.last_mut() {
                     parent
                         .children
@@ -822,6 +942,9 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
             }
             Event::Comment(c) => {
                 // Comment content is literal: do NOT unescape.
+                if stack.is_empty() {
+                    prolog_seen = true;
+                }
                 if let Some(parent) = stack.last_mut() {
                     parent
                         .children
@@ -831,6 +954,9 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
             Event::PI(pi) => {
                 // Processing instruction: split into (target, data). xmltree
                 // stores them as (name, Option<data>).
+                if stack.is_empty() {
+                    prolog_seen = true;
+                }
                 let raw = pi.into_inner();
                 let (target, data) = match raw.split_once(char::is_whitespace) {
                     Some((t, d)) => (t.to_string(), Some(d.trim_start().to_string())),
@@ -846,8 +972,37 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
                 // Reject DTDs outright: defense against entity-expansion attacks.
                 return Err(WordXmlError::DoctypeRejected);
             }
-            Event::Decl(_) => {
+            Event::Decl(decl) => {
                 // XML declaration (<?xml ...?>): no tree node, like xml-rs.
+                // Only a single declaration before the document element is
+                // legal, and only as the first construct: prolog whitespace,
+                // comments or PIs before it mean malformed XML that must not
+                // pass (FIX 6131 review).
+                if decl_seen || prolog_seen || !stack.is_empty() || root.is_some() {
+                    return Err(WordXmlError::QuickXml {
+                        position: reader.buffer_position(),
+                        reason: "misplaced XML declaration".to_string(),
+                    });
+                }
+                // The replaced parser rejected a declaration without a
+                // version and one with a non-1.x version, so validate the
+                // grammar instead of discarding it (FIX 6131 review).
+                let version_ok = decl
+                    .version()
+                    .ok()
+                    .is_some_and(|v| v == "1.0" || v == "1.1");
+                let encoding_ok = decl.encoding().transpose().is_ok();
+                let standalone_ok = decl
+                    .standalone()
+                    .transpose()
+                    .is_ok_and(|s| s.is_none_or(|s| s == "yes" || s == "no"));
+                if !(version_ok && encoding_ok && standalone_ok) {
+                    return Err(WordXmlError::QuickXml {
+                        position: reader.buffer_position(),
+                        reason: "malformed XML declaration".to_string(),
+                    });
+                }
+                decl_seen = true;
             }
             Event::Eof => break,
         }
@@ -908,12 +1063,21 @@ fn resolve_general_ref(
     reader: &Reader<&[u8]>,
 ) -> Result<String, WordXmlError> {
     let name: &str = reference;
-    quick_xml::escape::unescape(&format!("&{name};"))
+    let decoded = quick_xml::escape::unescape(&format!("&{name};"))
         .map(std::borrow::Cow::into_owned)
         .map_err(|e| WordXmlError::QuickXml {
             position: reader.buffer_position(),
             reason: format!("text unescape failed: {e}"),
-        })
+        })?;
+    // A numeric reference can decode to a character XML 1.0 forbids; the
+    // replaced parser rejected it (FIX 6131 review).
+    if decoded.chars().any(|ch| !is_xml_char(ch)) {
+        return Err(WordXmlError::QuickXml {
+            position: reader.buffer_position(),
+            reason: "illegal XML character in character reference".to_string(),
+        });
+    }
+    Ok(decoded)
 }
 
 /// Error returned by `for_each_body_child`: either a structural/XML failure from
@@ -1174,7 +1338,14 @@ fn build_subtree_from_open(
                 }
             }
             Event::DocType(_) => return Err(WordXmlError::DoctypeRejected),
-            Event::Decl(_) => {}
+            // A declaration inside a body-child subtree is mid-document by
+            // construction: always malformed, never ignored (FIX 6131 review).
+            Event::Decl(_) => {
+                return Err(WordXmlError::QuickXml {
+                    position: reader.buffer_position(),
+                    reason: "misplaced XML declaration".to_string(),
+                });
+            }
             Event::Eof => {
                 return Err(WordXmlError::QuickXml {
                     position: reader.buffer_position(),

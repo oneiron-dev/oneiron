@@ -40,8 +40,9 @@ use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
 use crate::entity_id::{EntityId, derived_domains::SIDE_ROW_MASK};
 use crate::error::{Error, Result};
-use crate::secret_custody::KnownValues;
+use crate::secret_custody::KeptValues;
 use crate::side_table::{CodecName, RefPath, RefStep, SideTableDbs, SideTableDecl};
+use crate::store::known_value_index::KnownValues;
 
 /// One part of a row the wall reads.
 #[derive(Debug, Clone)]
@@ -58,14 +59,19 @@ pub(crate) enum SidePart {
 
 impl SidePart {
     /// The door's scan of this part, a container's members included (FIX
-    /// 2312); a tree's encoded copy is wiped once read (FIX 1101).
-    fn scan(&self) -> Result<()> {
+    /// 2312), with this record's owner-kept values screened first. A tree's
+    /// encoded copy and its screened copy are wiped once read (FIX 1101).
+    fn scan(&self, kept: &KeptValues, record: &EntityId) -> Result<()> {
         let scanned: Cow<'_, [u8]> = match self {
             Self::Body(bytes) => Cow::Borrowed(bytes.as_slice()),
             Self::Text(text) => Cow::Borrowed(text.as_bytes()),
             Self::Value(value) => Cow::Owned(encoded(value)?),
         };
-        let scan = scan_write_tree(&scanned);
+        let mut screened = kept.screened(record, &scanned);
+        let scan = scan_write_tree(screened.as_deref().unwrap_or(scanned.as_ref()));
+        if let Some(copy) = screened.as_mut() {
+            copy.zeroize();
+        }
         if let Cow::Owned(mut copy) = scanned {
             copy.zeroize();
         }
@@ -408,9 +414,17 @@ fn admitted(
             "a part the side-row wall reads names no origin",
         ));
     }
+    let kept = match dbs.side_custody() {
+        Some(custody) => KeptValues::for_records_in_txn(
+            custody.store,
+            &*wtxn,
+            origins.iter().map(|(record, _)| *record),
+        )?,
+        None => KeptValues::default(),
+    };
     let mut refusal = None;
-    for part in parts.iter() {
-        if let Err(error) = part.scan() {
+    for (part, (record, _)) in parts.iter().zip(origins) {
+        if let Err(error) = part.scan(&kept, record) {
             refusal = Some(error);
             break;
         }
@@ -422,7 +436,7 @@ fn admitted(
         (None, Some(custody)) => KnownValues::shared_in_writer(custody.store, wtxn)?,
         (None, None) => None,
     };
-    if refusal.is_none() && known.is_none() {
+    if refusal.is_none() && known.is_none() && kept.is_empty() {
         return Ok(None);
     }
     // The plan's copy is wiped however the plan ends (FIX 1101).
@@ -431,6 +445,7 @@ fn admitted(
         handles: seed.0.clone(),
         mints: true,
         known: known.clone(),
+        kept: kept.clone(),
         ..Masker::default()
     };
     let mut placed = false;
@@ -444,8 +459,8 @@ fn admitted(
         return refusal.map_or(Ok(None), Err);
     }
     // A hit no span places is still in the copy, and refuses as before.
-    for part in &*planned {
-        part.scan()?;
+    for (part, (record, _)) in planned.iter().zip(origins) {
+        part.scan(&kept, record)?;
     }
     if !accepts(&planned[..]) {
         return refusal.map_or(Ok(None), Err);
@@ -461,10 +476,12 @@ fn admitted(
         handles: seed.0.clone(),
         minted: true,
         known,
+        kept,
         traced: pass.tracked.then(TextReplacements::default),
         ..Masker::default()
     };
-    for part in parts.iter_mut() {
+    for (part, (record, place)) in parts.iter_mut().zip(origins) {
+        minted.at = Some((*record, (*place).to_owned()));
         part.mask(&mut minted, pass.refs)?;
     }
     if !accepts(parts) {

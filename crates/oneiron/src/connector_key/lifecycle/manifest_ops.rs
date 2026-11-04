@@ -494,7 +494,7 @@ impl Vault {
 
 /// A staged manifest's snapshot, revision and aggregate size checks, in that
 /// order. Returns its hash.
-fn validate_staged_manifest(
+pub(super) fn validate_staged_manifest(
     manifest: &ResolvedConnectorManifest,
     revision: &str,
 ) -> Result<[u8; 32]> {
@@ -513,7 +513,7 @@ fn validate_staged_manifest(
 
 /// The qualification suite's run over the staged candidate, outside any
 /// writer. Returns its report hash.
-fn qualify_staged_manifest(
+pub(super) fn qualify_staged_manifest(
     suite: &dyn ConnectorManifestQualifier,
     manifest: &ResolvedConnectorManifest,
     revision: &str,

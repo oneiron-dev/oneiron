@@ -54,8 +54,6 @@ side_tables! {
     /// wire bytes and digest, the frozen destination and logical send, the hold, and the last
     /// send's receipt and outcome. Key: id16 (the ISSUE) + bytes32 (blake3 of the lane key).
     FEEDBACK_REPORT_DELIVERY: VaultMeta b"feedback:report-delivery:v1:" Named;
-    /// Owner disclosure preference, keyed by the resolved publisher reference.
-    FEEDBACK_REPORT_DISCLOSURE: VaultMeta b"feedback:report-disclosure:v1:" Named;
     /// The owner's binding of a publisher to this host's feedback destination (OF-420): its
     /// channel and exact endpoint, where that publisher's issue signatures go. Key: publisher
     /// reference.
@@ -190,6 +188,10 @@ side_tables! {
     /// and when. Node-local, as the cursor is. Key: id16 (identity) + bytes32 (sha256 of the
     /// provider message id).
     GMAIL_MAILBOX_SKIPPED: VaultMeta b"gmail:mailbox_skipped:v1:" Named;
+    /// A frozen Gmail member send plan its host kept for a send that dispatches later (FIX 1053):
+    /// its From, To, Subject, body, Date, Message-ID and reply headers; dropped once delivered.
+    /// Key: its content ref.
+    GMAIL_SEND_PLAN: VaultMeta b"gmail:send_plan:v1:" Named;
     /// Append-only offer-answer log for consent-graduation ramps, scope-major then UUIDv7 row id.
     /// Key: id16 + id16.
     EDIT_DISTANCE_GRADUATION_ANSWER: VaultMeta b"graduation_answer:v1:" Raw;
@@ -310,6 +312,10 @@ side_tables! {
     /// drawn at random).
     INFERENCE_SNAPSHOT_CATALOG: VaultMeta b"inference_snapshot:catalog:v1:" Named Engine
         => crate::inference_snapshot::erase_actor_in_txn;
+    /// One conversation's kept snapshots, by catalog id, so a restore reads
+    /// only its conversation's rows (FIX 11286): conversation id16 + catalog
+    /// id16, empty markers, written in the row's own transaction.
+    INFERENCE_SNAPSHOT_CONVERSATION_INDEX: VaultMeta b"inference_snapshot:conversation:v1:" Raw;
     /// Blob birth fingerprint tree used for perceptual/exact duplicate detection on ingest. Key:
     /// id16.
     INGEST_FINGERPRINT: VaultMeta b"ingest-fingerprint:v1:" LegacyJson;
@@ -431,16 +437,16 @@ side_tables! {
     /// One TASK's mirror control (OF-427 C6): whether it is opted out, its mapping revision and
     /// its last mapping edit. Key: id16 (TASK).
     LINEAR_MIRROR_CONTROL: VaultMeta b"linear.mirror_control.v1/" Named Engine
-        => crate::linear_sync::erase_mirror_control_actor_in_txn;
+        => crate::store::actor_scrubs::erase_mirror_control_actor_in_txn;
     /// One mirror event (OF-427): a webhook delivery, a sent push, a mapping edit or a title
     /// edit, with its external evidence and receipt. Key: direction byte + 32-byte digest.
     LINEAR_MIRROR_EVENT: VaultMeta b"linear.mirror_event.v1/" Named
-        => crate::linear_sync::erase_mirror_event_actor_in_txn;
+        => crate::store::actor_scrubs::erase_mirror_event_actor_in_txn;
     /// One TASK's mirror events by time; the value is empty. Key: id16 (TASK) + u64be (at) +
     /// 33-byte event key.
     LINEAR_MIRROR_EVENT_BY_TASK: VaultMeta b"linear.mirror_event_by_task.v1/" Raw;
     /// Tracker pull-page cursor. Key: ().
-    LINEAR_PULL_CURSOR: VaultMeta b"linear.pull_cursor.v1" Raw Authored [accepts: crate::task_verb::linear_pull_cursor_accepts_masked];
+    LINEAR_PULL_CURSOR: VaultMeta b"linear.pull_cursor.v1" Raw Authored [accepts: crate::store::linear_pull_cursor::linear_pull_cursor_accepts_masked];
     /// Tracker-mirror outbox marker. Key: id16.
     LINEAR_TASK_DIRTY: VaultMeta b"linear.task_dirty.v1/" Raw Engine;
     /// Tracker-mirror revision counter of a task. Key: id16.
@@ -457,10 +463,11 @@ side_tables! {
     /// the pressing actor and the mirrored TASK (FIX 6835). Key: 32-byte operation id + the
     /// press's 32-byte approve-once digest.
     LINEAR_EFFECT_APPROVAL: VaultMeta b"linear:effect_approval:v1/" Raw
-        => crate::linear_sync::erase_effect_approval_actor_in_txn;
-    /// Digest of the Linear effect request an operation id was first authorized for. Key: 32-byte
-    /// operation id.
-    LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw;
+        => crate::store::actor_scrubs::erase_effect_approval_actor_in_txn;
+    /// Frozen Linear effect binding digest, verified writer, scheduler and TASK, so hard erase
+    /// can retire the authorization (FIX 12508). Key: 32-byte operation id.
+    LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw
+        => crate::store::actor_scrubs::erase_effect_authorized_actor_in_txn;
     /// Task to tracker issue link state. Key: id16.
     LINEAR_SYNC_LINK: VaultMeta b"linear_sync:link:v4:" LegacyJson Authored [accepts: crate::linear_sync::linear_sync_link_accepts_masked];
     /// The vault's pinned model-role manifest (role bindings, tier/route defaults). Key: ().
@@ -472,9 +479,9 @@ side_tables! {
     LLM_CATALOG_REVISION: VaultMeta b"llm:catalog_revision:v1:" Named
         => crate::llm::catalog_doors::erase_catalog_source_rows_in_txn;
     /// Measured description scores keyed inside one singleton map. Key: ().
-    LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored [accepts: crate::llm::llm_description_measurements_accepts_masked];
+    LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_measurements_accepts_masked];
     /// Vault-owned description policy. Key: ().
-    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson Authored [accepts: crate::llm::llm_description_policy_accepts_masked];
+    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_policy_accepts_masked];
     /// Durable re-ask keyed by 64-character hex identity.
     LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson;
     /// Training provenance and checkpoint pin for the installed distilled encoder. Key: ().
@@ -484,7 +491,7 @@ side_tables! {
     LLM_MANIFEST: VaultMeta b"llm:manifest:v2" LegacyJson;
     /// Revision-pinned description of one registered model, read by seat routing. Key:
     /// string(model id).
-    LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored [accepts: crate::llm::llm_model_description_accepts_masked];
+    LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored [accepts: crate::store::seat_model_description::llm_model_description_accepts_masked];
     /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
     LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
     /// The loaded native Oneironer bundle's receipt at its bind: stack and
@@ -511,7 +518,7 @@ side_tables! {
     LLM_RUN_SEAT: VaultMeta b"llm:run_seat:v1:" LegacyJson;
     /// Rolling window (max 64) of recent benchmark score-change diffs for one model. Key:
     /// string(model id) "\x00".
-    LLM_SCORE_DIFFS: VaultMeta b"llm:scores:v1:" LegacyJson Authored [accepts: crate::llm::llm_score_diffs_accepts_masked];
+    LLM_SCORE_DIFFS: VaultMeta b"llm:scores:v1:" LegacyJson Authored [accepts: crate::store::model_score_diff::llm_score_diffs_accepts_masked];
     /// The catalog revision pinned when a held-out trial was nominated. Key: id16.
     LLM_TRIAL_CATALOG: VaultMeta b"llm:trial_catalog:v1:" Named;
 }

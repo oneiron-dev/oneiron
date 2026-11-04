@@ -160,10 +160,11 @@ impl Memory<'_> {
         self.repo_declaration_answer(binding, &own, &lease, Vec::new())
     }
 
-    /// `self.code.symbols.release` for a run: removes its own declaration.
-    /// Giving a hold up needs the run's membership and lease, not an edit
-    /// glob. A declaration that is not the TASK's current one of this run,
-    /// or has expired, is a stale lease, and nothing is removed.
+    /// `self.code.symbols.release` for a run: removes its own declaration,
+    /// an expired one included (FIX 7068). Giving a hold up needs the run's
+    /// membership and lease, not an edit glob. A declaration that is not
+    /// the TASK's current one of this run is a stale lease, and nothing is
+    /// removed.
     pub fn repo_symbols_release_for_run(
         &self,
         binding: &RepoRunBinding,
@@ -173,7 +174,6 @@ impl Memory<'_> {
         let fence = symbol_fence(binding, &own.stamp, input.declaration);
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, NO_PATHS);
         let released = self.vault.with_write_txn_grouped(|txn| {
-            let now = self.vault.now_recorded_at();
             if let Err(refused) = self.vault.readmit_repo_work_in_txn(
                 txn,
                 binding,
@@ -184,7 +184,7 @@ impl Memory<'_> {
                 return Ok(Err(refused));
             }
             Ok(
-                if crate::task_verb::release_symbols_for_run_in_txn(self.vault, txn, &fence, now)? {
+                if crate::task_verb::release_symbols_for_run_in_txn(self.vault, txn, &fence)? {
                     Ok(())
                 } else {
                     Err(RepoAccessRefusal::StaleLease)

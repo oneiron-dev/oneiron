@@ -13,7 +13,7 @@ pub(crate) mod health_review;
 pub mod helper;
 mod helper_eval;
 mod identity;
-mod invocation;
+use oneiron_base::skill_invocations as invocation;
 pub mod learning_judge;
 mod lifecycle;
 mod loaded_revision;
@@ -59,7 +59,7 @@ pub(crate) use self::saved_prose::{forked_skill_prose_links, saved_skill_prose_l
 pub(crate) use self::validate::{validate_hub_sync_skill_update, validate_skill_update};
 pub(crate) use crate::skill_optimize::exploration_trial::{
     EXPLORATION_ASK_CLIMB_HOURS, EXPLORATION_ASK_LAPSE_HOURS, ExplorationTrialStatus,
-    drive_exploration_trial, settle_exploration_route_in_txn,
+    drive_exploration_trial, revise_exploration_route_in_txn, settle_exploration_route_in_txn,
 };
 
 // The flat skill.rs module provided these names to the sibling test module

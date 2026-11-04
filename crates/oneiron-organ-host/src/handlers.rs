@@ -8,7 +8,7 @@ use std::fmt;
 use std::sync::{Mutex, PoisonError};
 use std::time::Instant;
 
-use oneiron_organ_protocol::AskRefusal;
+use oneiron_organ_protocol::{AskRefusal, Value};
 
 use crate::budget::{CallRoom, Stop};
 use crate::clock::Clock;
@@ -27,7 +27,7 @@ pub trait AskHandler: Sync {
 #[derive(Debug)]
 pub struct AskRequest<'a> {
     pub verb: &'a str,
-    pub value: &'a rmpv::Value,
+    pub value: &'a Value,
     pub organ: &'a str,
     /// The verb of the call the ask came from.
     pub call_verb: &'a str,
@@ -67,7 +67,7 @@ impl AskRequest<'_> {
 /// A handler's answer.
 #[derive(Debug)]
 pub struct Answered {
-    pub value: rmpv::Value,
+    pub value: Value,
     pub data: Option<Vec<u8>>,
     /// For a fetch, where it went, for the receipt.
     pub fetch: Option<FetchTarget>,
@@ -77,7 +77,7 @@ impl Default for Answered {
     /// A nil value, no bytes.
     fn default() -> Self {
         Self {
-            value: rmpv::Value::Nil,
+            value: Value::Nil,
             data: None,
             fetch: None,
         }

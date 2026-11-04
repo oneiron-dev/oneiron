@@ -49,7 +49,7 @@ impl HostSelfDispatcher<'_> {
         if !matches!(call, SelfCall::MemorySearch(_))
             || !binding.session.verb_hooks_may_run(effect.as_str())
         {
-            return Ok(Ok((call, HookedCall(None))));
+            return Ok(Ok((call, HookedCall(None, None))));
         }
         let invocation = self.verb_invocation(&call, site)?;
         // The same search a hook's ask parked names that pause, and resumes
@@ -91,12 +91,15 @@ impl HostSelfDispatcher<'_> {
             Err(stop) => return Ok(Err(stopped(effect, stop))),
         };
         if pre.args == args {
-            return Ok(Ok((call, HookedCall(Some(pre)))));
+            return Ok(Ok((call, HookedCall(Some(pre), None))));
         }
         let rewritten = rewrite(&call, &pre.args).map_err(|reason| {
             Error::InvalidConfig(format!("{} rewrite: {reason}", effect.as_str()))
         })?;
-        Ok(Ok((rewritten, HookedCall(Some(pre)))))
+        Ok(Ok((
+            rewritten.clone(),
+            HookedCall(Some(pre), Some(rewritten)),
+        )))
     }
 
     /// [`Self::leave_verb_hooks`] for a run bound to a room: the post chain

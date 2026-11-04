@@ -20,8 +20,15 @@ mod delegation;
 pub use delegation::{COMPANION_GRANT_OUTLIVES_ISSUER, COMPANION_PROFILE_SENSITIVITY};
 mod erase;
 pub(crate) use erase::erase_principal_grants_in_txn;
+mod owner_act;
+pub(crate) use owner_act::{
+    AccessGrantActChange, AccessGrantOwnerActReceipt, access_grant_owner_acts_in_txn,
+    record_access_grant_owner_act_in_txn,
+};
 mod record;
 mod vault_doors;
+mod witness_history;
+pub(crate) use witness_history::witness_read_generations;
 
 pub use self::codec::{
     ACCESS_GRANT_BODY_KEYS, ACCESS_GRANT_SCHEMA_VERSION, decode_access_grant_body,
@@ -31,8 +38,7 @@ pub(crate) use self::codec::{
     ACCESS_GRANT_FIELDS_FULL, ACCESS_GRANT_FIELDS_MINIMAL, ACCESS_GRANT_FIELDS_STANDARD,
     decode_entity_ref, decode_erased_grant_body, decode_live_access_grant_body,
     encode_erased_grant_body, erased_grant, invalid_grant, required_value,
-    validate_access_grant_body_bytes,
-    validate_keys,
+    validate_access_grant_body_bytes, validate_keys,
 };
 pub use self::record::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow,

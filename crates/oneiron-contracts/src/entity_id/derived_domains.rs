@@ -59,6 +59,10 @@ pub const AGENT_PRINCIPAL: &[u8] = b"oneiron/agent-principal/v1";
 /// (`commitment_schedule::commitment_projection_actor`). No parts.
 pub const COMMITMENT_PROJECTION_ACTOR: &[u8] = b"oneiron.commitment.projection.actor.v1\0";
 
+/// The System actor a facade row's verb hooks name for a scoped credential
+/// bound to no actor (`api::facade::hooks`, FIX 1439). No parts.
+pub const FACADE_UNBOUND_CALLER: &[u8] = b"oneiron:facade-unbound-caller:v1";
+
 /// One occurrence of one commitment series
 /// (`commitment_schedule::commitment_instance_id`). Parts: series, due-at, window
 /// start, window end (u64 big-endian each), ordinal (u32 big-endian).
@@ -193,6 +197,10 @@ pub const HISTORY_MESSAGE: &[u8] = b"oneiron.ingest.history.message.v1";
 /// folder, the file's path under it.
 pub const IMPORTED_NOTE: &[u8] = b"oneiron.ingest.notes.note.v1";
 
+/// An import-audience topic cluster (`ingest::audience`). Parts: the
+/// canonical bytes of the extractor's `topic_key`.
+pub const IMPORT_AUDIENCE_TOPIC: &[u8] = b"oneiron.ingest.import_audience.topic.v1";
+
 /// A project revision companion (`workspace_roster::project::revision`).
 /// Parts: the revision's 32-byte logical hash.
 pub const PROJECT_REVISION: &[u8] = b"oneiron/project-revision-id/v1/";
@@ -280,6 +288,10 @@ pub const CHANNEL_IDENTITY_AUTONOMY: &[u8] = b"oneiron/channel-identity-autonomy
 /// The source-bearing ASSET of one pack source (`skill_hub::pack_catalog::codec`,
 /// FIX 10125). Parts: the source's canonical tree content hash (32 bytes).
 pub const PACK_SOURCE_ASSET: &[u8] = b"oneiron.pack-source.asset.v1\0";
+
+/// The filed wording of one commitment reminder (`commitment_wake::reminder_wording`,
+/// FIX 12000). Parts: the reminder's content ref.
+pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminder-wording:v1:";
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]

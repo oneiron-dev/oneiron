@@ -1,0 +1,627 @@
+//! Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3
+//! edit round-trip pipeline.
+//!
+//! Office Open XML files (xlsx/docx/pptx) are ZIP containers of XML parts. The
+//! pipeline needs to decompose the bytes a code-session produced into their
+//! parts so it can enforce the OF-368 D5 fidelity law **independently of the
+//! session** — the corruption/passthrough gate must not trust the very tool
+//! that wrote the bytes. That is why this lives in the engine (pure Rust,
+//! runnable in CI) rather than behind the external-binary seam.
+//!
+//! Scope is deliberately narrow: read STORED and DEFLATE ZIP entries via the
+//! central directory, and write STORED entries. We never re-compress a
+//! session's output — the pipeline reads the session bytes to verify and diff
+//! them, it does not repackage them. Writing exists only to build the copy
+//! handed to a session and to construct test fixtures.
+//!
+//! Every entry is bounded and verified before it is trusted: the reader
+//! rejects a declared uncompressed size over a per-entry or per-package cap
+//! before inflating (a zip bomb), inflates against that bound, and checks the
+//! resulting length and CRC-32 against the central directory. Duplicate part
+//! names, multi-disk archives, ZIP64 sentinels, encrypted entries, and
+//! compression methods other than STORED/DEFLATE are rejected as corruption
+//! rather than silently mishandled.
+//!
+//! Before any payload is copied or inflated, its local header must repeat its
+//! central entry (name bytes, method, flags other than the DEFLATE option
+//! hints, and, without a data descriptor, checksum and sizes), and its local
+//! record must not overlap another entry's or reach the central directory, so
+//! one compressed payload is never inflated twice under two names.
+//!
+//! This is original code written against the published ZIP appnote and the
+//! ECMA-376 OPC part-naming conventions (facts, not expression); it copies no
+//! source from any packaging library.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
+
+use oneiron_contracts::error::{ArtifactError, Error, Result};
+
+const EOCD_SIGNATURE: u32 = 0x0605_4b50;
+const CENTRAL_DIR_SIGNATURE: u32 = 0x0201_4b50;
+const LOCAL_FILE_SIGNATURE: u32 = 0x0403_4b50;
+const EOCD_MIN_LEN: usize = 22;
+const CENTRAL_DIR_MIN_LEN: usize = 46;
+const LOCAL_FILE_MIN_LEN: usize = 30;
+const ZIP_STORED: u16 = 0;
+const ZIP_DEFLATE: u16 = 8;
+const DATA_DESCRIPTOR_SIGNATURE: u32 = 0x0807_4b50;
+/// General-purpose bits 1-2: DEFLATE option hints, which Excel writes
+/// differently in some local headers than in the central record.
+const DEFLATE_OPTION_FLAGS: u16 = 0x0006;
+/// General-purpose bit 3: CRC and sizes follow the payload in a descriptor.
+const DATA_DESCRIPTOR_FLAG: u16 = 0x0008;
+
+/// Per-entry ceiling on a central-directory *declared* uncompressed size. An
+/// OPC part advertising more than this is rejected before inflation, bounding a
+/// single zip-bomb entry (this pipeline reasons over spreadsheet XML, not
+/// arbitrary archives).
+const MAX_ENTRY_UNCOMPRESSED: u64 = 256 * 1024 * 1024;
+/// Whole-package ceiling on the sum of every entry's declared uncompressed
+/// size, bounding an archive of many individually-modest entries.
+const MAX_PACKAGE_UNCOMPRESSED: u64 = 1024 * 1024 * 1024;
+
+/// The OPC content-type manifest present in every well-formed package.
+pub const CONTENT_TYPES_PART: &str = "[Content_Types].xml";
+
+/// Coarse classification of an OPC part for the fidelity law.
+///
+/// `Supported` parts are the core editable spreadsheet surface the edit tool
+/// is allowed to rewrite. `Unknown` parts — macros, pivots, charts, custom
+/// XML, anything unrecognized — must survive an edit byte-for-byte
+/// ([passthrough law](super)); a change to one of them is corruption.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartClass {
+    Supported,
+    Unknown,
+}
+
+/// One part of an OPC package: its archive path and decompressed bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpcPart {
+    pub name: String,
+    pub data: Vec<u8>,
+}
+
+/// A decomposed OPC package. Part order mirrors the source central directory
+/// so a read/write round-trip is stable.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpcPackage {
+    parts: Vec<OpcPart>,
+}
+
+impl OpcPackage {
+    pub fn from_parts(parts: Vec<OpcPart>) -> Self {
+        Self { parts }
+    }
+
+    pub fn parts(&self) -> &[OpcPart] {
+        &self.parts
+    }
+
+    /// Returns the decompressed bytes for `name`, if present.
+    pub fn part(&self, name: &str) -> Option<&[u8]> {
+        self.parts
+            .iter()
+            .find(|part| part.name == name)
+            .map(|part| part.data.as_slice())
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.parts.iter().any(|part| part.name == name)
+    }
+
+    /// Iterates part names in package order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.parts.iter().map(|part| part.name.as_str())
+    }
+
+    /// Inserts or replaces a part, preserving position for replacements. Used
+    /// by the write side (fixture sessions today; a production Rust-side
+    /// session that repackages parts will promote it).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn upsert(&mut self, name: impl Into<String>, data: Vec<u8>) {
+        let name = name.into();
+        if let Some(existing) = self.parts.iter_mut().find(|part| part.name == name) {
+            existing.data = data;
+        } else {
+            self.parts.push(OpcPart { name, data });
+        }
+    }
+}
+
+/// Reads an OPC package from ZIP bytes via the central directory.
+///
+/// Returns [`ArtifactError::EditRoundtripFailed`](oneiron_contracts::error::ArtifactError::EditRoundtripFailed) for anything that is not a package
+/// this pipeline can safely reason about — a missing/blank EOCD, a truncated
+/// entry, or an unsupported compression method. Corruption checks upstream
+/// rely on this failing loudly rather than guessing.
+pub fn read(bytes: &[u8]) -> Result<OpcPackage> {
+    read_bounded(
+        bytes,
+        MAX_ENTRY_UNCOMPRESSED,
+        MAX_PACKAGE_UNCOMPRESSED,
+        usize::from(u16::MAX),
+    )
+}
+
+/// The DOCX door resolves these limits from trusted policy rather than using
+/// the spreadsheet reader's independent, fixed legacy ceiling.
+pub fn read_with_limits(bytes: &[u8], limits: crate::ArchiveLimits) -> Result<OpcPackage> {
+    if !limits.is_valid() {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "invalid docx archive limits",
+        )));
+    }
+    // The DOCX entry count is an observation, never a refusal (FIX 8570):
+    // the byte ceilings and the ZIP64 sentinels still bound this reader.
+    read_bounded(
+        bytes,
+        limits.max_part_bytes,
+        limits.max_total_bytes,
+        usize::MAX,
+    )
+}
+
+fn read_bounded(
+    bytes: &[u8],
+    max_entry: u64,
+    max_package: u64,
+    max_entries: usize,
+) -> Result<OpcPackage> {
+    let eocd = locate_eocd(bytes)?;
+
+    // Multi-disk / spanned archives are out of scope: OPC packages are single
+    // files. A non-zero disk number means the central directory this reader
+    // walks is only part of the archive, so reject rather than reason over a
+    // partial view.
+    if read_u16(bytes, eocd + 4)? != 0 || read_u16(bytes, eocd + 6)? != 0 {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc archive spans multiple disks (unsupported)",
+        )));
+    }
+
+    let entry_count = read_u16(bytes, eocd + 10)?;
+    let cd_offset = read_u32(bytes, eocd + 16)?;
+    // ZIP64 marks an overflowed 16/32-bit EOCD field with all-ones and moves
+    // the real value into a ZIP64 record this reader does not parse. Reject the
+    // sentinels loudly instead of truncating a 64-bit archive to 32 bits.
+    if entry_count == u16::MAX || cd_offset == u32::MAX {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc archive uses zip64 sentinels (unsupported)",
+        )));
+    }
+    let entry_count = entry_count as usize;
+    if entry_count > max_entries {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc archive exceeds the entry-count cap",
+        )));
+    }
+
+    let mut parts = Vec::with_capacity(entry_count);
+    let mut seen_names = BTreeSet::new();
+    // Every local record's `[start, end)` bytes, by start, for this decode.
+    let mut local_ranges = BTreeMap::new();
+    let mut total_declared: u64 = 0;
+    let mut cursor = cd_offset as usize;
+    for _ in 0..entry_count {
+        if read_u32(bytes, cursor)? != CENTRAL_DIR_SIGNATURE {
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc central directory header signature mismatch",
+            )));
+        }
+        let flags = read_u16(bytes, cursor + 8)?;
+        // General-purpose bit 0 marks an encrypted entry; we can neither verify
+        // nor pass ciphertext through under the fidelity law.
+        if flags & 0x0001 != 0 {
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc entry is encrypted (unsupported)",
+            )));
+        }
+        let method = read_u16(bytes, cursor + 10)?;
+        let expected_crc = read_u32(bytes, cursor + 16)?;
+        let comp_size = read_u32(bytes, cursor + 20)?;
+        let declared_size = read_u32(bytes, cursor + 24)?;
+        let name_len = read_u16(bytes, cursor + 28)? as usize;
+        let extra_len = read_u16(bytes, cursor + 30)? as usize;
+        let comment_len = read_u16(bytes, cursor + 32)? as usize;
+        let disk_start = read_u16(bytes, cursor + 34)?;
+        let local_offset = read_u32(bytes, cursor + 42)?;
+
+        if disk_start != 0 {
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc entry lives on another disk (unsupported)",
+            )));
+        }
+        if comp_size == u32::MAX || declared_size == u32::MAX || local_offset == u32::MAX {
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc entry uses zip64 sentinels (unsupported)",
+            )));
+        }
+
+        // Zip-bomb bound: reject before inflating any entry whose declared
+        // uncompressed size exceeds the per-entry cap, and any package whose
+        // declared sizes sum past the whole-package cap.
+        let declared_size = u64::from(declared_size);
+        if declared_size > max_entry {
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc entry declares an uncompressed size over the per-entry cap",
+            )));
+        }
+        total_declared = total_declared.saturating_add(declared_size);
+        if total_declared > max_package {
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc package declares an uncompressed size over the package cap",
+            )));
+        }
+
+        let name = read_name(bytes, cursor + CENTRAL_DIR_MIN_LEN, name_len)?;
+        // OPC part names must be unique; with a duplicate, which of the two
+        // same-named parts is authoritative is undefined, so the passthrough
+        // law cannot be enforced. Treat it as corruption.
+        if !seen_names.insert(name.clone()) {
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc package has duplicate part names",
+            )));
+        }
+
+        let data = read_local_entry(
+            bytes,
+            &CentralEntry {
+                name: name.as_bytes(),
+                flags,
+                method,
+                crc: expected_crc,
+                comp_size,
+                declared_size,
+                local_offset: local_offset as usize,
+            },
+            cd_offset as usize,
+            &mut local_ranges,
+        )?;
+        parts.push(OpcPart { name, data });
+
+        cursor = cursor
+            .checked_add(CENTRAL_DIR_MIN_LEN + name_len + extra_len + comment_len)
+            .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc central directory overflow",
+            )))?;
+    }
+
+    Ok(OpcPackage::from_parts(parts))
+}
+
+/// Serializes a package to ZIP bytes using STORED (method 0) entries.
+///
+/// The pipeline only *reads* the bytes a session produced; writing exists to
+/// build the copy handed to a session and to construct test fixtures. Until a
+/// production Rust-side session (e.g. umya-spreadsheet) or copy-materialization
+/// path lands, only the fixture session exercises it.
+#[cfg(any(test, feature = "test-support"))]
+pub fn write(package: &OpcPackage) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    let mut count: u16 = 0;
+
+    for part in package.parts() {
+        let name = part.name.as_bytes();
+        let crc = crc32(&part.data);
+        let size = part.data.len() as u32;
+        let local_offset = out.len() as u32;
+
+        out.extend_from_slice(&LOCAL_FILE_SIGNATURE.to_le_bytes());
+        out.extend_from_slice(&20u16.to_le_bytes()); // version needed
+        out.extend_from_slice(&0u16.to_le_bytes()); // flags
+        out.extend_from_slice(&ZIP_STORED.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes()); // mod time
+        out.extend_from_slice(&0u16.to_le_bytes()); // mod date
+        out.extend_from_slice(&crc.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes()); // compressed
+        out.extend_from_slice(&size.to_le_bytes()); // uncompressed
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes()); // extra len
+        out.extend_from_slice(name);
+        out.extend_from_slice(&part.data);
+
+        central.extend_from_slice(&CENTRAL_DIR_SIGNATURE.to_le_bytes());
+        central.extend_from_slice(&20u16.to_le_bytes()); // version made by
+        central.extend_from_slice(&20u16.to_le_bytes()); // version needed
+        central.extend_from_slice(&0u16.to_le_bytes()); // flags
+        central.extend_from_slice(&ZIP_STORED.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes()); // mod time
+        central.extend_from_slice(&0u16.to_le_bytes()); // mod date
+        central.extend_from_slice(&crc.to_le_bytes());
+        central.extend_from_slice(&size.to_le_bytes());
+        central.extend_from_slice(&size.to_le_bytes());
+        central.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes()); // extra len
+        central.extend_from_slice(&0u16.to_le_bytes()); // comment len
+        central.extend_from_slice(&0u16.to_le_bytes()); // disk number
+        central.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
+        central.extend_from_slice(&0u32.to_le_bytes()); // external attrs
+        central.extend_from_slice(&local_offset.to_le_bytes());
+        central.extend_from_slice(name);
+
+        count = count.saturating_add(1);
+    }
+
+    let cd_offset = out.len() as u32;
+    let cd_size = central.len() as u32;
+    out.extend_from_slice(&central);
+    out.extend_from_slice(&EOCD_SIGNATURE.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes()); // disk number
+    out.extend_from_slice(&0u16.to_le_bytes()); // cd start disk
+    out.extend_from_slice(&count.to_le_bytes()); // entries this disk
+    out.extend_from_slice(&count.to_le_bytes()); // entries total
+    out.extend_from_slice(&cd_size.to_le_bytes());
+    out.extend_from_slice(&cd_offset.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes()); // comment len
+    out
+}
+
+/// Classifies a part for the fidelity law. Unknown-forcing families (macros,
+/// pivots, charts, custom XML) are checked before the generic `xl/` editable
+/// surface so a pivot part never counts as supported.
+pub fn classify(name: &str) -> PartClass {
+    if is_unknown_forced(name) {
+        return PartClass::Unknown;
+    }
+    if name == CONTENT_TYPES_PART
+        || name.starts_with("_rels/")
+        || name.contains("/_rels/")
+        || name.starts_with("docProps/")
+        || is_supported_xl(name)
+        || name.starts_with("word/")
+        || name.starts_with("ppt/")
+    {
+        return PartClass::Supported;
+    }
+    PartClass::Unknown
+}
+
+/// True for part families the edit tool never rewrites and must pass through
+/// byte-for-byte: VBA macros, pivot caches/tables, charts, and custom XML.
+fn is_unknown_forced(name: &str) -> bool {
+    name == "xl/vbaProject.bin"
+        || name.starts_with("xl/externalLinks/")
+        || name.starts_with("customXml/")
+        || name.starts_with("xl/pivotCache/")
+        || name.starts_with("xl/pivotTables/")
+        || name.starts_with("xl/charts/")
+}
+
+fn is_supported_xl(name: &str) -> bool {
+    const SUPPORTED_XL_PREFIXES: [&str; 7] = [
+        "xl/worksheets/",
+        "xl/theme/",
+        "xl/tables/",
+        "xl/drawings/",
+        "xl/metadata",
+        "xl/sharedStrings.xml",
+        "xl/styles.xml",
+    ];
+    name == "xl/workbook.xml"
+        || name == "xl/calcChain.xml"
+        || SUPPORTED_XL_PREFIXES
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+}
+
+fn locate_eocd(bytes: &[u8]) -> Result<usize> {
+    if bytes.len() < EOCD_MIN_LEN {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc bytes too short for an EOCD record",
+        )));
+    }
+    let max_back = bytes.len() - EOCD_MIN_LEN;
+    // The EOCD comment can be up to 0xFFFF bytes; scan that far back at most.
+    let scan_floor = max_back.saturating_sub(u16::MAX as usize);
+    for candidate in (scan_floor..=max_back).rev() {
+        if read_u32(bytes, candidate)? == EOCD_SIGNATURE {
+            return Ok(candidate);
+        }
+    }
+    Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+        "opc end-of-central-directory record not found",
+    )))
+}
+
+/// What one central-directory entry says about its local record, which the
+/// local header must repeat before its payload is read.
+struct CentralEntry<'a> {
+    name: &'a [u8],
+    flags: u16,
+    method: u16,
+    crc: u32,
+    comp_size: u32,
+    declared_size: u64,
+    local_offset: usize,
+}
+
+fn read_local_entry(
+    bytes: &[u8],
+    entry: &CentralEntry<'_>,
+    cd_offset: usize,
+    local_ranges: &mut BTreeMap<usize, usize>,
+) -> Result<Vec<u8>> {
+    let local_offset = entry.local_offset;
+    if read_u32(bytes, local_offset)? != LOCAL_FILE_SIGNATURE {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local file header signature mismatch",
+        )));
+    }
+    // The local header is bound to its central entry before a byte of the
+    // payload is copied or inflated. Extra fields and timestamps may differ.
+    let local_flags = read_u16(bytes, local_offset + 6)?;
+    if (local_flags ^ entry.flags) & !DEFLATE_OPTION_FLAGS != 0
+        || read_u16(bytes, local_offset + 8)? != entry.method
+    {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local header flags or method do not match its central entry",
+        )));
+    }
+    let descriptor = entry.flags & DATA_DESCRIPTOR_FLAG != 0;
+    if !descriptor
+        && (read_u32(bytes, local_offset + 14)? != entry.crc
+            || read_u32(bytes, local_offset + 18)? != entry.comp_size
+            || u64::from(read_u32(bytes, local_offset + 22)?) != entry.declared_size)
+    {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local header checksum or sizes do not match its central entry",
+        )));
+    }
+    let local_name_len = read_u16(bytes, local_offset + 26)? as usize;
+    let local_extra_len = read_u16(bytes, local_offset + 28)? as usize;
+    let name_start = local_offset + LOCAL_FILE_MIN_LEN;
+    if bytes.get(name_start..name_start + local_name_len) != Some(entry.name) {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local header name does not match its central entry",
+        )));
+    }
+    let data_start = local_offset
+        .checked_add(LOCAL_FILE_MIN_LEN + local_name_len + local_extra_len)
+        .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local data offset overflow",
+        )))?;
+    let data_end = data_start
+        .checked_add(entry.comp_size as usize)
+        .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local data length overflow",
+        )))?;
+    let record_end = if descriptor {
+        descriptor_end(bytes, data_end, entry)
+    } else {
+        data_end
+    };
+    if record_end > cd_offset {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local record reaches the central directory",
+        )));
+    }
+    claim_local_range(local_ranges, local_offset, record_end)?;
+    let raw = bytes.get(data_start..data_end).ok_or(Error::Artifact(
+        ArtifactError::EditRoundtripFailed("opc entry data truncated"),
+    ))?;
+    let declared_size = entry.declared_size;
+    let expected_crc = entry.crc;
+
+    let data = match entry.method {
+        ZIP_STORED => raw.to_vec(),
+        ZIP_DEFLATE => inflate(raw, declared_size)?,
+        _ => {
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc entry uses an unsupported compression method",
+            )));
+        }
+    };
+
+    // Verify the produced bytes against the central-directory declaration. The
+    // gate never trusts a length or checksum it did not recompute from the
+    // actual bytes: a mismatch is corruption (or a bomb capped by `inflate`).
+    if data.len() as u64 != declared_size {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc entry size does not match its declared uncompressed size",
+        )));
+    }
+    if crc32(&data) != expected_crc {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc entry crc-32 does not match its central-directory checksum",
+        )));
+    }
+    Ok(data)
+}
+
+/// Where a bit-3 entry's record ends: past its data descriptor when one
+/// follows the payload in the unsigned (12-byte) or signed (16-byte) ZIP32
+/// layout, repeating the central checksum and sizes. A CRC equal to the
+/// signature word can match both layouts; the shorter is taken. Anything else
+/// claims no descriptor bytes: the payload is still checked against the
+/// central CRC and size after it is read.
+fn descriptor_end(bytes: &[u8], data_end: usize, entry: &CentralEntry<'_>) -> usize {
+    let word = |at: usize| {
+        data_end
+            .checked_add(at)
+            .and_then(|offset| read_u32(bytes, offset).ok())
+    };
+    let declared = u32::try_from(entry.declared_size).ok();
+    if word(0) == Some(entry.crc) && word(4) == Some(entry.comp_size) && word(8) == declared {
+        data_end + 12
+    } else if word(0) == Some(DATA_DESCRIPTOR_SIGNATURE)
+        && word(4) == Some(entry.crc)
+        && word(8) == Some(entry.comp_size)
+        && word(12) == declared
+    {
+        data_end + 16
+    } else {
+        data_end
+    }
+}
+
+/// Claims one local record's `[start, end)` bytes for this decode. A record
+/// starting where another starts, or overlapping either neighbour, aliases
+/// another entry's bytes and is refused before its payload is read.
+fn claim_local_range(ranges: &mut BTreeMap<usize, usize>, start: usize, end: usize) -> Result<()> {
+    let overlaps_before = ranges
+        .range(..=start)
+        .next_back()
+        .is_some_and(|(_, &prev_end)| prev_end > start);
+    let overlaps_after = ranges
+        .range(start..)
+        .next()
+        .is_some_and(|(&next_start, _)| next_start < end);
+    if overlaps_before || overlaps_after {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local records overlap",
+        )));
+    }
+    ranges.insert(start, end);
+    Ok(())
+}
+
+fn inflate(raw: &[u8], declared_size: u64) -> Result<Vec<u8>> {
+    // Bound the decompressor at declared+1 bytes: a well-formed entry inflates
+    // to exactly `declared_size`, so reading one extra byte is enough for the
+    // caller's length check to catch a stream that expands past its declaration
+    // (a zip bomb) without ever buffering the full expansion.
+    let mut out = Vec::new();
+    flate2::read::DeflateDecoder::new(raw)
+        .take(declared_size.saturating_add(1))
+        .read_to_end(&mut out)
+        .map_err(|_| {
+            Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc deflate entry failed to inflate",
+            ))
+        })?;
+    Ok(out)
+}
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = flate2::Crc::new();
+    crc.update(data);
+    crc.sum()
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> Result<u16> {
+    let slice = bytes.get(offset..offset + 2).ok_or(Error::Artifact(
+        ArtifactError::EditRoundtripFailed("opc read past end of buffer"),
+    ))?;
+    Ok(u16::from_le_bytes([slice[0], slice[1]]))
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> Result<u32> {
+    let slice = bytes.get(offset..offset + 4).ok_or(Error::Artifact(
+        ArtifactError::EditRoundtripFailed("opc read past end of buffer"),
+    ))?;
+    Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
+}
+
+fn read_name(bytes: &[u8], offset: usize, len: usize) -> Result<String> {
+    let raw = bytes.get(offset..offset + len).ok_or(Error::Artifact(
+        ArtifactError::EditRoundtripFailed("opc part name truncated"),
+    ))?;
+    String::from_utf8(raw.to_vec()).map_err(|_| {
+        Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc part name is not valid UTF-8",
+        ))
+    })
+}

@@ -452,6 +452,12 @@ fn apply_custody_rows(vault: &Vault, doc: &LoroDoc, key: &WindowKey, skip_held: 
     let mut rows = Vec::new();
     doc.get_map(CUSTODY_MAP).for_each(|map_key, value| {
         if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value {
+            // A resident multi-GiB part set must wait, not exhaust the
+            // tick: gate part payloads on their set's peak before copying
+            // (review P1 on #4467). Gated-out rows stay in their window.
+            if !export_output::parts::part_row_collection_admitted(&bytes) {
+                return;
+            }
             rows.push((map_key.to_owned(), bytes.to_vec()));
         }
     });
@@ -471,6 +477,9 @@ pub(crate) fn materialize_custody_from_delta(
         .iter()
         .filter_map(|(key, value)| match value {
             Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => {
+                if !export_output::parts::part_row_collection_admitted(bytes) {
+                    return None;
+                }
                 Some((key.to_string(), bytes.to_vec()))
             }
             _ => None,

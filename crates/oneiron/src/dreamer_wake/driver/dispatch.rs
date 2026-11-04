@@ -133,10 +133,15 @@ impl DreamerWakeDriver<'_> {
                 step_hashes: Vec::new(),
             })
         } else {
+            // Pre-dispatch sync (FIX 11963): a wake ask raised while
+            // the window settled trips the device work this attempt is
+            // about to admit under.
+            sync_wake_cancel(cancel, &self.device_cancel);
             let mut ctx = WakeAttemptContext {
                 vault: self.vault,
                 deadline: &self.deadline,
                 cancel: Some(cancel),
+                device_cancel: Some(self.device_cancel.clone()),
                 budget_id: line,
                 now_ms: input.now.saturating_mul(1_000),
                 prepared_wake: Some(prepared_wake),
@@ -222,9 +227,7 @@ impl DreamerWakeDriver<'_> {
                         "dreamer attempt executor panicked; parking the admitted attempt"
                     );
                     stage = Some("executor_panic");
-                    Err(crate::Error::InvariantViolation(
-                        "dreamer attempt executor panicked",
-                    ))
+                    Err(crate::dreamer_wake::executor_panic_error())
                 }
             }
         };

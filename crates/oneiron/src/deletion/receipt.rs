@@ -452,16 +452,20 @@ impl Vault {
                 take_staged_sweep_refs_in_txn(self, wtxn, &holder, &mut sweep_extras)?;
             }
             ids.insert(holder);
-            ids.extend(crate::skill_hub::source_carriers_for_holder_in_txn(
-                &self.store,
-                wtxn,
-                &holder,
-            )?);
-            ids.extend(crate::agent_def::birth_carriers_for_erased_entity_in_txn(
-                &self.store,
-                wtxn,
-                &holder,
-            )?);
+            ids.extend(
+                crate::store::skill_source_custody::source_carriers_for_holder_in_txn(
+                    &self.store,
+                    wtxn,
+                    &holder,
+                )?,
+            );
+            ids.extend(
+                crate::store::agent_birth_custody::birth_carriers_for_erased_entity_in_txn(
+                    &self.store,
+                    wtxn,
+                    &holder,
+                )?,
+            );
             ids.extend(crate::receipt::receipt_archives_for_holder(
                 &self.store,
                 wtxn,
@@ -508,7 +512,7 @@ impl Vault {
         // key is the one the delete door loaded before its first txn (P6c);
         // the client id is minted in THIS txn when missing — all receipt-mint
         // paths funnel through here, so this is the single in-txn hook.
-        let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
+        let identity = crate::store::install_identity::ensure_device_identity_in_txn(self, wtxn)?;
         let hard_purge_complete_at = input.hard_purge_complete_at;
         for entity in &input.scope.entity_ids {
             crate::ports::audit_mutation_in_txn(
@@ -575,7 +579,7 @@ impl Vault {
             hard_purge_complete_at: now,
             sweep_queued_at: cfg!(feature = "sync").then_some(now),
         };
-        let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
+        let identity = crate::store::install_identity::ensure_device_identity_in_txn(self, wtxn)?;
         let body =
             encode_redaction_audit_receipt(input, Vec::new(), Vec::new(), &receipt_id, &identity)?;
         self.put_redaction_audit_receipt_in_txn(wtxn, &receipt_id, now, &body)?;

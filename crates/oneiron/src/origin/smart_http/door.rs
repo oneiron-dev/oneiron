@@ -4,10 +4,11 @@
 use std::net::IpAddr;
 
 use super::paths::door_refused;
+use crate::credential_door::DoorCredential;
 use crate::credential_door::{CredentialDoorError, CredentialDoorService};
-use crate::credential_door::{DoorCredential, DoorScanVerdict};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::origin::receive_scan_verdict::DoorScanVerdict;
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::receive_scan::DOOR_RECEIVE_PACK_EFFECTOR;
 use crate::receive_scan::PushedBlob;

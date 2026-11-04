@@ -1,250 +1,13 @@
 //! Per-store clock and id source. No process-global clock or counter.
 use crate::error::{Error, Result};
-use crate::store::{AfterCommit, DetachedWrite, StoreCore};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::store::{DetachedWrite, StoreCore};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-/// The engine reads the clock inside the vault's write transaction, which may
-/// be one group commit shared with other writes. An implementation must only
-/// read time: it must not call into the vault or wait on anything a vault
-/// caller can hold while it writes, or the vault's writer deadlocks.
-pub trait Clock: Send + Sync {
-    fn now_recorded_at(&self) -> u64;
-    /// Wall milliseconds for capture-time metadata (FIX 10517): the
-    /// source's own time, held at no floor, so a stamp read this way moves
-    /// no later write's clock. The default reads seconds.
-    fn now_recorded_ms(&self) -> u64 {
-        self.now_recorded_at().saturating_mul(1000)
-    }
-}
-/// The engine mints ids inside the vault's write transaction, under the same
-/// contract as [`Clock`]: an implementation must only mint ids.
-pub trait IdGen: Send + Sync {
-    fn ulid(&self) -> [u8; 16];
-}
-struct SystemClock;
-impl Clock for SystemClock {
-    fn now_recorded_at(&self) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |v| v.as_secs())
-    }
-    fn now_recorded_ms(&self) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |v| u64::try_from(v.as_millis()).unwrap_or(u64::MAX))
-    }
-}
-impl IdGen for SystemClock {
-    fn ulid(&self) -> [u8; 16] {
-        uuid::Uuid::now_v7().into_bytes()
-    }
-}
-#[derive(Clone)]
-pub struct StoreClock {
-    system: bool,
-    source: Arc<dyn Clock>,
-    ids: Arc<dyn IdGen>,
-    floor: Arc<Mutex<u64>>,
-    /// The highest authorization lease this store has read or committed
-    /// (FIX 11664); 0 until it first reads one.
-    lease: Arc<Mutex<u64>>,
-    /// The latest time an authorization decision took after this store's
-    /// lease lapsed (FIX 12023); 0 until one does. A decision in a snapshot
-    /// read before that lease's renewal commits may stand there.
-    judged: Arc<AtomicU64>,
-    /// A lapsed lease's renewal is queued and not yet decided (FIX 12023):
-    /// one at a time.
-    renewal: Arc<AtomicBool>,
-    last_id: Arc<Mutex<u128>>,
-}
-impl std::fmt::Debug for StoreClock {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StoreClock").finish_non_exhaustive()
-    }
-}
-impl PartialEq for StoreClock {
-    fn eq(&self, other: &Self) -> bool {
-        (self.system && other.system)
-            || (Arc::ptr_eq(&self.source, &other.source) && Arc::ptr_eq(&self.ids, &other.ids))
-    }
-}
-impl Default for StoreClock {
-    fn default() -> Self {
-        let mut clock = Self::new(Arc::new(SystemClock), Arc::new(SystemClock));
-        clock.system = true;
-        clock
-    }
-}
-impl StoreClock {
-    pub fn new(source: Arc<dyn Clock>, ids: Arc<dyn IdGen>) -> Self {
-        Self {
-            system: false,
-            source,
-            ids,
-            floor: Arc::new(Mutex::new(0)),
-            lease: Arc::new(Mutex::new(0)),
-            judged: Arc::new(AtomicU64::new(0)),
-            renewal: Arc::new(AtomicBool::new(false)),
-            last_id: Arc::new(Mutex::new(0)),
-        }
-    }
-    /// Fork construction state: sharing the source must not share a vault's floor.
-    pub(crate) fn for_store(&self) -> Self {
-        let mut clock = Self::new(self.source.clone(), self.ids.clone());
-        clock.system = self.system;
-        clock
-    }
-    pub(crate) fn observe_floor(&self, persisted: u64) -> Result<u64> {
-        let mut floor = self
-            .floor
-            .lock()
-            .map_err(|_| Error::InvariantViolation("clock lock poisoned"))?;
-        *floor = (*floor).max(persisted).max(self.source.now_recorded_at());
-        Ok(*floor)
-    }
-    /// [`Self::observe_floor`] against the vault's committed floor and
-    /// authorization lease (FIX 11664). The first lease this store reads
-    /// raises its floor to it, so after a reopen no decision stands below
-    /// one made under that lease before, even when the source rolled back:
-    /// for at most [`AUTHORIZATION_LEASE_SECS`], the store's time runs up to
-    /// that far ahead.
-    pub(crate) fn observe_leased_floor(&self, persisted: u64, lease: u64) -> Result<u64> {
-        let seed = {
-            let mut known = self
-                .lease
-                .lock()
-                .map_err(|_| Error::InvariantViolation("clock lease lock poisoned"))?;
-            let seed = if *known == 0 { lease } else { 0 };
-            *known = (*known).max(lease);
-            seed
-        };
-        self.observe_floor(persisted.max(seed))
-    }
-    /// The time an authorization decision takes without a write: this
-    /// store's floor observed now, when the lease it holds still covers it
-    /// (FIX 11664). `None` when it holds none, or the clock has passed it.
-    pub(crate) fn leased_now(&self) -> Option<u64> {
-        let known = *self
-            .lease
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if known == 0 {
-            return None;
-        }
-        let mut floor = self
-            .floor
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let now = (*floor).max(self.source.now_recorded_at());
-        if now > known {
-            return None;
-        }
-        *floor = now;
-        Some(now)
-    }
-    /// Holds `lease`, which this store committed.
-    pub(crate) fn hold_lease(&self, lease: u64) -> Result<()> {
-        let mut known = self
-            .lease
-            .lock()
-            .map_err(|_| Error::InvariantViolation("clock lease lock poisoned"))?;
-        *known = (*known).max(lease);
-        Ok(())
-    }
-    /// Takes `now` as the time of an authorization decision made after the
-    /// lease lapsed (FIX 12023), never below one this store took before.
-    fn judge(&self, now: u64) -> u64 {
-        self.judged.fetch_max(now, Ordering::AcqRel).max(now)
-    }
-    /// The latest time a decision took after the lease lapsed; 0 for none.
-    fn judged(&self) -> u64 {
-        self.judged.load(Ordering::Acquire)
-    }
-    /// The renewal of a lapsed lease, when none is queued (FIX 12023):
-    /// `None` while another is.
-    fn claim_lease_renewal(&self) -> Option<LeaseRenewal> {
-        (!self.renewal.swap(true, Ordering::AcqRel)).then(|| LeaseRenewal {
-            clock: self.clone(),
-        })
-    }
-    /// The floor this store has observed; 0 when it has observed none.
-    fn observed_floor(&self) -> u64 {
-        *self
-            .floor
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-    /// [`Self::now_recorded_at`] without observing it: the floor stays where
-    /// the vault's writes put it, so a stamp read this way (a job row's) moves
-    /// no later write's clock, even after the source rolls back.
-    ///
-    /// The floor stays locked while the source is read, as in
-    /// [`Self::now_recorded_at`]: no other caller can observe the clock
-    /// between the two reads, so a peek never returns below a floor another
-    /// caller saw first.
-    pub(crate) fn peek_recorded_at(&self) -> u64 {
-        let floor = self
-            .floor
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (*floor).max(self.source.now_recorded_at())
-    }
-    /// The source itself, held at no floor: the host's wall clock. For a
-    /// holder proof's signed time, and for a clock that keeps its own
-    /// committed floor; never a stamp on what the vault records.
-    pub(crate) fn wall_now(&self) -> u64 {
-        self.source.now_recorded_at()
-    }
-    /// The source's wall milliseconds, held at no floor: capture-time
-    /// metadata (FIX 10517); never a stamp on what the vault records.
-    pub fn now_recorded_ms(&self) -> u64 {
-        self.source.now_recorded_ms()
-    }
-    /// Nondecreasing seconds, not one fictitious second for each write.
-    /// Transactions persist this floor before commit.
-    pub fn now_recorded_at(&self) -> u64 {
-        let mut floor = self
-            .floor
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *floor = (*floor).max(self.source.now_recorded_at());
-        *floor
-    }
-    /// Allocate a store-local identity. Repeated source values never reuse an id,
-    /// including two allocations in one transaction or after transaction abort.
-    pub fn ulid(&self) -> Result<[u8; 16]> {
-        let mut last = self
-            .last_id
-            .lock()
-            .map_err(|_| Error::InvariantViolation("id source lock poisoned"))?;
-        let source_bytes = self.ids.ulid();
-        crate::EntityId::from_bytes(source_bytes)?;
-        let source = u128::from_be_bytes(source_bytes);
-        let next = source.max(
-            last.checked_add(1)
-                .ok_or(Error::IndexOverflow("id source"))?,
-        );
-        let bytes = next.to_be_bytes();
-        crate::EntityId::from_bytes(bytes)?;
-        *last = next;
-        Ok(bytes)
-    }
+pub(crate) use oneiron_store::store_clock::AUTHORIZATION_LEASE_SECS;
+use oneiron_store::store_clock::lease_journal;
+pub use oneiron_store::store_clock::{Clock, IdGen, StoreClock};
 
-    pub fn entity_id(&self) -> Result<crate::EntityId> {
-        crate::EntityId::from_bytes(self.ulid()?)
-    }
-
-    pub(crate) fn observe_id_floor(&self, persisted: u128) -> Result<u128> {
-        let mut last = self
-            .last_id
-            .lock()
-            .map_err(|_| Error::InvariantViolation("id source lock poisoned"))?;
-        *last = (*last).max(persisted);
-        Ok(*last)
-    }
-}
 impl crate::Vault {
     /// Sample this vault's injected, nondecreasing policy/recording clock.
     pub fn now_recorded_at(&self) -> u64 {
@@ -271,14 +34,6 @@ pub(crate) fn job_recorded_at_in_txn(
 ) -> Result<u64> {
     Ok(authorization_floor_in_txn(store, txn)?.max(store.clock().peek_recorded_at()))
 }
-
-/// How far ahead of its observation an authorization decision commits the
-/// vault's clock (FIX 11664; Engine 04:02, 5 s): while a store's clock stays
-/// under the lease it committed, its reads judge without a write. Recalls
-/// come seconds apart, so a shorter lease would still write on almost every
-/// one. Past it, they judge without waiting for the writer too, and the
-/// lease's renewal is queued (FIX 12023).
-pub(crate) const AUTHORIZATION_LEASE_SECS: u64 = 5;
 
 /// The committed clock floor and authorization lease: the floor is the
 /// latest time a write or a decision stamped, and the lease bounds every
@@ -355,11 +110,28 @@ impl crate::store::Store {
     /// lease is held from its commit, not from its queueing, so it keeps its
     /// 5 s; one renewal is queued at a time, and one that does not commit is
     /// said in a warn and queued again by the next lapsed decision.
+    ///
+    /// A time past the committed lease is returned only once the lease
+    /// journal holds a bound that covers it, synced off the writer (review
+    /// #4484 P1-B; L02 11-04 13:53 = A): a crash before the renewal commits
+    /// replays that bound into the floor at the next owned open. When the
+    /// journal cannot take it, the decision renews the lease in its writer
+    /// first, as before FIX 12023, so its exact time is durable before it is
+    /// returned (L02 11-04 15:16). A store whose open did not take the writer
+    /// lease keeps no journal and renews in its writer too.
     pub(crate) fn authorization_now(&self) -> Result<u64> {
         let clock = crate::store::ManifestDbs::clock(self);
         if let Some(now) = clock.leased_now() {
             return Ok(now);
         }
+        let journal = if self.opened_with_writer_lease() {
+            clock.lease_journal()
+        } else {
+            None
+        };
+        let Some(journal) = journal else {
+            return self.renew_authorization_lease_in_writer();
+        };
         // One short snapshot reads the committed floor, and ends before the
         // decision opens its own: it holds no reader slot while a writer is
         // waited for.
@@ -368,6 +140,9 @@ impl crate::store::Store {
             let (persisted, lease) = clock_floor_and_lease_in_txn(self, &txn)?;
             clock.observe_leased_floor(persisted, lease)?
         };
+        if !journal.cover(now) {
+            return self.renew_authorization_lease_in_writer();
+        }
         let judged = clock.judge(now);
         if let Some(renewal) = clock.claim_lease_renewal() {
             let staged = Arc::new(AtomicU64::new(0));
@@ -379,44 +154,90 @@ impl crate::store::Store {
                     Ok(())
                 })
                 .replay_only()
-                .after_commit(renewal.hold_on_commit(staged)),
+                .after_commit(renewal.hold_on_commit(staged, journal)),
             );
         }
         Ok(judged)
     }
-}
 
-/// A lapsed lease's queued renewal (FIX 12023). It holds the store's one
-/// renewal flag until it drops, so a renewal that committed, failed or was
-/// lost lets the next lapsed decision queue another.
-struct LeaseRenewal {
-    clock: StoreClock,
-}
-
-impl LeaseRenewal {
-    /// The renewal's after-commit callback: once its group commit is
-    /// decided, the lease its stage put in `staged` is held when its rows
-    /// landed, and a renewal that did not land is said in a warn. The flag
-    /// clears either way, after the hold, so the next lapsed decision queues
-    /// a failed renewal again.
-    fn hold_on_commit(self, staged: Arc<AtomicU64>) -> AfterCommit {
-        Box::new(move |landed| {
-            let renewal = self;
-            if !landed {
-                tracing::warn!(
-                    "an authorization lease renewal did not commit; the next lapsed decision queues it again"
-                );
-            } else if let Err(error) = renewal.clock.hold_lease(staged.load(Ordering::Acquire)) {
-                tracing::warn!(%error, "a renewed authorization lease was not held");
-            }
-            drop(renewal);
-        })
+    /// A lapsed lease renewed in this store's own writer before the decision
+    /// judges, for a store that keeps no lease journal (its open took no
+    /// writer lease) or whose journal failed: the committed floor and lease,
+    /// raised past every bound
+    /// a lease holder's journal holds, so a crash it left never judges here
+    /// below a time it took.
+    fn renew_authorization_lease_in_writer(&self) -> Result<u64> {
+        let clock = crate::store::ManifestDbs::clock(self);
+        // A preliminary read would consume one reader slot per concurrent
+        // caller before writers serialize, exhausting small reader budgets.
+        // Persist ONLY clock authority here: a read must not also commit the
+        // floor of IDs allocated in RAM but not yet used by a mutation.
+        let mut txn = self.env.write_txn()?;
+        let (persisted, lease) = clock_floor_and_lease_in_txn(self, &txn)?;
+        let journaled = lease_journal::journaled_bound(self.canonical_root())?;
+        let now = clock.observe_leased_floor(persisted.max(journaled), lease)?;
+        // A lease another handle committed may already cover it.
+        let leased = if lease >= now {
+            lease
+        } else {
+            now.saturating_add(AUTHORIZATION_LEASE_SECS)
+        };
+        let changed = (now, leased) != (persisted, lease);
+        if changed {
+            put_clock_floor_in_txn(self, &mut txn, now, leased)?;
+        }
+        let id = self.env.info().last_txn_id + 1;
+        txn.commit()?;
+        clock.hold_lease(leased)?;
+        // A floor-only commit changes no Dreamer input (FIX 11568); an empty
+        // one moves no txn id and is never noted.
+        if changed {
+            crate::store::ManifestDbs::diagnostics(self)
+                .replay_only_commits
+                .note(id);
+        }
+        Ok(now)
     }
-}
 
-impl Drop for LeaseRenewal {
-    fn drop(&mut self) {
-        self.clock.renewal.store(false, Ordering::Release);
+    /// Every open's look at the lease journal before its first decision
+    /// (review #4484 Astra P1, 11-04 16:2x): the bound a crashed lease holder
+    /// journaled rises into this store's clock floor, so no decision here
+    /// judges, under a lease it read, below a time the holder took. A store
+    /// whose open took no writer lease reads it again at each renewal.
+    pub(crate) fn observe_authorization_lease_journal(&self) -> Result<()> {
+        let bound = lease_journal::journaled_bound(self.canonical_root())?;
+        if bound > 0 {
+            crate::store::ManifestDbs::clock(self).observe_floor(bound)?;
+        }
+        Ok(())
+    }
+
+    /// The owned open's replay of the lease journal (review #4484 P1-B,
+    /// condition 3), before any admission: the highest bound a crashed open
+    /// journaled commits into the clock floor and this store's clock, then
+    /// the journal is emptied for this open's own decisions.
+    pub(crate) fn replay_authorization_lease_journal(&self) -> Result<()> {
+        let clock = crate::store::ManifestDbs::clock(self);
+        let (journal, bound) = lease_journal::replay_at_open(self.canonical_root())?;
+        clock.set_lease_journal(Arc::clone(&journal));
+        if bound == 0 {
+            return Ok(());
+        }
+        let mut txn = self.env.write_txn()?;
+        let (persisted, lease) = clock_floor_and_lease_in_txn(self, &txn)?;
+        if bound > persisted {
+            put_clock_floor_in_txn(self, &mut txn, bound, lease)?;
+            let id = self.env.info().last_txn_id + 1;
+            txn.commit()?;
+            crate::store::ManifestDbs::diagnostics(self)
+                .replay_only_commits
+                .note(id);
+        } else {
+            txn.abort();
+        }
+        clock.observe_floor(bound)?;
+        lease_journal::truncate_after_replay(&journal);
+        Ok(())
     }
 }
 
@@ -497,6 +318,3 @@ pub(crate) fn persist_id_floor_in_txn(
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

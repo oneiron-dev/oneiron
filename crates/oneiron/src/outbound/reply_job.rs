@@ -80,20 +80,7 @@ impl ConnectorReplyJob {
     /// counterparty, as far as the event still decodes.
     pub(crate) fn named_ids(&self) -> Vec<EntityId> {
         let mut ids = vec![self.agent];
-        if let Ok(origin) = SurfaceConnectorPayload::from_connector_event(&self.event) {
-            let known = match &origin.counterparty {
-                SurfaceCounterpartyStamp::Known { counterparty_ref } => {
-                    EntityId::from_hex(counterparty_ref).ok()
-                }
-                SurfaceCounterpartyStamp::Unknown { .. }
-                | SurfaceCounterpartyStamp::Unparsed { .. } => None,
-            };
-            ids.extend(
-                [origin.actor().ok(), origin.receiving_identity().ok(), known]
-                    .into_iter()
-                    .flatten(),
-            );
-        }
+        ids.extend(connector_event_participant_ids(&self.event));
         ids
     }
 }
@@ -540,6 +527,16 @@ fn erase_connector_reply_result_artifact_in_txn(
     {
         return Ok(false);
     }
+    if let Err(error) = store.reject_legal_hold_in_txn(txn, artifact.as_bytes()) {
+        if !crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
+            return Err(error);
+        }
+        tracing::warn!(
+            artifact = %artifact.to_hex(),
+            "connector reply erase: a legal hold keeps the job's result"
+        );
+        return Ok(false);
+    }
     // A hold on any version's ASSET keeps the whole artifact (FIX 12532):
     // the tear below would otherwise refuse on the held ASSET and fail the
     // erase, rolling back the source hard erase with it (REVIEW-4385 P1).
@@ -572,9 +569,11 @@ fn erase_connector_reply_result_artifact_in_txn(
             if row.entity_type != crate::registry::ENTITY_TYPE_ASSET
                 || blake3::hash(&row.body).as_bytes() != &head.content_hash
             {
-                return Err(Error::CorruptedIndex("blob content hash"));
-            }
-            if let Ok(result) = serde_json::from_slice::<ConnectorReplyJobResult>(&row.body)
+                tracing::warn!(
+                    artifact = %artifact.to_hex(),
+                    "connector reply erase: unreadable result bytes name no body"
+                );
+            } else if let Ok(result) = serde_json::from_slice::<ConnectorReplyJobResult>(&row.body)
                 && let Some(body_ref) = result.body_ref.as_deref()
                 && let Some(rest) =
                     body_ref.strip_prefix(crate::outbound::CONNECTOR_REPLY_BODY_PREFIX)
@@ -585,16 +584,6 @@ fn erase_connector_reply_result_artifact_in_txn(
                 body_artifact = Some(body);
             }
         }
-    }
-    if let Err(error) = store.reject_legal_hold_in_txn(txn, artifact.as_bytes()) {
-        if !crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
-            return Err(error);
-        }
-        tracing::warn!(
-            artifact = %artifact.to_hex(),
-            "connector reply erase: a legal hold keeps the job's result"
-        );
-        return Ok(false);
     }
     crate::provenance::erase_row_provenance_without_attempt_payloads_in_txn(
         store, txn, artifact, true,
@@ -608,29 +597,7 @@ fn erase_connector_reply_result_artifact_in_txn(
         crate::store::vector_index::increment_vector_version(store, txn)?;
     }
     if let Some(body) = body_artifact {
-        // The tear destroys the row its window rides: capture the body's
-        // learned_at first, so its hard erasure publishes in its own window.
-        // The body is the newly reached row (REVIEW-4385 P1): its permanent
-        // marker refuses a peer's copy sent again, and its tombstone takes
-        // the copies peers hold.
-        let body_learned_at = EntityStoreRead::port_entity_raw(store, txn, &body)?
-            .as_deref()
-            .and_then(crate::batch::EntityMetadataHeader::parse)
-            .map(|header| header.learned_at);
-        // A hold keeps the body: its marker and tombstone stage only on
-        // the outcome that actually tore it (REVIEW-4385 P1), never on the
-        // hold that promised the bytes stay.
-        let erased = erase_connector_reply_result_artifact_in_txn(store, txn, &body, false)?;
-        if erased && let Some(learned_at) = body_learned_at {
-            let value = crate::deletion::TombstoneValueV2 {
-                reason: crate::deletion::TombstoneReason::UserHardDelete,
-                deleted_at: crate::ports::recorded_at_in_txn(store, txn)?,
-                request_id: *body.as_bytes(),
-            };
-            crate::deletion::stage_engine_row_hard_erasure_in_txn(
-                store, txn, &body, learned_at, &value,
-            )?;
-        }
+        erase_connector_reply_body_artifact_in_txn(store, txn, &body)?;
     }
     Ok(true)
 }
@@ -644,4 +611,112 @@ fn connector_reply_job_key(agent: EntityId, event_id: &str) -> String {
         hasher.update(value);
     }
     format!("connector-reply-job:{}", hasher.finalize().to_hex())
+}
+
+/// The participant ids a surface-born event names, without the replying agent.
+pub(crate) fn connector_event_participant_ids(event: &ConnectorEvent) -> Vec<EntityId> {
+    let mut ids = Vec::new();
+    if let Ok(origin) = SurfaceConnectorPayload::from_connector_event(event) {
+        let known = match &origin.counterparty {
+            SurfaceCounterpartyStamp::Known { counterparty_ref } => {
+                EntityId::from_hex(counterparty_ref).ok()
+            }
+            SurfaceCounterpartyStamp::Unknown { .. }
+            | SurfaceCounterpartyStamp::Unparsed { .. } => None,
+        };
+        ids.extend(
+            [origin.actor().ok(), origin.receiving_identity().ok(), known]
+                .into_iter()
+                .flatten(),
+        );
+    }
+    ids
+}
+
+fn is_connector_reply_body_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    artifact: &EntityId,
+) -> Result<bool> {
+    let Some(row) = EntityStoreRead::port_entity_record(store, txn, artifact)? else {
+        return Ok(false);
+    };
+    if row.entity_type != crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
+        return Ok(false);
+    }
+    Ok(
+        crate::blob_artifact::decode_blob_artifact_body(&row.body)?.media_type
+            == super::reply_content::REPLY_BODY_MEDIA_TYPE,
+    )
+}
+
+/// A newly reached body uses the same whole tear and publishes its tombstone
+/// only when that tear ran. A hold keeps its bytes and stages nothing.
+fn erase_connector_reply_body_artifact_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    body: &EntityId,
+) -> Result<bool> {
+    let learned_at = EntityStoreRead::port_entity_raw(store, txn, body)?
+        .as_deref()
+        .and_then(crate::batch::EntityMetadataHeader::parse)
+        .map(|header| header.learned_at);
+    let erased = erase_connector_reply_result_artifact_in_txn(store, txn, body, false)?;
+    if erased && let Some(learned_at) = learned_at {
+        let value = crate::deletion::TombstoneValueV2 {
+            reason: crate::deletion::TombstoneReason::UserHardDelete,
+            deleted_at: crate::ports::recorded_at_in_txn(store, txn)?,
+            request_id: *body.as_bytes(),
+        };
+        crate::deletion::stage_engine_row_hard_erasure_in_txn(
+            store, txn, body, learned_at, &value,
+        )?;
+    }
+    Ok(erased)
+}
+
+/// The bodies an erased participant's frozen events produced, even when no
+/// job or result ever named them. Stored provenance filters run-key collisions.
+pub(crate) fn erase_connector_reply_bodies_for_events_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    event_ids: &BTreeSet<String>,
+) -> Result<()> {
+    for event_id in event_ids {
+        let source = crate::blob_artifact::BornFromSource::AgentRun(format!(
+            "{}{event_id}",
+            super::reply_content::REPLY_RUN_PREFIX,
+        ));
+        for artifact in crate::blob_artifact::artifacts_born_from_in_txn(store, txn, &source)? {
+            if is_connector_reply_body_in_txn(store, txn, &artifact)? {
+                erase_connector_reply_body_artifact_in_txn(store, txn, &artifact)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Kept bodies a local authenticated author wrote, without needing a job row.
+/// Attribution stated in made_by is not an authorship capability.
+pub(crate) fn erase_connector_reply_bodies_by_authors_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    authors: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if authors.is_empty() {
+        return Ok(());
+    }
+    for artifact in crate::blob_artifact::agent_run_artifacts_with_prefix_in_txn(
+        &vault.store,
+        txn,
+        super::reply_content::REPLY_RUN_PREFIX,
+    )? {
+        if is_connector_reply_body_in_txn(&vault.store, txn, &artifact)?
+            && crate::blob_artifact::artifact_author_in_txn(vault, txn, &artifact)?
+                .is_some_and(|author| authors.contains(&author))
+        {
+            erase_connector_reply_body_artifact_in_txn(&vault.store, txn, &artifact)?;
+        }
+    }
+    Ok(())
 }

@@ -334,6 +334,8 @@ impl CodeRunBridgeCall {
         let request = self_call_request_value(&stamped)?;
         // A spawn row's erased ask answers only from a coherent row (FIX 9180).
         self.validate_spawn_coherence()?;
+        // A re-offered call meets its row by the guest's original request
+        // (FIX 1442 H4: match stays on original).
         Ok(
             match replay_request_match(self.effect, &self.request, &request)? {
                 ReplayRequestMatch::Hit => ProgramRowAnswer::Settled(Box::new(

@@ -178,23 +178,66 @@ pub(crate) fn rescan(
     let ledger = vault.folder_source_files(&source.folder)?;
     let prior = prior_files(&ledger);
     let prior = RESCAN_MTIME_SHORTCUT.then_some(&prior);
-    let (mut notes, mut name_only, mut facts, mut skipped) =
-        read_for_rescan(source, folder, &mut counts, prior)?;
+    let (mut notes, mut name_only, mut facts, mut skipped, mut unopened_dirs, mut vault_covers) =
+        read_for_rescan(
+            source,
+            folder,
+            &mut counts,
+            prior,
+            Some(vault.path()),
+            vault.dir_identity(),
+        )?;
     let mut standings = standings_of(vault, &namespace, &notes)?;
+    // A row a partial scan left pending (its source's ledger meta behind
+    // what this scan read, or none) still owes its links: when no unreadable
+    // folder could hold an included file, read whole so they reconcile
+    // (REVIEW-4381 P1). A folder that still would not open retries it on a
+    // later scan.
+    let pending = standings.iter().zip(notes.iter()).any(|(standing, note)| {
+        *standing == ImportedNoteStanding::Unchanged
+            && facts.get(note.path.as_str()).is_some_and(|read| {
+                ledger
+                    .iter()
+                    .find(|file| file.path == note.path)
+                    .is_some_and(|file| {
+                        file.meta.is_none_or(|meta| {
+                            (meta.bytes, meta.modified_at) != (read.bytes, read.modified_at)
+                        })
+                    })
+            })
+    });
     // A new note's inbound links, and a changed note's outbound ones, come
     // from the whole folder, skipped files included: with a new or changed
     // note the folder is read again, whole, so no live edge reads as dropped
     // when the rescan reconciles a superseded note's links (FIX 1363).
-    if !skipped.is_empty()
+    if (!skipped.is_empty()
         && standings.iter().any(|standing| {
             matches!(
                 standing,
                 ImportedNoteStanding::New | ImportedNoteStanding::Changed
             )
-        })
+        }))
+        || (pending
+            && unopened_dirs
+                .iter()
+                .all(|dir| !dir_can_hold_included(&source.include, dir)))
     {
         counts = NoteCounts::default();
-        (notes, name_only, facts, skipped) = read_for_rescan(source, folder, &mut counts, None)?;
+        (
+            notes,
+            name_only,
+            facts,
+            skipped,
+            unopened_dirs,
+            vault_covers,
+        ) = read_for_rescan(
+            source,
+            folder,
+            &mut counts,
+            None,
+            Some(vault.path()),
+            vault.dir_identity(),
+        )?;
         standings = standings_of(vault, &namespace, &notes)?;
     }
     let mut warnings = crossed_rows(vault, &counts);
@@ -208,17 +251,29 @@ pub(crate) fn rescan(
         .chain(name_only.iter().map(|file| file.path.as_str()))
         .collect::<HashSet<_>>();
     // Only a file that is gone retracts: one the read passed over (blank,
-    // hard-linked, unreadable) is still there. A continuation part names its
+    // hard-linked, unreadable) is still there, and so is one under a folder
+    // that would not open this scan (FIX 10246): its children could not be
+    // listed, so nothing under it is missing. A continuation part names its
     // file in its path; it retracts too when that file was read and its text
     // no longer reaches the part.
+    let unopened_prefixes: Vec<String> =
+        unopened_dirs.iter().map(|dir| format!("{dir}/")).collect();
+    let under_unopened = |path: &str| {
+        unopened_dirs.iter().any(|dir| path == dir)
+            || unopened_prefixes
+                .iter()
+                .any(|prefix| path.starts_with(prefix))
+    };
     let missing = ledger
         .iter()
         .filter(|file| file.state != FolderFileState::Retracted)
         .filter(|file| !seen.contains(file.path.as_str()))
+        .filter(|file| !under_unopened(&file.path))
         .filter(|file| {
             let read_from = file_of(&file.path, mark);
-            (read_from != file.path && seen.contains(read_from))
-                || std::fs::symlink_metadata(folder.join(read_from)).is_err()
+            !under_unopened(read_from)
+                && ((read_from != file.path && seen.contains(read_from))
+                    || std::fs::symlink_metadata(folder.join(read_from)).is_err())
         })
         .map(|file| file.path.clone())
         .collect::<Vec<_>>();
@@ -229,7 +284,9 @@ pub(crate) fn rescan(
     let (links, _) = resolve_links(&notes, &standings, &earlier_titles);
     // Every present file's links as its text holds them now: the rescan
     // reconciles a superseded note's edges to them. Only a whole read
-    // resolves them; a read that skipped files leaves every file's alone.
+    // resolves them; a read that skipped files, or could not open a folder,
+    // leaves every file's alone (a partial walk's missing targets must not
+    // read as dropped edges).
     let present_links = resolve_present_links(&notes, &standings);
     let mut present_targets: HashMap<&str, Vec<String>> = HashMap::new();
     for link in &present_links {
@@ -238,7 +295,13 @@ pub(crate) fn rescan(
             .or_insert_with(Vec::new)
             .push(link.to.clone());
     }
-    let links_complete = skipped.is_empty();
+    // An unreadable folder holds the links incomplete only when an
+    // included file could wait under it; any other unreadable folder still
+    // guards retraction and is still reported (REVIEW-4381 P2).
+    let links_complete = skipped.is_empty()
+        && unopened_dirs
+            .iter()
+            .all(|dir| !dir_can_hold_included(&source.include, dir));
     let mut known_kinds = HashMap::new();
     let mut taken = HashSet::new();
     let mut titles = TitleCounts::default();
@@ -297,11 +360,32 @@ pub(crate) fn rescan(
             missing,
             raw_hashes,
             facts,
+            whole: links_complete,
         },
     )?;
     // Skipped files keep what the ledger holds: each counts as unchanged,
     // as the reconcile counts the files it read and found the same.
     report.unchanged += skipped.len();
+    // The vault's own folder attached as its source reads nothing, and
+    // says so rather than reporting an empty success (FIX 10249).
+    if vault_covers {
+        report.failed += 1;
+        report.first_error.get_or_insert_with(|| {
+            "the folder is the vault's own folder; the vault never reads itself".to_owned()
+        });
+    }
+    // A folder that would not open is said with the files the write door
+    // refused: a later rescan tries it again (FIX 10246).
+    if !unopened_dirs.is_empty() {
+        report.failed += unopened_dirs.len();
+        report.first_error.get_or_insert_with(|| {
+            format!(
+                "{} folders would not open: {}",
+                unopened_dirs.len(),
+                unopened_dirs[0]
+            )
+        });
+    }
     // The notes have landed: what keeping their originals meets is said
     // beside the report, never in place of it.
     warnings.extend(keep_originals(
@@ -320,7 +404,14 @@ pub(crate) fn rescan(
 fn prior_files(ledger: &[FolderSourceFile]) -> HashMap<String, FileFacts> {
     ledger
         .iter()
-        .filter(|file| !matches!(file.state, FolderFileState::Retracted))
+        // A proposal the owner decided settles in reconcile: a Proposed
+        // row is always re-read, never skipped (REVIEW-4381 P1).
+        .filter(|file| {
+            !matches!(
+                file.state,
+                FolderFileState::Retracted | FolderFileState::Proposed { .. }
+            )
+        })
         .filter_map(|file| {
             let meta = file.meta?;
             Some((
@@ -342,24 +433,54 @@ fn read_for_rescan(
     folder: &Path,
     counts: &mut NoteCounts,
     prior: Option<&HashMap<String, FileFacts>>,
+    vault_dir: Option<&Path>,
+    vault_id: Option<(u64, u64)>,
 ) -> anyhow::Result<(
     Vec<Note>,
     Vec<NameOnlyFile>,
     HashMap<String, FileFacts>,
     Vec<String>,
+    Vec<String>,
+    bool,
 )> {
-    let (mut notes, mut name_only, facts, mut skipped) = match &source.files {
-        Some(files) => {
-            let read = super::files::read_files(folder, &files.exclude, counts, prior)?;
-            (read.notes, read.name_only, read.facts, read.skipped)
-        }
-        None => read_folder_rescan(folder, counts, prior)?,
-    };
+    let (mut notes, mut name_only, facts, mut skipped, unopened_dirs, vault_covers) =
+        match &source.files {
+            Some(files) => {
+                let read = super::files::read_files(
+                    folder,
+                    &files.exclude,
+                    counts,
+                    prior,
+                    vault_dir,
+                    vault_id,
+                )?;
+                (
+                    read.notes,
+                    read.name_only,
+                    read.facts,
+                    read.skipped,
+                    read.unopened_dirs,
+                    read.vault_covers_folder,
+                )
+            }
+            None => {
+                let (notes, name_only, facts, skipped, unopened_dirs) =
+                    read_folder_rescan(folder, counts, prior)?;
+                (notes, name_only, facts, skipped, unopened_dirs, false)
+            }
+        };
     // A part goes with its file.
     notes.retain(|note| included(&source.include, note.file()));
     name_only.retain(|file| included(&source.include, &file.path));
     skipped.retain(|path| included(&source.include, path));
-    Ok((notes, name_only, facts, skipped))
+    Ok((
+        notes,
+        name_only,
+        facts,
+        skipped,
+        unopened_dirs,
+        vault_covers,
+    ))
 }
 
 /// What the vault holds of each note read: new, changed or as it was.
@@ -475,6 +596,34 @@ pub(crate) fn canonical_folder(path: &Path) -> anyhow::Result<String> {
 /// pattern matches it.
 fn included(patterns: &[String], path: &str) -> bool {
     patterns.is_empty() || patterns.iter().any(|pattern| matches(pattern, path))
+}
+
+/// Whether an unreadable folder could hold a file `include` keeps
+/// (REVIEW-4381 P2). A `**` segment reaches every folder below it; any other
+/// segment reaches only the folder segment it matches, so a file-name `*`
+/// never reaches below the top folder while a `doc?` folder segment still
+/// reaches `docs`.
+fn dir_can_hold_included(patterns: &[String], dir: &str) -> bool {
+    patterns.is_empty()
+        || patterns.iter().any(|pattern| {
+            let pattern = pattern.strip_suffix('/').unwrap_or(pattern);
+            let mut here = dir.split('/');
+            for segment in pattern.split('/') {
+                if segment.contains("**") {
+                    return true;
+                }
+                let Some(name) = here.next() else {
+                    // The pattern runs past the folder: what follows sits
+                    // under it.
+                    return true;
+                };
+                if !matches(segment, name) {
+                    return false;
+                }
+            }
+            // The final file-name segment was already consumed by a folder.
+            false
+        })
 }
 
 /// Whether `pattern` matches all of `path`: `*` within a name, `**` across

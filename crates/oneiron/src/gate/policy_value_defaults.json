@@ -3,6 +3,8 @@
   {"row_ref":"default.calendar_outcome_grace_seconds","key":"calendar_outcome_grace_seconds","value":1800,"scope":{"level":"vault"}},
   {"row_ref":"default.comm_opt_out_posture","key":"comm_opt_out_posture","value":"escalate","scope":{"level":"vault"}},
   {"row_ref":"default.dreamer_retry_park_seconds","key":"dreamer_retry_park_seconds","value":900,"scope":{"level":"vault"}},
+  {"row_ref":"default.esign_rate_document_threshold","key":"esign_rate_document_threshold","value":1200,"scope":{"level":"vault"}},
+  {"row_ref":"default.esign_rate_recipient_threshold","key":"esign_rate_recipient_threshold","value":120,"scope":{"level":"vault"}},
   {"row_ref":"default.escalation_standing_rulings","key":"escalation_standing_rulings","value":3,"scope":{"level":"vault"}},
   {"row_ref":"default.miner_recurrence_receipts","key":"miner_recurrence_receipts","value":3,"scope":{"level":"vault"}},
   {"row_ref":"default.miner_rejection_wait_seconds","key":"miner_rejection_wait_seconds","value":1209600,"scope":{"level":"vault"}},

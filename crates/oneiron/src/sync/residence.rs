@@ -62,6 +62,7 @@ pub use bundle_access::{
 pub use bundle_payload::RecoveryCheckpointTrust;
 pub use bundle_payload::SealedBundleTake;
 pub use bundle_payload::SealedKitRestore;
+pub(crate) use bundle_payload::sealed_bundle_awaiting_reader;
 pub use bundle_stage::{SealedBundleStaged, sealed_bundle_stages};
 pub(crate) use bundle_turn::SEALED_BUNDLE_PUBLISH_LEASE_SECS;
 pub use bundle_turn::ask_sealed_bundle_turn;
@@ -649,6 +650,7 @@ pub fn promotion_covers_full_window_for(
             super::room_facts::ROOM_FACTS_MAP,
             super::document_pins::DOCUMENT_PINS_MAP,
             super::message_docs::MESSAGE_DOCS_MAP,
+            super::repo_manifests::REPO_MANIFESTS_MAP,
             super::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
             super::ingest::PEER_ORIGIN_MAP,
         ] {

@@ -163,6 +163,14 @@ pub struct OriginPublishReview {
     /// Whether a path's Git bytes are not UTF-8, so its text here is lossy
     /// and a Grant's path bounds cannot judge it (FIX 10003).
     pub lossy_paths: bool,
+    /// The freeze-time advisory (FIX 10969): `Some(true)` when the history
+    /// names an object a mark marks as a live key or one of unknown
+    /// liveness, so a public or unstated mirror's send of it is held
+    /// `marked_live_secret`; `Some(false)` when it names none; `None` when
+    /// it was not judged (an automatic mirror plan's review, or marks that
+    /// could not be read). Advisory only: the send-time recheck stays the
+    /// gate.
+    pub secret_history: Option<bool>,
 }
 
 /// Why a request ended without publishing.

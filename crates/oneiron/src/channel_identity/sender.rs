@@ -280,8 +280,9 @@ fn outbound_send_policy(
 /// 1. POLICY — does the manifest's `act_policy` row for
 ///    `channel_identity.outbound_send` permit this subject class, for this
 ///    holder? A pairing no row names, in a vault with or without a manifest,
-///    runs under the row the default manifest ships, and the fallback is
-///    logged as this send's receipt.
+///    runs under the row the default manifest ships; the fallback is logged,
+///    and the dispatch receipt of a send it carries names it
+///    ([`outbound_send_runs_under_shipped_posture_in_txn`]).
 /// 2. SUBSTRATE — does the row hold the capability the act needs? For a
 ///    self-held row that is a live state; for a delegated row it is an outbound
 ///    scope on the grant, which no read-only scope class can express.
@@ -323,6 +324,25 @@ fn outbound_send_permitted(
                      through put_policy_manifest_as_owner",
         })),
     }
+}
+
+/// Whether the identity `id`'s outbound send runs under
+/// [`SHIPPED_OUTBOUND_SEND_POSTURE`] because the vault's manifests name no
+/// act row for its pairing, in `txn`. False for an identity with no heads,
+/// and when a row resolves or a manifest cannot be read.
+pub(crate) fn outbound_send_runs_under_shipped_posture_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> crate::Result<bool> {
+    let Some(facts) = super::channel_identity_facts_in_txn(store, txn, id)? else {
+        return Ok(false);
+    };
+    let identity = read_identity_row(store, txn, id)?;
+    Ok(matches!(
+        outbound_send_policy(store, txn, &identity, facts.binding.actor_ref())?,
+        OutboundSendPolicy::Shipped
+    ))
 }
 
 /// [`outbound_send_permitted`] for a projection that lists who may send: an

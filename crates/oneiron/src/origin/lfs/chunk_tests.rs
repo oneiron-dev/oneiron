@@ -27,7 +27,12 @@ fn data(size: usize) -> Vec<u8> {
 fn chunk_parameters_are_persisted_by_store_creation_before_vault_open() {
     let dir = tempfile::tempdir().unwrap();
     let config = embedding_test_config();
-    let store = crate::store::Store::open(dir.path(), &config).unwrap();
+    let store = crate::store::Store::open(
+        dir.path(),
+        &config,
+        crate::engine_store_hooks::ENGINE_STORE_HOOKS,
+    )
+    .unwrap();
     let txn = store.env.read_txn().unwrap();
     let raw = store
         .vault_meta

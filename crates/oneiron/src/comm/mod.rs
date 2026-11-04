@@ -19,6 +19,7 @@ mod claims;
 mod consent;
 mod descriptor;
 mod generic_put_routing;
+mod inbound_events;
 mod opt_out_slots;
 mod parties;
 mod projection_writes;
@@ -55,6 +56,9 @@ pub use self::descriptor::{
     encode_claim_class_descriptor,
 };
 pub(crate) use self::descriptor::{
+    check_claim_against_compiled_descriptor, is_compiled_generic_claim_predicate,
+};
+pub(crate) use self::descriptor::{
     check_claim_against_descriptor_in_txn, is_restrictive_comm_predicate,
     seed_claim_class_descriptors,
 };
@@ -64,17 +68,18 @@ pub(crate) use self::generic_put_routing::{
 };
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
-    CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn,
+    CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn, person_party_key_in_txn,
     resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn,
 };
 pub(crate) use self::projector::{
     record_comm_actor_send_receipt_in_txn, record_comm_inbound_reply_in_txn,
-    run_comm_projector_housekeeping_step,
+    record_comm_inbound_stop_in_txn, run_comm_projector_housekeeping_step,
 };
 pub use self::projector::{
     record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,
     record_comm_thread_event, run_comm_projector,
 };
+pub(crate) use self::receipt_import::erase_skipped_send_receipt_in_txn;
 pub(crate) use self::records::{
     validate_comm_record_body_bytes, validate_key_string as validate_comm_party_key,
 };
@@ -83,7 +88,7 @@ pub(crate) use self::stop_hold::{
 };
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use self::projector::ProjectorAction;
 use self::records::{CommEventKind, CommRecord, read_comm_record_in_txn};
@@ -397,6 +402,27 @@ struct ProjectorIndexDelta {
     /// The heads the rule minted, superseded or retracted. The index reads
     /// none of them; an in-write projection reports them to its writer.
     heads: Vec<EntityId>,
+    /// The contacts whose type-132 rows a STOP re-derived. The index reads
+    /// none of them; they go to the live-window mirror with the heads.
+    contacts: Vec<EntityId>,
+    /// Whether the step stamped its source event `projected`, a write of the
+    /// event's own row.
+    source_stamped: bool,
+}
+
+impl ProjectorIndexDelta {
+    /// The rows the step for `event_id` wrote: the source event when it was
+    /// stamped, the heads, the contact rows it re-derived, and the gates it
+    /// consumed.
+    fn written_rows(&self, event_id: EntityId) -> BTreeSet<EntityId> {
+        self.source_stamped
+            .then_some(event_id)
+            .into_iter()
+            .chain(self.heads.iter().copied())
+            .chain(self.contacts.iter().copied())
+            .chain(self.consumed_gate_ids.iter().map(|(_, gate_id)| *gate_id))
+            .collect()
+    }
 }
 
 /// One source COMM_RECORD event, resolved to the projector rule it fires.

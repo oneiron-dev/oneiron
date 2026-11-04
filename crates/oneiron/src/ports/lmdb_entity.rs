@@ -4,8 +4,8 @@ use super::*;
 use crate::edge::EdgeInfo;
 use crate::error::{Error, Result};
 use crate::registry::*;
-use crate::scan_check::ScanCount;
 use crate::store::EngineScan;
+use crate::store::scan_count::ScanCount;
 use crate::store::{ManifestDbs, Store};
 use crate::{EdgeKind, EntityId, Vault};
 use heed::{RoTxn, RwTxn};
@@ -79,7 +79,12 @@ impl EntityStore for Vault {
         // The public delete facade still owns publish/receipt/sweep ordering.
         let (existed, vector, graph, neighbors) =
             crate::batch::deindex_entity(&self.store, txn, id)?;
-        crate::ppr::invalidate_ppr_for_delete(&self.store, txn, id, &neighbors)?;
+        crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(
+            &self.store,
+            txn,
+            id,
+            &neighbors,
+        )?;
         if vector {
             crate::store::vector_index::increment_vector_version(&self.store, txn)?;
         }

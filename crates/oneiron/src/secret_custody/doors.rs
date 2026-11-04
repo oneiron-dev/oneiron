@@ -3,10 +3,9 @@
 mod admission;
 
 use crate::batch::{BatchOp, apply_ops};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result, SideTableRowProblem};
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -19,66 +18,18 @@ use super::types::{
 use crate::error::SecretError;
 
 pub(crate) use self::admission::{SecretCustodyAdmission, read_secret_custody_admission_in_txn};
+pub(crate) use crate::store::secret_name_index::resolve_secret_ref_in_txn;
+pub(super) use crate::store::secret_name_index::{NAME_INDEX, NameEntry};
 
 // ---------------------------------------------------------------------------
 // Name index
 // ---------------------------------------------------------------------------
-
-/// Live secret name -> custody `EntityId` and the name's generation
-/// high-water, keyed by the name itself. `run_bound` reads a run's names
-/// and forgets them with their records (FIX 8028).
-pub(super) const NAME_INDEX: SideTable<String, NameEntry, Raw> =
-    SideTable::new(&side_table::SECRET_CUSTODY_NAME_INDEX);
-
-/// One name's index row: the custody record the name resolves to, and the
-/// highest `rotation_generation` a record has held under the name here. The
-/// high-water outlives its record: a name whose record is gone from the store
-/// starts its next life above it, never at the caller's number (FIX 5958).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct NameEntry {
-    pub(super) id: EntityId,
-    high_water: u32,
-}
-
-/// The record's id bytes, then the high-water as four big-endian bytes.
-impl RawValue for NameEntry {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut raw = self.id.as_bytes().to_vec();
-        raw.extend_from_slice(&self.high_water.to_be_bytes());
-        Ok(raw)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let undecodable = || CodecError::Row(SideTableRowProblem::Undecodable);
-        let (id, high_water) = bytes
-            .split_at_checked(ENTITY_ID_LEN)
-            .ok_or_else(undecodable)?;
-        let high_water = <[u8; 4]>::try_from(high_water).map_err(|_| undecodable())?;
-        Ok(Self {
-            id: <EntityId as RawValue>::from_raw(id)?,
-            high_water: u32::from_be_bytes(high_water),
-        })
-    }
-}
 
 /// One above `generation`, the generation a name's next life starts at.
 fn next_generation(generation: u32) -> Result<u32> {
     generation
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("secret rotation generation"))
-}
-
-/// Resolves a live secret name to its custody `EntityId` inside an
-/// existing txn. `pub(crate)` for SECRET-02's lease doors (ONE-1920), which
-/// hold their own write txn and must not open a nested read txn.
-pub(crate) fn resolve_secret_ref_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    name: &str,
-) -> Result<Option<EntityId>> {
-    Ok(NAME_INDEX
-        .get(store, txn, &name.to_owned())?
-        .map(|entry| entry.id))
 }
 
 /// Reads a custody record under either a read or write txn, its value

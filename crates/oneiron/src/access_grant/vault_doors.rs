@@ -8,8 +8,9 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::temporal::TimeRange;
 
-use super::codec::{decode_access_grant_body, decode_erased_grant_body, encode_access_grant_body,
-    erased_grant, invalid_grant,
+use super::codec::{
+    decode_access_grant_body, decode_erased_grant_body, encode_access_grant_body, erased_grant,
+    invalid_grant,
 };
 use super::record::{AccessGrant, AccessGrantScope, CalendarAccessGrantRow};
 use crate::error::RecordError;
@@ -221,11 +222,14 @@ impl Vault {
     /// admission and the write share one write transaction, as a revoke's
     /// do. The write passes every check [`Vault::put_access_grant`] runs and
     /// lands at `learned_at`. A deleted grant is no grant to write over.
+    /// Every changed write records its caller's act after apply and before
+    /// commit in the same transaction; a no-op records nothing.
     pub(crate) fn put_admitted_access_grant(
         &self,
         id: &EntityId,
         learned_at: u64,
         admit: impl FnOnce(&heed::RoTxn<'_>, Option<AccessGrant>) -> Result<(AccessGrant, bool)>,
+        record: impl FnOnce(&mut heed::RwTxn<'_>, &AccessGrant) -> Result<()>,
     ) -> Result<(AccessGrant, bool)> {
         use crate::vault::LiveEntityRow;
         let mut wtxn = self.store.env.write_txn()?;
@@ -253,6 +257,7 @@ impl Vault {
             self.check_companion_profile_target(&wtxn, &grant)?;
             crate::share::check_generic_grant_write(self, &wtxn, id, &grant)?;
             self.apply_access_grant_body(&mut wtxn, id, learned_at, data)?;
+            record(&mut wtxn, &grant)?;
             wtxn.commit()?;
         }
         Ok((grant, write))
@@ -348,6 +353,7 @@ impl Vault {
         learned_at: u64,
         data: Vec<u8>,
     ) -> Result<()> {
+        let data = super::witness_history::with_witness_read_history_in_txn(self, wtxn, id, data)?;
         apply_ops(
             &self.store,
             &self.config,

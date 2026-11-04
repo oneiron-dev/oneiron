@@ -41,6 +41,8 @@ pub enum AudioError {
     InvalidEvaluationReceipt,
     #[error("invalid evaluation cohort manifest")]
     InvalidCohortManifest,
+    #[error("not enough memory for the evaluation's working state")]
+    ResourceFloor,
     #[error("host stage {stage} failed: {code}")]
     Host { stage: String, code: String },
     #[error("artifact serialization failed")]

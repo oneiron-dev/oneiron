@@ -26,14 +26,15 @@ impl Vault {
             (Some(live), Some(next)) => (live, next),
             _ => return Err(refused("a restore over a vault keeps its tier")),
         };
-        let commitment = live.data_key.commitment(&live.vault_id);
-        if live.vault_id != next.vault_id || commitment != next.data_key.commitment(&next.vault_id)
+        let commitment = live.data_key().commitment(&live.vault_id());
+        if live.vault_id() != next.vault_id()
+            || commitment != next.data_key().commitment(&next.vault_id())
         {
             return Err(refused(
                 "the replacement is sealed under another vault's data key",
             ));
         }
-        if live.incarnation == next.incarnation {
+        if live.incarnation() == next.incarnation() {
             return Err(refused(
                 "the replacement is sealed under the live vault's own incarnation",
             ));
@@ -42,9 +43,9 @@ impl Vault {
             .resting_vault_key()?
             .ok_or_else(|| refused("the replacement's vault key has no wrap"))?;
         let swap = SealedSwap {
-            vault_id: live.vault_id,
-            live: live.incarnation,
-            replacement: next.incarnation,
+            vault_id: live.vault_id(),
+            live: live.incarnation(),
+            replacement: next.incarnation(),
             carried,
         };
         let _mirroring = MIRRORING.lock().unwrap_or_else(PoisonError::into_inner);

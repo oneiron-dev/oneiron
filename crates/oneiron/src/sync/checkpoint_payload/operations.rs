@@ -391,6 +391,20 @@ fn prepare(
     if plans.len() != parts.atoms.len() {
         return Err(not_proved());
     }
+    // Current-map values alone miss historical heads and removed parts.
+    // Judge manifest bindings against every value this group captured.
+    {
+        let entries: Vec<(&str, &[u8])> = plans
+            .iter()
+            .filter(|plan| plan.root.as_str() == crate::sync::repo_manifests::REPO_MANIFESTS_MAP)
+            .map(|plan| (plan.key.as_str(), plan.value.as_slice()))
+            .collect();
+        if let Some((owner, reason)) =
+            crate::sync::repo_manifests::checkpoint::binding_refusal(&entries)
+        {
+            return Err((Some(owner), reason));
+        }
+    }
     prove(&doc, rows, &slices, &parts, &plans)?;
     Ok(Prepared {
         parts,

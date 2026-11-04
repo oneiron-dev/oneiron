@@ -159,6 +159,7 @@ impl Section {
                 pages: count(self.pages.len()),
                 lfs_bytes: OriginPublishLfsBytes::NotSent,
                 lossy_paths: self.lossy_paths,
+                secret_history: None,
             },
             pages: self.pages,
             paths: self.paths,
@@ -211,6 +212,7 @@ impl Vault {
                     commit,
                     base.as_ref(),
                     reviewed,
+                    None,
                 )?;
                 section.absorb(walk);
                 (
