@@ -200,7 +200,7 @@ impl Base {
             LoadOptions {
                 strict: true,
                 max_decompressed_size: Some(codec), // KEPT: bound and admission compose
-                decode_admission: Some(Arc::clone(&admission)),
+                decode_admission: Some(Arc::clone(&admission) as Arc<dyn DecodeAdmission>),
                 ..LoadOptions::default()
             },
         )
