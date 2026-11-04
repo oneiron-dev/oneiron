@@ -43,7 +43,7 @@ const VERB_ASK_PRUNE_MAX: usize = 256;
 /// exact flakes policy — an internal code with no hook behind it. The
 /// caller's retry may re-open the consumed ask and run again. `pub` for the
 /// chat witness door (oneiron-server), which classifies the same way.
-pub(crate) fn run_failed_transient(error: &MemoryError) -> bool {
+pub fn run_failed_transient(error: &MemoryError) -> bool {
     error.hook.is_none() && error.code == MEMORY_CODE_INTERNAL
 }
 
