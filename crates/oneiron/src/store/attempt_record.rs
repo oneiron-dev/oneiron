@@ -17,6 +17,10 @@ use crate::store::attempt_result::AttemptResultRef;
 use crate::store::attempt_run_signal::{RunAsk, RunBranchSignal, SignalIntent};
 use crate::store::attempt_state::AttemptState;
 
+/// Receipt-family ABI-pin rule: changing this requires a
+/// [`crate::store::STORAGE_ABI_VERSION`] bump.
+pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 3;
+
 /// Durable attempt row stored in LMDB.
 ///
 /// One synced TASK owns N node-local ATTEMPT rows. A retry never mutates a
