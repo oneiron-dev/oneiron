@@ -432,7 +432,7 @@ fn agent_omissions(
         let available = document_import::parse_id(entity_id)
             .ok()
             .is_some_and(|child| {
-                crate::agent_def::birth_source_id(&child)
+                crate::store::agent_birth_identity::birth_source_id(&child)
                     .ok()
                     .and_then(|carrier| birth(&carrier))
                     .is_some_and(|bytes| {
@@ -642,8 +642,8 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
             if matches!(
                 predicate,
                 Some(
-                    crate::skill_hub::PREDICATE_SKILL_HUB_PROVENANCE
-                        | crate::skill_hub::PREDICATE_SKILL_SCAN_VERDICT
+                    crate::store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE
+                        | crate::store::skill_hub_predicates::PREDICATE_SKILL_SCAN_VERDICT
                 )
             ) {
                 Some(ImportOmissionReason::ForeignSkillSignalNotRestored)
