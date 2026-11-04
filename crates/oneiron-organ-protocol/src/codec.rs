@@ -17,9 +17,10 @@
 //!
 //! A typed field's own decode recurses only as deep as its type does,
 //! except for types that buffer their input to read it (an internally
-//! tagged or untagged enum), which nest as deep as that input. A
-//! [`crate::Value`] still builds itself without recursing, whatever its
-//! depth.
+//! tagged or untagged enum), which nest as deep as that input, up to 128
+//! compounds deep, past which the decode is refused instead of growing the
+//! call stack with untrusted bytes (FIX 12433). A [`crate::Value`] still
+//! builds itself without recursing, whatever its depth.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -107,7 +108,9 @@ pub fn to_value<T: Serialize + ?Sized>(value: &T) -> Result<Value, CodecError> {
     crate::value::decode_value(&to_vec(value)?)
 }
 
-/// `value` read as a `T`, by its field names.
+/// `value` read as a `T`, by its field names. A converter with its own
+/// budget reserves [`read_cost`] first: the temporary encoding is at most
+/// the value's encoded bytes, already inside that count (FIX 12436).
 ///
 /// # Errors
 /// The value is not a `T`.
@@ -528,14 +531,17 @@ impl Shape {
     /// At most what decoding the message allocates: each value one
     /// [`Value`] at most, a typed one no more; each container one step of
     /// the decoder's own stack while it fills, with one more slot for its
-    /// geometric-growth slack; and the bytes of its strings, binaries and
-    /// extensions beside.
+    /// geometric-growth slack; one [`Value`] slot per container for the
+    /// traversal stacks a later clone, drop or comparison may hold at once
+    /// (they walk no deeper than the containers, holding references); and
+    /// the bytes of its strings, binaries and extensions beside (FIX 12436).
     pub(crate) fn decoded(self) -> u64 {
         let value = std::mem::size_of::<Value>() as u64;
         let open = std::mem::size_of::<Open>() as u64;
         self.values
             .saturating_mul(value)
             .saturating_add(self.containers.saturating_mul(2).saturating_mul(open))
+            .saturating_add(self.containers.saturating_mul(value))
             .saturating_add(self.payload)
     }
 }
