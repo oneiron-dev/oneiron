@@ -5576,7 +5576,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/speculative.rs` | src | m | 4 struct · 2 enum · 7 fn · 2 re-export · 2 crate-vis | SpeculativeFinal, SpeculativeFireDecision, SpeculativePartial, SpeculativeSession, SpeculativeSessionConfig, SpeculativeThreads | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
 | `src/speculative/scoped.rs` | src | s | 3 fn · 5 crate-vis | — | Credential-bound candidate admission, inside every speculative pass |
 | `src/store/active_write_txn.rs` | src | s | 3 crate-vis | — | The calling thread's open write-transaction depth: a guard raises it while a vault write runs its closure… |
-| `src/store/actor_scrubs.rs` | src | s | 1 trait · 9 crate-vis | StoreActorScrubs | The actor scrubs of side tables whose eraser lives in the engine: the trait the engine implements, and the… |
+| `src/store/actor_scrubs.rs` | src | s | 1 trait · 13 crate-vis | StoreActorScrubs | The actor scrubs of side tables whose eraser lives in the engine: the trait the engine implements, and the… |
 | `src/store/agent_birth_custody.rs` | src | s | 6 crate-vis | — | Physical custody of a birthed agent's captured source, read side: which asset holds a child's source, which… |
 | `src/store/agent_birth_identity.rs` | src | s | 1 crate-vis | — | The derived id of the asset that carries a birthed agent's captured source |
 | `src/store/agent_definition.rs` | src | s | 1 struct | AgentDefinition | The stored agent definition record (AGENT_DEF): a saved, host-agnostic agent composition and the shared… |
