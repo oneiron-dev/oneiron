@@ -136,6 +136,7 @@ pub mod attempt_record;
 pub(crate) mod attempt_record_codec;
 pub(crate) mod attempt_retention;
 pub mod attempt_result;
+pub(crate) mod attempt_run_root;
 pub mod attempt_run_signal;
 pub mod attempt_state;
 pub mod canonical_document;
