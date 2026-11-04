@@ -29,7 +29,7 @@ impl HeapDropReport {
     /// is disjoint across producers and sums into its matching output field;
     /// no max/overwrite rule is permitted.
     #[must_use]
-    pub(crate) fn merged(self, other: Self) -> Self {
+    pub fn merged(self, other: Self) -> Self {
         Self {
             sync_windows: self.sync_windows.saturating_add(other.sync_windows),
             ppr_cache_rows: self.ppr_cache_rows.saturating_add(other.ppr_cache_rows),

@@ -10,7 +10,9 @@ use crate::edit_distance::delta::{
     OUTCOME_APPROVED_AMENDED, attach_amendment_deltas, bump_amendment_uncaptured_in_txn,
     capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
 };
-use crate::edit_distance::miner::{CompilationTarget, record_inbox_learning_in_txn};
+use crate::inbox::compilation_target::CompilationTarget;
+use crate::edit_distance::miner::CompilationTargetValidation;
+use crate::edit_distance::miner::record_inbox_learning_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;

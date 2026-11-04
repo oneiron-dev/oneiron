@@ -418,9 +418,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/affect/annotation.rs",
-     "purpose": "Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers",
+     "purpose": "Turn and message VAD annotation persistence",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 1
      }
     },
     {
@@ -584,34 +584,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/agent_def/codec.rs",
-     "purpose": "Pinned-key MessagePack encode and top-level body decode",
+     "purpose": "The AGENT_DEF body codec's old paths: the codec lives in `store::agent_definition_codec`, the legacy `sys.*`…",
      "surface": {
-      "crate-vis": 3,
-      "fn": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/agent_def/codec/value.rs",
-     "purpose": "Agent definition value and field decoding",
-     "surface": {
-      "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/agent_def/decode.rs",
-     "purpose": "Per-field MessagePack decoders, the validate_* ladder, and text helpers",
-     "surface": {
-      "crate-vis": 8
+      "crate-vis": 2,
+      "re-export": 1
      }
     },
     {
@@ -655,7 +635,7 @@
      "path": "src/agent_def/manifest.rs",
      "purpose": "Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 8
      }
     },
     {
@@ -673,33 +653,25 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "AgentModel"
-     ],
+     "notable": [],
      "path": "src/agent_def/models.rs",
      "purpose": "The owner's per-agent model list (FIX 4472): the models an agent may run on, each with the owner's own words…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 3,
       "fn": 7,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "OptionalMemory",
-      "OptionalMemoryProfile"
-     ],
+     "notable": [],
      "path": "src/agent_def/optional_memory.rs",
      "purpose": "How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget)",
      "surface": {
-      "const": 2,
-      "crate-vis": 2,
-      "enum": 1,
       "fn": 4,
-      "struct": 1
+      "re-export": 2
      }
     },
     {
@@ -754,20 +726,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RefusalDial",
-      "RefusalDomain",
-      "RefusalLevel",
       "RefusalOutcome",
       "VaultKind"
      ],
      "path": "src/agent_def/refusal.rs",
      "purpose": "The refusal dial (OF-533): an agent's own disposition to object to, or decline, what she is asked to do, set…",
      "surface": {
-      "const": 1,
-      "crate-vis": 4,
-      "enum": 4,
-      "fn": 12,
-      "struct": 1
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 5,
+      "re-export": 1
      }
     },
     {
@@ -779,21 +747,15 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AgentDefinition",
-      "AgentScope",
-      "MemoryProfile"
-     ],
+     "notable": [],
      "path": "src/agent_def/types.rs",
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
-      "crate-vis": 59,
-      "enum": 1,
+      "crate-vis": 4,
       "fn": 17,
-      "re-export": 14,
-      "struct": 2
+      "re-export": 17
      }
     },
     {
@@ -2418,10 +2380,10 @@
      "path": "src/attempt_queue/cancel/types.rs",
      "purpose": "Durable wire types of the ONE-1896 two-rung graceful-cancel protocol",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 3,
       "fn": 20,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 1
      }
     },
@@ -2504,13 +2466,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/encoding.rs",
      "purpose": "Storage key derivation and LMDB row encode/decode for the attempt queue",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 16
      }
     },
     {
@@ -2573,7 +2535,7 @@
      "path": "src/attempt_queue/engine/mod.rs",
      "purpose": "The [`AttemptQueue`] handle and its lease state machine",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 4,
       "re-export": 1,
       "struct": 1
      }
@@ -2626,7 +2588,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 32,
       "fn": 6
      }
     },
@@ -2759,7 +2721,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 14,
       "mod": 9,
       "re-export": 10
      }
@@ -2782,7 +2744,7 @@
      "path": "src/attempt_queue/payload_erase.rs",
      "purpose": "An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -2842,7 +2804,7 @@
      "path": "src/attempt_queue/payload_erase/response.rs",
      "purpose": "An agent dispatch's payload text in checkpoint images (FIX 7115, KEY STORE = A): its attempt row is a…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 1
      }
     },
     {
@@ -2896,7 +2858,7 @@
      "path": "src/attempt_queue/run_signal.rs",
      "purpose": "Durable branch signal and ask vocabulary with persisted-row validation",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 2,
       "enum": 1,
       "re-export": 1,
       "struct": 1
@@ -2958,8 +2920,8 @@
      "path": "src/attempt_queue/skill_edit_cycle.rs",
      "purpose": "Skill edit cycle labels that bound their originating run identifiers",
      "surface": {
-      "const": 1,
-      "crate-vis": 1
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -3145,7 +3107,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/validate/cancel_receipt_landing.rs",
@@ -3155,13 +3117,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/validate/field_validators.rs",
      "purpose": "Length caps, error literals, and per-field validators plus lease/manifest mutators",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 15
      }
     },
     {
@@ -8354,7 +8316,7 @@
      "path": "src/batch/types.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -15592,7 +15554,7 @@
      "path": "src/code_document/mod.rs",
      "purpose": "Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 6
      }
     },
@@ -15694,9 +15656,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "CodeEditReceipt",
       "CodeOpAttribution",
-      "CodeOpProvenance",
       "CodeRangeChange",
       "CodeSpanBlame",
       "CodeSpanResolution"
@@ -15707,8 +15667,8 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 2,
-      "re-export": 2,
-      "struct": 5
+      "re-export": 3,
+      "struct": 3
      }
     },
     {
@@ -15766,14 +15726,12 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "CodeMemoryPullResult"
-     ],
+     "notable": [],
      "path": "src/code_memory/parts/pull.rs",
      "purpose": "—",
      "surface": {
       "fn": 2,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -16949,9 +16907,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 44,
+      "crate-vis": 45,
       "mod": 8,
-      "re-export": 31
+      "re-export": 32
      }
     },
     {
@@ -17540,8 +17498,8 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 30,
-      "re-export": 5
+      "crate-vis": 31,
+      "re-export": 6
      }
     },
     {
@@ -17625,7 +17583,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 8,
       "struct": 2
      }
@@ -17790,6 +17748,24 @@
      "purpose": "A run's type feedback rows on its own route (FIX 10389, CALLS \"session feedback lives on the session route…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeRunSecretLiftDismiss",
+      "CodeRunSecretLiftDismissal",
+      "CodeRunSecretLiftProposalView",
+      "CodeRunSecretLiftRequest",
+      "CodeRunSecretLiftStatus"
+     ],
+     "path": "src/code_run/storage/secret_lift.rs",
+     "purpose": "Value-free owner decisions on code-run secret lift proposals",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 5
      }
     },
     {
@@ -19429,7 +19405,7 @@
      "path": "src/comm/stop_hold.rs",
      "purpose": "The send hold of an inbound STOP (F06): the external-effect gate's read of a STOP's standing opt-out, the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 4
      }
     },
     {
@@ -20078,7 +20054,6 @@
       "OutputAffordance",
       "OutputContextEntry",
       "OutputContextView",
-      "OutputDecayPolicy",
       "OutputRef",
       "OutputTier",
       "OutputWorkingContext"
@@ -20090,7 +20065,8 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 17,
-      "struct": 5
+      "re-export": 1,
+      "struct": 4
      }
     },
     {
@@ -21541,7 +21517,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 6
      }
@@ -22267,9 +22243,10 @@
      "path": "src/context_board/plugin/claim.rs",
      "purpose": "Install claim payload and the pre-consent proposal path",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 3,
       "fn": 4,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -22961,7 +22938,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 69,
+      "fn": 70,
       "struct": 1
      }
     },
@@ -23143,17 +23120,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SourceRankingPolicy"
-     ],
+     "notable": [],
      "path": "src/context_pack/source_ranking.rs",
-     "purpose": "PACK data for provenance-aware claim ordering",
+     "purpose": "Claim-source ranking over stored claim vocabulary",
      "surface": {
-      "crate-vis": 7,
-      "fn": 1,
-      "struct": 1
+      "crate-vis": 2,
+      "re-export": 1
      }
     },
     {
@@ -23430,15 +23404,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "OutputMark"
-     ],
+     "notable": [],
      "path": "src/conversation/output_guard.rs",
      "purpose": "The container output guard (OF-365 P5, FIX 1389): the fence between an attendee's first entry into a…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 1,
       "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -23963,9 +23935,9 @@
      "path": "src/core_write/batch.rs",
      "purpose": "`vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "enum": 1,
-      "fn": 3
+      "fn": 2
      }
     },
     {
@@ -23975,17 +23947,7 @@
      "path": "src/core_write/conversations.rs",
      "purpose": "`vault.conversations.create` and `vault.conversations.turns.create` (OF-181): a conversation, and a TURN…",
      "surface": {
-      "fn": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/core_write/dag.rs",
-     "purpose": "`vault.conversations.records.append` (OF-181): one DAG record and its topology, the write `POST…",
-     "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -24083,7 +24045,8 @@
      "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
      "surface": {
       "crate-vis": 16,
-      "fn": 2
+      "fn": 1,
+      "re-export": 1
      }
     },
     {
@@ -25991,7 +25954,8 @@
      "purpose": "Conflict and bucket identities for consolidation candidates and swarm returns",
      "surface": {
       "crate-vis": 10,
-      "fn": 9,
+      "fn": 8,
+      "re-export": 1,
       "struct": 9
      }
     },
@@ -27211,7 +27175,7 @@
      "path": "src/dreamer_consolidation/stage_log.rs",
      "purpose": "The one line a consolidation partition attempt logs when it ends (L07 DREAM-OBSERVE): the wall ms of each…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 8
      }
     },
     {
@@ -27246,9 +27210,9 @@
      "path": "src/dreamer_consolidation/support.rs",
      "purpose": "Consolidation constants, hash domains and shared codec helpers",
      "surface": {
-      "const": 11,
+      "const": 10,
       "crate-vis": 30,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -27479,7 +27443,7 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 25
      }
     },
     {
@@ -27936,7 +27900,7 @@
      "path": "src/dreamer_runner/authority.rs",
      "purpose": "Two vault-owned base-agent principals on one runner: the Dreamer and the Coach (ARCH-0026 #base-agents)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 6,
       "fn": 5,
       "re-export": 1,
       "struct": 2
@@ -28025,8 +27989,8 @@
      "path": "src/dreamer_runner/codec.rs",
      "purpose": "MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows",
      "surface": {
-      "crate-vis": 25,
-      "fn": 2
+      "crate-vis": 12,
+      "re-export": 1
      }
     },
     {
@@ -28067,7 +28031,7 @@
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
       "const": 1,
-      "crate-vis": 35,
+      "crate-vis": 32,
       "re-export": 25
      }
     },
@@ -30355,7 +30319,6 @@
       "CompleteDreamerAttemptOutcome",
       "DreamerAdmissionOutcome",
       "DreamerAdmittedAttempt",
-      "DreamerAttemptPayload",
       "DreamerAttemptProgressState",
       "DreamerAttemptStatus",
       "DreamerBudgetRecord",
@@ -30392,8 +30355,8 @@
       "crate-vis": 4,
       "enum": 12,
       "fn": 17,
-      "re-export": 2,
-      "struct": 25
+      "re-export": 3,
+      "struct": 24
      }
     },
     {
@@ -32692,7 +32655,7 @@
      "path": "src/edit_roundtrip/paragraph_review.rs",
      "purpose": "Typed questions over paragraphs (ARCH-0076 §2, \"Paragraph or clause\"): each selected paragraph of a DOCX…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 2
      }
@@ -34063,13 +34026,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/engine_store_hooks.rs",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -34738,20 +34701,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "OversightCounts",
-      "OversightKind",
-      "OversightReceipt"
-     ],
+     "notable": [],
      "path": "src/failure_ladder/oversight.rs",
      "purpose": "Per-vault signed oversight over healer proposals and review decisions",
      "surface": {
-      "crate-vis": 5,
-      "enum": 1,
-      "fn": 5,
-      "struct": 2
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -35083,7 +35040,7 @@
      "path": "src/federation/agent_grant.rs",
      "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -36795,17 +36752,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "CriticalWriteConfirmBinding",
       "CriticalWriteConfirmResolution"
      ],
      "path": "src/gate/confirm.rs",
      "purpose": "—",
      "surface": {
-      "const": 4,
-      "crate-vis": 19,
+      "const": 2,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 2,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -36815,7 +36771,7 @@
      "path": "src/gate/confirm/demotion_retry.rs",
      "purpose": "The expiry walk's backoff for a timeout demotion that keeps failing (FIX 12079)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 2
      }
     },
     {
@@ -36845,7 +36801,7 @@
      "path": "src/gate/consolidation_readers.rs",
      "purpose": "The readers that consolidate a claim, and the question each asks first",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -36891,7 +36847,7 @@
      "path": "src/gate/decision.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 23
      }
     },
     {
@@ -37602,7 +37558,7 @@
      "path": "src/gate/manifest_authenticity.rs",
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 15,
       "fn": 6,
       "struct": 1
      }
@@ -37624,7 +37580,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 83,
+      "crate-vis": 82,
       "mod": 1,
       "re-export": 8
      }
@@ -37859,7 +37815,7 @@
      "path": "src/gate/project_depth/codec.rs",
      "purpose": "Exact, content-addressed POLICY_MANIFEST carrier and signature grammar",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 16
      }
     },
     {
@@ -37917,7 +37873,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "ProposalPolicySource",
       "ProposalSubmissionCheck",
       "ProposalSubmissionReceipt"
      ],
@@ -37927,7 +37882,8 @@
       "const": 1,
       "crate-vis": 6,
       "fn": 3,
-      "struct": 3
+      "re-export": 1,
+      "struct": 2
      }
     },
     {
@@ -38721,7 +38677,7 @@
      "path": "src/gate/witness_message.rs",
      "purpose": "ONE-1686 (RT-04): the witness MESSAGE approval-ceiling door",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -39636,19 +39592,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "HeapDropReport"
-     ],
-     "path": "src/heap_drop.rs",
-     "purpose": "Counts reported by rebuildable index and window heap drops",
-     "surface": {
-      "crate-vis": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/hnsw/delete.rs",
      "purpose": "Node delete with symmetric/legacy backlink scrub",
@@ -39767,15 +39710,23 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ClaimVadPaymentWorker"
-     ],
+     "notable": [],
+     "path": "src/host_memory.rs",
+     "purpose": "The process-wide physical-memory admission line",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/housekeeping/claim_vad_payment.rs",
      "purpose": "The claim VAD payment worker's wake (FIX 11702, Engine 10-31 04:1x)",
      "surface": {
       "crate-vis": 4,
       "fn": 3,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -39845,9 +39796,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/housekeeping/wake.rs",
-     "purpose": "Wake deadlines: when a retirement sweep next has work, read without a scan",
+     "purpose": "Retirement wake rows are owned by the store layer",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 2
      }
     },
     {
@@ -39935,13 +39886,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/identity.rs",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 8
      }
     },
     {
@@ -39951,7 +39902,7 @@
      "path": "src/identity_redirect.rs",
      "purpose": "ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 4,
       "re-export": 1
      }
@@ -42126,26 +42077,25 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LinkedText",
       "ProseSpan",
       "RecordLinks",
       "RecordLinksRequest",
-      "RecordRef",
       "RecordRefPreview",
       "ResolveRecordRefRequest"
      ],
      "path": "src/lens/record_ref.rs",
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
-      "const": 4,
+      "const": 3,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 7,
-      "re-export": 1,
-      "struct": 6
+      "fn": 4,
+      "re-export": 3,
+      "struct": 5
      }
     },
     {
@@ -42319,7 +42269,7 @@
      "surface": {
       "crate-vis": 29,
       "mod": 202,
-      "re-export": 102
+      "re-export": 103
      }
     },
     {
@@ -46435,6 +46385,17 @@
       "crate-vis": 4,
       "fn": 3,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/core_write_doors.rs",
+     "purpose": "The core write doors on the `Memory` facade (OF-181): `vault.batch`, `vault.conversations.create`…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5
      }
     },
     {
@@ -56338,19 +56299,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "VectorRefinement"
-     ],
-     "path": "src/pipeline/vector_refinement.rs",
-     "purpose": "The dimensional space the existing HNSW funnel actually scores in",
-     "surface": {
-      "crate-vis": 1,
-      "struct": 1
-     }
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -57718,10 +57666,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ppr/invalidation.rs",
+     "purpose": "PPR's implementation of the store's transaction-local invalidation contract",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ppr/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -63966,7 +63924,7 @@
      "path": "src/self_heal/admission.rs",
      "purpose": "Content-address and occurrence binding shared by local and replicated puts",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -64089,9 +64047,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/self_heal/centroid_evidence/erase.rs",
-     "purpose": "A centroid snapshot's sources and their erase (FIX 10094)",
+     "purpose": "Centroid evidence custody is owned by the store layer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 3
      }
     },
     {
@@ -64532,7 +64490,7 @@
      "purpose": "Closed-form T1 projections",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 10,
       "re-export": 1,
       "struct": 6
@@ -64841,7 +64799,7 @@
      "surface": {
       "const": 4,
       "crate-vis": 7,
-      "fn": 4,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -64849,13 +64807,13 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "FieldProfile",
       "PackFormat"
      ],
      "path": "src/serialize/pack_format.rs",
      "purpose": "Context-pack output formats and field profiles",
      "surface": {
-      "enum": 2
+      "enum": 1,
+      "re-export": 1
      }
     },
     {
@@ -65851,9 +65809,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill/resident.rs",
-     "purpose": "Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base",
+     "purpose": "Resident ownership storage and loaded-skill erasure",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 2
      }
     },
     {
@@ -69044,7 +69002,7 @@
      "path": "src/store/actor_scrubs.rs",
      "purpose": "The actor scrubs of side tables whose eraser lives in the engine: the trait the engine implements, and the…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "trait": 1
      }
     },
@@ -69072,6 +69030,138 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AgentDefinition"
+     ],
+     "path": "src/store/agent_definition.rs",
+     "purpose": "The stored agent definition record (AGENT_DEF): a saved, host-agnostic agent composition and the shared…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/decode.rs",
+     "purpose": "Per-field MessagePack decoders, the validate_* ladder, and text helpers",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/keys.rs",
+     "purpose": "The AGENT_DEF body's pinned MessagePack keys, by name: the body, model entry, memory profile, budget split…",
+     "surface": {
+      "crate-vis": 52
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/mod.rs",
+     "purpose": "Pinned-key MessagePack encode and top-level body decode",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/models.rs",
+     "purpose": "The AGENT_DEF `models` list and `compaction_model` codec (FIX 4472): the strict decode, the pinned-key…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/optional_memory.rs",
+     "purpose": "The AGENT_DEF memory profile's `optional_memory` sub-map codec (ZERO-RETRIEVAL = A): the pinned-key encode…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/refusal.rs",
+     "purpose": "The AGENT_DEF `refusal` dial codec (OF-533): the pinned-key encode, the strict decode and the dial rule…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_definition_codec/value.rs",
+     "purpose": "Agent definition value and field decoding",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_manifest/mod.rs",
+     "purpose": "The embedded seeded-roster manifest (OF-334 / ONE-1890): its parsed form, the one cached parse, and the…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemoryProfile"
+     ],
+     "path": "src/store/agent_memory_profile.rs",
+     "purpose": "The per-agent context-window memory profile (RT-05, ONE-1687) an agent definition stores: its window budget…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentModel"
+     ],
+     "path": "src/store/agent_model.rs",
+     "purpose": "One model on an agent's model list (FIX 4472): the revision-pinned model and the owner's words on when the…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OptionalMemory",
+      "OptionalMemoryProfile"
+     ],
+     "path": "src/store/agent_optional_memory.rs",
+     "purpose": "How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): the…",
+     "surface": {
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AgentCeiling",
       "AgentWakeCadence",
       "CompactionOwnership",
@@ -69086,6 +69176,36 @@
       "enum": 4,
       "fn": 10,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RefusalDial",
+      "RefusalDomain",
+      "RefusalLevel"
+     ],
+     "path": "src/store/agent_refusal.rs",
+     "purpose": "The refusal dial (OF-533) an agent definition stores: one position from none to full, and the agent's…",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentScope"
+     ],
+     "path": "src/store/agent_scope.rs",
+     "purpose": "The run scope persisted with an agent definition: every world, base reality only, or one world plus base…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
      }
     },
     {
@@ -69168,6 +69288,7 @@
      "path": "src/store/attempt_cancel.rs",
      "purpose": "The graceful-cancel vocabulary an attempt row carries (ONE-1896): the landing and its trigger, the resume…",
      "surface": {
+      "const": 1,
       "enum": 5,
       "struct": 7
      }
@@ -69262,6 +69383,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_operations.rs",
+     "purpose": "The attempt queue operations the store layer runs but the engine owns: the trait the engine implements, and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AbandonAttempt",
       "AbandonOutcome",
@@ -69278,6 +69409,26 @@
      "surface": {
       "enum": 6,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_payload_response.rs",
+     "purpose": "An agent dispatch's attempt row as a row-held response of a checkpoint image (FIX 7115, KS-2B1): whether the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_payload_retire.rs",
+     "purpose": "Retiring an attempt row's payload text in place: the row takes its text-free form when the body instance it…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -69319,9 +69470,60 @@
      "path": "src/store/attempt_record.rs",
      "purpose": "The durable attempt row (`AttemptRecord`) and the field types it alone holds: its operator placement, a…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_record_codec/cancel_validators.rs",
+     "purpose": "The cancel-receipt shape table and the landing and cancel-state validators the strict reader runs on a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_record_codec/field_validators.rs",
+     "purpose": "The attempt record's field validators and their length caps and error literals: every check the strict…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 65
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_record_codec/mod.rs",
+     "purpose": "The attempt record's strict codec (`job_records` rows): the version byte and named MessagePack body, the…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_record_codec/signal_validators.rs",
+     "purpose": "The persisted-row validation of an attempt row's branch signals and asks: each field's shape, signal-key and…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_record_read.rs",
+     "purpose": "Point reads of one attempt row inside the caller's transaction: the decoded row, and whether a worker still…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -69346,6 +69548,16 @@
      "purpose": "Owner-retained queue kind and identifier range classification",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_run_root.rs",
+     "purpose": "The Dreamer run-root lookup: the OF-193 root attempt of one stamped run, read through the durable run index…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -69400,6 +69612,16 @@
      "purpose": "What a commit changed for the backup watermark (FIX 6730): a write that moves nothing an owner backs up (a…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/base_agent.rs",
+     "purpose": "Fixed base-agent principal rows and their immutable write guards",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -69520,7 +69742,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/body_envelope/response.rs",
@@ -69641,6 +69863,36 @@
       "enum": 2,
       "fn": 2,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/centroid_evidence/erase.rs",
+     "purpose": "A centroid snapshot's sources and their erase (FIX 10094)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/centroid_evidence/mod.rs",
+     "purpose": "Immutable centroid evidence rows and source-erasure custody",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/channel_class.rs",
+     "purpose": "Canonical recipient-facing channel classes",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -69885,6 +70137,20 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SourceRankingPolicy"
+     ],
+     "path": "src/store/claim_source_ranking/mod.rs",
+     "purpose": "PACK data for provenance-aware claim ordering",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -69892,6 +70158,19 @@
      "purpose": "Owed claim VAD consolidation (FIX 9598)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClaimVadPaymentWorker"
+     ],
+     "path": "src/store/claim_vad_payment.rs",
+     "purpose": "Per-handle claim VAD payment wake state and attached-worker lifetime",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -69922,6 +70201,19 @@
      "surface": {
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeEditReceipt",
+      "CodeOpProvenance"
+     ],
+     "path": "src/store/code_document_receipt.rs",
+     "purpose": "Stored code-operation provenance and exact edit receipts",
+     "surface": {
+      "struct": 2
      }
     },
     {
@@ -69997,7 +70289,20 @@
       "crate-vis": 11,
       "enum": 5,
       "fn": 8,
+      "re-export": 1,
       "struct": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeMemoryPullResult"
+     ],
+     "path": "src/store/code_memory_values/pull_result.rs",
+     "purpose": "Provenance-labelled code-memory pull values",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -70264,6 +70569,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/consolidation_evidence.rs",
+     "purpose": "Domain-separated content hashes of consolidation source bytes",
+     "surface": {
+      "const": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "DreamerConsolidationScope"
      ],
@@ -70272,6 +70588,31 @@
      "surface": {
       "enum": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutputMark"
+     ],
+     "path": "src/store/container_output.rs",
+     "purpose": "Per-container output invalidation marks",
+     "surface": {
+      "crate-vis": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FieldProfile"
+     ],
+     "path": "src/store/context_field_profile.rs",
+     "purpose": "The field profile a context pack selects record fields by",
+     "surface": {
+      "enum": 1
      }
     },
     {
@@ -70369,8 +70710,38 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/conversation_residency.rs",
+     "purpose": "The exact refusal of a turn whose witnessed message is not resident",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/conversation_span.rs",
      "purpose": "Result vocabulary for a fingerprint-pinned conversation span read",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/conversation_summary.rs",
+     "purpose": "Coverage references encoded in stored conversation summaries",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/core_write_operations.rs",
+     "purpose": "The engine operations the core write doors run on conversation rows and owner credentials: the trait the…",
      "surface": {
       "crate-vis": 1
      }
@@ -70429,6 +70800,20 @@
       "crate-vis": 10,
       "fn": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CriticalWriteConfirmBinding"
+     ],
+     "path": "src/store/critical_confirm_record.rs",
+     "purpose": "The critical-confirm pending record: its reason codes, its deadline, and the deterministic binding the…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 5,
+      "struct": 1
      }
     },
     {
@@ -70555,7 +70940,7 @@
      "path": "src/store/diagnostic_record/admission.rs",
      "purpose": "Content-address and occurrence binding shared by local and replicated puts",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -70611,8 +70996,18 @@
      "path": "src/store/diagnostic_record/mod.rs",
      "purpose": "Diagnostic record vocabulary, canonical body codecs and content addresses",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/diagnostic_record/normal_baseline.rs",
+     "purpose": "Normal-baseline predicate tokens retained by gate receipts",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -70681,6 +71076,20 @@
      "purpose": "Queue discriminators and wire constants used by stored Dreamer attempts",
      "surface": {
       "const": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerAttemptPayload"
+     ],
+     "path": "src/store/dreamer_attempt_payload.rs",
+     "purpose": "Dreamer attempt payload envelope and its MessagePack codec",
+     "surface": {
+      "crate-vis": 18,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -71082,6 +71491,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_hooks.rs",
+     "purpose": "The gate hooks the store layer's open, write, erase and read paths run, supplied by the engine when a store…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_metrics.rs",
+     "purpose": "One vault's gate outcome x reason-class counters",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71116,7 +71545,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/graph_version.rs",
-     "purpose": "Transactional graph-version metadata",
+     "purpose": "Transactional graph-version metadata, defined in `oneiron_store::graph_version`: the counter is read and…",
      "surface": {
       "crate-vis": 3
      }
@@ -71176,6 +71605,23 @@
      "purpose": "The policy manifest's fold of one committed snapshot, kept on the vault between resolutions: a light recall…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OversightCounts",
+      "OversightKind",
+      "OversightReceipt"
+     ],
+     "path": "src/store/healer_oversight.rs",
+     "purpose": "Per-vault signed oversight over healer proposals and review decisions",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -71270,6 +71716,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/housekeeping_wake.rs",
+     "purpose": "Wake deadlines: when a retirement sweep next has work, read without a scan",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "IdempotencyIntent"
      ],
@@ -71297,6 +71753,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/identity_redirect_rows.rs",
+     "purpose": "Redirect projection row encoding, deletion maintenance and inbound traversal",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/inference_snapshot_custody.rs",
      "purpose": "The inference snapshot custody client: one erasable wrapped data key per snapshot, on the one typed custody…",
      "surface": {
@@ -71304,13 +71770,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/install_identity.rs",
      "purpose": "Install identity rows, attestation values, and transaction-bound signing accessors",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 21
      }
     },
     {
@@ -71828,9 +72294,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/key_encoding.rs",
-     "purpose": "Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders and…",
+     "purpose": "Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders, and…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -71983,6 +72449,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/live_speaker_calls.rs",
+     "purpose": "Per-room live voice-call registration index",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/local_queue_budget.rs",
      "purpose": "Byte accounting for bounded device-local queues, separate from verdict/rate policy",
      "surface": {
@@ -72054,8 +72530,8 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 107,
-      "mod": 108,
+      "crate-vis": 147,
+      "mod": 115,
       "re-export": 31
      }
     },
@@ -72263,7 +72739,7 @@
      "purpose": "Version stamps, vault-meta key consts, HNSW layout consts, error strings, process locks, DB manifest, and…",
      "surface": {
       "const": 5,
-      "crate-vis": 41,
+      "crate-vis": 40,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -72332,6 +72808,18 @@
      "surface": {
       "enum": 1,
       "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutputDecayPolicy"
+     ],
+     "path": "src/store/output_decay.rs",
+     "purpose": "The output decay policy: after how many turns a context output's view drops from full to its overview, and…",
+     "surface": {
       "struct": 1
      }
     },
@@ -72412,6 +72900,16 @@
      "purpose": "The pages LMDB lays rows out in, bounded before an environment exists (FIX 5613): what a restore's copy…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/pending_comm_stop.rs",
+     "purpose": "Pending inbound STOP markers and transactional put/delete maintenance",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -72538,6 +73036,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/plugin_section_predicate.rs",
+     "purpose": "Stored plugin-section install claim predicate",
+     "surface": {
+      "const": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/policy_record.rs",
      "purpose": "Stored policy metadata and pure decision input vocabulary",
      "surface": {
@@ -72557,6 +73065,16 @@
       "crate-vis": 2,
       "enum": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/ppr_cache_invalidation.rs",
+     "purpose": "Transaction-local invalidation of a retrieval cache after stored graph writes",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -72718,7 +73236,7 @@
       "StoreRecordHooks"
      ],
      "path": "src/store/record_hooks.rs",
-     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation and room…",
+     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation, room and…",
      "surface": {
       "trait": 1
      }
@@ -72741,6 +73259,21 @@
      "purpose": "Pure parsing of record links in Markdown text",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecordRef"
+     ],
+     "path": "src/store/record_ref.rs",
+     "purpose": "Typed record references and bounded record display labels",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -73694,6 +74227,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/skill_resident.rs",
+     "purpose": "Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/skill_source_carrier.rs",
      "purpose": "Holder-bound exact skill source carrier framing",
      "surface": {
@@ -73794,6 +74337,16 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/task_authority_guard.rs",
+     "purpose": "Immutable task-authority fact row and edge deletion guards",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -73924,10 +74477,10 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/store/vector_index/keys.rs",
-     "purpose": "HNSW metadata key/counter literals, error strings, and the one-way prefix",
+     "path": "src/store/vad_annotation.rs",
+     "purpose": "Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 8
      }
     },
     {
@@ -73935,10 +74488,28 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/vector_index/mod.rs",
-     "purpose": "Persisted vector-index metadata and admission vocabulary",
+     "purpose": "Persisted vector-index metadata and admission vocabulary, defined in `oneiron_store::vector_index`: each…",
      "surface": {
       "crate-vis": 8
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/vector_index/rebuild.rs",
+     "purpose": "Validation of the stored key and vector bytes admitted by a rebuild",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/vector_index_dbs.rs",
+     "purpose": "The engine's [`VectorIndexDbs`] for each of its store handles: the table accessors and union flag of…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -73997,7 +74568,7 @@
      "path": "src/store/witness_message_body.rs",
      "purpose": "Canonical MESSAGE body vocabulary, encoding, and structural validation",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -74088,6 +74659,16 @@
      "purpose": "Storage keys for foreign-world registration and stale markers",
      "surface": {
       "const": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/writer_hold.rs",
+     "purpose": "Writer closure timing and the Dreamer writer-hold trace",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -78654,7 +79235,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities",
      "surface": {
       "const": 2,
-      "crate-vis": 24,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
@@ -83439,7 +84020,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1256
+      "fn": 1257
      }
     },
     {
@@ -87802,7 +88383,7 @@
       "crate-vis": 4,
       "enum": 3,
       "fn": 4,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2
      }
     },
@@ -87827,6 +88408,19 @@
      "purpose": "Recording one owner work request in the act's own transaction, and the one rule that names its executor; and…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeviceSyncStart"
+     ],
+     "path": "src/world_keys/owner_work/relay_start.rs",
+     "purpose": "The host's last observed device-sync start outcome, never current health",
+     "surface": {
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -89080,7 +89674,7 @@
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes"
     },
     "agent_def": {
-     "files": 24,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -89311,7 +89905,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 174,
+     "files": 175,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89479,7 +90073,7 @@
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution"
     },
     "core_write": {
-     "files": 5,
+     "files": 4,
      "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -89635,7 +90229,7 @@
     "engine_store_hooks": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
@@ -89737,19 +90331,19 @@
      "layout": "file",
      "purpose": "Productivity-pack task-role vocabulary + task/habit checkin validators, plus the derived Habit streak…"
     },
-    "heap_drop": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Counts reported by rebuildable index and window heap drops"
-    },
     "hnsw": {
      "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "HNSW graph index over the persisted neighbor graph"
+    },
+    "host_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The process-wide physical-memory admission line"
     },
     "housekeeping": {
      "files": 8,
@@ -89768,7 +90362,7 @@
     "identity": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…"
     },
@@ -89859,7 +90453,7 @@
     "lens": {
      "files": 38,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Closed generated-lens atom vocabulary"
     },
@@ -89920,7 +90514,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 352,
+     "files": 353,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90039,7 +90633,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 69,
+     "files": 68,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90067,7 +90661,7 @@
      "purpose": "Transaction-composable storage ports"
     },
     "ppr": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90382,7 +90976,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 416,
+     "files": 472,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90613,16 +91207,16 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 141,
+   "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6296,
+   "source_files": 6352,
    "test_files": 895
   },
   "oneiron-android": {
@@ -92116,7 +92710,7 @@
      "surface": {
       "const": 2,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "trait": 1
      }
     },
@@ -92643,7 +93237,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/beam/model_scaffold.rs",
@@ -94027,7 +94621,7 @@
     "beam": {
      "files": 42,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
@@ -94130,7 +94724,7 @@
      "purpose": "`vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120)"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "oneiron-bench — benchmark harness drivers",
    "source_files": 153,
    "test_files": 18
@@ -97076,6 +97670,22 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MachineMemory",
+      "MemoryLease",
+      "MemoryRefusal"
+     ],
+     "path": "src/host_memory.rs",
+     "purpose": "The process's physical-memory admission line for host and native work",
+     "surface": {
+      "enum": 1,
+      "fn": 14,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -97096,7 +97706,7 @@
      "path": "src/lib.rs",
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
-      "mod": 23,
+      "mod": 24,
       "re-export": 2
      }
     },
@@ -97214,11 +97824,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "EntityMetadataHeader"
+     ],
      "path": "src/record_layout.rs",
      "purpose": "Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred…",
      "surface": {
-      "const": 6
+      "const": 6,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -97545,6 +98159,13 @@
      "layout": "file",
      "purpose": "The caller-supplied retrieval filter"
     },
+    "host_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The process's physical-memory admission line for host and native work"
+    },
     "identity_topology": {
      "files": 1,
      "impl_vault": false,
@@ -97653,7 +98274,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 63,
+   "source_files": 64,
    "test_files": 1
   },
   "oneiron-crypto": {
@@ -104789,7 +105410,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1224
+      "fn": 1225
      }
     },
     {
@@ -106541,7 +107162,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1225
+      "fn": 1226
      }
     },
     {
@@ -110963,6 +111584,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/code_run_secret_lift_doors.rs",
+     "purpose": "The owner's code-result secret lift list and proposal-only dismissal",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/code_view_doors.rs",
      "purpose": "Typed owner projections of linked working views and account-local cache use",
      "surface": {
@@ -111556,7 +112187,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 163
+      "crate-vis": 164
      }
     },
     {
@@ -113826,7 +114457,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 64
+      "crate-vis": 65
      }
     },
     {
@@ -113907,6 +114538,16 @@
      "purpose": "`/v1/owner/cleanup/review` and `/v1/owner/cleanup/decide`: one open cleanup proposal reviewed slot by slot…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/code_run_secret_lift_routes.rs",
+     "purpose": "Value-free code-result secret lift proposals on the owner HTTP door",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -120205,7 +120846,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 16
      }
     },
     {
@@ -125990,7 +126631,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 654,
+     "files": 656,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -126496,7 +127137,7 @@
    },
    "over_bar": 43,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1518,
+   "source_files": 1520,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -126843,6 +127484,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConsolidationReader"
+     ],
+     "path": "src/consolidation_reader.rs",
+     "purpose": "The readers that consolidate a claim: the vocabulary the engine's consolidation check and the store layer's…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AddressMode",
       "AppendFailure",
       "AppendRecord",
@@ -126946,6 +127601,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConfirmDemotionRetries",
+      "ConfirmDemotionRetry"
+     ],
+     "path": "src/critical_confirm_retry.rs",
+     "purpose": "The expiry walk's backoff state for a timeout demotion that keeps failing (FIX 12079): a row whose demotion…",
+     "surface": {
+      "const": 2,
+      "fn": 3,
+      "struct": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "EmbeddingDevice",
       "EmbeddingProvenance",
       "InputKind"
@@ -126956,6 +127627,18 @@
       "const": 2,
       "enum": 2,
       "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignRateThresholds"
+     ],
+     "path": "src/esign_rate_thresholds.rs",
+     "purpose": "The e-sign send-rate thresholds a policy manifest resolves to",
+     "surface": {
       "struct": 1
      }
     },
@@ -126975,6 +127658,30 @@
       "fn": 5,
       "struct": 1,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/graph_version.rs",
+     "purpose": "The graph version counter in `hnsw_meta`, which PPR caches are keyed and validated by, and its little-endian…",
+     "surface": {
+      "const": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HeapDropReport"
+     ],
+     "path": "src/heap_drop.rs",
+     "purpose": "Counts reported by rebuildable index and window heap drops",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -127019,7 +127726,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 29
+      "mod": 42
      }
     },
     {
@@ -127030,6 +127737,16 @@
      "purpose": "The occurrence span past which a stored record is a long interval",
      "surface": {
       "const": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/manifest_origin_keys.rs",
+     "purpose": "The row keys of a policy manifest's trusted-origin and seeded-confidence side tables, spelled for the…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -127346,6 +128063,45 @@
      "path": "src/overlay_db/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PolicyScopedGrant"
+     ],
+     "path": "src/policy_scoped_grant.rs",
+     "purpose": "One scoped grant row of a policy manifest, as the manifest fold decodes it",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProjectBirthOwnerProof",
+      "ProjectDepthBirth"
+     ],
+     "path": "src/project_depth_record.rs",
+     "purpose": "A project's depth birth record, as a POLICY_MANIFEST contribution carries it",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProposalPolicySource"
+     ],
+     "path": "src/proposal_observation_record.rs",
+     "purpose": "The policy source behind a proposal submission's advisory threshold, as the proposal observation records it",
+     "surface": {
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -127684,6 +128440,67 @@
       "enum": 1,
       "fn": 17,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vector_index/keys.rs",
+     "purpose": "HNSW metadata key/counter literals, error strings, and the one-way prefix",
+     "surface": {
+      "const": 33
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VectorIndexDbs"
+     ],
+     "path": "src/vector_index/mod.rs",
+     "purpose": "Persisted vector-index metadata and admission vocabulary: the `hnsw_meta` keys and counters, read and bumped…",
+     "surface": {
+      "fn": 5,
+      "mod": 1,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InsertPlan"
+     ],
+     "path": "src/vector_insert_plan.rs",
+     "purpose": "Prepared vector-index neighbor choices bound to a read snapshot",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VectorRefinement"
+     ],
+     "path": "src/vector_refinement.rs",
+     "purpose": "The dimensional space the existing HNSW funnel actually scores in",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vector_row.rs",
+     "purpose": "The persisted vector row codec (EMB-3 v1): little-endian f16 components behind a one-byte format tag",
+     "surface": {
+      "const": 1,
+      "fn": 3
      }
     },
     {
@@ -128776,6 +129593,13 @@
      "layout": "file",
      "purpose": "Connector-key lifecycle status and its pinned wire strings"
     },
+    "consolidation_reader": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The readers that consolidate a claim: the vocabulary the engine's consolidation check and the store layer's…"
+    },
     "conversation_record": {
      "files": 1,
      "impl_vault": false,
@@ -128790,6 +129614,13 @@
      "layout": "dir",
      "purpose": "Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages…"
     },
+    "critical_confirm_retry": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The expiry walk's backoff state for a timeout demotion that keeps failing (FIX 12079): a row whose demotion…"
+    },
     "embedding_vocabulary": {
      "files": 1,
      "impl_vault": false,
@@ -128797,12 +129628,33 @@
      "layout": "file",
      "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…"
     },
+    "esign_rate_thresholds": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The e-sign send-rate thresholds a policy manifest resolves to"
+    },
     "file_secret_marks": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
+    },
+    "graph_version": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The graph version counter in `hnsw_meta`, which PPR caches are keyed and validated by, and its little-endian…"
+    },
+    "heap_drop": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Counts reported by rebuildable index and window heap drops"
     },
     "identity_hints": {
      "files": 1,
@@ -128832,6 +129684,13 @@
      "layout": "file",
      "purpose": "The occurrence span past which a stored record is a long interval"
     },
+    "manifest_origin_keys": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The row keys of a policy manifest's trusted-origin and seeded-confidence side tables, spelled for the…"
+    },
     "model_decision": {
      "files": 13,
      "impl_vault": false,
@@ -128859,6 +129718,27 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Per-database accessor seam for the session write-overlay (ARCH-0052, D2)"
+    },
+    "policy_scoped_grant": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "One scoped grant row of a policy manifest, as the manifest fold decodes it"
+    },
+    "project_depth_record": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A project's depth birth record, as a POLICY_MANIFEST contribution carries it"
+    },
+    "proposal_observation_record": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The policy source behind a proposal submission's advisory threshold, as the proposal observation records it"
     },
     "receive_scan": {
      "files": 1,
@@ -128916,6 +129796,34 @@
      "layout": "file",
      "purpose": "The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under…"
     },
+    "vector_index": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Persisted vector-index metadata and admission vocabulary: the `hnsw_meta` keys and counters, read and bumped…"
+    },
+    "vector_insert_plan": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Prepared vector-index neighbor choices bound to a read snapshot"
+    },
+    "vector_refinement": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The dimensional space the existing HNSW funnel actually scores in"
+    },
+    "vector_row": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The persisted vector row codec (EMB-3 v1): little-endian f16 components behind a one-byte format tag"
+    },
     "window_key": {
      "files": 1,
      "impl_vault": false,
@@ -128940,7 +129848,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 143,
+   "source_files": 157,
    "test_files": 4
   },
   "oneiron-uniffi": {
@@ -129837,6 +130745,11 @@
       "CodeRepoView",
       "CodeRunModelHealCountRequest",
       "CodeRunModelHealCountView",
+      "CodeRunSecretLiftDismiss",
+      "CodeRunSecretLiftDismissal",
+      "CodeRunSecretLiftProposalView",
+      "CodeRunSecretLiftRequest",
+      "CodeRunSecretLiftStatus",
       "CodeRunTypeDiagnosticsRequest",
       "CodeRunWorkFile",
       "CodeRunWorkLink",
@@ -133559,7 +134472,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1105,
-      "struct": 3351
+      "struct": 3356
      }
     },
     {

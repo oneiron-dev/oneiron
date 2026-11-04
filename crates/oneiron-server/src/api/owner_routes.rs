@@ -48,6 +48,7 @@ pub(super) mod browser_takeover_routes;
 pub(super) mod budget_hold_routes;
 pub(super) mod checkpoint_policy_routes;
 mod cleanup_decide;
+pub(super) mod code_run_secret_lift_routes;
 mod commitment_routes;
 pub(super) mod concern_routes;
 pub(super) mod conflict_routes;
@@ -188,6 +189,7 @@ fn owner_tables() -> OwnerTable {
         secret_use_routes::owner_table(),
         secret_reveal_routes::owner_table(),
         secret_found_routes::owner_table(),
+        code_run_secret_lift_routes::owner_table(),
         secret_lift_routes::owner_table(),
         steer_routes::owner_table(),
         stream_recovery_routes::owner_table(),
