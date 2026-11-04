@@ -69426,6 +69426,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/attempt_record_read.rs",
+     "purpose": "Point reads of one attempt row inside the caller's transaction: the decoded row, and whether a worker still…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AttemptResultRef"
      ],
@@ -72199,7 +72209,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 117,
+      "crate-vis": 118,
       "mod": 108,
       "re-export": 31
      }
@@ -90546,7 +90556,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 428,
+     "files": 429,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90786,7 +90796,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6310,
+   "source_files": 6311,
    "test_files": 895
   },
   "oneiron-android": {
