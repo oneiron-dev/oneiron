@@ -2246,7 +2246,7 @@ export type SkillOptimizeTradeoffResolveRequest = { proposal: EntityId; pending:
 export type SkillGovernanceSetRequest = { entity: EntityId; tier?: string | null }
 /** `oneiron::verbs::hub::HubHookBindRequest` */
 export type HubHookBindRequest = { pack: string }
-/** `oneiron::skill_hub::pack_catalog::hooks::HookActorClass` */
+/** `oneiron::store::pack_hook_actor_class::HookActorClass` */
 export type HookActorClass = "human" | "agent" | "system"
 /** `oneiron::skill_hub::pack_catalog::hooks::HookPhase` */
 export type HookPhase = "pre" | "post" | "fact"
@@ -6682,7 +6682,7 @@ export type ScoreObservation = { model: ModelId; benchmark: string; score: numbe
 export type ScoreSnapshot = { source: string; fetched_at: number; observations: ScoreObservation[]; source_rows?: EntityId[] | null }
 /** `oneiron::llm::catalog_doors::types::ModelCatalogRefresh` */
 export type ModelCatalogRefresh = { revision: string; expected_revision?: string | null; catalog: CatalogSeed; scores?: ScoreSnapshot[] }
-/** `oneiron::llm::registry::ModelScoreDiff` */
+/** `oneiron::store::model_score_diff::ModelScoreDiff` */
 export type ModelScoreDiff = { model: ModelId; source: string; benchmark: string; previous?: number | null; score: number; fetched_at: number }
 /** `oneiron::llm::catalog_doors::types::ModelCatalogRevision` */
 export type ModelCatalogRevision = { revision: string; previous_revision?: string | null; catalog: CatalogSeed; rows: ModelRegistryRow[]; score_diffs: ModelScoreDiff[]; refreshed_at: number }
@@ -6946,7 +6946,7 @@ export type DecisionBandEnforceRequest = { question: DecisionQuestion; reversibi
 export type DecisionAskAnswerRequest = { seq: number; answer: DecisionAnswer }
 /** `oneiron::llm::decision::asks::AskPrior` */
 export type AskPrior = { answer: DecisionAnswer; probability?: number | null; provider: ProviderPin; paired?: PairedReading | null; person?: PairedReading | null }
-/** `oneiron::llm::decision::ladder::roles::AskRole` */
+/** `oneiron::store::decision_ask_role::AskRole` */
 export type AskRole = { role: "responsible"; actor: string; project?: string | null } | { role: "board"; project: string } | { role: "owner" }
 /** `oneiron::llm::decision::ladder::roles::AskTo` */
 export type AskTo = { role: AskRole; ceiling: RoleRank; act: AskAct }
