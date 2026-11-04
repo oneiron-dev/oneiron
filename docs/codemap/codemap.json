@@ -24392,7 +24392,7 @@
      "path": "src/credential_door/door_types.rs",
      "purpose": "Door constants, floor names and prefixes, error type, and small naming helpers",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 22
      }
     },
     {
@@ -52901,7 +52901,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 16,
       "re-export": 5
      }
@@ -53273,6 +53273,16 @@
       "enum": 8,
       "fn": 1,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/receive_scan_verdict.rs",
+     "purpose": "The verdict of a pushed pack's pre-receive scan, and the lift advice a refused push carries back",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -63228,7 +63238,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/control/pending_revoke.rs",
@@ -63274,7 +63284,7 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 16,
       "fn": 4
      }
     },
@@ -63345,7 +63355,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "SecretHandleLabel",
       "SecretHandleLabelSet"
      ],
      "path": "src/secret_custody/handle_labels.rs",
@@ -63353,7 +63362,8 @@
      "surface": {
       "crate-vis": 3,
       "fn": 3,
-      "struct": 2
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -63408,44 +63418,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/known_values.rs",
-     "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
+     "purpose": "The custody side of the known-value index (OF-560 C): which records it never keys",
      "surface": {
-      "const": 1,
-      "crate-vis": 22
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/secret_custody/known_values/forms.rs",
-     "purpose": "A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not…",
-     "surface": {
-      "crate-vis": 13
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/secret_custody/known_values/rolling.rs",
-     "purpose": "The keyed rolling prefilter (FIX 12209): each entry keeps a 2-byte keyed rolling value of its first window…",
-     "surface": {
-      "crate-vis": 9
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/secret_custody/known_values/writer_index.rs",
-     "purpose": "One known-value index per write (FIX 12210): the index a write the group commit runs loads is kept, on the…",
-     "surface": {
-      "crate-vis": 4
+      "crate-vis": 3,
+      "re-export": 1
      }
     },
     {
@@ -63478,13 +63458,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/masked_files.rs",
-     "purpose": "Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2)",
+     "purpose": "The serving doors' reads of files stored with keys in them (OF-560; ARCH-0069 #mask-on-write)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 9,
       "fn": 3,
       "re-export": 1
      }
@@ -70833,6 +70813,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/file_key_masks.rs",
+     "purpose": "Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2)",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/found_key_notice_queue.rs",
+     "purpose": "The found-key notice queue: the custody records whose found-key notice is still due, with when their keys…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "GateAttributionErase"
      ],
@@ -71866,6 +71866,47 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/known_value_index.rs",
+     "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/known_value_index/forms.rs",
+     "purpose": "A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/known_value_index/rolling.rs",
+     "purpose": "The keyed rolling prefilter (FIX 12209): each entry keeps a 2-byte keyed rolling value of its first window…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/known_value_index/writer_index.rs",
+     "purpose": "One known-value index per write (FIX 12210): the index a write the group commit runs loads is kept, on the…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -72004,7 +72045,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 64,
+      "crate-vis": 71,
       "mod": 72,
       "re-export": 29
      }
@@ -72250,6 +72291,16 @@
      "purpose": "The pages LMDB lays rows out in, bounded before an environment exists (FIX 5613): what a restore's copy…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/pending_custody_revoke.rs",
+     "purpose": "The custody revokes this install still owes the owner's other machines (CALLS CUSTODY_REVOKE_PENDING_CARRY)…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -73052,6 +73103,29 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SecretHandleLabel"
+     ],
+     "path": "src/store/secret_handle_labels.rs",
+     "purpose": "The owner-set labels on custody handles: one stored label per custody record, with the Gate receipt of the…",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/secret_name_index.rs",
+     "purpose": "The live secret name index: each live custody record's name, the record it resolves to and the name's…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/send_receipt_audit.rs",
      "purpose": "Append-only send receipt audit storage",
@@ -73492,6 +73566,16 @@
      "purpose": "One world's pads installed into current custody and read back (KS-5, FIX 6706; PAD-2, FIX 10470): the core a…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/world_pad_rows.rs",
+     "purpose": "The world-key pad rows' store facts (KS-5): a world whose keys were destroyed or that was soft-deleted here…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -87241,7 +87325,7 @@
      "path": "src/world_keys/pad_custody.rs",
      "purpose": "A world key's pad at rest and on the move (KS-5, FIX 5686)",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 18
      }
     },
     {
@@ -87293,7 +87377,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world erase that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 19,
       "fn": 2,
       "re-export": 2,
       "struct": 1
@@ -89367,7 +89451,7 @@
      "purpose": "Live office body records and Vault doors"
     },
     "origin": {
-     "files": 158,
+     "files": 159,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89619,7 +89703,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 81,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89780,7 +89864,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 325,
+     "files": 335,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90020,7 +90104,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6228,
+   "source_files": 6236,
    "test_files": 898
   },
   "oneiron-android": {
@@ -125985,7 +126069,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 22
+      "mod": 23
      }
     },
     {
@@ -126377,6 +126461,21 @@
      "surface": {
       "crate-vis": 1,
       "fn": 15,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PadBody",
+      "WorldKeyPad"
+     ],
+     "path": "src/world_pad_codec.rs",
+     "purpose": "The world-key pad row codec (KS-5, FIX 5686): a pad, a pad row's deterministic id, and a pad row body in its…",
+     "surface": {
+      "enum": 1,
+      "fn": 17,
       "struct": 1
      }
     },
@@ -127546,6 +127645,13 @@
      "layout": "file",
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
+    "world_pad_codec": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The world-key pad row codec (KS-5, FIX 5686): a pad, a pad row's deterministic id, and a pad row body in its…"
+    },
     "write_envelope": {
      "files": 72,
      "impl_vault": false,
@@ -127556,7 +127662,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 120,
+   "source_files": 121,
    "test_files": 1
   },
   "oneiron-uniffi": {

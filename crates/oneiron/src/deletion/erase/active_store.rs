@@ -94,7 +94,11 @@ impl Vault {
             // An erased custody record's known-value history goes, its
             // entries' retirement staged; another record's stays (KS-3).
             self.store.stage_known_history_erase_in_txn(wtxn, id)?;
-            crate::secret_custody::erase_secret_handle_label_in_txn(&self.store, wtxn, id)?;
+            crate::store::secret_handle_labels::erase_secret_handle_label_in_txn(
+                &self.store,
+                wtxn,
+                id,
+            )?;
             // An erased pad row takes its key's pad out of custody, never
             // another of its world's (KS-5, FIX 7192): every caller wrote
             // the row's hard marker in this transaction, which the

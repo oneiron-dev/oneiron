@@ -509,7 +509,7 @@ impl Memory<'_> {
             } else {
                 crate::file_secret_marks::SecretSight::Masked
             };
-            let sighted = crate::secret_custody::sighted_bytes_in_txn(
+            let sighted = crate::store::file_key_masks::sighted_bytes_in_txn(
                 &self.vault().store,
                 txn,
                 bytes,
