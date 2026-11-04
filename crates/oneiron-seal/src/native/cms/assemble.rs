@@ -119,9 +119,10 @@ pub(crate) fn assemble_unsigned_attrs(
     memory: &MemoryLedger,
 ) -> Result<Vec<u8>, SealError> {
     let sum: usize = attrs.iter().map(Vec::len).sum();
-    // Two content-sized copies are live at once (the canonical content plus
-    // the output TLV) while the output is built.
-    admit(sum.saturating_mul(2).saturating_add(64), memory)?;
+    // Three content-sized copies are live at once: the caller's deep-cloned
+    // attributes, the canonical content, and the output TLV. The clone's
+    // bytes ride this admission (they were not admitted where made).
+    admit(sum.saturating_mul(3).saturating_add(64), memory)?;
     Ok(tlv(0xA1, &canonical_attribute_content(attrs)))
 }
 
@@ -155,9 +156,11 @@ pub(crate) fn build_signed_data(
     unsigned_attrs: &[Vec<u8>],
     memory: &MemoryLedger,
 ) -> Result<Vec<u8>, SealError> {
-    // Inputs copied into the output, plus DER headers (at most 16 bytes per
-    // TLV, about twenty TLVs) and the intermediate bodies, which together
-    // stay below twice the inputs; the slack is admission-only.
+    // Five content-sized copies of the chain are live at once at the peak
+    // (the `certs` concatenation, `sd_body`, `signed_data`, `ci_body`, and
+    // the returned TLV), each also carrying the smaller inputs, plus DER
+    // headers (at most 16 bytes per TLV, about twenty TLVs, none of them
+    // input-scaling); the slack beyond the headers is admission-only.
     let inputs: usize = material
         .signer_cert_der
         .len()
@@ -167,7 +170,7 @@ pub(crate) fn build_signed_data(
         .saturating_add(signed_attrs_wire.len())
         .saturating_add(signature.len())
         .saturating_add(unsigned_attrs.iter().map(Vec::len).sum());
-    admit(inputs.saturating_mul(2).saturating_add(1024), memory)?;
+    admit(inputs.saturating_mul(5).saturating_add(2048), memory)?;
     memory
         .admit_len::<&[u8]>(material.chain_ders.len().saturating_add(1))
         .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?;
@@ -181,8 +184,8 @@ pub(crate) fn build_signed_data(
     signer_info_body.extend_from_slice(&tlv(0x04, signature));
     if !unsigned_attrs.is_empty() {
         // The working clone below copies the outer slots as well as each
-        // attribute; the outer is admitted here, the attributes were admitted
-        // where they were made and the assembled output inside the call.
+        // attribute; the outer is admitted here, the cloned attributes ride
+        // `assemble_unsigned_attrs`' own 3x admission inside the call.
         memory
             .admit_len::<Vec<u8>>(unsigned_attrs.len())
             .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?;

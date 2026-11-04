@@ -351,31 +351,6 @@ pub(crate) struct Lease {
     _held: Mutex<Box<dyn Send>>,
 }
 
-/// A sealed output's owned reservation. Clones share it; equality and the
-/// serialized PDF/report do not depend on which owner holds the bytes.
-#[derive(Clone)]
-pub(crate) struct OutputLease(Arc<Lease>);
-
-impl OutputLease {
-    pub(crate) fn new(lease: Lease) -> Self {
-        Self(Arc::new(lease))
-    }
-}
-
-impl fmt::Debug for OutputLease {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("OutputLease")
-    }
-}
-
-impl PartialEq for OutputLease {
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
-}
-
-impl Eq for OutputLease {}
-
 /// Bytes whose memory was reserved before they were allocated, with the
 /// lease that holds the reservation (FIX 7655). The buffer and its lease
 /// drop together, so the memory goes back when the last owner lets go and
@@ -518,6 +493,41 @@ impl AdmittedBytes {
         }
         self.bytes.extend_from_slice(chunk);
         Ok(())
+    }
+}
+
+/// The wire form is the bytes alone, exactly as the `Vec<u8>` this
+/// replaces: a wire receipt arrives without a lease, like every other
+/// received buffer, and its receiver admits before use.
+impl serde::Serialize for AdmittedBytes {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.bytes.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AdmittedBytes {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self {
+            bytes: Vec::<u8>::deserialize(deserializer)?,
+            _lease: None,
+        })
+    }
+}
+
+impl AdmittedBytes {
+    /// The buffer for a sole owner without copying (FIX 8452): a shared
+    /// buffer is copied instead, so callers reserve the copy's bytes first —
+    /// a copy is memory nothing reserved.
+    pub(crate) fn into_vec(shared: SharedBytes) -> Vec<u8> {
+        Arc::try_unwrap(shared)
+            .map(|owned| owned.bytes)
+            .unwrap_or_else(|shared| shared.bytes.clone())
     }
 }
 

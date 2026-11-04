@@ -35,7 +35,13 @@ pub struct Stream {
 }
 
 /// Basic PDF object types defined in an enum.
-#[derive(Clone, PartialEq)]
+///
+/// `Clone` and `Drop` are stack-safe by hand below (FIX 8446): the iterative
+/// parser keeps dictionaries and arrays of any depth, so copying or dropping
+/// one — including a discarded `stream`-first alternative — must not recurse
+/// through the native stack. Both walk with an explicit heap stack and keep
+/// element and entry order identical to the derived implementations.
+#[derive(PartialEq)]
 pub enum Object {
     Null,
     Boolean(bool),
@@ -47,6 +53,145 @@ pub enum Object {
     Dictionary(Dictionary),
     Stream(Stream),
     Reference(ObjectId),
+}
+
+impl Drop for Object {
+    /// Iterative destruction: composite children drain onto an explicit heap
+    /// stack instead of recursing; leaves drop inline. The discarded parser
+    /// alternative that motivated this drops through the same path.
+    fn drop(&mut self) {
+        fn push_composite(stack: &mut Vec<Object>, value: Object) {
+            if matches!(
+                value,
+                Object::Array(_) | Object::Dictionary(_) | Object::Stream(_)
+            ) {
+                stack.push(value);
+            }
+        }
+        let mut current = std::mem::replace(self, Object::Null);
+        let mut stack: Vec<Object> = Vec::new();
+        loop {
+            match current {
+                Object::Array(items) => {
+                    for item in items {
+                        push_composite(&mut stack, item);
+                    }
+                }
+                Object::Dictionary(dict) => {
+                    for (_, value) in dict.0 {
+                        push_composite(&mut stack, value);
+                    }
+                }
+                Object::Stream(stream) => {
+                    current = Object::Dictionary(stream.dict);
+                    continue;
+                }
+                _ => {}
+            }
+            match stack.pop() {
+                Some(next) => current = next,
+                None => break,
+            }
+        }
+    }
+}
+
+impl Clone for Object {
+    /// Iterative deep clone: the walk emits post-order build events with an
+    /// explicit stack and replays them, so no nesting level recurses. Entry
+    /// and element order match the derived clone exactly.
+    fn clone(&self) -> Self {
+        enum Task<'a> {
+            Obj(&'a Object),
+            Dict(&'a Dictionary),
+            MakeArray(usize),
+            MakeDict(Vec<Vec<u8>>),
+            MakeStream(Vec<u8>, bool, Option<usize>),
+        }
+        enum Event {
+            Ready(Object),
+            MakeArray(usize),
+            MakeDict(Vec<Vec<u8>>),
+            MakeStream(Vec<u8>, bool, Option<usize>),
+        }
+        let mut tasks = vec![Task::Obj(self)];
+        let mut events: Vec<Event> = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Obj(Object::Array(items)) => {
+                    tasks.push(Task::MakeArray(items.len()));
+                    for child in items.iter().rev() {
+                        tasks.push(Task::Obj(child));
+                    }
+                }
+                Task::Obj(Object::Dictionary(dict)) => {
+                    tasks.push(Task::Dict(dict));
+                }
+                Task::Dict(dict) => {
+                    let mut keys = Vec::with_capacity(dict.len());
+                    let mut values = Vec::with_capacity(dict.len());
+                    for (key, value) in dict.0.iter() {
+                        keys.push(key.clone());
+                        values.push(value);
+                    }
+                    tasks.push(Task::MakeDict(keys));
+                    for value in values.into_iter().rev() {
+                        tasks.push(Task::Obj(value));
+                    }
+                }
+                Task::Obj(Object::Stream(stream)) => {
+                    tasks.push(Task::MakeStream(
+                        stream.content.clone(),
+                        stream.allows_compression,
+                        stream.start_position,
+                    ));
+                    tasks.push(Task::Dict(&stream.dict));
+                }
+                Task::MakeArray(len) => events.push(Event::MakeArray(len)),
+                Task::MakeDict(keys) => events.push(Event::MakeDict(keys)),
+                Task::MakeStream(content, allows, pos) => {
+                    events.push(Event::MakeStream(content, allows, pos));
+                }
+                // Composites are matched above, so this is a flat leaf whose
+                // own clone cannot recurse.
+                Task::Obj(leaf) => events.push(Event::Ready(leaf.clone())),
+            }
+        }
+        let mut values: Vec<Object> = Vec::new();
+        for event in events {
+            match event {
+                Event::Ready(object) => values.push(object),
+                Event::MakeArray(len) => {
+                    let children = values.split_off(values.len() - len);
+                    values.push(Object::Array(children));
+                }
+                Event::MakeDict(keys) => {
+                    let children = values.split_off(values.len() - keys.len());
+                    let mut dict = Dictionary::new();
+                    for (key, value) in keys.into_iter().zip(children) {
+                        dict.set(key, value);
+                    }
+                    values.push(Object::Dictionary(dict));
+                }
+                Event::MakeStream(content, allows, pos) => {
+                    let dict = match values.pop() {
+                        Some(Object::Dictionary(dict)) => dict,
+                        _ => Dictionary::new(),
+                    };
+                    values.push(Object::Stream(Stream {
+                        dict,
+                        content,
+                        allows_compression: allows,
+                        start_position: pos,
+                    }));
+                }
+            }
+        }
+        let mut values = values.into_iter();
+        let cloned = values.next().unwrap_or(Object::Null);
+        debug_assert!(values.next().is_none());
+        cloned
+    }
 }
 
 /// String objects can be written in two formats.
