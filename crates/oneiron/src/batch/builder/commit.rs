@@ -186,15 +186,17 @@ impl BatchBuilder<'_> {
         self.commit_inner(None, None, guard, |_| Ok(()), None)
     }
 
-    /// The same target guard and retained-denial behavior, with an atomic
-    /// follow-up after this batch's writes. A follow-up error rolls back the
-    /// batch and its allow receipts, as the existing checker terminal does.
-    pub(crate) fn commit_with_target_guard_and_then(
+    /// The target guard and retained-denial behavior, with atomic hooks
+    /// after successful preflight and after apply. Either hook's error rolls
+    /// back the batch and its allow receipts. This terminal has no reader
+    /// savepoint: its hooks share the batch's writer.
+    pub(crate) fn commit_with_target_guard_and_hooks(
         self,
         guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        before_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
-        self.commit_inner(None, None, guard, after_apply, None)
+        self.commit_inner_with_before_apply(None, None, guard, before_apply, after_apply, None)
     }
 
     /// Promotion's checker-aware terminal owns the transaction so a preflight
@@ -234,10 +236,29 @@ impl BatchBuilder<'_> {
     }
 
     fn commit_inner(
+        self,
+        checker: Option<&BoundedAutoChecker>,
+        reader: Option<&ScopedRead<'_>>,
+        target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+        writer_hold_site: Option<&'static str>,
+    ) -> Result<()> {
+        self.commit_inner_with_before_apply(
+            checker,
+            reader,
+            target_guard,
+            |_| Ok(()),
+            after_apply,
+            writer_hold_site,
+        )
+    }
+
+    fn commit_inner_with_before_apply(
         mut self,
         checker: Option<&BoundedAutoChecker>,
         reader: Option<&ScopedRead<'_>>,
         target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        before_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
         writer_hold_site: Option<&'static str>,
     ) -> Result<()> {
@@ -337,6 +358,9 @@ impl BatchBuilder<'_> {
                     }),
                     Err(err) => Rows::Discard(Err(err.into())),
                 };
+            }
+            if let Err(err) = before_apply(wtxn) {
+                return Rows::Discard(Err(err.into()));
             }
             // The routed puts' events project here, before the gate, VAD and
             // lexical staging of the ops that remain. From here an unbound

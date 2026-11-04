@@ -229,7 +229,7 @@ impl Vault {
             input.text.as_deref().map(text_pairs),
         )?
         .edge_checked(&id, &conversation, 1.0)
-        .commit_with_target_guard_and_then(
+        .commit_with_target_guard_and_hooks(
             |txn| {
                 if admits(txn, &conversation, &id)? {
                     existed.set(crate::ports::EntityStoreRead::port_entity_present(
@@ -241,6 +241,12 @@ impl Vault {
                 }
                 outside.set(true);
                 Err(crate::Error::EntityNotFound)
+            },
+            |txn| {
+                if !existed.get() {
+                    crate::conversation_dag::permit_core_turn_in_txn(self, txn, &conversation, id)?;
+                }
+                Ok(())
             },
             |txn| {
                 if !existed.get() {

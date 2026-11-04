@@ -87,4 +87,4 @@ mod tests;
 #[cfg(any(test, all(feature = "sync", feature = "test-hooks")))]
 pub mod test_support;
 
-pub(crate) use migration::{join_core_turn_in_txn, migrate_in_txn};
+pub(crate) use migration::{join_core_turn_in_txn, migrate_in_txn, permit_core_turn_in_txn};

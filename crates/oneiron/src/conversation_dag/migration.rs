@@ -23,6 +23,16 @@ pub(crate) fn migrate_in_txn(
     initialize_except_in_txn(vault, txn, conversation, None)
 }
 
+/// The admitted current producer permits its fresh ChildOf before staging.
+pub(crate) fn permit_core_turn_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    conversation: &EntityId,
+    turn: EntityId,
+) -> Result<()> {
+    super::admission::permit(&vault.store, txn, &turn, conversation)
+}
+
 /// A fresh core TURN joins the actual local HEAD in its create transaction.
 /// It is excluded only while initializing the pre-existing received DAG;
 /// its own Parent and canonical placement are then written explicitly.
@@ -35,9 +45,10 @@ pub(crate) fn join_core_turn_in_txn(
 ) -> Result<()> {
     // These records already keep their explicit non-trunk placement.
     if graph::is_thread_record(&vault.store, txn, &turn)?
+        || super::writes::bound_to_thread(vault, txn, &turn)?
         || graph::is_sub_session_record(&vault.store, txn, &turn)?
     {
-        return Ok(());
+        return super::admission::finish(&vault.store, txn, &turn);
     }
     initialize_except_in_txn(vault, txn, conversation, Some(&turn))?;
     if graph::parent(&vault.store, txn, &turn)?.is_none()
@@ -48,7 +59,8 @@ pub(crate) fn join_core_turn_in_txn(
             .edge_with_value_fields(&turn, EdgeKind::Parent, &parent, super::writes::value(at))
             .apply(txn)?;
     }
-    set_head_in_txn(vault, txn, conversation, turn)
+    set_head_in_txn(vault, txn, conversation, turn)?;
+    super::admission::finish(&vault.store, txn, &turn)
 }
 
 fn initialize_except_in_txn(
@@ -93,6 +105,7 @@ fn initialize_except_in_txn(
     let mut turns = Vec::new();
     let mut all_parents = HashMap::new();
     let mut non_trunk = HashSet::new();
+    let mut opaque_thread_roots = HashSet::new();
     for id in candidates {
         match live_entity_row_in_txn(&vault.store, txn, &id)? {
             LiveEntityRow::Absent | LiveEntityRow::DeletedShell => continue,
@@ -101,7 +114,8 @@ fn initialize_except_in_txn(
         }
         graph::require_member(&vault.store, txn, conversation, &id)?;
         let body = graph::require_type(&vault.store, txn, &id, ENTITY_TYPE_TURN)?;
-        super::admission::record_kind(&body)?;
+        let record_kind = super::admission::record_kind(&body)?;
+        let room_thread = crate::workspace_roster::thread_binding(&body)?.is_some();
         let raw = vault
             .store
             .port_entity_record(txn, &id)?
@@ -130,7 +144,12 @@ fn initialize_except_in_txn(
             continue;
         }
         all_parents.insert(id, parent);
-        let thread = graph::is_thread_record(&vault.store, txn, &id)?;
+        // Native opaque room-thread births need no DAG Parent. They remain
+        // graph roots for later thread replies, but never trunk roots.
+        if parent.is_none() && room_thread && record_kind.is_none() {
+            opaque_thread_roots.insert(id);
+        }
+        let thread = graph::is_thread_record(&vault.store, txn, &id)? || room_thread;
         let sub_session =
             graph::is_sub_session_record(&vault.store, txn, &id).map_err(|error| {
                 // This is a received conversation's topology, not a storage
@@ -202,7 +221,7 @@ fn initialize_except_in_txn(
                 ));
             }
             all_children.entry(parent).or_default().push(id);
-        } else if non_trunk.contains(&id) {
+        } else if non_trunk.contains(&id) && !opaque_thread_roots.contains(&id) {
             return Err(graph::invalid(
                 "received thread or sub-session has no Parent",
             ));
