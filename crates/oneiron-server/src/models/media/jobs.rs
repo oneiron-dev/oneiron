@@ -310,7 +310,7 @@ impl JobStore {
                     Some(bytes) => {
                         let Ok(bytes) = oneiron::store::media_response_read(row.as_bytes(), &bytes)
                         else {
-                            return Ok(false);
+                            return Ok::<_, oneiron::Error>(false);
                         };
                         match rmp_serde::from_slice::<JobRow>(&bytes) {
                             Ok(kept) => {
@@ -335,7 +335,7 @@ impl JobStore {
                         self.vault.sync_state_delete_in_write_txn(txn, key)?;
                     }
                 }
-                Ok(expired)
+                Ok::<_, oneiron::Error>(expired)
             })
             .map_err(|error| error.to_string())
     }
