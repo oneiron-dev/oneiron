@@ -1,50 +1,15 @@
 #[cfg(test)]
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::Ordering as AtomicOrdering;
 
 use crate::counterparty_contact::CounterpartyFirstTouch;
 use crate::write_envelope::communication::SendOverrideMatch;
 
 use super::input::ExternalEffectGateContext;
 
-pub(super) use crate::store::gate_reason::{GATE_METRIC_OUTCOME_COUNT, GATE_METRIC_REASON_CLASS_COUNT};
-
-/// One vault's gate outcome x reason-class counters.
-///
-/// Owned by that vault's store handle (`StoreCore::diagnostics`), so a reader
-/// sees only what its own vault's doors decided.
-pub(crate) struct GateMetrics {
-    counters: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT]; GATE_METRIC_OUTCOME_COUNT],
-}
-
-impl Default for GateMetrics {
-    fn default() -> Self {
-        Self {
-            counters: [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
-                GATE_METRIC_OUTCOME_COUNT],
-        }
-    }
-}
+pub(crate) use crate::store::gate_metrics::GateMetrics;
 
 impl GateMetrics {
-    #[must_use]
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn snapshot(&self) -> GateMetricsSnapshot {
-        let mut counters =
-            Vec::with_capacity(GATE_METRIC_OUTCOME_COUNT * GATE_METRIC_REASON_CLASS_COUNT);
-        for outcome in GateOutcome::metric_values() {
-            for reason_class in GateMetricReasonClass::metric_values() {
-                counters.push(GateMetricCounter {
-                    outcome,
-                    reason_class,
-                    count: self.counters[outcome.metric_index()][reason_class.metric_index()]
-                        .load(AtomicOrdering::Relaxed),
-                });
-            }
-        }
-        GateMetricsSnapshot { counters }
-    }
-
     pub(super) fn record_decision(&self, decision: &GateDecision) {
         #[cfg(test)]
         GATE_METRIC_EMISSIONS.with(|count| count.set(count.get().saturating_add(1)));
@@ -58,8 +23,9 @@ impl GateMetrics {
     }
 }
 
-pub(crate) use crate::store::gate_reason::{GateOutcome, GateReasonCode};
+#[cfg(test)]
 pub(super) use crate::store::gate_reason::GateMetricReasonClass;
+pub(crate) use crate::store::gate_reason::{GateOutcome, GateReasonCode};
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -252,31 +218,6 @@ pub(super) fn external_effect_receipt_reasons(
             Some(SendOverrideMatch::OneShot) => Some("comm_send_override_one_shot"),
             None => None,
         })
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct GateMetricCounter {
-    outcome: GateOutcome,
-    reason_class: GateMetricReasonClass,
-    count: u64,
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct GateMetricsSnapshot {
-    counters: Vec<GateMetricCounter>,
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-impl GateMetricsSnapshot {
-    #[must_use]
-    pub(crate) fn count(&self, outcome: GateOutcome, reason_class: GateMetricReasonClass) -> u64 {
-        self.counters
-            .iter()
-            .find(|counter| counter.outcome == outcome && counter.reason_class == reason_class)
-            .map_or(0, |counter| counter.count)
-    }
 }
 
 #[cfg(test)]

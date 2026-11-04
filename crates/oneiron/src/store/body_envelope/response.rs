@@ -296,8 +296,10 @@ impl ResponseFamily {
                     MediaKey::Part { .. } => Self::MediaPart,
                 })
             }
-            ResponseDb::Attempts => crate::attempt_queue::attempt_payload_family(key, value)
-                .then_some(Self::AttemptPayload),
+            ResponseDb::Attempts => {
+                crate::store::attempt_payload_route::attempt_payload_family(key, value)
+                    .then_some(Self::AttemptPayload)
+            }
         }
     }
 
@@ -592,7 +594,12 @@ impl ResponseFamily {
                 Ok(())
             }
             Self::AttemptPayload => {
-                crate::attempt_queue::retire_attempt_payload_in_txn(store, wtxn, key, &kept()?)
+                crate::store::attempt_payload_retire::retire_attempt_payload_in_txn(
+                    store,
+                    wtxn,
+                    key,
+                    &kept()?,
+                )
             }
             Self::Http | Self::InvocationClaim | Self::MediaJob => {
                 store
