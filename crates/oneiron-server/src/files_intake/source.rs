@@ -188,25 +188,24 @@ pub(crate) fn rescan(
             vault.dir_identity(),
         )?;
     let mut standings = standings_of(vault, &namespace, &notes)?;
-    // A row a partial scan left pending (a Files source's ledger meta behind
+    // A row a partial scan left pending (its source's ledger meta behind
     // what this scan read, or none) still owes its links: when no unreadable
     // folder could hold an included file, read whole so they reconcile
     // (REVIEW-4381 P1). A folder that still would not open retries it on a
     // later scan.
-    let pending = source.files.is_some()
-        && standings.iter().zip(notes.iter()).any(|(standing, note)| {
-            *standing == ImportedNoteStanding::Unchanged
-                && facts.get(note.path.as_str()).is_some_and(|read| {
-                    ledger
-                        .iter()
-                        .find(|file| file.path == note.path)
-                        .is_some_and(|file| {
-                            file.meta.is_none_or(|meta| {
-                                (meta.bytes, meta.modified_at) != (read.bytes, read.modified_at)
-                            })
+    let pending = standings.iter().zip(notes.iter()).any(|(standing, note)| {
+        *standing == ImportedNoteStanding::Unchanged
+            && facts.get(note.path.as_str()).is_some_and(|read| {
+                ledger
+                    .iter()
+                    .find(|file| file.path == note.path)
+                    .is_some_and(|file| {
+                        file.meta.is_none_or(|meta| {
+                            (meta.bytes, meta.modified_at) != (read.bytes, read.modified_at)
                         })
-                })
-        });
+                    })
+            })
+    });
     // A new note's inbound links, and a changed note's outbound ones, come
     // from the whole folder, skipped files included: with a new or changed
     // note the folder is read again, whole, so no live edge reads as dropped
@@ -465,8 +464,9 @@ fn read_for_rescan(
                 )
             }
             None => {
-                let (notes, name_only, facts, skipped) = read_folder_rescan(folder, counts, prior)?;
-                (notes, name_only, facts, skipped, Vec::new(), false)
+                let (notes, name_only, facts, skipped, unopened_dirs) =
+                    read_folder_rescan(folder, counts, prior)?;
+                (notes, name_only, facts, skipped, unopened_dirs, false)
             }
         };
     // A part goes with its file.
@@ -607,9 +607,8 @@ fn dir_can_hold_included(patterns: &[String], dir: &str) -> bool {
     patterns.is_empty()
         || patterns.iter().any(|pattern| {
             let pattern = pattern.strip_suffix('/').unwrap_or(pattern);
-            let wanted: Vec<&str> = pattern.split('/').collect();
             let mut here = dir.split('/');
-            for (at, segment) in wanted.iter().enumerate() {
+            for segment in pattern.split('/') {
                 if segment.contains("**") {
                     return true;
                 }
@@ -618,21 +617,12 @@ fn dir_can_hold_included(patterns: &[String], dir: &str) -> bool {
                     // under it.
                     return true;
                 };
-                let last = at + 1 == wanted.len();
-                if segment.contains('*') || segment.contains('?') {
-                    if last {
-                        // A final file-name segment matches only a file
-                        // directly inside, never below the top folder.
-                        return here.next().is_none();
-                    }
-                    continue;
-                }
-                if *segment != name {
+                if !matches(segment, name) {
                     return false;
                 }
             }
-            // The folder sits under the pattern's whole prefix.
-            true
+            // The final file-name segment was already consumed by a folder.
+            false
         })
 }
 
