@@ -127,7 +127,7 @@ pub mod attempt_manifest;
 pub mod attempt_result;
 pub mod canonical_document;
 pub mod checkout_task;
-pub mod checkpoint_host_recipient;
+pub use oneiron_store::checkpoint_host_recipient;
 pub mod code_tree_blob;
 pub mod conversation_body;
 pub mod conversation_record;
@@ -139,11 +139,14 @@ pub mod housekeeping_schedule;
 #[cfg(feature = "sync")]
 pub(crate) mod loro_document;
 #[cfg(feature = "sync")]
+pub(crate) mod loro_tombstones;
+#[cfg(feature = "sync")]
 pub mod materialization_event;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
+pub(crate) mod project_kind;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
 pub(crate) mod repo_environment;
@@ -188,7 +191,8 @@ pub mod code_snapshot;
 pub(crate) mod query_memo_codec;
 pub mod query_memos;
 pub(crate) use claim_vad_owed::{
-    owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
+    claim_vad_owed_in_txn, owe_claim_vad_in_txn, owed_claim_vad_count_in_txn,
+    settle_claim_vad_in_txn,
 };
 pub mod body_descriptor;
 mod commitment_due;
@@ -236,6 +240,8 @@ mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
 pub(crate) mod local_replica;
+#[cfg(feature = "sync")]
+pub(crate) mod replica_edge_key;
 mod notification_updates;
 mod open_gates;
 mod outbound_send_receipt;
@@ -284,7 +290,7 @@ pub(crate) use asset_body::{
     unused_imports,
     reason = "FIX 5489 PR2 and PR3 receive bodies through these"
 )]
-pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody};
+pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody, StagedHold};
 pub(crate) use served_vaults::served_vault_at;
 // FIX 6730: what a commit changes for the backup watermark.
 #[cfg(feature = "sync")]
@@ -334,7 +340,10 @@ pub use deadline_jobs::{DEADLINE_JOBS_CHECK_KIND, DeadlineJob};
 pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;
-pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
+pub(crate) use group_commit::{
+    AfterCommit, Callback, DetachedWrite, GroupCommit, GroupCommitCounters, Rows,
+    release_vault_handle,
+};
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;

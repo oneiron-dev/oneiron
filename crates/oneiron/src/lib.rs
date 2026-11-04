@@ -96,7 +96,7 @@ pub mod model_decision;
 pub mod model_step_context;
 pub(crate) mod model_step_effect;
 pub mod model_step_error;
-pub mod model_step_record;
+pub use oneiron_store::model_step_record;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod ppr_community;
@@ -106,7 +106,7 @@ pub mod reaction;
 pub mod rerank;
 pub mod research_budget;
 pub mod retrieval_depth;
-pub mod run_budget;
+pub use oneiron_run_budget::run_budget;
 pub mod teacher_probe_policy;
 mod vault_live_rows;
 pub use oneiron_base::retrieval_quality;
@@ -147,7 +147,7 @@ pub mod world_keys;
 pub mod channel_identity;
 pub mod channel_identity_autonomy;
 pub mod channel_identity_lifecycle;
-pub mod channel_identity_manifest;
+pub use oneiron_authority::channel_identity_manifest;
 pub mod channel_identity_provider;
 pub mod channel_identity_selection;
 pub mod counterparty_contact;
@@ -196,7 +196,7 @@ pub mod outbound_intent_ledger;
 #[cfg(feature = "sync")]
 pub mod sync;
 pub mod web_connector;
-pub mod web_fetch;
+pub use oneiron_web_fetch::web_fetch;
 // ===== Agent runtime ===== agent defs, dispatch, attempt queue, run tree, sessions, code-mode
 pub mod agent_def;
 pub mod agent_dispatch;
@@ -252,7 +252,7 @@ pub mod artifact_hosting;
 pub mod blob_artifact;
 pub mod browser_library;
 pub mod build_cache;
-pub mod bundle_generations;
+pub use oneiron_store::bundle_generations;
 pub mod checkout;
 pub mod code_artifact;
 pub mod code_document;
@@ -272,7 +272,7 @@ pub mod edit_settle;
 pub mod file_secret_marks;
 pub mod git_wire;
 pub mod inference_snapshot;
-pub(crate) mod key_material;
+pub(crate) use oneiron_store::key_material;
 pub mod merge_queue;
 pub mod office_body;
 pub mod origin;
@@ -399,9 +399,9 @@ pub use crate::compaction::{
     CompactionDirective, CompactionDriver, CompactionPacket, CompactionPayloadKind,
     CompactionProduct, CompactionRequest, CompactionSignal, CompactionSnapshotRef,
     CompactionTierClass, CompactionWatermark, CompactionWindowMessage, EPOCH_SUMMARY_BODY_KEYS,
-    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EPOCH_SUMMARY_MAX_DERIVED_EDGES,
-    EpochSummaryBody, MarginLaw, SwapPlan, ValidatedCompactionPacket, admit_compaction_packet,
-    decode_epoch_summary_body, encode_epoch_summary_body,
+    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody, MarginLaw, SwapPlan,
+    ValidatedCompactionPacket, admit_compaction_packet, decode_epoch_summary_body,
+    encode_epoch_summary_body,
 };
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
@@ -508,8 +508,8 @@ pub use crate::llm::{
     IncompleteReason, LlmBackend, LlmCapability, LlmCatalogEntry, LlmError, LlmGenerateFuture,
     LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult,
     LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality,
-    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RetryableLlmError,
-    TierPrecedence, UnsupportedCapability,
+    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ReasoningPartKind, ResponseFormat,
+    RetryableLlmError, TierPrecedence, UnsupportedCapability,
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,

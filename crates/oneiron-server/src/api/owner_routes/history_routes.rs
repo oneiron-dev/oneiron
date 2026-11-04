@@ -10,7 +10,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use serde::Deserialize;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -25,6 +25,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/history",
                 summary: "Every history erase filed for one text.",
                 row: None,
+                shape: None,
             },
             get(receipts),
         ),
@@ -34,6 +35,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/history/erase",
                 summary: "Drops one text's history below its oldest pin, or below through when that is no later.",
                 row: None,
+                shape: Some(RestShape::json(
+                    erase_history_body_schema,
+                    erase_outcome_schema,
+                )),
             },
             post(erase),
         ),
@@ -43,6 +48,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/history/erase/execute",
                 summary: "Runs a waiting history erase the caller started, once its veto window passed with no objection.",
                 row: None,
+                shape: Some(RestShape::json(execute_erase_body_schema, erased_schema)),
             },
             post(execute),
         ),

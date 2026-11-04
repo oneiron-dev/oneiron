@@ -602,6 +602,7 @@ pub use import::{
     ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteBatchReceipt, ImportedNoteLink,
     ImportedNoteStanding, NOTES_IMPORT_SOURCE,
 };
+pub(crate) use import::{folder_import_creator_in_txn, imported_note_source_in_txn};
 mod title_index;
 pub(crate) use birth::{document_birth_in_txn, room_birth_document_in_txn};
 // FIX 4280: a room's NOTE read where the room holds it, and the sizes a
@@ -617,6 +618,7 @@ pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationRec
 pub(crate) mod frame_envelope;
 #[cfg(feature = "sync")]
 mod replica;
+mod token_uses;
 #[cfg(feature = "sync")]
 pub use brief_view::{BriefCitationView, BriefView};
 #[cfg(feature = "sync")]

@@ -1,5 +1,6 @@
 //! The served host's side of the built-in connector packs (OF-519): the
-//! connection checks only a served host can run, the channel handles it
+//! connection checks only a served host can run, the isolated probes that
+//! qualify a built-in on them (FIX 710), the channel handles it
 //! keeps for every checked built-in channel, the provider webhooks those
 //! handles serve, the native mail pack's inbox reads, the transports its
 //! served sinks send through, and the Slack app's manifest and OAuth install.
@@ -7,6 +8,7 @@
 mod checks;
 mod handles;
 mod native_mail;
+mod probes;
 mod slack_app;
 mod webhooks;
 

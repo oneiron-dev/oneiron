@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
-use crate::side_table::{self, FixedSideKey, Named, SideKey, SideTable, SideTableDbs};
+use crate::side_table::{self, FixedSideKey, Named, Raw, SideKey, SideTable, SideTableDbs};
 use crate::store::Store;
 use oneiron_model::llm::{
     CacheDigest, CacheIdentity, ConditioningDigest, ScopeDigest, TokenDigest, VaultRef,
@@ -40,6 +40,13 @@ pub const SNAPSHOT_RECORD_SCHEMA: u32 = 1;
 /// Key: the catalog id (16 random bytes).
 pub(super) const CATALOG: SideTable<SnapshotId, SnapshotRecord, Named> =
     SideTable::new(&side_table::INFERENCE_SNAPSHOT_CATALOG);
+
+/// Key: the conversation id plus the catalog id (16 + 16 bytes), empty
+/// markers, so a restore lists one conversation's rows without reading the
+/// whole catalog. Written in the row's own transaction; startup reconcile
+/// heals rows that predate it.
+pub(super) const CONVERSATION_INDEX: SideTable<(EntityId, SnapshotId), (), Raw> =
+    SideTable::new(&side_table::INFERENCE_SNAPSHOT_CONVERSATION_INDEX);
 
 /// A snapshot's catalog id: 16 random bytes, never taken from a digest, and
 /// not the sealed body's own id. The body's file name derives from it.
@@ -98,7 +105,9 @@ pub struct SnapshotCompatibility {
     pub cache_mode: Option<CacheDigest>,
     /// The backend's implementation and build.
     pub runtime: Option<CacheDigest>,
-    /// The attention and position settings: rope, sliding window, sinks.
+    /// The attention and position settings: the worker's own digest where
+    /// its snapshot header names one, else the digest of the header's whole
+    /// compatibility (legacy snapshots).
     pub attention: Option<CacheDigest>,
     /// The worker's state serialization schema.
     pub state_schema: Option<u32>,
@@ -291,6 +300,30 @@ impl SnapshotRecord {
     }
 }
 
+/// Records the conversation index entry of the row `id` names under
+/// `conversation`, in `wtxn`.
+pub(super) fn put_conversation_entry(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    conversation: &EntityId,
+    id: &SnapshotId,
+) -> Result<()> {
+    CONVERSATION_INDEX.put(store, wtxn, &(*conversation, *id), &())
+}
+
+/// Drops the conversation index entry of the row `id` named under
+/// `conversation`, in `wtxn`.
+pub(super) fn delete_conversation_entry(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    conversation: &EntityId,
+    id: &SnapshotId,
+) -> Result<()> {
+    CONVERSATION_INDEX
+        .delete(store, wtxn, &(*conversation, *id))
+        .map(|_| ())
+}
+
 /// One catalog row as read: its id, and its record, `None` when the row
 /// does not decode.
 pub(super) type CatalogRow = (SnapshotId, Option<SnapshotRecord>);
@@ -318,6 +351,26 @@ pub(super) fn rows(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<CatalogRow>> {
         .into_iter()
         .filter_map(|(_, row)| row)
         .collect())
+}
+
+/// Every row of `conversation` that decodes and may serve a restore, by the
+/// conversation index: no other row is read. A dangling entry, whose row is
+/// gone, is skipped; the row's own transaction never leaves one.
+pub(super) fn rows_of_conversation(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    conversation: &EntityId,
+) -> Result<Vec<SnapshotRecord>> {
+    let mut out = Vec::new();
+    for (_, id) in CONVERSATION_INDEX.scan_keys(store, txn, conversation.as_bytes())? {
+        // Lenient: one damaged row must not hide every healthy snapshot.
+        if let Some(record) = CATALOG.get_lenient(store, txn, &id)? {
+            if record.reusable() {
+                out.push(record);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The rows an erase of `id` takes: every row whose dependency set names

@@ -1,6 +1,7 @@
 //! Folds every signed act on a vault setting (FIX 4624, FIX 5660): the
-//! owner's dreamer wake policy and inference defaults, and each agent's
-//! free-time policy, set by the owner or by an agent whose Grant names it.
+//! owner's dreamer wake policy, inference defaults and room-thread admin
+//! switches, and each agent's free-time policy, set by the owner or by an
+//! agent whose Grant names it.
 //!
 //! The setting itself is a local row of the install that changed it; the
 //! signed act is the account every machine the owner admits folds and
