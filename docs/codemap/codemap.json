@@ -31337,7 +31337,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 11,
       "mod": 11,
@@ -34105,13 +34105,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/commit_receipts.rs",
      "purpose": "Every generic entity-document commit carries its made_by receipt (FIX 7790, ARCH-0035): the engine stamp…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -34223,7 +34223,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 2,
       "re-export": 10
      }
