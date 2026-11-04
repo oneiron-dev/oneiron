@@ -43,6 +43,22 @@ pub(crate) async fn self_skills_call(
         .unwrap_or_else(|refusal| (Err(refusal), Some(Vec::new())))
 }
 
+/// A graph workflow needs the attached run's host context. The ordinary
+/// HTTP/MCP facade has no run or lease in this request; it must not guess
+/// one from the actor or mint one. RunHostDoor serves this verb with its
+/// actual registered lease, executor and current read proof.
+pub(crate) async fn self_skills_graph(
+    _server: &Arc<SyncServer>,
+    _auth: &CoreAuth,
+    _input: oneiron::receipt::GraphSkillRunRequest,
+) -> Listed<oneiron::receipt::GraphSkillRunOutcome> {
+    refused(MemoryError::new(
+        MEMORY_CODE_MODEL_UNAVAILABLE,
+        "graph workflow skills execute through the attached run's host door",
+        &[],
+    ))
+}
+
 async fn skills_call(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
