@@ -10,7 +10,7 @@ use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 
 const DOMAIN: &[u8] = b"oneiron.project.depth.policy.v1\0";
-const PREFIX: &[u8; 4] = &[0xD5, 0x9A, 0x3C, 0x7E];
+use oneiron_store::project_depth_record::PROJECT_DEPTH_ID_PREFIX as PREFIX;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -59,27 +59,7 @@ pub(crate) fn canonical_birth(project: EntityId) -> Result<ProjectDepthBirth> {
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ProjectDepthBirth {
-    pub(crate) version: u8,
-    pub(crate) project_ref: String,
-    pub(crate) depth: u64,
-    pub(crate) source_manifest: String,
-    pub(crate) source_hash: [u8; 32],
-    pub(crate) owner: Option<ProjectBirthOwnerProof>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ProjectBirthOwnerProof {
-    pub(crate) vault_id: [u8; 32],
-    pub(crate) actor_ref: String,
-    pub(crate) frontier: [u8; 32],
-    pub(crate) suite: String,
-    pub(crate) public_key: Vec<u8>,
-    pub(crate) signature: Vec<u8>,
-}
+pub(crate) use oneiron_store::project_depth_record::{ProjectBirthOwnerProof, ProjectDepthBirth};
 
 pub(crate) fn birth_transcript(birth: &ProjectDepthBirth) -> Result<Vec<u8>> {
     let proof = birth.owner.as_ref().ok_or_else(invalid)?;
@@ -152,27 +132,9 @@ pub(crate) fn encode_contribution(value: &ProjectDepthContribution) -> Result<Ve
     rmp_serde::to_vec_named(value).map_err(|_| invalid())
 }
 
-pub(crate) fn is_project_depth_id(id: &EntityId) -> bool {
-    id.as_bytes().starts_with(PREFIX)
-}
-
-pub(crate) fn is_project_depth_contribution(bytes: &[u8]) -> bool {
-    // Distinct tagged envelope. A malformed candidate must never downgrade
-    // to an ordinary locally trusted policy pack.
-    rmpv::decode::read_value(&mut std::io::Cursor::new(bytes))
-        .ok()
-        .is_some_and(|value| {
-            value.as_map().is_some_and(|entries| {
-                entries.iter().any(|(key, value)| {
-                    key.as_str() == Some("kind")
-                        && matches!(
-                            value.as_str(),
-                            Some("default" | "default_edit" | "birth" | "edit")
-                        )
-                })
-            })
-        })
-}
+pub(crate) use oneiron_store::project_depth_record::{
+    is_project_depth_contribution, is_project_depth_id,
+};
 
 /// The whole contribution decodes, however long its body (rule 5): its put
 /// door counts the bytes and predecessors, and refuses neither.
