@@ -186,7 +186,10 @@ fn remark_file(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId, bytes: &[u8]) 
 pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Done> {
     let done = lift_record(vault, txn, key)?;
     #[cfg(feature = "sync")]
-    if matches!(done, Done::Clean | Done::Masked { .. })
+    if matches!(
+        done,
+        Done::Clean | Done::Masked { .. } | Done::Propose(LiftCause::File, _)
+    )
         && let Some(id) = record_id(key)
         && exists(vault, txn, key)?
         && vault.get_entity_type_in_txn(txn, &id)? != Some(ENTITY_TYPE_NOTE)
