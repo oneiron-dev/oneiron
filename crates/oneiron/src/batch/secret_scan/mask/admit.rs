@@ -25,8 +25,8 @@ use super::wipe::{PlanValues, replace_wiped, wipe_part};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::secret_custody::KnownValues;
 use crate::side_table::SideTableDbs;
+use crate::store::known_value_index::KnownValues;
 
 /// What a stream's admitted text keeps in place of a secret it may still be
 /// writing: a span that reaches the end of the text so far. The door reads it
@@ -207,4 +207,42 @@ pub(crate) fn scan_document_in_txn(
         Some(before) if scan_payload(&before).is_err() => Ok(()),
         _ => Err(refusal),
     }
+}
+
+/// The batch door's mask on write, predicted for a planner that holds no
+/// writer (OF-560): `Ok(())` when the door would place every hit in `body`
+/// (a put's body, read as the door reads one) and land the write with its
+/// handles, or the door's refusal for a hit no span places. The plan runs on
+/// a copy with a stand-in for each secret, as the door's does, and the copy
+/// is read again. Nothing is minted, values custody already holds are not
+/// read, and the owner's switch is the caller's to read.
+pub(crate) fn predict_masked_body(body: &[u8]) -> Result<()> {
+    predict_masked(body, |plan| plan.mask_body(body))
+}
+
+/// [`predict_masked_body`] for a text field's text, read as the door reads
+/// one.
+pub(crate) fn predict_masked_text(text: &str) -> Result<()> {
+    predict_masked(text.as_bytes(), |plan| {
+        Ok(plan.mask_text(text)?.map(String::into_bytes))
+    })
+}
+
+fn predict_masked(
+    data: &[u8],
+    mask: impl FnOnce(&mut super::Masker) -> Result<Option<Vec<u8>>>,
+) -> Result<()> {
+    let Err(refusal) = super::super::scan_write_payload(data) else {
+        return Ok(());
+    };
+    // No record is read or written: the plan's place only names its finds.
+    let mut plan = super::Masker {
+        at: Some((EntityId::from_bytes_unchecked([0; 16]), "plan".to_owned())),
+        ..super::Masker::default()
+    };
+    // The copy holds what no span placed; it is wiped once read again.
+    let Some(copy) = mask(&mut plan)?.map(zeroize::Zeroizing::new) else {
+        return Err(refusal);
+    };
+    super::super::scan_write_payload(&copy)
 }

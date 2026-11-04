@@ -58,8 +58,30 @@ impl OutboundDispatchPipeline {
         )?;
         let effect = publish_effect(request);
         let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-        let (gate_id, decision, _) =
-            gate::check_external_effect_policy(&vault.store, &mut wtxn, &effect, &policy, true)?;
+        let (gate_id, decision, _) = match gate::check_external_effect_policy_paced(
+            &vault.store,
+            &mut wtxn,
+            &effect,
+            &policy,
+        )? {
+            gate::ExternalEffectCheck::Decided(id, decision, charge) => (id, decision, charge),
+            // FIX 12156: a full count-bound window paces the publish: drop
+            // the writer with nothing recorded or charged, and name the
+            // instant to bring it back.
+            gate::ExternalEffectCheck::Paced { next_eligible_at } => {
+                drop(wtxn);
+                return Ok(ArtifactPublishVerbOutcome {
+                    status: ArtifactPublishVerbStatus::Paced {
+                        retry_at: next_eligible_at,
+                    },
+                    pointer: None,
+                    receipt: None,
+                    // No gate decision was recorded; never name one that
+                    // cannot be read back.
+                    gate_decision_ref: String::new(),
+                });
+            }
+        };
         if decision.outcome() != GateOutcome::Allow {
             wtxn.commit()?;
             return Ok(ArtifactPublishVerbOutcome {
@@ -362,7 +384,7 @@ fn publish_receipt(
         job_ref: None,
         trigger_ref: None,
         policy_trace: std::iter::once(gate_ref)
-            .chain(crate::receipt::gate_decision_receipt(gate).policy_trace)
+            .chain(crate::store::gate_receipt::gate_decision_receipt(gate).policy_trace)
             .collect(),
         fields,
     }
@@ -397,7 +419,7 @@ pub(crate) fn artifact_publish_receipts(
         let gate = admitted_gate(vault, txn, &admission)?;
         let receipt = publish_receipt(id, &admission, &gate);
         if query.matches(&receipt) {
-            crate::receipt::retain_newest_receipt(&mut receipts, receipt, query.limit);
+            crate::store::receipt_row::retain_newest_receipt(&mut receipts, receipt, query.limit);
         }
     }
     Ok(receipts)

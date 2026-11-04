@@ -532,6 +532,37 @@ impl CoreAuth {
         self.managed_owner
     }
 
+    /// Re-judges an account-key auth after a wait (review-4320 P1): a live
+    /// cached verdict answers from memory; a cache miss (lease race with
+    /// the wait, eviction, or a full cache that never stored it)
+    /// re-presents the waiter's own bearer to the verifier instead of
+    /// refusing a live key. Revoked or expired keys still fail there, and
+    /// an unreachable control plane fails closed. Anything but an
+    /// account-key auth, and a missing verifier, never reads live here.
+    pub(crate) async fn account_key_still_live(
+        &self,
+        server: &SyncServer,
+        headers: &HeaderMap,
+    ) -> bool {
+        let Some(instrument) = self.instrument else {
+            return false;
+        };
+        let Some(keys) = server.account_keys.as_ref() else {
+            return false;
+        };
+        let now = oneiron_vault_contract::now_ts();
+        if keys.instrument_is_live(&instrument, now) {
+            return true;
+        }
+        let Ok(Some(token)) = bearer_token(headers) else {
+            return false;
+        };
+        if token.starts_with(CORE_TOKEN_V2_PREFIX) {
+            return false;
+        }
+        keys.verify(token.as_bytes(), now).await.is_ok()
+    }
+
     /// The instrument this request's slip was admitted on, for the work it
     /// queues.
     pub(crate) fn invocation_slip(&self) -> Option<&oneiron::authority::InvocationSlipBinding> {
@@ -729,6 +760,11 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
+        // FIX 12323: a facade route takes the live caller its receipt layer
+        // resolved for this same request.
+        if let Some(auth) = crate::api::resolved_facade_caller(parts, server) {
+            return Ok(auth);
+        }
         Self::for_request(parts, server).await.map_err(Into::into)
     }
 }

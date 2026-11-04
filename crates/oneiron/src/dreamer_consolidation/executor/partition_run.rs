@@ -12,6 +12,35 @@ use super::super::{PreparedConsolidationAttempt, PreparedWake};
 use super::*;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 
+/// A partition opened at its wake pin, ready for its model work.
+pub(super) struct PartitionStarted<'a> {
+    pub(super) payload: rmpv::Value,
+    pub(super) resources: BranchResources<'a>,
+    /// The peers this attempt's widening newly assigned beyond its
+    /// queued originals, with the readings this branch froze of their
+    /// words at its open and the partition each was read under: recorded
+    /// as taken only once the run completes, under `widened_round`
+    /// (FIX 12246). A held run stamps none of them.
+    pub(super) widened: Vec<(EntityId, [u8; 32], [u8; 32])>,
+    /// The queued originals, for the stamp's carrier-round guard.
+    pub(super) originals: Vec<EntityId>,
+    /// The queued originals' frozen readings and partitions, for
+    /// stamping members no round has taken yet on completion.
+    pub(super) returned: Vec<(EntityId, [u8; 32], [u8; 32])>,
+    /// The projection round this attempt itself carries, for the
+    /// latest-round bookkeeping its widened stamp owes; `None` for an
+    /// unkeyed attempt, which records no assignment at all.
+    pub(super) widened_round: Option<[u8; 32]>,
+    pub(super) charges: StepChargeTally,
+}
+
+/// A partition at its open: already settled (a residency wait), or
+/// running with its opened branch.
+pub(super) enum PartitionStart<'a> {
+    Early(DreamerAttemptExecution),
+    Running(Box<PartitionStarted<'a>>),
+}
+
 impl ConsolidationExecutor<'_> {
     /// Runs `plan`, prepared on `wake`, and settles its outcome. However it
     /// ends, it logs one line of its stages' wall ms (L07 DREAM-OBSERVE).
@@ -38,28 +67,76 @@ impl ConsolidationExecutor<'_> {
         wake: &PreparedWake,
         stages: &mut PartitionStages,
     ) -> Result<DreamerAttemptExecution> {
+        let started = match self.start_partition(attempt, ctx, plan, wake, stages)? {
+            PartitionStart::Early(done) => return Ok(done),
+            PartitionStart::Running(started) => *started,
+        };
+        let PartitionStarted {
+            payload,
+            resources,
+            widened,
+            originals,
+            returned,
+            widened_round,
+            mut charges,
+        } = started;
+        let run_started = Instant::now();
+        let run = self
+            .run_partition_attempt(
+                &payload,
+                &resources,
+                ctx,
+                attempt.status.attempt.id,
+                attempt.status.attempt.run_id.clone(),
+                &mut charges,
+                stages,
+            )
+            .await;
+        stages.close_model_run(run_started);
+        self.settle_partition_run(
+            &resources,
+            run,
+            &widened,
+            widened_round,
+            &originals,
+            &returned,
+            ctx,
+            &mut charges,
+            stages,
+        )
+        .await
+    }
+
+    /// Opens `plan`'s branch resources at the wake pin: the payload the
+    /// run decodes, the widened turns an accepted commit records as
+    /// taken, and a fresh charge tally. A turn demoted since the wake
+    /// prepared it waits for its promotion (FIX 3861), as one away at
+    /// preparation does; that wait ends the partition before any model
+    /// work.
+    pub(super) fn start_partition<'a>(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &WakeAttemptContext<'a>,
+        plan: &PreparedConsolidationAttempt,
+        wake: &'a PreparedWake,
+        stages: &mut PartitionStages,
+    ) -> Result<PartitionStart<'a>> {
         let payload = plan.input().clone();
         let opened = Instant::now();
         let resources = BranchResources::open_prepared(ctx.vault, self.actor, plan, wake);
         stages.branch_ms = ms_since(opened);
-        // A turn demoted since the wake prepared it waits for its promotion
-        // (FIX 3861), as one away at preparation does.
         let resources = match resources {
             Err(error) if super::super::residency::waits_on_residency(&error) => {
-                return Ok(super::super::residency::residency_deferral(
-                    ctx.now_ms,
-                    0,
-                    Vec::new(),
+                return Ok(PartitionStart::Early(
+                    super::super::residency::residency_deferral(ctx.now_ms, 0, Vec::new()),
                 ));
             }
             resources => resources?,
         };
-        // The peers this attempt's widening newly assigned beyond its queued
-        // originals, with the readings this branch froze of their words and
-        // the partition each was read under: recorded as taken only once
-        // the run completes (FIX 12246). A held run stamps none of them, so
-        // its retry rereads every widened turn whose candidates are still
-        // waiting.
+        // The widened peers carry the readings this branch froze of their
+        // words at its open and the partition each was read under: a
+        // window slot's finish re-opens its branch, but the stamp owes
+        // the words as first read, never a reread.
         let widened: Vec<(EntityId, [u8; 32], [u8; 32])> = Self::widened_turns(attempt, plan)
             .into_iter()
             .filter_map(|turn| {
@@ -81,8 +158,7 @@ impl ConsolidationExecutor<'_> {
                 Some((*turn, reading, partition))
             })
             .collect();
-        // The projection round this attempt itself carries, for the
-        // latest-round bookkeeping its widened stamp owes: a deferral
+        // The projection round this attempt itself carries: a deferral
         // requeues this same row, and a successor copies kind + dedupe
         // key, so the id names the live round its window or chunk made.
         let widened_round = attempt
@@ -93,21 +169,32 @@ impl ConsolidationExecutor<'_> {
             .map(|dedupe_key| {
                 crate::dreamer_wake::projection_round_id(&attempt.status.attempt.kind, dedupe_key)
             });
-        let run_id = attempt.status.attempt.run_id.clone();
-        let mut charges = StepChargeTally::default();
-        let run_started = Instant::now();
-        let run = self
-            .run_partition_attempt(
-                &payload,
-                &resources,
-                ctx,
-                attempt.status.attempt.id,
-                run_id,
-                &mut charges,
-                stages,
-            )
-            .await;
-        stages.close_model_run(run_started);
+        Ok(PartitionStart::Running(Box::new(PartitionStarted {
+            payload,
+            resources,
+            widened,
+            originals,
+            returned,
+            widened_round,
+            charges: StepChargeTally::default(),
+        })))
+    }
+
+    /// Settles one partition run's outcome: an accepted commit, a
+    /// checkpoint, a park or a deferral, each carrying what the attempt
+    /// already spent.
+    pub(super) async fn settle_partition_run(
+        &mut self,
+        resources: &BranchResources<'_>,
+        run: crate::llm::DurableStepResult<PartitionRun>,
+        widened: &[(EntityId, [u8; 32], [u8; 32])],
+        widened_round: Option<[u8; 32]>,
+        originals: &[EntityId],
+        returned: &[(EntityId, [u8; 32], [u8; 32])],
+        ctx: &WakeAttemptContext<'_>,
+        charges: &mut StepChargeTally,
+        stages: &mut PartitionStages,
+    ) -> Result<DreamerAttemptExecution> {
         match run {
             // A finished partition lands while its landing window is still
             // open, even past the pass ceiling (FIX 11570): its model steps
@@ -132,10 +219,10 @@ impl ConsolidationExecutor<'_> {
                     .commit_candidates(
                         &resources,
                         candidates,
-                        &widened,
+                        widened,
                         widened_round,
-                        &originals,
-                        &returned,
+                        originals,
+                        returned,
                         ctx,
                         stages,
                     )
@@ -186,10 +273,53 @@ impl ConsolidationExecutor<'_> {
             // Every other failure parks with what the attempt spent, a
             // refused conflict read's paid usage included (FIX 414).
             Err(other) => Ok(super::failure::park_partition_failure_with_spend(
-                other,
-                &mut charges,
+                other, charges,
             )),
         }
+    }
+
+    /// The prepared partition path's identity gates and scope pin,
+    /// shared by the serial `execute` and a partition window's slot
+    /// admission.
+    pub(super) fn pin_prepared_partition(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &WakeAttemptContext<'_>,
+        plan: &PreparedConsolidationAttempt,
+    ) -> Result<()> {
+        if plan.attempt_id() != attempt.status.attempt.id
+            || !plan.matches_queued(&attempt.status.payload.input)
+            || (ctx.prepared_wake.is_some()
+                && self.scope.as_ref().is_some()
+                && self.scope.as_ref() != plan.scope())
+        {
+            return Err(invalid_consolidation(
+                "executor scope/identity differs from prepared attempt",
+            ));
+        }
+        let branch_scope = super::super::branch_scope::pin_execution_scope(
+            ctx.vault,
+            attempt.status.attempt.id,
+            plan.scope(),
+        )?;
+        if branch_scope.as_ref() != plan.scope() {
+            return Err(invalid_consolidation(
+                "prepared branch scope changed after the wake pin",
+            ));
+        }
+        // FIX 7729: a child its preparation narrowed holds only what it runs.
+        let narrowed = plan.branch().bucket_set();
+        if super::super::partition::decode_partition_payload(&attempt.status.payload.input)
+            .is_ok_and(|queued| queued.bucket_set() != narrowed)
+        {
+            super::super::running_buckets::record_running_buckets(
+                ctx.vault,
+                attempt.status.attempt.id,
+                attempt.status.attempt.attempt_count,
+                &narrowed,
+            )?;
+        }
+        Ok(())
     }
 
     /// Hands `candidates` to the sink, its wall ms the commit stage. On an

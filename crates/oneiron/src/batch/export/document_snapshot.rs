@@ -11,10 +11,11 @@ use super::{
     ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryLedger, ExportEdge,
     ExportManifest, ExportScope, ExportSecretsNulledManifest, ExportSnapshotEntityBody,
     WholeVaultExport, WholeVaultExportReceipt, carries_embedding_setup,
-    whole_vault_export_excludes_entity,
+    whole_vault_export_excludes_entity_in_txn,
 };
 use crate::Vault;
-use crate::authority::{HolderExportNeed, HolderExportRequest};
+use crate::authority::HolderExportRequest;
+use crate::batch::export::secret_supplement_record::HolderExportNeed;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::{EdgeActorClass, parse_strict_edge_record};
 use crate::entity_id::EntityId;
@@ -46,8 +47,10 @@ pub(crate) struct ExportSnapshotRun {
 /// not exported.
 pub(crate) struct ExportSnapshotBody<'t> {
     pub(crate) bytes: u64,
-    pub(crate) body:
-        std::result::Result<crate::code_run::CodeRunResultBodyReader<'t>, &'static str>,
+    pub(crate) body: std::result::Result<
+        crate::store::result_body_reader::CodeRunResultBodyReader<'t>,
+        &'static str,
+    >,
 }
 
 /// One live row as the snapshot reads it, with what it carries beside it.
@@ -62,7 +65,7 @@ pub(crate) struct ExportSnapshotEntity<'t> {
     /// The pack source an ASSET body is.
     pub(crate) pack_source: Option<crate::skill_hub::pack_catalog::PackSource>,
     /// The task receipts a CLAIM cites, by id.
-    pub(crate) task_receipts: BTreeMap<String, crate::receipt::ReceiptRecord>,
+    pub(crate) task_receipts: BTreeMap<String, crate::store::receipt_row::ReceiptRecord>,
     /// A CLAIM's archived receipt sources.
     pub(crate) archived_receipts: Option<BTreeMap<String, super::ExportReceiptSource>>,
 }
@@ -310,7 +313,7 @@ impl Vault {
         {
             let (id, raw) = entry?;
             if only.is_some_and(|only| !only.contains(&id))
-                || whole_vault_export_excludes_entity(self, &id)?
+                || whole_vault_export_excludes_entity_in_txn(&self.store, &rtxn, &id)?
             {
                 continue;
             }
@@ -364,6 +367,25 @@ impl Vault {
                 &id,
                 header.entity_type,
             )? || !row_live_in_txn(&self.store, &rtxn, &id)?
+            {
+                continue;
+            }
+            // FIX 1496 S5: an epoch summary stays home when any transitive
+            // source is excluded (use-limited or off-record), same as the
+            // JSON bundle door. Non-epoch rows answer None and pass through.
+            if crate::compaction::epoch_sources_admitted_in(
+                &self.store,
+                &rtxn,
+                &id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                |source, _| {
+                    Ok(!whole_vault_export_excludes_entity_in_txn(
+                        &self.store,
+                        &rtxn,
+                        source,
+                    )?)
+                },
+            )? == Some(false)
             {
                 continue;
             }
@@ -743,6 +765,9 @@ fn carrier_withheld(
     let Some(carrier) = carrier else {
         return Ok(false);
     };
+    if crate::store::legal_hold::use_limit_in_txn(store, rtxn, carrier)?.is_some() {
+        return Ok(true);
+    }
     crate::settings::device_only_withholds(store, rtxn, device_only, carrier).or_else(|error| {
         match error {
             Error::CorruptedIndex(_) => Ok(true),

@@ -14,6 +14,9 @@ side_tables! {
     /// UID-to-EVENT lookup cache. Key: bytes32.
     /// Host-installed iMIP submission endpoint and custody name. Key: ().
     CALENDAR_IMIP_TRANSPORT: VaultMeta b"calendar.imip-transport.v1" Named;
+    /// FIX 12004: one meeting card delivered to the owners' INBOX, a prep pack or a check-in with
+    /// its one morning re-ask, holding the lens as delivered. Key: id16(EVENT) + string (kind).
+    CALENDAR_INBOX_CARD: VaultMeta b"calendar.inbox-card.v1:" Named Admitted;
     CALENDAR_PASSPORT_UID_INDEX: VaultMeta b"calendar.passport.v1:" Raw;
     /// Marker that a derived EVENT's source was erased. Key: id16.
     CALENDAR_INVALIDATED_EVENT: VaultMeta b"calendar_invalid:v1:" Raw;
@@ -259,6 +262,10 @@ side_tables! {
     CODE_REVISION_PROMOTION: VaultMeta b"code_revision:promotion:v1:" LegacyCompact;
     /// Stranded/diverged revision proposal awaiting reconciliation with the head. Key: id16.
     CODE_REVISION_PROPOSAL: VaultMeta b"code_revision:proposal:v1:" Raw;
+    /// The checked Baseline a tested queue revision's parent chain ends at (value = id16),
+    /// written when its seal is finalized, so a read finds the root by key, never by walking
+    /// the chain (FIX 7390, 7391). Key: id16.
+    CODE_REVISION_QUEUE_ROOT: VaultMeta b"code_revision:queue_root:v1:" Raw;
     /// Finalized code-revision row (hand-rolled MessagePack map). Key: id16.
     CODE_REVISION_RECORD: VaultMeta b"code_revision:record:v1:" Raw;
     /// Index of revisions belonging to a session, empty marker value. Key: id16 + id16.
@@ -292,6 +299,11 @@ side_tables! {
     CODE_RUN_FOLDS: VaultMeta b"code_run:folds:v1:" Raw;
     /// Node-local per-model wire-heal tally, keyed by validated model id. Key: string.
     CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw Engine;
+    /// One model call's evidence and replay record (FIX 12516), keyed by
+    /// id16(attempt) + be64(lease generation) + be64(call index). Side-table
+    /// evidence only: never an entity, BM25/vector/Dreamer input.
+    CODE_RUN_MODEL_CALL: VaultMeta b"code_run:model_call:v1:" Named Authored
+        => crate::code_run::erase_model_call_actor_in_txn;
     /// DOOR-141 PR3b: a turn program's resume checkpoint, joined to its code run's checkpoint
     /// commit: the head (the pinned program it replays, the record position and state hash its
     /// last entry committed, the applied and injected positions, its page count and the wait it
@@ -341,6 +353,9 @@ side_tables! {
     /// or a write receipt's run) and the actor its host stamped, or Erased once that actor's erase
     /// took it. The capsule table's scrub erases it. Key: id16(record).
     CODE_RUN_RESPONSE_OWNER: VaultMeta b"code_run:response_owner:v1:" Named Engine;
+    /// The owner's value-free dismissal of one code-run secret lift proposal. The
+    /// occurrence's secret/taint marks stay unchanged. Key: string(handle/occurrence).
+    CODE_RUN_SECRET_LIFT_DISMISSED: VaultMeta b"code_run:secret_lift:dismissed:v1:" Named Engine;
     /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
     /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
     CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored;
@@ -352,7 +367,7 @@ side_tables! {
         => crate::code_run::erase_type_diagnostics_actor_in_txn;
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
     /// id16(wait) + be64(generation).
-    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored [accepts: crate::code_run::code_run_wait_delivery_accepts_masked];
+    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored [accepts: crate::store::executor_wait_delivery::code_run_wait_delivery_accepts_masked];
     /// Who held each code-run wait's reply (FIX 5718): one row per run delivered a reply of the
     /// wait, at the generation it parked, naming the actor its run's replies are, or Erased once
     /// that actor's erase took them. It outlives the wait's waiter and delivery rows. The capsule
@@ -406,6 +421,9 @@ side_tables! {
     /// An inbound STOP this replica has not projected yet: its party and channel, which hold a
     /// send until the projection that releases it or the event's delete. Key: id16 (the event).
     COMM_PENDING_STOP: VaultMeta b"comm.pending_stop.v1:" Named;
+    /// A durable send receipt the comm projector's import skipped, written when it first warned
+    /// about it: the reason and when. Node-local. Key: id16 (the receipt's TASK).
+    COMM_SKIPPED_SEND_RECEIPT: VaultMeta b"comm.skipped_send_receipt.v1:" Named;
     /// Time-ordered commitment due-index row. Key: u64be + u8 + id16 + id16.
     COMMITMENT_DUE_PRIMARY: VaultMeta b"commitment_due:v1:" Raw;
     /// Instance and phase to primary due-row key. Key: id16 + u8.
@@ -429,11 +447,17 @@ side_tables! {
     /// The connector key a stamped slate is bound to (16-byte key id). Key: id16(slate).
     CONNECTOR_GRANT_SLATE_BINDING: VaultMeta b"connector.grant_slate.binding.v1/" Raw;
     /// A per-grant key's holder narrows of the slate its calls meet (FIX 987). Key: id16(key).
-    CONNECTOR_SLATE_HOLDER_NARROW: VaultMeta b"connector.grant_slate.holder_narrow.v1/" Named;
+    CONNECTOR_SLATE_HOLDER_NARROW: VaultMeta b"connector.grant_slate.holder_narrow.v1/" Named
+        => crate::connector_key::erase_holder_narrows_in_txn;
     /// One logical connector call's typed scope exceed and its ruling (FIX 988). Key: id16.
     CONNECTOR_SLATE_SCOPE_SIGNAL: VaultMeta b"connector.grant_slate.scope_signal.v1/" Named;
     /// Typed per-tool grant slate draft plus any authenticated-owner overrides. Key: id16.
-    CONNECTOR_GRANT_SLATE: VaultMeta b"connector.grant_slate.v1/" LegacyJson;
+    CONNECTOR_GRANT_SLATE: VaultMeta b"connector.grant_slate.v1/" LegacyJson
+        => crate::connector_key::erase_grant_slate_holder_narrows_in_txn;
+    /// The qualification kit the owner's last successful qualify of a catalog key used, which an
+    /// accepted issuer revision's re-run qualifies its dependent rows with (FIX 9304). Key: id16
+    /// (catalog key).
+    CONNECTOR_QUALIFICATION_KIT: VaultMeta b"connector.qualification_kit.v1/" Named;
     /// Idempotent wake-decision record for one connector-event subscription match. Key: hash32.
     CONNECTOR_WAKE_DECISION: VaultMeta b"connector.wake.v1:" LegacyJson;
     /// Permanent catalog-name to key-id index; never deleted on key removal. Key: string(catalog
@@ -483,10 +507,10 @@ side_tables! {
     /// Immutable recorded contract baseline snapshot (public API names, schemas, command outputs),
     /// keyed by its own content digest; a differing value under the same id is corruption. Key:
     /// hex64.
-    CONTRACT_ORACLE_BASELINE: VaultMeta b"contract_oracle:baseline:v1:" Named Authored [accepts: crate::contract_oracle::contract_oracle_baseline_accepts_masked];
+    CONTRACT_ORACLE_BASELINE: VaultMeta b"contract_oracle:baseline:v1:" Named Authored [accepts: crate::store::contract_oracle::contract_oracle_baseline_accepts_masked];
     /// Immutable recorded verdict comparing a candidate snapshot against a recorded baseline (diffs
     /// plus test-pass state), keyed by its own content digest. Key: hex64.
-    CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named Authored [accepts: crate::contract_oracle::contract_oracle_verdict_accepts_masked];
+    CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named Authored [accepts: crate::store::contract_oracle::contract_oracle_verdict_accepts_masked];
     /// Actor id (id16) that created a room; an unrooted vault reads it as the room's owner. Key:
     /// id16 (room).
     CONVERSATION_CREATOR: VaultMeta b"conversation:creator:v1:" Raw;

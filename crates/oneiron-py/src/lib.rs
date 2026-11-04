@@ -90,6 +90,7 @@ impl WitnessTurnInput {
                 author: message.author,
                 message_type: message.message_type,
                 content: message.content,
+                parts: None,
                 metadata: message.metadata,
                 is_visible: message.is_visible.unwrap_or(true),
                 order: message.order,
@@ -2190,6 +2191,27 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.inbox.lens")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.inbox.lens", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_inbox_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.inbox.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.inbox.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_inbox_done(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.inbox.done")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.inbox.done", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_inbox_later(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.inbox.later")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.inbox.later", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -5479,6 +5501,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_secrets_code_run_lifts(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.secrets.code_run_lifts")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.secrets.code_run_lifts", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_secrets_lift_history(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.secrets.lift_history")?;
         let output = py
@@ -7989,6 +8018,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.skills.callables")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.skills.callables", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_callable_amend(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.callable.amend")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.callable.amend", input))
             .map_err(raise)?;
         encode(&output)
     }

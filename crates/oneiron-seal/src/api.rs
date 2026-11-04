@@ -141,13 +141,15 @@ pub trait SealBackend: Send + Sync {
     }
 }
 
-/// Bound for `operation_id` (§4): opaque, non-empty, at most this many UTF-8
-/// bytes, stable for one logical seal. Validated before any signing work.
+/// The backend's bound for an operation id (§4): at most this many UTF-8
+/// bytes. Every id the seal derives for its backend fits it, whatever the
+/// caller's id holds (FIX 6271).
 pub const MAX_OPERATION_ID_BYTES: usize = 256;
 
 /// Reserved headroom for the engine's derived sub-operation-id suffix
-/// (`:{16 hex}:{phase}:{capacity}`). Caller-supplied ids must leave this
-/// budget so every derived id still fits the backend's 256-byte bound.
+/// (`:{16 hex}:{phase}:{capacity}`). A caller id longer than the bound less
+/// this goes to the backend as its alias
+/// (`oneiron_organ_protocol::seal::backend_operation_id`).
 pub const OPERATION_ID_SUFFIX_RESERVE: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,13 +159,13 @@ pub struct SealRequest {
 }
 
 impl SealRequest {
-    /// Enforce the `operation_id` contract. Engines must run this before the
-    /// request reaches any signing or fetch path. Caller ids are bounded to
-    /// [`MAX_OPERATION_ID_BYTES`] minus [`OPERATION_ID_SUFFIX_RESERVE`] so the
-    /// suffixed sub-operation ids the engine derives stay inside the bound.
+    /// Enforce the `operation_id` contract: opaque, non-empty, stable for one
+    /// logical seal. Engines must run this before the request reaches any
+    /// signing or fetch path. No length is refused (FIX 6271): a caller id
+    /// past [`MAX_OPERATION_ID_BYTES`] minus [`OPERATION_ID_SUFFIX_RESERVE`]
+    /// reaches the backend as its bounded alias.
     pub fn validate_operation_id(&self) -> Result<(), SealError> {
-        let max_caller = MAX_OPERATION_ID_BYTES - OPERATION_ID_SUFFIX_RESERVE;
-        if self.operation_id.is_empty() || self.operation_id.len() > max_caller {
+        if self.operation_id.is_empty() {
             return Err(SealError::Fatal {
                 stage: crate::error::SealStage::InputValidation,
                 code: crate::error::FatalCode::InvalidConfiguration,

@@ -3,7 +3,11 @@
 //! Port contracts do not name heed, LMDB, or OverlayDb. Backend transaction
 //! types are associated types; the LMDB implementation keeps the original
 //! transaction and the in-memory implementation owns an isolated snapshot.
+mod claim_read_status;
 mod contracts;
+pub(crate) use claim_read_status::ClaimReadStatus;
+mod point_read;
+pub use point_read::{PointRead, ReadRow, ReadTarget};
 mod read_result;
 pub use read_result::ScopedReadResult;
 mod lmdb_retrieval;
@@ -81,7 +85,7 @@ pub(crate) use integrity::{
 pub(crate) use integrity::{
     invalidate_source_in_txn, keep_deleted_worlds_in_txn, keep_worlds_of_unmade_epoch_in_txn,
     record_dependency_in_txn, record_derived_edge_in_txn, record_withdrawn_in_txn,
-    retire_withdrawn_in_txn, source_has_dependents_in_txn, stale_in_txn,
+    retire_withdrawn_in_txn, source_has_dependents_in_txn, stage_stale_mark_in_txn, stale_in_txn,
     withdraw_from_lost_source_in_session_txn, withdraw_from_lost_source_in_txn,
     withdrawn_worlds_in,
 };

@@ -10,7 +10,7 @@ side_tables! {
     /// answer it gives that question about that evidence, and whether it was revoked. Key:
     /// id16 (rule) + u64be(revision).
     DECISION_HOST_RULE: VaultMeta b"decision:host_rule:v1:" Named
-        => crate::llm::decision::erase_rule_actor_in_txn;
+        => crate::store::decision_rule_rows::erase_rule_actor_in_txn;
     /// The creation record of one deck made from a kept outline: born-from, template, slides,
     /// write set and fit. Key: id16 (artifact).
     DECK_CREATION: VaultMeta b"deck:creation:v1:" Named;
@@ -431,15 +431,20 @@ side_tables! {
     /// erase re-keys the project it names (FIX 6038). Key: string.
     EDIT_DISTANCE_AMENDMENT_JUDGMENT: VaultMeta b"edit_distance/amendment_judgment/v1\0" Raw
         => crate::edit_distance::attribution::erase_amendment_project_in_txn;
+    /// Uncaptured-amendment counters per door (FIX 11542): how many store-row
+    /// and inbox amendments measured nothing. Key: string (door).
+    EDIT_DISTANCE_AMENDMENT_UNCAPTURED_COUNT: VaultMeta b"edit_distance/amendment_uncaptured_count/v1\0" Raw;
     /// Live edit-cost head for a (predicate, subject, scope) tuple; the retraction ledger for re-
     /// judged receipts. Key: string "\x00" hex32 "\x00" string.
     EDIT_DISTANCE_EDIT_COST_TARGET: VaultMeta b"edit_distance/edit_cost_target/v1\0" Raw;
     /// Append-only ruled-escalation ledger row, scope-major (scope digest then UUIDv7 row id) so one
     /// scope's history is a contiguous range. Key: id16 + id16.
-    EDIT_DISTANCE_ESCALATION: VaultMeta b"edit_distance/escalation/v1\0" Raw;
+    EDIT_DISTANCE_ESCALATION: VaultMeta b"edit_distance/escalation/v1\0" Raw
+        => crate::edit_distance::escalation::erase_escalation_scope_in_txn;
     /// Standing escalation policy for one (scope, trigger) pair, keyed by what the row governs. Key:
     /// id16 + u8.
-    EDIT_DISTANCE_ESCALATION_POLICY: VaultMeta b"edit_distance/escalation_policy/v1\0" Raw;
+    EDIT_DISTANCE_ESCALATION_POLICY: VaultMeta b"edit_distance/escalation_policy/v1\0" Raw
+        => crate::edit_distance::escalation::erase_escalation_scope_in_txn;
     /// Publisher digest-interview session state, keyed by the digest artifact id. Key: id16.
     EDIT_DISTANCE_INTERVIEW_SESSION: VaultMeta b"edit_distance/interview_session/v1\0" Raw;
     /// Stored publisher issue-signature (category, artifact, version, model, counts, content hash).
@@ -452,6 +457,9 @@ side_tables! {
     EDIT_DISTANCE_JUDGE_AUDIT: VaultMeta b"edit_distance/judge_audit/v1\0" Raw;
     /// Monotonic counter behind EDIT_DISTANCE_JUDGE_AUDIT's sequence half. Key: ().
     EDIT_DISTANCE_JUDGE_AUDIT_SEQUENCE: VaultMeta b"edit_distance/judge_audit_sequence/v1" Raw;
+    /// Claim-to-receipt index bounding the teaching-copy erase (FIX 11347): the receipt ids taught
+    /// on one claim. Key: id16.
+    EDIT_DISTANCE_MINER_CLAIM_RECEIPTS: VaultMeta b"edit_distance/miner_claim_receipts/v1\0" Named;
     /// Mint-mark preventing a re-mint of the same substitution cluster, keyed by cluster handle. Key:
     /// hash32.
     EDIT_DISTANCE_MINER_MINT_MARK: VaultMeta b"edit_distance/miner_mint_mark/v1\0" Raw;
@@ -546,6 +554,12 @@ side_tables! {
     /// A published revision whose vector an embedding-space swap dropped, to be embedded again at
     /// idle. Key: id16.
     ENTITY_REVISION_VECTOR_REFILL: VaultMeta b"entity_revision:vector_refill:" Raw;
+    /// The erase previews a caller was shown and may still confirm (FIX
+    /// 12522): the digest the preview showed, and when it was issued and
+    /// expires on the vault's recording clock. Key: id16 (caller) + id16
+    /// (record).
+    ERASE_PREVIEW: VaultMeta b"erase:preview:v1:" Named
+        => crate::verbs::erase_preview_actor_in_txn;
     /// Esign machine actor id. Key: ().
     ESIGN_ARTIFACT_ACTOR: VaultMeta b"esign.artifact_actor.v1" Raw;
     /// Esign document audit event. Key: id16 + u64be.
@@ -555,7 +569,8 @@ side_tables! {
     /// Esign outbound dispatch marker. Key: bytes32.
     ESIGN_DISPATCH_MARKER: VaultMeta b"esign.dispatch.v1/" Raw;
     /// Held automated sign act, one per recipient. Key: hex32/string.
-    ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named;
+    ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named
+        => crate::blob_artifact::esign::erase_held_signing_actor_in_txn;
     /// Signature image byte budget. Key: id16.
     ESIGN_IMAGE_BYTES_BUDGET: VaultMeta b"esign.image_bytes.v1/" Raw;
     /// The send act a signing document's staged notices go out under with no caller (FIX 6219):

@@ -103,6 +103,11 @@ pub struct Vault {
     /// only: a close or a crash drops them.
     pub(crate) pending_owner_export_receipts:
         std::sync::Mutex<Vec<crate::share_travel::ExportTravel>>,
+    /// The holder-proof nonces an admission spent in memory before its
+    /// reply, whose rows land through the detached door (FIX 12023 W0). In
+    /// memory only, and one set per environment in this process, shared by
+    /// its handles.
+    pub(crate) spent_nonces: std::sync::Arc<crate::authority::SpentNonces>,
     /// One housekeeping pass at a time on this handle.
     pub(crate) housekeeping:
         std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
@@ -116,6 +121,10 @@ pub struct Vault {
     pub(crate) analyzer: MultilingualAnalyzer,
     /// Which vault this handle belongs to, resolved once at open.
     vault_id: VaultId,
+    /// This vault's own directory identity, retained at open while its path
+    /// is fresh: folder reads exclude the vault by identity, so a rename
+    /// after open cannot defeat the exclusion (REVIEW-4381 P1).
+    dir_identity: Option<(u64, u64)>,
     /// The key over this vault's stored retrieval-trace fork hashes,
     /// resolved once at open.
     retrieval_trace_key: self::retrieval_trace_key::RetrievalTraceKey,
@@ -149,7 +158,7 @@ pub struct Vault {
     pub(crate) owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64,
     /// The claim VAD payment worker's wake and the claims the write door
     /// handed it (FIX 11702). In memory only: the debt rows are the debt.
-    pub(crate) claim_vad_payment: crate::housekeeping::ClaimVadPayment,
+    pub(crate) claim_vad_payment: crate::store::claim_vad_payment::ClaimVadPayment,
     /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
     /// state mutex and nothing else: the fixed-order drop transaction and the
     /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
@@ -161,7 +170,8 @@ pub struct Vault {
         std::sync::Mutex<std::collections::BTreeMap<crate::EntityId, Vec<crate::EntityId>>>,
     /// The backoff of each critical confirm whose timeout demotion keeps
     /// failing (FIX 12079). In memory only: a reopened vault tries each at once.
-    pub(crate) confirm_demotion_retries: crate::gate::ConfirmDemotionRetries,
+    pub(crate) confirm_demotion_retries:
+        oneiron_store::critical_confirm_retry::ConfirmDemotionRetries,
     /// The host's USD quote for launch statements (OF-532), installed once
     /// by [`Vault::install_launch_usd_prices`]. Empty: dollars are unknown.
     pub(crate) launch_usd_prices:

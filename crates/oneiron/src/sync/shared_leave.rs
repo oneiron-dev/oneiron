@@ -28,7 +28,7 @@ use crate::side_table::{self, Named, Raw, SideTable};
 mod collect;
 
 pub(crate) use collect::{
-    collect_left_env_bodies, collect_left_env_bodies_at_open, left_env_body_collect_due_at,
+    collect_left_env_bodies, collect_left_env_bodies_admitted, left_env_body_collect_due_at,
 };
 
 /// This device's leave records, keyed by the notice's receipt id.
@@ -153,13 +153,16 @@ pub struct SharedLeaveReceipt {
     pub changed_at: u64,
     /// When this device discarded its queued edits.
     pub completed_at: u64,
-    /// Queued window updates discarded (`q:` rows).
+    /// Queued window updates discarded (`q:` rows) plus valid run-buffer
+    /// updates an explicit leave discarded unqueued (leave-only single-try
+    /// Pause, published before `running=false`).
     pub discarded_window_updates: u64,
     /// Unacknowledged text frames discarded (`qd:e:` rows).
     pub discarded_text_frames: u64,
     /// Pending NOTE commands discarded (`qn:e:` rows).
     pub discarded_note_commands: u64,
-    /// Every unsynced edit the leave discarded: the three counts together.
+    /// Every unsynced edit the leave discarded: the three counts together,
+    /// the window count including discarded-unqueued updates.
     pub discarded_unsynced_edits: u64,
     /// The env's replica rows the leave purged: entity, edge, index, side and
     /// sync rows.
@@ -231,18 +234,28 @@ pub fn has_left(vault: &Vault) -> Result<bool> {
 /// lane first (`SyncConnection::check_shared_leave` does), so no buffered
 /// update lands after the discard and nothing refills the env.
 ///
+/// `unqueued` counts the valid run-buffer updates the leave arms discarded
+/// without queueing; it enters the window count at first confirm only.
+///
 /// # Errors
 ///
 /// A notice that ends no membership; storage errors.
 pub fn confirm_verified_shared_leave(
     vault: &Vault,
     notice: &VerifiedLeaveNotice,
+    unqueued: u64,
 ) -> Result<SharedLeaveReceipt> {
     let Some(kind) = notice.kind() else {
         return Err(not_a_leave());
     };
     let outcome = notice.outcome();
-    confirm_leave(vault, (outcome.vault_id, &outcome.recipient), outcome, kind)
+    confirm_leave(
+        vault,
+        (outcome.vault_id, &outcome.recipient),
+        outcome,
+        kind,
+        unqueued,
+    )
 }
 
 fn not_a_leave() -> Error {
@@ -256,6 +269,7 @@ fn confirm_leave(
     (vault_id, member): (u64, &str),
     notice: &SharedActOutcome,
     kind: SharedLeaveKind,
+    unqueued: u64,
 ) -> Result<SharedLeaveReceipt> {
     let purge = |wtxn: &mut heed::RwTxn<'_>, receipt: &mut SharedLeaveReceipt| -> Result<bool> {
         let pass = crate::store::local_replica::purge_left_shared_env_in_txn(
@@ -287,8 +301,16 @@ fn confirm_leave(
             let complete = purge(wtxn, &mut receipt)?;
             return Ok((receipt, complete));
         }
+        // Durable `q:` rows that landed plus valid run-buffer entries that
+        // never did (leave-only Pause, published before `running=false`). No
+        // double count: the durable discard touches NO memory, and `unqueued`
+        // counts ONLY remaining valid entries after the final single try. The
+        // confirmed-before branch above ignores `unqueued`; a txn-failure
+        // retry re-adds the same un-reset value with the still-present
+        // durable rows.
         let discarded_window_updates =
-            crate::sync::queue::discard_updates_for_leave_in_txn(vault, wtxn)?;
+            crate::sync::queue::discard_updates_for_leave_in_txn(vault, wtxn)?
+                .saturating_add(unqueued);
         let discarded_text_frames =
             count(QUEUED_TEXT_FRAMES.delete_from(&vault.store, wtxn, &[])?);
         let discarded_note_commands =

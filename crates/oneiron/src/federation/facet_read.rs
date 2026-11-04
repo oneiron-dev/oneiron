@@ -20,7 +20,10 @@ use crate::{EntityId, Vault};
 mod pending;
 pub(crate) use pending::unpark_stamp;
 #[cfg(feature = "sync")]
-pub(crate) use pending::{Hold, park_stamp, retire_held_stamps, unpark_released};
+pub(crate) use pending::{
+    Hold, ParkedFacetReceipt, park_stamp, parked_facet_receipts, retire_held_stamps,
+    unpark_released,
+};
 
 /// A federated `FacetOf` stamp sent ahead of its source row, held out of the
 /// window document under the lane of the sender that brought it, with when it

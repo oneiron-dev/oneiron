@@ -699,6 +699,15 @@ impl OneironClient {
                 "self.inbox.lens" => remote_agent_verb_output::<
                     oneiron::agent_inbox_lens::InboxLensPage,
                 >(client, verb, &input),
+                "self.inbox.get" => remote_agent_verb_output::<
+                    oneiron::agent_inbox_lens::InboxItemView,
+                >(client, verb, &input),
+                "self.inbox.done" => remote_agent_verb_output::<
+                    oneiron::agent_inbox_lens::InboxItemMarked,
+                >(client, verb, &input),
+                "self.inbox.later" => remote_agent_verb_output::<
+                    oneiron::agent_inbox_lens::InboxItemMarked,
+                >(client, verb, &input),
                 "vault.skills.bootstrap" => remote_agent_verb_output::<
                     Vec<oneiron::task_verb::sdk::BootstrapSkillView>,
                 >(client, verb, &input),
@@ -1751,6 +1760,9 @@ impl OneironClient {
                 "vault.settings.learning.clear" => remote_agent_verb_output::<
                     oneiron::learning_setting_doors::LearningSettingsView,
                 >(client, verb, &input),
+                "vault.secrets.code_run_lifts" => remote_agent_verb_output::<
+                    oneiron::code_run::CodeRunSecretLiftStatus,
+                >(client, verb, &input),
                 "vault.secrets.lift_history" => remote_agent_verb_output::<
                     oneiron::policy_model::SecretLiftStatus,
                 >(client, verb, &input),
@@ -2667,6 +2679,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "self.skills.callables" => remote_agent_verb_output::<
                     Vec<oneiron::skill::helper::CallableCardView>,
+                >(client, verb, &input),
+                "vault.skills.callable.amend" => remote_agent_verb_output::<
+                    oneiron::skill::helper::CallableAmendReceipt,
                 >(client, verb, &input),
                 "vault.skills.pack_receipt" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::SkillPackReceipt,
@@ -6551,6 +6566,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.inbox.lens", value)
+    }
+    pub fn self_inbox_get(
+        &self,
+        input: &oneiron::agent_inbox_lens::InboxItemRequest,
+    ) -> Result<oneiron::agent_inbox_lens::InboxItemView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.inbox.get", value)
+    }
+    pub fn self_inbox_done(
+        &self,
+        input: &oneiron::agent_inbox_lens::InboxItemRequest,
+    ) -> Result<oneiron::agent_inbox_lens::InboxItemMarked, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.inbox.done", value)
+    }
+    pub fn self_inbox_later(
+        &self,
+        input: &oneiron::agent_inbox_lens::InboxItemLaterRequest,
+    ) -> Result<oneiron::agent_inbox_lens::InboxItemMarked, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.inbox.later", value)
     }
     pub fn vault_skills_bootstrap(
         &self,
@@ -10689,6 +10740,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.settings.learning.clear", value)
     }
+    pub fn vault_secrets_code_run_lifts(
+        &self,
+        input: &oneiron::code_run::CodeRunSecretLiftRequest,
+    ) -> Result<oneiron::code_run::CodeRunSecretLiftStatus, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.secrets.code_run_lifts", value)
+    }
     pub fn vault_secrets_lift_history(
         &self,
         input: &oneiron::policy_model::SecretLiftRequest,
@@ -14349,6 +14412,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.skills.callables", value)
+    }
+    pub fn vault_skills_callable_amend(
+        &self,
+        input: &oneiron::skill::helper::CallableAmendRequest,
+    ) -> Result<oneiron::skill::helper::CallableAmendReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.callable.amend", value)
     }
     pub fn vault_skills_pack_receipt(
         &self,

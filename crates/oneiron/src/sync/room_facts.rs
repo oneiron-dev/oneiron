@@ -38,6 +38,7 @@
 pub(super) mod checkpoint;
 mod erased;
 mod turn_marks;
+mod waiting;
 pub(crate) use erased::erase_carried_actors;
 pub(crate) use turn_marks::{clear_turn_marks, mark_cold_turn_carriers};
 
@@ -64,7 +65,7 @@ use crate::workspace_roster::{
 pub(crate) const ROOM_FACTS_MAP: &str = "room_facts";
 
 /// The largest side row a window carries.
-const MAX_ROW_BYTES: usize = 1 << 16;
+use super::room_parts::ROOM_FACT_MAX_ROW_BYTES as MAX_ROW_BYTES;
 
 /// The key prefix of a room's host pin cell.
 const PIN: &str = "pin/";
@@ -699,6 +700,9 @@ pub(crate) fn scrub_room_facts(
                 gone.push(map_key);
             }
         }
+        // FIX 12127: a manifest whose parts never all land drops with the
+        // row it stands for, decided from its key alone.
+        gone.extend(waiting::doomed_manifests(vault, &rtxn, &map)?);
         let named = erased::erased_rows(vault, &rtxn, &map)?;
         (gone, named)
     };

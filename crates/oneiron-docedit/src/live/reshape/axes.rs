@@ -10,6 +10,31 @@ use crate::live::held::children;
 use crate::live::pptx::{ChartPlot, surface};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// A value axis's children in schema order.
+const VALUE: &[&str] = &[
+    "axId",
+    "scaling",
+    "delete",
+    "axPos",
+    "majorGridlines",
+    "minorGridlines",
+    "title",
+    "numFmt",
+    "majorTickMark",
+    "minorTickMark",
+    "tickLblPos",
+    "spPr",
+    "txPr",
+    "crossAx",
+    "crosses",
+    "crossesAt",
+    "crossBetween",
+    "majorUnit",
+    "minorUnit",
+    "dispUnits",
+    "extLst",
+];
+
 /// A held x axis turned into the other kind of axis, a value axis
 /// (`value`) for a scatter or bubble plot or a category axis for a category
 /// plot, as a chart type change between them turns it (FIX 8587): its own
@@ -24,29 +49,6 @@ pub(super) fn retyped_axis(
     value: bool,
     writer: &Writer,
 ) -> Result<Vec<u8>, LiveError> {
-    const VALUE: &[&str] = &[
-        "axId",
-        "scaling",
-        "delete",
-        "axPos",
-        "majorGridlines",
-        "minorGridlines",
-        "title",
-        "numFmt",
-        "majorTickMark",
-        "minorTickMark",
-        "tickLblPos",
-        "spPr",
-        "txPr",
-        "crossAx",
-        "crosses",
-        "crossesAt",
-        "crossBetween",
-        "majorUnit",
-        "minorUnit",
-        "dispUnits",
-        "extLst",
-    ];
     const CATEGORY: &[&str] = &[
         "axId",
         "scaling",
@@ -118,6 +120,35 @@ pub(super) fn retyped_axis(
         node,
         &xml::qualify(xml::prefix(node), local),
     ));
+    families::applied(bytes, tree, axis, splices)
+}
+
+/// A held value axis crossing its x axis at the categories (`midCat`), as
+/// a plot converted to a surface plots on it (FIX 10299, as new surface
+/// axes do, FIX 9376): its `c:crossBetween` written over, every other child
+/// and byte kept; its own bytes when it crosses there already or is no
+/// value axis.
+pub(super) fn mid_cat_axis(
+    bytes: &[u8],
+    tree: &XmlTree,
+    axis: usize,
+    writer: &Writer,
+) -> Result<Vec<u8>, LiveError> {
+    let crosses = xml::child(tree, axis, C, "crossBetween")
+        .and_then(|at| tree.nodes[at].attr("val"))
+        .map(str::trim);
+    if !tree.nodes[axis].is(C, "valAx") || crosses == Some("midCat") {
+        return Ok(bytes[tree.nodes[axis].span.clone()].to_vec());
+    }
+    let entry = format!(r#"<{} val="midCat"/>"#, writer.el("crossBetween")).into_bytes();
+    let splices = families::written(
+        bytes,
+        tree,
+        axis,
+        VALUE,
+        &[("crossBetween", entry)],
+        |name| name,
+    );
     families::applied(bytes, tree, axis, splices)
 }
 
@@ -221,12 +252,14 @@ pub(super) fn axes(
 /// The axes a chart rewrite's plots plot on: the plot area's held axes
 /// (each id and node), each target plot's axis ids, each target's held
 /// plot's own ids, the held x axes that turn between a category and a value
-/// axis, and the new axes' XML.
+/// axis, the held value axes a plot converted to a surface crosses at the
+/// categories, and the new axes' XML.
 pub(super) struct PlotAxes {
     pub(super) held: Vec<(u32, usize)>,
     pub(super) ids: Vec<Vec<u32>>,
     pub(super) kept: Vec<Vec<u32>>,
     pub(super) retyped: BTreeMap<u32, bool>,
+    pub(super) mid_cat: BTreeSet<u32>,
     pub(super) new: String,
 }
 
@@ -237,7 +270,8 @@ pub(super) struct PlotAxes {
 /// same kind, or a new pair, each id above every id the chart holds; a 3D
 /// plot that stands its series one behind another a depth axis too, a 3D
 /// pie none. A held x axis turns between a category and a value axis with
-/// its plot.
+/// its plot, and a held value axis a plot converted to a surface keeps
+/// crosses at the categories, as a new surface's does (FIX 10299).
 pub(super) fn plot_axes(
     tree: &XmlTree,
     area: usize,
@@ -269,6 +303,7 @@ pub(super) fn plot_axes(
         .map(|&(id, at)| (id, tree.nodes[at].name == "valAx"))
         .collect();
     let mut retyped: BTreeMap<u32, bool> = BTreeMap::new();
+    let mut mid_cat: BTreeSet<u32> = BTreeSet::new();
     let mut new_axes = String::new();
     let mut ids_of: Vec<Vec<u32>> = Vec::with_capacity(targets.len());
     let mut held_ids: Vec<Vec<u32>> = Vec::with_capacity(targets.len());
@@ -315,6 +350,10 @@ pub(super) fn plot_axes(
                 retyped.insert(x, wants_value);
                 value_x.insert(x, wants_value);
             }
+            let converted = target.held.is_some_and(|at| !surface(plots[at].0));
+            if surface(target.kind) && converted {
+                mid_cat.insert(kept[1]);
+            }
             let mut ids: Vec<u32> = kept
                 .iter()
                 .copied()
@@ -356,6 +395,7 @@ pub(super) fn plot_axes(
         ids: ids_of,
         kept: held_ids,
         retyped,
+        mid_cat,
         new: new_axes,
     }
 }

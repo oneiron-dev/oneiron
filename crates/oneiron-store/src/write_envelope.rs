@@ -1,0 +1,763 @@
+//! Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping.
+
+use std::collections::BTreeSet;
+
+use rmpv::Value;
+
+use crate::write_envelope::claim_body::ClaimBody;
+use crate::write_envelope::claim_body::ClaimSubject;
+use crate::write_envelope::claim_body::RelationshipScope;
+use oneiron_contracts::claim::ClaimApprovalStatus;
+use oneiron_contracts::claim::ClaimLifecycleStatus;
+use oneiron_contracts::claim::ClaimSource;
+use oneiron_contracts::entity_id::EntityId;
+
+pub mod actor_predicate;
+pub mod actor_tokens;
+pub mod affect_trigger;
+pub mod carry_forward;
+pub mod channel_identity;
+pub mod claim_body;
+pub mod claim_predicate;
+pub mod claim_vad;
+pub mod cohort_claims;
+pub mod commitment_actor;
+pub mod commitment_transition;
+pub mod communication;
+pub mod communication_record;
+pub mod companion_subject;
+pub mod companion_task_kind;
+pub mod coping_outcome;
+pub mod counterparty_fields;
+mod effect_digest;
+pub mod identity_pair;
+pub mod identity_reputation;
+pub mod learning_predicate;
+pub mod person_identity;
+pub mod profile_snapshot;
+pub mod provenance;
+pub mod skill_record;
+pub mod skill_source;
+pub mod task_body;
+pub mod thread_claim;
+pub mod vad_annotation;
+mod validation;
+pub mod voice_segment;
+pub mod world_access_predicates;
+
+pub use effect_digest::EffectDigest;
+pub use validation::validate_write_envelope;
+
+/// Defined in `oneiron-contracts`, so crates below this one can name the actor.
+pub use oneiron_contracts::write_envelope::WriteActor;
+// The sibling tests name the actor class bare through `use super::*`.
+
+/// Opaque provenance payload carried by a [`WriteEnvelope`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct WriteProvenance {
+    value: Value,
+}
+
+impl WriteProvenance {
+    /// Creates a provenance payload, rejecting an absent (`nil`) value.
+    pub fn new(value: Value) -> oneiron_contracts::error::Result<Self> {
+        if matches!(value, Value::Nil) {
+            return Err(oneiron_contracts::error::Error::InvalidClaimBody(
+                "write envelope missing provenance",
+            ));
+        }
+
+        Ok(Self { value })
+    }
+
+    /// Returns the opaque provenance value.
+    #[must_use]
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+}
+
+/// The set of source classes a write's own history actually drew on.
+///
+/// The envelope's `source` is a DECLARATION: one label the writer stamps. The
+/// lineage is what happened — every source class in the effect history behind
+/// this write. A code-mode run that observed an external effect and then wrote
+/// a claim declares `Generated` truthfully about the declaration and falsely
+/// about the run; the lineage carries `ToolOutput` alongside it, and the
+/// auto-permit decision consults both.
+///
+/// It is a SET, not a trail: order and per-hop identity are deliberately not
+/// modelled here, so the type cannot drift into a provenance chain (that lives
+/// in candidate evidence). Membership is additive and never removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceLineage {
+    sources: BTreeSet<ClaimSource>,
+}
+
+impl SourceLineage {
+    /// The trivial lineage: exactly the one declared source class.
+    ///
+    /// Every 4-arity [`WriteEnvelope`] construction lands here, so a write
+    /// whose history is its own declaration behaves exactly as it did before
+    /// lineage existed.
+    #[must_use]
+    pub fn of(source: ClaimSource) -> Self {
+        Self {
+            sources: BTreeSet::from([source]),
+        }
+    }
+
+    /// Adds one more observed source class. Additive: an already-present
+    /// class is a no-op, and nothing is ever removed.
+    #[must_use]
+    pub fn with(mut self, source: ClaimSource) -> Self {
+        self.sources.insert(source);
+        self
+    }
+
+    /// Whether this class is part of the write's history.
+    #[must_use]
+    pub fn contains(&self, source: ClaimSource) -> bool {
+        self.sources.contains(&source)
+    }
+
+    /// Whether ANY member requires an explicit auto permit. This classifies
+    /// the history; it does not authorize it. Authorization must check each
+    /// restricted member's own permit. No member can vouch for another.
+    #[must_use]
+    pub fn requires_explicit_auto_permit(&self) -> bool {
+        self.sources
+            .iter()
+            .any(|source| source.requires_explicit_auto_permit())
+    }
+
+    /// The member classes, in the set's canonical (`Ord`) order.
+    pub fn iter(&self) -> impl Iterator<Item = ClaimSource> + '_ {
+        self.sources.iter().copied()
+    }
+}
+
+/// Ed25519 proof that a MACHINE authored the exact stored claim body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MachineWriteSignature {
+    /// Per-vault enrolled software authority key, not a transport key.
+    pub public_key: [u8; 32],
+    /// Signature over the domain-separated machine claim transcript.
+    pub signature: [u8; 64],
+}
+
+/// Required metadata for writing a [`ClaimCandidate`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct WriteEnvelope {
+    actor: WriteActor,
+    source: ClaimSource,
+    provenance: WriteProvenance,
+    approval: ClaimApprovalStatus,
+    session_tag: Option<String>,
+    machine_signature: Option<MachineWriteSignature>,
+    /// ONE-1314. Stamped HOST-INTERNALLY only: no public constructor, guest
+    /// payload, or API argument reaches this field, and the 4-arity
+    /// constructors below can only produce the trivial value.
+    lineage: SourceLineage,
+}
+
+impl WriteEnvelope {
+    /// Creates an envelope from already-validated typed fields.
+    #[must_use]
+    pub fn new(
+        actor: WriteActor,
+        source: ClaimSource,
+        provenance: WriteProvenance,
+        approval: ClaimApprovalStatus,
+    ) -> Self {
+        Self {
+            actor,
+            source,
+            provenance,
+            approval,
+            session_tag: None,
+            machine_signature: None,
+            lineage: SourceLineage::of(source),
+        }
+    }
+
+    /// Creates an envelope whose history is WIDER than its declared source.
+    ///
+    /// The ONE non-trivial-lineage constructor, reserved for host dispatchers
+    /// that own a run's effect history (the code-run dispatcher, the Dreamer
+    /// promotion writer). It is `pub(crate)` on purpose: no public, guest, or
+    /// API path may supply a lineage value, so a caller cannot narrow its own
+    /// history to ride the auto lane.
+    pub fn with_lineage(
+        actor: WriteActor,
+        source: ClaimSource,
+        provenance: WriteProvenance,
+        approval: ClaimApprovalStatus,
+        lineage: SourceLineage,
+    ) -> Self {
+        Self {
+            actor,
+            source,
+            provenance,
+            approval,
+            session_tag: None,
+            machine_signature: None,
+            lineage,
+        }
+    }
+
+    /// Creates an envelope from caller-bound optional fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidClaimBody`](oneiron_contracts::error::Error::InvalidClaimBody) when any required envelope
+    /// axis is absent.
+    pub fn try_new(
+        actor: Option<WriteActor>,
+        source: Option<ClaimSource>,
+        provenance: Option<WriteProvenance>,
+        approval: Option<ClaimApprovalStatus>,
+    ) -> oneiron_contracts::error::Result<Self> {
+        let actor = actor.ok_or(oneiron_contracts::error::Error::InvalidClaimBody(
+            "write envelope missing actor",
+        ))?;
+        let source = source.ok_or(oneiron_contracts::error::Error::InvalidClaimBody(
+            "write envelope missing source",
+        ))?;
+        let provenance = provenance.ok_or(oneiron_contracts::error::Error::InvalidClaimBody(
+            "write envelope missing provenance",
+        ))?;
+        let approval = approval.ok_or(oneiron_contracts::error::Error::InvalidClaimBody(
+            "write envelope missing approval",
+        ))?;
+
+        Ok(Self::new(actor, source, provenance, approval))
+    }
+
+    /// Carries a machine's signature; the shared write door verifies it against
+    /// the exact stored body, claim id and the vault's folded authority roster.
+    #[must_use]
+    pub fn with_machine_signature(mut self, proof: MachineWriteSignature) -> Self {
+        self.machine_signature = Some(proof);
+        self
+    }
+
+    /// Host-only access to the machine's proof for staging immutable birth.
+    pub const fn machine_signature(&self) -> Option<MachineWriteSignature> {
+        self.machine_signature
+    }
+
+    /// Actor stamped into candidate writes.
+    #[must_use]
+    pub const fn actor(&self) -> WriteActor {
+        self.actor
+    }
+
+    /// Provenance source stamped into candidate writes.
+    #[must_use]
+    pub const fn source(&self) -> ClaimSource {
+        self.source
+    }
+
+    /// Opaque provenance payload stamped into candidate writes.
+    #[must_use]
+    pub fn provenance(&self) -> &WriteProvenance {
+        &self.provenance
+    }
+
+    /// Explicit approval state stamped into candidate writes.
+    #[must_use]
+    pub const fn approval(&self) -> ClaimApprovalStatus {
+        self.approval
+    }
+
+    /// A synthetic query hint is generated, retaining its writer and lineage.
+    pub fn for_lexical_hint(&self) -> Self {
+        let mut hint = self.clone();
+        hint.source = ClaimSource::Generated;
+        hint.lineage = hint.lineage.with(ClaimSource::Generated);
+        hint
+    }
+
+    /// Narrow the approval requested by a typed writer while preserving lineage.
+    #[must_use]
+    pub fn with_approval(mut self, approval: ClaimApprovalStatus) -> Self {
+        self.approval = approval;
+        self
+    }
+
+    /// The source classes this write's history actually drew on.
+    #[must_use]
+    pub const fn lineage(&self) -> &SourceLineage {
+        &self.lineage
+    }
+
+    /// Whether the gate must expose the declared source and sensitivity even
+    /// for a non-Auto write. This is an input-shape question, not authorization:
+    /// the gate must still check the actual restricted lineage members.
+    /// A trivial lineage answers exactly what the declared label answered.
+    #[must_use]
+    pub fn effective_requires_explicit_auto_permit(&self) -> bool {
+        self.source.requires_explicit_auto_permit() || self.lineage.requires_explicit_auto_permit()
+    }
+
+    /// Whether the lineage says nothing the declared source did not already
+    /// say. Trivial lineage stamps NO evidence entry, so every write that
+    /// existed before this axis keeps byte-identical evidence.
+    fn lineage_is_trivial(&self) -> bool {
+        self.lineage == SourceLineage::of(self.source)
+    }
+
+    /// Tags every emitted claim with the agent session that produced it.
+    ///
+    /// The tag is validated by the claim write door and becomes the durable
+    /// data-native session-bundle association on proposed claims.
+    #[must_use]
+    pub fn with_session_tag(mut self, session_tag: impl Into<String>) -> Self {
+        self.session_tag = Some(session_tag.into());
+        self
+    }
+}
+
+/// Caller-emitted claim data before write-path envelope stamping.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClaimCandidate {
+    predicate: String,
+    subject: ClaimSubject,
+    value: Value,
+    confidence: f32,
+    confidence_details: Option<oneiron_contracts::claim::ConfidenceDetails>,
+    salience: Option<f32>,
+    evidence: Option<Value>,
+    valid_from: Option<u64>,
+    valid_to: Option<u64>,
+    world: Option<EntityId>,
+    relationship: RelationshipScope,
+    scope: Option<Value>,
+    facet_stamp: Option<EntityId>,
+    project_stamp: Option<EntityId>,
+    stale: bool,
+    lexical_hints: Vec<String>,
+}
+
+impl ClaimCandidate {
+    /// Creates candidate claim data. Metadata axes are supplied by
+    /// [`WriteEnvelope`] at write time.
+    #[must_use]
+    pub fn new(
+        predicate: impl Into<String>,
+        subject: ClaimSubject,
+        value: Value,
+        confidence: f32,
+    ) -> Self {
+        Self {
+            predicate: predicate.into(),
+            subject,
+            value,
+            confidence,
+            confidence_details: None,
+            salience: None,
+            evidence: None,
+            valid_from: None,
+            valid_to: None,
+            world: None,
+            relationship: None,
+            scope: None,
+            facet_stamp: None,
+            project_stamp: None,
+            stale: false,
+            lexical_hints: Vec::new(),
+        }
+    }
+
+    /// Prospective queries from the extractor, never claim value or evidence.
+    pub fn with_lexical_hints(mut self, hints: Vec<String>) -> Self {
+        self.lexical_hints = hints;
+        self
+    }
+
+    pub fn lexical_hints(&self) -> &[String] {
+        &self.lexical_hints
+    }
+
+    /// Adds the band and basis the candidate's confidence was produced in
+    /// (FIX 7761); without them the stored claim carries the house band of
+    /// its number.
+    #[must_use]
+    pub fn with_confidence_details(
+        mut self,
+        details: oneiron_contracts::claim::ConfidenceDetails,
+    ) -> Self {
+        self.confidence_details = Some(details);
+        self
+    }
+
+    /// Adds candidate-local salience.
+    #[must_use]
+    pub fn with_salience(mut self, salience: f32) -> Self {
+        self.salience = Some(salience);
+        self
+    }
+
+    /// Adds candidate-local evidence; the envelope keeps its own provenance stamp.
+    #[must_use]
+    pub fn with_evidence(mut self, evidence: Value) -> Self {
+        self.evidence = Some(evidence);
+        self
+    }
+
+    /// Adds typed document citations beside the candidate's other evidence
+    /// (ARCH-0032, FIX 904). The write pins each one that verifies against
+    /// its document in the write's own snapshot.
+    pub fn with_evidence_refs(
+        mut self,
+        refs: &[crate::write_envelope::claim_body::EvidenceRef],
+    ) -> oneiron_contracts::error::Result<Self> {
+        let key = crate::write_envelope::claim_body::EVIDENCE_REFS_KEY;
+        let mut entries = match self.evidence.take() {
+            Some(Value::Map(entries)) => entries,
+            None => Vec::new(),
+            Some(_) => {
+                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
+                    "evidence must be a map",
+                ));
+            }
+        };
+        entries.retain(|(name, _)| name.as_str() != Some(key));
+        entries.push((
+            Value::from(key),
+            crate::write_envelope::claim_body::public_evidence_value(refs)?,
+        ));
+        self.evidence = Some(Value::Map(entries));
+        Ok(self)
+    }
+
+    /// Candidate-local evidence data, before the promotion writer replaces it
+    /// with the sealed evidence envelope.
+    pub fn evidence(&self) -> Option<&Value> {
+        self.evidence.as_ref()
+    }
+
+    /// Adds an optional validity window.
+    #[must_use]
+    pub fn with_validity(mut self, valid_from: Option<u64>, valid_to: Option<u64>) -> Self {
+        self.valid_from = valid_from;
+        self.valid_to = valid_to;
+        self
+    }
+
+    /// Adds an optional world scope.
+    #[must_use]
+    pub fn with_world(mut self, world: EntityId) -> Self {
+        self.world = Some(world);
+        self
+    }
+
+    /// Adds a relationship scope. Without one, the writer stamps `rel:all`.
+    /// Limits the claim to one RELATIONSHIP. Validated at the write door.
+    #[must_use]
+    pub fn with_relationship(mut self, relationship: EntityId) -> Self {
+        self.relationship = Some(BTreeSet::from([relationship]));
+        self
+    }
+
+    /// Sets the whole relationship scope: `None` is `all`, `Some(empty)` the
+    /// explicit empty set, `Some(ids)` every listed RELATIONSHIP. Validated at
+    /// the write door.
+    #[must_use]
+    pub fn with_relationships(mut self, relationships: RelationshipScope) -> Self {
+        self.relationship = relationships;
+        self
+    }
+
+    pub const fn relationship(&self) -> Option<&BTreeSet<EntityId>> {
+        self.relationship.as_ref()
+    }
+
+    /// Adds an optional opaque scope value.
+    #[must_use]
+    pub fn with_scope(mut self, scope: Value) -> Self {
+        self.scope = Some(scope);
+        self
+    }
+
+    /// Preserve an already-scoped claim's exact facet and audience on a
+    /// session-branch proposal. This internal door does not grant scope.
+    pub fn with_scope_stamps(mut self, facet: EntityId, project: EntityId) -> Self {
+        self.facet_stamp = Some(facet);
+        self.project_stamp = Some(project);
+        self
+    }
+
+    /// Marks the candidate as stale derived data.
+    #[must_use]
+    pub fn with_stale(mut self, stale: bool) -> Self {
+        self.stale = stale;
+        self
+    }
+
+    /// Derived answers cannot disclose their input through a broader reader.
+    pub fn with_private_reader(
+        mut self,
+        principal: EntityId,
+    ) -> oneiron_contracts::error::Result<Self> {
+        let mut scope = match self.scope.take() {
+            Some(Value::Map(scope)) => scope,
+            None => Vec::new(),
+            Some(_) => {
+                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
+                    "scope must be a map",
+                ));
+            }
+        };
+        scope.retain(|(key, _)| key.as_str() != Some("typed_question_principal"));
+        scope.push((
+            Value::from("typed_question_principal"),
+            Value::from(principal.to_hex()),
+        ));
+        self.scope = Some(Value::Map(scope));
+        Ok(self)
+    }
+
+    pub fn with_evidence_taint(
+        mut self,
+        taint: ClaimSource,
+    ) -> oneiron_contracts::error::Result<Self> {
+        let mut entries = match self.scope.take() {
+            Some(Value::Map(entries)) => entries,
+            None => Vec::new(),
+            Some(_) => {
+                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
+                    "scope must be a map",
+                ));
+            }
+        };
+        entries.retain(|(key, _)| key.as_str() != Some("evidence_taint"));
+        entries.push((Value::from("evidence_taint"), Value::from(taint.as_str())));
+        self.scope = Some(Value::Map(entries));
+        Ok(self)
+    }
+
+    /// Sets the ClaimOf weight the claim is born with: ONE initial-weight
+    /// entry in the scope map, replacing any it carried. `None` drops the
+    /// entry, so the claim is born at the ClaimOf default. The entry is part
+    /// of the canonical body, so a MACHINE birth signs it, and the
+    /// materializer and the signed-history fold read the same value
+    /// (`claim::claim_initial_claim_of_weight`).
+    pub fn with_initial_claim_of_weight(
+        mut self,
+        weight: Option<f32>,
+    ) -> oneiron_contracts::error::Result<Self> {
+        let key = crate::write_envelope::claim_body::CLAIM_SCOPE_INITIAL_CLAIM_OF_WEIGHT_KEY;
+        let mut entries = match self.scope.take() {
+            Some(Value::Map(entries)) => entries,
+            None => Vec::new(),
+            Some(_) => {
+                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
+                    "scope must be a map",
+                ));
+            }
+        };
+        entries.retain(|(entry, _)| entry.as_str() != Some(key));
+        if let Some(weight) = weight {
+            if !matches!(self.subject, ClaimSubject::Entity(_)) {
+                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
+                    "initial ClaimOf weight requires an entity subject",
+                ));
+            }
+            if !weight.is_finite() || !(0.0..=1.0).contains(&weight) {
+                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
+                    "malformed initial ClaimOf weight",
+                ));
+            }
+            entries.push((Value::from(key), Value::F32(weight)));
+        }
+        self.scope = (!entries.is_empty()).then_some(Value::Map(entries));
+        Ok(self)
+    }
+
+    pub const fn subject(&self) -> ClaimSubject {
+        self.subject
+    }
+
+    /// The candidate's optional world scope, as an entity ref.
+    ///
+    /// ONE-1728 (K4): the batch decode point enumerates every overlay-id-bearing
+    /// ref on a `BatchOp::ClaimCandidate`, and the world scope is one of them.
+    /// The field is otherwise consumed only inside `into_claim_body`.
+    pub const fn world(&self) -> Option<EntityId> {
+        self.world
+    }
+
+    pub fn value_str(&self) -> Option<&str> {
+        self.value.as_str()
+    }
+
+    /// The predicate this candidate would write. Read by the batch doors so
+    /// they can refuse a predicate family whose supersession chain a typed
+    /// door owns, before the candidate reaches a write.
+    pub fn predicate(&self) -> &str {
+        &self.predicate
+    }
+
+    /// The candidate's free values: its value, evidence and scope. The batch
+    /// door's mask on write (OF-560) moves a secret it finds in one into
+    /// custody and leaves the handle in its place.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut Value> {
+        std::iter::once(&mut self.value)
+            .chain(self.evidence.as_mut())
+            .chain(self.scope.as_mut())
+    }
+
+    /// The stored body. A candidate that names a facet keeps it; otherwise the
+    /// body carries `default_facet`, the vault default when the body is stored.
+    pub fn into_claim_body(
+        self,
+        envelope: &WriteEnvelope,
+        default_facet: EntityId,
+    ) -> oneiron_contracts::error::Result<ClaimBody> {
+        let mut body = ClaimBody::new(
+            self.predicate,
+            self.subject,
+            self.value,
+            self.confidence,
+            envelope.approval(),
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.set_confidence(self.confidence, self.confidence_details);
+        body.salience = self.salience;
+        body.evidence = Some(write_envelope_evidence(envelope, self.evidence));
+        body.valid_from = self.valid_from;
+        body.valid_to = self.valid_to;
+        body.source = Some(envelope.source());
+        body.world = self.world;
+        body.rel = self.relationship;
+        body.scope_facet = self.facet_stamp.unwrap_or(default_facet);
+        if let Some(project) = self.project_stamp {
+            body.scope_project = project;
+        }
+        if let Some(Value::Map(entries)) = self.scope.as_ref() {
+            for (key, value) in entries {
+                let id = match value {
+                    Value::Binary(bytes) => bytes
+                        .as_slice()
+                        .try_into()
+                        .ok()
+                        .and_then(|bytes| EntityId::from_bytes(bytes).ok()),
+                    _ => value
+                        .as_str()
+                        .and_then(|value| EntityId::from_hex(value).ok()),
+                };
+                if let Some(id) = id {
+                    match key.as_str() {
+                        Some("facet" | "facet_ref" | "facetRef") => body.scope_facet = id,
+                        Some("scopeProjectId") => body.scope_project = id,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        body.scope = self.scope;
+        body.session_tag = envelope.session_tag.clone();
+        body.stale = self.stale;
+        Ok(body)
+    }
+}
+
+pub const WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY: &str = "actor_entity_ref";
+pub const WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY: &str = "actor_class";
+pub const WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY: &str = "provenance";
+pub const WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY: &str = "candidate_evidence";
+/// ONE-1314: the engine-owned record of what the write's history drew on.
+/// Present ONLY when the lineage says more than the declared source already
+/// did, so trivial-lineage writes keep the evidence map they always had.
+pub const WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY: &str = "lineage";
+/// The evidence a raw predecessor held at its top level, carried by a stamped
+/// successor apart from any writer's `candidate_evidence`. Readers that check
+/// a raw claim's evidence where it was written (typed citations) check it here.
+pub const WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY: &str = "carried_evidence";
+
+/// The raw predecessor's evidence a stamped claim carries (see
+/// [`WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY`]). A stamp is never carried
+/// evidence, so a value that holds one is not.
+pub fn envelope_carried_evidence(evidence: &Value) -> Option<&Value> {
+    fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value)
+    }
+    let Value::Map(entries) = evidence else {
+        return None;
+    };
+    field(entries, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)?;
+    match field(entries, WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY)? {
+        Value::Map(carried) if field(carried, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY).is_some() => None,
+        carried => Some(carried),
+    }
+}
+
+pub fn write_envelope_evidence(
+    envelope: &WriteEnvelope,
+    candidate_evidence: Option<Value>,
+) -> Value {
+    let actor = envelope.actor();
+    let mut entries = vec![
+        (
+            Value::from(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
+            Value::Binary(actor.entity_ref().as_bytes().to_vec()),
+        ),
+        (
+            Value::from(WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY),
+            Value::from(actor.actor_class() as u8),
+        ),
+        (
+            Value::from(WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY),
+            envelope.provenance().value().clone(),
+        ),
+    ];
+
+    // Engine-owned and strictly additive: a writer cannot suppress it (the
+    // lineage is not caller-supplied) and cannot mint it (a trivial lineage
+    // stamps nothing at all, which is every pre-ONE-1314 write).
+    if let Some(frontier) = actor.authority_frontier() {
+        entries.push((
+            Value::from("authority_frontier"),
+            Value::Binary(frontier.to_vec()),
+        ));
+    }
+
+    if !envelope.lineage_is_trivial() {
+        entries.push((
+            Value::from(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY),
+            Value::Array(
+                envelope
+                    .lineage()
+                    .iter()
+                    .map(|source| Value::from(source.as_str()))
+                    .collect(),
+            ),
+        ));
+    }
+
+    if let Some(proof) = envelope.machine_signature {
+        entries.push((
+            Value::from("machine_signature"),
+            Value::Array(vec![
+                Value::Binary(proof.public_key.to_vec()),
+                Value::Binary(proof.signature.to_vec()),
+            ]),
+        ));
+    }
+
+    if let Some(candidate_evidence) = candidate_evidence {
+        entries.push((
+            Value::from(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY),
+            candidate_evidence,
+        ));
+    }
+
+    Value::Map(entries)
+}
+
+pub mod subject_record;

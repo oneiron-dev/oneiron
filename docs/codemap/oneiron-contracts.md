@@ -26,7 +26,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/vault_read/types.rs` | src | s | 8 struct · 2 enum · 3 fn | AskRequest, CodeExecuteRequest, CodeSearchRequest, CoreBatchShortIdHydrateRequest, CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryAffect, CoreQueryRequest +2 | Vault-read request shapes and the view / count-mode knobs they carry |
 | `src/edge.rs` | src | s | 1 enum · 2 fn | EdgeActorClass | Edge vocabulary the write path shares |
 | `src/entity_id.rs` | src | m | 4 struct · 18 fn · 3 const · 2 mod | EntityId, ForeignWorldId, LocalWorldId, ParsedPresentationId | `EntityId` + world-id newtypes + id parsing/hex |
-| `src/entity_id/derived_domains.rs` | src | m | 65 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
+| `src/entity_id/derived_domains.rs` | src | m | 68 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
 | `src/entity_id/serde_hex.rs` | src | s | 4 fn · 1 mod | — | Validated entity-id representation for opt-in domain records |
 | `src/error/artifact.rs` | src | m | 2 enum · 1 fn · 1 crate-vis | ArtifactError, LiveDeckRefusal | Artifact-domain errors: code and blob artifacts, anchors, edit proposals, skills, agent definitions… |
 | `src/error/claim.rs` | src | s | 1 enum · 1 crate-vis | ClaimError | Claim-domain errors: predicate and actor-authority refusals, claim lifecycle transitions, and the… |
@@ -42,10 +42,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error/relay.rs` | src | s | 1 enum · 1 crate-vis | RelayError | Relay-domain errors: relay attestation refusals, vault-receipt trust, and the hosted policy manifest and… |
 | `src/error/secret.rs` | src | m | 2 enum · 1 crate-vis | KitRecord, SecretError | Secret-domain errors: secret custody, binding and tier refusals, and the secret-lease doors with their… |
 | `src/error/store.rs` | src | s | 4 enum · 1 fn · 1 crate-vis | SideTableRowProblem, StoreError, VaultRootEntry, VaultRootProblem | Store-domain errors: the vault-root preflight and the index/analyzer compatibility refusals a store open or… |
-| `src/error/sync.rs` | src | m | 1 struct · 6 enum · 6 fn · 4 crate-vis | SyncConfigField, SyncEngineContext, SyncError, SyncProtocolPruneScope, SyncProtocolValidation, SyncRollbackError, SyncSelectorValidation | Sync-domain errors: the CRDT window/protocol/engine failures behind `feature = "sync"`, plus the… |
+| `src/error/sync.rs` | src | m | 1 struct · 7 enum · 6 fn · 4 crate-vis | FederationReplayEnd, SyncConfigField, SyncEngineContext, SyncError, SyncProtocolPruneScope, SyncProtocolValidation, SyncRollbackError, SyncSelectorValidation | Sync-domain errors: the CRDT window/protocol/engine failures behind `feature = "sync"`, plus the… |
 | `src/gate.rs` | src | s | 1 struct | RetrievalFilter | The caller-supplied retrieval filter |
+| `src/host_memory.rs` | src | m | 2 struct · 1 enum · 14 fn | MachineMemory, MemoryLease, MemoryRefusal | The process's physical-memory admission line for host and native work |
 | `src/identity_topology.rs` | src | s | 2 enum · 4 fn | EntityLifecycleState, IdentityTopologyRejection | Identity-topology lifecycle states and per-op rejections: the values the topology ledger, the sync replay… |
-| `src/lib.rs` | src | s | 23 mod · 2 re-export | — | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… |
+| `src/lib.rs` | src | s | 24 mod · 2 re-export | — | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… |
 | `src/limit_ask.rs` | src | m | 2 struct · 1 enum · 1 trait · 11 fn | EngineLimit, EngineLimits, LimitAsk, LimitWatch | The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520) |
 | `src/limit_ask/cgroup.rs` | src | s | 2 crate-vis | — | The memory cgroup this process runs in (FIX 8067), and what its limits leave (FIX 8066) |
 | `src/limit_ask/engine_rows.rs` | src | m | 2 fn · 1 const | — | The engine rows' tables: every row, its config key and its default (moved out of `limit_ask.rs` whole, so… |
@@ -55,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/error/engine.rs` | src | m | — | — | — |
 | `src/memory/error/gate_denial.rs` | src | s | 1 struct | MemoryGateDenial | The Gate rejection a `MemoryError` carries when its engine cause was a Gate write rejection |
 | `src/posterior.rs` | src | s | 1 trait · 2 fn | Posterior | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
-| `src/record_layout.rs` | src | s | 6 const | — | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |
+| `src/record_layout.rs` | src | s | 1 struct · 1 fn · 6 const | EntityMetadataHeader | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |
 | `src/registry/artifact_kinds.rs` | src | s | 2 enum · 2 fn | ArtifactFamilyId, ArtifactFamilyKindId | Semantic artifact kinds under the one artifact family (ARCH-0078) |
 | `src/registry/families.rs` | src | s | 1 struct · 1 enum · 7 fn · 1 const | TypeByteFamily, TypeByteFamilyEntry | Byte-space v3.1 family allocation, independent of kind behavior |
 | `src/registry/mod.rs` | src | s | 12 re-export | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
