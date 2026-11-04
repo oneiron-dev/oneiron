@@ -231,6 +231,7 @@ pub mod retrieval_deadline;
 pub mod retrieval_signal;
 pub mod row_birth;
 pub(crate) mod pending_custody_revoke;
+pub mod seat_model_description;
 pub(crate) mod secret_handle_labels;
 pub(crate) mod secret_name_index;
 pub(crate) mod side_table_erase_scan;
