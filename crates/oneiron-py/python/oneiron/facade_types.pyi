@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1224 facade rows, 4455 declarations.
+Census: 1224 facade rows, 4456 declarations.
 Inputs: 1155 of 1224 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1060 of 1224 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -10461,6 +10461,10 @@ ConsentGrantStatus = Literal["active", "revoked"]
 class ConsentRevokeAction(TypedDict):
     command: str
     grant_ref: str
+class ConsentRegrantAction(TypedDict):
+    command: str
+    agent: str
+    conversation: str
 class BypassScopeProject(TypedDict):
     project: EntityId
 class BypassScopeThread(TypedDict):
@@ -10488,7 +10492,7 @@ class ConsentRegistryAgentGrant(TypedDict):
     expires_at: NotRequired[int | None]
     repo_bounds: NotRequired[RepoAccessBounds | None]
     confers: bool
-ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
+ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "regrant_action": NotRequired[ConsentRegrantAction | None], "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
 class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]
 class HeldFailureSignalBatchView(TypedDict):
