@@ -9,7 +9,7 @@ use super::doors::{
     standing_composition_in_txn, validate_landing_in_txn,
 };
 use super::purpose::SummaryPurpose;
-use crate::attempt_queue::AttemptId;
+use crate::store::attempt_id::AttemptId;
 use crate::conversation_dag::{actor_in_txn, prove_branch_span, selected_thread_in_txn};
 use crate::dreamer_consolidation::{ScopeSummaryEvidence, scope_summary_evidence_in_txn};
 use crate::dreamer_runner::DreamerAttemptPayload;

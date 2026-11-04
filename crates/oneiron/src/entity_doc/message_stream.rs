@@ -48,7 +48,7 @@ pub(crate) fn quote_birth_admits_in(
     };
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE
-        || crate::gate::validate_canonical_witness_message_body(body).is_err()
+        || crate::store::witness_message_body::validate_canonical_witness_message_body(body).is_err()
     {
         return Ok(false);
     }
@@ -119,7 +119,7 @@ fn birth_message_in_txn(
         return Err(invalid("stream birth requires MESSAGE"));
     }
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-    crate::gate::validate_canonical_witness_message_body(body)?;
+    crate::store::witness_message_body::validate_canonical_witness_message_body(body)?;
     let value = rmpv::decode::read_value(&mut std::io::Cursor::new(body))
         .map_err(|_| Error::CorruptedIndex("message canonical body"))?;
     let rmpv::Value::Map(mut fields) = value else {
@@ -135,7 +135,7 @@ fn birth_message_in_txn(
         .ok_or(Error::CorruptedIndex("message text"))?;
     // A MESSAGE its writing door already stamped keeps that birth on its
     // document's birth commit (FIX 10929).
-    let born = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, entity)?;
+    let born = crate::store::birth_record::row_birth_in_txn(&vault.store, txn, entity)?;
     // The birth commit names the actor's stamp token (FIX 10930).
     let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
     let born = born.as_ref().map(|birth| &birth.made_by);

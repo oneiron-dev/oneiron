@@ -1570,6 +1570,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
                 ),
             ),
+            #[cfg(feature = "sync")]
             (
                 "vault.mesh.path_receipts",
                 crate::code_run::vault_read::request_schema::<
@@ -1598,6 +1599,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                     crate::task_verb::sdk::MeshMachineRevokeRequest,
                 >(),
             ),
+            #[cfg(feature = "sync")]
             (
                 "vault.mesh.dial",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::MeshDialRequest>(
@@ -1839,52 +1841,61 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                     crate::task_verb::sdk::CoreferencePairRequest,
                 >(),
             ),
+            #[cfg(feature = "sync")]
             (
                 "vault.federation.burst.baseline",
                 crate::code_run::vault_read::request_schema::<
                     crate::sync::federation_burst::FederationBurstPeerRequest,
                 >(),
             ),
+            #[cfg(feature = "sync")]
             (
                 "vault.federation.burst.policy",
                 crate::code_run::vault_read::request_schema::<
                     crate::sync::federation_burst::FederationBurstPeerRequest,
                 >(),
             ),
+            #[cfg(feature = "sync")]
             (
                 "vault.federation.burst.policy.set",
                 crate::code_run::vault_read::request_schema::<
                     crate::sync::federation_burst::FederationBurstPolicySetRequest,
                 >(),
             ),
+            #[cfg(feature = "sync")]
             (
                 "vault.federation.burst.ingress",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectDelivery>(
                 ),
             ),
+            #[cfg(feature = "sync")]
             (
                 "vault.federation.burst.disposition",
                 crate::code_run::vault_read::request_schema::<
                     crate::sync::federation_burst::FederationBurstReplayRequest,
                 >(),
             ),
+            #[cfg(feature = "sync")]
             (
                 "vault.federation.burst.review",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
                 ),
             ),
+            #[cfg(feature = "sync")]
             (
                 "vault.federation.burst.review.release",
                 crate::code_run::vault_read::request_schema::<
                     crate::sync::federation_burst::FederationBurstReviewRequest,
                 >(),
             ),
+            #[cfg(feature = "sync")]
             (
                 "vault.federation.burst.review.reject",
                 crate::code_run::vault_read::request_schema::<
                     crate::sync::federation_burst::FederationBurstReviewRequest,
                 >(),
             ),
+            #[cfg(feature = "sync")]
             (
                 "vault.federation.burst.replay",
                 crate::code_run::vault_read::request_schema::<
@@ -2119,6 +2130,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                     crate::task_verb::sdk::ResidencePruneRequest,
                 >(),
             ),
+            #[cfg(feature = "sync")]
             (
                 "vault.residence.directives",
                 crate::code_run::vault_read::request_schema::<
@@ -8595,6 +8607,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.slim.resume" => {
             crate::code_run::vault_read::request_schema::<crate::slim::public::SlimResumeReceipt>()
         }
+        #[cfg(feature = "sync")]
         "vault.mesh.path_receipts" => crate::code_run::vault_read::request_schema::<
             Vec<crate::sync::mesh_path::MeshPathReceipt>,
         >(),
@@ -8610,6 +8623,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.mesh.revoke_machine" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::MeshMachineRevoked,
         >(),
+        #[cfg(feature = "sync")]
         "vault.mesh.dial" => {
             crate::code_run::vault_read::request_schema::<crate::sync::mesh_path::MeshPathReceipt>()
         }
@@ -8657,30 +8671,39 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.federation.coreference.unlink" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::CoreferenceUnlinkReceipt,
         >(),
+        #[cfg(feature = "sync")]
         "vault.federation.burst.baseline" => crate::code_run::vault_read::request_schema::<
             crate::sync::federation_burst::FederationBurstBaselineState,
         >(),
+        #[cfg(feature = "sync")]
         "vault.federation.burst.policy" => crate::code_run::vault_read::request_schema::<
             crate::sync::federation_burst::FederationBurstPolicy,
         >(),
+        #[cfg(feature = "sync")]
         "vault.federation.burst.policy.set" => crate::code_run::vault_read::request_schema::<
             crate::sync::federation_burst::FederationBurstPolicy,
         >(),
+        #[cfg(feature = "sync")]
         "vault.federation.burst.ingress" => crate::code_run::vault_read::request_schema::<
             crate::sync::federation_burst::FederationBurstReceipt,
         >(),
+        #[cfg(feature = "sync")]
         "vault.federation.burst.disposition" => crate::code_run::vault_read::request_schema::<
             crate::sync::federation_burst::FederationBurstReceipt,
         >(),
+        #[cfg(feature = "sync")]
         "vault.federation.burst.review" => crate::code_run::vault_read::request_schema::<
             Vec<crate::sync::federation_burst::FederationBurstReviewBundle>,
         >(),
+        #[cfg(feature = "sync")]
         "vault.federation.burst.review.release" => crate::code_run::vault_read::request_schema::<
             crate::sync::federation_burst::FederationBurstReviewReceipt,
         >(),
+        #[cfg(feature = "sync")]
         "vault.federation.burst.review.reject" => crate::code_run::vault_read::request_schema::<
             crate::sync::federation_burst::FederationBurstReviewReceipt,
         >(),
+        #[cfg(feature = "sync")]
         "vault.federation.burst.replay" => crate::code_run::vault_read::request_schema::<
             crate::sync::federation_burst::FederationBurstReceipt,
         >(),
@@ -8785,6 +8808,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.files.sources.files" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::FilesSourceFiles>()
         }
+        #[cfg(feature = "sync")]
         "vault.residence.directives" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::ResidenceDirectiveView>,
         >(),
@@ -12793,6 +12817,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
         "vault.mesh.path_receipts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -12828,6 +12853,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
         "vault.mesh.dial" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13109,6 +13135,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.baseline" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13116,6 +13143,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.policy" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13123,6 +13151,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.policy.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13130,6 +13159,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.ingress" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13137,6 +13167,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.disposition" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13144,7 +13175,9 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.review" => &[],
+        #[cfg(feature = "sync")]
         "vault.federation.burst.review.release" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13152,6 +13185,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.review.reject" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13159,6 +13193,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.replay" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13433,6 +13468,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
         "vault.residence.directives" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20180,6 +20216,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.slim.resume" => {
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
         "vault.mesh.path_receipts" => {
             let _input: crate::task_verb::sdk::MeshPathReceiptsRequest = decode(value.clone())?;
         }
@@ -20195,6 +20232,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mesh.revoke_machine" => {
             let _input: crate::task_verb::sdk::MeshMachineRevokeRequest = decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
         "vault.mesh.dial" => {
             let _input: crate::task_verb::sdk::MeshDialRequest = decode(value.clone())?;
         }
@@ -20325,36 +20363,45 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.federation.coreference.unlink" => {
             let _input: crate::task_verb::sdk::CoreferencePairRequest = decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.baseline" => {
             let _input: crate::sync::federation_burst::FederationBurstPeerRequest =
                 decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.policy" => {
             let _input: crate::sync::federation_burst::FederationBurstPeerRequest =
                 decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.policy.set" => {
             let _input: crate::sync::federation_burst::FederationBurstPolicySetRequest =
                 decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.ingress" => {
             let _input: crate::task_verb::sdk::ConnectDelivery = decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.disposition" => {
             let _input: crate::sync::federation_burst::FederationBurstReplayRequest =
                 decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.review" => {
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.review.release" => {
             let _input: crate::sync::federation_burst::FederationBurstReviewRequest =
                 decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.review.reject" => {
             let _input: crate::sync::federation_burst::FederationBurstReviewRequest =
                 decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.replay" => {
             let _input: crate::sync::federation_burst::FederationBurstReplayRequest =
                 decode(value.clone())?;
@@ -20481,6 +20528,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.residence.prune" => {
             let _input: crate::task_verb::sdk::ResidencePruneRequest = decode(value.clone())?;
         }
+        #[cfg(feature = "sync")]
         "vault.residence.directives" => {
             let input: crate::task_verb::sdk::ResidenceDirectivesRequest = decode(value.clone())?;
             input.validate()?;
@@ -24021,11 +24069,13 @@ pub fn invoke(
         "vault.slim.resume_step" => encode(vault_slim_resume_step(memory, decode(value)?)?),
         "vault.slim.drop_heavy" => encode(vault_slim_drop_heavy(memory, decode(value)?)?),
         "vault.slim.resume" => encode(vault_slim_resume(memory, decode(value)?)?),
+        #[cfg(feature = "sync")]
         "vault.mesh.path_receipts" => encode(vault_mesh_path_receipts(memory, decode(value)?)?),
         "vault.mesh.identity" => encode(vault_mesh_identity(memory, decode(value)?)?),
         "vault.mesh.bind_machine" => encode(vault_mesh_bind_machine(memory, decode(value)?)?),
         "vault.mesh.set_alpn_grant" => encode(vault_mesh_set_alpn_grant(memory, decode(value)?)?),
         "vault.mesh.revoke_machine" => encode(vault_mesh_revoke_machine(memory, decode(value)?)?),
+        #[cfg(feature = "sync")]
         "vault.mesh.dial" => encode(vault_mesh_dial(memory, decode(value)?)?),
         "vault.outbox.diverged.list" => encode(vault_outbox_diverged_list(memory, decode(value)?)?),
         "vault.outbox.diverged.answer" => {
@@ -24098,32 +24148,41 @@ pub fn invoke(
         "vault.federation.coreference.unlink" => {
             encode(vault_federation_coreference_unlink(memory, decode(value)?)?)
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.baseline" => {
             encode(vault_federation_burst_baseline(memory, decode(value)?)?)
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.policy" => {
             encode(vault_federation_burst_policy(memory, decode(value)?)?)
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.policy.set" => {
             encode(vault_federation_burst_policy_set(memory, decode(value)?)?)
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.ingress" => {
             encode(vault_federation_burst_ingress(memory, decode(value)?)?)
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.disposition" => {
             encode(vault_federation_burst_disposition(memory, decode(value)?)?)
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.review" => {
             encode(vault_federation_burst_review(memory, decode(value)?)?)
         }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.review.release" => encode(vault_federation_burst_review_release(
             memory,
             decode(value)?,
         )?),
+        #[cfg(feature = "sync")]
         "vault.federation.burst.review.reject" => encode(vault_federation_burst_review_reject(
             memory,
             decode(value)?,
         )?),
+        #[cfg(feature = "sync")]
         "vault.federation.burst.replay" => {
             encode(vault_federation_burst_replay(memory, decode(value)?)?)
         }
@@ -24218,6 +24277,7 @@ pub fn invoke(
         "vault.residence.open" => encode(vault_residence_open(memory, decode(value)?)?),
         "vault.residence.index" => encode(vault_residence_index(memory, decode(value)?)?),
         "vault.residence.prune" => encode(vault_residence_prune(memory, decode(value)?)?),
+        #[cfg(feature = "sync")]
         "vault.residence.directives" => encode(vault_residence_directives(memory, decode(value)?)?),
         "vault.off_record.start" => encode(vault_off_record_start(memory, decode(value)?)?),
         "vault.off_record.status" => encode(vault_off_record_status(memory, decode(value)?)?),
@@ -28604,6 +28664,7 @@ pub fn vault_slim_resume(
 ) -> MemoryResult<crate::slim::public::SlimResumeReceipt> {
     crate::task_verb::sdk::host_only(memory, "vault.slim.resume", &input)
 }
+#[cfg(feature = "sync")]
 pub fn vault_mesh_path_receipts(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::MeshPathReceiptsRequest,
@@ -28634,6 +28695,7 @@ pub fn vault_mesh_revoke_machine(
 ) -> MemoryResult<crate::task_verb::sdk::MeshMachineRevoked> {
     crate::task_verb::sdk::host_only(memory, "vault.mesh.revoke_machine", &input)
 }
+#[cfg(feature = "sync")]
 pub fn vault_mesh_dial(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::MeshDialRequest,
@@ -29016,6 +29078,7 @@ pub fn vault_federation_coreference_unlink(
         input,
     )
 }
+#[cfg(feature = "sync")]
 pub fn vault_federation_burst_baseline(
     memory: &Memory<'_>,
     input: crate::sync::federation_burst::FederationBurstPeerRequest,
@@ -29026,6 +29089,7 @@ pub fn vault_federation_burst_baseline(
         input,
     )
 }
+#[cfg(feature = "sync")]
 pub fn vault_federation_burst_policy(
     memory: &Memory<'_>,
     input: crate::sync::federation_burst::FederationBurstPeerRequest,
@@ -29036,6 +29100,7 @@ pub fn vault_federation_burst_policy(
         input,
     )
 }
+#[cfg(feature = "sync")]
 pub fn vault_federation_burst_policy_set(
     memory: &Memory<'_>,
     input: crate::sync::federation_burst::FederationBurstPolicySetRequest,
@@ -29046,6 +29111,7 @@ pub fn vault_federation_burst_policy_set(
         input,
     )
 }
+#[cfg(feature = "sync")]
 pub fn vault_federation_burst_ingress(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ConnectDelivery,
@@ -29056,6 +29122,7 @@ pub fn vault_federation_burst_ingress(
         &input,
     )
 }
+#[cfg(feature = "sync")]
 pub fn vault_federation_burst_disposition(
     memory: &Memory<'_>,
     input: crate::sync::federation_burst::FederationBurstReplayRequest,
@@ -29066,6 +29133,7 @@ pub fn vault_federation_burst_disposition(
         &input,
     )
 }
+#[cfg(feature = "sync")]
 pub fn vault_federation_burst_review(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::EmptyRequest,
@@ -29075,6 +29143,7 @@ pub fn vault_federation_burst_review(
         &memory.embedded_owner("vault.federation.burst.review")?,
     )
 }
+#[cfg(feature = "sync")]
 pub fn vault_federation_burst_review_release(
     memory: &Memory<'_>,
     input: crate::sync::federation_burst::FederationBurstReviewRequest,
@@ -29085,6 +29154,7 @@ pub fn vault_federation_burst_review_release(
         input,
     )
 }
+#[cfg(feature = "sync")]
 pub fn vault_federation_burst_review_reject(
     memory: &Memory<'_>,
     input: crate::sync::federation_burst::FederationBurstReviewRequest,
@@ -29095,6 +29165,7 @@ pub fn vault_federation_burst_review_reject(
         input,
     )
 }
+#[cfg(feature = "sync")]
 pub fn vault_federation_burst_replay(
     memory: &Memory<'_>,
     input: crate::sync::federation_burst::FederationBurstReplayRequest,
@@ -29397,6 +29468,7 @@ pub fn vault_residence_prune(
 ) -> MemoryResult<crate::task_verb::sdk::ResidencePruneAnswer> {
     crate::task_verb::sdk::residence_host_only(memory, "vault.residence.prune", &input)
 }
+#[cfg(feature = "sync")]
 pub fn vault_residence_directives(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ResidenceDirectivesRequest,
