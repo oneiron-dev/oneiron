@@ -32,7 +32,7 @@ impl Vault {
         self.store
             .delete_guards
             .reject_ruling_delete(&self.store, txn, id)?;
-        crate::task_authority::reject_fact_delete(&self.store, txn, id)?;
+        crate::store::task_authority_guard::reject_fact_delete(&self.store, txn, id)?;
         if reason != DeleteReason::GdprDelete {
             self.store
                 .delete_guards
