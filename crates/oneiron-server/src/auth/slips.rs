@@ -199,9 +199,6 @@ impl CoreAuth {
             {
                 return Err(ApiError::unauthorized());
             }
-        } else if matches!(&claims.scope.verbs, ScopeAxis::Some(verbs) if verbs.iter().any(|verb| verb.starts_with("org:")))
-        {
-            return Err(ApiError::unauthorized());
         }
         let scopes: BTreeSet<_> = CoreScope::all()
             .into_iter()
@@ -211,8 +208,8 @@ impl CoreAuth {
                 if claims.invitation_ref.is_some() {
                     return false;
                 }
-                // A general root is not an organization credential. Organization
-                // powers exist only in the explicit org-bound closed vocabulary.
+                // A member grant may carry org:* verbs without an organization.
+                // Project organization powers only with their explicit binding.
                 if matches!(scope, CoreScope::OrgAdmin(_)) && claims.org_ref.is_none() {
                     return false;
                 }

@@ -10,6 +10,7 @@ use crate::claim::ClaimBody;
 use crate::context_pack::EmptyReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::query_expansion::{
     CompletionCandidate, CompletionRequest, EvidenceVerdict, HydeRequest, ground_query,
     normalized_subqueries,
@@ -178,17 +179,30 @@ impl PipelineBuilder<'_> {
             }
         };
 
-        let hyde_expansion = match self.hyde.as_ref() {
+        // The HyDE request's validations, before anything paid: its options,
+        // the text query it grounds, and the grounded query itself. A
+        // deadline already reached skips the expansion, as ever.
+        let hyde_query = match self.hyde.as_ref() {
             None => None,
             Some(_) if self.deadline_reached() => None,
-            Some((expander, grounding, options)) => {
+            Some((_, grounding, options)) => {
                 options.validate()?;
                 let Some((template, _)) = self.text_search.as_ref() else {
                     return Err(Error::InvalidConfig(
                         "hyde requires search_text query".to_owned(),
                     ));
                 };
-                let query = ground_query(template, grounding)?;
+                Some(ground_query(template, grounding)?)
+            }
+        };
+        // The one final count this execution serves, measured after every
+        // applicable validation and before any paid expansion or scoring.
+        // Best effort: the run serves its rows either way.
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::RequestedResultRows, self.result_limit as u64);
+        let hyde_expansion = match (self.hyde.as_ref(), hyde_query) {
+            (Some((expander, _, _)), Some(query)) => {
                 let expansion = expander.expand(&HydeRequest {
                     query,
                     max_subqueries: crate::query_expansion::HYDE_MAX_SUBQUERIES,
@@ -196,6 +210,7 @@ impl PipelineBuilder<'_> {
                 crate::query_expansion::validate_hyde_expansion(self.vault, &expansion)?;
                 Some(expansion)
             }
+            _ => None,
         };
 
         if self.text_search.is_some() {
