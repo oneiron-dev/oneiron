@@ -51,21 +51,21 @@ export type CommitmentWakeProposal = { proposal_ref: string; instance_ref: strin
 export type CommitmentFulfillRequest = { commitment_ref: string; source: CommitmentFulfillmentSource; evidence_turn_refs: string[] }
 /** `oneiron::memory::commitment_doors::types::CommitmentCloseRequest` */
 export type CommitmentCloseRequest = { commitment_ref: string; evidence_turn_refs: string[] }
-/** `oneiron::memory::web_acquisition::door::WebFetchRequest` */
+/** `oneiron_web_fetch::web_acquisition::door::WebFetchRequest` */
 export type WebFetchRequest = { url: string }
-/** `oneiron::memory::web_acquisition::RendererKind` */
+/** `oneiron_web_fetch::web_acquisition::RendererKind` */
 export type RendererKind = "readability" | "headless" | "firecrawl"
-/** `oneiron::memory::web_acquisition::FetchResult` */
+/** `oneiron_web_fetch::web_acquisition::FetchResult` */
 export type FetchResult = { markdown: string; title: string; canonical_url: string; fetched_at: number; content_hash: string; renderer: RendererKind }
-/** `oneiron::memory::web_acquisition::CrawlScope` */
+/** `oneiron_web_fetch::web_acquisition::CrawlScope` */
 export type CrawlScope = "same_site" | "cross_site"
-/** `oneiron::memory::web_acquisition::door::WebCrawlRequest` */
+/** `oneiron_web_fetch::web_acquisition::door::WebCrawlRequest` */
 export type WebCrawlRequest = { seed_url: string; page_budget: number; scope?: CrawlScope }
-/** `oneiron::memory::web_acquisition::CrawlPageFailure` */
+/** `oneiron_web_fetch::web_acquisition::CrawlPageFailure` */
 export type CrawlPageFailure = { url: string; reason: string }
-/** `oneiron::memory::web_acquisition::CrawlCompletion` */
+/** `oneiron_web_fetch::web_acquisition::CrawlCompletion` */
 export type CrawlCompletion = { status: "complete" } | { status: "budget_exhausted"; unvisited_urls: string[] }
-/** `oneiron::memory::web_acquisition::CrawlResult` */
+/** `oneiron_web_fetch::web_acquisition::CrawlResult` */
 export type CrawlResult = { pages: FetchResult[]; failed: CrawlPageFailure[]; completion: CrawlCompletion }
 /** `oneiron::edit_distance::publisher::vocab::IssueCategory` */
 export type IssueCategory = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"
@@ -763,7 +763,7 @@ export type SpendBasis = "calibrated" | "prior"
 export type DollarBasis = "unknown_price" | "upper_bound_rate" | "sum" | "incomplete_or_overflow"
 /** `oneiron::agent_dispatch::spend_calibration::ExpectedSpend` */
 export type ExpectedSpend = { units: number; samples: number; basis: SpendBasis; expected_usd_micros?: number | null; dollar_basis: DollarBasis }
-/** `oneiron::run_budget::declaration::LeaseUnit` */
+/** `oneiron_run_budget::run_budget::declaration::LeaseUnit` */
 export type LeaseUnit = string
 /** `oneiron::workspace_roster::spend_scope::SpendScopeId` */
 export type SpendScopeId = string
@@ -1767,133 +1767,133 @@ export type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[];
 export type WeaveReportView = { sections: WeaveSectionView[]; narrowing: ScopedReadReceipt }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveDigestRequest` */
 export type WeaveDigestRequest = { scheduled_for?: number | null }
-/** `oneiron::lens::generated_ui::genui_app_catalog::GeneratedUiCatalog` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_app_catalog::GeneratedUiCatalog` */
 export type GeneratedUiCatalog = string
-/** `oneiron::lens::generated_ui::genui_app_catalog::GeneratedUiCatalogVersion` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_app_catalog::GeneratedUiCatalogVersion` */
 export type GeneratedUiCatalogVersion = string
-/** `oneiron::lens::atom::atom_scalars::LensText` */
+/** `oneiron_lens_wire::lens::atom::atom_scalars::LensText` */
 export type LensText = string
-/** `oneiron::lens::atom::atom_leaves::LensTextSpan` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::LensTextSpan` */
 export type LensTextSpan = { type: "literal"; value: LensText } | { type: "interpolation"; value: { key: string; fallback: LensText } }
-/** `oneiron::lens::atom::atom_leaves::TextBlockAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::TextBlockAtom` */
 export type TextBlockAtom = { spans: LensTextSpan[] }
-/** `oneiron::lens::atom::atom_leaves::LedgerCell` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::LedgerCell` */
 export type LedgerCell = { label: LensText; value: LensText }
-/** `oneiron::lens::atom::atom_leaves::LensStatus` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::LensStatus` */
 export type LensStatus = "proposed" | "auto" | "approved" | "rejected" | "stale" | "missing" | "running" | "complete"
-/** `oneiron::lens::atom::atom_leaves::StatusDotAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::StatusDotAtom` */
 export type StatusDotAtom = { status: LensStatus; label?: LensText | null }
-/** `oneiron::lens::atom::atom_leaves::SealLevel` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::SealLevel` */
 export type SealLevel = "none" | "local" | "actor" | "authority"
-/** `oneiron::lens::atom::atom_leaves::SealAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::SealAtom` */
 export type SealAtom = { level: SealLevel; label: LensText }
-/** `oneiron::lens::atom::atom_leaves::LedgerRowAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::LedgerRowAtom` */
 export type LedgerRowAtom = { cells: LedgerCell[]; status?: StatusDotAtom | null; seal?: SealAtom | null }
-/** `oneiron::lens::atom::atom_leaves::ClaimLineAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::ClaimLineAtom` */
 export type ClaimLineAtom = { subject: LensText; predicate: LensText; value: LensText; status: StatusDotAtom; seal?: SealAtom | null }
-/** `oneiron::lens::atom::atom_leaves::MetaLineAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::MetaLineAtom` */
 export type MetaLineAtom = { label: LensText; value: LensText }
-/** `oneiron::lens::atom::atom_leaves::SectionAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::SectionAtom` */
 export type SectionAtom = { title: LensText; lines?: LensText[] }
-/** `oneiron::lens::atom::atom_leaves::ThreadEntryAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::ThreadEntryAtom` */
 export type ThreadEntryAtom = { author: LensText; body: LensText; timestamp?: LensText | null; seal?: SealAtom | null }
-/** `oneiron::lens::atom::atom_leaves::CollectionAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::CollectionAtom` */
 export type CollectionAtom = { title: LensText; rows?: LedgerRowAtom[] }
-/** `oneiron::lens::atom::atom_leaves::ReceiptAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::ReceiptAtom` */
 export type ReceiptAtom = { title: LensText; lines?: MetaLineAtom[]; seal?: SealAtom | null }
-/** `oneiron::lens::atom::atom_leaves::PostmarkAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::PostmarkAtom` */
 export type PostmarkAtom = { label: LensText; timestamp: LensText }
-/** `oneiron::lens::atom::atom_leaves::PackLineAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::PackLineAtom` */
 export type PackLineAtom = { pack: LensText; summary: LensText; status: LensStatus }
-/** `oneiron::lens::wire_ids::LensHandleRole` */
+/** `oneiron_lens_wire::lens::wire_ids::LensHandleRole` */
 export type LensHandleRole = "claim_set" | "entity_set" | "timeline" | "query_result" | "action_target"
-/** `oneiron::lens::wire_ids::LensHandleRef` */
+/** `oneiron_lens_wire::lens::wire_ids::LensHandleRef` */
 export type LensHandleRef = { name: string; role: LensHandleRole }
-/** `oneiron::lens::atom::atom_leaves::AnswerSheetAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::AnswerSheetAtom` */
 export type AnswerSheetAtom = { question: LensText; answer: LensText; citations?: LensHandleRef[] }
-/** `oneiron::lens::atom::atom_leaves::TwoClocksAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::TwoClocksAtom` */
 export type TwoClocksAtom = { occurred_at: LensText; learned_at: LensText }
-/** `oneiron::lens::atom::atom_leaves::GraphNode` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::GraphNode` */
 export type GraphNode = { id: string; label: LensText }
-/** `oneiron::lens::atom::atom_leaves::GraphEdge` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::GraphEdge` */
 export type GraphEdge = { from: string; to: string; label: LensText }
-/** `oneiron::lens::atom::atom_leaves::NeighborhoodGraphAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::NeighborhoodGraphAtom` */
 export type NeighborhoodGraphAtom = { nodes?: GraphNode[]; edges?: GraphEdge[] }
-/** `oneiron::lens::atom::atom_leaves::AsofScrubberAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::AsofScrubberAtom` */
 export type AsofScrubberAtom = { value: LensText; min?: LensText | null; max?: LensText | null }
-/** `oneiron::lens::atom::atom_leaves::ThrobberAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::ThrobberAtom` */
 export type ThrobberAtom = { label: LensText }
-/** `oneiron::lens::atom::atom_leaves::VadBadge` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::VadBadge` */
 export type VadBadge = "low" | "neutral" | "high"
-/** `oneiron::lens::atom::atom_leaves::VoiceLineAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::VoiceLineAtom` */
 export type VoiceLineAtom = { speaker: LensText; text: LensText; vad?: VadBadge | null }
-/** `oneiron::lens::self_ui::SelfUiOption` */
+/** `oneiron_lens_wire::lens::self_ui::SelfUiOption` */
 export type SelfUiOption = { value: string; label: LensText }
-/** `oneiron::lens::atom::atom_scalars::FiniteF64` */
+/** `oneiron_lens_wire::lens::atom::atom_scalars::FiniteF64` */
 export type FiniteF64 = number
-/** `oneiron::lens::self_ui::SelfUiValue` */
+/** `oneiron_lens_wire::lens::self_ui::SelfUiValue` */
 export type SelfUiValue = { type: "bool"; value: boolean } | { type: "number"; value: FiniteF64 } | { type: "text"; value: LensText } | { type: "token"; value: string } | { type: "handle"; value: string }
-/** `oneiron::lens::self_ui::SelfUiAction` */
+/** `oneiron_lens_wire::lens::self_ui::SelfUiAction` */
 export type SelfUiAction = { command: string; args?: SelfUiValue[] }
-/** `oneiron::lens::atom::atom_leaves::QuickFilterAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::QuickFilterAtom` */
 export type QuickFilterAtom = { id: string; label: LensText; options?: SelfUiOption[]; selected?: string[]; action: SelfUiAction }
-/** `oneiron::lens::atom::atom_leaves::InspectorAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::InspectorAtom` */
 export type InspectorAtom = { title: LensText; sections?: SectionAtom[] }
-/** `oneiron::lens::self_ui::ButtonControl` */
+/** `oneiron_lens_wire::lens::self_ui::ButtonControl` */
 export type ButtonControl = { id: string; label: LensText; action: SelfUiAction }
-/** `oneiron::lens::self_ui::ToggleControl` */
+/** `oneiron_lens_wire::lens::self_ui::ToggleControl` */
 export type ToggleControl = { id: string; label: LensText; checked: boolean; action: SelfUiAction }
-/** `oneiron::lens::self_ui::SegmentedControl` */
+/** `oneiron_lens_wire::lens::self_ui::SegmentedControl` */
 export type SegmentedControl = { id: string; label: LensText; options: SelfUiOption[]; selected?: string | null; action: SelfUiAction }
-/** `oneiron::lens::self_ui::SelectControl` */
+/** `oneiron_lens_wire::lens::self_ui::SelectControl` */
 export type SelectControl = { id: string; label: LensText; options: SelfUiOption[]; selected?: string | null; action: SelfUiAction }
-/** `oneiron::lens::self_ui::SliderControl` */
+/** `oneiron_lens_wire::lens::self_ui::SliderControl` */
 export type SliderControl = { id: string; label: LensText; min: FiniteF64; max: FiniteF64; step: FiniteF64; value: FiniteF64; action: SelfUiAction }
-/** `oneiron::lens::self_ui::TextInputControl` */
+/** `oneiron_lens_wire::lens::self_ui::TextInputControl` */
 export type TextInputControl = { id: string; label: LensText; placeholder?: LensText | null; value?: LensText | null; action: SelfUiAction }
-/** `oneiron::lens::self_ui::SelfUiControlWire` */
+/** `oneiron_lens_wire::lens::self_ui::SelfUiControlWire` */
 export type SelfUiControlWire = { control: "button"; props: ButtonControl } | { control: "toggle"; props: ToggleControl } | { control: "segmented"; props: SegmentedControl } | { control: "select"; props: SelectControl } | { control: "slider"; props: SliderControl } | { control: "text_input"; props: TextInputControl }
-/** `oneiron::lens::self_ui::SelfUiControl` */
+/** `oneiron_lens_wire::lens::self_ui::SelfUiControl` */
 export type SelfUiControl = SelfUiControlWire
-/** `oneiron::lens::atom::atom_leaves::MediaAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::MediaAtom` */
 export type MediaAtom = { handle: string; alt: LensText }
-/** `oneiron::lens::atom::atom_leaves::GeneratedUiResultSetRow` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::GeneratedUiResultSetRow` */
 export type GeneratedUiResultSetRow = { id: string; label: LensText; target_handle: string }
-/** `oneiron::lens::atom::atom_leaves::GeneratedUiResultSetSelectAll` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::GeneratedUiResultSetSelectAll` */
 export type GeneratedUiResultSetSelectAll = { mode: "disabled" } | { mode: "within_filter"; predicate_handle: string }
-/** `oneiron::lens::atom::atom_leaves::GeneratedUiResultSetAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::GeneratedUiResultSetAtom` */
 export type GeneratedUiResultSetAtom = { rows: GeneratedUiResultSetRow[]; select_all: GeneratedUiResultSetSelectAll; action_bar?: string[] }
-/** `oneiron::lens::generated_ui::genui_app_catalog::GeneratedUiComponentAtom` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_app_catalog::GeneratedUiComponentAtom` */
 export type GeneratedUiComponentAtom = { catalog: string; name: string; props?: unknown }
-/** `oneiron::lens::atom::atom_enum::LensAtomWire` */
+/** `oneiron_lens_wire::lens::atom::atom_enum::LensAtomWire` */
 export type LensAtomWire = { kind: "text_block"; props: TextBlockAtom } | { kind: "ledger_row"; props: LedgerRowAtom } | { kind: "claim_line"; props: ClaimLineAtom } | { kind: "status_dot"; props: StatusDotAtom } | { kind: "seal"; props: SealAtom } | { kind: "meta_line"; props: MetaLineAtom } | { kind: "dossier_section"; props: SectionAtom } | { kind: "thread_entry"; props: ThreadEntryAtom } | { kind: "sheet"; props: CollectionAtom } | { kind: "slip"; props: SectionAtom } | { kind: "receipt"; props: ReceiptAtom } | { kind: "charter"; props: SectionAtom } | { kind: "postmark"; props: PostmarkAtom } | { kind: "pack_line"; props: PackLineAtom } | { kind: "answer_sheet"; props: AnswerSheetAtom } | { kind: "two_clocks"; props: TwoClocksAtom } | { kind: "neighborhood_graph"; props: NeighborhoodGraphAtom } | { kind: "asof_scrubber"; props: AsofScrubberAtom } | { kind: "throbber"; props: ThrobberAtom } | { kind: "voice_line"; props: VoiceLineAtom } | { kind: "quick_filter"; props: QuickFilterAtom } | { kind: "inspector_sheet"; props: InspectorAtom } | { kind: "inspector_rail"; props: InspectorAtom } | { kind: "inspector_trail"; props: InspectorAtom } | { kind: "self_ui"; props: SelfUiControl } | { kind: "media"; props: MediaAtom } | { kind: "result_set"; props: GeneratedUiResultSetAtom } | { kind: "component"; props: GeneratedUiComponentAtom }
-/** `oneiron::lens::atom::atom_enum::LensAtom` */
+/** `oneiron_lens_wire::lens::atom::atom_enum::LensAtom` */
 export type LensAtom = LensAtomWire
-/** `oneiron::lens::generated_ui::genui_state::SelfUiBindableProperty` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_state::SelfUiBindableProperty` */
 export type SelfUiBindableProperty = "checked" | "selected" | "value" | "text"
-/** `oneiron::lens::generated_ui::genui_state::SelfUiBinding` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_state::SelfUiBinding` */
 export type SelfUiBinding = { stateKey: string; property: SelfUiBindableProperty }
-/** `oneiron::lens::generated_ui::genui_render::GeneratedUiNode` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_render::GeneratedUiNode` */
 export type GeneratedUiNode = { id: string; parent?: string | null; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; childRefs?: string[] }
-/** `oneiron::lens::generated_ui::genui_state::GeneratedUiActionTier` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_state::GeneratedUiActionTier` */
 export type GeneratedUiActionTier = "local" | "deterministic_tool" | "model_round_trip"
-/** `oneiron::lens::generated_ui::genui_state::GeneratedUiActionDeclaration` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_state::GeneratedUiActionDeclaration` */
 export type GeneratedUiActionDeclaration = { elementId: string; actionId: string; tier: GeneratedUiActionTier; action: SelfUiAction }
-/** `oneiron::lens::generated_ui::genui_state::SelfUiStateValue` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_state::SelfUiStateValue` */
 export type SelfUiStateValue = { type: "bool"; value: boolean } | { type: "number"; value: FiniteF64 } | { type: "text"; value: LensText } | { type: "token"; value: string }
-/** `oneiron::lens::generated_ui::genui_state::GeneratedUiStateSnapshot` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_state::GeneratedUiStateSnapshot` */
 export type GeneratedUiStateSnapshot = Record<string, SelfUiStateValue>
-/** `oneiron::lens::generated_ui::genui_state::GeneratedUiCardPhase` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_state::GeneratedUiCardPhase` */
 export type GeneratedUiCardPhase = "generating" | "active" | "responded" | "archived"
-/** `oneiron::lens::generated_ui::genui_state::GeneratedUiArchiveReason` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_state::GeneratedUiArchiveReason` */
 export type GeneratedUiArchiveReason = "completed" | "expired" | "dismissed" | "superseded"
-/** `oneiron::lens::generated_ui::genui_state::GeneratedUiCardLifecycle` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_state::GeneratedUiCardLifecycle` */
 export type GeneratedUiCardLifecycle = { phase: GeneratedUiCardPhase; revision: number; archiveReason?: GeneratedUiArchiveReason | null }
-/** `oneiron::lens::generated_ui::genui_render::GeneratedUiRender` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_render::GeneratedUiRender` */
 export type GeneratedUiRender = { protocolVersion: number; catalog: GeneratedUiCatalog; catalogVersion: GeneratedUiCatalogVersion; cardId: string; root: string; fallbackText: LensText; nodes: GeneratedUiNode[]; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot; lifecycle: GeneratedUiCardLifecycle }
-/** `oneiron::lens::atom::atom_node::LensNode` */
+/** `oneiron_lens_wire::lens::atom::atom_node::LensNode` */
 export type LensNode = { id: string; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; children?: LensNode[] }
-/** `oneiron::lens::generated_ui::genui_envelope::GeneratedLens` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_envelope::GeneratedLens` */
 export type GeneratedLens = { kit_version: number; apps_contract_version: number; root: LensNode }
 /** `oneiron::lens::mediation::hosted_render::LensFrameCard` */
 export type LensFrameCard = { card_id: string; render: GeneratedUiRender; lens: GeneratedLens }
@@ -1901,13 +1901,13 @@ export type LensFrameCard = { card_id: string; render: GeneratedUiRender; lens: 
 export type WeaveLensRefusal = { reason: string; skill_ref: string; skill_version: string; model: string; refused_at: number }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveDigestView` */
 export type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: LensFrameCard | null; lens_refused?: WeaveLensRefusal | null }
-/** `oneiron::lens::generated_ui::genui_catalog::GeneratedUiPrimitive` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_catalog::GeneratedUiPrimitive` */
 export type GeneratedUiPrimitive = "text_block" | "ledger_row" | "claim_line" | "status_dot" | "seal" | "meta_line" | "dossier_section" | "thread_entry" | "sheet" | "slip" | "receipt" | "charter" | "postmark" | "pack_line" | "answer_sheet" | "two_clocks" | "neighborhood_graph" | "asof_scrubber" | "throbber" | "voice_line" | "quick_filter" | "inspector_sheet" | "inspector_rail" | "inspector_trail" | "self_ui" | "media" | "result_set" | "component"
-/** `oneiron::lens::generated_ui::genui_app_catalog::GeneratedUiComponentSchema` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_app_catalog::GeneratedUiComponentSchema` */
 export type GeneratedUiComponentSchema = { name: string; schema?: unknown }
-/** `oneiron::lens::generated_ui::genui_stream::GeneratedUiStreamProfile` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_stream::GeneratedUiStreamProfile` */
 export type GeneratedUiStreamProfile = "full_model" | "patch"
-/** `oneiron::lens::generated_ui::genui_catalog::GeneratedUiSurfaceCapabilities` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_catalog::GeneratedUiSurfaceCapabilities` */
 export type GeneratedUiSurfaceCapabilities = { catalog: GeneratedUiCatalog; catalogVersion?: GeneratedUiCatalogVersion; maxCatalogVersion?: number; primitives?: GeneratedUiPrimitive[]; components?: GeneratedUiComponentSchema[]; stream?: GeneratedUiStreamProfile }
 /** `oneiron::lens::sdk::WeaveLensRequest` */
 export type WeaveLensRequest = { sections: WeaveSectionInput[]; surface?: GeneratedUiSurfaceCapabilities | null }
@@ -4019,11 +4019,11 @@ export type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; qu
 export type EmbeddingSpaceProbeDeleteRequest = { id: string }
 /** `oneiron::verbs::embedding_space::EmbeddingSpaceProbeDeleted` */
 export type EmbeddingSpaceProbeDeleted = { ok: boolean }
-/** `oneiron::policy_model::contract::PolicyOutputContract` */
+/** `oneiron_policy_vocabulary::policy_model::contract::PolicyOutputContract` */
 export type PolicyOutputContract = "binary" | "category_json" | "rationale_json"
-/** `oneiron::policy_model::pattern::PolicyPatternRole` */
+/** `oneiron_policy_vocabulary::policy_model::pattern::PolicyPatternRole` */
 export type PolicyPatternRole = "escalate" | "decide" | "log"
-/** `oneiron::policy_model::pattern::PolicyPatternRule` */
+/** `oneiron_policy_vocabulary::policy_model::pattern::PolicyPatternRule` */
 export type PolicyPatternRule = { id: string; pattern: string; category: string; role?: PolicyPatternRole }
 /** `oneiron::gate::policy_manifest_doors::content_policy::OwnerPolicyConfiguration` */
 export type OwnerPolicyConfiguration = { owner_policy_enabled?: boolean; owner_policy_document?: string | null; owner_policy_output_contract?: PolicyOutputContract | null; owner_policy_patterns?: PolicyPatternRule[] }
@@ -4557,13 +4557,13 @@ export type LensSelection = { selectionRef: string; cardId: string; atomId: stri
 export type LensSelectionResolveRequest = { cardId: string; selectionRef: string }
 /** `oneiron::lens::selection::LensSelectionResolved` */
 export type LensSelectionResolved = { selection: LensSelection; source: InspectionResolved }
-/** `oneiron::lens::generated_ui::genui_state::GeneratedUiStatePatch` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_state::GeneratedUiStatePatch` */
 export type GeneratedUiStatePatch = { op: "add"; path: string; value: SelfUiStateValue } | { op: "replace"; path: string; value: SelfUiStateValue } | { op: "remove"; path: string }
-/** `oneiron::lens::generated_ui::genui_state::GeneratedUiActionEvent` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_state::GeneratedUiActionEvent` */
 export type GeneratedUiActionEvent = { cardId: string; elementId: string; actionId: string; patch?: GeneratedUiStatePatch[]; occurredAt: number }
-/** `oneiron::lens::atom::atom_leaves::GeneratedUiResultSetSelection` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::GeneratedUiResultSetSelection` */
 export type GeneratedUiResultSetSelection = { mode: "explicit"; row_ids: string[] } | { mode: "all_within_filter" }
-/** `oneiron::lens::atom::atom_leaves::GeneratedUiResultSetActionEvent` */
+/** `oneiron_lens_wire::lens::atom::atom_leaves::GeneratedUiResultSetActionEvent` */
 export type GeneratedUiResultSetActionEvent = { action: GeneratedUiActionEvent; selection: GeneratedUiResultSetSelection }
 /** `oneiron::lens::selection::LensResultSetActionRequest` */
 export type LensResultSetActionRequest = { event: GeneratedUiResultSetActionEvent; selected: string[]; idempotencyKey: string }
@@ -6243,7 +6243,7 @@ export type JoinRequest = { room: EntityId; branch?: EntityId | null; subject: J
 export type ConsentAnswer = { join_ref: string; part: ConsentPart; grant: boolean; spend_scope?: SpendScopeId | null }
 /** `oneiron::workspace_roster::rooms::offers::OfferDraft` */
 export type OfferDraft = { room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; spend_scope?: SpendScopeId | null; until?: number | null; intent_key: string }
-/** `oneiron::run_budget::job_maximum::DeclaredMaximum` */
+/** `oneiron_run_budget::run_budget::job_maximum::DeclaredMaximum` */
 export type DeclaredMaximum = { units: number; unit: LeaseUnit }
 /** `oneiron::workspace_roster::rooms::offers::OfferState` */
 export type OfferState = { kind: "open"; needs: ConsentNeed[] } | { kind: "joined"; turn: EntityId; receipt_ref: string } | { kind: "not_now"; diary_ref?: EntityId | null } | { kind: "superseded"; by: string } | { kind: "aged_out" }
@@ -7055,7 +7055,7 @@ export type BookingConstraintTurnWindow = { start: number; end: number }
 export type BookingConstraintTurnInput = { event_type: EventTypeKey; window: BookingConstraintTurnWindow; visitor_tz: string; free_text: string; session_ref: string }
 /** `oneiron::verbs::calendar::BookingConstraintTurnRequest` */
 export type BookingConstraintTurnRequest = { page_token: string; turn: BookingConstraintTurnInput }
-/** `oneiron::lens::generated_ui::genui_card::GeneratedUiCard` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_card::GeneratedUiCard` */
 export type GeneratedUiCard = { protocolVersion: number; catalog: GeneratedUiCatalog; catalogVersion: GeneratedUiCatalogVersion; cardId: string; fallbackText: LensText; tree: GeneratedLens; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot }
 /** `oneiron::verbs::calendar::BookingConstraintHoldContext` */
 export type BookingConstraintHoldContext = { event_type: EventTypeKey; visitor_tz: string; constraint: ConstraintObject; session_ref: string }
@@ -8105,7 +8105,7 @@ export type ProspectiveQueryHint = { hint_ref: string; target_ref: string; query
 export type SignalExtractionClaim = { claim: ClaimView; sources: SignalExtractionSource[]; prospective_queries: ProspectiveQueryHint[] }
 /** `oneiron::memory::signal_extraction::SignalExtractionResult` */
 export type SignalExtractionResult = { job: DreamerAttemptView; claims: SignalExtractionClaim[] }
-/** `oneiron::channel_identity::shape::SelfHeldShape` */
+/** `oneiron_authority::channel_identity_shape::SelfHeldShape` */
 export type SelfHeldShape = "dedicated_address" | "dedicated_handle" | "shared_presence"
 /** `oneiron::channel_identity::binding::ChannelIdentityBinding` */
 export type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet_ref?: EntityId | null } | { kind: "vault"; vault_id: number }
@@ -8113,7 +8113,7 @@ export type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet
 export type ChannelIdentityFulfillment = "api" | "manual" | "review"
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityProvisionRequest` */
 export type ChannelIdentityProvisionRequest = { channel: string; address_or_handle: string; shape: SelfHeldShape; binding: ChannelIdentityBinding; fulfillment_mode: ChannelIdentityFulfillment; request_ref?: EntityId | null }
-/** `oneiron::channel_identity::shape::ChannelIdentityShape` */
+/** `oneiron_authority::channel_identity_shape::ChannelIdentityShape` */
 export type ChannelIdentityShape = "dedicated_address" | "dedicated_handle" | "shared_presence" | "delegated_grant"
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityCustody` */
 export type ChannelIdentityCustody = "self_held" | "delegated"
@@ -8173,7 +8173,7 @@ export type ThreadPassportsRequest = { thread_ref: string }
 export type ThreadPassportsView = { canonical_thread_ref: string; passports: ThreadPassportView[]; pinned_mask?: ThreadMaskView | null }
 /** `oneiron::delivery_window::window::DeliveryWindowTimeWindow` */
 export type DeliveryWindowTimeWindow = { start_minute: number; end_minute: number }
-/** `oneiron::delivery_window::types::DeliveryWindowContextCondition` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowContextCondition` */
 export type DeliveryWindowContextCondition = "calendar_busy" | "focus_on" | "driving" | "asleep"
 /** `oneiron::memory::channel_doors::policy::DeliveryWindowRule` */
 export type DeliveryWindowRule = { kind: "quiet"; window: DeliveryWindowTimeWindow } | { kind: "context"; when: DeliveryWindowContextCondition } | { kind: "channel"; channel: string; window?: DeliveryWindowTimeWindow | null }
@@ -8187,19 +8187,19 @@ export type DeliveryWindowPolicyRow = { claim_ref: EntityId; subject_ref: Entity
 export type DeliveryWindowPolicies = { rows: DeliveryWindowPolicyRow[] }
 /** `oneiron::memory::channel_doors::policy::DeliveryWindowPolicyRetractRequest` */
 export type DeliveryWindowPolicyRetractRequest = { claim_ref: EntityId }
-/** `oneiron::delivery_window::types::DeliveryWindowVerbClass` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowVerbClass` */
 export type DeliveryWindowVerbClass = "ambient" | "interrupt"
-/** `oneiron::delivery_window::types::DeliveryWindowApnsInterruptionLevel` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowApnsInterruptionLevel` */
 export type DeliveryWindowApnsInterruptionLevel = "Passive" | "Active" | "TimeSensitive" | "Critical"
 /** `oneiron::memory::channel_doors::policy::DeliveryWindowEvaluateRequest` */
 export type DeliveryWindowEvaluateRequest = { subject_refs: EntityId[]; delivery_epoch_secs: number; local_minute_of_day: number; verb_class: DeliveryWindowVerbClass; channel: string; active_contexts?: DeliveryWindowContextCondition[]; interrupt_surface?: string | null; degrade_to?: string | null; apns_interruption_level?: DeliveryWindowApnsInterruptionLevel | null }
-/** `oneiron::delivery_window::types::DeliveryWindowDecision` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowDecision` */
 export type DeliveryWindowDecision = "DeliverNow" | { DeliverNowWithApnsCap: { reason: string; from: string; to: string } } | { Hold: { reason: string; retry_at?: number | null } } | { Degrade: { reason: string; from: string; to: string } } | { LetGo: { reason: string } }
-/** `oneiron::delivery_window::types::DeliveryWindowMatch` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowMatch` */
 export type DeliveryWindowMatch = { predicate: string; reason: string; retry_at?: number | null }
-/** `oneiron::delivery_window::types::DeliveryWindowLadderRung` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowLadderRung` */
 export type DeliveryWindowLadderRung = "HumanExplicitInstant" | "Ambient" | "InterruptDegraded" | "InterruptHeld" | "MissingLocalMinute"
-/** `oneiron::delivery_window::types::DeliveryWindowResolution` */
+/** `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowResolution` */
 export type DeliveryWindowResolution = { observed: DeliveryWindowDecision; effective: DeliveryWindowDecision; matched: DeliveryWindowMatch[]; rung: DeliveryWindowLadderRung }
 /** `oneiron::memory::channel_doors::policy::DeliveryWindowPreview` */
 export type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution }
@@ -8893,25 +8893,25 @@ export type LensFrameEventRequest = { event: GeneratedUiActionEvent; idempotency
 export type LensFrameEventReply = { $state: GeneratedUiStateSnapshot; refinement?: unknown | null } | { outcome: unknown; readReceipt: ScopedReadReceipt } | { queued: boolean; callbackId: string }
 /** `oneiron_remote::lens_frames::CloseLensFrameReply` */
 export type CloseLensFrameReply = { closed: boolean }
-/** `oneiron::lens::generated_ui::genui_render::GeneratedUiCardStart` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_render::GeneratedUiCardStart` */
 export type GeneratedUiCardStart = { protocolVersion: number; catalog: GeneratedUiCatalog; catalogVersion: GeneratedUiCatalogVersion; cardId: string; root: string; nodeCount: number; fallbackText: LensText }
-/** `oneiron::lens::generated_ui::genui_render::GeneratedUiCardElement` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_render::GeneratedUiCardElement` */
 export type GeneratedUiCardElement = { protocolVersion: number; cardId: string; node: GeneratedUiNode }
-/** `oneiron::lens::generated_ui::genui_render::GeneratedUiDataModel` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_render::GeneratedUiDataModel` */
 export type GeneratedUiDataModel = { root: string; nodeCount: number; catalog: GeneratedUiCatalog; catalogVersion: GeneratedUiCatalogVersion; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot; lifecycle: GeneratedUiCardLifecycle }
-/** `oneiron::lens::generated_ui::genui_render::GeneratedUiCardStateUpdate` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_render::GeneratedUiCardStateUpdate` */
 export type GeneratedUiCardStateUpdate = { protocolVersion: number; cardId: string; dataModel: GeneratedUiDataModel }
-/** `oneiron::lens::generated_ui::genui_stream::GeneratedUiCardReady` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_stream::GeneratedUiCardReady` */
 export type GeneratedUiCardReady = { protocolVersion: number; cardId: string }
-/** `oneiron::lens::generated_ui::genui_json_patch::GeneratedUiJsonPatchOperation` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_json_patch::GeneratedUiJsonPatchOperation` */
 export type GeneratedUiJsonPatchOperation = { op: "add"; path: string; value: unknown } | { op: "remove"; path: string } | { op: "replace"; path: string; value: unknown } | { op: "move"; from: string; path: string } | { op: "copy"; from: string; path: string } | { op: "test"; path: string; value: unknown }
-/** `oneiron::lens::generated_ui::genui_stream::GeneratedUiCardStatePatch` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_stream::GeneratedUiCardStatePatch` */
 export type GeneratedUiCardStatePatch = { protocolVersion: number; cardId: string; patch: GeneratedUiJsonPatchOperation[] }
-/** `oneiron::lens::generated_ui::genui_stream::GeneratedUiCardStateSnapshot` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_stream::GeneratedUiCardStateSnapshot` */
 export type GeneratedUiCardStateSnapshot = { protocolVersion: number; cardId: string; render: GeneratedUiRender }
-/** `oneiron::lens::generated_ui::genui_render::GeneratedUiSegment` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_render::GeneratedUiSegment` */
 export type GeneratedUiSegment = { segment: "card_start"; payload: GeneratedUiCardStart } | { segment: "card_element"; payload: GeneratedUiCardElement } | { segment: "card_state_update"; payload: GeneratedUiCardStateUpdate } | { segment: "card_ready"; payload: GeneratedUiCardReady } | { segment: "card_state_patch"; payload: GeneratedUiCardStatePatch } | { segment: "card_state_snapshot"; payload: GeneratedUiCardStateSnapshot }
-/** `oneiron::lens::generated_ui::genui_app_catalog::GeneratedUiCatalogDescriptor` */
+/** `oneiron_lens_wire::lens::generated_ui::genui_app_catalog::GeneratedUiCatalogDescriptor` */
 export type GeneratedUiCatalogDescriptor = { catalog: GeneratedUiCatalog; catalogVersion: GeneratedUiCatalogVersion; components?: GeneratedUiComponentSchema[] }
 /** `oneiron::memory::transcript::TranscriptMessage` */
 export type TranscriptMessage = { id: string; short_id?: string | null; role: string; message_type?: string | null; occurred: number; text: string; metadata?: unknown | null; result?: MessageResultAttachment | null; incomplete: boolean; generating: boolean }
