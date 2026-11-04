@@ -82,6 +82,18 @@ pub(crate) struct LiveSheet {
 }
 
 impl LiveSheet {
+    /// Stored addresses whose values differ across the two live frontiers.
+    /// A shifted/whole sheet is named separately by `whole()`; callers can
+    /// represent that as one interval rather than expanding a rectangle.
+    pub(crate) fn changed_cells(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.then
+            .iter()
+            .flat_map(|cells| cells.keys())
+            .chain(self.now.iter().flat_map(|cells| cells.keys()))
+            .copied()
+            .filter(|(row, col)| self.differs(*col, *row))
+    }
+
     /// How the sheet fares as a whole: gone from the head, or every address
     /// in doubt.
     pub(crate) fn whole(&self) -> Option<LiveChange> {

@@ -11,7 +11,7 @@ use super::artifact_question::{
 use super::judgment_cells::{named_sheet_cells_until, verify_sheet_answer_bytes};
 use super::{
     AppliedEdit, CellRef, CellValue, EditOp, EditOutcome, EditPlan, EditProposal, EditSession,
-    OfficeDoc, OfficeFormat, RangeRef,
+    OfficeDoc, OfficeFormat, RangeRef, SheetRowSelection,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -153,7 +153,7 @@ pub struct SheetRowsAsk<'a> {
     pub max_count_override: Option<u64>,
     /// Only these rows of `rows` are asked: a wake asks again only the rows
     /// that changed under a held answer.
-    pub only_rows: Option<&'a BTreeSet<u32>>,
+    pub only_rows: Option<&'a SheetRowSelection>,
 }
 
 impl Vault {
@@ -241,10 +241,10 @@ impl Vault {
         }
         let mut selected = request
             .only_rows
-            .map(|only| only.range(rows.start.row..=rows.end.row));
+            .map(|only| only.iter_within(rows.start.row, rows.end.row));
         let mut all = rows.start.row..=rows.end.row;
         let mut row_iter = std::iter::from_fn(move || match selected.as_mut() {
-            Some(selected) => selected.next().copied(),
+            Some(selected) => selected.next(),
             None => all.next(),
         });
         let mut run = ArtifactAskRun {
