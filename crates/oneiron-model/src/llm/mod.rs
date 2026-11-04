@@ -158,5 +158,6 @@ pub use self::scheduling::{
     AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
     SCHEDULING_SCHEMA_MINOR, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate,
     SchedulingCapability, SchedulingReceipt, WorkCancel, WorkClass, WorkContext, WorkId,
-    WorkPhysical, WorkPriority,
+    WorkPhysical, WorkPriority, forget_work_parent, lookup_work_parent, record_work_parent,
+    take_work_parent,
 };
