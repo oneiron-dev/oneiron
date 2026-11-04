@@ -1,10 +1,10 @@
 //! Claim source lineage, evidence taint, and stored value projections.
 
-use rmpv::Value;
 use crate::error::{Error, Result};
 use crate::write_envelope::claim_body::*;
 use crate::write_envelope::claim_predicate::is_reserved_predicate;
-use oneiron_contracts::claim::{ClaimSource, ClaimLifecycleStatus};
+use oneiron_contracts::claim::{ClaimLifecycleStatus, ClaimSource};
+use rmpv::Value;
 
 /// The ClaimOf weight a claim is born with: the initial-weight entry in its
 /// scope map, else the ClaimOf default. `None` for an edge subject, which has
