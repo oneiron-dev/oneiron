@@ -476,6 +476,8 @@ impl OfferLadder {
     /// The requested rung and, only for one proved picked rung, its exact
     /// route pin for the model-call record (FIX 12516). A fallback answer
     /// leaves the route unknown instead of naming the first rung falsely.
+    /// The pin is the capsule-canonical one (adapter@origin, offer, catalog
+    /// revision, wire model), never rebuilt from today's catalog.
     pub(crate) fn model_call_binding(&self) -> (CapsuleRungBinding, Option<ReplayRoutePin>) {
         let prompt = self.exact_prompt().flatten().map(str::to_owned);
         let rung = self.rungs.first();
@@ -484,19 +486,9 @@ impl OfferLadder {
             locality: rung.map_or(ModelLocality::OnDevice, |rung| rung.offer.binding.locality),
             prompt: prompt.clone(),
         };
-        let route = self.exact_prompt().map(|_| {
-            let rung = &self.rungs[0];
-            let route_prompt_digest =
-                *blake3::hash(&oneiron::llm::canonical_json_bytes(&prompt).unwrap_or_default())
-                    .as_bytes();
-            ReplayRoutePin {
-                route_id: rung.offer_id(),
-                offer_id: rung.offer_id(),
-                catalog_revision: None,
-                wire_model: rung.wire_model.clone(),
-                route_prompt_digest,
-            }
-        });
+        let route = self
+            .exact_prompt()
+            .and_then(|_| rung.and_then(shadow_capture::route_pin));
         (binding, route)
     }
 

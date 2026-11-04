@@ -312,6 +312,9 @@ pub(crate) fn erase_model_call_actor_in_txn(
     if crate::deletion::names_no_actor(vault, wtxn, actor)? {
         return Ok(());
     }
+    // The scan holds only a read borrow of the transaction; the
+    // erasures land after it is gone.
+    let mut stale = Vec::new();
     for row in MODEL_CALLS.iter_raw_from(&vault.store, wtxn, &[])? {
         let (key, bytes) = row?;
         let Some(key) = <(EntityId, u64, u64) as SideKey>::decode_key(&key) else {
@@ -321,8 +324,11 @@ pub(crate) fn erase_model_call_actor_in_txn(
             && record.actor == Some(*actor)
             && !record.erased
         {
-            MODEL_CALLS.put_erased(&vault.store, wtxn, &key, Erased::of(record)?)?;
+            stale.push((key, Erased::of(record)?));
         }
+    }
+    for (key, erased) in stale {
+        MODEL_CALLS.put_erased(&vault.store, wtxn, &key, erased)?;
     }
     Ok(())
 }
