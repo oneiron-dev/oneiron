@@ -446,7 +446,7 @@ side_tables! {
     /// 33-byte event key.
     LINEAR_MIRROR_EVENT_BY_TASK: VaultMeta b"linear.mirror_event_by_task.v1/" Raw;
     /// Tracker pull-page cursor. Key: ().
-    LINEAR_PULL_CURSOR: VaultMeta b"linear.pull_cursor.v1" Raw Authored [accepts: crate::task_verb::linear_pull_cursor_accepts_masked];
+    LINEAR_PULL_CURSOR: VaultMeta b"linear.pull_cursor.v1" Raw Authored [accepts: crate::store::linear_pull_cursor::linear_pull_cursor_accepts_masked];
     /// Tracker-mirror outbox marker. Key: id16.
     LINEAR_TASK_DIRTY: VaultMeta b"linear.task_dirty.v1/" Raw Engine;
     /// Tracker-mirror revision counter of a task. Key: id16.
@@ -478,7 +478,7 @@ side_tables! {
     LLM_CATALOG_REVISION: VaultMeta b"llm:catalog_revision:v1:" Named
         => crate::llm::catalog_doors::erase_catalog_source_rows_in_txn;
     /// Measured description scores keyed inside one singleton map. Key: ().
-    LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored [accepts: crate::llm::llm_description_measurements_accepts_masked];
+    LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_measurements_accepts_masked];
     /// Vault-owned description policy. Key: ().
     LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson Authored [accepts: crate::llm::llm_description_policy_accepts_masked];
     /// Durable re-ask keyed by 64-character hex identity.
@@ -517,7 +517,7 @@ side_tables! {
     LLM_RUN_SEAT: VaultMeta b"llm:run_seat:v1:" LegacyJson;
     /// Rolling window (max 64) of recent benchmark score-change diffs for one model. Key:
     /// string(model id) "\x00".
-    LLM_SCORE_DIFFS: VaultMeta b"llm:scores:v1:" LegacyJson Authored [accepts: crate::llm::llm_score_diffs_accepts_masked];
+    LLM_SCORE_DIFFS: VaultMeta b"llm:scores:v1:" LegacyJson Authored [accepts: crate::store::model_score_diff::llm_score_diffs_accepts_masked];
     /// The catalog revision pinned when a held-out trial was nominated. Key: id16.
     LLM_TRIAL_CATALOG: VaultMeta b"llm:trial_catalog:v1:" Named;
 }
