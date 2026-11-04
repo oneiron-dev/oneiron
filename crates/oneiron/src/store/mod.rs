@@ -119,6 +119,7 @@ pub mod ports {
     };
 }
 
+pub(crate) mod agent_birth_custody;
 pub(crate) mod agent_birth_identity;
 pub mod agent_record;
 pub mod attempt_cleanup;
