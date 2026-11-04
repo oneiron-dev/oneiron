@@ -343,7 +343,7 @@ side_tables! {
     /// id16(set).
     CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored [accepts: crate::code_run::code_run_reader_wait_accepts_masked];
     /// A code run's replay record, keyed by run id. Key: id16.
-    CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored;
+    CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored [accepts: crate::code_run::code_run_replay_record_accepts_masked];
     /// A canonical attempt's step replay capsule (FIX 3028): the request the step sent by its body
     /// ref and hash, each skill exposure in it, its seed and the rung that answered it. Key:
     /// id16(attempt) + be64(lease generation) + be64(step).
@@ -358,7 +358,7 @@ side_tables! {
     CODE_RUN_SECRET_LIFT_DISMISSED: VaultMeta b"code_run:secret_lift:dismissed:v1:" Named Engine;
     /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
     /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
-    CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored;
+    CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored [accepts: crate::code_run::code_run_summary_memo_accepts_masked];
     /// One program step's type feedback (FIX 8277): its check's state, measures and diagnostics
     /// or the run's body holding them, the preparation note, the actor the run ran as and the
     /// checker incarnation a pending check belongs to. Key: id16(run) + be64(step) +

@@ -112,7 +112,9 @@ pub(crate) use self::wait_holders::{
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::continuation::code_run_continuation_accepts_masked;
+pub(crate) use self::reader_folds::code_run_summary_memo_accepts_masked;
 pub(crate) use self::reader_jobs::code_run_reader_job_accepts_masked;
 pub(crate) use self::reader_jobs::code_run_reader_wait_accepts_masked;
+pub(crate) use self::records::code_run_replay_record_accepts_masked;
 pub(crate) use self::replay_capsule::code_run_replay_capsule_accepts_masked;
 pub(crate) use self::type_diagnostics::code_run_type_diagnostics_accepts_masked;

@@ -298,6 +298,8 @@ pub(crate) use self::storage::code_run_continuation_accepts_masked;
 pub(crate) use self::storage::code_run_reader_job_accepts_masked;
 pub(crate) use self::storage::code_run_reader_wait_accepts_masked;
 pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
+pub(crate) use self::storage::code_run_replay_record_accepts_masked;
+pub(crate) use self::storage::code_run_summary_memo_accepts_masked;
 pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
 
 pub use self::dispatcher::{

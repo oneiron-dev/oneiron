@@ -43,6 +43,10 @@ pub(super) use self::bodies::{
 pub(super) const REPLAY_RECORDS: SideTable<EntityId, CodeRunReplayRecord, Raw> =
     SideTable::new(&side_table::CODE_RUN_REPLAY);
 
+pub(crate) fn code_run_replay_record_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<CodeRunReplayRecord, Raw>(bytes)
+}
+
 impl StoredBody {
     /// This body as a row that holds it on its own when `held`.
     pub(super) fn holding(&self, held: bool) -> Self {
