@@ -6572,7 +6572,7 @@
      "purpose": "Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight…",
      "surface": {
       "crate-vis": 6,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -47083,14 +47083,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/credential_key.rs",
      "purpose": "The read key a verified credential reads under",
      "surface": {
       "crate-vis": 5,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -55870,7 +55870,7 @@
      "path": "src/outbound_consent/connector_elicitation_asks.rs",
      "purpose": "The owner ask an answer to a connector's question takes (ONE-2510)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 2
      }
@@ -55882,7 +55882,7 @@
      "path": "src/outbound_consent/connector_elicitation_consent.rs",
      "purpose": "The owner's consent on an answer to a connector's question under `always ask` (FIX 8808): DEC-0006's three…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
