@@ -14,6 +14,29 @@ use crate::side_table::ActorScrub;
 
 use super::tombstone::HARD_DELETE_MARKER;
 
+/// The accepted hard-erase continuation, borrowing its exact writer and
+/// target. Only deletion's hard branches may construct one; receipt scrubs
+/// cannot turn an actor id or an old marker into write authority.
+pub(crate) struct ActorErasureWriter<'write, 'env> {
+    vault: &'write Vault,
+    wtxn: &'write mut heed::RwTxn<'env>,
+    actor: EntityId,
+}
+
+impl<'write, 'env> ActorErasureWriter<'write, 'env> {
+    pub(in crate::deletion) fn new(
+        vault: &'write Vault,
+        wtxn: &'write mut heed::RwTxn<'env>,
+        actor: EntityId,
+    ) -> Self {
+        Self { vault, wtxn, actor }
+    }
+
+    pub(crate) fn parts(&mut self) -> (&Vault, &mut heed::RwTxn<'env>, EntityId) {
+        (self.vault, &mut *self.wtxn, self.actor)
+    }
+}
+
 /// Identity ops are an entity family, not a side table: their decisions stay
 /// and the actor's author carriers go.
 const IDENTITY_OPS: ActorScrub = Vault::scrub_identity_op_actor_in_txn;
@@ -39,11 +62,11 @@ const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_toke
 /// first, so each custody record their scrub revokes is carried to his other
 /// machines (FIX 11883); their declared scrub then finds none.
 pub(super) fn erase_actor_fields_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
+    mut erase: ActorErasureWriter<'_, '_>,
     act: Option<&EraseOwnerAct<'_>>,
 ) -> Result<()> {
+    let (vault, wtxn, actor) = erase.parts();
+    let actor = &actor;
     // A marker-only hard path writes the marker before this sweep and never
     // reaches the provenance door's erase.
     let hard =
@@ -66,20 +89,19 @@ pub(super) fn erase_actor_fields_in_txn(
             &BTreeSet::from([*actor]),
         )?;
     }
-    scrub_actor_fields_in_txn(vault, wtxn, actor)?;
+    scrub_actor_fields_in_txn(&mut erase)?;
     if hard {
-        crate::attempt_queue::erase_attempt_payload_actor_in_txn(&vault.store, wtxn, actor)?;
+        let (vault, wtxn, actor) = erase.parts();
+        crate::attempt_queue::erase_attempt_payload_actor_in_txn(&vault.store, wtxn, &actor)?;
     }
     Ok(())
 }
 
 /// The sweep's scrubs without the attempt payloads, which a restore's sweep
 /// clears for all its ids in one pass.
-fn scrub_actor_fields_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
+fn scrub_actor_fields_in_txn(erase: &mut ActorErasureWriter<'_, '_>) -> Result<()> {
+    let (vault, wtxn, actor) = erase.parts();
+    let actor = &actor;
     IDENTITY_OPS(vault, wtxn, actor)?;
     ORIGIN_CLAIMS(vault, wtxn, actor)?;
     ACTOR_STAMP_TOKENS(vault, wtxn, actor)?;
@@ -93,9 +115,10 @@ fn scrub_actor_fields_in_txn(
     // on soft deletes that keep attribution (FIX 11060, FIX 812, FIX 6640).
     // Marker-only replay and checkpoint restore reach this sweep, so a
     // restored receipt never brings back a hard-erased actor.
-    crate::context_board::scrub_section_fit_receipt_actors_in_txn(vault, wtxn, actor)?;
+    crate::context_board::scrub_section_fit_receipt_actors_in_txn(erase)?;
+    let (vault, wtxn, actor) = erase.parts();
     for scrub in crate::side_table::actor_scrubs() {
-        scrub(vault, wtxn, actor)?;
+        scrub(vault, wtxn, &actor)?;
     }
     Ok(())
 }
@@ -146,10 +169,9 @@ fn hard_erased_ids_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<BTree
 /// erase takes from planned intents and attempt payloads goes again too;
 /// the rest of the restored content stays.
 pub(crate) fn rerun_actor_scrubs_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    live: &BTreeSet<EntityId>,
+    mut restore: crate::recovery::checkpoint::RestoreActorScrubWriter<'_, '_>,
 ) -> Result<()> {
+    let (vault, wtxn, live) = restore.parts();
     let mut erased = hard_erased_ids_in_txn(vault, wtxn)?;
     erased.extend(live);
     // The spawn asks the image brings back for any of them, actor or not,
@@ -171,7 +193,10 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
         .rerun_gate_claim_scrubs_in_txn(wtxn, &erased, now)?;
     crate::outbound::erase_connector_reply_bodies_by_authors_in_txn(vault, wtxn, &erased)?;
     for actor in &erased {
-        scrub_actor_fields_in_txn(vault, wtxn, actor)?;
+        {
+            let mut erase = ActorErasureWriter::new(vault, wtxn, *actor);
+            scrub_actor_fields_in_txn(&mut erase)?;
+        }
         // The image's cleanup rows name it again; they go once more (FIX 7517).
         crate::vault_cleanup::erase_in_txn(&vault.store, wtxn, actor)?;
     }
