@@ -268,7 +268,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         };
         // The text lands in durable names, never its calls' labels (FIX
         // 10359); the reduce digest is the landed text's.
-        let lines = super::durable_labels::durable_arc(lines, run.view);
+        let lines = super::durable_labels::durable_arc_parts(lines, run.view, &run.members);
         let reduce = ArcReduceRow {
             digest: result_digest(&lines.text, &lines.keep, &lines.line_sources),
             lines: lines.line_sources.len() as u64,
