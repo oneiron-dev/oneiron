@@ -69056,7 +69056,7 @@
      "path": "src/store/actor_scrubs.rs",
      "purpose": "The actor scrubs of side tables whose eraser lives in the engine: the trait the engine implements, and the…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "trait": 1
      }
     },
