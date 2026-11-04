@@ -16,25 +16,19 @@ use crate::xlsx_body::{
 };
 use std::collections::BTreeSet;
 
-fn letters(mut col: u32) -> String {
-    let mut out = Vec::new();
-    while col > 0 {
-        out.push(b'A' + ((col - 1) % 26) as u8);
-        col = (col - 1) / 26;
-    }
-    out.reverse();
-    String::from_utf8(out).unwrap_or_default()
-}
-
 /// A reference to the rectangle from `(col, first)` to `(last_col, last)`
-/// on `sheet`; one cell when both corners are one.
+/// on `sheet`; one cell when both corners are one. Rows stay `usize`, so the
+/// `$` splice stays and only the letters go through the shared core.
 fn area(sheet: &str, (col, first): (u32, usize), (last_col, last): (u32, usize)) -> String {
     let sheet = format!("'{}'", sheet.replace('\'', "''"));
-    let from = format!("${}${first}", letters(col));
+    let from = format!("${}${first}", crate::a1::col_letters(col));
     if (col, first) == (last_col, last) {
         format!("{sheet}!{from}")
     } else {
-        format!("{sheet}!{from}:${}${last}", letters(last_col))
+        format!(
+            "{sheet}!{from}:${}${last}",
+            crate::a1::col_letters(last_col)
+        )
     }
 }
 
