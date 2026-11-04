@@ -38,10 +38,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/esign_rate_thresholds.rs` | src | s | 1 struct | EsignRateThresholds | The e-sign send-rate thresholds a policy manifest resolves to |
 | `src/file_secret_marks.rs` | src | s | 1 struct · 2 enum · 5 fn · 2 type · 2 const | KeySpan, MemberStep, SecretSight | Value-free file-mask paths, read visibility, and byte-span transformations |
 | `src/graph_version.rs` | src | s | 3 fn · 1 const | — | The graph version counter in `hnsw_meta`, which PPR caches are keyed and validated by, and its little-endian… |
+| `src/heap_drop.rs` | src | s | 1 struct · 1 fn | HeapDropReport | Counts reported by rebuildable index and window heap drops |
 | `src/identity_hints.rs` | src | s | 1 fn | — | Per-kind declared identity fields (human-facing identity hints) |
 | `src/index_keys.rs` | src | s | 3 fn | — | Byte layouts of the edge, temporal and type index keys |
 | `src/key_material.rs` | src | s | 1 struct · 1 enum · 4 fn | WorldKeyDestroyCause, WorldKeyDestruction | Guarded key derivation, OS entropy, and the world-key refusal constructor |
-| `src/lib.rs` | src | s | 37 mod | — | The store layer of the oneiron engine |
+| `src/lib.rs` | src | s | 42 mod | — | The store layer of the oneiron engine |
 | `src/long_interval.rs` | src | s | 1 const | — | The occurrence span past which a stored record is a long interval |
 | `src/manifest_origin_keys.rs` | src | s | 2 fn | — | The row keys of a policy manifest's trusted-origin and seeded-confidence side tables, spelled for the… |
 | `src/model_decision/answer_actor.rs` | src | s | 1 enum · 4 fn | AnswerActor | An answer actor identity, including its erased state |
@@ -92,6 +93,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store_clock/lease_journal.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | LeaseJournal | The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A) |
 | `src/store_clock/tests.rs` | test | s | — | — | The store clock's reads, observed through what a caller gets back |
 | `src/vault_page_seal.rs` | src | s | 3 struct · 1 enum · 17 fn · 1 const | SealOrigin, VaultDataKey, VaultPageSeal, WrapDigest | The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under… |
+| `src/vector_index/keys.rs` | src | s | 33 const | — | HNSW metadata key/counter literals, error strings, and the one-way prefix |
+| `src/vector_index/mod.rs` | src | s | 1 trait · 5 fn · 1 type · 1 mod | VectorIndexDbs | Persisted vector-index metadata and admission vocabulary: the `hnsw_meta` keys and counters, read and bumped… |
+| `src/vector_insert_plan.rs` | src | s | 1 struct | InsertPlan | Prepared vector-index neighbor choices bound to a read snapshot |
+| `src/vector_refinement.rs` | src | s | 1 struct · 1 fn | VectorRefinement | The dimensional space the existing HNSW funnel actually scores in |
+| `src/vector_row.rs` | src | s | 3 fn · 1 const | — | The persisted vector row codec (EMB-3 v1): little-endian f16 components behind a one-byte format tag |
 | `src/window_key.rs` | src | s | 1 struct · 15 fn · 1 crate-vis | WindowKey | Monthly CRDT window keys and their timestamp conversion |
 | `src/world_pad_codec.rs` | src | s | 1 struct · 1 enum · 17 fn | PadBody, WorldKeyPad | The world-key pad row codec (KS-5, FIX 5686): a pad, a pad row's deterministic id, and a pad row body in its… |
 | `src/write_envelope.rs` | src | m | 5 struct · 48 fn · 6 const · 31 mod · 3 re-export | ClaimCandidate, MachineWriteSignature, SourceLineage, WriteEnvelope, WriteProvenance | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
