@@ -1,5 +1,6 @@
 //! Claim-gate preflight loop including CommitmentGapDecay arms.
 
+use super::super::base_apply::pending_prompt_for;
 use super::super::*;
 use super::BatchOp;
 
@@ -28,6 +29,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
     checker: Option<&BoundedAutoChecker>,
     origin: BaseWriteOrigin<'_>,
     caller_envelopes: &HashMap<EntityId, crate::WriteEnvelope>,
+    births: &[(EntityId, crate::provenance::birth::RowBirth)],
 ) -> Result<()> {
     if !contains_local_claim_put(ops) {
         return Ok(());
@@ -94,8 +96,8 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         defer_metrics_until_commit: true,
                         transition: None,
                         owner_authored: None,
-                        // FIX 11000: stays None until #4344 threads births
-                        // through commit.rs/preflight; incomplete anchors.
+                        // Derived lapse rows carry no pending birth on this
+                        // door; do not infer one from a stored revision.
                         pending_prompt: None,
                     },
                     &policy,
@@ -134,6 +136,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                 let result =
                     crate::claim::validate_claim_body_and_decode_in_txn(store, wtxn, data, false)
                         .and_then(|body| {
+                            let pending_prompt = pending_prompt_for(births, id);
                             crate::gate::check_claim_policy_for_write_with_record(
                                 store,
                                 wtxn,
@@ -148,8 +151,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                                     defer_metrics_until_commit: true,
                                     transition: None,
                                     owner_authored: None,
-                                    // FIX 11000: stays None until #4344.
-                                    pending_prompt: None,
+                                    pending_prompt: pending_prompt.as_deref(),
                                 },
                                 &policy,
                                 crate::store::GateWriteMode {
@@ -174,6 +176,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                 let body = (**candidate)
                     .clone()
                     .into_claim_body(envelope, default_facet)?;
+                let pending_prompt = pending_prompt_for(births, id);
                 let result = crate::gate::check_claim_policy_for_write_with_record(
                     store,
                     wtxn,
@@ -190,8 +193,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         defer_metrics_until_commit: true,
                         transition: None,
                         owner_authored: None,
-                        // FIX 11000: stays None until #4344.
-                        pending_prompt: None,
+                        pending_prompt: pending_prompt.as_deref(),
                     },
                     &policy,
                     crate::store::GateWriteMode {
