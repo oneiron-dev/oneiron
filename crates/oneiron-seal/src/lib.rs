@@ -34,10 +34,7 @@ pub use api::{
 };
 pub use error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
 #[cfg(feature = "native")]
-pub use memory::{
-    AdmittedBytes, AdmittedStr, SealMemory, SealMemoryProvider, SealMemoryRefusal, SharedBytes,
-    SharedStr,
-};
+pub use memory::{AdmittedBytes, SealMemory, SealMemoryProvider, SealMemoryRefusal, SharedBytes};
 
 #[cfg(feature = "native")]
 pub use native::NativeSealEngine;
