@@ -22,9 +22,8 @@ pub(in crate::oneironer) const CHAR_REFINE_K: usize = 3;
 pub(in crate::oneironer) const CHAR_REFINE_TAU: f32 = 0.5;
 
 /// Whether a call without `EncoderInput.language` runs the DATE snap. The
-/// snap's tables are keyed by language and no language source reaches the
-/// live callers yet (FIX 6713), so such a call skips it; character
-/// refinement runs either way.
+/// snap's tables are keyed by language, so a call without a configured
+/// language (FIX 6713) skips it; character refinement runs either way.
 const DATE_SNAP_WITHOUT_LANGUAGE: bool = false;
 
 /// The character vocabulary's id for a character outside it.
