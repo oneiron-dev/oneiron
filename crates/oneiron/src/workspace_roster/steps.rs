@@ -753,8 +753,19 @@ pub(super) fn ensure_companion_profile_grant(
             if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
-            let existing =
-                crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            let existing = match crate::access_grant::decode_access_grant_body(body) {
+                Ok(existing) => existing,
+                // FIX 4980: an erased standing grant is no longer the
+                // expected live grant, so replay reports the existing
+                // already-bound mismatch.
+                Err(_) if crate::access_grant::decode_erased_grant_body(body).is_ok() => {
+                    return Err(invalid(
+                        "profile_grant_ref is already bound to a different access grant",
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
             if existing != expected {
                 return Err(invalid(
                     "profile_grant_ref is already bound to a different access grant",
