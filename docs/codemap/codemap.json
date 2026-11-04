@@ -3410,7 +3410,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthorityCheckpointAttestation",
@@ -3421,7 +3421,7 @@
      "purpose": "Checkpoint v2 attestations (OF-469): an eligible root attests one authority checkpoint image with two…",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 13,
       "struct": 3
      }
@@ -25682,14 +25682,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RoomParty"
+      "RoomParty",
+      "RoomPartyEntry"
      ],
      "path": "src/disclosure/room_party.rs",
      "purpose": "The term one room member brings to the room's meet (ARCH-0067 §8: \"the grants behind the people and agents…",
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 2
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -63256,7 +63258,7 @@
      "surface": {
       "crate-vis": 12,
       "fn": 9,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 2,
       "type": 1
      }
@@ -92179,7 +92181,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 141,
+   "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6357,
    "test_files": 900
