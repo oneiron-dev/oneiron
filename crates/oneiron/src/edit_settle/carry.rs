@@ -1182,19 +1182,14 @@ impl Vault {
             };
             // A replay marks nothing: its first ask already covered the
             // evaluation. Any evaluation that ran — a real ask, or a
-            // terminal one with no unit left — retires the wake: a terminal
-            // withdrawal marks every answer, not just this wake's subset,
-            // so a partially marked row can never pump its expired deadline
-            // forever (FIX 9826).
-            if asked {
+            // terminal one with no unit left — retires this wake's own
+            // units. Only units present in this wake's snapshot are marked:
+            // newly appended units stay due for their own evaluation, and
+            // a later fresh wake covering them retires or asks them in turn,
+            // so no expired deadline can pump forever (FIX 9826).
+            if asked || retire {
                 for answer in &mut row.answers {
                     if answer.woken_at.is_none() && units.contains(&&answer.unit) {
-                        answer.woken_at = Some(now);
-                    }
-                }
-            } else if retire {
-                for answer in &mut row.answers {
-                    if answer.woken_at.is_none() {
                         answer.woken_at = Some(now);
                     }
                 }
