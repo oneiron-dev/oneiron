@@ -109,7 +109,10 @@ impl LeaseJournal {
         };
         state.dir_synced = true;
         let bound = now.saturating_add(AUTHORIZATION_LEASE_SECS);
-        match file.write_all(&record(bound)).and_then(|()| file.sync_data()) {
+        let l15_sync = crate::stage_timing::stage("server.lease_journal_sync");
+        let synced = file.write_all(&record(bound)).and_then(|()| file.sync_data());
+        drop(l15_sync);
+        match synced {
             Ok(()) => {
                 state.covered = bound;
                 state.owed = true;

@@ -350,7 +350,9 @@ impl Nonces {
         let Some(file) = self.journal.as_mut() else {
             return false;
         };
+        let l15_journal = crate::stage_timing::stage("server.nonce_journal_sync");
         let appended = file.write_all(&record).and_then(|()| file.sync_data());
+        drop(l15_journal);
         tracing::Span::current().record(
             "journal_us",
             u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
