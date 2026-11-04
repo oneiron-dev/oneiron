@@ -14,22 +14,9 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use serde_json::Value;
 
+pub(crate) use crate::batch::export::agent_knowledge_format::KnowledgeFormat;
+
 const FORMAT_V2: &str = "oneiron.agent-knowledge.v2";
-
-/// A selected-knowledge facet's form.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum KnowledgeFormat {
-    /// `[row, ...]`; typed ids are byte arrays. Read, never written.
-    V1,
-    /// `["oneiron.agent-knowledge.v2", row, ...]`; typed ids are lowercase
-    /// hex text. A row is an object, so a leading string is only a marker.
-    V2,
-}
-
-impl KnowledgeFormat {
-    /// The form every new facet is written in.
-    pub(crate) const CURRENT: Self = Self::V2;
-}
 
 pub(crate) fn encode_agent_knowledge(
     format: KnowledgeFormat,
