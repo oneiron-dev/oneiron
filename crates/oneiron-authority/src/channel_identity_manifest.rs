@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel_identity::ChannelIdentityShape;
+use crate::channel_identity_shape::ChannelIdentityShape;
 
 /// Stable schema version for channel identity capability manifests.
 pub const CHANNEL_IDENTITY_CAPABILITY_MATRIX_VERSION: &str =

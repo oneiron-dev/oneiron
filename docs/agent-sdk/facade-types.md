@@ -8105,7 +8105,7 @@ export type ProspectiveQueryHint = { hint_ref: string; target_ref: string; query
 export type SignalExtractionClaim = { claim: ClaimView; sources: SignalExtractionSource[]; prospective_queries: ProspectiveQueryHint[] }
 /** `oneiron::memory::signal_extraction::SignalExtractionResult` */
 export type SignalExtractionResult = { job: DreamerAttemptView; claims: SignalExtractionClaim[] }
-/** `oneiron::channel_identity::shape::SelfHeldShape` */
+/** `oneiron_authority::channel_identity_shape::SelfHeldShape` */
 export type SelfHeldShape = "dedicated_address" | "dedicated_handle" | "shared_presence"
 /** `oneiron::channel_identity::binding::ChannelIdentityBinding` */
 export type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet_ref?: EntityId | null } | { kind: "vault"; vault_id: number }
@@ -8113,7 +8113,7 @@ export type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet
 export type ChannelIdentityFulfillment = "api" | "manual" | "review"
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityProvisionRequest` */
 export type ChannelIdentityProvisionRequest = { channel: string; address_or_handle: string; shape: SelfHeldShape; binding: ChannelIdentityBinding; fulfillment_mode: ChannelIdentityFulfillment; request_ref?: EntityId | null }
-/** `oneiron::channel_identity::shape::ChannelIdentityShape` */
+/** `oneiron_authority::channel_identity_shape::ChannelIdentityShape` */
 export type ChannelIdentityShape = "dedicated_address" | "dedicated_handle" | "shared_presence" | "delegated_grant"
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityCustody` */
 export type ChannelIdentityCustody = "self_held" | "delegated"
