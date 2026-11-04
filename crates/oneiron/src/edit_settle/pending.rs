@@ -660,7 +660,7 @@ impl Vault {
                 row.explicit_fork || head.as_ref().is_some_and(|head| head.version != *base)
             });
             let version = match &row.made_by {
-                Some(made_by) => self.append_blob_artifact_version_made_by_in_txn(
+                Some(made_by) => self.append_blob_artifact_version_kept_in_txn(
                     wtxn,
                     artifact_id,
                     fork_parent,

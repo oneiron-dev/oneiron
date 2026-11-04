@@ -80,6 +80,16 @@ fn rewrite_version_claim_in_txn(
     wtxn: &mut RwTxn<'_>,
     record: &BlobArtifactVersion,
 ) -> Result<()> {
+    // A MACHINE-signed version claim carries an authenticated history pin
+    // that rejects an ordinary reserved rewrite (InvalidMachineClaimProof).
+    // Retire the pin and its controls first — the authorized erasure path —
+    // then the redacted body lands as an ordinary claim rewrite. The retired
+    // controls embed the born content, so they leave the indexes with it.
+    let controls = crate::claim::history_store::retire_machine_history_for_delete(
+        &vault.store,
+        wtxn,
+        &record.claim_id,
+    )?;
     let raw = vault
         .get_raw_in(wtxn, &record.claim_id)?
         .ok_or(Error::CorruptedIndex("blob artifact version claim header"))?;
@@ -107,6 +117,9 @@ fn rewrite_version_claim_in_txn(
         },
         header.learned_at,
     )?;
+    for control in &controls {
+        let _ = crate::batch::deindex_entity(&vault.store, wtxn, control)?;
+    }
     crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, &record.claim_id)?;
     let raw = vault
         .get_raw_in(wtxn, &record.claim_id)?
