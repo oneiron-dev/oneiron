@@ -79,7 +79,7 @@ use super::types::{AttemptId, AttemptRecord};
 pub(crate) use self::model_step::erase_model_step_failure_reasons_in_txn;
 
 // FIX 7115: the payload text in checkpoint images, a row-held response.
-pub(crate) use self::response::{attempt_payload_owners, attempt_payload_scan, attempt_row_opaque};
+pub(crate) use self::response::attempt_row_opaque;
 
 /// The input member that holds the AGENT_DEF snapshot.
 const KEY_DEFINITION: &str = AGENT_DISPATCH_INPUT_KEYS[4];
@@ -115,7 +115,7 @@ enum TextOwner {
 /// Who owns `record`'s dispatch text: its target AGENT_DEF, the actor the
 /// dispatch runs as. `None` for a row that is no agent dispatch, or whose
 /// input does not decode: it names no owner.
-fn dispatch_payload_actor(record: &AttemptRecord) -> Option<EntityId> {
+pub(crate) fn dispatch_payload_actor(record: &AttemptRecord) -> Option<EntityId> {
     let input = record_dispatch_input(record)?;
     agent_dispatch_actor(&input)
         .ok()
@@ -182,6 +182,13 @@ fn erase_dispatch_payload_text(record: &mut AttemptRecord, owner: TextOwner) -> 
     }
     record.payload = encode_dreamer_attempt_payload(&payload)?;
     Ok(true)
+}
+
+/// [`erase_dispatch_payload_text`] for the dispatch target's text: what a
+/// checkpoint image carries of a dispatch's row in its place (the store's
+/// response scan, through its attempt operations).
+pub(crate) fn erase_dispatch_payload_text_target(record: &mut AttemptRecord) -> Result<bool> {
+    erase_dispatch_payload_text(record, TextOwner::Target)
 }
 
 /// The AGENT_DEF body in `value` without its instructions key; every other
