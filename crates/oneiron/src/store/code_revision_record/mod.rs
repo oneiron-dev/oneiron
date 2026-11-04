@@ -1,19 +1,19 @@
 //! Code revision records, canonical codecs and pure complete-tree vocabulary.
 
-mod types;
 pub mod codec;
 pub(crate) mod commit_metadata;
 pub(crate) mod file_frontiers;
 pub(crate) mod tree_codec;
 pub(crate) mod tree_inventory;
+mod types;
 
-pub use types::{CodeRevision, CodeRevisionFork, CodeRevisionKind};
-pub use tree_inventory::CodeTreeInventory;
-pub use crate::store::code_commit_metadata::CodeCommitMetadata;
-pub use crate::store::code_tree_blob::CodeTreeBlob;
 use crate::entity_id::EntityId;
+pub use crate::store::code_commit_metadata::CodeCommitMetadata;
 use crate::store::code_document_values::CodeDocumentFrontier;
+pub use crate::store::code_tree_blob::CodeTreeBlob;
 use serde::{Deserialize, Serialize};
+pub use tree_inventory::CodeTreeInventory;
+pub use types::{CodeRevision, CodeRevisionFork, CodeRevisionKind};
 
 /// One retired path of a tested queue revision: the exact predecessor it
 /// removed, its document if it had one, and the reviewed operation and

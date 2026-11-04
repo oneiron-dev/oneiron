@@ -1,8 +1,8 @@
 //! Hydrated entity value consumed by pack serializers.
 
-use std::collections::HashMap;
 use crate::edge::EdgeInfo;
 use crate::entity_id::EntityId;
+use std::collections::HashMap;
 
 /// Hydrated entity with decoded fields, edges, and provenance.
 #[derive(Debug, Clone)]
@@ -22,4 +22,3 @@ pub struct ContextEntity {
     pub edges: Option<Vec<EdgeInfo>>,
     pub vector: Option<Vec<f32>>,
 }
-

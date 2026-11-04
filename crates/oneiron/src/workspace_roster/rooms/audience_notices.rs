@@ -46,7 +46,7 @@ use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use std::collections::BTreeMap;
 
-pub(crate) use crate::store::conversation_body::{THREAD_NOTICE_PRODUCER};
+pub(crate) use crate::store::conversation_body::THREAD_NOTICE_PRODUCER;
 
 /// The private threads an Owner's copy carries (FIX 6427), each root with
 /// its binding as the copy's own read resolved it (FIX 6681): what its
