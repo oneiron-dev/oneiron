@@ -135,10 +135,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/access_grant/erase.rs",
+     "purpose": "Scrub an erased principal out of non-brief ACCESS_GRANT bodies (FIX 4980)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/access_grant/mod.rs",
      "purpose": "AccessGrant control-plane record substrate",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 6
      }
     },
@@ -78682,7 +78692,7 @@
      "path": "src/task_verb/consult_fanout_store.rs",
      "purpose": "Node-local frozen fan-out plans and transaction-owned surface sink",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -78934,7 +78944,7 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "struct": 1
      }
@@ -78978,6 +78988,16 @@
      "surface": {
       "crate-vis": 5,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/fanout_launch/scrub.rs",
+     "purpose": "Erasure scrub of fan-out recipients (FIX 4699, Engine ruling 13:2x)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -79981,7 +80001,7 @@
      "path": "src/task_verb/wave_port.rs",
      "purpose": "Vault-backed, atomic wave plan application through the ordinary TASK doors",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -89557,7 +89577,7 @@
    ],
    "modules": {
     "access_grant": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90978,7 +90998,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 159,
+     "files": 160,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91183,7 +91203,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6273,
+   "source_files": 6275,
    "test_files": 900
   },
   "oneiron-android": {
