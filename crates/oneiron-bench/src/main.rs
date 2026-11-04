@@ -1,4 +1,4 @@
-//! oneiron-bench — benchmark harness skeleton.
+//! oneiron-bench — benchmark harness drivers.
 //!
 //! Subcommands (plan ONE-317 §9, ONE-1120, ONE-1311):
 //!
@@ -35,7 +35,7 @@
 //!   as resumable JSONL rows.
 //!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
-//! matrix is not shipped here; this binary only ships the bench skeleton,
+//! matrix is not shipped here; this binary ships the bench drivers,
 //! cheap in-workspace checks, and the ONE-1311 trace export seam.
 #![recursion_limit = "256"]
 #![allow(

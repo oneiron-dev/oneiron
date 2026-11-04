@@ -36,7 +36,10 @@ pub enum ClaimSuccession {
     /// A lower confidence, stamped with the `weakened` rung.
     Weakening { confidence: f32 },
     /// The same claim under another facet; `stamp` adds its `facet_of` edge.
-    Fork { facet: oneiron_contracts::entity_id::EntityId, stamp: bool },
+    Fork {
+        facet: oneiron_contracts::entity_id::EntityId,
+        stamp: bool,
+    },
 }
 
 /// One demotion step's result: the rung now carried and the claim that
