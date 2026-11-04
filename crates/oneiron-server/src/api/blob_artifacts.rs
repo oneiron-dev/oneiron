@@ -32,11 +32,11 @@ use oneiron::blob_artifact::{
 };
 use oneiron::edge::EdgeActorClass;
 use oneiron::edit_roundtrip::{DeckEditContext, DeckEditOutcome};
-use oneiron::edit_settle::{MadeByReader, NativeOutput, SettleConsent};
+use oneiron::edit_settle::{MadeByReader, NativeOutput, PendingProposalView, SettleConsent};
 use oneiron::provenance::made_by::{MadeBy, MadeByTrigger};
 use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::write_envelope::WriteActor;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::conversation_members::actor;
@@ -147,9 +147,28 @@ pub(super) struct ProposeOutput {
     media_type: String,
     content_base64: String,
     #[serde(default)]
-    report: Value,
+    report: Box<serde_json::value::RawValue>,
     #[serde(default)]
     made_by: Option<MadeBy>,
+}
+
+/// Typed proposal listings (FIX 12431): the summary's raw report text
+/// serializes verbatim, never through a recursive `Value`.
+#[derive(Serialize)]
+struct ProposalsResponse {
+    proposals: Vec<PendingProposalView>,
+}
+
+#[derive(Serialize)]
+struct ProposedResponse {
+    proposed: PendingProposalView,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum DeckProposeResponse {
+    Proposed { proposed: PendingProposalView },
+    Rejected { rejected: DeckProposeRejection },
 }
 
 #[derive(Deserialize, Default)]
@@ -720,7 +739,7 @@ pub(super) async fn proposals(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(artifact): Path<String>,
-) -> Result<Json<Value>, EnvelopedApiError> {
+) -> Result<Json<ProposalsResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
     let pending = blocking_read(move || {
@@ -737,7 +756,7 @@ pub(super) async fn proposals(
         pending.map_err(|error| core_engine_error("proposal list failed", error))
     })
     .await?;
-    Ok(Json(json!({ "proposals": pending })))
+    Ok(Json(ProposalsResponse { proposals: pending }))
 }
 
 /// Propose a native deck transaction against a PPTX artifact.
@@ -762,7 +781,7 @@ pub(super) async fn propose_deck(
     State(server): State<Arc<SyncServer>>,
     Path(artifact): Path<String>,
     payload: Result<Json<ProposeDeck>, JsonRejection>,
-) -> Result<(StatusCode, Json<Value>), EnvelopedApiError> {
+) -> Result<(StatusCode, Json<DeckProposeResponse>), EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
     let actor = proposal_writer(&server, &auth)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
@@ -787,20 +806,21 @@ pub(super) async fn propose_deck(
                         actor,
                         now,
                     )
-                    .map(|pending| Ok(json!(pending)))
+                    .map(Ok)
                     .map_err(failed)
             }
-            DeckEditOutcome::Rejected(rejection) => {
-                Ok(Err(json!(DeckProposeRejection::from(*rejection))))
-            }
+            DeckEditOutcome::Rejected(rejection) => Ok(Err(DeckProposeRejection::from(*rejection))),
         }
     })
     .await?;
     Ok(match outcome {
-        Ok(pending) => (StatusCode::CREATED, Json(json!({ "proposed": pending }))),
+        Ok(pending) => (
+            StatusCode::CREATED,
+            Json(DeckProposeResponse::Proposed { proposed: pending }),
+        ),
         Err(rejected) => (
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "rejected": rejected })),
+            Json(DeckProposeResponse::Rejected { rejected }),
         ),
     })
 }
@@ -826,7 +846,7 @@ pub(super) async fn propose_output(
     State(server): State<Arc<SyncServer>>,
     Path(artifact): Path<String>,
     payload: Result<Json<ProposeOutput>, JsonRejection>,
-) -> Result<(StatusCode, Json<Value>), EnvelopedApiError> {
+) -> Result<(StatusCode, Json<ProposedResponse>), EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
     let actor = proposal_writer(&server, &auth)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
@@ -836,7 +856,7 @@ pub(super) async fn propose_output(
         run_ref: request.run_ref,
         name: request.name,
         media_type: request.media_type,
-        report: request.report,
+        report: request.report.get().to_owned(),
         made_by: request.made_by,
     };
     let pending = blocking_read(move || {
@@ -847,7 +867,10 @@ pub(super) async fn propose_output(
             .map_err(|error| core_engine_error("native output proposal failed", error))
     })
     .await?;
-    Ok((StatusCode::CREATED, Json(json!({ "proposed": pending }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(ProposedResponse { proposed: pending }),
+    ))
 }
 
 fn settle_request(payload: Option<Json<Settle>>) -> Settle {

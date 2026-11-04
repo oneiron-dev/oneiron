@@ -26,8 +26,8 @@ use crate::edit_roundtrip::{
     RangeRef, SheetRowsAsk, UnitAbstention, UnitCall, UnitDecider, UnitRefusal,
 };
 use crate::edit_settle::{
-    KeepUndo, MadeByReader, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
-    SettledReview,
+    KeepUndo, MadeByReader, NativeOutput, OrganWaitView, PendingProposalView, RawJson,
+    SettleConsent, SettledReview,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -144,7 +144,7 @@ pub struct NativeOutputRequest {
     pub media_type: String,
     pub content_base64: String,
     #[serde(default)]
-    pub report: serde_json::Value,
+    pub report: RawJson,
     /// The envelope Keep gives the version; absent gives the writer's own.
     #[serde(default)]
     pub made_by: Option<MadeBy>,
@@ -1115,7 +1115,7 @@ impl Memory<'_> {
             name: input.name.clone(),
             media_type: input.media_type.clone(),
             bytes,
-            report: input.report.clone(),
+            report: input.report.0.get().to_owned(),
             made_by: input.made_by.clone(),
         };
         Ok(self.vault().propose_native_output(

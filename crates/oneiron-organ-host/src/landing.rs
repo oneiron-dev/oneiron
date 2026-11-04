@@ -47,18 +47,26 @@ impl OrganOutcome {
     /// Each export file this call made, as a native output for its artifact.
     /// The organ's report and the host's call receipt travel with each; a
     /// call that made several files names them `<run_ref>/<n>`.
-    #[must_use]
-    pub fn native_outputs(&self, run_ref: &str, made_by: Option<&MadeBy>) -> Vec<NativeOutput> {
-        let receipt = to_value(&self.receipt).unwrap_or_default();
+    pub fn native_outputs(
+        &self,
+        run_ref: &str,
+        made_by: Option<&MadeBy>,
+    ) -> oneiron::Result<Vec<NativeOutput>> {
+        let receipt = to_value(&self.receipt).map_err(|_| {
+            oneiron::error::Error::Artifact(oneiron::error::ArtifactError::InvalidBlobArtifactBody(
+                "native output report does not encode",
+            ))
+        })?;
         let both = Value::Map(vec![
             (Value::from("report"), self.report.clone()),
             (Value::from("receipt"), receipt),
         ]);
-        let msgpack = rmpv_of(&both);
-        let report = NativeOutput::report_from_msgpack(&msgpack);
+        let msgpack = rmpv_of(&both)?;
+        let report = NativeOutput::report_json_from_msgpack(&msgpack)?;
         dismantle(msgpack);
         let several = self.outputs.len() > 1;
-        self.outputs
+        Ok(self
+            .outputs
             .iter()
             .enumerate()
             .map(|(n, output)| NativeOutput {
@@ -73,13 +81,13 @@ impl OrganOutcome {
                 report: report.clone(),
                 made_by: made_by.cloned(),
             })
-            .collect()
+            .collect())
     }
 }
 
 /// `value` as the engine's report reader takes it, built bottom-up with a
 /// stack of its own, so a deep report costs no thread stack here.
-fn rmpv_of(value: &Value) -> rmpv::Value {
+fn rmpv_of(value: &Value) -> oneiron::Result<rmpv::Value> {
     enum Step<'a> {
         Enter(&'a Value),
         Array(usize),
@@ -100,7 +108,7 @@ fn rmpv_of(value: &Value) -> rmpv::Value {
                     steps.push(Step::Enter(key));
                 }
             }
-            Step::Enter(leaf) => built.push(rmpv_leaf(leaf)),
+            Step::Enter(leaf) => built.push(rmpv_leaf(leaf)?),
             Step::Array(len) => {
                 let items = built.split_off(built.len().saturating_sub(len));
                 built.push(rmpv::Value::Array(items));
@@ -116,23 +124,27 @@ fn rmpv_of(value: &Value) -> rmpv::Value {
             }
         }
     }
-    built.pop().unwrap_or(rmpv::Value::Nil)
+    Ok(built.pop().unwrap_or(rmpv::Value::Nil))
 }
 
-fn rmpv_leaf(value: &Value) -> rmpv::Value {
+fn rmpv_leaf(value: &Value) -> oneiron::Result<rmpv::Value> {
     match value {
-        Value::Nil | Value::Array(_) | Value::Map(_) => rmpv::Value::Nil,
-        Value::Boolean(flag) => rmpv::Value::Boolean(*flag),
+        Value::Nil | Value::Array(_) | Value::Map(_) => Ok(rmpv::Value::Nil),
+        Value::Boolean(flag) => Ok(rmpv::Value::Boolean(*flag)),
         Value::Integer(integer) => match (integer.as_u64(), integer.as_i64()) {
-            (Some(unsigned), _) => rmpv::Value::from(unsigned),
-            (None, Some(signed)) => rmpv::Value::from(signed),
-            (None, None) => rmpv::Value::Nil,
+            (Some(unsigned), _) => Ok(rmpv::Value::from(unsigned)),
+            (None, Some(signed)) => Ok(rmpv::Value::from(signed)),
+            (None, None) => Err(oneiron::error::Error::Artifact(
+                oneiron::error::ArtifactError::InvalidBlobArtifactBody(
+                    "native output report integer does not encode",
+                ),
+            )),
         },
-        Value::F32(float) => rmpv::Value::F32(*float),
-        Value::F64(float) => rmpv::Value::F64(*float),
-        Value::String(text) => rmpv::Value::from(text.as_str()),
-        Value::Binary(bytes) => rmpv::Value::Binary(bytes.clone()),
-        Value::Ext(kind, bytes) => rmpv::Value::Ext(*kind, bytes.clone()),
+        Value::F32(float) => Ok(rmpv::Value::F32(*float)),
+        Value::F64(float) => Ok(rmpv::Value::F64(*float)),
+        Value::String(text) => Ok(rmpv::Value::from(text.as_str())),
+        Value::Binary(bytes) => Ok(rmpv::Value::Binary(bytes.clone())),
+        Value::Ext(kind, bytes) => Ok(rmpv::Value::Ext(*kind, bytes.clone())),
     }
 }
 
@@ -177,7 +189,7 @@ pub fn propose_organ_outputs(
     let now = vault.now_recorded_at();
     let made_by = outcome.made_by(actor.entity_ref(), trigger, now);
     outcome
-        .native_outputs(run_ref, Some(&made_by))
+        .native_outputs(run_ref, Some(&made_by))?
         .iter()
         .map(|output| {
             let reader = vault.organ_landing_reader(submitter)?;

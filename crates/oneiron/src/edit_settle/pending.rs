@@ -124,6 +124,53 @@ enum PendingBody {
     },
 }
 
+/// One JSON value as its encoded text (FIX 12431): the bytes travel
+/// verbatim, never parsed into a recursive `Value`, so an arbitrarily deep
+/// report costs no thread stack. Text in is text out; `PartialEq` compares
+/// the bytes, and the schema is any JSON value.
+#[derive(Debug, Clone)]
+pub struct RawJson(pub Box<serde_json::value::RawValue>);
+
+impl PartialEq for RawJson {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.get() == other.0.get()
+    }
+}
+
+impl Default for RawJson {
+    fn default() -> Self {
+        Self(serde_json::value::RawValue::NULL.to_owned())
+    }
+}
+
+impl serde::Serialize for RawJson {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for RawJson {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Box::<serde_json::value::RawValue>::deserialize(deserializer).map(Self)
+    }
+}
+
+impl schemars::JsonSchema for RawJson {
+    fn schema_name() -> String {
+        "RawJson".to_owned()
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::Schema::Bool(true)
+    }
+}
+
 /// One native organ result offered to an artifact as its next version: the
 /// export file the organ produced, its report, and who made it from what.
 #[derive(Debug, Clone, PartialEq)]
@@ -135,17 +182,226 @@ pub struct NativeOutput {
     /// Must equal the artifact's media type: an export is a version of its kind.
     pub media_type: String,
     pub bytes: Vec<u8>,
-    /// The organ's structured report (JSON), kept with the proposal.
-    pub report: serde_json::Value,
+    /// The organ's structured report as encoded JSON text, kept with the
+    /// proposal verbatim (FIX 12431).
+    pub report: String,
     /// The kept version's envelope; `None` gives the writer's own.
     pub made_by: Option<MadeBy>,
 }
 
 impl NativeOutput {
-    /// An organ's MessagePack report as the JSON report a native output keeps.
-    #[must_use]
-    pub fn report_from_msgpack(report: &rmpv::Value) -> serde_json::Value {
-        serde_json::to_value(report).unwrap_or(serde_json::Value::Null)
+    /// An organ's MessagePack report as the JSON text a native output keeps,
+    /// written iteratively with a heap stack so a deep report costs no
+    /// thread stack. Leaves stringify as the MessagePack reader does:
+    /// strings, booleans, integers and finite floats; map keys keep the
+    /// last of duplicates, sorted. Anything else (a non-finite float, a
+    /// key that is not a string, boolean, integer or finite float) is an
+    /// honest refusal, never a silent null (FIX 12431).
+    pub fn report_json_from_msgpack(report: &rmpv::Value) -> Result<String> {
+        fn invalid_json(msg: &'static str) -> Error {
+            Error::Artifact(ArtifactError::InvalidBlobArtifactBody(msg))
+        }
+
+        fn float_value_text(value: f64) -> Result<String, Error> {
+            if !value.is_finite() {
+                return Err(invalid_json(
+                    "native output report holds a non-finite float",
+                ));
+            }
+            serde_json::to_string(&value)
+                .map_err(|_| invalid_json("native output report float does not encode"))
+        }
+
+        fn float_key_text_f32(value: f32) -> Result<String, Error> {
+            if !value.is_finite() {
+                return Err(invalid_json(
+                    "native output report key is not a string, boolean, integer or finite float",
+                ));
+            }
+            serde_json::to_string(&value)
+                .map_err(|_| invalid_json("native output report key does not encode"))
+        }
+
+        fn float_key_text_f64(value: f64) -> Result<String, Error> {
+            if !value.is_finite() {
+                return Err(invalid_json(
+                    "native output report key is not a string, boolean, integer or finite float",
+                ));
+            }
+            serde_json::to_string(&value)
+                .map_err(|_| invalid_json("native output report key does not encode"))
+        }
+
+        fn key_text(key: &rmpv::Value) -> Result<String, Error> {
+            match key {
+                rmpv::Value::String(text) => text.as_str().map(str::to_owned).ok_or_else(|| {
+                    invalid_json(
+                        "native output report key is not a string, boolean, integer or finite float",
+                    )
+                }),
+                rmpv::Value::Boolean(flag) => Ok(flag.to_string()),
+                rmpv::Value::Integer(n) => Ok(n.to_string()),
+                rmpv::Value::F32(f) => float_key_text_f32(*f),
+                rmpv::Value::F64(f) => float_key_text_f64(*f),
+                _ => Err(invalid_json(
+                    "native output report key is not a string, boolean, integer or finite float",
+                )),
+            }
+        }
+
+        fn push_byte_array(out: &mut String, bytes: &[u8]) {
+            out.push('[');
+            for (n, byte) in bytes.iter().enumerate() {
+                if n > 0 {
+                    out.push(',');
+                }
+                out.push_str(&byte.to_string());
+            }
+            out.push(']');
+        }
+
+        fn push_flat(out: &mut String, value: &rmpv::Value) -> Result<(), Error> {
+            match value {
+                rmpv::Value::Nil => out.push_str("null"),
+                rmpv::Value::Boolean(flag) => out.push_str(if *flag { "true" } else { "false" }),
+                rmpv::Value::Integer(n) => out.push_str(&n.to_string()),
+                // A 32-bit float travels as the 64-bit value the JSON reader
+                // holds it in, so the text matches the reader's number.
+                rmpv::Value::F32(f) => out.push_str(&float_value_text(f64::from(*f))?),
+                rmpv::Value::F64(f) => out.push_str(&float_value_text(*f)?),
+                rmpv::Value::String(text) => match text.as_str() {
+                    Some(valid) => out.push_str(&serde_json::to_string(valid).map_err(|_| {
+                        invalid_json("native output report string does not encode")
+                    })?),
+                    None => push_byte_array(out, text.as_bytes()),
+                },
+                rmpv::Value::Binary(bytes) => push_byte_array(out, bytes),
+                rmpv::Value::Ext(kind, bytes) => {
+                    out.push('[');
+                    out.push_str(&kind.to_string());
+                    out.push(',');
+                    push_byte_array(out, bytes);
+                    out.push(']');
+                }
+                rmpv::Value::Array(_) | rmpv::Value::Map(_) => {
+                    unreachable!("containers take the frame path")
+                }
+            }
+            Ok(())
+        }
+
+        fn sorted_entries<'a>(
+            entries: &'a [(rmpv::Value, rmpv::Value)],
+        ) -> Result<Vec<(String, &'a rmpv::Value)>, Error> {
+            let mut sorted = BTreeMap::<String, &'a rmpv::Value>::new();
+            for (key, value) in entries {
+                sorted.insert(key_text(key)?, value);
+            }
+            Ok(sorted.into_iter().collect())
+        }
+
+        enum Frame<'a> {
+            Array {
+                items: &'a [rmpv::Value],
+                idx: usize,
+            },
+            Map {
+                entries: Vec<(String, &'a rmpv::Value)>,
+                idx: usize,
+            },
+        }
+
+        let mut out = String::new();
+        let mut stack: Vec<Frame<'_>> = Vec::new();
+        match report {
+            rmpv::Value::Array(items) => {
+                out.push('[');
+                stack.push(Frame::Array { items, idx: 0 });
+            }
+            rmpv::Value::Map(entries) => {
+                out.push('{');
+                stack.push(Frame::Map {
+                    entries: sorted_entries(entries)?,
+                    idx: 0,
+                });
+            }
+            leaf => {
+                push_flat(&mut out, leaf)?;
+                return Ok(out);
+            }
+        }
+        while let Some(frame) = stack.last_mut() {
+            match frame {
+                Frame::Array { items, idx } => {
+                    if *idx >= items.len() {
+                        out.push(']');
+                        stack.pop();
+                        continue;
+                    }
+                    if *idx > 0 {
+                        out.push(',');
+                    }
+                    let child = &items[*idx];
+                    *idx += 1;
+                    match child {
+                        rmpv::Value::Array(nested) => {
+                            out.push('[');
+                            stack.push(Frame::Array {
+                                items: nested,
+                                idx: 0,
+                            });
+                        }
+                        rmpv::Value::Map(nested) => {
+                            out.push('{');
+                            stack.push(Frame::Map {
+                                entries: sorted_entries(nested)?,
+                                idx: 0,
+                            });
+                        }
+                        leaf => push_flat(&mut out, leaf)?,
+                    }
+                }
+                Frame::Map { entries, idx } => {
+                    if *idx >= entries.len() {
+                        out.push('}');
+                        stack.pop();
+                        continue;
+                    }
+                    if *idx > 0 {
+                        out.push(',');
+                    }
+                    let at = *idx;
+                    let (key_json, child) = {
+                        let (key, value) = &entries[at];
+                        let key_json = serde_json::to_string(key).map_err(|_| {
+                            invalid_json("native output report key does not encode")
+                        })?;
+                        (key_json, *value)
+                    };
+                    out.push_str(&key_json);
+                    out.push(':');
+                    *idx += 1;
+                    match child {
+                        rmpv::Value::Array(nested) => {
+                            out.push('[');
+                            stack.push(Frame::Array {
+                                items: nested,
+                                idx: 0,
+                            });
+                        }
+                        rmpv::Value::Map(nested) => {
+                            out.push('{');
+                            stack.push(Frame::Map {
+                                entries: sorted_entries(nested)?,
+                                idx: 0,
+                            });
+                        }
+                        leaf => push_flat(&mut out, leaf)?,
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -438,7 +694,8 @@ impl Vault {
                 "a native output needs a file name and non-empty bytes",
             )));
         }
-        let report = serde_json::to_string(&output.report).map_err(|_| {
+        let report = output.report.clone();
+        serde_json::from_str::<&serde_json::value::RawValue>(&report).map_err(|_| {
             Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "native output report does not encode",
             ))

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{PendingBody, PendingRow};
+use super::{PendingBody, PendingRow, RawJson};
 use crate::blob_artifact::hash_hex;
 use crate::edit_roundtrip::EditManifest;
 use crate::entity_id::EntityId;
@@ -37,7 +37,7 @@ pub struct PendingProposalView {
     pub made_by: Option<MadeBy>,
     /// The deck's semantic diff line, the edit manifest's op count, or the
     /// organ's report.
-    pub summary: serde_json::Value,
+    pub summary: RawJson,
 }
 
 impl PendingRow {
@@ -47,29 +47,62 @@ impl PendingRow {
                 format, manifest, ..
             } => {
                 let manifest = EditManifest::from_msgpack(manifest).ok();
-                serde_json::json!({
-                    "format": format,
-                    "ops": manifest.as_ref().map_or(0, |manifest| manifest.ops.len()),
-                    "deck": manifest.as_ref().and_then(|manifest| {
+                let ops = manifest.as_ref().map_or(0, |manifest| manifest.ops.len());
+                let format_text = match format {
+                    crate::edit_roundtrip::OfficeFormat::Xlsx => "\"xlsx\"",
+                    crate::edit_roundtrip::OfficeFormat::Docx => "\"docx\"",
+                    crate::edit_roundtrip::OfficeFormat::Pptx => "\"pptx\"",
+                };
+                let deck_text = manifest
+                    .as_ref()
+                    .and_then(|manifest| {
                         manifest.ops.iter().find_map(|op| match op {
                             crate::edit_roundtrip::EditOp::DeckTransaction { report, .. } => {
-                                serde_json::from_str::<serde_json::Value>(report).ok()
+                                serde_json::from_str::<&serde_json::value::RawValue>(report)
+                                    .ok()
+                                    .map(|_| report.as_str())
                             }
                             _ => None,
                         })
-                    }),
-                })
+                    })
+                    .unwrap_or("null");
+                let mut text = String::with_capacity(deck_text.len() + 64);
+                text.push_str("{\"deck\":");
+                text.push_str(deck_text);
+                text.push_str(",\"format\":");
+                text.push_str(format_text);
+                text.push_str(",\"ops\":");
+                text.push_str(&ops.to_string());
+                text.push('}');
+                // SAFETY: `deck_text` is a validated single JSON value or
+                // `null`, `format_text` is a quoted literal, and `ops` is a
+                // number, so the object is one well-formed value with no
+                // surrounding whitespace.
+                RawJson(unsafe { serde_json::value::RawValue::from_string_unchecked(text) })
             }
             PendingBody::Output {
                 name,
                 media_type,
                 report,
-            } => serde_json::json!({
-                "name": name,
-                "media_type": media_type,
-                "report": serde_json::from_str::<serde_json::Value>(report)
-                    .unwrap_or(serde_json::Value::Null),
-            }),
+            } => {
+                let name_json = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".to_owned());
+                let media_json =
+                    serde_json::to_string(media_type).unwrap_or_else(|_| "\"\"".to_owned());
+                let mut text =
+                    String::with_capacity(report.len() + name_json.len() + media_json.len() + 64);
+                text.push_str("{\"media_type\":");
+                text.push_str(&media_json);
+                text.push_str(",\"name\":");
+                text.push_str(&name_json);
+                text.push_str(",\"report\":");
+                text.push_str(report);
+                text.push('}');
+                // SAFETY: `name`/`media_type` are serializer-quoted strings
+                // and `report` is stored report text validated at proposal
+                // time, so the object is one well-formed value with no
+                // surrounding whitespace.
+                RawJson(unsafe { serde_json::value::RawValue::from_string_unchecked(text) })
+            }
         };
         PendingProposalView {
             artifact_id,
