@@ -683,6 +683,7 @@ impl Vault {
                 recalc: None,
                 recalc_zone: Some(request.zone.clone()),
                 effects: Vec::new(),
+                rebind_frontier: None,
             };
             EXPORTS.put(
                 &self.store,

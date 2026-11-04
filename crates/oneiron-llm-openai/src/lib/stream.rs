@@ -224,6 +224,20 @@ impl Stream for OpenAiCompatLlmStream<'_> {
                         Err(error) => return Poll::Ready(Some(Err(error))),
                     }
                 }
+                Poll::Ready(Some(Ok(OpenAiCompatStreamFrame::ChunkWithMetadata {
+                    chunk,
+                    metadata,
+                }))) => match this.accumulator.push_chunk(chunk) {
+                    Ok(mut events) => {
+                        for event in &mut events {
+                            if let LlmStreamEvent::Done { usage, .. } = event {
+                                usage.call_metadata = Some(metadata.clone());
+                            }
+                        }
+                        this.pending.extend(events.into_iter().map(Ok));
+                    }
+                    Err(error) => return Poll::Ready(Some(Err(error))),
+                },
                 Poll::Ready(Some(Ok(OpenAiCompatStreamFrame::Abort { usage }))) => {
                     this.pending
                         .extend(this.accumulator.abort_with_usage(usage).into_iter().map(Ok));

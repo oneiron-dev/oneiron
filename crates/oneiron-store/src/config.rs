@@ -9,13 +9,13 @@ pub use oneiron_base::config::failure_signals;
 
 use std::path::PathBuf;
 
-use oneiron_contracts::error::StoreError;
 pub use oneiron_base::config::{
     DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES, HostingPrivacyPosture, PPR_VAD_ALPHA_DEFAULT,
     PPR_VAD_ALPHA_MAX, PPR_VAD_ALPHA_SWEEP, PprCommunityConfig, READER_SLOTS, TextAnalyzerConfig,
     TextIndexOptions, VaultDataKeyCustody, VaultPrivacyConfig, VectorEvidenceFloors,
     validate_ppr_community, validate_ppr_vad_alpha,
 };
+use oneiron_contracts::error::StoreError;
 
 /// HNSW configuration values.
 ///
@@ -290,8 +290,8 @@ impl Bm25RankProfile {
     pub fn to_bm25_config(
         &self,
     ) -> Result<crate::config::bm25::Bm25Config, oneiron_contracts::error::Error> {
-        use oneiron_base::analyzer::AnalyzerChannel;
         use crate::config::bm25::{Bm25Config, Bm25Formula};
+        use oneiron_base::analyzer::AnalyzerChannel;
         use oneiron_contracts::error::Error;
 
         fn scored_slot(
@@ -388,8 +388,7 @@ impl VaultConfig {
             limits: oneiron_contracts::limit_ask::EngineLimits::default(),
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
             page_seal: None,
-            checkpoint_host_holds:
-                crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
+            checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
         }
     }
 
@@ -425,8 +424,7 @@ impl VaultConfig {
             limits: oneiron_contracts::limit_ask::EngineLimits::default(),
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
             page_seal: None,
-            checkpoint_host_holds:
-                crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
+            checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
         }
     }
 
