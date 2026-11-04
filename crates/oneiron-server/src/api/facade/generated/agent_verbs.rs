@@ -1039,6 +1039,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/ai.ask_image", post(facade_route))
         .route("/ai.verdict", post(facade_route))
         .route("/vault.graph.ask", post(facade_route))
+        .route("/self.skills.graph", post(facade_route))
         .route("/vault.graph.admit", post(facade_route))
         .route("/vault.questions.create", post(facade_route))
         .route("/vault.questions.edit", post(facade_route))

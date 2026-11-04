@@ -17,6 +17,7 @@ mod dispatch_observation;
 mod family;
 mod field_set;
 mod grant;
+mod graph_skill;
 mod guest_revoke;
 mod identity_kind;
 pub mod intent_id;
@@ -68,6 +69,7 @@ pub use self::grant::{
     StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,
     StandingOutboundGrantsLensQuery,
 };
+pub use self::graph_skill::{GraphSkillRunOutcome, GraphSkillRunRequest};
 pub use self::guest_revoke::{
     GuestCopyState, GuestDeletionRequestStatus, GuestPactStanding, GuestRevokeCourtesyTarget,
     GuestRevokeCourtesyTargetView, GuestRevokeDisclosure, GuestRevokeOutcome, GuestRevokeResponse,

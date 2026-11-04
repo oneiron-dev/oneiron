@@ -1199,6 +1199,7 @@ pub(crate) fn mcp_agent_verb_input(
         "ai.ask_image" => a.spec.clone().ok_or_else(invalid),
         "ai.verdict" => a.spec.clone().ok_or_else(invalid),
         "vault.graph.ask" => a.spec.clone().ok_or_else(invalid),
+        "self.skills.graph" => a.spec.clone().ok_or_else(invalid),
         "vault.graph.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.create" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.edit" => a.spec.clone().ok_or_else(invalid),
@@ -4402,6 +4403,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.graph.ask" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.skills.graph" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.graph.admit" => {
@@ -21541,6 +21545,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::receipt::GraphAskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_graph_ask(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.skills.graph" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.skills.graph", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::receipt::GraphSkillRunRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_skills_graph(
                 server, auth, input,
             ))
             .await;

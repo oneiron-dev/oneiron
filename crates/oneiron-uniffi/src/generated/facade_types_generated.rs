@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1225 facade rows, 4461 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1177.
+// UniFFI census: 1226 facade rows, 4463 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1178.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -42831,7 +42831,7 @@ pub enum AgentCeilingInput {
     Proposed,
 }
 
-/// `oneiron::agent_def::refusal::RefusalLevel`.
+/// `oneiron::store::agent_refusal::RefusalLevel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RefusalLevel {
     #[serde(rename = "none")]
@@ -42844,7 +42844,7 @@ pub enum RefusalLevel {
     Full,
 }
 
-/// `oneiron::agent_def::refusal::RefusalDial`.
+/// `oneiron::store::agent_refusal::RefusalDial`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RefusalDial {
@@ -42854,7 +42854,7 @@ pub struct RefusalDial {
     pub logistics: Option<RefusalLevel>,
 }
 
-/// `oneiron::agent_def::models::AgentModel`.
+/// `oneiron::store::agent_model::AgentModel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentModel {
@@ -55263,6 +55263,60 @@ pub enum GraphAskOutcome {
         abstained: Vec<String>,
         #[serde(rename = "declined")]
         declined: Vec<GraphAskDeclined>,
+    },
+}
+
+/// `oneiron::receipt::graph_skill::GraphSkillRunRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraphSkillRunRequest {
+    #[serde(rename = "skill")]
+    pub skill: String,
+    #[serde(rename = "reference")]
+    pub reference: String,
+    #[serde(rename = "ceiling", default, skip_serializing_if = "Option::is_none")]
+    pub ceiling: Option<DecisionRung>,
+    #[serde(
+        rename = "unit_deadline_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub unit_deadline_ms: Option<u64>,
+    #[serde(rename = "posture", default, skip_serializing_if = "Option::is_none")]
+    pub posture: Option<HostingPrivacyPosture>,
+    #[serde(rename = "criteria", default, skip_serializing_if = "Option::is_none")]
+    pub criteria: Option<QuestionCriteriaString>,
+}
+
+/// `oneiron::receipt::graph_skill::GraphSkillRunOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum GraphSkillRunOutcome {
+    #[serde(rename = "done")]
+    Done {
+        #[serde(rename = "stages")]
+        stages: Vec<Vec<Option<AnswerRecord>>>,
+    },
+    #[serde(rename = "failed")]
+    Failed {
+        #[serde(
+            rename = "failed_stage",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        failed_stage: Option<u64>,
+        #[serde(
+            rename = "failed_input",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        failed_input: Option<u64>,
+        #[serde(rename = "code")]
+        code: String,
+        #[serde(rename = "message")]
+        message: String,
+        #[serde(rename = "stages")]
+        stages: Vec<Vec<Option<AnswerRecord>>>,
     },
 }
 

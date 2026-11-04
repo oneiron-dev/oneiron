@@ -81,6 +81,7 @@ use crate::decision_verdict::{HELD_IMAGE, HeldImage, on_caller_payer, run_verdic
 use crate::slide_render::{AdmittedRenderer, RenderRefusal};
 
 mod board_carrier;
+mod graph_skill;
 mod host_rows;
 mod resident_rows;
 
@@ -320,7 +321,7 @@ impl AgentVerbDoor for RunHostDoor {
                         attempt.as_deref(),
                     )
                 }
-                None => answer_as_agent(
+                None => answer_as_agent_with_run(
                     &server,
                     actor,
                     &origin,
@@ -330,6 +331,7 @@ impl AgentVerbDoor for RunHostDoor {
                     held,
                     line.as_ref(),
                     attempt.as_deref(),
+                    Some(run_id),
                 ),
             })
         };
@@ -599,6 +601,23 @@ pub(crate) fn answer_as_agent(
     line: Option<&RunAdmission>,
     attempt: Option<&str>,
 ) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
+    answer_as_agent_with_run(
+        server, actor, origin, invocation, verb, input, held, line, attempt, None,
+    )
+}
+
+fn answer_as_agent_with_run(
+    server: &SyncServer,
+    actor: WriteActor,
+    origin: &HostWriteOrigin,
+    invocation: InvocationId,
+    verb: AgentVerb,
+    input: Value,
+    held: Option<HeldImage>,
+    line: Option<&RunAdmission>,
+    attempt: Option<&str>,
+    run_id: Option<EntityId>,
+) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
     // The agent's task work waits its turn in the vault's line (Rule 5), as
     // a served caller's does, and runs on it.
     let turn = verb
@@ -628,6 +647,8 @@ pub(crate) fn answer_as_agent(
                     input,
                     line,
                     attempt,
+                    origin,
+                    run_id,
                     &mut evidence,
                 )
             })
@@ -683,6 +704,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::AiVideoCancel
             | AgentVerb::AiVerdict
             | AgentVerb::VaultGraphAsk
+            | AgentVerb::SelfSkillsGraph
             | AgentVerb::VaultQuestionsCreate
             | AgentVerb::VaultQuestionsEdit
             | AgentVerb::VaultQuestionsPause

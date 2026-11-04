@@ -4696,6 +4696,11 @@ export_facade! {
     let output = client.vault_graph_ask(&input)?;
     crate::codec::lift_record("vault.graph.ask", &output)
 };
+"self.skills.graph" => fn self_skills_graph(&self, input: GraphSkillRunRequest) -> GraphSkillRunOutcome = |client| {
+    let input: oneiron::receipt::GraphSkillRunRequest = crate::codec::lower_record("self.skills.graph", input)?;
+    let output = client.self_skills_graph(&input)?;
+    crate::codec::lift_record("self.skills.graph", &output)
+};
 "vault.graph.admit" => fn vault_graph_admit(&self, input: GraphAdmitRequest) -> GraphAskOutcome = |client| {
     let input: oneiron::receipt::GraphAdmitRequest = crate::codec::lower_record("vault.graph.admit", input)?;
     let output = client.vault_graph_admit(&input)?;

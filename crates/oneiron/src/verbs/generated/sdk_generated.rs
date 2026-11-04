@@ -5211,6 +5211,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::receipt::GraphAskRequest>(),
             ),
             (
+                "self.skills.graph",
+                crate::code_run::vault_read::request_schema::<crate::receipt::GraphSkillRunRequest>(
+                ),
+            ),
+            (
                 "vault.graph.admit",
                 crate::code_run::vault_read::request_schema::<crate::receipt::GraphAdmitRequest>(),
             ),
@@ -17176,6 +17181,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.skills.graph" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.graph.admit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22300,6 +22312,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let input: crate::receipt::GraphAskRequest = decode(value.clone())?;
             input.validate()?;
         }
+        "self.skills.graph" => {
+            let input: crate::receipt::GraphSkillRunRequest = decode(value.clone())?;
+            input.validate()?;
+        }
         "vault.graph.admit" => {
             let input: crate::receipt::GraphAdmitRequest = decode(value.clone())?;
             input.validate()?;
@@ -25259,6 +25275,7 @@ pub fn invoke(
         "ai.ask_image" => encode(ai_ask_image(memory, decode(value)?)?),
         "ai.verdict" => encode(ai_verdict(memory, decode(value)?)?),
         "vault.graph.ask" => encode(vault_graph_ask(memory, decode(value)?)?),
+        "self.skills.graph" => encode(self_skills_graph(memory, decode(value)?)?),
         "vault.graph.admit" => encode(vault_graph_admit(memory, decode(value)?)?),
         "vault.questions.create" => encode(vault_questions_create(memory, decode(value)?)?),
         "vault.questions.edit" => encode(vault_questions_edit(memory, decode(value)?)?),
@@ -33783,6 +33800,13 @@ pub fn vault_graph_ask(
 ) -> MemoryResult<crate::receipt::GraphAskOutcome> {
     input.validate()?;
     crate::task_verb::sdk::host_only(memory, "vault.graph.ask", &input)
+}
+pub fn self_skills_graph(
+    memory: &Memory<'_>,
+    input: crate::receipt::GraphSkillRunRequest,
+) -> MemoryResult<crate::receipt::GraphSkillRunOutcome> {
+    input.validate()?;
+    crate::task_verb::sdk::host_only(memory, "self.skills.graph", &input)
 }
 pub fn vault_graph_admit(
     memory: &Memory<'_>,
