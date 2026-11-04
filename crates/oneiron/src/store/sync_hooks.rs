@@ -86,6 +86,24 @@ pub trait StoreSyncHooks: Send + Sync {
     /// The engine's `sync::window::merge_window_heads`.
     fn merge_window_heads(&self, doc: &LoroDoc) -> Result<()>;
 
+    /// The engine's `sync::selector::erase_carried_born_with_in_txn`, an
+    /// entity side-row eraser of `deletion::derived_rows`.
+    fn erase_carried_born_with_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
+    /// The engine's `sync::federation_burst::erase_retained_copies_in_txn`, an
+    /// entity side-row eraser of `deletion::derived_rows`.
+    fn erase_retained_copies_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()>;
+
     /// The engine's `sync::documents::compact`.
     fn compact_document(&self, vault: &crate::Vault, id: EntityId, erased: bool) -> Result<()>;
 }
