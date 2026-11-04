@@ -28,7 +28,7 @@ use super::{Attempts, DialBook, Dispatches, Finding, entity, run_loop, settled, 
 use crate::attempt_queue::AttemptState;
 use crate::code_run::{DiagnosticCollection, StepKey, StoredStepFeedback, TypeDiagnostics};
 use crate::receipt::CallOutcome;
-use crate::self_heal::AgentHealthSignal;
+use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::{EntityId, Result, Vault};
 
 /// One logical check's current streak of equal failures on equal inputs.

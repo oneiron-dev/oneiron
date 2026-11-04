@@ -336,6 +336,12 @@ pub struct PublishObserved {
     pub home: Option<EntityId>,
     pub reach: PublishReach,
     pub latest: LatestRead,
+    /// Each world whose capsule this pass's upload did not seal fresh because
+    /// its merged authority history was incomplete (FIX 4497): owners warn
+    /// members of exactly these worlds, not only of an empty capsule (FIX
+    /// 12417). Empty when the pass assembled no upload or sealed every world.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub incomplete_authority: Vec<EntityId>,
 }
 
 /// The exact attempt an executor persisted before its commit and has not

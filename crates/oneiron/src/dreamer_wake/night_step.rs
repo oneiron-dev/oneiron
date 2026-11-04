@@ -6,7 +6,7 @@
 
 use crate::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerAttemptOutcome};
 use crate::error::Result;
-use crate::runtime_hooks::InvocationId;
+use crate::store::verb_invocation::InvocationId;
 
 /// One night step's request id: the 16 bytes of the logical invocation that
 /// asked for it, so a replay of that invocation names the same request. Its

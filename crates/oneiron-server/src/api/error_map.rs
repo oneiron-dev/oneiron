@@ -101,6 +101,7 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::InvalidWitnessMessageBody
         | ErrorKind::InvalidEditManifest
         | ErrorKind::LiveDeckRefused
+        | ErrorKind::MemoryFloorRefused
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidCodebaseSnapshotBody
         | ErrorKind::InvalidCodeSymbolManifestBody

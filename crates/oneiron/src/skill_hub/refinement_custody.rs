@@ -18,7 +18,8 @@ use crate::{
     temporal::TimeRange,
 };
 
-const MAGIC: &[u8] = b"oneiron.refinement-receipt.v1\0";
+use crate::store::refinement_carrier::MAGIC;
+pub(crate) use crate::store::refinement_carrier::refinement_carrier_payload;
 const DOMAIN: &[u8] = b"oneiron.refinement-receipt.asset.v1\0";
 /// Empty marker per (holder, carrier id) the holder currently owns.
 const OWNED: SideTable<(EntityId, EntityId), (), Raw> =
@@ -128,12 +129,6 @@ fn decode(bytes: &[u8]) -> Result<Option<(EntityId, EntityId, RefinementReceipt)
         return Err(invalid("noncanonical refinement receipt"));
     }
     Ok(Some((candidate, ruling, payload)))
-}
-
-/// The receipt JSON a carrier wraps behind its magic and ids, for the
-/// credential scans: read whether or not the carrier is canonical.
-pub(crate) fn refinement_carrier_payload(bytes: &[u8]) -> Option<&[u8]> {
-    bytes.strip_prefix(MAGIC)?.get(32..)
 }
 
 /// A malformed carrier can still be scrubbed by its fixed holder prefix.

@@ -23,6 +23,8 @@ mod content_landed;
 #[cfg(feature = "sync")]
 mod content_window;
 mod doors;
+#[cfg(feature = "sync")]
+pub(crate) mod forward_version;
 mod kit;
 mod kit_piece;
 mod machine;
@@ -117,14 +119,14 @@ pub(crate) use self::pads::{
     world_pad_windows_in_txn,
 };
 pub(crate) use self::page_seal::{
-    OpenedDataKey, admit_new_vault, discard_creation_record, page_seal_open_error, read_sealed,
-    seal_read_only,
+    CapturedMirror, OpenedDataKey, admit_new_vault, discard_creation_record, page_seal_open_error,
+    read_sealed, seal_read_only,
 };
 pub use self::page_seal::{
     PAGE_SEAL_WARNING, SealedSwap, VaultPageSeal, new_delivered_page_seal, new_page_seal,
-    page_seal_custody_path, page_seal_vault_id, refuse_unfinished_sealed_creation,
-    remove_unfinished_sealed_creation, reopen_delivered_page_seal, unlock_page_seal,
-    vault_is_sealed,
+    page_seal_custody_path, page_seal_incarnations, page_seal_vault_id,
+    refuse_unfinished_sealed_creation, remove_unfinished_sealed_creation,
+    reopen_delivered_page_seal, unlock_page_seal, vault_is_sealed,
 };
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
 pub use self::root::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin};
@@ -135,7 +137,7 @@ pub use self::session::WorldKeyFrontierCheck;
 pub(crate) use self::session::{CountersignStage, WorldKeySession};
 pub use self::state::{WorldPadAvailability, WorldRecoveryState, recovery_state};
 pub(crate) use self::vault_key::CarriedVaultKey;
-pub use self::vault_key::kit::IssuedVaultKeyKit;
+pub use self::vault_key::kit::{IssuedVaultKeyKit, sealed_keeps_kit_piece};
 pub(crate) use self::vault_key::restore::{RecipientCustody, RestoreAdmissionCapability};
 pub use self::vault_key::{
     EscrowAddWarning, EscrowAdded, EscrowRetirement, NewVaultKeyWrap, ResealedEscrowCapsule,
@@ -152,7 +154,7 @@ pub use oneiron_crypto::{HybridPublicKey, HybridSecretKey};
 use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SecretError};
+use crate::error::Result;
 
 /// Everything a wrap is bound to. A reader states it from its own records; the
 /// envelope's claims are never the expectation.
@@ -245,29 +247,4 @@ fn base_world() -> EntityId {
     oneiron_contracts::claim::base_world_id()
 }
 
-pub(crate) fn refused(reason: &'static str) -> Error {
-    Error::Secret(SecretError::WorldKeyRefused(reason))
-}
-
-/// `BLAKE3-derive_key(context, parts…)`, the same 32 bytes, written straight
-/// into guarded output (FIX 6334): the output is zero-filled first and the
-/// XOF fills it in place, and the hasher's block buffer and the reader's
-/// state, which still hold the input key's bytes, are wiped. A secret subkey
-/// never passes through a plain array on its way to its guard.
-pub(crate) fn derive_guarded(context: &str, parts: &[&[u8]]) -> Zeroizing<[u8; 32]> {
-    let mut out = Zeroizing::new([0u8; 32]);
-    let mut hasher = blake3::Hasher::new_derive_key(context);
-    for part in parts {
-        hasher.update(part);
-    }
-    let mut reader = hasher.finalize_xof();
-    reader.fill(&mut out[..]);
-    zeroize::Zeroize::zeroize(&mut hasher);
-    zeroize::Zeroize::zeroize(&mut reader);
-    out
-}
-
-/// Fills `buf` from the OS CSPRNG. A failure is an error, never a weaker key.
-pub(crate) fn os_fill(buf: &mut [u8]) -> Result<()> {
-    getrandom::fill(buf).map_err(|_| refused("os entropy unavailable"))
-}
+pub(crate) use crate::key_material::{derive_guarded, os_fill, refused};

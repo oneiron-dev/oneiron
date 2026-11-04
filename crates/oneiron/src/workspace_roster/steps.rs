@@ -324,7 +324,7 @@ pub(super) fn birth_companion(
     // A companion gets her own dreaming by default; an authored setting wins.
     definition
         .dreaming
-        .get_or_insert(crate::agent_def::DreamingMode::Own);
+        .get_or_insert(crate::store::agent_record::DreamingMode::Own);
     definition.display_name = Some(companion.display_name.clone());
     ensure_agent_definition(vault, intent, &companion.actor_ref, &definition, writer)?;
 
@@ -432,7 +432,7 @@ pub(super) fn read_onboarding_mailbox_in_txn(
             crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &intent.actor_ref, at)?;
         if anchor.is_none_or(|anchor| {
             anchor.subject_ref != intent.person_ref
-                || anchor.subject_kind != crate::subject_model::SubjectKind::Person
+                || anchor.subject_kind != crate::write_envelope::subject_record::SubjectKind::Person
         }) {
             return Err(invalid(
                 "mailbox actor must remain anchored to the member PERSON",
@@ -643,8 +643,8 @@ pub(super) fn ensure_companion_person(
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
             let stored = &raw[ENTITY_METADATA_HEADER_LEN..];
-            crate::companion::validated_persona_baseline(stored)?;
-            let fields = crate::companion::persona_body_fields(stored)?;
+            crate::serialize::person_identity::validated_persona_baseline(stored)?;
+            let fields = crate::write_envelope::person_identity::body_fields(stored)?;
             let field = |name: &str| {
                 fields
                     .iter()
@@ -753,8 +753,19 @@ pub(super) fn ensure_companion_profile_grant(
             if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
-            let existing =
-                crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            let existing = match crate::access_grant::decode_access_grant_body(body) {
+                Ok(existing) => existing,
+                // FIX 4980: an erased standing grant is no longer the
+                // expected live grant, so replay reports the existing
+                // already-bound mismatch.
+                Err(_) if crate::access_grant::decode_erased_grant_body(body).is_ok() => {
+                    return Err(invalid(
+                        "profile_grant_ref is already bound to a different access grant",
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
             if existing != expected {
                 return Err(invalid(
                     "profile_grant_ref is already bound to a different access grant",

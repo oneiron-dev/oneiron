@@ -75,7 +75,7 @@ pub struct WitnessMessage {
     /// opaque. A stored message's quote is a birth fact, so a retry carries
     /// the same one. Absent ⇒ no quote.
     #[serde(default)]
-    pub quote: Option<crate::conversation_dag::QuoteSpan>,
+    pub quote: Option<crate::store::conversation_record::QuoteSpan>,
 }
 
 /// One conversational turn to witness: create-or-get CONVERSATION/TURN plus

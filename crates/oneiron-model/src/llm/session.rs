@@ -587,6 +587,8 @@ pub enum SessionInvalidation {
     WorkerEpoch,
     /// The worker or the host evicted it.
     Evicted,
+    /// The vault locked: every session of it is released with the key.
+    VaultLocked,
     /// The worker no longer holds it resident.
     ResidencyLost,
 }

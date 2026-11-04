@@ -4,13 +4,14 @@ use heed::{RoTxn, RwTxn};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::ClaimSubject;
-use crate::codebase::entity_id_from_hash_material;
+use crate::edit_settle::{MadeByReader, NativeOutput, PendingProposalView};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::store::Store;
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::ClaimSubject;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
 use super::body::{BlobArtifactBody, decode_blob_artifact_body, encode_blob_artifact_body};
@@ -27,8 +28,8 @@ use super::store_keys::{
 pub(super) use super::version_codec::decode_blob_artifact_version_record;
 use super::version_codec::encode_blob_artifact_version_record;
 use crate::error::ArtifactError;
-use crate::provenance::made_by::MadeBy;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::write_envelope::provenance::made_by::MadeBy;
 
 // The version chain's reads: the head, the tree, one version's metadata
 // and its bytes, with the gate on a compaction step's response (FIX 5977).
@@ -164,6 +165,14 @@ pub(super) const KEY_EXPORT_NAME: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[10];
 pub(super) const KEY_EXPORT_MEDIA_TYPE: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[11];
 pub(super) const KEY_MADE_BY: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[12];
 
+/// What a checked direct append did: landed immediately, or retained through
+/// the ordinary proposal door for an authorized Keep (FIX 8208).
+#[derive(Debug, Clone)]
+pub enum BlobArtifactAppendOutcome {
+    Landed(BlobArtifactVersion),
+    Proposed(PendingProposalView),
+}
+
 impl Vault {
     pub fn put_blob_artifact(
         &self,
@@ -193,7 +202,7 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         if header.entity_type != ENTITY_TYPE_BLOB_ARTIFACT {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
@@ -201,6 +210,119 @@ impl Vault {
             )));
         }
         decode_blob_artifact_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    /// A direct door's checked append. User uploads and first versions land as
+    /// before. A later AgentRun append without settlement waits as the same
+    /// native-output proposal any organ result uses, with the caller's live
+    /// content-write authority checked beside it; HEAD stays untouched until
+    /// Keep takes the existing authorized settlement path (FIX 8208).
+    #[expect(clippy::too_many_arguments)]
+    pub fn append_blob_artifact_version_checked(
+        &self,
+        artifact_id: &EntityId,
+        fork_parent: Option<u64>,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        made_by: Option<&MadeBy>,
+        reader: Option<MadeByReader<'_>>,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<BlobArtifactAppendOutcome> {
+        let (version, fork_base) = self.with_write_txn_grouped(|wtxn| {
+            let later =
+                read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?.is_some();
+            let content_hash = blake3::hash(bytes);
+            let dedupe = fork_parent.is_none()
+                && read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
+                    .is_some_and(|head| head.content_hash == *content_hash.as_bytes());
+            if later && !dedupe && matches!(provenance, BlobVersionProvenance::AgentRun { .. }) {
+                if let Some(named) = made_by {
+                    validate_version_made_by_in_txn(self, wtxn, named)?;
+                }
+                let fork_base = match fork_parent {
+                    Some(parent) => {
+                        let record =
+                            match read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)? {
+                                Some(head) if parent > 0 && parent <= head.version => {
+                                    VERSIONS.get(&self.store, wtxn, &(*artifact_id, parent))?
+                                }
+                                _ => None,
+                            };
+                        let Some(record) = record else {
+                            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                                "fork parent version does not exist",
+                            )));
+                        };
+                        if record.version != parent {
+                            return Err(Error::CorruptedIndex("blob artifact fork parent"));
+                        }
+                        Some((parent, record.content_hash))
+                    }
+                    None => None,
+                };
+                return Ok((None, fork_base));
+            }
+            let version = match made_by {
+                Some(made_by) => self.append_blob_artifact_version_made_by_in_txn(
+                    wtxn,
+                    artifact_id,
+                    fork_parent,
+                    bytes,
+                    provenance,
+                    made_by,
+                    actor,
+                    occurred,
+                    learned_at,
+                )?,
+                None => self.append_blob_artifact_version_with_parent_in_txn(
+                    wtxn,
+                    artifact_id,
+                    bytes,
+                    provenance,
+                    actor,
+                    occurred,
+                    learned_at,
+                    fork_parent,
+                )?,
+            };
+            Ok((Some(version), None))
+        })?;
+        if let Some(version) = version {
+            return Ok(BlobArtifactAppendOutcome::Landed(version));
+        }
+        let BlobVersionProvenance::AgentRun { run_ref } = provenance else {
+            unreachable!("only a later AgentRun append takes the proposal path")
+        };
+        let body = self
+            .get_blob_artifact(artifact_id)?
+            .ok_or(Error::EntityNotFound)?;
+        // A normal AgentRun append omitting made_by keeps the submitting
+        // actor's own default, so Keep records the submitter, not the keeper
+        // (blind review of #4387). No input rows: the envelope names only its
+        // writer, so retention admits nothing new and no door refuses more.
+        let output = NativeOutput {
+            run_ref: run_ref.clone(),
+            name: body.name,
+            media_type: body.media_type,
+            bytes: bytes.to_vec(),
+            report: serde_json::json!({}),
+            made_by: made_by.cloned().or_else(|| {
+                Some(default_version_made_by(
+                    &actor, provenance, None, learned_at,
+                ))
+            }),
+        };
+        self.propose_native_output_with_write_grant(
+            artifact_id,
+            &output,
+            reader,
+            actor,
+            learned_at,
+            fork_base,
+        )
+        .map(BlobArtifactAppendOutcome::Proposed)
     }
 
     /// Appends one version to the artifact's append-only chain.
@@ -439,8 +561,12 @@ impl Vault {
         let body = self
             .get_blob_artifact_in_txn(wtxn, artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        let fingerprint =
-            crate::ingest::prepare_blob_artifact_birth(&self.store, wtxn, artifact_id, bytes)?;
+        let fingerprint = crate::store::blob_fingerprint::prepare_blob_artifact_birth(
+            &self.store,
+            wtxn,
+            artifact_id,
+            bytes,
+        )?;
         let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
         let highwater = read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?;
         // HEAD is the greatest version that stays; a released one (FIX 6225)
@@ -576,9 +702,9 @@ impl Vault {
                 &self.store,
                 wtxn,
                 artifact_id,
-                &crate::provenance::birth::RowBirth {
+                &crate::store::row_birth::RowBirth {
                     made_by: record.made_by.clone(),
-                    content_hash: crate::provenance::birth::RowBirth::content_hash_of(&[
+                    content_hash: crate::store::row_birth::RowBirth::content_hash_of(&[
                         content_hash.as_slice(),
                     ]),
                     withheld: Vec::new(),

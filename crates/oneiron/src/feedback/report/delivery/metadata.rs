@@ -17,7 +17,8 @@ use crate::edit_distance::publisher::{CountKey, tally_judged_outcomes};
 use crate::settings::{
     ModelStack, ModelStackId, ModelStackModel, ModelStackRegistry, default_model_stack_registry,
 };
-use crate::{EntityId, ModelId, Result, Vault};
+use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::ModelId;
 
 /// The role a host model's one-model stack names it under.
 const HOST_STACK_ROLE: &str = "executor";

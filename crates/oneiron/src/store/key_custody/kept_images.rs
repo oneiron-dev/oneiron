@@ -141,7 +141,7 @@ impl LocalCustody<'_> {
     ) -> Result<ImageHolder> {
         let dir = self.images_dir()?;
         let mut token = [0u8; 16];
-        crate::world_keys::os_fill(&mut token)?;
+        crate::key_material::os_fill(&mut token)?;
         let name = super::protocol::hex(&token);
         let instances: Vec<[u8; 16]> = instances.iter().copied().collect();
         if !write_once(&dir, &name, &encode(&[0; 32], &instances))? {

@@ -16,12 +16,12 @@ use super::{
 use crate::Vault;
 use crate::authority::{HolderExportNeed, HolderExportRequest};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::CallerLocality;
 use crate::edge::{EdgeActorClass, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::serialize::{DocumentTail, DocumentWriter};
+use crate::settings::CallerLocality;
 use crate::settings::ReadDestination;
 use crate::write_envelope::WriteActor;
 
@@ -29,10 +29,16 @@ use crate::write_envelope::WriteActor;
 /// why the egress door withholds the run's occurrence of it, if it does.
 pub(crate) struct ExportSnapshotRun {
     pub(crate) run_id: EntityId,
-    pub(crate) outputs: Vec<(crate::code_run::CodeRunRawOutput, Option<&'static str>)>,
+    pub(crate) outputs: Vec<(
+        crate::store::result_manifest::CodeRunRawOutput,
+        Option<&'static str>,
+    )>,
     /// The run's fold receipts, each with why the egress door withholds the
     /// occurrence it describes, if it does.
-    pub(crate) receipts: Vec<(crate::code_run::ReaderFoldReceipt, Option<&'static str>)>,
+    pub(crate) receipts: Vec<(
+        crate::store::reader_fold_receipt::ReaderFoldReceipt,
+        Option<&'static str>,
+    )>,
 }
 
 /// One result body a clean occurrence names: its bytes as they stream, read
@@ -52,7 +58,7 @@ pub(crate) struct ExportSnapshotEntity<'t> {
     pub(crate) body: ExportSnapshotEntityBody<'t>,
     pub(crate) tainted: bool,
     /// A SKILL's stored source package.
-    pub(crate) skill_package: Option<crate::skill_hub::HubPackage>,
+    pub(crate) skill_package: Option<crate::store::skill_package::HubPackage>,
     /// The pack source an ASSET body is.
     pub(crate) pack_source: Option<crate::skill_hub::pack_catalog::PackSource>,
     /// The task receipts a CLAIM cites, by id.
@@ -97,7 +103,7 @@ impl Vault {
             |_| Ok::<_, Error>(()),
             sink,
         )?;
-        let format = crate::memory::EXPORT_TARGET_ARCHIVE;
+        let format = crate::serialize::EXPORT_TARGET_ARCHIVE;
         crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
         Ok(receipt)
     }
@@ -158,7 +164,7 @@ impl Vault {
             |_| Ok::<_, Error>(()),
             sink,
         )?;
-        let format = crate::memory::EXPORT_TARGET_OKF;
+        let format = crate::serialize::EXPORT_TARGET_OKF;
         crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
         Ok(receipt)
     }
@@ -387,7 +393,7 @@ impl Vault {
                 && let Some(record) = body.bytes()
                 && let Some(package) = self.export_hub_package_in_txn(&rtxn, &id)?
             {
-                let record = crate::skill::decode_skill_record(record)?;
+                let record = crate::write_envelope::skill_record::decode_skill_record(record)?;
                 if record.content_hash != Some(package.content_hash()?) {
                     return Err(Error::CorruptedIndex("stored skill package identity drift").into());
                 }
@@ -429,7 +435,7 @@ impl Vault {
             if !tainted
                 && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && let Some(claim) = body.bytes()
-                && let Ok(claim) = crate::claim::decode_claim_body(claim, true)
+                && let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(claim, true)
             {
                 // SCAN C022: each receipt source is folded from its carrier
                 // only when the carrier passes the same filter, and the
@@ -691,12 +697,12 @@ fn archive_custody_secret(
     on_device: bool,
     include_secrets: bool,
 ) -> Result<Option<(ArchiveSecretCustody, Option<HolderExportNeed>)>> {
-    use crate::secret_custody::{CustodyClass, SecretCustodyStatus};
+    use crate::secret_record::{CustodyClass, SecretCustodyStatus};
     use base64::Engine as _;
     let (record, value) = crate::secret_custody::archive_custody_body(store, id, body, |record| {
         include_secrets
             && record.status == SecretCustodyStatus::Active
-            && !crate::secret_custody::is_cloud_registration_slot(&record.name)
+            && !crate::secret_record::is_cloud_registration_slot(&record.name)
             && (on_device || (!record.device_only && record.class == CustodyClass::CustodyPortable))
     })?;
     if record.status == SecretCustodyStatus::Revoked {

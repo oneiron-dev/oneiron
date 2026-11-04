@@ -242,9 +242,9 @@ impl Vault {
     /// is passed over: its own writes land in base, or keep nothing.
     ///
     /// The egress and route checks are [`Self::reconcile_media_embeddings_admitted`]'s, judged
-    /// on the room's view: a third-party embedder reads only what `egress` allows and no
-    /// device-local world keeps. A document the model refuses by its content is kept in
-    /// `refusals` for the room's life, never in the vault.
+    /// on the room's view: a third-party embedder, or one on the owner's server with a gate,
+    /// reads only what `egress` allows and no device-local world keeps. A document the model
+    /// refuses by its content is kept in `refusals` for the room's life, never in the vault.
     ///
     /// # Errors
     ///
@@ -323,6 +323,7 @@ impl Vault {
         report: &mut MediaEmbedReport,
     ) -> Result<()> {
         let room = session.session_ref().to_owned();
+        let destination = embedder.endpoint();
         let stopped = |error: &Error| {
             tracing::warn!(
                 kind = ?error.kind(),
@@ -336,6 +337,7 @@ impl Vault {
             kinds,
             max_items,
             egress,
+            &destination,
             |document| refusals.holds(&room, &space.id, document),
             report,
         );
@@ -349,7 +351,8 @@ impl Vault {
         if documents.is_empty() {
             return Ok(());
         }
-        let outcomes = self.embed_documents(embedder, &documents, Some(session))?;
+        let outcomes =
+            self.embed_documents(embedder, &documents, Some(session), egress, &destination)?;
         for ((document, turn), outcome) in documents.iter().zip(&turns).zip(outcomes) {
             let (vector, provenance) = match outcome {
                 Ok(answer) => answer,
@@ -409,6 +412,7 @@ impl Vault {
         kinds: &BTreeSet<InputKind>,
         max_items: usize,
         egress: Option<&dyn EgressPredicate>,
+        destination: &crate::settings::ReadDestination,
         refused: impl Fn(&PendingMedia) -> bool,
         report: &mut MediaEmbedReport,
     ) -> Result<(Vec<PendingMedia>, Vec<EntityId>)> {
@@ -422,7 +426,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let view = session.read_view()?;
         let gate = egress
-            .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+            .map(|egress| MediaEgressGate::read(self, &rtxn, egress, destination))
             .transpose()?;
         let media_kinds = kinds.contains(&InputKind::Image) || kinds.contains(&InputKind::Audio);
         let (mut pending, mut turns) = (Vec::new(), Vec::new());

@@ -185,10 +185,6 @@ impl HttpTagger {
         })
     }
 
-    pub(crate) fn base(&self) -> &str {
-        &self.base
-    }
-
     /// Checks the tagger's identity and reads what it returns.
     ///
     /// A reachable tagger with the wrong checkpoint, contract, label count or

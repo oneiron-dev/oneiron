@@ -51,10 +51,10 @@ use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::{ASSET_BODY_FILE, ASSET_BODY_HELD};
 use crate::error::{Error, Result};
 use crate::provenance::body::{
-    BodyLocation, BodyRef, BodyState, OwnedBody, owned_body_in_txn, publish_body_in_txn,
-    release_body_in_txn, release_owner_bodies_in_txn,
+    owned_body_in_txn, publish_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn,
 };
 use crate::registry::ENTITY_TYPE_ASSET;
+use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody};
 
 /// FIX 3677 (CALLS "ASSET inline body bound"): an opaque ASSET body longer
 /// than this lives in a body file; a body this long or shorter, and every
@@ -225,7 +225,7 @@ pub(crate) const ASSET_FILE_PLANE: bool = false;
 fn opaque_body(body: &[u8]) -> bool {
     crate::serialize::attaches_as_file(ENTITY_TYPE_ASSET, body)
         && !crate::batch::secret_scan::is_container(body)
-        && crate::skill_hub::refinement_carrier_payload(body).is_none()
+        && crate::store::refinement_carrier::refinement_carrier_payload(body).is_none()
         && !leads_with_keyed_map(body)
 }
 

@@ -53,8 +53,7 @@ use crate::{EntityId, Error, Result, Vault};
 pub const COACH_FEEDBACK_DELIVERY_FACET: &str = "coach.feedback_delivery";
 /// The one delivery lane built here: content-free signatures.
 pub const REPORT_SIGNATURE_LANE: &str = "signature";
-/// The outbound verb a signature leaves on, beside a bundle's `send`.
-pub const REPORT_SIGNATURE_VERB: &str = "signature";
+pub use crate::outbound::report_signature::REPORT_SIGNATURE_VERB;
 /// The schema token every signature body carries.
 pub const REPORT_SIGNATURE_SCHEMA: &str = "oneiron.issue_signature.v1";
 

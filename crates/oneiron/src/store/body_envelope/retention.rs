@@ -270,7 +270,7 @@ pub(crate) fn note_settled_inline_in_txn(
 
 /// The content handle of the result body `digest`.
 fn inline_handle(digest: &[u8; 32]) -> String {
-    crate::code_run::CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
+    crate::store::result_manifest::CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
         hash: *digest,
         byte_len: 0,
     })

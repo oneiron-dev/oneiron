@@ -5990,9 +5990,12 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_inbox_concern_move(&memory, input)
                 .map_err(mcp_facade_error)?;
-            server
-                .ai
-                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            if matches!(&output, oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome::Applied { receipt, .. } if matches!(receipt.link, oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveLink::Note { .. }))
+            {
+                server
+                    .ai
+                    .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            }
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -22758,8 +22761,17 @@ async fn execute_agent_verb_row_on(
         "vault.esign.signing.act" => {
             let input: oneiron::blob_artifact::esign::EsignSigningRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::vault_esign_signing_act(&memory, input)
-                .map_err(mcp_facade_error)?;
+            let (output, listed) = Box::pin(mcp_off_runtime_row(
+                server,
+                tool,
+                actor,
+                surface,
+                move |memory| oneiron::task_verb::sdk::vault_esign_signing_act(memory, input),
+            ))
+            .await?;
+            // Derived from the rows its reads listed, on a refusal too.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

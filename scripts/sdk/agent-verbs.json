@@ -12176,6 +12176,7 @@
       "scope": "Write",
       "admission": {},
       "section": false,
+      "openapi": true,
       "binding": {
         "wire": "json",
         "args": [
@@ -16895,6 +16896,7 @@
       "input": "crate::blob_artifact::esign::EsignSigningRequest",
       "output": "crate::blob_artifact::esign::SigningOutcome",
       "call": "memory.esign_signing_act(&input)?",
+      "mcp_off_runtime": true,
       "scope": "Write",
       "admission": {
         "lane_record_scope": true,
