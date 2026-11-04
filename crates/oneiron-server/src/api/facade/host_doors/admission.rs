@@ -554,6 +554,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultResultsSlice
         | Row::VaultCodeModelHealCount
         | Row::VaultCodeTypeDiagnostics
+        | Row::VaultCodeWaitsRebind
         | Row::VaultCodeWaitsResolve
         | Row::VaultCodeWaitsReceipt
         | Row::VaultCodeExport

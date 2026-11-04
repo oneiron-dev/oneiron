@@ -4014,6 +4014,12 @@ class Oneiron:
     class _VaultCodeWaitsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def rebind_prepare(self, spec):
+            """Propose the original holder's actual successor credential for one admitted, unsettled code consent wait. Stores no active authorization; a separate owner rebind act must confirm it."""
+            return json.loads(_translate(lambda: self._client.vault_code_waits_rebind_prepare(json.dumps(spec))))
+        def rebind(self, spec):
+            """Explicitly authorize one exact holder-proposed successor as the independent authenticated owner. Only an admitted, unsettled wait continues under the same intent; its original answer, admission and delivery stay unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_code_waits_rebind(json.dumps(spec))))
         def resolve(self, spec):
             """Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."""
             return json.loads(_translate(lambda: self._client.vault_code_waits_resolve(json.dumps(spec))))

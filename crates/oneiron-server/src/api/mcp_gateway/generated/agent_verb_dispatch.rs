@@ -811,6 +811,8 @@ pub(crate) fn mcp_agent_verb_input(
         "execute_code" => a.spec.clone().ok_or_else(invalid),
         "vault.code.model_heal_count" => a.spec.clone().ok_or_else(invalid),
         "vault.code.type_diagnostics" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.waits.rebind_prepare" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.waits.rebind" => a.spec.clone().ok_or_else(invalid),
         "vault.code.waits.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.code.waits.receipt" => a.spec.clone().ok_or_else(invalid),
         "vault.results.status" => a.spec.clone().ok_or_else(invalid),
@@ -3531,6 +3533,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.type_diagnostics" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.waits.rebind_prepare" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.waits.rebind" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.waits.resolve" => {
@@ -16947,6 +16955,32 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_type_diagnostics(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.waits.rebind_prepare" => {
+            let input: oneiron::memory::code_wait_doors::CodeWaitRebindPrepareRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_code_waits_rebind_prepare(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.waits.rebind" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.waits.rebind", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::code_wait_doors::CodeWaitRebindRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_waits_rebind(server, auth, input),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

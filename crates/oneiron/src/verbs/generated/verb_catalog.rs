@@ -667,6 +667,8 @@ pub enum AgentVerb {
     ExecuteCode,
     VaultCodeModelHealCount,
     VaultCodeTypeDiagnostics,
+    VaultCodeWaitsRebindPrepare,
+    VaultCodeWaitsRebind,
     VaultCodeWaitsResolve,
     VaultCodeWaitsReceipt,
     VaultResultsStatus,
@@ -1916,6 +1918,8 @@ impl AgentVerb {
         Self::ExecuteCode,
         Self::VaultCodeModelHealCount,
         Self::VaultCodeTypeDiagnostics,
+        Self::VaultCodeWaitsRebindPrepare,
+        Self::VaultCodeWaitsRebind,
         Self::VaultCodeWaitsResolve,
         Self::VaultCodeWaitsReceipt,
         Self::VaultResultsStatus,
@@ -3192,6 +3196,8 @@ impl AgentVerb {
             Self::ExecuteCode => "execute_code",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
             Self::VaultCodeTypeDiagnostics => "vault.code.type_diagnostics",
+            Self::VaultCodeWaitsRebindPrepare => "vault.code.waits.rebind_prepare",
+            Self::VaultCodeWaitsRebind => "vault.code.waits.rebind",
             Self::VaultCodeWaitsResolve => "vault.code.waits.resolve",
             Self::VaultCodeWaitsReceipt => "vault.code.waits.receipt",
             Self::VaultResultsStatus => "vault.results.status",
@@ -4453,6 +4459,8 @@ impl AgentVerb {
                 | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeTypeDiagnostics
+                | Self::VaultCodeWaitsRebindPrepare
+                | Self::VaultCodeWaitsRebind
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
@@ -5731,6 +5739,8 @@ impl AgentVerb {
                 | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeTypeDiagnostics
+                | Self::VaultCodeWaitsRebindPrepare
+                | Self::VaultCodeWaitsRebind
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
@@ -7141,6 +7151,8 @@ impl AgentVerb {
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeTypeDiagnostics
+                | Self::VaultCodeWaitsRebindPrepare
+                | Self::VaultCodeWaitsRebind
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
@@ -8059,6 +8071,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalResolve
                 | Self::VaultCodeProposalReview
                 | Self::VaultCodeProposalSettle
+                | Self::VaultCodeWaitsRebindPrepare
+                | Self::VaultCodeWaitsRebind
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
                 | Self::VaultCodeImport
@@ -9108,6 +9122,8 @@ impl AgentVerb {
             Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeTypeDiagnostics => &["spec"],
+            Self::VaultCodeWaitsRebindPrepare => &["spec"],
+            Self::VaultCodeWaitsRebind => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
             Self::VaultCodeWaitsReceipt => &["spec"],
             Self::VaultResultsStatus => &["spec"],
@@ -10358,6 +10374,8 @@ impl AgentVerb {
             Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeTypeDiagnostics => &["spec"],
+            Self::VaultCodeWaitsRebindPrepare => &["spec"],
+            Self::VaultCodeWaitsRebind => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
             Self::VaultCodeWaitsReceipt => &["spec"],
             Self::VaultResultsStatus => &["spec"],
@@ -12904,6 +12922,12 @@ impl AgentVerb {
             }
             Self::VaultCodeTypeDiagnostics => {
                 "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."
+            }
+            Self::VaultCodeWaitsRebindPrepare => {
+                "Propose the original holder's actual successor credential for one admitted, unsettled code consent wait. Stores no active authorization; a separate owner rebind act must confirm it."
+            }
+            Self::VaultCodeWaitsRebind => {
+                "Explicitly authorize one exact holder-proposed successor as the independent authenticated owner. Only an admitted, unsettled wait continues under the same intent; its original answer, admission and delivery stay unchanged."
             }
             Self::VaultCodeWaitsResolve => {
                 "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."

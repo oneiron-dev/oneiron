@@ -14,6 +14,7 @@
 //! under.
 
 mod operations;
+mod rebind;
 mod types;
 
 pub use types::*;

@@ -21,6 +21,7 @@ use super::support::{
 };
 use crate::error::GateError;
 
+mod code_wait_rebind;
 mod decision_slot;
 mod grants;
 mod lineage;

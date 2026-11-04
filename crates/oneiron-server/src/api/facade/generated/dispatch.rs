@@ -21218,6 +21218,62 @@ async fn vault_code_type_diagnostics(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_code_waits_rebind_prepare(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.code.waits.rebind_prepare",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_code_waits_rebind(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.waits.rebind")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.waits.rebind", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.code.waits.rebind", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_waits_rebind(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_waits_resolve(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40306,6 +40362,10 @@ async fn call_verb_row(
         "vault.code.type_diagnostics" => {
             Box::pin(vault_code_type_diagnostics(server, call, input)).await
         }
+        "vault.code.waits.rebind_prepare" => {
+            Box::pin(vault_code_waits_rebind_prepare(server, call, input)).await
+        }
+        "vault.code.waits.rebind" => Box::pin(vault_code_waits_rebind(server, call, input)).await,
         "vault.code.waits.resolve" => Box::pin(vault_code_waits_resolve(server, call, input)).await,
         "vault.code.waits.receipt" => Box::pin(vault_code_waits_receipt(server, call, input)).await,
         "vault.results.status" => Box::pin(vault_results_status(server, call, input)).await,
