@@ -405,7 +405,14 @@ pub(crate) fn rescan(
 fn prior_files(ledger: &[FolderSourceFile]) -> HashMap<String, FileFacts> {
     ledger
         .iter()
-        .filter(|file| !matches!(file.state, FolderFileState::Retracted))
+        // A proposal the owner decided settles in reconcile: a Proposed
+        // row is always re-read, never skipped (REVIEW-4381 P1).
+        .filter(|file| {
+            !matches!(
+                file.state,
+                FolderFileState::Retracted | FolderFileState::Proposed { .. }
+            )
+        })
         .filter_map(|file| {
             let meta = file.meta?;
             Some((

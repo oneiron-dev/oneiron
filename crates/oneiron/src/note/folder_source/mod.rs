@@ -171,6 +171,12 @@ pub struct FolderSourceFile {
     /// 0 only for rows written before it.
     #[serde(default)]
     pub first_seen_at: u64,
+    /// The note's indexing time, kept while the meta is cleared to force a
+    /// re-read: the clear must not lose when the note was last indexed
+    /// (REVIEW-4381 P1). Moved back into the meta when a whole read lands
+    /// it. None when no whole read has indexed the note since the clear.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_indexed_at: Option<u64>,
 }
 
 impl FolderSourceFile {

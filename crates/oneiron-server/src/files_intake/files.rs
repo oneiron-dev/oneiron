@@ -193,7 +193,7 @@ pub(super) fn read_files(
             counts.unreadable_name += 1;
             continue;
         };
-        if let Some(file) = reopened(folder, &path) {
+        if let Some(file) = reopened(folder, &path, vault_id) {
             read_file(path, file, &shown, counts, &mut read, prior)?;
             continue;
         }
@@ -302,15 +302,19 @@ fn original(file: File, shown: &Path, path: &str) -> Option<OriginalBytes> {
 
 /// The file at `path` below `folder`, opened again after the walk, every
 /// folder on the way relative to the one above it and never through a link
-/// (FIX 11588); `None` when it still does not open.
+/// (FIX 11588); `None` when it still does not open — or when the retry
+/// lands at or under the vault, whose root may have been replaced after
+/// the checked walk (REVIEW-4381 P1).
 #[cfg(unix)]
-fn reopened(folder: &Path, path: &str) -> Option<File> {
-    super::confined::open_below(folder, Path::new(path))
-        .ok()
-        .map(|(_, file)| file)
+fn reopened(folder: &Path, path: &str, vault: Option<(u64, u64)>) -> Option<File> {
+    let (dir, file) = super::confined::open_below(folder, Path::new(path)).ok()?;
+    if vault.is_some_and(|vault| super::confined::under_vault_dir(&dir, vault)) {
+        return None;
+    }
+    Some(file)
 }
 
 #[cfg(not(unix))]
-fn reopened(_folder: &Path, _path: &str) -> Option<File> {
+fn reopened(_folder: &Path, _path: &str, _vault: Option<(u64, u64)>) -> Option<File> {
     None
 }

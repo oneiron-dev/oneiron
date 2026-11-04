@@ -264,7 +264,7 @@ fn is_vault_dir(dir: &OwnedFd, vault: (u64, u64)) -> bool {
 /// open descriptors, never path strings: a root swapped, or a vault renamed,
 /// after the caller's strings were read still matches. Stops at the
 /// filesystem root; on any error the string checks decide alone.
-fn under_vault_dir(dir: &OwnedFd, vault: (u64, u64)) -> bool {
+pub(crate) fn under_vault_dir(dir: &OwnedFd, vault: (u64, u64)) -> bool {
     let mut current = match dir.try_clone() {
         Ok(current) => current,
         Err(_) => return false,

@@ -247,6 +247,13 @@ impl Vault {
                 // seen; its meta stays behind on a partial read either way.
                 let old_row = FILES.get(&self.store, txn, &key)?;
                 let old = old_row.as_ref().and_then(|row| row.meta);
+                // The indexing time rides out a pending clear beside the
+                // row, so a later whole read restores it (REVIEW-4381 P1).
+                let old_indexed = old_row.as_ref().and_then(|row| {
+                    row.meta
+                        .and_then(|meta| meta.indexed_at)
+                        .or(row.pending_indexed_at)
+                });
                 let hash = text_hash(&note.markdown);
                 let row = FolderSourceFile {
                     path: note.path.clone(),
@@ -266,6 +273,7 @@ impl Vault {
                     },
                     original: None,
                     first_seen_at: old_row.map(|row| row.first_seen_at).unwrap_or(at),
+                    pending_indexed_at: if whole { None } else { old_indexed },
                 };
                 FILES.put(&self.store, txn, &key, &row)?;
             }
@@ -333,7 +341,13 @@ impl Vault {
                         (meta.bytes, meta.modified_at) != (facts.bytes, facts.modified_at)
                     })
                 });
-                if file.links.is_some() && !row_pending {
+                // A proposal the owner decided settles on the full path
+                // below: the shortcut would leave it Proposed with a stale
+                // landed hash (REVIEW-4381 P1).
+                if file.links.is_some()
+                    && !row_pending
+                    && !matches!(same.state, FolderFileState::Proposed { .. })
+                {
                     report.unchanged += 1;
                     let facts_moved = facts.is_some_and(|facts| {
                         same.meta.is_none_or(|meta| {
@@ -403,6 +417,7 @@ impl Vault {
             // No row yet: first sight is stamped when a whole read lands the
             // meta (REVIEW-4381 P1).
             first_seen_at: 0,
+            pending_indexed_at: None,
         });
         row.note = Some(id);
         row.raw_hash = raw_hash;
@@ -416,21 +431,27 @@ impl Vault {
         if current == file.markdown || content_unchanged {
             // An open proposal is the owner's unaccepted fork: its links are
             // not the vault's to reconcile, and neither its state nor its
-            // landed hash moves until the owner decides. A fork the owner
-            // already decided settles here instead of preserving a stale
-            // landed hash (REVIEW-4381 P1).
-            let proposal_open = match &row.state {
+            // landed hash moves until the owner decides. A decided fork
+            // settles here — unless the note does not hold its text. Then
+            // the fork lost (rejected, or superseded): the owner's text
+            // stays canonical, so the prior landed hash and links stand and
+            // no rejected edge lands or deletes (REVIEW-4381 P1).
+            let fork_decided = match &row.state {
                 FolderFileState::Proposed { fork: Some(id) } => {
                     let txn = self.store.env.read_txn()?;
-                    !crate::recovery::note_fork_decided(self, &txn, id)?
+                    Some(crate::recovery::note_fork_decided(self, &txn, id)?)
                 }
-                FolderFileState::Proposed { fork: None } => true,
-                _ => false,
+                _ => None,
+            };
+            let preserve = match fork_decided {
+                None => matches!(row.state, FolderFileState::Proposed { fork: None }),
+                Some(false) => true,
+                Some(true) => current != file.markdown,
             };
             // The note already holds the file's text; only its links may be
             // behind (their landing failed, or their target landed since).
             // A file the host could not resolve whole leaves them alone.
-            if !proposal_open && let Some(links) = file.links.as_deref() {
+            if !preserve && let Some(links) = file.links.as_deref() {
                 match self.reconcile_present_file_links(
                     &landing.namespace,
                     &id,
@@ -453,10 +474,10 @@ impl Vault {
             // its meta, so the mtime shortcut re-reads it, and a later
             // whole read reconciles the links this scan left alone.
             row.file_hash = hash.clone();
-            if file.links.is_some() && !proposal_open {
+            if file.links.is_some() && !preserve {
                 row.landed_hash = hash;
             }
-            if !proposal_open {
+            if !preserve {
                 row.state = FolderFileState::Landed;
             }
             if !retracted {
@@ -465,22 +486,30 @@ impl Vault {
             return self.with_write_txn(|txn| {
                 // No links, no meta: the row stays pending so the shortcut
                 // re-reads it and a later whole read reconciles the links
-                // this scan left alone (REVIEW-4381 P1).
+                // this scan left alone. The facts go, the indexing time
+                // rides out the clear beside the row (REVIEW-4381 P1).
                 if file.links.is_none() {
+                    row.pending_indexed_at = row
+                        .meta
+                        .and_then(|meta| meta.indexed_at)
+                        .or(row.pending_indexed_at);
                     row.meta = None;
                 } else {
                     let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
                     if row.first_seen_at == 0 {
                         row.first_seen_at = at;
                     }
-                    // An open proposal keeps its indexing history: its text
+                    // A preserved row keeps its indexing history: its text
                     // has not landed.
-                    let indexed_at = if proposal_open {
-                        row.meta.and_then(|meta| meta.indexed_at)
+                    let indexed_at = if preserve {
+                        row.meta
+                            .and_then(|meta| meta.indexed_at)
+                            .or(row.pending_indexed_at)
                     } else {
                         Some(at)
                     };
                     row.meta = next_meta(row.meta, facts, at, indexed_at);
+                    row.pending_indexed_at = None;
                 }
                 FILES.put(&self.store, txn, &key, &row)
             });
@@ -566,17 +595,25 @@ impl Vault {
         self.with_write_txn(|txn| {
             // No links, no meta: the row stays pending so the shortcut
             // re-reads it and a later whole read reconciles the links this
-            // scan left alone (REVIEW-4381 P1).
+            // scan left alone. The facts go, the indexing time rides out
+            // the clear beside the row (REVIEW-4381 P1).
             if file.links.is_none() {
+                row.pending_indexed_at = row
+                    .meta
+                    .and_then(|meta| meta.indexed_at)
+                    .or(row.pending_indexed_at);
                 row.meta = None;
             } else {
                 let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
                 let indexed_at = if indexed || retracted {
                     Some(at)
                 } else {
-                    row.meta.and_then(|meta| meta.indexed_at)
+                    row.meta
+                        .and_then(|meta| meta.indexed_at)
+                        .or(row.pending_indexed_at)
                 };
                 row.meta = next_meta(row.meta, facts, at, indexed_at);
+                row.pending_indexed_at = None;
             }
             FILES.put(&self.store, txn, &key, &row)
         })
@@ -681,6 +718,7 @@ impl Vault {
                     meta: Some(FileMeta::first(file.facts, at, None)),
                     original: None,
                     first_seen_at: at,
+                    pending_indexed_at: None,
                 };
                 FILES.put(&self.store, txn, &key, &row)?;
                 return Ok(Held::Named);
