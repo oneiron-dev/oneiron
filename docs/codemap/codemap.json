@@ -31658,7 +31658,7 @@
      "path": "src/edit_distance/escalation/mod.rs",
      "purpose": "ED-06 (ONE-1762, ARCH-0056 §7): the schema behind an escalated ask — what the engine asked, what the human…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 4
      }
     },
@@ -31683,6 +31683,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/escalation/scope_erase.rs",
+     "purpose": "An actor's erase takes the actor out of the escalation rows that name it (FIX 4700)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -90167,7 +90177,7 @@
      "purpose": "The `regenerates` link proofs over stored rows (FIX 5972)"
     },
     "edit_distance": {
-     "files": 85,
+     "files": 86,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -91226,7 +91236,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6279,
+   "source_files": 6280,
    "test_files": 900
   },
   "oneiron-android": {
