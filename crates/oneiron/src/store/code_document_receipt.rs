@@ -1,7 +1,9 @@
 //! Stored code-operation provenance and exact edit receipts.
 
 use crate::entity_id::EntityId;
-use crate::store::code_document_values::{CodeDocumentFrontier, CodeFileEdit, CodeFileMetadataEdit};
+use crate::store::code_document_values::{
+    CodeDocumentFrontier, CodeFileEdit, CodeFileMetadataEdit,
+};
 use crate::write_envelope::WriteActor;
 use serde::{Deserialize, Serialize};
 
