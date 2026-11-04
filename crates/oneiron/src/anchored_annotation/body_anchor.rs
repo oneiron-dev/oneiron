@@ -471,7 +471,7 @@ fn warn_unread(artifact: &EntityId, error: &crate::error::Error, unread: &mut u6
     tracing::warn!(
         artifact = %artifact.to_hex(),
         error = ?error,
-        "a body or version did not read; its comments keep their version pin",
+        "an annotation body-anchor input could not be read",
     );
 }
 
