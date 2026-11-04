@@ -383,7 +383,8 @@ impl Vault {
     /// person. The answer must be one the question's contract accepts, and never an
     /// abstention. An answer that changed the ladder's prior is kept for the Coach, bound
     /// to the ask's id. The same answer again is a no-op; a different one to an answered
-    /// ask is refused.
+    /// ask is refused. A yes to an open pack setup allow ask returns the still-open ask:
+    /// only the owner's proof at its owner door lands that allow and settles the ask.
     pub fn answer_decision_ask_as(
         &self,
         holder: &WriteActor,
@@ -392,7 +393,7 @@ impl Vault {
     ) -> Result<DecisionAsk> {
         let kind = holder_kind(holder)?;
         let actor = holder.entity_ref();
-        self.settle_decision_ask(seq, answer, None, |txn, ask| {
+        let answerer = |txn: &heed::RoTxn<'_>, ask: &DecisionAsk| {
             self.verify_write_actor_in_txn(txn, holder)?;
             let role = ask
                 .role
@@ -404,7 +405,21 @@ impl Vault {
                 ));
             }
             Ok((actor, role.role.clone(), kind))
-        })
+        };
+        if matches!(answer, DecisionAnswer::Noul(true)) {
+            let txn = self.store.env.read_txn()?;
+            let ask = ASKS
+                .get(&self.store, &txn, &seq)?
+                .ok_or_else(|| invalid("no such decision ask"))?;
+            if ask.queue_pin.model == crate::connector_key::PACK_SETUP_ALLOW_ASK_QUEUE
+                && ask.question.contract == super::AnswerContract::Noul
+                && ask.is_open()
+            {
+                answerer(&txn, &ask)?;
+                return Ok(ask);
+            }
+        }
+        self.settle_decision_ask(seq, answer, None, answerer)
     }
 
     /// Whether `actor`, as `kind`, holds the role `ask` is at now (its holders read again).
@@ -860,8 +875,8 @@ impl DecisionAsks {
             .answer_decision_ask_with_reason(owner, seq, answer, reason)
     }
 
-    /// Answers one ask as a holder of its role (see [`Vault::answer_decision_ask_as`]) and
-    /// wakes its waiters.
+    /// Answers one ask as a holder of its role (see [`Vault::answer_decision_ask_as`]), waking
+    /// its waiters only when the ask settles.
     pub fn answer_as(
         &self,
         holder: &WriteActor,

@@ -76,6 +76,7 @@ impl AttemptQueue<'_> {
             dedupe_actor_ref: persisted_actor_ref,
             created_at: input.now,
             updated_at: input.now,
+            settled_at: None,
             events: Vec::new(),
             manifest: Vec::new(),
             executor_model: None,

@@ -180,6 +180,10 @@ pub(super) fn access_grant_receipts(
             ) {
                 return Ok(());
             }
+            if crate::ingest::connector_witness_read_reason(&id, &grant).is_some() {
+                append_witness_read_receipts(id, &grant, body, query, &mut receipts)?;
+                return Ok(());
+            }
             let created = access_grant_receipt(id, &grant, grant.created_at, "active", "created");
             if query.matches(&created) {
                 receipts.push(created);
@@ -194,6 +198,43 @@ pub(super) fn access_grant_receipts(
         },
     )?;
     Ok(receipts)
+}
+
+fn append_witness_read_receipts(
+    id: EntityId,
+    grant: &AccessGrant,
+    body: &[u8],
+    query: &ReceiptQuery,
+    receipts: &mut Vec<ReceiptRecord>,
+) -> Result<()> {
+    for generation in crate::access_grant::witness_read_generations(body, grant)? {
+        let mut snapshot = grant.clone();
+        snapshot.created_at = generation.created_at;
+        snapshot.revoked_at = generation.revoked_at;
+        snapshot.status = generation.status;
+        let mut created =
+            access_grant_receipt(id, &snapshot, generation.created_at, "active", "created");
+        created.receipt_id = format!(
+            "scoped_read:{}:v{}:created",
+            id.to_hex(),
+            generation.generation_ref.to_hex(),
+        );
+        if query.matches(&created) {
+            receipts.push(created);
+        }
+        if let Some(revoked_at) = generation.revoked_at {
+            let mut revoked = access_grant_receipt(id, &snapshot, revoked_at, "revoked", "revoked");
+            revoked.receipt_id = format!(
+                "scoped_read:{}:v{}:revoked",
+                id.to_hex(),
+                generation.generation_ref.to_hex(),
+            );
+            if query.matches(&revoked) {
+                receipts.push(revoked);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn access_grant_receipt(

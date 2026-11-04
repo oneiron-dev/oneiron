@@ -244,7 +244,12 @@ impl StreamAssembly {
         if content.is_empty()
             || content.iter().all(|p| match p {
                 ContentPart::Text { text } => text.is_empty(),
-                ContentPart::Reasoning { text, data, .. } => text.is_empty() && data.is_none(),
+                ContentPart::Reasoning {
+                    text,
+                    signature,
+                    data,
+                    ..
+                } => text.is_empty() && signature.is_none() && data.is_none(),
                 _ => false,
             })
         {

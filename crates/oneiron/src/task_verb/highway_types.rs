@@ -486,7 +486,9 @@ pub enum TaskWorkflowOutcome {
     /// the run off as [`TaskWorkflowHandoff::Interrupted`]; it never runs
     /// the program again.
     Started { at: u64 },
-    /// The program met its postcondition and every TASK check held.
+    /// The program met its postcondition and every TASK check held, with no
+    /// model answering (FIX 8072): a met run that was not model-free hands
+    /// off instead.
     Done { receipt_ref: EntityId },
     /// The try went on to its planner, for `cause`.
     Handoff {
@@ -519,6 +521,11 @@ pub enum TaskWorkflowHandoff {
     /// The strict program was started at an earlier entry and its end was
     /// never recorded (FIX 8104): what it did on the page is unknown.
     Interrupted,
+    /// The strict program met its postcondition with every TASK check
+    /// holding, but its run was not model-free (FIX 8072): a verb hook
+    /// dispatched a model, or a decision's record proves no rung
+    /// (`model_free_unproven`), so the try settles no zero-model Done.
+    NotModelFree,
 }
 
 impl TaskWorkflowHandoff {
@@ -532,6 +539,7 @@ impl TaskWorkflowHandoff {
             Self::Missing { .. } => "workflow_missing",
             Self::Unreadable { .. } => "workflow_unreadable",
             Self::Interrupted => "workflow_interrupted",
+            Self::NotModelFree => "workflow_not_model_free",
         }
     }
 }

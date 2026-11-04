@@ -34,15 +34,17 @@ use crate::sync::room_facts::ROOM_FACTS_MAP;
 use crate::sync::room_turns::ROOM_TURNS_MAP;
 use crate::sync::row_birth::ROW_BIRTHS_MAP;
 use crate::sync::schema::ASSET_BODY_REFS_MAP;
+use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
 use crate::sync::withdrawn_cutoffs::{
     CarriedCutoff, EPOCH_FLOOR, WITHDRAWN_CUTOFFS_MAP, admit_withdrawn_cutoff_carrier,
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(super) const WINDOW_ROOTS: [&str; 20] = [
+pub(super) const WINDOW_ROOTS: [&str; 21] = [
     "entities",
     "edges",
     "tombstones",
+    HELD_EDIT_CAUSALITY_MAP,
     "retained_claim_worlds",
     ROW_BIRTHS_MAP,
     PEER_ORIGIN_MAP,
@@ -168,6 +170,9 @@ fn binary(value: &[u8]) -> LoroValue {
 /// meets is asked, a deleted one's too.
 pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
     let class = match root {
+        // Only neutral deletes use this key. A value in this root still
+        // has no root_entry adapter and keeps the group whole.
+        HELD_EDIT_CAUSALITY_MAP if key == HELD_EDIT_CAUSALITY_KEY => KeyClass::Opaque,
         // A room row's part is filed under its digest (FIX 11790).
         ROOM_TURNS_MAP | ROOM_FACTS_MAP if is_part_key(key) => KeyClass::Digest,
         "entities"

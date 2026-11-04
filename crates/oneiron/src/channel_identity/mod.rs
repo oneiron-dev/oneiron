@@ -45,7 +45,7 @@ mod keys;
 mod lifecycle;
 mod record;
 mod sender;
-mod shape;
+use oneiron_authority::channel_identity_shape as shape;
 mod transition;
 mod vault_doors;
 

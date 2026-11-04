@@ -323,6 +323,64 @@ pub(super) fn found_key_custody_in_txn(
         }))
 }
 
+/// Moves a deleted side row's found-key state to its replacement's origin (FIX
+/// 12779, REVIEW-4444 follow-up): every `FOUND` key under `old` joins `new`,
+/// merged by custody without losing either side's settlement or the earliest
+/// `found_at`, and `old`'s `DUE` marker moves to `new` without losing a
+/// destination marker. Leaves no `FOUND`/`DUE` under `old`. Each moved
+/// custody's mask origin is rebound `old` -> `new` only when it still names
+/// `old`, so a known value the row references keeps its owner. Skips cleanly
+/// when `old` holds nothing. Runs in the caller's write transaction, with the
+/// row move it follows: the handles the new row keeps still resolve.
+pub(crate) fn move_side_row_custody_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    old: &EntityId,
+    new: &EntityId,
+) -> Result<()> {
+    if old == new {
+        return Ok(());
+    }
+    if let Some(old_found) = FOUND.get(store, wtxn, old)? {
+        for key in &old_found.keys {
+            crate::batch::secret_scan::rebind_mask_origin_in_txn(
+                store,
+                wtxn,
+                &key.custody,
+                old,
+                new,
+            )?;
+        }
+        let mut merged = FOUND.get(store, wtxn, new)?.unwrap_or_default();
+        for key in old_found.keys {
+            match merged
+                .keys
+                .iter_mut()
+                .find(|held| held.custody == key.custody)
+            {
+                Some(held) => {
+                    if held.settled.is_none() {
+                        held.settled = key.settled;
+                    }
+                    held.found_at = held.found_at.min(key.found_at);
+                }
+                None => merged.keys.push(key),
+            }
+        }
+        if !merged.keys.is_empty() {
+            FOUND.put(store, wtxn, new, &merged)?;
+        }
+        FOUND.delete(store, wtxn, old)?;
+    }
+    if let Some(old_due) = DUE.get(store, wtxn, old)? {
+        if DUE.get(store, wtxn, new)?.is_none() {
+            DUE.put(store, wtxn, new, &old_due)?;
+        }
+        DUE.delete(store, wtxn, old)?;
+    }
+    Ok(())
+}
+
 /// The values the owner ruled no secret or kept as text by choice, by record:
 /// the write door reads none of them as a hit in that record, and the mask
 /// leaves each as written. Each value is read from its revoked custody record
