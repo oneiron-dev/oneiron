@@ -236,10 +236,11 @@ pub fn has_left(vault: &Vault) -> Result<bool> {
 /// Storage errors.
 pub fn leave_purge_complete(vault: &Vault) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    Ok(LEAVE_RECEIPTS
-        .iter_from(&vault.store, &txn, &[])?
-        .next()
-        .is_some_and(|(_, receipt)| receipt.purge_complete))
+    let Some(first) = LEAVE_RECEIPTS.iter_from(&vault.store, &txn, &[])?.next() else {
+        return Ok(false);
+    };
+    let (_, receipt) = first?;
+    Ok(receipt.purge_complete)
 }
 
 /// Confirms, in `vault` (the env that holds the shared vault), the leave or
