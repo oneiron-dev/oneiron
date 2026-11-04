@@ -82,19 +82,16 @@ pub(super) struct MediaEgressGate<'a> {
 }
 
 impl<'a> MediaEgressGate<'a> {
-    /// The gate for a scan in `txn`.
+    /// The gate for a scan in `txn`, of documents read toward `destination`.
     pub(super) fn read(
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         egress: &'a dyn EgressPredicate,
+        destination: &crate::settings::ReadDestination,
     ) -> Result<Self> {
         Ok(Self {
             egress,
-            flagged: crate::settings::device_local_worlds_at(
-                vault,
-                txn,
-                crate::claim::CallerLocality::OffDevice,
-            )?,
+            flagged: crate::settings::device_local_worlds_for(vault, txn, destination)?,
         })
     }
 
@@ -161,6 +158,7 @@ impl Vault {
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<MediaEmbedReport> {
         let egress = media_egress_for(embedder, egress)?;
+        let destination = embedder.endpoint();
         let mut report = MediaEmbedReport::default();
         let space_id = embedder.space_id();
         let (space, kinds, pending) = {
@@ -183,7 +181,7 @@ impl Vault {
                 )));
             }
             let gate = egress
-                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress, &destination))
                 .transpose()?;
             let pending = self.media_backlog_where_in_txn(
                 &rtxn,
@@ -199,7 +197,7 @@ impl Vault {
             return Ok(report);
         }
 
-        let outcomes = self.embed_documents(embedder, &pending, None, egress)?;
+        let outcomes = self.embed_documents(embedder, &pending, None, egress, &destination)?;
         // A model that has embedded nothing here may be refusing them all for a reason of its
         // own; no document is blamed for that.
         if report.already_embedded == 0
@@ -340,6 +338,7 @@ impl Vault {
         pending: &[PendingMedia],
         session: Option<&OffRecordSession<'_>>,
         egress: Option<&dyn EgressPredicate>,
+        destination: &crate::settings::ReadDestination,
     ) -> Result<Vec<MediaOutcome>> {
         let inputs: Vec<MediaEmbeddingInput<'_>> =
             pending.iter().map(PendingMedia::input).collect();
@@ -355,7 +354,7 @@ impl Vault {
                         });
                     }
                 }
-                if self.media_rows_may_leave(session, rows)? {
+                if self.media_rows_may_leave(session, rows, destination)? {
                     Ok(())
                 } else {
                     Err(Error::UpstreamToolFailure {
@@ -412,7 +411,7 @@ impl Vault {
         if gate.decide_media(input) != EgressDecision::Allow {
             return Ok(false);
         }
-        self.media_rows_may_leave(None, input.source_rows())
+        self.media_rows_may_leave(None, input.source_rows(), &embedder.endpoint())
     }
 
     /// Whether every row of `rows` may leave this device now, as `session`'s room reads them,
@@ -423,15 +422,12 @@ impl Vault {
         &self,
         session: Option<&OffRecordSession<'_>>,
         rows: &[EntityId],
+        destination: &crate::settings::ReadDestination,
     ) -> Result<bool> {
         #[cfg(feature = "sync")]
         let _acceptance = self.device_only_acceptance();
         let rtxn = self.store.env.read_txn()?;
-        let flagged = crate::settings::device_local_worlds_at(
-            self,
-            &rtxn,
-            crate::claim::CallerLocality::OffDevice,
-        )?;
+        let flagged = crate::settings::device_local_worlds_for(self, &rtxn, destination)?;
         if flagged.is_empty() {
             return Ok(true);
         }

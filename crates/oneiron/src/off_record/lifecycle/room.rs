@@ -42,6 +42,7 @@ use super::types::{
 };
 
 mod export_roots;
+mod message_result;
 
 /// The most notices a room's timeline holds, and the most save suggestions
 /// that wait in it; past it the oldest drop, so a member repeating an act

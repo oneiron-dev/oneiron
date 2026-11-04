@@ -99,7 +99,17 @@ pub(crate) fn prepare_blob_artifact_birth(
     if let Ok(text) = std::str::from_utf8(bytes) {
         return prepare_blob_birth(store, txn, id, bytes, text);
     }
-    let asset_hash = *blake3::hash(bytes).as_bytes();
+    prepare_binary_blob_artifact_birth(store, txn, id, *blake3::hash(bytes).as_bytes())
+}
+/// [`prepare_blob_artifact_birth`] for bytes that are no UTF-8 text, known
+/// by their BLAKE3 `asset_hash` alone: a body the asset plane holds as a
+/// file is never text, so its birth reads none of its bytes (FIX 12091).
+pub(crate) fn prepare_binary_blob_artifact_birth(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    asset_hash: [u8; 32],
+) -> Result<FingerprintUpdate> {
     let decision = if load(store, txn, id)?.is_some_and(|tree| tree.asset_hash == asset_hash) {
         BlobBirthDecision::Unchanged(FingerprintRung::Asset)
     } else {
