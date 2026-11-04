@@ -18,7 +18,15 @@ checks the lease again and pins the loaded skill in the attempt's manifest. A
 non-attached host-only call does not create a run or lease.
 
 Saved question versions retain their existing live principal and frozen read-lane
-checks. The existing decision ladder answers each input, on the existing
+checks. A run carrying a waking credential also keeps that caller's actual read
+key: source preparation, media reads and the terminal source recheck meet it with
+the saved version's lane in each read's transaction. The key comes from the bound
+`Memory`, not the request. It keeps the credential, records, scope, destination
+and room-turn checks; it never gains a local reader's extra owner authority.
+A native run without a waking credential keeps the existing principal reader.
+Selecting the saved target and loading the skill retain their existing checks.
+
+The existing decision ladder answers each input, on the existing
 per-question clock and caller payer. A later stage can join earlier proposed
 answers, but missing answers remain missing. A final-stage answer does not keep a
 claim, send a campaign or authorize another action.

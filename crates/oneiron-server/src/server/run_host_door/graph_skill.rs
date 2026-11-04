@@ -20,6 +20,7 @@ pub(super) fn run(
     line: Option<&RunAdmission>,
     input: Value,
     evidence: &mut Option<Vec<EntityId>>,
+    current: Option<oneiron::claim::ScopedReadActorKey>,
 ) -> MemoryResult<Value> {
     let request: GraphSkillRunRequest = decode(input)?;
     request.validate()?;
@@ -44,7 +45,7 @@ pub(super) fn run(
         .with_posture(request.posture)
         .with_criteria(request.criteria.unwrap_or_default());
     let ran = on_caller_payer(line.and_then(RunAdmission::payer), || {
-        oneiron::skill::execute_graph_workflow_skill(
+        oneiron::skill::execute_graph_workflow_skill_with_read_key(
             server.vault(),
             &leased,
             &skill,
@@ -54,6 +55,7 @@ pub(super) fn run(
             actor,
             &mut answerer,
             oneiron_vault_contract::now_ts(),
+            current,
         )
     });
     let outcome = match ran {

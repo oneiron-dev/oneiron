@@ -49,6 +49,24 @@ pub(crate) fn run_graph_question_with_proposals(
     answerer: &mut impl GraphAnswerer,
     now: u64,
 ) -> std::result::Result<GraphAskResult, GraphAskFailure> {
+    run_graph_question_with_current(
+        vault, principal, actor, reference, inputs, proposals, answerer, now, None,
+    )
+}
+
+/// The same saved recipe with the admitted caller's current credential
+/// reader conjoined with the saved version's lane at every source read.
+pub(crate) fn run_graph_question_with_current(
+    vault: &Vault,
+    principal: EntityId,
+    actor: WriteActor,
+    reference: GraphQuestionRef,
+    inputs: &[GraphQuestionInput],
+    proposals: &[super::AnswerRecord],
+    answerer: &mut impl GraphAnswerer,
+    now: u64,
+    current: Option<&crate::claim::ScopedReadActorKey>,
+) -> std::result::Result<GraphAskResult, GraphAskFailure> {
     let validate = || -> crate::Result<()> {
         let record = read_question(vault, principal, reference.id, Some(reference.version))?
             .ok_or(Error::EntityNotFound)?;
@@ -75,7 +93,7 @@ pub(crate) fn run_graph_question_with_proposals(
     for input in inputs {
         let answer = (|| -> crate::Result<Option<super::AnswerRecord>> {
             let prepared = super::standing::prepare_graph_answer(
-                vault, principal, reference, actor, input, proposals,
+                vault, principal, reference, actor, input, proposals, current,
             );
             let (record, context, frontier) = match prepared {
                 Ok(prepared) => prepared,
@@ -84,15 +102,25 @@ pub(crate) fn run_graph_question_with_proposals(
             };
             let question = &record.definition.question;
             let images = if answerer.reads_images() && record.definition.media.images {
-                let key = super::saved_reader::saved_reader(vault, principal, &record.read_lane)?;
-                let lane = super::reader_authority::question_lane(vault, key);
+                let key = super::saved_reader::saved_reader_with_current(
+                    vault,
+                    principal,
+                    &record.read_lane,
+                    current,
+                )?;
+                let lane = super::saved_reader::current_reader_lane(vault, key, current);
                 super::graph_ask::unit_images(&lane, &context)?
             } else {
                 Vec::new()
             };
             let audio = if answerer.reads_audio() && record.definition.media.audio {
-                let key = super::saved_reader::saved_reader(vault, principal, &record.read_lane)?;
-                let lane = super::reader_authority::question_lane(vault, key);
+                let key = super::saved_reader::saved_reader_with_current(
+                    vault,
+                    principal,
+                    &record.read_lane,
+                    current,
+                )?;
+                let lane = super::saved_reader::current_reader_lane(vault, key, current);
                 super::graph_ask::unit_audio(&lane, &context)?
             } else {
                 Vec::new()
@@ -106,7 +134,7 @@ pub(crate) fn run_graph_question_with_proposals(
                     super::graph_ask::validate_prediction(question, &prediction)?;
                     super::standing::backfill_graph_answer(
                         vault, principal, reference, actor, context, frontier, prediction,
-                        proposals, now,
+                        proposals, now, current,
                     )
                     .map(Some)
                 }
@@ -117,7 +145,7 @@ pub(crate) fn run_graph_question_with_proposals(
                     }
                     super::standing::backfill_graph_decision(
                         vault, principal, reference, actor, context, frontier, &images, &audio,
-                        *decision, proposals, now,
+                        *decision, proposals, now, current,
                     )
                     .map(Some)
                 }

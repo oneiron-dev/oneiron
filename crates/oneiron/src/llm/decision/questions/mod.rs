@@ -66,8 +66,8 @@ pub use outcomes::{
     calibration_pairs, outcome_labels, person_changed_pairs, project_bound_outcomes,
 };
 pub(crate) use reader_authority::question_lane;
-pub(crate) use recipe::run_graph_question_with_proposals;
 pub use recipe::{GraphQuestionInput, GraphQuestionRef, run_graph_question};
+pub(crate) use recipe::{run_graph_question_with_current, run_graph_question_with_proposals};
 pub use records::*;
 pub(crate) use refresh::answer_records_in_txn;
 pub use refresh::{

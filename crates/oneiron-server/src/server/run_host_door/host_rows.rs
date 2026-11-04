@@ -74,9 +74,16 @@ pub(super) fn host_row(
                 None,
             )?)
         }
-        AgentVerb::SelfSkillsGraph => {
-            super::graph_skill::run(server, actor, origin, run_id, line, input, evidence)
-        }
+        AgentVerb::SelfSkillsGraph => super::graph_skill::run(
+            server,
+            actor,
+            origin,
+            run_id,
+            line,
+            input,
+            evidence,
+            memory.proof_backed_read_key()?,
+        ),
         AgentVerb::VaultGraphAsk => {
             let request: GraphAskRequest = decode(input)?;
             request.validate()?;
