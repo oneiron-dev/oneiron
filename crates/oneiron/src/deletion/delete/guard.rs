@@ -31,7 +31,7 @@ impl Vault {
         allow_replay_test: bool,
         due: Option<&PendingConfirmedErase>,
     ) -> Result<DeleteGuard> {
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::store::base_agent::guard_actor_delete(id)?;
         {
             let rtxn = self.store.env.read_txn()?;
             crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;
@@ -65,7 +65,7 @@ impl Vault {
             self.store
                 .delete_guards
                 .reject_ruling_delete(&self.store, &txn, id)?;
-            crate::task_authority::reject_fact_delete(&self.store, &txn, id)?;
+            crate::store::task_authority_guard::reject_fact_delete(&self.store, &txn, id)?;
             self.store
                 .delete_guards
                 .reject_audience_edit_delete(&self.store, &txn, id)?;

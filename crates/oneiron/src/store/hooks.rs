@@ -33,4 +33,7 @@ pub struct StoreHooks {
     /// run in a build with sync.
     #[cfg(feature = "sync")]
     pub(crate) sync_hooks: &'static dyn StoreSyncHooks,
+    /// The attempt queue operations the store layer's erase and cooperative
+    /// delivery paths run.
+    pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
 }
