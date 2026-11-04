@@ -17,7 +17,7 @@ use super::evidence::RefUpdate;
 use super::hooks::DoorHooksDir;
 use super::paths::serve_failed;
 use crate::error::Result;
-use crate::federation::git_push::GitPushRefChange;
+use crate::origin::git_ref_change::GitPushRefChange;
 
 /// One move's key: its old value (`None` for a creation) and its new one.
 type MoveKey = (Option<String>, String);
