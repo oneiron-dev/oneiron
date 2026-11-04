@@ -339,6 +339,9 @@ pub(crate) struct CallRoom {
     /// The machine floor the organ's own buffers lease from; none on a host
     /// built without one, which reserves them nothing.
     floor: Option<SharedFloor>,
+    /// The room's one machine-floor lease for native memory, behind its own
+    /// lock so the floor wait never holds the room's accounting lock.
+    leases: Mutex<Leases>,
     /// Its waits for room: time the call's deadline does not count.
     waits: WaitClock,
     /// The kernel's limits on the process the call runs in, which grow
@@ -364,19 +367,24 @@ struct RoomState {
     /// (`memory.grow`). No answer's arithmetic reads it or gives it back: it
     /// stays until the room drops with the call.
     native: u64,
-    /// The machine's leases behind `native`, given back as the room drops.
-    leases: Leases,
     overcommit: u64,
     peak: u64,
 }
 
-/// The machine's leases one room holds for the organ's own buffers.
+/// The machine's lease behind one room's native memory for the organ's own
+/// buffers: one handle, grown as the buffers take shape and given back as
+/// the room drops, so repeated growth never waits behind its own earlier
+/// leases (FIX 12440).
 #[derive(Default)]
-struct Leases(Vec<Box<dyn FloorLease>>);
+struct Leases(Option<Box<dyn FloorLease>>);
 
 impl fmt::Debug for Leases {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Leases({})", self.0.len())
+        f.write_str(if self.0.is_some() {
+            "Leases(leased)"
+        } else {
+            "Leases(empty)"
+        })
     }
 }
 
@@ -400,11 +408,11 @@ impl CallRoom {
                 permit,
                 held: 0,
                 native: 0,
-                leases: Leases::default(),
                 overcommit: 0,
                 peak: 0,
             }),
             floor,
+            leases: Mutex::new(Leases::default()),
             waits: WaitClock::default(),
             limits: OnceLock::new(),
         }
@@ -450,11 +458,12 @@ impl CallRoom {
     }
 
     /// Holds `bytes` more for the organ's own buffers (`memory.grow`): leased
-    /// from the machine's floor first, with no lock of the room held while
-    /// that waits, then held in the room, its booking grown when they pass
-    /// it. The machine is asked even when the booking already covers them.
-    /// Both stay until the room drops. Waits no later than `deadline`, and
-    /// no longer than `stopped` allows; refused, nothing is held.
+    /// from the machine's floor first, with no lock of the room's accounting
+    /// held while that waits (only its lease slot), then held in the room,
+    /// its booking grown when they pass it. The machine is asked even when
+    /// the booking already covers them. Both stay until the room drops. Waits
+    /// no later than `deadline`, and no longer than `stopped` allows;
+    /// refused, nothing is held.
     pub(crate) fn grow_native(
         &self,
         bytes: u64,
@@ -468,15 +477,31 @@ impl CallRoom {
         if ended() {
             return Err(NativeRefusal::Deadline);
         }
-        let lease = floor
-            .0
-            .lease(bytes, deadline, &ended)
-            .map_err(|refused| match refused {
-                FloorRefusal::Floor { needed, available } => {
-                    NativeRefusal::Floor { needed, available }
-                }
-                FloorRefusal::Deadline => NativeRefusal::Deadline,
-            })?;
+        // One handle for all of the room's native memory: later growth widens
+        // the same lease, so it never queues behind what the room already
+        // holds (FIX 12440). A refused growth leaves the lease it widens
+        // unchanged. The slot's own lock is held across the floor wait; the
+        // room's accounting lock is not.
+        let mut slot = lock_leases(&self.leases);
+        if let Some(held) = slot.0.as_mut() {
+            held.grow(bytes, deadline, &ended)
+                .map_err(|refused| match refused {
+                    FloorRefusal::Floor { needed, available } => {
+                        NativeRefusal::Floor { needed, available }
+                    }
+                    FloorRefusal::Deadline => NativeRefusal::Deadline,
+                })?;
+        } else {
+            slot.0 = Some(floor.0.lease(bytes, deadline, &ended).map_err(
+                |refused| match refused {
+                    FloorRefusal::Floor { needed, available } => {
+                        NativeRefusal::Floor { needed, available }
+                    }
+                    FloorRefusal::Deadline => NativeRefusal::Deadline,
+                },
+            )?);
+        }
+        drop(slot);
         let mut state = self.lock();
         let need = state
             .held
@@ -494,7 +519,6 @@ impl CallRoom {
             state.peak = state.peak.max(grown.peak);
         }
         state.native = state.native.saturating_add(bytes);
-        state.leases.0.push(lease);
         drop(state);
         if let Some(limits) = self.limits.get() {
             limits.grant(bytes);
@@ -507,6 +531,22 @@ impl CallRoom {
     pub(crate) fn release(&self, bytes: u64) {
         let mut state = self.lock();
         state.held = state.held.saturating_sub(bytes);
+    }
+
+    /// Gives back the frames' own bytes of a call or answer already sent:
+    /// the transient half of what reserve_read holds, whose value half stays
+    /// until the call ends (FIX 12437). What it gives back never passes what
+    /// is held, and the kernel's limits come down with it.
+    pub(crate) fn release_native(&self, bytes: u64) {
+        let mut state = self.lock();
+        let back = state.native.min(bytes);
+        state.native -= back;
+        drop(state);
+        if back > 0
+            && let Some(limits) = self.limits.get()
+        {
+            limits.give_back(back);
+        }
     }
 
     /// Moves `bytes` already held to an output that outlives the call.
