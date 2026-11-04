@@ -182,9 +182,11 @@ impl NativeSealEngine {
                 report: Box::new(report),
             });
         }
+        let bytes = crate::memory::AdmittedBytes::adopt(&limits.memory, outcome.bytes, None)
+            .map_err(|refusal| refusal.seal_error(SealStage::PdfIncrementalUpdate))?;
         Ok(SealedPdf {
-            evidence_sha256: cms::sha256(&outcome.bytes),
-            bytes: outcome.bytes,
+            evidence_sha256: cms::sha256(&bytes),
+            bytes: std::sync::Arc::new(bytes),
             requested_profile: seal_request.target_profile,
             achieved_profile: outcome.achieved,
             warnings: outcome.warnings,

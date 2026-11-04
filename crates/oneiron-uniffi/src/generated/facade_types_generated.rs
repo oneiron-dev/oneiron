@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1223 facade rows, 4435 generated types.
+// UniFFI census: 1223 facade rows, 4438 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1175.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -58199,6 +58199,12 @@ pub struct EsignDocument {
     pub sequential: bool,
     #[serde(rename = "expires_at")]
     pub expires_at: u64,
+    #[serde(
+        rename = "token_expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub token_expires_at: Option<u64>,
     #[serde(rename = "items")]
     pub items: Vec<EsignItem>,
     #[serde(rename = "recipients")]
@@ -58398,6 +58404,44 @@ pub struct SignatureRow {
     pub at: u64,
 }
 
+/// `oneiron::blob_artifact::esign::model::EsignAuthenticationMethod`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EsignAuthenticationMethod {
+    #[serde(rename = "bearer")]
+    Bearer,
+    #[serde(rename = "person")]
+    Person,
+    #[serde(rename = "agent")]
+    Agent,
+}
+
+/// `oneiron::blob_artifact::esign::model::EsignSigningIntent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EsignSigningIntent {
+    #[serde(rename = "direct")]
+    Direct,
+    #[serde(rename = "held_allow")]
+    HeldAllow,
+}
+
+/// `oneiron::blob_artifact::esign::model::EsignSigningEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningEvidence {
+    #[serde(rename = "authentication_method")]
+    pub authentication_method: EsignAuthenticationMethod,
+    #[serde(
+        rename = "disclosure_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub disclosure_version: Option<String>,
+    #[serde(rename = "consent")]
+    pub consent: bool,
+    #[serde(rename = "intent")]
+    pub intent: EsignSigningIntent,
+}
+
 /// `oneiron::blob_artifact::esign::model::EsignEvent`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "event")]
@@ -58415,6 +58459,11 @@ pub enum EsignEvent {
         #[serde(rename = "recipient")]
         recipient: String,
     },
+    #[serde(rename = "access_verified")]
+    AccessVerified {
+        #[serde(rename = "recipient")]
+        recipient: String,
+    },
     #[serde(rename = "field_saved")]
     FieldSaved {
         #[serde(rename = "signature")]
@@ -58426,6 +58475,10 @@ pub enum EsignEvent {
         recipient: String,
         #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
         next: Option<String>,
+        #[serde(rename = "evidence")]
+        evidence: EsignSigningEvidence,
+        #[serde(rename = "items")]
+        items: Vec<EsignItem>,
     },
     #[serde(rename = "declined")]
     Declined {
