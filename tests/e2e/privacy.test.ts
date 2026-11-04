@@ -317,7 +317,7 @@ async function allReceipts(client: PublicHttpClient) {
   const rows: FacadeResult<"vault.receipts">["receipts"] = [];
   let after: string | undefined;
   do {
-    const page = await client.call("vault.receipts", { limit: 100, kinds: receiptKinds, after });
+    const page = await client.call("vault.receipts", { limit: 100, kinds: receiptKinds, ...(after === undefined ? {} : { after }) });
     expect(page.undecodable).toBe(0);
     rows.push(...page.receipts);
     after = page.next_after ?? undefined;
@@ -355,7 +355,7 @@ async function anonymousPolicy(engine: EngineFixture, policyRow: string): Promis
     owner_policy_rows: [{ row_ref: policyRow, text: "Do not reveal the ending of the fixture story.",
       active: true, action: "block" }],
     owner_policy_patterns: [{ id: "privacy.story-ending", pattern: "privacyanonymousblock",
-      category: policyRow, role: "decide" }],
+      category: policyRow, role: "decide" as const }],
   };
   const rows = shape.live.rows.map(row => row === manifest
     ? { kind: "manifest" as const, manifest_ref: manifest.manifest_ref, json: configured }
@@ -462,7 +462,9 @@ async function expectReferenceGone(client: PublicHttpClient, reference: string, 
     if (!(error instanceof PublicHttpError)) throw error;
     excludes(error.reply.body, forbidden);
     expect([404, 422]).toContain(error.reply.status);
-    expect(["NOT_FOUND", "INVENTED_REFERENCE"]).toContain(error.error?.code);
+    const code = error.error?.code;
+    if (code === undefined) throw error;
+    expect(["NOT_FOUND", "INVENTED_REFERENCE"]).toContain(code);
   }
 }
 
