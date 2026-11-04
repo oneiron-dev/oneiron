@@ -23888,7 +23888,7 @@
      "purpose": "Atomic append, explicit HEAD moves and canonical-index repair",
      "surface": {
       "crate-vis": 5,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -25531,6 +25531,16 @@
      "purpose": "A run host's own claim of a CLI attempt (FIX 4552): a host that runs the official CLIs on the person's own…",
      "surface": {
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/json_lines.rs",
+     "purpose": "One JSON object per line, read whole from a stream's start in order (FIX 9240)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -36560,6 +36570,7 @@
      "kind": "src",
      "notable": [
       "FeedbackTriageNodeAnswer",
+      "FeedbackTriageParkOutcome",
       "FeedbackTriagePin",
       "FeedbackTriageSpan",
       "FeedbackTriageSplit",
@@ -36571,7 +36582,7 @@
      "purpose": "A long revision's durable work graph (FIX 7549)",
      "surface": {
       "crate-vis": 2,
-      "enum": 1,
+      "enum": 2,
       "fn": 4,
       "struct": 6
      }
@@ -90064,7 +90075,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91207,7 +91218,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6274,
+   "source_files": 6275,
    "test_files": 900
   },
   "oneiron-android": {
@@ -104029,7 +104040,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 6,
-      "fn": 16,
+      "fn": 17,
       "struct": 5
      }
     },
@@ -121705,7 +121716,7 @@
      "path": "src/models/worker_host/session.rs",
      "purpose": "Exact conversation sessions on this process's managed EXL3 workers (DESIGN-V2 §3.2, R2), host side: the…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -121715,7 +121726,7 @@
      "path": "src/models/worker_host/session/commit.rs",
      "purpose": "A committed reply's canonical successor (DESIGN-V2 §3.2 steps 4-5): the turn's canonical path with its…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
