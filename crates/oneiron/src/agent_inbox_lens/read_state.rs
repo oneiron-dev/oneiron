@@ -51,13 +51,17 @@ impl AgentInboxReadState {
 }
 
 /// What the agent wrote of one row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct AgentInboxReadMark {
     state: AgentInboxReadState,
     /// When a `later` row comes back; `None` waits for a newer entry.
     until: Option<u64>,
     /// The row's newest entry time when the record was written.
     through: u64,
+    /// The newest entry's payload then: a same-second arrival changes the
+    /// entry without moving the time, and must reopen the row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    through_payload: Option<String>,
     /// When the record was written.
     at: u64,
 }
@@ -65,7 +69,9 @@ struct AgentInboxReadMark {
 impl AgentInboxReadMark {
     /// The state this record leaves `item` in at `now`.
     fn state_of(&self, item: &AgentInboxLensItem, now: u64) -> AgentInboxReadState {
-        if item.occurred_at > self.through {
+        if item.occurred_at > self.through
+            || (item.occurred_at == self.through && item.payload_ref != self.through_payload)
+        {
             return AgentInboxReadState::New;
         }
         match self.state {
@@ -232,6 +238,7 @@ impl Memory<'_> {
             state,
             until,
             through: item.occurred_at,
+            through_payload: item.payload_ref.clone(),
             at: vault.now_recorded_at(),
         };
         let key = (self.actor(), item.item_id.clone());
