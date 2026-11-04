@@ -19535,7 +19535,6 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.recall" => {
             let input: RecallRequest = decode(value.clone())?;
-            crate::memory::caps::check_query(&input.query)?;
             crate::memory::caps::check_limit_nonzero(
                 input
                     .limit
@@ -22634,7 +22633,6 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.search.bm25" => {
             let input: QueryBm25Request = decode(value.clone())?;
-            crate::memory::caps::check_query(&input.query)?;
             crate::memory::caps::check_limit_nonzero(input.limit)?;
         }
         "vault.neighbors" => {
@@ -26957,7 +26955,6 @@ pub fn vault_recall(
     memory: &Memory<'_>,
     input: RecallRequest,
 ) -> MemoryResult<crate::memory::MemoryPack> {
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(
         input
             .limit
@@ -34567,7 +34564,6 @@ pub fn vault_search_bm25(
     memory: &Memory<'_>,
     input: QueryBm25Request,
 ) -> MemoryResult<crate::task_verb::sdk::Bm25Search> {
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(input.limit)?;
     crate::task_verb::sdk::search_bm25(memory, input)
 }

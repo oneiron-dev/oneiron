@@ -152,6 +152,23 @@ impl PipelineBuilder<'_> {
         // closed here, before any channel work, like the boost above.
         validate_access_factor_overrides(self.access_factor_overrides)?;
 
+        // Measure the resolved channel inputs once, before expansion or
+        // scoring. Outer recall and binding doors do not measure again.
+        if let Some((query, _)) = self.text_search.as_ref() {
+            self.vault.measure_limit(
+                crate::limit_ask::EngineLimit::RecallQueryBytes,
+                query.len() as u64,
+            );
+        }
+        if let Some(codes) = self.phonetic_search.as_ref() {
+            for query in codes {
+                self.vault.measure_limit(
+                    crate::limit_ask::EngineLimit::RecallQueryBytes,
+                    query.len() as u64,
+                );
+            }
+        }
+
         // RET-010 rerank knobs fail closed before any channel work, in the
         // same spirit as the rank profile above: an invalid `top_n` or a
         // missing query is a caller bug even when the block would be empty

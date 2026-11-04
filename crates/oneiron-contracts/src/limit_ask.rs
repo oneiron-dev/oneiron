@@ -522,6 +522,9 @@ pub enum EngineLimit {
     /// (FIX 5218). Past it the row asks whether everything is okay and
     /// the merge scores over every receipt.
     SharedMergeEvidenceRows,
+    /// Original UTF-8 bytes of one recall or text-search query. Past it the
+    /// row asks and the query is served whole; model windows are separate.
+    RecallQueryBytes,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

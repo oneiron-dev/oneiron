@@ -161,7 +161,6 @@ fn recall_within_ceiling(
     )?;
     let scope = input.scope.clone().unwrap_or_default();
     let limit = input.limit.unwrap_or(VAULT_RECALL_LIMIT_DEFAULT);
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(limit)?;
     // Refused before the query embeds, as every free check is.
     let query_affect = input

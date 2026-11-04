@@ -156,7 +156,6 @@ impl<'s> SessionReadContext<'s> {
             }
             SessionRead::SearchBm25 => {
                 let input: QueryBm25Request = decode(input)?;
-                caps::check_query(&input.query)?;
                 caps::check_limit_nonzero(input.limit)?;
                 let read = self.query_bm25(&memory, &input.query, input.limit)?;
                 let rows = read
@@ -515,6 +514,10 @@ pub(crate) fn scoped_session_text(
         lane.end_recall_plan()?;
         return Ok((Vec::new(), started));
     }
+    vault.measure_limit(
+        crate::limit_ask::EngineLimit::RecallQueryBytes,
+        query.len() as u64,
+    );
     lane.persist_grant_clock()?;
     let scores = {
         let txn = vault.store.env.read_txn()?;

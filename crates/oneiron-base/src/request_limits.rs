@@ -2,9 +2,6 @@
 
 use oneiron_contracts::memory::MemoryError;
 
-/// Maximum query string, in bytes: 8 KiB.
-pub const MAX_QUERY_BYTES: usize = 8 * 1024;
-
 /// Maximum rows any list/search verb may be asked for: 1,000.
 pub const MAX_SEARCH_LIMIT: usize = 1_000;
 
@@ -55,17 +52,6 @@ pub const MAX_REMOTE_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 #[must_use]
 pub fn clamp_search_limit(limit: usize) -> (usize, bool) {
     (limit.min(MAX_SEARCH_LIMIT), limit > MAX_SEARCH_LIMIT)
-}
-
-/// Rejects an over-long query before it reaches retrieval.
-pub fn check_query(query: &str) -> Result<(), MemoryError> {
-    if query.len() > MAX_QUERY_BYTES {
-        return Err(MemoryError::bad_request_with(
-            format!("query exceeds the {MAX_QUERY_BYTES}-byte ceiling"),
-            &["Shorten the query; retrieval scores intent, not transcript length."],
-        ));
-    }
-    Ok(())
 }
 
 /// Longest recall deadline a request or a vault may name, in milliseconds:
