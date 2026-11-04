@@ -200,10 +200,7 @@ impl Vault {
         use crate::store::window_rows::CarrierRemoval;
         use crate::sync::bridge::with_deletion_tombstone_observer_a_suppressed;
         use crate::sync::schema::create_window_doc;
-        use crate::sync::window::{
-            apply_tombstone_to_window_doc, load_window_from_state, mark_removed_carriers_first,
-            merge_persisted_state_into_doc,
-        };
+        use crate::sync::window::{load_window_from_state, merge_persisted_state_into_doc};
         use crate::window_key::WindowKey;
         use loro::CommitOptions;
 
@@ -258,7 +255,7 @@ impl Vault {
                 // Marked before the publish txn opens, which LMDB cannot nest:
                 // a failed publish keeps the mutated live doc, and a later
                 // persist would make its removal durable without the mark.
-                mark_removed_carriers_first(
+                self.store.sync_hooks.mark_removed_carriers_first(
                     self,
                     CarrierRemoval::LocalPublication,
                     &entity_carriers(&window.doc, &[*id]),
@@ -276,7 +273,11 @@ impl Vault {
                 let (delete_update, (snapshot, owes_compaction), vv) =
                     with_deletion_tombstone_observer_a_suppressed(|| -> Result<_> {
                         *doc_mutated = true;
-                        apply_tombstone_to_window_doc(&window.doc, id, &value.encode())?;
+                        self.store.sync_hooks.apply_tombstone_to_window_doc(
+                            &window.doc,
+                            id,
+                            &value.encode(),
+                        )?;
                         window
                             .doc
                             .commit_with(CommitOptions::new().origin(DELETION_TOMBSTONE_ORIGIN));
@@ -338,7 +339,7 @@ impl Vault {
             gate_decision.map(|decision| decision.decision_id),
         );
         super::tombstone_scope::capture_deleted_scope(self, id, value);
-        mark_removed_carriers_first(
+        self.store.sync_hooks.mark_removed_carriers_first(
             self,
             CarrierRemoval::LocalPublication,
             &entity_carriers(&doc, &[*id]),
@@ -356,7 +357,9 @@ impl Vault {
             due,
         )?;
         let vv_before = doc.oplog_vv();
-        apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
+        self.store
+            .sync_hooks
+            .apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
         doc.commit();
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
@@ -865,7 +868,7 @@ impl Vault {
                 window_key.as_str(),
                 update.as_bytes(),
             )?;
-            crate::sync::queue::push_delete_bearing_in_txn(
+            self.store.sync_hooks.push_delete_bearing_in_txn(
                 self,
                 wtxn,
                 window_key.as_str(),
