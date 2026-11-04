@@ -9,12 +9,11 @@
 use std::sync::Arc;
 
 use oneiron::claim::CallerLocality;
-use oneiron::conversation::OutputMark;
 use oneiron::memory::resolve_entity_ref;
 use oneiron::{LlmMessage, LlmMessageRole, ModelLocality, Vault};
 use serde::Serialize;
 
-use super::{ChatTurnRequest, assistant, chat_request, text_message};
+use super::{assistant, chat_request, text_message};
 use crate::ai_host::{AiHandle, CHAT_ROLE};
 use crate::api::context_board::{ChatBoard, ChatContextCapture, PromptBoard};
 use crate::auth::{CoreAuth, CoreScope};
@@ -47,15 +46,9 @@ impl BoardOmission {
     }
 }
 
-/// What a turn read before anything was written: the reply's newcomer mark,
-/// taken first (FIX 8133), and the board read after it.
-pub(super) struct TurnRead {
-    pub(super) mark: OutputMark,
-    pub(super) board: Result<Option<ChatBoard>, BoardOmission>,
-}
-
-/// The board `request`'s turn reads as `auth` reads, read before anything is
-/// written, beside every row it served (FIX 6935); `Ok(None)` when the turn
+/// The board a turn for `text` reads as `auth` reads, read before the turn
+/// witnesses anything (FIX 6924: after its funding/hook/keepalive refusals),
+/// beside every row it served (FIX 6935); `Ok(None)` when the turn
 /// reads none: a caller or request the turn refuses, no chat seat, or an
 /// empty frame. A board the turn read and goes without is the omission's
 /// reason (FIX 8136): a refused assembly, or rows a world keeps from where
@@ -71,11 +64,13 @@ pub(super) struct TurnRead {
 pub(super) async fn turn_board(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    request: &ChatTurnRequest,
+    text: &str,
+    conversation_ref: &str,
+    agent_ref: Option<&str>,
 ) -> Result<Option<ChatBoard>, BoardOmission> {
     if auth.require(CoreScope::Read).is_err()
         || auth.require(CoreScope::Write).is_err()
-        || request.text.trim().is_empty()
+        || text.trim().is_empty()
     {
         return Ok(None);
     }
@@ -83,12 +78,12 @@ pub(super) async fn turn_board(
         return Ok(None);
     };
     let vault = server.vault();
-    let Ok((agent, _)) = assistant(auth, vault, request.agent_ref.as_deref()) else {
+    let Ok((agent, _)) = assistant(auth, vault, agent_ref) else {
         return Ok(None);
     };
     // A new conversation has no room yet; one that resolves narrows the read
     // to its audience.
-    let conversation = resolve_entity_ref(vault, &request.conversation_ref).ok();
+    let conversation = resolve_entity_ref(vault, conversation_ref).ok();
     let reads_at = if auth.locality() == CallerLocality::OnDevice
         && PromptBoard::route_locality(&server.ai, vault, seat) == ModelLocality::OnDevice
     {
@@ -101,7 +96,7 @@ pub(super) async fn turn_board(
         auth.clone().at(reads_at),
         conversation,
         agent,
-        &request.text,
+        text,
     )
     .await
     {
