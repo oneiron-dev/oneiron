@@ -1,25 +1,25 @@
 //! Canonical entity references for typed-decision wire records.
 
-use crate::EntityId;
+use oneiron_contracts::EntityId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-pub(crate) mod entity {
+pub mod entity {
     use super::*;
-    pub(crate) fn serialize<S: Serializer>(
+    pub fn serialize<S: Serializer>(
         id: &EntityId,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         id.to_hex().serialize(serializer)
     }
-    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+    pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<EntityId, D::Error> {
         parse(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
-pub(crate) mod entities {
+pub mod entities {
     use super::*;
-    pub(crate) fn serialize<S: Serializer>(
+    pub fn serialize<S: Serializer>(
         ids: &[EntityId],
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
@@ -28,7 +28,7 @@ pub(crate) mod entities {
             .collect::<Vec<_>>()
             .serialize(serializer)
     }
-    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+    pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Vec<EntityId>, D::Error> {
         Vec::<String>::deserialize(deserializer)?
@@ -37,15 +37,15 @@ pub(crate) mod entities {
             .collect()
     }
 }
-pub(crate) mod optional_entity {
+pub mod optional_entity {
     use super::*;
-    pub(crate) fn serialize<S: Serializer>(
+    pub fn serialize<S: Serializer>(
         id: &Option<EntityId>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         id.map(|id| id.to_hex()).serialize(serializer)
     }
-    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+    pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<EntityId>, D::Error> {
         Option::<String>::deserialize(deserializer)?
@@ -53,7 +53,7 @@ pub(crate) mod optional_entity {
             .transpose()
     }
 }
-pub(crate) fn parse(text: &str) -> Result<EntityId, &'static str> {
+pub fn parse(text: &str) -> Result<EntityId, &'static str> {
     let id = EntityId::from_hex(text).map_err(|_| "invalid entity reference")?;
     if id.to_hex() != text {
         return Err("noncanonical entity reference");
