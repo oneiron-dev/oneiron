@@ -220,7 +220,7 @@ impl ReceiptReads for TxnReads<'_, '_, '_> {
         let Some(trigger) = trigger else {
             return Ok(true);
         };
-        crate::provenance::birth::trigger_is_live_in_txn(&self.vault.store, self.txn, trigger)
+        crate::store::birth_record::trigger_is_live_in_txn(&self.vault.store, self.txn, trigger)
     }
 
     fn prompt_input_present(&self, row: &EntityId) -> Result<bool> {
@@ -316,7 +316,7 @@ pub(crate) fn commit_input_rows_in_txn(
     };
     let doc = super::storage::load(&vault.store, txn, &head)?;
     let document = EntityId::from_hex(&doc.birth().entity)?;
-    let birth = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, &document)?
+    let birth = crate::store::birth_record::row_birth_in_txn(&vault.store, txn, &document)?
         .map(|birth| birth.made_by);
     let mut changes: Vec<ChangeMeta> = Vec::new();
     doc.doc
@@ -350,5 +350,5 @@ fn trigger_recorded(vault: &crate::Vault, trigger: Option<&MadeByTrigger>) -> Re
         return Ok(true);
     };
     let txn = vault.store.env.read_txn()?;
-    crate::provenance::birth::trigger_is_live_in_txn(&vault.store, &txn, trigger)
+    crate::store::birth_record::trigger_is_live_in_txn(&vault.store, &txn, trigger)
 }
