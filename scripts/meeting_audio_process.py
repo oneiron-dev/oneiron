@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import selectors
-import signal
 import subprocess
 import time
 import uuid
@@ -59,7 +58,11 @@ def check_files(spec, error):
 
 def exchange(command, request, idle, error, progress=None):
     """Runs one port call while it writes within `idle` seconds of its last
-    output; `progress` is told every PROGRESS_EVERY_SECONDS meanwhile."""
+    output; `progress` is told every PROGRESS_EVERY_SECONDS meanwhile.
+
+    The worker stays in this bridge's process group, which the engine
+    started and owns: an engine deadline kills and reaps the bridge and every
+    worker together. A stall seen here kills and reaps the worker itself."""
     if os.name != "posix":
         raise error("ProcessPlatformUnsupported")
     environment = dict(os.environ)
@@ -67,7 +70,7 @@ def exchange(command, request, idle, error, progress=None):
     last_output = time.monotonic()
     output = bytearray()
     with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                          env=environment, start_new_session=True) as child:
+                          env=environment) as child:
         try:
             with selectors.DefaultSelector() as selector:
                 for stream, event in [(child.stdin, selectors.EVENT_WRITE), (child.stdout, selectors.EVENT_READ)]:
@@ -105,10 +108,7 @@ def exchange(command, request, idle, error, progress=None):
             return child.returncode, bytes(output)
         finally:
             if child.poll() is None:
-                try:
-                    os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                child.kill()
                 child.wait()
 
 

@@ -7,6 +7,7 @@ use super::{
 use crate::Vault;
 use crate::authority::{FederationGrantActivation, federation_grant_activation};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
@@ -58,7 +59,27 @@ impl Vault {
         writer: &WriteActor,
         requested: &SharedVaultWrite,
     ) -> Result<()> {
-        let fold = self.verify_write_actor_in_txn(txn, writer)?;
+        // A folder's note-import MACHINE writes as the member its own stored
+        // record names as both its importer and its maker: that member's
+        // binding and live grant decide, as for the member's own write, and
+        // a refusal there is final. The stored actor stays the MACHINE. Every
+        // other writer, and a MACHINE that names no such member, writes on
+        // its own standing.
+        let principal = match crate::note::folder_import_creator_in_txn(
+            &self.store,
+            txn,
+            &writer.entity_ref(),
+        )? {
+            Some(importer) => {
+                let member = WriteActor::new(importer, EdgeActorClass::Human);
+                match writer.authority_frontier() {
+                    Some(frontier) => member.with_authority_frontier(frontier),
+                    None => member,
+                }
+            }
+            None => *writer,
+        };
+        let fold = self.verify_write_actor_in_txn(txn, &principal)?;
         // A deleted shared vault takes no further write of any kind.
         if vault_id == 0
             || matches!(requested, SharedVaultWrite::PersonalVault)
@@ -66,6 +87,7 @@ impl Vault {
         {
             return Err(denied());
         }
+        let member = principal.entity_ref();
         for entry in self
             .store
             .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
@@ -90,7 +112,7 @@ impl Vault {
             }
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             if grant.scope != FederationGrantScope::vault(vault_id)
-                || grant.member_ref != writer.entity_ref()
+                || grant.member_ref != member
                 || grant
                     .expires_at
                     .is_some_and(|expires| self.store.clock.now_recorded_at() >= expires)

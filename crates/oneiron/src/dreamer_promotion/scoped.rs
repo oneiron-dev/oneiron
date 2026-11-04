@@ -331,6 +331,7 @@ fn attach_evidence(
                 defer_metrics_until_commit: false,
                 transition: None,
                 owner_authored: None,
+                pending_prompt: None,
             },
             &policy,
             crate::gate::GateWriteMode {

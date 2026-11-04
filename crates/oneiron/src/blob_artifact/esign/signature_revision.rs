@@ -9,8 +9,14 @@
 //! objects it re-emits keep every value and type: a real is written as the
 //! shortest decimal that reads back as the same real, never rounded.
 
-use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId, StringFormat};
+use lopdf::{
+    DecodeAdmission, DecodeAdmissionError, Dictionary, Document, LoadOptions, Object, ObjectId,
+    StringFormat,
+};
+use oneiron_docedit::resource::{Hold, ResourceRefusal, wide};
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use super::render::PdfPreparationError;
 use super::sealer::{EsignSealInput, EsignSignatureRevision};
@@ -72,11 +78,11 @@ impl EsignSealInput {
     }
 }
 
-/// The bytes the largest stream lopdf decoded while it read `doc` came to:
-/// an object stream's, which it leaves decoded in place, or a
-/// cross-reference stream's, decoded again here to be measured. Each
-/// decoded within the codec bound, or the read failed.
-fn largest_decoded_stream(doc: &Document, codec: usize) -> u64 {
+/// The largest uncompressed cross-reference stream's bytes, within `codec`.
+/// The load never decodes these, so the admission never sees them, while the
+/// old re-decode counted their length. A length read, never a decode.
+/// Over-codec streams count as nothing, as the re-decode's `.ok()` did.
+fn uncompressed_xref_bytes(doc: &Document, codec: usize) -> u64 {
     doc.objects
         .values()
         .filter_map(|object| object.as_stream().ok())
@@ -87,15 +93,12 @@ fn largest_decoded_stream(doc: &Document, codec: usize) -> u64 {
                 .ok()
                 .and_then(|kind| kind.as_name().ok());
             match kind {
-                Some(b"ObjStm") if !stream.is_compressed() => Some(stream.content.len()),
-                Some(b"ObjStm" | b"XRef") => stream
-                    .decompressed_content_with_limit(codec)
-                    .ok()
-                    .map(|content| content.len()),
+                Some(b"XRef") if !stream.is_compressed() && stream.content.len() <= codec => {
+                    Some(stream.content.len() as u64)
+                }
                 _ => None,
             }
         })
-        .map(|len| len as u64)
         .max()
         .unwrap_or(0)
 }
@@ -128,24 +131,97 @@ fn reference(object: &Object) -> Option<ObjectId> {
     }
 }
 
+/// The revision read's admission on the host's machine memory (6274): one
+/// hold, NOT a ledger. It admits every table, copy, and decode before it is
+/// allocated and records each finished decode's length. Admissions are never
+/// released on this base (lopdf admits only), so growth holds old+new
+/// together: correct, only more conservative. A process with no registered
+/// host reserves nothing, as before (measuring port).
+struct BaseAdmission {
+    state: Mutex<BaseAdmissionState>,
+    max_decoded: AtomicU64,
+}
+
+struct BaseAdmissionState {
+    hold: Hold,
+    /// Stays 0: this base's trait has no `release` to credit it (§4).
+    spare: u64,
+}
+
+impl BaseAdmission {
+    fn new(hold: Hold) -> Self {
+        Self {
+            state: Mutex::new(BaseAdmissionState { hold, spare: 0 }),
+            max_decoded: AtomicU64::new(0),
+        }
+    }
+
+    fn max_decoded(&self) -> u64 {
+        self.max_decoded.load(Ordering::Relaxed)
+    }
+}
+
+impl DecodeAdmission for BaseAdmission {
+    fn admit(&self, bytes: usize) -> std::result::Result<(), DecodeAdmissionError> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let bytes = wide(bytes);
+        let credit = state.spare.min(bytes);
+        state.spare -= credit;
+        let rest = bytes - credit;
+        if rest == 0 {
+            return Ok(());
+        }
+        state.hold.take(rest).map_err(|refusal| match refusal {
+            ResourceRefusal::MemoryFloor { needed, available } => {
+                DecodeAdmissionError::MemoryFloor { needed, available }
+            }
+            ResourceRefusal::Deadline => DecodeAdmissionError::Deadline,
+        })
+    }
+
+    fn decoded(&self, bytes: usize) {
+        self.max_decoded.fetch_max(wide(bytes), Ordering::Relaxed);
+    }
+}
+
 impl Base {
     /// The prepared PDF's base, and its largest decoded stream's bytes.
     fn read(pdf: &[u8], codec: usize) -> Result<(Self, u64)> {
+        // Declared before `doc`: reverse drop order keeps the hold alive
+        // while the tables, copies, and decodes it admitted live in `doc`.
+        let admission = Arc::new(BaseAdmission::new(
+            crate::office_body::document_resources().hold(),
+        ));
         let doc = Document::load_mem_with_options(
             pdf,
             LoadOptions {
                 strict: true,
-                max_decompressed_size: Some(codec),
+                max_decompressed_size: Some(codec), // KEPT: bound and admission compose
+                decode_admission: Some(Arc::clone(&admission) as Arc<dyn DecodeAdmission>),
                 ..LoadOptions::default()
             },
         )
-        .map_err(|error| match PdfPreparationError::from(error) {
-            PdfPreparationError::Limit => {
-                PdfPreparationError::StreamPastCodecBound(STREAM_CODEC_ROW)
-            }
-            other => other,
+        .map_err(|error| match error {
+            lopdf::Error::DecodeAdmission(DecodeAdmissionError::MemoryFloor {
+                needed,
+                available,
+            }) => PdfPreparationError::MemoryFloor { needed, available },
+            // Deadline, plus Cancelled defensively: nothing on this path
+            // cancels (no Cancelled source in the vendored load).
+            lopdf::Error::DecodeAdmission(_) => PdfPreparationError::Deadline,
+            other => match PdfPreparationError::from(other) {
+                PdfPreparationError::Limit => {
+                    PdfPreparationError::StreamPastCodecBound(STREAM_CODEC_ROW)
+                }
+                other => other,
+            },
         })?;
-        let stream_bytes = largest_decoded_stream(&doc, codec);
+        let stream_bytes = admission
+            .max_decoded()
+            .max(uncompressed_xref_bytes(&doc, codec));
         let prev_startxref = last_startxref(pdf)?;
         let at = usize::try_from(prev_startxref).map_err(malformed)?;
         if pdf.get(at..at.saturating_add(4)) != Some(b"xref".as_slice())

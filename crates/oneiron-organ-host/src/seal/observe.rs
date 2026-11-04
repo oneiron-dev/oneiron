@@ -9,7 +9,7 @@ use oneiron::blob_artifact::esign::EsignSealerError;
 use oneiron::limit_ask::EngineLimit;
 use serde::Deserialize;
 
-use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, ByteBuf};
+use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, ByteBuf, Value};
 
 use super::{ASK_IDENTITY, ASK_SIGN, HostedSealer};
 use crate::handlers::AskHandlers;
@@ -28,7 +28,7 @@ impl HostedSealer<'_> {
         call: OrganCall,
         lent: Vec<LentInput>,
         handlers: &AskHandlers<'_>,
-    ) -> Result<(rmpv::Value, OrganOutcome), EsignSealerError> {
+    ) -> Result<(Value, OrganOutcome), EsignSealerError> {
         let lent_bytes = lent.iter().map(|input| input.bytes.len() as u64).sum();
         let mut measure = CallMeasure::default();
         let called = self.host.call_sized_with(
@@ -41,7 +41,7 @@ impl HostedSealer<'_> {
         );
         measure_frames(self.vault, &measure);
         let mut outcome = called.map_err(super::host_failure)?;
-        let report = std::mem::replace(&mut outcome.report, rmpv::Value::Nil);
+        let report = std::mem::replace(&mut outcome.report, Value::Nil);
         let (reply, observed) = Observed::split(report);
         observed.measure(self.vault);
         Ok((reply, outcome))
@@ -92,9 +92,9 @@ struct Observed {
 
 impl Observed {
     /// The report's outcome, with the `observed` entry beside it taken out.
-    fn split(report: rmpv::Value) -> (rmpv::Value, Self) {
-        match report {
-            rmpv::Value::Map(entries) => {
+    fn split(report: Value) -> (Value, Self) {
+        match report.into_map() {
+            Ok(entries) => {
                 let (observed, outcome): (Vec<_>, Vec<_>) = entries
                     .into_iter()
                     .partition(|(key, _)| key.as_str() == Some("observed"));
@@ -102,9 +102,9 @@ impl Observed {
                     .into_iter()
                     .find_map(|(_, value)| super::from_value(&value).ok())
                     .unwrap_or_default();
-                (rmpv::Value::Map(outcome), observed)
+                (Value::Map(outcome), observed)
             }
-            other => (other, Self::default()),
+            Err(other) => (other, Self::default()),
         }
     }
 

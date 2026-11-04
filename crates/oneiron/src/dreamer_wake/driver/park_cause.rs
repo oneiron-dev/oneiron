@@ -48,6 +48,14 @@ pub(crate) const fn waits_on_owner_act(kind: ErrorKind) -> bool {
     )
 }
 
+/// Whether an executor error of `kind` ends the pass where it
+/// stands: the same owner-act rule, named for the executor's
+/// partition window, whose finishes must stop at such an error
+/// instead of committing later slots past it (FIX 12487 round 2).
+pub(crate) const fn executor_error_ends_pass(kind: ErrorKind) -> bool {
+    waits_on_owner_act(kind)
+}
+
 /// Whether a failed model call waits on an owner act (FIX 7382): a budget
 /// denial, spent prepaid credit (the owner tops up), a world kept on the
 /// device (world privacy), a world order that names none of its routes

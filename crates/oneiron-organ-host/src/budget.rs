@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 
 use crate::clock::WaitClock;
 use crate::error::HostError;
-use crate::resource_memory::{FloorRefusal, SharedFloor};
+use crate::resource_memory::{FloorLease, FloorRefusal, SharedFloor};
 use crate::shutdown;
 use crate::spec::CallClass;
 
@@ -193,6 +193,27 @@ pub(crate) enum Unroomed {
     Floor { needed: u64, available: u64 },
 }
 
+fn unroomed(refused: FloorRefusal) -> Unroomed {
+    match refused {
+        FloorRefusal::Floor { needed, available } => Unroomed::Floor { needed, available },
+        FloorRefusal::Deadline => Unroomed::Stopped,
+    }
+}
+
+/// The one machine-floor lease a frame grows as its message arrives.
+#[derive(Default)]
+struct FrameFloor(Option<Box<dyn FloorLease>>);
+
+impl fmt::Debug for FrameFloor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(if self.0.is_some() {
+            "FrameFloor(leased)"
+        } else {
+            "FrameFloor(empty)"
+        })
+    }
+}
+
 /// Memory one frame holds while its bytes and its value live, given back on
 /// drop.
 #[derive(Debug)]
@@ -202,8 +223,8 @@ pub(crate) struct Lease {
     /// The frame's encoded body.
     frame: u64,
     grown: Grown,
-    /// The machine's leases behind `memory`, when the host has a floor.
-    floors: Mutex<Leases>,
+    /// The machine's lease behind `memory`, when the host has a floor.
+    floors: Mutex<FrameFloor>,
 }
 
 impl Room {
@@ -216,7 +237,7 @@ impl Room {
             memory: 0,
             frame: bytes,
             grown: Grown::default(),
-            floors: Mutex::new(Leases::default()),
+            floors: Mutex::new(FrameFloor::default()),
         };
         self.grow(&mut lease, bytes, stopped)?;
         Ok(lease)
@@ -233,16 +254,19 @@ impl Room {
         if let Some(floor) = &self.floor
             && bytes > 0
         {
-            let held = floor
-                .0
-                .lease_untimed(bytes, &|| stopped() || shutdown::interrupted())
-                .map_err(|refused| match refused {
-                    FloorRefusal::Floor { needed, available } => {
-                        Unroomed::Floor { needed, available }
-                    }
-                    FloorRefusal::Deadline => Unroomed::Stopped,
-                })?;
-            lock_leases(&lease.floors).0.push(held);
+            let stopped = || stopped() || shutdown::interrupted();
+            // `&mut Lease` already excludes every other accessor: do not hold
+            // a floor-slot guard across either this wait or the budget wait.
+            let slot = lease
+                .floors
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(held) = &mut slot.0 {
+                held.grow_untimed(bytes, &stopped).map_err(unroomed)?;
+            } else {
+                let held = floor.0.lease_untimed(bytes, &stopped).map_err(unroomed)?;
+                slot.0 = Some(held);
+            }
         }
         let grown = self.shared.grow(bytes, stopped).ok_or(Unroomed::Stopped)?;
         lease.memory += bytes;
@@ -263,6 +287,11 @@ impl Lease {
     /// The frame's encoded body, as it came: what the frame rows measure.
     pub(crate) fn bytes(&self) -> u64 {
         self.frame
+    }
+
+    /// Counts continuation-frame bytes in the measured encoded length.
+    pub(crate) fn add_frame_bytes(&mut self, len: u64) {
+        self.frame = self.frame.saturating_add(len);
     }
 
     /// Gives back `bytes` of the budget's room for bytes that are gone: a
@@ -343,7 +372,7 @@ struct RoomState {
 
 /// The machine's leases one room holds for the organ's own buffers.
 #[derive(Default)]
-struct Leases(Vec<Box<dyn Send>>);
+struct Leases(Vec<Box<dyn FloorLease>>);
 
 impl fmt::Debug for Leases {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

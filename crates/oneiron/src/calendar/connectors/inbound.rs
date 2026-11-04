@@ -141,7 +141,14 @@ fn apply_remote_change(
                     EchoDisposition::AcknowledgeEcho => counters.acknowledged += 1,
                     EchoDisposition::ApplyInbound | EchoDisposition::ApplyRemoteUpdate => {
                         crate::calendar::ingest::admit_connector_event(
-                            vault, system, &source, parsed, now,
+                            vault,
+                            system,
+                            crate::calendar::ingest::ConnectorAdmissionSource {
+                                record: source.as_str(),
+                                source_version: Some(source_blob_ref.as_str()),
+                            },
+                            parsed,
+                            now,
                         )?;
                         counters.applied += 1;
                     }

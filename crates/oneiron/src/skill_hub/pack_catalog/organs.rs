@@ -12,7 +12,10 @@ use super::{PackInstallStatus, PackManifest, PackSource, invalid};
 use crate::consent::AuthenticatedOwner;
 use crate::skill::{SkillContentHash, canonical_skill_tree_hash};
 use crate::skill_hub::HubFile;
-use crate::{EntityId, TimeRange, Vault, error::Result};
+use crate::{
+    EntityId, TimeRange, Vault,
+    error::{Error, Result},
+};
 use serde::{Deserialize, Serialize};
 
 const ORGAN_DIR: &str = "organs/";
@@ -179,8 +182,14 @@ impl PackOrganBuild {
     }
 
     fn verify(&self, bytes: &[u8]) -> Result<[u8; 32]> {
+        self.verify_digest(bytes.len() as u64, blake3::hash(bytes).as_bytes())
+    }
+
+    /// [`Self::verify`] of a build measured as it streamed: its length and
+    /// BLAKE3.
+    fn verify_digest(&self, len: u64, digest: &[u8; 32]) -> Result<[u8; 32]> {
         let hash = self.hash()?;
-        if bytes.len() as u64 != self.bytes || *blake3::hash(bytes).as_bytes() != hash {
+        if len != self.bytes || *digest != hash {
             return Err(invalid("organ build bytes disagree with their pin"));
         }
         Ok(hash)
@@ -433,38 +442,72 @@ impl Vault {
     /// Owner door: hold one organ build for a staged pack source, checked
     /// against the source's pin. Holding grants nothing; only an Active
     /// installation hands a build out.
+    ///
+    /// `build` streams through the asset body plane before the writer opens:
+    /// measured as it passes, spilled to the body directory past the inline
+    /// bound, and filed there while the plane files bodies. The writer checks
+    /// its length and BLAKE3 against the pin and binds it as the source's blob
+    /// asset. Nothing is refused for its size (Rule 5).
     pub fn put_pack_organ_build(
         &self,
         owner: &AuthenticatedOwner,
         source_id: EntityId,
         organ: &str,
         platform: &str,
-        bytes: &[u8],
+        build: impl std::io::Read,
     ) -> Result<PackOrganBuild> {
+        // A source that pins no such build is refused before any byte is read.
+        {
+            let txn = self.store.env.read_txn()?;
+            self.pinned_organ_build_in_txn(&txn, &source_id, organ, platform)?;
+        }
+        // A body instance is minted outside every writer (KS-2A), and only
+        // while the plane files bodies. The values custody holds load only
+        // inside a writer, and this stages before one: none is passed.
+        let mint = if crate::store::ASSET_FILE_PLANE {
+            Some(self.store.body_mint()?)
+        } else {
+            None
+        };
+        let staged = self.stage_asset_body(build, None, None, mint.as_ref())?;
+        let facts = staged.facts();
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
-            let source = self
-                .pack_source_in_txn(txn, &source_id)?
-                .ok_or_else(|| invalid("pack source missing"))?;
-            let build = source
-                .organs()
-                .iter()
-                .find(|declared| declared.name == organ)
-                .and_then(|declared| declared.build(platform))
-                .ok_or_else(|| invalid("the source pins no such organ build"))?
-                .clone();
-            build.verify(bytes)?;
+            let build = self.pinned_organ_build_in_txn(txn, &source_id, organ, platform)?;
+            let hash = build.verify_digest(facts.len, &facts.blake3)?;
+            let id = crate::blob_artifact::blob_artifact_asset_entity_id(&hash)?;
+            if id == source_id {
+                return Err(Error::InvariantViolation("blob cannot reference itself"));
+            }
             let at = crate::unix_seconds_now();
-            crate::ports::BlobStore::port_blob_put(
-                self,
+            self.put_asset_body_in_txn(txn, &id, TimeRange { start: at, end: at }, at, &staged)?;
+            self.store.vault_meta.put(
                 txn,
-                &source_id,
-                bytes,
-                TimeRange { start: at, end: at },
-                at,
+                &crate::blob_artifact::blob_artifact_asset_ref_key(&hash, &source_id),
+                &[],
             )?;
             Ok(build)
         })
+    }
+
+    /// The build `source_id`'s facet pins for `organ` on `platform`.
+    fn pinned_organ_build_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        source_id: &EntityId,
+        organ: &str,
+        platform: &str,
+    ) -> Result<PackOrganBuild> {
+        let source = self
+            .pack_source_in_txn(txn, source_id)?
+            .ok_or_else(|| invalid("pack source missing"))?;
+        source
+            .organs()
+            .iter()
+            .find(|declared| declared.name == organ)
+            .and_then(|declared| declared.build(platform))
+            .cloned()
+            .ok_or_else(|| invalid("the source pins no such organ build"))
     }
 
     /// Every organ of every Active installation, with the platforms this

@@ -270,8 +270,9 @@ pub enum JsResultRef {
 }
 
 /// A result reference, and the byte range of its body it is narrowed to:
-/// `<name-or-handle>#<start>-<end>`, as a chunk names one. A range persists
-/// nothing; every read of it is a read of its parent, checked as one.
+/// `<name-or-handle-or-occurrence>#<start>-<end>`, as a chunk names one. A
+/// range persists nothing; every read of it is a read of its parent, checked
+/// as one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsResultTarget {
     pub reference: JsResultRef,

@@ -110,6 +110,16 @@ impl Memory<'_> {
         if let Some(payload) = send.calendar_invite {
             request = request.calendar_invite(payload.clone());
         }
+        // A send that carries its host's selection question selects its
+        // sender by the vault's selection rules over its identity faces
+        // (FIX 12100).
+        if let Some(selection) = &send.continuation.selection {
+            request = request.send_autonomy_context(
+                selection
+                    .request
+                    .send_autonomy(selection.counterparty_class.as_deref()),
+            );
+        }
         // FIX 6424: the ask names the logical send the executor will run
         // this TASK under, so a press on it pins the send that spends it.
         request.approval_identity_ref = Some(crate::outbound::connector_logical_send_ref(

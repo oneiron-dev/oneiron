@@ -392,3 +392,52 @@ pub(in crate::secret_custody) fn decodings(bytes: &[u8]) -> Vec<Zeroizing<Vec<u8
     );
     decoded
 }
+
+/// Each place `value` sits in `data`, as raw bytes or in any spelling
+/// [`decodings`] reads, mapped back to the original bytes.
+pub(in crate::secret_custody) fn occurrences(data: &[u8], value: &[u8]) -> Vec<Range<usize>> {
+    if value.is_empty() {
+        return Vec::new();
+    }
+    let mut spans = raw_occurrences(data, value);
+    for view in [percent_view(data), form_view(data), json_view(data)]
+        .into_iter()
+        .flatten()
+    {
+        spans.extend(
+            raw_occurrences(&view.bytes, value)
+                .into_iter()
+                .filter_map(|span| view.source_mapped(span)),
+        );
+    }
+    let reach = value.len().saturating_mul(KNOWN_FORM_REACH_FACTOR);
+    for (_, view) in base64_views(data, reach) {
+        spans.extend(
+            raw_occurrences(&view.bytes, value)
+                .into_iter()
+                .filter_map(|span| view.source_mapped(span)),
+        );
+    }
+    spans.sort_unstable_by_key(|span| (span.start, span.end));
+    spans.dedup();
+    spans
+}
+
+fn raw_occurrences(data: &[u8], value: &[u8]) -> Vec<Range<usize>> {
+    let Some(&first) = value.first() else {
+        return Vec::new();
+    };
+    let mut spans = Vec::new();
+    let mut from = 0;
+    while let Some(rest) = data.get(from..).filter(|rest| rest.len() >= value.len()) {
+        let Some(offset) = rest.iter().position(|&byte| byte == first) else {
+            break;
+        };
+        let at = from + offset;
+        from = at + 1;
+        if data.get(at..at + value.len()) == Some(value) {
+            spans.push(at..at + value.len());
+        }
+    }
+    spans
+}

@@ -62,6 +62,7 @@ pub mod queue;
 pub mod quota;
 pub(crate) mod receipt_ingest;
 pub mod replay;
+pub(crate) mod repo_manifests;
 pub mod residence;
 pub mod residence_operation_budgets;
 pub(crate) mod room_facts;

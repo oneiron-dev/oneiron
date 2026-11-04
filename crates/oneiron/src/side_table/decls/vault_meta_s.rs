@@ -121,6 +121,9 @@ side_tables! {
     /// A record whose found keys still owe the owner their needs-you notice: raised at the next
     /// write's commit boundary, then removed. Key: id16 (the record).
     SECRET_FOUND_KEY_DUE: VaultMeta b"secret_found_key_due:v1:" Named;
+    /// A custody handle's owner-set display label and its Gate receipt. The custody name stays the
+    /// identity; this label changes presentation only and holds no value. Key: id16 (custody record id).
+    SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Custody;
     /// Each custody record's committed known-value history (KS-3): the slot of each entry typed
     /// custody holds for it (`KnownValueEntry`, item = the record's id) with the record generation
     /// it was written at, never a value, length, tag or fingerprint. Canonical, so an image

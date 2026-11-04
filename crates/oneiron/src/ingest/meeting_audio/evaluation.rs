@@ -62,8 +62,9 @@ pub struct E1SelectionReceipt {
 
 impl E1SelectionReceipt {
     /// Parse and strictly validate one receipt document. Blanks, an empty arm
-    /// list, a winner naming no arm, a non-hex corpus hash, and an arm with no
-    /// language entry all fail. Cross-corpus binding is the caller's next
+    /// list, a winner naming no arm, a non-hex corpus hash, an arm with no
+    /// language entry, and an arm whose totals overflow `u64` all fail; no
+    /// count of arms or languages does. Cross-corpus binding is the caller's next
     /// check: compare [`E1SelectionReceipt::corpus_sha256`] against the hash of
     /// the corpus manifest actually scored before trusting `winner`.
     pub fn parse(json: &str) -> AudioResult<Self> {
@@ -89,29 +90,30 @@ impl E1SelectionReceipt {
                 || !is_lower_hex_sha256(&arm.model_sha256)
                 || !is_lower_hex_sha256(&arm.runtime_sha256)
                 || arm.wer_by_lang.is_empty()
-                || arm.wer_by_lang.len() > 256
                 || !seen_models.insert(arm.model_id.as_str())
             {
                 return Err(AudioError::InvalidEvaluationReceipt);
             }
+            // The arm's totals, summed in u128 so no count of languages can
+            // overflow the check: an aggregate over them must fit u64 exactly.
+            let (mut errors, mut reference_len) = (0u128, 0u128);
             for (lang, counts) in &arm.wer_by_lang {
                 if lang.trim().is_empty()
                     || counts.reference_len == 0
                     || u128::from(counts.substitutions) + u128::from(counts.deletions)
                         > u128::from(counts.reference_len)
-                    || counts.reference_len > u64::MAX / 256
                 {
                     return Err(AudioError::InvalidEvaluationReceipt);
                 }
-                // Reject absurd receipts whose error counts could not fit a
-                // saturating aggregate; computed in u128 so the check itself
-                // cannot overflow on hostile input.
-                let errors = u128::from(counts.substitutions)
-                    + u128::from(counts.deletions)
-                    + u128::from(counts.insertions);
-                if errors > u128::from(u64::MAX / 256) {
-                    return Err(AudioError::InvalidEvaluationReceipt);
-                }
+                errors = errors.saturating_add(
+                    u128::from(counts.substitutions)
+                        + u128::from(counts.deletions)
+                        + u128::from(counts.insertions),
+                );
+                reference_len = reference_len.saturating_add(u128::from(counts.reference_len));
+            }
+            if errors > u128::from(u64::MAX) || reference_len > u128::from(u64::MAX) {
+                return Err(AudioError::InvalidEvaluationReceipt);
             }
             if arm.model_id == self.winner {
                 winner_arms += 1;
@@ -187,7 +189,8 @@ pub struct CohortManifest {
 
 impl CohortManifest {
     /// Parse and strictly validate one cohort manifest. Blank ids, an empty
-    /// file list, duplicate file ids, and non-hex hashes all fail.
+    /// file list, duplicate file ids, and non-hex hashes all fail; no count
+    /// of files does.
     pub fn parse(json: &str) -> AudioResult<Self> {
         let manifest: Self =
             serde_json::from_str(json).map_err(|_| AudioError::InvalidCohortManifest)?;
@@ -207,7 +210,6 @@ impl CohortManifest {
         if self.corpus_id.trim().is_empty()
             || !is_lower_hex_sha256(&self.cohort_sha256)
             || self.files.is_empty()
-            || self.files.len() > 4096
             || self.cohort_sha256 != self.computed_hash()?
         {
             return Err(AudioError::InvalidCohortManifest);

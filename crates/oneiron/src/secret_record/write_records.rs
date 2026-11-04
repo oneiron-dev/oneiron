@@ -21,6 +21,8 @@ pub enum FoundKeyAction {
     /// The owner ruled it no secret: the value went back, and its custody
     /// record was revoked.
     NotASecret,
+    /// The owner accepted the risk and kept the marked span as text by choice.
+    KeptAsText,
 }
 
 impl FoundKeyAction {
@@ -32,6 +34,7 @@ impl FoundKeyAction {
             Self::Delete => "delete",
             Self::Grant => "grant",
             Self::NotASecret => "not_a_secret",
+            Self::KeptAsText => "kept_as_text",
         }
     }
 }

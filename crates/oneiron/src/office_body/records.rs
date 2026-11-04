@@ -16,6 +16,11 @@ pub(super) const FORKS: SideTable<(EntityId, EntityId), OfficeBodyFork, Named> =
 pub(super) const EXPORTS: SideTable<Vec<u8>, OfficeBodyExportRecord, Named> =
     SideTable::new(&side_table::OFFICE_BODY_EXPORT);
 
+/// One consecutive actor group's opaque DOCX revision token, by artifact,
+/// export version and zero-based group index (FIX 595).
+pub(super) const EXPORT_AUTHORS: SideTable<(EntityId, u64, u64), OfficeBodyExportAuthor, Named> =
+    SideTable::new(&side_table::OFFICE_BODY_EXPORT_AUTHOR);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OfficeBodyKind {
@@ -188,6 +193,14 @@ pub struct OfficeBodyExportRecord {
     /// cached results, a picture whose cells were deleted collapses, a note
     /// goes with its cell. One line each; none for DOCX.
     pub effects: Vec<String>,
+}
+
+/// One consecutive actor group's author binding for a multi-revision DOCX
+/// export. `None` is a missing or erased receipt, presented as `erased`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeBodyExportAuthor {
+    pub actor: Option<EntityId>,
+    pub token: String,
 }
 
 impl OfficeBodyExportRecord {

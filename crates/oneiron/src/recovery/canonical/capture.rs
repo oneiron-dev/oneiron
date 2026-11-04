@@ -72,6 +72,7 @@ pub(crate) fn capture_canonical_window_within(
             "room_facts",
             "document_pins",
             "message_docs",
+            "repo_manifests",
             "withdrawn_cutoffs",
             "peer_origins",
             "asset_body_refs",

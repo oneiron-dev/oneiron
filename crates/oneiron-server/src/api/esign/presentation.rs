@@ -82,11 +82,12 @@ pub(super) async fn layout(
 pub(super) async fn preview(
     State(server): State<Arc<SyncServer>>,
     SigningIngress { token, admitted }: SigningIngress,
-    headers: HeaderMap,
+    parts: Parts,
     peer: NetworkPeer,
     local_peer: LocalPeer,
     body: Body,
 ) -> Response {
+    let headers = &parts.headers;
     let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
@@ -94,15 +95,22 @@ pub(super) async fn preview(
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
+    let Ok((caller, verified_actor)) = signing_caller(&parts, &server) else {
+        return refused();
+    };
     let request: super::ingress::ItemBody =
-        match super::ingress::payload(&server, admitted, &headers, body).await {
+        match super::ingress::payload(&server, admitted, headers, body).await {
             Ok(request) => request,
             Err(response) => return response,
         };
-    let Ok((page, bytes)) = server
-        .vault
-        .esign_preview_for_capability(&token, request.item, ip, ua)
-    else {
+    let Ok((page, bytes)) = server.vault.esign_preview_for_capability_as(
+        &token,
+        request.item,
+        caller,
+        verified_actor,
+        ip,
+        ua,
+    ) else {
         return refused();
     };
     let Ok(pages) =
@@ -230,18 +238,24 @@ pub(super) async fn upload_geometry(
 pub(super) async fn signature(
     State(server): State<Arc<SyncServer>>,
     SigningIngress { token, admitted }: SigningIngress,
-    headers: HeaderMap,
+    parts: Parts,
     body: Body,
 ) -> Response {
+    let headers = &parts.headers;
+    let Ok((caller, verified_actor)) = signing_caller(&parts, &server) else {
+        return refused();
+    };
     let request: super::ingress::SignatureBody =
-        match super::ingress::payload(&server, admitted, &headers, body).await {
+        match super::ingress::payload(&server, admitted, headers, body).await {
             Ok(request) => request,
             Err(response) => return response,
         };
-    match server
-        .vault
-        .esign_signature_image_for_capability(&token, &request.image_ref)
-    {
+    match server.vault.esign_signature_image_for_capability_as(
+        &token,
+        &request.image_ref,
+        caller,
+        verified_actor,
+    ) {
         Ok(bytes) => ([(header::CONTENT_TYPE, "image/png")], bytes).into_response(),
         Err(_) => refused(),
     }

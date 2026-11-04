@@ -2,16 +2,23 @@
 //! Entry: `erase_in_txn`.
 //! Definitions live here; office_body forwards their original names.
 
+use super::holder_ask::LIVE_EDIT_GROUPS;
 use super::*;
 
 /// Removes `artifact`'s office rows: its format record, its deck forks'
-/// office records, its proposals and its export records. The body itself, a Loro document in
+/// office records, its proposals and its export and revision-author records. The body itself, a Loro document in
 /// every format, goes with its forks in the typed body's own eraser.
 /// Registered in `deletion/derived_rows.rs`.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     FORKS.delete_from(store, txn, entity.as_bytes())?;
     consent::erase_in_txn(store, txn, entity)?;
     EXPORTS.delete_from(store, txn, entity.as_bytes())?;
+    EXPORT_AUTHORS.delete_from(store, txn, entity.as_bytes())?;
+    for (group, route) in LIVE_EDIT_GROUPS.scan(store, txn)? {
+        if route.artifact == *entity {
+            LIVE_EDIT_GROUPS.delete(store, txn, &group)?;
+        }
+    }
     SOURCES.delete(store, txn, entity)?;
     Ok(())
 }
@@ -269,4 +276,34 @@ pub(crate) fn fork_waits(proposal: &EntityId, refused: Option<&str>) -> Error {
         "the fork waits in proposal {} for a person outside its opener's lineage; no grant covers it, {asked}",
         proposal.to_hex()
     ))
+}
+
+/// A live edit that waits on its owner ask `ask` (FIX 596): the editor
+/// retries the same call once the owner answers.
+pub(crate) fn live_edit_waits(ask: &EntityId, artifact: &EntityId, editor: &EntityId) -> Error {
+    Error::InvalidConfig(format!(
+        "the live edit by {} on artifact {} waits on owner ask {}; no standing entity.office.edit grant covers it yet",
+        editor.to_hex(),
+        artifact.to_hex(),
+        ask.to_hex(),
+    ))
+}
+
+/// A live edit whose owner ask `ask` was accepted while its coverage still
+/// holds (FIX 596): the editor retries the same call carrying the ops
+/// again, which now lands; nothing was applied.
+pub(crate) fn live_edit_granted(ask: &EntityId, artifact: &EntityId, editor: &EntityId) -> Error {
+    Error::InvalidConfig(format!(
+        "owner ask {} accepted live edits by {} on artifact {}; retry the same edit, which now lands",
+        ask.to_hex(),
+        editor.to_hex(),
+        artifact.to_hex(),
+    ))
+}
+
+/// The typed refusal of a live edit the owner declined or let lapse
+/// (FIX 596): rejection or lapse alone refuses; pending and admission
+/// failure wait instead.
+pub(crate) fn live_edit_refused(reason: &str) -> Error {
+    Error::Refused(reason.to_owned())
 }

@@ -308,6 +308,10 @@ side_tables! {
     /// drawn at random).
     INFERENCE_SNAPSHOT_CATALOG: VaultMeta b"inference_snapshot:catalog:v1:" Named Engine
         => crate::inference_snapshot::erase_actor_in_txn;
+    /// One conversation's kept snapshots, by catalog id, so a restore reads
+    /// only its conversation's rows (FIX 11286): conversation id16 + catalog
+    /// id16, empty markers, written in the row's own transaction.
+    INFERENCE_SNAPSHOT_CONVERSATION_INDEX: VaultMeta b"inference_snapshot:conversation:v1:" Raw;
     /// Blob birth fingerprint tree used for perceptual/exact duplicate detection on ingest. Key:
     /// id16.
     INGEST_FINGERPRINT: VaultMeta b"ingest-fingerprint:v1:" LegacyJson;

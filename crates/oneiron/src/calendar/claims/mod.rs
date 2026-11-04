@@ -27,14 +27,15 @@ mod values;
 #[cfg(test)]
 mod tests;
 
-pub use self::codec::require_event_subject;
+pub use self::codec::{encode_prep_opt_in_value, require_event_subject};
 pub use self::predicates::{
     CALENDAR_CLAIM_PREDICATES, ClaimClassDescriptorRow, ICS_TRANSP_OPAQUE, ICS_TRANSP_TRANSPARENT,
     PREDICATE_CALENDAR_ATTENDEE, PREDICATE_CALENDAR_MEETING_LINK, PREDICATE_CALENDAR_ORIGIN,
-    PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_RRULE, PREDICATE_CALENDAR_SERIES_EXCEPTION,
-    PREDICATE_CALENDAR_SERIES_MASTER, PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_SUCCESSOR,
-    PREDICATE_CALENDAR_TIME_KIND, PREDICATE_CALENDAR_TZ, PREDICATE_CALENDAR_WALL_TIME,
-    claim_class_descriptors, is_calendar_claim_predicate,
+    PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_PREP_OPT_IN, PREDICATE_CALENDAR_RRULE,
+    PREDICATE_CALENDAR_SERIES_EXCEPTION, PREDICATE_CALENDAR_SERIES_MASTER,
+    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_SUCCESSOR, PREDICATE_CALENDAR_TIME_KIND,
+    PREDICATE_CALENDAR_TZ, PREDICATE_CALENDAR_WALL_TIME, claim_class_descriptors,
+    is_calendar_claim_predicate,
 };
 pub use self::values::{
     CalendarAttendeeValue, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection,
@@ -45,9 +46,9 @@ pub use self::values::{
 
 pub(crate) use self::codec::decode_status_value;
 pub(in crate::calendar) use self::codec::{
-    decode_attendee_value, decode_series_exception_value, decode_series_master_value,
-    decode_time_kind_value, decode_wall_time_end, decode_wall_time_value,
-    encode_event_outcome_value, validate_calendar_claim_value,
+    decode_attendee_value, decode_prep_opt_in_value, decode_series_exception_value,
+    decode_series_master_value, decode_time_kind_value, decode_wall_time_end,
+    decode_wall_time_value, encode_event_outcome_value, validate_calendar_claim_value,
 };
 pub(crate) use self::codec::{
     decode_event_outcome_value, decode_passport_value, validate_calendar_claim_structure,

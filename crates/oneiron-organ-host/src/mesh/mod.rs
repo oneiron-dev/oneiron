@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron_mesh_transport::{MeshConnection, MeshError};
-use oneiron_organ_protocol::{AskRefusal, ByteBuf, Hash32, OrganError, TypedBody};
+use oneiron_organ_protocol::{AskRefusal, ByteBuf, Hash32, OrganError, TypedBody, Value};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -93,7 +93,7 @@ pub(crate) struct PeerCall {
     pub organ: String,
     pub verb: String,
     pub schema: u32,
-    pub args: rmpv::Value,
+    pub args: Value,
     pub body: Option<TypedBody>,
     pub class: CallClass,
     pub deadline_ms: u64,
@@ -122,7 +122,7 @@ pub(crate) enum PeerResult {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PeerOutcome {
     pub body: Option<TypedBody>,
-    pub report: rmpv::Value,
+    pub report: Value,
     pub receipt: CallReceipt,
     pub outputs: Vec<PeerOutput>,
 }
@@ -162,7 +162,7 @@ pub(crate) enum FailureKind {
 pub(crate) struct PeerAsk {
     pub organ: String,
     pub verb: String,
-    pub value: rmpv::Value,
+    pub value: Value,
     pub call_verb: String,
     pub grant: String,
     pub deadline_ms: u64,
@@ -178,17 +178,21 @@ pub(crate) struct PeerAnswer {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PeerAnswered {
-    pub value: rmpv::Value,
+    pub value: Value,
     pub data: Option<Carried>,
     pub fetch: Option<FetchTarget>,
 }
 
+/// A mesh message in the organ protocol's codec, which neither encodes nor
+/// decodes a value by recursing over its depth.
 pub(crate) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, MeshError> {
-    rmp_serde::to_vec_named(value).map_err(|err| MeshError::Io(format!("organ mesh encode: {err}")))
+    oneiron_organ_protocol::to_vec(value)
+        .map_err(|err| MeshError::Io(format!("organ mesh encode: {err}")))
 }
 
 pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, MeshError> {
-    rmp_serde::from_slice(bytes).map_err(|err| MeshError::Io(format!("organ mesh decode: {err}")))
+    oneiron_organ_protocol::from_slice(bytes)
+        .map_err(|err| MeshError::Io(format!("organ mesh decode: {err}")))
 }
 
 /// One message out on a fresh stream, one back.

@@ -479,11 +479,13 @@ fn decode_abi_layout_check(value: &Value) -> Result<CodeRunAbiLayoutCheck> {
     Ok(check)
 }
 
-/// A binding is the pair `[name, handle]`.
+/// A binding is the triple `[name, handle, path]`; rows bound before
+/// occurrences were recorded decode from the pair `[name, handle]`.
 fn encode_binding(binding: &CodeRunResultBinding) -> Value {
     Value::Array(vec![
         Value::from(binding.name.as_str()),
         Value::from(binding.handle.as_str()),
+        Value::from(binding.path.as_str()),
     ])
 }
 
@@ -491,15 +493,21 @@ fn decode_binding(value: &Value) -> Result<CodeRunResultBinding> {
     let Value::Array(items) = value else {
         return Err(invalid_code_run_replay("result binding must be an array"));
     };
-    let [name, handle] = items.as_slice() else {
-        return Err(invalid_code_run_replay(
-            "result binding must be a [name, handle] pair",
-        ));
-    };
-    Ok(CodeRunResultBinding::new(
-        str_value(name)?,
-        str_value(handle)?,
-    ))
+    match items.as_slice() {
+        [name, handle, path] => Ok(CodeRunResultBinding::new(
+            str_value(name)?,
+            str_value(handle)?,
+            str_value(path)?,
+        )),
+        [name, handle] => Ok(CodeRunResultBinding::new(
+            str_value(name)?,
+            str_value(handle)?,
+            "",
+        )),
+        _ => Err(invalid_code_run_replay(
+            "result binding must be a [name, handle, path] triple",
+        )),
+    }
 }
 
 fn encode_live_run(binding: &CodeRunLiveRunBinding) -> Value {

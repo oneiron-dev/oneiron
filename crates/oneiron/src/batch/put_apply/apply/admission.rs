@@ -16,6 +16,7 @@ pub(super) struct FixedPut<'a> {
     pub(super) transition: Option<&'a crate::batch::VerifiedClaimTransition>,
     pub(super) posture: crate::HostingPrivacyPosture,
     pub(super) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
+    pub(super) pending_prompt: Option<&'a [EntityId]>,
     /// The authority rows the put's batch carries beside it, which a
     /// replicated AUTHORITY_LOG row is judged with (FIX 11764).
     pub(super) authority_beside: Option<crate::authority::RowsBeside<'a>>,
@@ -101,6 +102,7 @@ pub(super) fn admit_put<'a>(
                 transition,
                 posture,
                 owner_authored,
+                pending_prompt,
             },
     } = request;
     let Replication {
@@ -229,6 +231,7 @@ pub(super) fn admit_put<'a>(
             transition,
             posture,
             owner_authored,
+            pending_prompt,
             authority_beside,
             own_device,
             replicated,

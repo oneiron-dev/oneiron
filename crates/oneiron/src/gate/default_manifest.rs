@@ -11,7 +11,6 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 
-use super::class_policy::ActPosture;
 use super::constants::{
     ACT_POLICY_CLASS_KEY, ACT_POLICY_POSTURE_KEY, ACT_POLICY_SUBJECT_CLASS_KEY, ACTOR_CEILING_KEY,
     ACTOR_CLASS_KEY, ACTOR_REF_KEY, ATTRIBUTION_PRECEDENCE_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY,
@@ -1213,7 +1212,7 @@ fn act_policy_default_entry() -> (Value, Value) {
             ),
             (
                 Value::from(ACT_POLICY_POSTURE_KEY),
-                Value::from(ActPosture::RequireCapability.as_str()),
+                Value::from(crate::channel_identity::SHIPPED_OUTBOUND_SEND_POSTURE.as_str()),
             ),
         ]),
         // A self-held row is an account the product minted, so the
@@ -1230,7 +1229,7 @@ fn act_policy_default_entry() -> (Value, Value) {
             ),
             (
                 Value::from(ACT_POLICY_POSTURE_KEY),
-                Value::from(ActPosture::RequireCapability.as_str()),
+                Value::from(crate::channel_identity::SHIPPED_OUTBOUND_SEND_POSTURE.as_str()),
             ),
         ]),
     ]);

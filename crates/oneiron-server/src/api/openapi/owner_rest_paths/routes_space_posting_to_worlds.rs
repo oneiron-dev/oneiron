@@ -18,6 +18,7 @@ use crate::api::owner_routes::vault_key_routes::{
     retire_escrow_body_schema, set_password_body_schema, unlock_body_schema,
     vault_key_report_schema, vault_key_wrap_info_schema, wrap_removed_schema,
 };
+use crate::api::owner_routes::weave_digest_channel_routes::weave_digest_channel_schema;
 use crate::api::owner_routes::weave_routes::{
     clear_weave_schedule_body_schema, set_weave_schedule_body_schema, weave_lens_schema,
     weave_link_correction_schema, weave_report_body_schema, weave_report_schema,
@@ -106,6 +107,14 @@ pub(super) fn merge(spec: &mut Value) {
         "post",
         unlock_body_schema(),
         vault_key_report_schema(),
+        &[],
+    );
+    super::bind(
+        spec,
+        "/v1/owner/weave/digest-channels",
+        "put",
+        weave_digest_channel_schema(),
+        weave_digest_channel_schema(),
         &[],
     );
     super::bind(

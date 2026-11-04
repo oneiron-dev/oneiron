@@ -3,7 +3,8 @@
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream};
 use crate::code_run::{
-    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage,
+    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunRawOutput, CodeRunReplayRecord, CodeRunResultBinding,
+    ExecutorStorage, ResultOccurrence,
 };
 use crate::code_sandbox::source::PreparedSource;
 use crate::compaction::output::OutputRef;
@@ -56,6 +57,26 @@ pub(super) fn publish_output(
         storage.publish_code_run_output_sourced(path, sink, true, record.run_id, input_rows)?;
     record.outputs.push(output.clone());
     Ok(output)
+}
+
+/// Binds the published `output` to the next free automatic `r<n>` name, one
+/// past the record's live names and past any name taken: the binding joins
+/// the record, and its name and handle join the step's digest bindings.
+pub(super) fn bind_published_output(
+    record: &mut CodeRunReplayRecord,
+    digest_bindings: &mut Vec<(String, String)>,
+    output: &CodeRunRawOutput,
+) {
+    let name = (record.bindings.len() + 1..)
+        .map(|n| format!("r{n}"))
+        .find(|name| !record.bindings.iter().any(|binding| binding.name == *name))
+        .unwrap_or_default();
+    record.bindings.push(CodeRunResultBinding::new(
+        name.clone(),
+        output.handle.clone(),
+        output.path.clone(),
+    ));
+    digest_bindings.push((name, output.handle.clone()));
 }
 
 /// A step's model reply as the provider gave it, kept apart from the program
@@ -127,13 +148,70 @@ pub(super) fn result_read_path(source: OutputRef) -> String {
     )
 }
 
+/// The guest's read path for one occurrence of a stored result body: the
+/// content path plus the occurrence id, so two stores of the same bytes
+/// read under different paths and select their own taint and secrets.
+/// Paths without the occurrence segment keep the legacy meaning (the
+/// first occurrence with those bytes).
+pub(crate) fn result_read_path_for(source: OutputRef, occurrence: &ResultOccurrence) -> String {
+    format!("{}/{}", result_read_path(source), occurrence.id().to_hex())
+}
+
+/// Splits a stored-result read path into its body ref, its occurrence when
+/// present, and its chunk offset: `{ROOT}{hash}/{len}[/{occ}]/chunk/{off}`.
+/// `None` when the shape is wrong.
+pub(crate) fn parse_result_read_path(path: &str) -> Option<(OutputRef, Option<EntityId>, u64)> {
+    let rest = path.strip_prefix(RESULT_READ_ROOT)?;
+    let (base, offset) = rest.rsplit_once("/chunk/")?;
+    let mut parts = base.split('/');
+    let hash = parts.next()?;
+    let len = parts.next()?;
+    let occurrence = match (parts.next(), parts.next()) {
+        (Some(occ), None) => Some(EntityId::from_hex(occ).ok()?),
+        (None, None) => None,
+        _ => return None,
+    };
+    if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut digest = [0_u8; 32];
+    for (at, chunk) in hash.as_bytes().chunks(2).enumerate() {
+        let text = std::str::from_utf8(chunk).ok()?;
+        digest[at] = u8::from_str_radix(text, 16).ok()?;
+    }
+    let byte_len = len.parse::<u64>().ok().filter(|parsed| len == parsed.to_string())?;
+    let offset = offset
+        .parse::<u64>()
+        .ok()
+        .filter(|parsed| offset == parsed.to_string())?;
+    Some((
+        OutputRef {
+            hash: digest,
+            byte_len,
+        },
+        occurrence,
+        offset,
+    ))
+}
+
 /// Where the guest reads stored result bodies.
 pub(crate) const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
 
 /// What the guest gets in place of a result stored as a body: its handle,
-/// size, kind, completion and preview, and where to read it.
-pub(crate) fn result_handle_json(output: &CodeRunRawOutput) -> serde_json::Value {
-    json!({
+/// size, kind, completion and preview, where to read it, and the ref that
+/// names it back. The read path names the run's occurrence of the body, so
+/// a same-byte result reads its own taint and secrets instead of the first
+/// occurrence's. The ref names the same occurrence (`occurrence:<hex>`),
+/// because the guest's `refOf` prefers `ref` over `handle`: a bare handle
+/// names the first occurrence with those bytes, so a second same-byte store
+/// would slice, describe and inherit as the first one and read its taint.
+pub(crate) fn result_handle_json(owner: EntityId, output: &CodeRunRawOutput) -> serde_json::Value {
+    let occurrence = ResultOccurrence::of(Some(owner), output).ok();
+    let read = occurrence
+        .as_ref()
+        .map(|occurrence| result_read_path_for(output.output_ref(), occurrence))
+        .unwrap_or_else(|| result_read_path(output.output_ref()));
+    let mut card = json!({
         "handle": output.handle,
         "bytes": output.raw_len,
         "kind": match output.kind {
@@ -143,8 +221,12 @@ pub(crate) fn result_handle_json(output: &CodeRunRawOutput) -> serde_json::Value
         "lines": output.lines,
         "complete": output.complete,
         "preview": output.preview.text,
-        "read": result_read_path(output.output_ref()),
-    })
+        "read": read,
+    });
+    if let Some(occurrence) = occurrence.as_ref() {
+        card["ref"] = json!(format!("occurrence:{}", occurrence.id().to_hex()));
+    }
+    card
 }
 
 /// A step's streamed result as its host took it: one body sink per target,
@@ -318,6 +400,28 @@ pub(super) fn record_prepared_source(
     record_output(storage, record, source_map_output_path(seq), &map)
 }
 
+/// The output count a step's stores count from: the run's outputs minus
+/// the current step's own evidence (its reply, its script, and for a
+/// transpiled program its executed JavaScript plus source map). A step's
+/// stores then name the same ordinals live and in a shadow replay, which
+/// seeds its base from the step-start row that holds none of this
+/// evidence. Rows without current-step evidence are unchanged.
+pub(crate) fn store_ordinal_base(record: &CodeRunReplayRecord) -> usize {
+    let seq = record.step_checkpoints.len() as u64;
+    let evidence = [
+        reply_output_path(seq),
+        script_output_path(seq),
+        executed_output_path(seq),
+        source_map_output_path(seq),
+    ];
+    record.outputs.len()
+        - record
+            .outputs
+            .iter()
+            .filter(|output| evidence.iter().any(|path| path == &output.path))
+            .count()
+}
+
 /// Whether the occurrence of `output` that run `owner` holds may enter
 /// model context as it stands: one the secret scan marked, or one under
 /// live or stale taint, never does. A context output has no `owner`, and is
@@ -466,9 +570,15 @@ pub(super) fn message_result_attachment(
     record: &CodeRunReplayRecord,
     output: &CodeRunRawOutput,
 ) -> Result<crate::memory::MessageResultAttachment> {
-    let read =
-        crate::code_run::ResultRead::new(storage, record.run_id, output.clone(), None, None)?
-            .map_err(|_| Error::InvariantViolation("a whole result read is refused"))?;
+    let read = crate::code_run::ResultRead::new(
+        storage,
+        record.run_id,
+        output.clone(),
+        None,
+        None,
+        false,
+    )?
+    .map_err(|_| Error::InvariantViolation("a whole result read is refused"))?;
     let card = read.card(storage)?;
     let preview = card["preview"]
         .as_str()
@@ -538,22 +648,23 @@ pub(super) fn reply_output_path(seq: u64) -> String {
 
 /// A bridge call's result, stored as a body because it was too large for
 /// one reply.
-pub(super) fn bridge_result_output_path(bridge_seq: u64) -> String {
+pub(crate) fn bridge_result_output_path(bridge_seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/bridge/{bridge_seq:06}.result.json")
 }
 
-/// A value a program passed to `store`, named by its digest: the same bytes
-/// stored twice are one output.
-pub(crate) fn store_result_output_path(digest: &[u8; 32]) -> String {
+/// A value a program passed to `store`, named by its digest and the run's
+/// output ordinal: the same bytes stored twice are two outputs. The body
+/// bytes are still stored once by content.
+pub(crate) fn store_result_output_path(digest: &[u8; 32], ordinal: usize) -> String {
     format!(
-        "{SCRIPT_OUTPUT_DIR}/store/{}.result",
+        "{SCRIPT_OUTPUT_DIR}/store/{}.{ordinal:06}.result",
         crate::entity_id::bytes_to_hex_lower(digest)
     )
 }
 
 /// Whether `path` names a result of the run the guest may read back: a
-/// stored bridge result, a stored value, or the reply a parked call resumed
-/// with.
+/// stored bridge result, a stored value, the reply a parked call resumed
+/// with, a step's observation, or a file a step wrote.
 pub(crate) fn is_result_output_path(path: &str) -> bool {
     let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
         return false;
@@ -564,6 +675,42 @@ pub(crate) fn is_result_output_path(path: &str) -> bool {
             .strip_prefix("/store/")
             .is_some_and(|rest| rest.ends_with(".result"))
         || resumed_output_wait(path).is_some()
+        || is_observation_output_path(path)
+        || is_runtime_output_path(path)
+}
+
+/// Whether `path` names a step's observation.
+fn is_observation_output_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix('/') else {
+        return false;
+    };
+    let Some(seq) = rest.strip_suffix(".observation.txt") else {
+        return false;
+    };
+    !seq.is_empty() && seq.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Whether `path` names a file a step wrote.
+fn is_runtime_output_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix('/') else {
+        return false;
+    };
+    let Some((seq, rest)) = rest.split_once("/output/") else {
+        return false;
+    };
+    if seq.is_empty() || !seq.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    let Some((index, tail)) = rest.split_once('-') else {
+        return false;
+    };
+    !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit()) && !tail.is_empty()
 }
 
 /// Whether the run's output at `path` holds reply content an erase of the

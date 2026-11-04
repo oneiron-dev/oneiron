@@ -5,8 +5,8 @@
 //! recipient when the delivery exports: the invitation, each reminder, each
 //! resend. The vault keeps only the link's digest and non-secret export
 //! metadata; the raw link reaches the delivery envelope and nothing else.
-//! Each link works until the document's deadline, its own revocation or the
-//! document's end, and a later delivery never revokes an earlier one.
+//! Each link works until the resolved capability deadline, its own revocation
+//! or the document's end, and a later delivery never revokes an earlier one.
 //!
 //! A mint runs under the send's authority as it stands under the mint
 //! writer, never under the queued row alone: the vault owner's own recorded
@@ -28,7 +28,7 @@
 //! the ended receipts (`delivery_receipts`).
 
 use super::capability::{
-    EsignCapability, delivered_digest_in, mint_delivery_capability_in_txn,
+    EsignCapability, capability_expires_at, delivered_digest_in, mint_delivery_capability_in_txn,
     recipient_bindings_read_in,
 };
 use super::delivery_settlement::{EsignDeliveryEndReason, ended_reason, fail_ended_in_txn};
@@ -49,7 +49,7 @@ pub struct EsignDeliveryLink {
     /// The bearer capability: the recipient opens the signing page with it
     /// as the fragment (`/sign#<capability>`).
     pub capability: EsignCapability,
-    /// When the link stops working: the document's deadline.
+    /// When the link stops working: the resolved capability deadline.
     pub hard_expires_at: u64,
 }
 
@@ -194,18 +194,19 @@ impl Vault {
                 ..
             } = *mintable;
             let lease = crate::entity_id::bytes_to_hex_lower(attempt.as_bytes());
+            let hard_expires_at = capability_expires_at(&state.document);
             let capability = mint_delivery_capability_in_txn(
                 self,
                 txn,
                 document,
                 &notice.recipient,
-                state.document.expires_at,
+                hard_expires_at,
                 (&lease, attempt_count),
                 deliver,
             )?;
             Ok(EsignDeliveryMint::Minted(EsignDeliveryLink {
                 capability,
-                hard_expires_at: state.document.expires_at,
+                hard_expires_at,
             }))
         })
     }

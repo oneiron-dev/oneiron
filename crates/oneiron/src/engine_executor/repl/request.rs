@@ -346,10 +346,10 @@ impl EngineNativeExecutor<'_> {
                 .to_owned(),
         ];
         for binding in record.bindings.iter().rev().take(BRIEF_BINDINGS) {
-            let Some(output) = record
-                .outputs
-                .iter()
-                .find(|output| output.handle == binding.handle)
+            let Some(output) = record.outputs.iter().find(|output| {
+                output.handle == binding.handle
+                    && (binding.path.is_empty() || output.path == binding.path)
+            })
             else {
                 return Err(Error::CorruptedIndex("executor result binding").into());
             };

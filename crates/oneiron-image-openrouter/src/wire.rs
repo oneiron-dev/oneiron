@@ -1,7 +1,10 @@
 //! Buffered `/api/v1/images` request and response mapping.
 use crate::backend::{OpenRouterImageConfig, OpenRouterImageHttpRequest};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use oneiron::llm::image::{ImageBytes, ImageIntent, ImageResponse};
+use oneiron::llm::{
+    image::{ImageBytes, ImageIntent, ImageResponse},
+    limit,
+};
 use oneiron::{FatalLlmError, LlmError, LlmResult, ModelId, RetryableLlmError};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -136,16 +139,11 @@ pub fn classify_image_status(
     if status == 451 || matches!(code, Some("content_filter" | "content_filtered")) {
         return FatalLlmError::ContentFiltered.into();
     }
+    if limit::is_limit_status(status, body) {
+        return limit::limit_refusal(status, headers, body).into();
+    }
     match status {
         408 | 504 => RetryableLlmError::Timeout.into(),
-        429 => RetryableLlmError::RateLimited {
-            retry_after: headers
-                .iter()
-                .find(|(key, _)| key.eq_ignore_ascii_case("retry-after"))
-                .and_then(|(_, value)| value.parse::<u64>().ok()),
-            resets_at: Vec::new(),
-        }
-        .into(),
         500..=599 => RetryableLlmError::ServerError.into(),
         401 | 403 => FatalLlmError::Auth.into(),
         _ => FatalLlmError::InvalidRequest.into(),

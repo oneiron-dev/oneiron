@@ -10,7 +10,9 @@ impl Memory<'_> {
     /// `vault.code.merge_queue.enqueue`: queues stored repository proposals
     /// as one batch through the unchanged `MergeQueue::enqueue`, which keeps
     /// its size limit and green-base check and speculates six proposals at a
-    /// time (FIX 9948). No proposal is reviewed, checked or landed here.
+    /// time (FIX 9948). No proposal is reviewed or landed here; a
+    /// handle-bearing proposal is refused at once, since no test cycle is
+    /// spent on bytes that cannot land in their stack (FIX 12483).
     pub fn merge_queue_enqueue_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -133,7 +135,9 @@ impl Memory<'_> {
     /// The CALL behind a proposal ref: the engine input is built from the
     /// stored proposal alone. Its path and new bytes are the reviewed ones,
     /// and the expected bytes are read from its own retained base fork. No
-    /// byte, vote, actor or verdict comes from the request.
+    /// byte, vote, actor or verdict comes from the request. A handle-bearing
+    /// row is refused here, before any test cycle: the stack-landing guard
+    /// stays as backstop (FIX 12483).
     fn merge_queue_proposal(
         &self,
         repo: &QueuedRepo,
@@ -159,6 +163,10 @@ impl Memory<'_> {
                 &["Propose the change again from the current green commit."],
             ));
         }
+        // A handle-bearing row never enters its merge stack: refusing at
+        // enqueue spends no test cycle on bytes the landing guard would
+        // refuse. This covers the bundle arm below too, which funnels here.
+        crate::repo_mutation::proposal::resolve_handles::refuse_handle_bearing_row(&row)?;
         // A file bundle is ONE queue proposal carrying all its files, each
         // with its reviewed state change; the caller names none of it.
         if row.is_file_bundle() {

@@ -86,6 +86,22 @@ pub(super) fn active_comm_party_key_in_txn(
         .map(str::to_owned))
 }
 
+/// The `party_key` of the active comm-owned PERSON `id`: the address the
+/// identity plane knows that person by. `None` for any other id.
+///
+/// # Errors
+/// A storage error.
+pub(crate) fn person_party_key_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> crate::Result<Option<String>> {
+    active_comm_party_key_in_txn(store, rtxn, id).map_err(|error| match error {
+        CommError::Engine(error) => error,
+        other => crate::Error::InvalidConfig(other.to_string()),
+    })
+}
+
 /// The `party_key` of every comm-owned PERSON row, whatever its lifecycle:
 /// every party a party lookup can reach.
 pub(crate) fn comm_party_keys_in_txn(

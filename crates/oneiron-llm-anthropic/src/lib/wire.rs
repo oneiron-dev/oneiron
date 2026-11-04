@@ -250,9 +250,23 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
     })
 }
 
+/// A part's system text: ordinary text and a reasoning part's own words. A
+/// summary or a count describes the reasoning instead of speaking it, so it
+/// never joins the system string.
 fn text_content(part: &ContentPart) -> Option<String> {
     match part {
-        ContentPart::Text { text } | ContentPart::Reasoning { text, .. } => Some(text.clone()),
+        ContentPart::Text { text } => Some(text.clone()),
+        ContentPart::Reasoning {
+            text,
+            reasoning_kind,
+            ..
+        } if !matches!(
+            reasoning_kind,
+            oneiron::ReasoningPartKind::Summary | oneiron::ReasoningPartKind::Count
+        ) =>
+        {
+            Some(text.clone())
+        }
         _ => None,
     }
 }

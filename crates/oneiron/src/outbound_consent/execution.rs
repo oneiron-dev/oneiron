@@ -539,6 +539,10 @@ impl<S: OutboundResultSender> crate::outbound_chokepoint::OutboundTransport
     fn remote_task(&self) -> Option<crate::outbound_intent_ledger::RemoteTaskHandle> {
         self.inner.remote_task()
     }
+
+    fn reported_cost(&self) -> Option<crate::connector_key::ConnectorSpendEstimate> {
+        self.inner.reported_cost()
+    }
 }
 
 /// What one live connector question binds (ONE-2510): the original call's

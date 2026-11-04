@@ -314,7 +314,7 @@ struct Masker {
     file_ids: Vec<EntityId>,
     /// The record and place the pass reads now.
     at: Option<(EntityId, String)>,
-    /// The values the owner ruled no secret, by record: left as written.
+    /// The values the owner ruled no secret or kept as text, by record: left as written.
     kept: KeptValues,
     /// The values custody already holds (OF-560 C): each keeps its record's
     /// handle, and nothing is minted for it.
@@ -574,8 +574,8 @@ impl Masker {
         Ok(true)
     }
 
-    /// Whether the owner ruled `value` no secret in the record the pass
-    /// reads now.
+    /// Whether the owner ruled `value` no secret or kept as text in the record
+    /// the pass reads now.
     fn is_kept(&self, value: &[u8]) -> bool {
         self.at
             .as_ref()

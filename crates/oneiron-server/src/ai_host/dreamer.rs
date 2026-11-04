@@ -1503,6 +1503,49 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         outcome
     }
 
+    /// A partition window is work like its attempts: counted started
+    /// together, then each outcome folded into the same counters and
+    /// run log a serial execute feeds. No window attempt is a resident
+    /// or TASK shape, so none can end unserved.
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<oneiron::Result<DreamerAttemptExecution>> {
+        let started = u64::try_from(window.len()).unwrap_or(u64::MAX);
+        self.status.update(|status| {
+            status.dreamer.state = WorkState::Working;
+            status.dreamer.started = status.dreamer.started.saturating_add(started);
+        });
+        let outcomes = self.inner.execute_partition_window(window).await;
+        let one_writer_reads = window
+            .first()
+            .map(|(_, ctx)| ctx.vault.dreamer_one_writer_reads());
+        self.status.update(|status| {
+            status.dreamer.state = WorkState::Waiting;
+            if let Some(reads) = one_writer_reads {
+                status.dreamer_one_writer_reads = reads;
+            }
+            for outcome in &outcomes {
+                match outcome {
+                    Ok(DreamerAttemptExecution::Completed { .. }) => {
+                        status.dreamer.completed += 1;
+                    }
+                    Ok(other) => {
+                        status.dreamer.last_error = Some(format!("{other:?}"));
+                    }
+                    Err(error) => {
+                        status.dreamer.failed += 1;
+                        status.dreamer.last_error = Some(error.to_string());
+                    }
+                }
+            }
+        });
+        for ((attempt, ctx), outcome) in window.iter().zip(&outcomes) {
+            run_log::executed(attempt, ctx, outcome);
+        }
+        outcomes
+    }
+
     /// A resident dreaming on its own served model reserves and settles on
     /// its own runner line, the one its durable step meters (FIX 1152). An
     /// unresolved slot, a slot that fails to read and every other attempt

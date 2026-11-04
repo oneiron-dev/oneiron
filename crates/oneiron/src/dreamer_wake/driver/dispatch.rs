@@ -222,9 +222,7 @@ impl DreamerWakeDriver<'_> {
                         "dreamer attempt executor panicked; parking the admitted attempt"
                     );
                     stage = Some("executor_panic");
-                    Err(crate::Error::InvariantViolation(
-                        "dreamer attempt executor panicked",
-                    ))
+                    Err(crate::dreamer_wake::executor_panic_error())
                 }
             }
         };

@@ -242,6 +242,15 @@ pub trait ConnectorCallHost: OutboundResultSender {
     fn take_sent_presentation(&mut self) -> Option<SentPresentation> {
         None
     }
+
+    /// Takes the hold the last `send` met at its door (FIX 9303): the call's
+    /// durable issuer binding, read again as its credential would leave,
+    /// held its row, so nothing was presented or sent, and its outcome is a
+    /// certain non-delivery. `None` when it met none, or this host does not
+    /// read it there.
+    fn take_send_hold(&mut self) -> Option<&'static str> {
+        None
+    }
 }
 
 /// One held or pending-delivery call, as a settler lists it: its ref, the

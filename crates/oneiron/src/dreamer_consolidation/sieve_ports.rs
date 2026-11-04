@@ -473,7 +473,7 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
 
 /// Poll at most `width` children together. A ready error is just a slot
 /// value: every admitted sibling drains, and outputs retain spawn order.
-async fn ordered_slots<F: Future>(jobs: Vec<F>, width: usize) -> Vec<F::Output> {
+pub(super) async fn ordered_slots<F: Future>(jobs: Vec<F>, width: usize) -> Vec<F::Output> {
     let count = jobs.len();
     let mut queued = jobs.into_iter().enumerate();
     let mut active: Vec<(usize, Pin<Box<F>>)> = Vec::new();

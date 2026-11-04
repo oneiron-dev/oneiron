@@ -98,6 +98,11 @@ pub(super) struct ConnectorSendTaskBody {
     /// The ambient send the interrupt degrades to (FIX 7962).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) ambient_alternative: Option<super::OutboundAmbientAlternative>,
+    /// FIX 12100's selection, frozen at the schedule chokepoint: the
+    /// executor replays it instead of reselecting without it. Additive and
+    /// elided when absent, so every pre-change TASK body hydrates unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) selection: Option<super::OutboundSendSelection>,
     pub(super) occurred_at: u64,
 }
 
@@ -162,6 +167,9 @@ pub struct ConnectorSendTask {
     pub deadline_at: Option<u64>,
     /// The ambient send the interrupt degrades to (FIX 7962).
     pub ambient_alternative: Option<super::OutboundAmbientAlternative>,
+    /// FIX 12100's selection, frozen at the schedule chokepoint and replayed
+    /// by the executor; `None` dispatches as every schedule did before it.
+    pub selection: Option<super::OutboundSendSelection>,
     pub occurred_at: u64,
 }
 
@@ -238,6 +246,7 @@ pub(crate) fn put_connector_send_task_in_txn(
         calendar_invite: calendar_invite.cloned(),
         deadline_at: continuation.deadline_at,
         ambient_alternative: continuation.ambient_alternative.clone(),
+        selection: continuation.selection.clone(),
         occurred_at,
     };
     let task_body = rmp_serde::to_vec_named(&task_body)
@@ -423,6 +432,7 @@ impl Vault {
             calendar_invite: body.calendar_invite,
             deadline_at: body.deadline_at,
             ambient_alternative: body.ambient_alternative,
+            selection: body.selection,
             occurred_at: body.occurred_at,
         }))
     }

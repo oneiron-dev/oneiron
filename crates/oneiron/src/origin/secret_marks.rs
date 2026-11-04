@@ -401,7 +401,7 @@ pub(crate) fn readdress_forward_secret_marks_in_txn(
 
 /// Writes `mark` once at its id, and says whether it wrote it: the same
 /// fact again writes nothing; any other record under the id refuses.
-fn put_repo_secret_mark_in_txn(
+pub(crate) fn put_repo_secret_mark_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
     mark: &RepoSecretMark,

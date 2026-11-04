@@ -80,10 +80,15 @@ impl EngineNativeExecutor<'_> {
         let output = publish_output(&self.storage, record, path.clone(), sink)?;
         let name = format!("wait{seq}");
         match record.bindings.iter_mut().find(|held| held.name == name) {
-            Some(held) => held.handle = output.handle,
-            None => record
-                .bindings
-                .push(CodeRunResultBinding::new(name, output.handle)),
+            Some(held) => {
+                held.handle = output.handle.clone();
+                held.path = output.path.clone();
+            }
+            None => record.bindings.push(CodeRunResultBinding::new(
+                name,
+                output.handle.clone(),
+                output.path.clone(),
+            )),
         }
         let generation = self
             .storage
@@ -132,7 +137,7 @@ impl EngineNativeExecutor<'_> {
         // bodies, as on the success path (FIX 833), and are hashed into
         // its checkpoint below; the fold receipts its stores computed land
         // in the same commit, beside the bindings they describe.
-        let bindings: Vec<_> = bound
+        let mut bindings: Vec<_> = bound
             .iter()
             .map(|binding| (binding.name.clone(), binding.handle.clone()))
             .collect();
@@ -152,6 +157,20 @@ impl EngineNativeExecutor<'_> {
             observation_output_path(completed_steps),
             &observation,
         )?;
+        // The failed step's observation is a result by path (FIX 828), so it
+        // takes its fresh `r<n>` here like the success path's, or no card
+        // would name it.
+        {
+            let path = observation_output_path(completed_steps);
+            if let Some(output) = record
+                .outputs
+                .iter()
+                .find(|output| output.path == path)
+                .cloned()
+            {
+                bind_published_output(record, &mut bindings, &output);
+            }
+        }
         let terminal_status = durable_wait.map(EngineExecutorStatus::Waiting);
         if let Some(status) = &terminal_status {
             record_terminal_output(&self.storage, record, completed_steps, status)?;

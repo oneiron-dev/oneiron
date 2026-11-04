@@ -72,6 +72,22 @@ fn require_consumed_claim_bindings(
     super::verified_claim_transition::require_consumed(transitions)
 }
 
+/// Pending-birth prompt sources for `id` from this batch's births (FIX 11000):
+/// proven `Some` (possibly empty) — no entry, or an entry with no Prompt
+/// inputs, means none. Callers without batch state pass `None` (unknown,
+/// so incomplete anchors). Pure and infallible.
+pub(super) fn pending_prompt_for(
+    births: &[(EntityId, crate::provenance::birth::RowBirth)],
+    id: &EntityId,
+) -> Option<Vec<EntityId>> {
+    let prompts = births
+        .iter()
+        .find(|(row, _)| row == id)
+        .map(|(_, birth)| crate::provenance::birth::prompted::prompt_sources_of_birth(birth))
+        .unwrap_or_default();
+    Some(prompts)
+}
+
 /// Materializes the already-authorized CLAIM puts from a session-bundle merge.
 ///
 /// The narrow operation-shape check prevents the prechecked mode from being

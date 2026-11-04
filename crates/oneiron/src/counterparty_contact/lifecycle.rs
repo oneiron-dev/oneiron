@@ -338,14 +338,14 @@ pub(crate) fn rematerialize_contact_cache_in_txn(
 /// at HEAD, and a bounded lookup that missed one contact would reintroduce
 /// exactly that hole. Which heads then apply to each
 /// row stays the fold's decision, so re-deriving a row is never a suppression
-/// source of its own.
+/// source of its own. Answers the contacts whose rows it re-derived.
 pub(crate) fn rematerialize_party_contact_cache_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     party_ref: &str,
     channel_class: Option<&str>,
     now: u64,
-) -> Result<()> {
+) -> Result<Vec<EntityId>> {
     // The targets are the party's contacts by their claims (OF-272), so a
     // contact whose row a cache drop removed is re-derived too: its row comes
     // back carrying the party's head instead of staying absent while the
@@ -373,10 +373,10 @@ pub(crate) fn rematerialize_party_contact_cache_in_txn(
         }
         targets.push(contact_id);
     }
-    for contact_id in targets {
-        rematerialize_contact_cache_in_txn(vault, wtxn, &contact_id, now)?;
+    for contact_id in &targets {
+        rematerialize_contact_cache_in_txn(vault, wtxn, contact_id, now)?;
     }
-    Ok(())
+    Ok(targets)
 }
 
 /// Rebuilds the record a contact's `counterparty_contact.*` heads describe.

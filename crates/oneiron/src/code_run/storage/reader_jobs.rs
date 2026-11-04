@@ -669,6 +669,10 @@ impl ExecutorStorage<'_> {
             return Ok(None);
         };
         let mut card = crate::code_run::result_card(self, owner, &output, None)?;
+        // The parent reads its children's findings by content handle, never
+        // by the child's occurrence: name the card by the handle, as the
+        // settle reply does, so its `ref` resolves.
+        card["ref"] = serde_json::json!(handle);
         card["task"] = serde_json::json!(task.to_hex());
         Ok(Some(card))
     }
@@ -1294,19 +1298,6 @@ impl ExecutorStorage<'_> {
         let Some((job, members)) = self.live_summary(task, generation)? else {
             return Ok(Err("reader_task_settled".to_owned()));
         };
-        let mut sink = self.code_run_output_sink()?;
-        sink.write(text.as_bytes())?;
-        // The path names the digest the body is published under (FIX 5399b).
-        sink.finalize_sweep()?;
-        let path = crate::engine_executor::store_result_output_path(&sink.digest()?);
-        let output = self.publish_code_run_output(path, sink, true, job.run)?;
-        let mut from = Vec::with_capacity(members.len());
-        for member in &members {
-            if let Some(held) = self.recorded(member.owner, &member.path, &member.handle)? {
-                from.push((member.owner, held));
-            }
-        }
-        self.inherit_code_run_result_marks(job.run, &output, &from)?;
         let held = self.get_code_run_replay_record(&job.run)?;
         let expected = held
             .as_ref()
@@ -1321,11 +1312,29 @@ impl ExecutorStorage<'_> {
                 ),
             )
         });
+        let ordinal = record.outputs.len();
+        let mut sink = self.code_run_output_sink()?;
+        sink.write(text.as_bytes())?;
+        // The path names the digest the body is published under (FIX 5399b).
+        sink.finalize_sweep()?;
+        let path = crate::engine_executor::store_result_output_path(&sink.digest()?, ordinal);
+        let output = self.publish_code_run_output(path, sink, true, job.run)?;
+        let mut from = Vec::with_capacity(members.len());
+        for member in &members {
+            if let Some(held) = self.recorded(member.owner, &member.path, &member.handle)? {
+                from.push((member.owner, held));
+            }
+        }
+        self.inherit_code_run_result_marks(job.run, &output, &from)?;
         if !record.outputs.iter().any(|held| held.path == output.path) {
             record.outputs.push(output.clone());
         }
         let binding =
-            crate::code_run::CodeRunResultBinding::new(SUMMARY_RESULT_NAME, output.handle.clone());
+            crate::code_run::CodeRunResultBinding::new(
+                SUMMARY_RESULT_NAME,
+                output.handle.clone(),
+                output.path.clone(),
+            );
         match record
             .bindings
             .iter_mut()

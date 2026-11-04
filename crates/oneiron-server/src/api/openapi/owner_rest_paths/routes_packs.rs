@@ -7,6 +7,9 @@ use super::{bind, bind_answer};
 use crate::api::owner_routes::pack_preview_routes::{
     pack_import_preview_schema, preview_pack_body_schema,
 };
+use crate::api::owner_routes::pack_routes::hook_proposals::{
+    hook_proposal_answer_body_schema, hook_proposal_schema,
+};
 use crate::api::owner_routes::pack_routes::schema::{
     activation_ask_view_schema, activation_request_body_schema, agent_world_body_schema,
     bind_hooks_body_schema, bound_hooks_schema, consent_row_schema, hook_enabled_body_schema,
@@ -198,6 +201,22 @@ pub(super) fn merge(spec: &mut Value) {
         "post",
         hook_enabled_body_schema(),
         hook_enabled_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/packs/hooks/proposals/approve",
+        "post",
+        hook_proposal_answer_body_schema(),
+        hook_proposal_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/packs/hooks/proposals/discard",
+        "post",
+        hook_proposal_answer_body_schema(),
+        hook_proposal_schema(),
         &[],
     );
     // The four writes below read no body: the entity, if any, travels in the path.

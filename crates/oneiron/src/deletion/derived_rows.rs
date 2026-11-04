@@ -49,6 +49,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 9752: a fitted section install's receipt, with the skill or the
     // install claim it names.
     crate::context_board::erase_section_fit_receipts_in_txn,
+    // FIX 6870: a CODE anchor's repo manifests, aliases and minted markers.
+    crate::origin::erase_repo_manifests_in_txn,
     // FIX 9949: an uploaded or generated ASSET's reference to its bytes.
     crate::memory::release_asset_blob_in_txn,
     // FIX 10219: a subject's recognition prints, samples and active pointer.
@@ -67,6 +69,16 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::feedback::erase_handoff_in_txn,
     // FIX 9636: an erased booking EVENT's receipt intake and invite addresses.
     crate::booking::lifecycle::erase_booking_receipt_carriers_in_txn,
+    // FIX 9876: an imported MESSAGE's text hash in the history import ledger.
+    crate::ingest::history::erase_message_in_txn,
+    // FIX 9775: a PERSON's trusted-contact relations, asks and staged notices.
+    crate::counterparty_contact::erase_trusted_contact_rows_in_txn,
+    // FIX 11952: a TASK's comm receipt-import skip marker.
+    crate::comm::erase_skipped_send_receipt_in_txn,
+    // FIX 12004: meeting cards whose EVENT or copied source row is erased.
+    crate::calendar::inbox_card::erase_inbox_cards_in_txn,
+    // FIX 11815: an agent hook's proposal, by the binding claim it widens.
+    crate::skill_hub::pack_catalog::erase_hook_proposal_in_txn,
     // FIX 11965: the stamp tokens the record's document names.
     crate::provenance::erase_actor_stamp_uses_in_txn,
     #[cfg(feature = "sync")]

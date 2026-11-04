@@ -35,7 +35,7 @@ use oneiron::llm::{
 use zeroize::Zeroizing;
 
 use super::lifecycle::{self, Admitted, Counted};
-use super::park::{SNAPSHOT_MIN_FRONTIER_TOKENS, device_room, host_room, identity_part, mib};
+use super::park::{SNAPSHOT_MIN_FRONTIER_TOKENS, device_room, fits_host, identity_part, mib};
 use super::registry::{self, HostCopy, Phase, Place, Session, send};
 use super::{AuthorityVerdict, CheckpointAuthority, RestoreClaim, TURNS, policy};
 use crate::models::native_exl3::{OpFault, SnapshotRegion, session_import};
@@ -117,13 +117,16 @@ fn turn_authority(turn: &ManifestDigest) -> Option<Arc<dyn CheckpointAuthority>>
         .and_then(Weak::upgrade)
 }
 
-/// The newest kept snapshot of `vault` the turn keyed by `key` may restore.
+/// The newest kept snapshot of `vault` the turn keyed by `key` may restore:
+/// only its conversation's rows are read (FIX 11286).
 async fn candidate(vault: &Arc<Vault>, key: &SessionKey) -> Option<SnapshotRecord> {
     let reading = Arc::clone(vault);
-    let records = tokio::task::spawn_blocking(move || reading.inference_snapshot_records())
-        .await
-        .ok()?
-        .ok()?;
+    let conversation = key.anchor.conversation;
+    let records =
+        tokio::task::spawn_blocking(move || reading.inference_snapshot_records_for(&conversation))
+            .await
+            .ok()?
+            .ok()?;
     let wanted = identity_part(&key.identity, &key.conditioning);
     records
         .into_iter()
@@ -176,18 +179,23 @@ impl Restore<'_> {
     }
 
     /// The restore, in order. `Err` with whether the session it registered
-    /// holds the snapshot's pin now. Its host copy (the plaintext, then the
-    /// region made of it) runs only while it fits beside the headroom, as a
-    /// park's does; the device room is honoured where the ledger knows it,
-    /// and elsewhere the worker's own answer decides (`snapshot_busy` is
-    /// cold).
+    /// holds the snapshot's pin now. Its host copies (the plaintext, then
+    /// the region made of it) peak at two copies beside the headroom, as a
+    /// park's do: the screen admits the two-copy peak atomically and the
+    /// guard holds it committed through the import, so a concurrent restore
+    /// cannot pass its own screen on the same bytes. The device room is
+    /// honoured where the ledger knows it, and elsewhere the worker's own
+    /// answer decides (`snapshot_busy` is cold).
     async fn run(&self) -> Result<Restored, (Cold, bool)> {
         self.recheck().await.map_err(|cold| (cold, false))?;
         let bytes = self.record.plaintext_bytes;
         let ledger = super::super::device_ledger(self.worker_id);
-        if host_room(bytes) != Some(true) || !device_room(ledger.as_deref(), bytes) {
+        if fits_host(bytes).await != Some(true) || !device_room(ledger.as_deref(), bytes) {
             return Err((COLD, false));
         }
+        // The import peaks at two live copies (plaintext plus region).
+        let peak = bytes.saturating_mul(2);
+        let _host_reserved = registry::reserve_host(peak).await.ok_or((COLD, false))?;
         let holder = format!("snapshot-restore-{}", policy::next_op_id());
         if let Some(ledger) = &ledger {
             ledger.hold(&holder, mib(bytes));
@@ -229,6 +237,9 @@ impl Restore<'_> {
     /// Decrypts the snapshot, imports it into a fresh session, rechecks it
     /// and publishes it ready.
     async fn import(&self) -> Result<Restored, (Cold, bool)> {
+        // The region doubles the host copy; `run`'s reservation already
+        // holds those bytes committed through this import, so no second
+        // screen is needed here (it would charge the guard twice).
         let plaintext = self.open().await.ok_or((COLD, false))?;
         let created = self.create().await.ok_or((COLD, false))?;
         let target = SessionTarget {
@@ -238,7 +249,8 @@ impl Restore<'_> {
         // From here the session holds the pin: its release drops it.
         let region = SnapshotRegion::from_bytes(plaintext.get()).map_err(|_| (COLD, true))?;
         drop(plaintext);
-        let region = HostCopy::hold(self.key.anchor.vault, region);
+        let region_len = region.len();
+        let region = HostCopy::hold(self.key.anchor.vault, region, region_len);
         let body = SessionImport {
             target: target.clone(),
             stamp: SessionOpStamp {
@@ -302,7 +314,8 @@ impl Restore<'_> {
         .ok()?
         .ok()??;
         lifecycle::count(Counted::Open);
-        Some(HostCopy::hold(self.key.anchor.vault, opened))
+        let opened_len = u64::try_from(opened.len()).unwrap_or(u64::MAX);
+        Some(HostCopy::hold(self.key.anchor.vault, opened, opened_len))
     }
 
     /// A fresh session for the turn's key on this incarnation, registered

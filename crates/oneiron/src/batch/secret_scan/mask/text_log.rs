@@ -7,9 +7,8 @@
 
 use std::ops::Range;
 
-/// What one text's rules found, before any ruling of the record it sits
-/// in: each value custody holds, with its record's handle, and each span
-/// the door's text rules place, with its reason.
+/// What one text's rules found: non-kept known values with their handles,
+/// and shape spans with their reasons, before the record's shape rulings.
 #[derive(Clone, Default)]
 pub(super) struct TextSpans {
     pub(super) known: Vec<(Range<usize>, String)>,

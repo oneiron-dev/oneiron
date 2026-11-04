@@ -190,6 +190,24 @@ pub enum DreamerAttemptExecution {
     },
 }
 
+/// The error an executor panic leaves, from whichever containment
+/// caught it (the driver's dispatch/flush catch, or a partition
+/// window's per-slot catch): one constructor and one predicate, so
+/// the driver can mark the executor-panic stage - and end the pass
+/// without reusing the executor (FIX 7322) - no matter who caught it
+/// (FIX 12487 round 2).
+pub(crate) fn executor_panic_error() -> crate::Error {
+    crate::Error::InvariantViolation("dreamer attempt executor panicked")
+}
+
+/// Whether `error` is the shared executor-panic error above.
+pub(crate) fn is_executor_panic_error(error: &crate::Error) -> bool {
+    matches!(
+        error,
+        crate::Error::InvariantViolation("dreamer attempt executor panicked")
+    )
+}
+
 /// Per-attempt execution context handed to the executor.
 pub struct WakeAttemptContext<'a> {
     pub vault: &'a Vault,
@@ -410,6 +428,26 @@ pub trait DreamerAttemptExecutor {
         attempt: &DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution>;
+
+    /// Runs one window of plain Micro consolidation partitions the driver
+    /// admitted back to back (FIX 12487): their extractions may overlap,
+    /// but outcomes come back in window order and every commit lands
+    /// serially in that order, so the committed rows equal serial
+    /// `execute` calls over the same attempts. The window holds only
+    /// plain partition attempts (Micro kind, the scope's own attempt
+    /// type, a Ready prepared plan, no thing branch); a wrapper that
+    /// intercepts other shapes never sees its own shape here and may
+    /// forward the window whole. The default runs the window serially.
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        let mut outcomes = Vec::with_capacity(window.len());
+        for (attempt, ctx) in window.iter_mut() {
+            outcomes.push(self.execute(*attempt, ctx).await);
+        }
+        outcomes
+    }
 
     /// The host's answer to a completed TASK try's "Done means met?"
     /// (OF-533), asked once the try's result is attached and outside any

@@ -10,68 +10,11 @@ use image::imageops::{self, FilterType};
 use image::{ImageBuffer, Rgba, Rgba32FImage, RgbaImage};
 use oneiron_organ_protocol::{ErrorCode, OrganError};
 
-use crate::body::{Filter, ImageBody, Overlay, Point, Size, Step};
+use crate::body::{Filter, ImageBody, Overlay, Point, Step};
 
 /// Segments longer than this (or than the brush radius, if wider) are cut so
 /// each piece's box stays thin.
 const PIECE: f32 = 32.0;
-/// Painting may visit at most this many times the canvas's pixels in all...
-const PAINT_FACTOR: f64 = 16.0;
-/// ...or this many pixels, if more, so a small canvas can still be drawn on.
-const PAINT_FLOOR: f64 = 16_777_216.0;
-
-/// Pixels painting `overlay` on a `canvas` visits: each segment's part on
-/// the canvas, swept by the brush and its one-pixel ramp, and never more
-/// than its pieces' boxes on the canvas (each piece paints inside it).
-fn paint_work(canvas: Size, overlay: &Overlay) -> f64 {
-    let radius = overlay.stroke.width / 2.0;
-    let reach = radius + 1.0;
-    let area = (
-        -reach,
-        -reach,
-        canvas.w as f32 + reach,
-        canvas.h as f32 + reach,
-    );
-    let side = f64::from(2.0 * reach);
-    // A box's span on one axis, in whole pixels, as `paint` rounds it.
-    let span =
-        |lo: f32, hi: f32, edge: u32| f64::from((hi.min(edge as f32) - lo.max(0.0)).max(0.0)) + 2.0;
-    overlay
-        .shape
-        .segments(overlay.stroke.width)
-        .into_iter()
-        .filter_map(|(a, b)| clip(a, b, area))
-        .map(|(a, b)| {
-            let len = (b.x - a.x).hypot(b.y - a.y);
-            let swept = (f64::from(len) + side) * side;
-            let boxed = span(a.x.min(b.x) - reach, a.x.max(b.x) + reach, canvas.w)
-                * span(a.y.min(b.y) - reach, a.y.max(b.y) + reach, canvas.h);
-            let count = f64::from((len / PIECE.max(radius)).ceil().max(1.0));
-            swept.min(count * boxed)
-        })
-        .sum()
-}
-
-/// Refuses overlays that would paint far more than their canvas holds.
-///
-/// # Errors
-/// `too_large`.
-pub(crate) fn check_paint(body: &ImageBody) -> Result<(), OrganError> {
-    let pixels = f64::from(body.canvas.w) * f64::from(body.canvas.h);
-    let allowed = (pixels * PAINT_FACTOR).max(PAINT_FLOOR);
-    let work: f64 = body
-        .overlays
-        .iter()
-        .map(|overlay| paint_work(body.canvas, overlay))
-        .sum();
-    if work > allowed {
-        return Err(OrganError::new(
-            ErrorCode::TooLarge,
-            format!("the overlays would paint {work:.0} pixels; this canvas allows {allowed:.0}"),
-        ));
-    }
-    Ok(())
-}
 
 /// Renders `body` over its decoded `source`. `check` runs between steps and
 /// returns an error once the call is cancelled.
@@ -149,14 +92,15 @@ fn to_u8(unit: f32) -> u8 {
 /// Paints one overlay: coverage is the distance from each pixel centre to
 /// the stroke's segments, with a one-pixel ramp, kept as the maximum over
 /// segments so crossings do not darken; then one source-over blend. `check`
-/// runs before each piece, so a cancel lands within one piece's work.
+/// runs before each segment and each piece, so a cancel lands within one
+/// piece's work.
 fn paint(
     image: &mut RgbaImage,
     overlay: &Overlay,
     check: &dyn Fn() -> Result<(), OrganError>,
 ) -> Result<(), OrganError> {
     let (cw, ch) = image.dimensions();
-    let b = overlay.bounds();
+    let b = overlay.bounds(check)?;
     let x0 = clamp_floor(b.x0 - 1.0, cw);
     let y0 = clamp_floor(b.y0 - 1.0, ch);
     let x1 = clamp_ceil(b.x1 + 1.0, cw);
@@ -168,7 +112,8 @@ fn paint(
     let mut mask = vec![0u8; mw as usize * mh as usize];
     let radius = overlay.stroke.width / 2.0;
     let reach = radius + 1.0;
-    for (a, b) in overlay.shape.segments(overlay.stroke.width) {
+    for (a, b) in overlay.shape.segments(overlay.stroke.width, check)? {
+        check()?;
         let area = (-reach, -reach, cw as f32 + reach, ch as f32 + reach);
         let Some((a, b)) = clip(a, b, area) else {
             continue;

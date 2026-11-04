@@ -531,6 +531,8 @@ impl Store {
         &self,
         run_id: RetrievalRunId,
     ) -> Result<Vec<RetrievalOutcomeRecord>> {
+        // A run finalized through the detached door may not have landed yet.
+        self.wait_for_deferred_commits();
         let rtxn = self.env.read_txn()?;
         if !RETRIEVAL_RUN.contains(self, &rtxn, &run_id)?
             || RETRIEVAL_RUN_PROVISIONAL.contains(self, &rtxn, &run_id)?

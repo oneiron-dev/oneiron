@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1220 facade rows, 4426 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1172.
+// UniFFI census: 1223 facade rows, 4438 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1175.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -15527,6 +15527,19 @@ pub struct InboxLensDiaryReview {
     pub reason: String,
 }
 
+/// `oneiron::agent_inbox_lens::read_state::AgentInboxReadState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AgentInboxReadState {
+    #[serde(rename = "new")]
+    New,
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "later")]
+    Later,
+    #[serde(rename = "done")]
+    Done,
+}
+
 /// `oneiron::agent_inbox_lens::serve::InboxLensRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct InboxLensRow {
@@ -15578,6 +15591,12 @@ pub struct InboxLensRow {
     pub sender: Option<String>,
     #[serde(rename = "widening", default, skip_serializing_if = "Option::is_none")]
     pub widening: Option<ConsultWidening>,
+    #[serde(
+        rename = "read_state",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub read_state: Option<AgentInboxReadState>,
 }
 
 /// `oneiron::agent_inbox_lens::serve::InboxConcernGroup`.
@@ -15899,6 +15918,69 @@ pub enum InboxGroupResolution {
         #[serde(rename = "receipt")]
         receipt: ShapeApplyReceipt,
     },
+}
+
+/// `oneiron::agent_inbox_lens::read_state::InboxItemRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct InboxItemRequest {
+    #[serde(rename = "item_id")]
+    pub item_id: String,
+}
+
+/// `oneiron::agent_inbox_lens::read_state::InboxItemMessage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct InboxItemMessage {
+    #[serde(rename = "identity")]
+    pub identity: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "payload_ref")]
+    pub payload_ref: String,
+    #[serde(rename = "occurred_at")]
+    pub occurred_at: u64,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "claims_not_instructions")]
+    pub claims_not_instructions: bool,
+}
+
+/// `oneiron::agent_inbox_lens::read_state::InboxItemView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct InboxItemView {
+    #[serde(rename = "item")]
+    pub item: InboxLensRow,
+    #[serde(rename = "messages")]
+    pub messages: Vec<InboxItemMessage>,
+    #[serde(
+        rename = "notification",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub notification: Option<NotificationRow>,
+    #[serde(rename = "lens", default, skip_serializing_if = "Option::is_none")]
+    pub lens: Option<GeneratedLens>,
+}
+
+/// `oneiron::agent_inbox_lens::read_state::InboxItemMarked`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct InboxItemMarked {
+    #[serde(rename = "item_id")]
+    pub item_id: String,
+    #[serde(rename = "read_state")]
+    pub read_state: AgentInboxReadState,
+    #[serde(rename = "until", default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<u64>,
+}
+
+/// `oneiron::agent_inbox_lens::read_state::InboxItemLaterRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct InboxItemLaterRequest {
+    #[serde(rename = "item_id")]
+    pub item_id: String,
+    #[serde(rename = "until", default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<u64>,
 }
 
 /// `oneiron::write_envelope::skill_source::hub_record::HubPin`.
@@ -18366,6 +18448,8 @@ pub struct ConnectorPackView {
     pub consent_required: bool,
     #[serde(rename = "stamped")]
     pub stamped: bool,
+    #[serde(rename = "staged")]
+    pub staged: bool,
     #[serde(rename = "manifest")]
     pub manifest: SlateManifest,
     #[serde(rename = "rows")]
@@ -34772,6 +34856,45 @@ pub struct SecretCustodyCandidateReply {
     pub this_install: bool,
 }
 
+/// `oneiron_contracts::secret_custody::CustodyTier`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CustodyTier {
+    #[serde(rename = "T0Doored")]
+    T0Doored,
+    #[serde(rename = "T1Leased")]
+    T1Leased,
+    #[serde(rename = "T2LocalRegistered")]
+    T2LocalRegistered,
+}
+
+/// `oneiron::secret_record::types::TierBand`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TierBand {
+    #[serde(rename = "min")]
+    pub min: CustodyTier,
+    #[serde(rename = "max")]
+    pub max: CustodyTier,
+}
+
+/// `oneiron::secret_record::types::SecretCustodyFloor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SecretCustodyFloor {
+    #[serde(rename = "portable")]
+    pub portable: TierBand,
+    #[serde(rename = "device_bound")]
+    pub device_bound: TierBand,
+    #[serde(rename = "cross_vault")]
+    pub cross_vault: TierBand,
+    #[serde(
+        rename = "rotation_max_age_secs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rotation_max_age_secs: Option<u64>,
+    #[serde(rename = "env_bindings")]
+    pub env_bindings: std::collections::HashMap<String, String>,
+}
+
 /// `oneiron::verbs::secret_custody::SecretCustodyViewReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -34800,6 +34923,8 @@ pub struct SecretCustodyViewReply {
     pub candidates: Vec<SecretCustodyCandidateReply>,
     #[serde(rename = "delivery")]
     pub delivery: String,
+    #[serde(rename = "floor")]
+    pub floor: SecretCustodyFloor,
 }
 
 /// `oneiron::verbs::secret_custody::SecretCustodyPermit`.
@@ -36789,6 +36914,11 @@ pub enum ArtifactPublishVerbStatus {
     Proposed,
     #[serde(rename = "published")]
     Published,
+    #[serde(rename = "paced")]
+    Paced {
+        #[serde(rename = "retry_at")]
+        retry_at: u64,
+    },
 }
 
 /// `oneiron::artifact_hosting::vocabulary::ArtifactPointer`.
@@ -37704,6 +37834,8 @@ pub enum RepoProposalStatus {
     Failed,
     #[serde(rename = "Rejected")]
     Rejected,
+    #[serde(rename = "Superseded")]
+    Superseded,
 }
 
 /// `oneiron::code_document::review_views::CodeProposedStamp`.
@@ -58083,6 +58215,12 @@ pub struct EsignDocument {
     pub sequential: bool,
     #[serde(rename = "expires_at")]
     pub expires_at: u64,
+    #[serde(
+        rename = "token_expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub token_expires_at: Option<u64>,
     #[serde(rename = "items")]
     pub items: Vec<EsignItem>,
     #[serde(rename = "recipients")]
@@ -58282,6 +58420,44 @@ pub struct SignatureRow {
     pub at: u64,
 }
 
+/// `oneiron::blob_artifact::esign::model::EsignAuthenticationMethod`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EsignAuthenticationMethod {
+    #[serde(rename = "bearer")]
+    Bearer,
+    #[serde(rename = "person")]
+    Person,
+    #[serde(rename = "agent")]
+    Agent,
+}
+
+/// `oneiron::blob_artifact::esign::model::EsignSigningIntent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EsignSigningIntent {
+    #[serde(rename = "direct")]
+    Direct,
+    #[serde(rename = "held_allow")]
+    HeldAllow,
+}
+
+/// `oneiron::blob_artifact::esign::model::EsignSigningEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningEvidence {
+    #[serde(rename = "authentication_method")]
+    pub authentication_method: EsignAuthenticationMethod,
+    #[serde(
+        rename = "disclosure_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub disclosure_version: Option<String>,
+    #[serde(rename = "consent")]
+    pub consent: bool,
+    #[serde(rename = "intent")]
+    pub intent: EsignSigningIntent,
+}
+
 /// `oneiron::blob_artifact::esign::model::EsignEvent`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "event")]
@@ -58299,6 +58475,11 @@ pub enum EsignEvent {
         #[serde(rename = "recipient")]
         recipient: String,
     },
+    #[serde(rename = "access_verified")]
+    AccessVerified {
+        #[serde(rename = "recipient")]
+        recipient: String,
+    },
     #[serde(rename = "field_saved")]
     FieldSaved {
         #[serde(rename = "signature")]
@@ -58310,6 +58491,10 @@ pub enum EsignEvent {
         recipient: String,
         #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
         next: Option<String>,
+        #[serde(rename = "evidence")]
+        evidence: EsignSigningEvidence,
+        #[serde(rename = "items")]
+        items: Vec<EsignItem>,
     },
     #[serde(rename = "declined")]
     Declined {

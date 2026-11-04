@@ -346,6 +346,13 @@ pub struct EsignDispatchView {
 }
 
 impl Memory<'_> {
+    fn signing_caller(&self) -> super::SigningCaller {
+        match self.actor_class() {
+            crate::edge::EdgeActorClass::Human => super::SigningCaller::Person,
+            _ => super::SigningCaller::Agent,
+        }
+    }
+
     /// `vault.esign.signing.act`: one recipient ceremony act under the
     /// capability in the request body, the typed twin of the public
     /// `POST /sign/action` door. The capability is the authority; the
@@ -360,19 +367,23 @@ impl Memory<'_> {
         input: &EsignSigningRequest,
     ) -> MemoryResult<super::SigningOutcome> {
         let token = super::EsignCapability::parse(&input.token)?;
-        let caller = match self.actor_class() {
-            crate::edge::EdgeActorClass::Human => super::SigningCaller::Person,
-            _ => super::SigningCaller::Agent,
-        };
+        let caller = self.signing_caller();
         let vault = self.vault();
+        let verified_actor = Some(self.actor());
         Ok(match self.esign_scope()? {
-            EsignScope::Unrestricted => {
-                vault.execute_signing_action_as(&token, &input.action, caller, None, None)?
-            }
+            EsignScope::Unrestricted => vault.execute_signing_action_as(
+                &token,
+                &input.action,
+                caller,
+                verified_actor,
+                None,
+                None,
+            )?,
             EsignScope::Credential(lane) => vault.execute_signing_action_within(
                 &token,
                 &input.action,
                 caller,
+                verified_actor,
                 None,
                 None,
                 &|txn: &heed::RoTxn<'_>, document: EntityId| {
@@ -385,8 +396,8 @@ impl Memory<'_> {
     /// `vault.esign.signing.pdf`: one ceremony item's bytes under its
     /// capability, the typed twin of `POST /sign/pdf`: the pinned
     /// original while signing, the hash-checked sealed output after
-    /// sealing. Loading the item is a ceremony Load, so a first download
-    /// marks the recipient viewed, as on the public door.
+    /// sealing. Loading the item is a ceremony Load and never records Viewed;
+    /// only a later explicit human action does.
     /// # Errors
     /// A capability that does not admit the item.
     pub fn esign_signing_pdf(
@@ -395,14 +406,23 @@ impl Memory<'_> {
     ) -> MemoryResult<EsignSigningPdfView> {
         use base64::Engine;
         let token = super::EsignCapability::parse(&input.token)?;
+        let caller = self.signing_caller();
+        let verified_actor = Some(self.actor());
         let vault = self.vault();
         let bytes = match self.esign_scope()? {
-            EsignScope::Unrestricted => {
-                vault.esign_pdf_for_capability(&token, input.item, None, None)?
-            }
+            EsignScope::Unrestricted => vault.esign_pdf_for_capability_as(
+                &token,
+                input.item,
+                caller,
+                verified_actor,
+                None,
+                None,
+            )?,
             EsignScope::Credential(lane) => vault.esign_pdf_for_capability_within(
                 &token,
                 input.item,
+                caller,
+                verified_actor,
                 None,
                 None,
                 &|txn: &heed::RoTxn<'_>, document: EntityId| {
@@ -431,12 +451,18 @@ impl Memory<'_> {
     ) -> MemoryResult<EsignSigningImageView> {
         let token = super::EsignCapability::parse(&input.token)?;
         let (_memory, bytes) = admitted_signature_image(&input.png_or_jpeg_base64)?;
+        let caller = self.signing_caller();
+        let verified_actor = Some(self.actor());
         let vault = self.vault();
         let image_ref = match self.esign_scope()? {
-            EsignScope::Unrestricted => vault.upload_esign_signature_image(&token, &bytes)?,
+            EsignScope::Unrestricted => {
+                vault.upload_esign_signature_image_as(&token, &bytes, caller, verified_actor)?
+            }
             EsignScope::Credential(lane) => vault.upload_esign_signature_image_within(
                 &token,
                 &bytes,
+                caller,
+                verified_actor,
                 &|txn: &heed::RoTxn<'_>, document: EntityId| {
                     lane_scope::reaches(&lane, txn, document)
                 },
@@ -456,14 +482,21 @@ impl Memory<'_> {
     ) -> MemoryResult<EsignSigningSignatureView> {
         use base64::Engine;
         let token = super::EsignCapability::parse(&input.token)?;
+        let caller = self.signing_caller();
+        let verified_actor = Some(self.actor());
         let vault = self.vault();
         let bytes = match self.esign_scope()? {
-            EsignScope::Unrestricted => {
-                vault.esign_signature_image_for_capability(&token, &input.image_ref)?
-            }
+            EsignScope::Unrestricted => vault.esign_signature_image_for_capability_as(
+                &token,
+                &input.image_ref,
+                caller,
+                verified_actor,
+            )?,
             EsignScope::Credential(lane) => vault.esign_signature_image_for_capability_within(
                 &token,
                 &input.image_ref,
+                caller,
+                verified_actor,
                 &|txn: &heed::RoTxn<'_>, document: EntityId| {
                     lane_scope::reaches(&lane, txn, document)
                 },

@@ -195,6 +195,16 @@ impl<'p, E> CommitmentWakeExecutor<'p, E> {
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for CommitmentWakeExecutor<'_, E> {
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        // A window holds only prepared partitions; a commitment wake's
+        // payload is no partition payload, so it never has a Ready plan
+        // and never reaches a window.
+        self.inner.execute_partition_window(window).await
+    }
+
     async fn execute(
         &mut self,
         attempt: &DreamerAdmittedAttempt,

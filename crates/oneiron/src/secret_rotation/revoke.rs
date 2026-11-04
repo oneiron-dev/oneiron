@@ -51,15 +51,18 @@ pub(crate) enum RevokeCause {
     Revoked,
     /// The owner ruled the found key it holds no secret.
     RuledNoSecret,
+    /// The owner kept the found key's marked span as text by choice.
+    KeptAsText,
 }
 
 /// Whether a revoke for `cause` erases the value at rest.
 fn erases(cause: RevokeCause) -> bool {
     match (CUSTODY_REVOKE_ERASE, cause) {
         (CustodyRevokeErase::ValueCarrierInputsExceptRuledNoSecret, RevokeCause::Revoked) => true,
-        (CustodyRevokeErase::ValueCarrierInputsExceptRuledNoSecret, RevokeCause::RuledNoSecret) => {
-            false
-        }
+        (
+            CustodyRevokeErase::ValueCarrierInputsExceptRuledNoSecret,
+            RevokeCause::RuledNoSecret | RevokeCause::KeptAsText,
+        ) => false,
     }
 }
 
@@ -81,9 +84,10 @@ pub(crate) fn holds_erasable_value_in_txn(
     {
         return Ok(false);
     }
-    Ok(!crate::secret_custody::ruled_no_secret_in_txn(
-        store, txn, id,
-    )?)
+    Ok(
+        !crate::secret_custody::ruled_no_secret_in_txn(store, txn, id)?
+            && !crate::secret_custody::kept_as_text_in_txn(store, txn, id)?,
+    )
 }
 
 /// Revokes custody record `id` inside `wtxn`: the record flips `Revoked`

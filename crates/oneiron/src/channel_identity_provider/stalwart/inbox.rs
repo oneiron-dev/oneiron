@@ -8,15 +8,19 @@ use serde_json::{Value, json};
 use super::{StalwartClient, StalwartMailbox, array, invalid, method_result, string};
 use crate::channel_identity_provider::mail_placement::{MailPlacement, PlacementPolicy};
 use crate::channel_identity_provider::native_mail::{
-    NativeMailAdapter, archive_native_mail_inbound, mailbox_local_part,
+    NATIVE_MAIL_SET_ASIDE_AFTER_STOPS, NativeMailAdapter, NativeMailSkippedMessage,
+    archive_native_mail_inbound, clear_native_mail_stopping_message, mailbox_local_part,
+    native_mail_message_stops, native_mail_stopping_message, record_native_mail_skipped_message,
+    record_native_mail_stopping_message,
 };
 use crate::channel_identity_provider::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, EmailProviderInbound,
     EmailThreadHeaders,
 };
+use crate::error::ErrorKind;
 use crate::limit_ask::EngineLimit;
 use crate::surface_event::SurfaceEventAdmission;
-use crate::{EntityId, Result, Vault};
+use crate::{EntityId, Error, Result, Vault};
 
 const INBOX_PAGE_SIZE: usize = 100;
 
@@ -24,7 +28,9 @@ const INBOX_PAGE_SIZE: usize = 100;
 /// instance or placement change invalidates it. A changed query resumes from
 /// the server's changes since the cursor's state; a server that cannot
 /// calculate them restarts safely through the durable SurfaceEvent dedupe
-/// door.
+/// door. How many polls in a row a message stopped is not the cursor's: the
+/// vault's node-local set-aside table keeps it, so a restart goes on
+/// counting (FIX 12104).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StalwartInboxCursor {
     instance_ref: String,
@@ -37,6 +43,10 @@ pub struct StalwartInboxCursor {
 #[derive(Debug, Clone)]
 pub struct StalwartInboxOutcome {
     pub admissions: Vec<SurfaceEventAdmission>,
+    /// The messages this poll set aside, each after its own failure stopped
+    /// [`NATIVE_MAIL_SET_ASIDE_AFTER_STOPS`] polls in a row: each has its
+    /// durable set-aside row, and the poll read on past it.
+    pub set_aside: Vec<StalwartInboxStop>,
     /// Where the next poll resumes; the end of the mailbox when this poll
     /// read to it, so the next poll reads only what changed. After a stop it
     /// names the stopped message, so every message before it keeps its
@@ -126,9 +136,25 @@ impl StalwartQuarantine {
         }
     }
 
-    /// Resolve only a reference this quarantine format can have produced.
-    pub fn read(&self, payload_ref: &str) -> Result<Vec<u8>> {
-        let digest = payload_ref
+    /// One quarantined message's raw bytes, from a surface event's
+    /// `payload_ref`: the provider event the inbound was archived as
+    /// ([`archive_native_mail_inbound`]), which holds the message's
+    /// quarantine reference, or that reference itself. Resolves only a
+    /// reference this quarantine format can have produced.
+    pub fn read(&self, vault: &Vault, payload_ref: &str) -> Result<Vec<u8>> {
+        let archived = if payload_ref.starts_with(crate::surface_event::PROVIDER_EVENT_REF_PREFIX) {
+            let body = vault
+                .read_provider_event(payload_ref)?
+                .ok_or_else(|| invalid("native mail provider event is not held"))?;
+            let inbound: EmailProviderInbound = serde_json::from_slice(&body)
+                .map_err(|_| invalid("native mail provider event does not decode"))?;
+            inbound.payload_ref
+        } else {
+            None
+        };
+        let digest = archived
+            .as_deref()
+            .unwrap_or(payload_ref)
             .strip_prefix("native-mail:quarantine:")
             .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
             .ok_or_else(|| invalid("invalid native mail quarantine reference"))?;
@@ -227,6 +253,7 @@ impl StalwartClient {
                     position: changes.position,
                 }),
                 more: false,
+                set_aside: Vec::new(),
                 stopped: None,
             });
         }
@@ -256,10 +283,16 @@ impl StalwartClient {
         }
         // Progress is per message: a message that fails stops the page
         // there, and the cursor resumes at it with every earlier message
-        // kept. No byte cap stops one, since its bytes stream to disk.
+        // kept. One whose own failure stops the polls in a row is set aside
+        // and the page reads on. No byte cap stops one, since its bytes
+        // stream to disk. The count is the message's durable row, which a
+        // poll that reads the message drops.
         let mut admissions = Vec::new();
+        let mut set_aside = Vec::new();
         let mut stopped = None;
         if !ids.is_empty() {
+            let stopping =
+                native_mail_stopping_message(vault, identity_ref)?.map(|row| row.message_id);
             let reply = self.call(
                 "Email/get",
                 json!({
@@ -304,18 +337,46 @@ impl StalwartClient {
                     .as_str()
                     .ok_or_else(|| invalid("invalid native inbox message id"))?;
                 match read_one(id) {
-                    Ok(admission) => admissions.push(admission),
+                    Ok(admission) => {
+                        if stopping.as_deref() == Some(id) {
+                            clear_native_mail_stopping_message(vault, identity_ref, id)?;
+                        }
+                        admissions.push(admission);
+                    }
                     Err(error) => {
-                        stopped = Some(StalwartInboxStop {
+                        let counted = native_mail_message_stops(vault, identity_ref, id)?;
+                        let polls = stop_polls(counted, &error);
+                        let stop = StalwartInboxStop {
                             message_id: id.to_owned(),
                             reason: error.to_string(),
-                        });
+                        };
+                        let row = NativeMailSkippedMessage {
+                            identity_ref: identity_ref.to_hex(),
+                            mailbox_address: mailbox.address.clone(),
+                            message_id: stop.message_id.clone(),
+                            // A typed code: the error's text may quote the
+                            // message.
+                            reason: error_kind_code(error.kind()),
+                            polls,
+                            skipped_at: now,
+                        };
+                        if polls >= NATIVE_MAIL_SET_ASIDE_AFTER_STOPS {
+                            record_native_mail_skipped_message(vault, identity_ref, row)?;
+                            set_aside.push(stop);
+                            continue;
+                        }
+                        // A failure that counted is kept for the next poll,
+                        // a restart's included.
+                        if polls > counted {
+                            record_native_mail_stopping_message(vault, identity_ref, &row)?;
+                        }
+                        stopped = Some(stop);
                         break;
                     }
                 }
             }
         }
-        let read = admissions.len() as u64;
+        let read = (admissions.len() + set_aside.len()) as u64;
         let next_position = position.saturating_add(read);
         let total = query
             .get("total")
@@ -331,6 +392,7 @@ impl StalwartClient {
                 position: next_position,
             }),
             more: stopped.is_none() && next_position < total && read > 0,
+            set_aside,
             stopped,
         })
     }
@@ -450,6 +512,26 @@ impl StalwartClient {
         let thread = inbound.thread_headers.clone();
         let input = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(inbound))?;
         vault.enqueue_inbound_email(input, thread.as_ref(), now)
+    }
+}
+
+/// `kind`'s stable snake_case wire name (FIX 9177): the typed code a stored
+/// skip row keeps in place of the error's text.
+fn error_kind_code(kind: ErrorKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{kind:?}"))
+}
+
+/// How many polls in a row a message has now stopped on its own failure:
+/// one more than `counted`, the count its durable row kept. A transport or
+/// storage failure says nothing about the message, so it leaves the count
+/// as it was.
+fn stop_polls(counted: u32, error: &Error) -> u32 {
+    match error.kind() {
+        ErrorKind::Io | ErrorKind::Storage | ErrorKind::MapFull => counted,
+        _ => counted.saturating_add(1),
     }
 }
 

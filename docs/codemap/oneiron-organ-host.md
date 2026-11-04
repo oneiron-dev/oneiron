@@ -12,8 +12,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/asks.rs` | src | m | 11 crate-vis | — | Protocol 1.1 asks, the engine side: who answers, and what the receipt records |
-| `src/bin/oneiron-organ-probe.rs` | src | m | 12 crate-vis | — | A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)… |
-| `src/budget.rs` | src | m | 1 struct · 1 fn · 30 crate-vis | BudgetConfig | One admission budget for every organ: threads, memory, in-flight calls |
+| `src/bin/oneiron-organ-probe.rs` | src | m | 11 crate-vis | — | A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)… |
+| `src/budget.rs` | src | m | 1 struct · 1 fn · 31 crate-vis | BudgetConfig | One admission budget for every organ: threads, memory, in-flight calls |
 | `src/clock.rs` | src | s | 11 crate-vis | — | A call's time, which stops while the call waits for budget room (Engine ruling, 10-20; FIX 6196, 8020) |
 | `src/error.rs` | src | s | 2 enum | HostError, Unavailable | What can go wrong on the engine side of an organ call |
 | `src/fetch.rs` | src | m | 1 struct · 3 crate-vis | GuardedFetch | The granted fetch, `net.fetch`: the engine fetches for an organ that has no network of its own, inside the… |
@@ -32,12 +32,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outcome.rs` | src | s | 2 struct · 3 crate-vis | OrganOutcome, OrganOutput | What an organ call proposed, checked by the host that ran it: on this machine, or on another of the owner's… |
 | `src/pin.rs` | src | s | 2 fn | — | Organs installed from a pinned hub binary (OF-575): the pack names the binary by blake3, the bytes are… |
 | `src/process.rs` | src | L | 23 crate-vis | — | One live organ process: spawn, handshake, a reader thread, calls |
-| `src/process/frames.rs` | src | s | 4 crate-vis | — | A process's frames, booked before each allocation they make (FIX 6195, 7890): the body of each frame the… |
+| `src/process/frames.rs` | src | s | 5 crate-vis | — | A process's messages, booked before each allocation they make (FIX 6195, 7890): each frame of a message the… |
 | `src/process/lifeline.rs` | src | s | 6 crate-vis | — | One organ process's life: the child, the cell its descendants are fenced in (FIX 7887), the kernel limits… |
 | `src/process/shutdown.rs` | src | s | 4 crate-vis | — | A call the host's mesh stop cancels (FIX 4756): told with the protocol's shutdown reason, as a deadline… |
 | `src/receipt.rs` | src | s | 6 struct · 1 enum · 2 crate-vis | AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered | The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them… |
 | `src/regions.rs` | src | s | 5 crate-vis | — | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… |
-| `src/resource_memory.rs` | src | s | 1 struct · 1 enum · 1 trait · 1 crate-vis | FloorRefusal, MachineFloor, MemoryGrow | `memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to… |
+| `src/resource_memory.rs` | src | s | 1 struct · 1 enum · 2 trait · 1 crate-vis | FloorLease, FloorRefusal, MachineFloor, MemoryGrow | `memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to… |
 | `src/route.rs` | src | m | 3 struct · 2 enum · 1 trait · 6 fn | NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes | Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on… |
 | `src/sandbox.rs` | src | s | 5 crate-vis | — | What the host does to an organ process between fork and exec |
 | `src/sandbox/fence.rs` | src | s | 5 crate-vis | — | The descendant fence (FIX 7887): a cgroup of its own for each organ process, made under the engine's own… |

@@ -96,10 +96,18 @@ impl Memory<'_> {
                 // FIX 4699: a retired check has no re-read path; erasure wins
                 // over the old digest. A marked held run binds the new
                 // scrubbed digest; its re-proof is the scrubbed rebuild.
-                let plan = if run
-                    .recipient_scrub
-                    .as_ref()
-                    .is_some_and(|marker| marker.retired_check_row.is_some())
+                // FIX 12731: a dispatched check acked before its scrub keeps
+                // no retirement marker; re-prove every scrubbed dispatched
+                // check before its recorded ack replays, regardless of
+                // retirement.
+                let scrubbed_dispatched_check = run.recipient_scrub.is_some()
+                    && run.dispatched_at.is_some()
+                    && run.check_row.is_some();
+                let plan = if scrubbed_dispatched_check
+                    || run
+                        .recipient_scrub
+                        .as_ref()
+                        .is_some_and(|marker| marker.retired_check_row.is_some())
                 {
                     verify_scrubbed_run(&run)?
                 } else {

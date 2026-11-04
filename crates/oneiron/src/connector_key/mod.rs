@@ -22,6 +22,7 @@ mod manifest_drift;
 mod measure;
 mod meter;
 pub mod qualification;
+mod qualification_kit;
 mod record;
 mod setup;
 mod slate;
@@ -61,6 +62,7 @@ pub use self::meter::{
     EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRead, EffectorBudgetRowId,
     EffectorBudgetRowRead, EffectorBudgetRowSource, EffectorPoolCharge,
 };
+pub use self::qualification_kit::{ConnectorIssuerRerunOutcome, ConnectorIssuerRerunStage};
 pub use self::record::{
     CalendarPeriod, CompiledConnectorPolicy, ConnectorCallClass, ConnectorCatalogEntry,
     ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeySpec, ConnectorKeyStatus,
@@ -81,13 +83,15 @@ pub(crate) use self::charter::{
     charter_block_drifted, charter_never_list_matches, charter_never_list_matches_capability,
     charter_never_list_matches_scoped_channel,
 };
-pub(crate) use self::credential_binding::connector_issuer_hold_in_txn;
+pub(crate) use self::credential_binding::{
+    connector_issuer_hold_in_txn, connector_issuer_hold_reason_in_txn,
+};
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
     BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, budget_block_pooled,
     budget_exhausted_reason, charge_effector_budgets, charge_effector_budgets_pooled,
-    preflight_effector_budgets_pooled, release_effector_debits_in_txn,
-    reserve_connector_spend_in_txn, shares_budget_pool,
+    preflight_effector_budgets_pooled, reconcile_connector_spend_in_txn,
+    release_effector_debits_in_txn, reserve_connector_spend_in_txn, shares_budget_pool,
 };
 pub(crate) use self::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,

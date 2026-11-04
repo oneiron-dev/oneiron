@@ -3,6 +3,7 @@ mod approval_target;
 mod effect_consent;
 mod effect_contacts;
 mod effect_grants;
+mod effect_paced;
 mod effect_pair;
 mod evaluate;
 mod record;
@@ -23,6 +24,7 @@ use self::effect_grants::{
     channel_identity_envelope_admission_in_txn, standing_outbound_grant_for_effect,
     touch_standing_outbound_grant_in_txn,
 };
+pub(crate) use self::effect_paced::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::effect_pair::{PairAdmission, check_external_effect_policy_pair};
 pub(crate) use self::evaluate::evaluate_external_effect_policy;
 pub(crate) use self::record::{

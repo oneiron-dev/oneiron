@@ -58,5 +58,8 @@ pub(super) fn create_preflight(
         store.ensure_default_policy_manifest_on_open()?;
     }
     store.reconcile_retrieval_telemetry_on_open()?;
+    // A crashed lease holder's journaled decision times rise into this
+    // store's clock floor before its first decision (review #4484).
+    store.observe_authorization_lease_journal()?;
     Ok(store)
 }

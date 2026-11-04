@@ -29,14 +29,15 @@ use super::types::{
 };
 use crate::code_run::{
     CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayCursor, CodeRunReplayRecord,
-    CodeRunResultBinding, ResultFacet, ResultRead, ResultReply, SelfCall, SelfDispatchOutcome,
-    SelfDispatcher, SelfDurableWait, resolve_result, result_cannot, result_refusal, unknown_handle,
+    CodeRunResultBinding, ResultFacet, ResultOccurrence, ResultRead, ResultReply, SelfCall,
+    SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, resolve_result, result_cannot,
+    result_refusal, unknown_handle,
 };
-use crate::compaction::output::OutputRef;
 use crate::engine_executor::{
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStepOutcome, JsCodeModeStream, JsResultCall,
     JsResultTarget, RESULT_READ_ROOT, SelfDispatchResponse, StepCancellation,
-    is_result_output_path, store_result_output_path,
+    bridge_result_output_path, is_result_output_path, parse_result_read_path,
+    store_result_output_path,
 };
 use crate::limit_ask::{EngineLimit, EngineLimits, LimitWatch};
 use crate::secret_rotation::ArtifactTaintState;
@@ -53,8 +54,6 @@ pub(crate) struct ArmReads {
     /// Each observation of a step before this one, by the path its chunks
     /// are read under, and whether it was frozen clean.
     pub(crate) recoverable: Vec<(String, CodeRunRawOutput, bool)>,
-    /// The path a stored result's chunks are read under.
-    pub(crate) result_path: fn(OutputRef) -> String,
     /// Bytes one chunk read answers.
     pub(crate) chunk_bytes: usize,
 }
@@ -169,6 +168,14 @@ pub(crate) struct ShadowBridgeHost<'a> {
     /// The vault's `[limits]` scan row, frozen for the arm's reads.
     watch: LimitWatch,
     streams: ArmStreams,
+    /// The run's full output count as the step started (FIX 1393
+    /// follow-up): the base the arm's store ordinals count from, the same
+    /// base live execution counts from — every output, not only results.
+    output_ordinal_base: usize,
+    /// Matched bridge-result spills the arm consumed (live `store_answer`
+    /// bodies the arm only matched as cards). Counted in store ordinals,
+    /// as live counts them in its captured outputs.
+    spilled: usize,
     /// The run's results, those before the step first, then the arm's own.
     results: Vec<ArmResult>,
     /// The run's result names before the step.
@@ -222,6 +229,8 @@ impl<'a> ShadowBridgeHost<'a> {
             reads,
             watch: LimitWatch::new(limits),
             streams: ArmStreams::default(),
+            output_ordinal_base: crate::engine_executor::store_ordinal_base(&prepared.prefix),
+            spilled: 0,
             results,
             bindings: prepared.prefix.bindings.clone(),
             bound: Vec::new(),
@@ -304,10 +313,10 @@ impl<'a> ShadowBridgeHost<'a> {
             .unwrap_or_default()
     }
 
-    /// Binds `name` to the result `handle`; a rebind replaces the name's
-    /// entry in place.
-    fn bind(&mut self, name: String, handle: String) {
-        let binding = CodeRunResultBinding::new(name, handle);
+    /// Binds `name` to the result `handle` at its occurrence `path`; a
+    /// rebind replaces the name's entry in place.
+    fn bind(&mut self, name: String, handle: String, path: String) {
+        let binding = CodeRunResultBinding::new(name, handle, path);
         match self.bound.iter_mut().find(|held| held.name == binding.name) {
             Some(held) => *held = binding,
             None => self.bound.push(binding),
@@ -337,7 +346,8 @@ impl<'a> ShadowBridgeHost<'a> {
         self.admit_read()?;
         let live = self.live_bindings();
         let outputs = self.results.iter().map(|result| &result.output);
-        let Some((output, name)) = resolve_result(outputs, &live, &target.reference) else {
+        let Some((output, name)) = resolve_result(self.run_id, outputs, &live, &target.reference)
+        else {
             return Ok(Err(unknown_handle(&live)));
         };
         let taint = self.taint_of(&output);
@@ -367,9 +377,18 @@ impl<'a> ShadowBridgeHost<'a> {
         name: Option<String>,
         inherit: &[Taint],
     ) -> Result<(CodeRunRawOutput, Value)> {
-        let (output, secret) = self
-            .store
-            .finish_named(store_result_output_path, sink, true)?;
+        // The same ordinal live execution names this store with (FIX 1393):
+        // the step-start full-output base plus the arm's own stores so far.
+        // A replayed store then reuses its frozen occurrence and taint
+        // instead of colliding with a later ordinal.
+        let ordinal = self.output_ordinal_base
+            + self.spilled
+            + self.results.iter().filter(|held| held.own).count();
+        let (output, secret) = self.store.finish_named(
+            |digest| store_result_output_path(digest, ordinal),
+            sink,
+            true,
+        )?;
         let taint = match self
             .results
             .iter()
@@ -388,7 +407,7 @@ impl<'a> ShadowBridgeHost<'a> {
             }
         };
         let name = name.unwrap_or_else(|| self.next_auto_name());
-        self.bind(name.clone(), output.handle.clone());
+        self.bind(name.clone(), output.handle.clone(), output.path.clone());
         let card = match ResultRead::in_arm(self.run_id, output.clone(), Some(name), None, taint) {
             Ok(read) => read.arm_card(self.store)?,
             Err(_) => return Err(Error::InvariantViolation("a whole result has no range")),
@@ -517,25 +536,34 @@ impl<'a> ShadowBridgeHost<'a> {
             .map(Some)
     }
 
-    /// A chunk of one of the arm's stored results, by its read path.
+    /// A chunk of one of the arm's stored results, by its read path. The
+    /// path names the occurrence when the card gave one: a same-byte
+    /// result reads its own occurrence, never the first with its bytes.
     fn read_stored_result(&mut self, path: &str) -> Result<Option<Vec<u8>>> {
-        let result_path = self.reads.result_path;
-        let found = self.results.iter().find_map(|held| {
-            let base = result_path(held.output.output_ref());
-            let offset = path.strip_prefix(base.as_str())?.strip_prefix("/chunk/")?;
-            Some((
-                offset.to_owned(),
-                held.output.clone(),
-                !held.state.is_tainted(),
-            ))
-        });
-        let Some((offset, output, clean)) = found else {
+        let Some((wanted, occurrence, offset)) = parse_result_read_path(path) else {
             return Err(Error::InvalidConfig(
                 "stored result is outside this run".to_owned(),
             ));
         };
-        let offset = canonical_offset(&offset)
-            .ok_or_else(|| Error::InvalidConfig("invalid stored result reference".to_owned()))?;
+        let found = self.results.iter().find_map(|held| {
+            if held.output.output_ref() != wanted {
+                return None;
+            }
+            if let Some(occurrence) = &occurrence {
+                let mine = ResultOccurrence::of(Some(self.run_id), &held.output)
+                    .ok()?
+                    .id();
+                if &mine != occurrence {
+                    return None;
+                }
+            }
+            Some((held.output.clone(), !held.state.is_tainted()))
+        });
+        let Some((output, clean)) = found else {
+            return Err(Error::InvalidConfig(
+                "stored result is outside this run".to_owned(),
+            ));
+        };
         self.read_chunk(&output, clean, offset)
     }
 
@@ -683,6 +711,20 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
             }
         };
         self.record_matched(at)?;
+        // A matched bridge answer live spilled as a body shifts every later
+        // store ordinal: the arm counts it, as live counts its captured
+        // outputs, or the next store mints a new path instead of reusing
+        // its frozen occurrence. Only a row whose answer spilled counts:
+        // unavailable, trapped and mismatched answers never became bodies.
+        let window = self.window;
+        if window.bridge_calls.get(at).is_some_and(|row| {
+            window
+                .outputs
+                .iter()
+                .any(|output| output.path == bridge_result_output_path(row.seq))
+        }) {
+            self.spilled += 1;
+        }
         if let SelfDispatchOutcome::DurableWait(wait) = &outcome
             && self.durable_wait.is_none()
         {

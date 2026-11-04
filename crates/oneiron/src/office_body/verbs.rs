@@ -592,7 +592,11 @@ impl Memory<'_> {
             .office_body_commits(&artifact, actor.as_ref())?)
     }
 
-    /// `vault.artifacts.body.edit`: a person's live edit.
+    /// `vault.artifacts.body.edit`: a person's live edit. A live DOCX/XLSX
+    /// edit without a covering grant asks the vault's owner (FIX 596): the
+    /// first call waits on the ask, an accepted ask mints the standing grant
+    /// and the retry lands, and only a rejection or a lapse refuses, typed.
+    /// Decks keep today's behavior.
     pub fn artifacts_body_edit(
         &self,
         input: &OfficeBodyEditRequest,
@@ -601,17 +605,79 @@ impl Memory<'_> {
         let made_by = self.body_made_by(input.made_by.as_ref(), "office_body.edit")?;
         let base = input.base.as_deref();
         let actor = self.body_actor();
-        Ok(match &self.lifted_body_ops(&artifact, &input.ops)? {
+        let ops = self.lifted_body_ops(&artifact, &input.ops)?;
+        let gated = !matches!(ops, OfficeBodyOps::Pptx { .. });
+        let edit = match &ops {
             OfficeBodyOps::Docx { ops } => self
                 .vault()
-                .edit_docx_body(&artifact, base, ops, actor, &made_by)?,
+                .edit_docx_body(&artifact, base, ops, actor, &made_by),
             OfficeBodyOps::Xlsx { ops } => self
                 .vault()
-                .edit_xlsx_body(&artifact, base, ops, actor, &made_by)?,
+                .edit_xlsx_body(&artifact, base, ops, actor, &made_by),
             OfficeBodyOps::Pptx { ops } => self
                 .vault()
-                .edit_pptx_body(&artifact, base, ops, actor, &made_by)?,
-        })
+                .edit_pptx_body(&artifact, base, ops, actor, &made_by),
+        };
+        match edit {
+            Ok(edit) => Ok(edit),
+            Err(error) if gated && actor.actor_class() == EdgeActorClass::Human => {
+                self.live_edit_or_ask(&artifact, &actor.entity_ref(), error)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// A Human DOCX/XLSX live edit the gate refused (FIX 596): a genuine op
+    /// or shape refusal passes through untouched, while a missing grant
+    /// raises the owner ask and waits on it. Never parses messages: the
+    /// admission read disambiguates.
+    fn live_edit_or_ask(
+        &self,
+        artifact: &EntityId,
+        editor: &EntityId,
+        error: crate::Error,
+    ) -> MemoryResult<OfficeBodyEdit> {
+        if !matches!(error, crate::Error::InvalidConfig(_)) {
+            return Err(error.into());
+        }
+        if !matches!(
+            self.vault().live_edit_admission(artifact, editor)?,
+            super::LiveEditAdmission::NeedsAsk
+        ) {
+            return Err(error.into());
+        }
+        let ask = match self.raise_live_edit_holder_ask(artifact, editor) {
+            Ok(receipt) => receipt.handle.group_ref,
+            Err(error) => {
+                return Err(crate::Error::InvalidConfig(format!(
+                    "the live edit by {} on artifact {} needs a standing entity.office.edit grant, and asking the owner was refused: {error}",
+                    editor.to_hex(),
+                    artifact.to_hex(),
+                ))
+                .into());
+            }
+        };
+        Err(match self.live_edit_ask_outcome(&ask)? {
+            super::LiveEditAskOutcome::Pending => super::live_edit_waits(&ask, artifact, editor),
+            super::LiveEditAskOutcome::Accepted => {
+                super::live_edit_granted(&ask, artifact, editor)
+            }
+            super::LiveEditAskOutcome::Rejected => super::live_edit_refused(&format!(
+                "the owner declined live edits by {} on artifact {} in ask {}; {} needs a standing entity.office.edit grant",
+                editor.to_hex(),
+                artifact.to_hex(),
+                ask.to_hex(),
+                editor.to_hex(),
+            )),
+            super::LiveEditAskOutcome::Lapsed { reason } => super::live_edit_refused(&format!(
+                "the owner ask {} for live edits by {} on artifact {} {reason}; {} needs a standing entity.office.edit grant",
+                ask.to_hex(),
+                editor.to_hex(),
+                artifact.to_hex(),
+                editor.to_hex(),
+            )),
+        }
+        .into())
     }
 
     /// `vault.artifacts.body.fork.open`. The fork's run is the try a host
