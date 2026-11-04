@@ -32695,7 +32695,7 @@
      "path": "src/edit_roundtrip/paragraph_review.rs",
      "purpose": "Typed questions over paragraphs (ARCH-0076 §2, \"Paragraph or clause\"): each selected paragraph of a DOCX…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 2
      }
