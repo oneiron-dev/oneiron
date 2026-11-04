@@ -19,7 +19,7 @@ use crate::skill_attribution::LateCreditReceipt;
 use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
 use crate::temporal::TimeRange;
 
-use super::amended::{amended_receipt_shares_in_txn, amended_share_in_txn};
+use super::amended::amended_receipt_shares_in_txn;
 use super::anchored_amendment::{AnchoredEffect, anchored_rows_in_txn, effective_evidence_in_txn};
 use super::codec::invalid;
 use super::equivalent::redirect_equivalent_subjects_in_txn;
@@ -124,7 +124,6 @@ fn recomputed_person_observation(
     txn: &mut heed::RwTxn<'_>,
     credit: &LateCreditReceipt,
     attempt: &str,
-    executor: &str,
     exclude: Option<&EntityId>,
 ) -> Result<Option<(bool, f64)>> {
     let mut subjects: Vec<EntityId> = credit
@@ -141,10 +140,12 @@ fn recomputed_person_observation(
         if Some(&subject) == exclude {
             continue;
         }
-        let candidate = if let Some(share) =
-            amended_share_in_txn(vault, txn, &subject, Some(executor), attempt)?
-        {
-            Some((false, f64::from(share)))
+        // The skill restatement's executor-agnostic amended map (both arm
+        // prefixes, maximum share), so a share recorded under another
+        // executor still governs the person row.
+        let shares = amended_receipt_shares_in_txn(vault, txn, &subject)?;
+        let candidate = if let Some(share) = shares.get(attempt) {
+            Some((false, f64::from(*share)))
         } else {
             crate::skill_attribution::standing_credit_observation_in_txn(
                 vault, txn, credit, &subject,
@@ -629,7 +630,7 @@ pub(super) fn project_in_txn(
                     txn,
                     &evidence.receipt,
                 )? && let Some(observation) =
-                    recomputed_person_observation(vault, txn, &credit, attempt, executor, None)?
+                    recomputed_person_observation(vault, txn, &credit, attempt, None)?
                 {
                     record_recomputed_person_evidence_in_txn(
                         vault,
@@ -712,7 +713,7 @@ pub(super) fn project_in_txn(
         if let Some(credit) =
             crate::skill_attribution::late_credit_receipt_in_txn(vault, txn, &evidence.receipt)?
             && let Some(observation) =
-                recomputed_person_observation(vault, txn, &credit, &attempt_ref, executor, None)?
+                recomputed_person_observation(vault, txn, &credit, &attempt_ref, None)?
         {
             record_recomputed_person_evidence_in_txn(
                 vault,
@@ -754,14 +755,8 @@ pub(super) fn project_in_txn(
         };
         if let Some(credit) =
             crate::skill_attribution::late_credit_receipt_in_txn(vault, txn, &receipt)?
-            && let Some(observation) = recomputed_person_observation(
-                vault,
-                txn,
-                &credit,
-                &attempt_ref,
-                executor,
-                Some(&subject),
-            )?
+            && let Some(observation) =
+                recomputed_person_observation(vault, txn, &credit, &attempt_ref, Some(&subject))?
         {
             let mut restated = LearningEvidence::anchored(
                 receipt.clone(),
