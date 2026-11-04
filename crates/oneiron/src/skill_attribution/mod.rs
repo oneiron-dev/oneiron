@@ -68,6 +68,7 @@ mod contribution_targets;
 pub(crate) use contribution_targets::Experiment;
 pub use contribution_targets::{CheckedEdge, ContributionTarget};
 mod credit_join;
+pub(crate) use credit_join::effective_credit_subjects_in_txn;
 pub(crate) use credit_join::erase_credit_adjustments_in_txn;
 pub(crate) use credit_join::standing_credit_observation_in_txn;
 pub use credit_join::{CreditAdjustmentReceipt, credit_adjustments};
@@ -162,9 +163,9 @@ mod run_writes;
 pub(crate) use run_writes::{
     RunDerivations, current_run_write_token, enter_run_write_token, enter_run_writes,
     note_direct_derivation_in_txn, note_promoted_ops_in_txn, note_run_derivations_in_txn,
-    run_derivations,
+    run_derivations, run_write_token_from_lease,
 };
-pub use run_writes::{RunWriteToken, with_run_write_token};
+pub use run_writes::{RunWriteToken, run_write_token_of_origin, with_run_write_token};
 mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
