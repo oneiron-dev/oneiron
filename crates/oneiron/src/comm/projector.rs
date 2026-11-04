@@ -445,7 +445,6 @@ pub(super) fn project_event(
     vault: &Vault,
     event_id: EntityId,
     index: &CommProjectorIndex,
-    admission: &mut HeadAdmission<'_>,
 ) -> CommResult<ProjectorIndexDelta> {
     // A write group of its own, so the index can tell its own commit from
     // any other writer's (`CommProjectorIndex::begin_event_txn`).
@@ -465,6 +464,7 @@ fn project_event_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     event_id: EntityId,
     index: &CommProjectorIndex,
+    admission: &mut HeadAdmission<'_>,
 ) -> CommResult<ProjectorIndexDelta> {
     index.begin_event_txn(vault);
     let Some(raw) = vault.store.port_entity_record(&*wtxn, &event_id)? else {
