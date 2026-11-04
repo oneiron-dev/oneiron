@@ -33,6 +33,7 @@
     reason = "FIX 7608: the exact-source proof and some accessors wait for later slices"
 )]
 
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 use heed::RoTxn;
@@ -294,6 +295,21 @@ fn building_dir(vault: &Vault, store_id: EntityId, key: EntityId) -> Result<Path
         .join(format!("{BUILDING_DIR_PREFIX}{}", key.to_hex())))
 }
 
+/// Holds one building key through its standing check, build and publication.
+/// The lock file stays in place so waiters always lock the same inode.
+fn building_lock(vault: &Vault, store_id: EntityId, key: EntityId) -> Result<File> {
+    let parent = repo_secret_projection_root(vault)?.join(store_id.to_hex());
+    std::fs::create_dir_all(&parent)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(parent.join(format!("{BUILDING_DIR_PREFIX}{}.lock", key.to_hex())))?;
+    file.lock()?;
+    Ok(file)
+}
+
 /// The directory every copy of the canonical store `store_id` would live
 /// under, made by nothing here.
 pub(crate) fn existing_projection_store_dir(vault: &Vault, store_id: EntityId) -> PathBuf {
@@ -377,10 +393,11 @@ pub(crate) fn materialize_masked_git_graph(
         return Ok(None);
     };
     require_store_not_erased(vault, inputs.store_id)?;
+    let key = RepoProjectionClaim::graph(inputs.base.clone())?.graph;
+    let _building_lock = building_lock(vault, inputs.store_id, key)?;
     if let Some(standing) = standing_for_base(vault, wire, &inputs.base, inputs.store_id, roots)? {
         return Ok(Some(standing));
     }
-    let key = RepoProjectionClaim::graph(inputs.base.clone())?.graph;
     let building = building_dir(vault, inputs.store_id, key)?;
     // A building directory is an interrupted copy: it starts over.
     if building.exists() {
