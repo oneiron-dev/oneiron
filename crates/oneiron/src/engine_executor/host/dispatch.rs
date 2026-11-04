@@ -52,7 +52,7 @@ impl RecordingJsHost<'_, '_> {
         };
         let name = self.next_auto_name();
         self.bind(name.clone(), output.handle.clone(), output.path.clone());
-        let mut card = result_handle_json(&output);
+        let mut card = result_handle_json(self.run_id, &output);
         card["name"] = json!(name);
         self.captured.push(output);
         Ok(card)

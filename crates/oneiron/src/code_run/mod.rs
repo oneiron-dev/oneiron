@@ -101,6 +101,7 @@ pub use self::dispatcher::{
     SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
 pub(crate) use self::payload::agent_verb_observations_of;
+pub(crate) use self::result_read::unmarked_secret;
 pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,

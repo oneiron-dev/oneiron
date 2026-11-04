@@ -3,6 +3,8 @@
 //! `RecordingJsHost` and `ResolvedResult` are defined by `engine_executor::host`.
 
 use super::*;
+use crate::code_run::{ResultOccurrence, unmarked_secret};
+use crate::engine_executor::parse_result_read_path;
 
 impl RecordingJsHost<'_, '_> {
     /// The run's live result names, oldest first: this step's binds over
@@ -509,18 +511,27 @@ impl RecordingJsHost<'_, '_> {
                 "stored result read refused: result_withheld".into(),
             ));
         }
+        // The read names a body by content and, when the card gave one, an
+        // occurrence: a same-byte result reads its own occurrence, never
+        // the first with its bytes. A path without an occurrence keeps the
+        // legacy meaning (the first occurrence with those bytes).
+        let Some((wanted, occurrence, offset)) = parse_result_read_path(path) else {
+            return Err(Error::InvalidConfig(
+                "stored result is outside this run".into(),
+            ));
+        };
         for output in self.results.iter().chain(&self.captured) {
-            let base = result_read_path(output.output_ref());
-            let Some(offset) = path.strip_prefix(&format!("{base}/chunk/")) else {
+            if output.output_ref() != wanted {
                 continue;
-            };
-            let offset = offset
-                .parse::<u64>()
-                .ok()
-                .filter(|parsed| offset == parsed.to_string())
-                .ok_or(Error::InvalidConfig(
-                    "invalid stored result reference".into(),
-                ))?;
+            }
+            if let Some(occurrence) = &occurrence {
+                let mine = ResultOccurrence::of(Some(self.run_id), output)
+                    .ok()
+                    .map(|mine| mine.id());
+                if mine.as_ref() != Some(occurrence) {
+                    continue;
+                }
+            }
             if offset > output.raw_len {
                 return Err(Error::InvalidConfig(
                     "stored result offset exceeds its body".into(),
@@ -537,10 +548,18 @@ impl RecordingJsHost<'_, '_> {
                     "stored result read refused: tainted".into(),
                 ));
             }
-            return storage
+            let bytes = storage
                 .read_code_run_raw_output_range(output, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES)?
-                .ok_or(Error::CorruptedIndex("executor replay output bytes"))
-                .map(Some);
+                .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+            // A body stored before its scan read every rule may hold a
+            // secret no mark names: a chunk showing one is withheld like a
+            // card or answer showing one is.
+            if let Some(reason) = unmarked_secret(&json!(String::from_utf8_lossy(&bytes))) {
+                return Err(Error::InvalidConfig(
+                    format!("stored result read refused: {reason}"),
+                ));
+            }
+            return Ok(Some(bytes));
         }
         Err(Error::InvalidConfig(
             "stored result is outside this run".into(),

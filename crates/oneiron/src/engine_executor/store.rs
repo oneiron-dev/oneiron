@@ -4,7 +4,7 @@ use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream};
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunRawOutput, CodeRunReplayRecord, CodeRunResultBinding,
-    ExecutorStorage,
+    ExecutorStorage, ResultOccurrence,
 };
 use crate::code_sandbox::source::PreparedSource;
 use crate::compaction::output::OutputRef;
@@ -148,12 +148,63 @@ pub(super) fn result_read_path(source: OutputRef) -> String {
     )
 }
 
+/// The guest's read path for one occurrence of a stored result body: the
+/// content path plus the occurrence id, so two stores of the same bytes
+/// read under different paths and select their own taint and secrets.
+/// Paths without the occurrence segment keep the legacy meaning (the
+/// first occurrence with those bytes).
+pub(super) fn result_read_path_for(source: OutputRef, occurrence: &ResultOccurrence) -> String {
+    format!("{}/{}", result_read_path(source), occurrence.id().to_hex())
+}
+
+/// Splits a stored-result read path into its body ref, its occurrence when
+/// present, and its chunk offset: `{ROOT}{hash}/{len}[/{occ}]/chunk/{off}`.
+/// `None` when the shape is wrong.
+pub(super) fn parse_result_read_path(path: &str) -> Option<(OutputRef, Option<EntityId>, u64)> {
+    let rest = path.strip_prefix(RESULT_READ_ROOT)?;
+    let (base, offset) = rest.rsplit_once("/chunk/")?;
+    let mut parts = base.split('/');
+    let hash = parts.next()?;
+    let len = parts.next()?;
+    let occurrence = match (parts.next(), parts.next()) {
+        (Some(occ), None) => Some(EntityId::from_hex(occ).ok()?),
+        (None, None) => None,
+        _ => return None,
+    };
+    if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut digest = [0_u8; 32];
+    for (at, chunk) in hash.as_bytes().chunks(2).enumerate() {
+        let text = std::str::from_utf8(chunk).ok()?;
+        digest[at] = u8::from_str_radix(text, 16).ok()?;
+    }
+    let byte_len = len.parse::<u64>().ok().filter(|parsed| len == parsed.to_string())?;
+    let offset = offset
+        .parse::<u64>()
+        .ok()
+        .filter(|parsed| offset == parsed.to_string())?;
+    Some((
+        OutputRef {
+            hash: digest,
+            byte_len,
+        },
+        occurrence,
+        offset,
+    ))
+}
+
 /// Where the guest reads stored result bodies.
 pub(crate) const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
 
 /// What the guest gets in place of a result stored as a body: its handle,
-/// size, kind, completion and preview, and where to read it.
-pub(crate) fn result_handle_json(output: &CodeRunRawOutput) -> serde_json::Value {
+/// size, kind, completion and preview, and where to read it. The read path
+/// names the run's occurrence of the body, so a same-byte result reads
+/// its own taint and secrets instead of the first occurrence's.
+pub(crate) fn result_handle_json(owner: EntityId, output: &CodeRunRawOutput) -> serde_json::Value {
+    let read = ResultOccurrence::of(Some(owner), output)
+        .map(|occurrence| result_read_path_for(output.output_ref(), &occurrence))
+        .unwrap_or_else(|_| result_read_path(output.output_ref()));
     json!({
         "handle": output.handle,
         "bytes": output.raw_len,
@@ -164,7 +215,7 @@ pub(crate) fn result_handle_json(output: &CodeRunRawOutput) -> serde_json::Value
         "lines": output.lines,
         "complete": output.complete,
         "preview": output.preview.text,
-        "read": result_read_path(output.output_ref()),
+        "read": read,
     })
 }
 
@@ -337,6 +388,28 @@ pub(super) fn record_prepared_source(
     )?;
     let map = transpiled.record_json(prepared.original())?;
     record_output(storage, record, source_map_output_path(seq), &map)
+}
+
+/// The output count a step's stores count from: the run's outputs minus
+/// the current step's own evidence (its reply, its script, and for a
+/// transpiled program its executed JavaScript plus source map). A step's
+/// stores then name the same ordinals live and in a shadow replay, which
+/// seeds its base from the step-start row that holds none of this
+/// evidence. Rows without current-step evidence are unchanged.
+pub(crate) fn store_ordinal_base(record: &CodeRunReplayRecord) -> usize {
+    let seq = record.step_checkpoints.len() as u64;
+    let evidence = [
+        reply_output_path(seq),
+        script_output_path(seq),
+        executed_output_path(seq),
+        source_map_output_path(seq),
+    ];
+    record.outputs.len()
+        - record
+            .outputs
+            .iter()
+            .filter(|output| evidence.iter().any(|path| path == &output.path))
+            .count()
 }
 
 /// Whether the occurrence of `output` that run `owner` holds may enter
@@ -559,7 +632,7 @@ pub(super) fn reply_output_path(seq: u64) -> String {
 
 /// A bridge call's result, stored as a body because it was too large for
 /// one reply.
-pub(super) fn bridge_result_output_path(bridge_seq: u64) -> String {
+pub(crate) fn bridge_result_output_path(bridge_seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/bridge/{bridge_seq:06}.result.json")
 }
 

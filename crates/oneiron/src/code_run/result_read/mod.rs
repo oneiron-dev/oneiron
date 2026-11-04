@@ -213,14 +213,19 @@ impl ResultRead {
     }
 
     /// The reference a reply names the result by: a range by its parent's
-    /// handle, a whole result by its name, or its handle when it has none.
+    /// live name when it has one, else its handle; a whole result by its
+    /// name, or its handle when it has none.
     fn reference(&self) -> String {
+        // A range names its parent by the live name when it has one: the
+        // name resolves through its binding to the exact occurrence, while
+        // a bare handle reads the first occurrence with those bytes.
+        let parent = self
+            .name
+            .clone()
+            .unwrap_or_else(|| self.output.handle.clone());
         match self.range {
-            Some((start, end)) => format!("{}#{start}-{end}", self.output.handle),
-            None => self
-                .name
-                .clone()
-                .unwrap_or_else(|| self.output.handle.clone()),
+            Some((start, end)) => format!("{parent}#{start}-{end}"),
+            None => parent,
         }
     }
 
@@ -246,7 +251,7 @@ impl ResultRead {
     /// [`Self::card`] over `body`, the result's bytes where they are held: a
     /// run's storage, or a shadow arm's own store (`arm`).
     fn card_of(&self, body: &dyn ResultBody) -> Result<Value> {
-        let mut card = result_handle_json(&self.output);
+        let mut card = result_handle_json(self.owner, &self.output);
         card["name"] = json!(self.name);
         card["taint"] = json!({"state": taint_word(self.state), "secret": self.secret});
         card["more"] = json!(ResultFacet::ALL.map(ResultFacet::as_str));
@@ -357,15 +362,20 @@ impl ResultRead {
             watch,
         };
         let reference = self.reference();
+        // Chunk and page refs name the same parent the ref above names, so
+        // a page of a named result reparses to its occurrence, not to the
+        // first result with its bytes.
+        let parent = self
+            .name
+            .clone()
+            .unwrap_or_else(|| self.output.handle.clone());
         let reply = match facet {
             ResultFacet::Slice => slice::slice(body, &reference, input, &bounds),
             ResultFacet::Search => search::search(body, &reference, input, &bounds),
             ResultFacet::Query => {
-                query::query(body, &reference, &self.output.handle, input, &bounds, spill)
+                query::query(body, &reference, &parent, input, &bounds, spill)
             }
-            ResultFacet::Chunks => {
-                chunks::chunks(body, &reference, &self.output.handle, input, &bounds)
-            }
+            ResultFacet::Chunks => chunks::chunks(body, &reference, &parent, input, &bounds),
         }?;
         // A spilled selection is a new body, which its own sink's scan marks.
         Ok(match reply {
@@ -422,7 +432,7 @@ impl ResultRead {
 /// (OF-067): a body stored before its scan read every rule may hold a secret
 /// no mark names, so a card or an answer that shows one is withheld as a
 /// marked body's is. The body's row keeps its taint as it was.
-fn unmarked_secret(shown: &Value) -> Option<&'static str> {
+pub(crate) fn unmarked_secret(shown: &Value) -> Option<&'static str> {
     crate::batch::secret_scan::write_payload_hit(shown.to_string().as_bytes())
 }
 

@@ -26,8 +26,8 @@ use super::code_check::{CheckedDoor, ProgramAdmission, ProgramCheck, TypeFeedbac
 use super::host::executor_boundary_contract;
 use super::store::{
     RECOVERABLE_OUTPUT_CHUNK_BYTES, executed_output_path, is_result_output_path,
-    observation_output_path, recoverable_output_path, result_read_path, script_output_path,
-    source_map_output_path, validate_runtime_outputs,
+    observation_output_path, recoverable_output_path, script_output_path, source_map_output_path,
+    validate_runtime_outputs,
 };
 use super::types::{JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome};
 use super::wire::heal_executor_reply;
@@ -234,7 +234,6 @@ fn arm_reads(prepared: &PreparedShadowStep) -> ArmReads {
         .collect();
     ArmReads {
         recoverable,
-        result_path: result_read_path,
         chunk_bytes: RECOVERABLE_OUTPUT_CHUNK_BYTES,
     }
 }
