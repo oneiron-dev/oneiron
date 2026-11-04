@@ -246,8 +246,6 @@ mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
 pub(crate) mod local_replica;
-#[cfg(feature = "sync")]
-pub(crate) mod replica_edge_key;
 mod notification_updates;
 mod open_gates;
 mod outbound_send_receipt;
@@ -258,6 +256,8 @@ mod ppr_community;
 mod ppr_community_indexed;
 pub(crate) mod reader_fold_receipt;
 pub(crate) mod refinement_carrier;
+#[cfg(feature = "sync")]
+pub(crate) mod replica_edge_key;
 pub mod result_manifest;
 pub mod retrieval_policy;
 mod retrieval_telemetry;
