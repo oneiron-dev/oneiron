@@ -550,7 +550,8 @@ side_tables! {
     /// 12522): the digest the preview showed, and when it was issued and
     /// expires on the vault's recording clock. Key: id16 (caller) + id16
     /// (record).
-    ERASE_PREVIEW: VaultMeta b"erase:preview:v1:" Named;
+    ERASE_PREVIEW: VaultMeta b"erase:preview:v1:" Named
+        => crate::verbs::erase_preview_actor_in_txn;
     /// Esign machine actor id. Key: ().
     ESIGN_ARTIFACT_ACTOR: VaultMeta b"esign.artifact_actor.v1" Raw;
     /// Esign document audit event. Key: id16 + u64be.

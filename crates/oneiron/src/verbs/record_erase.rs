@@ -178,6 +178,16 @@ struct ErasePreviewRow {
     expires_at: u64,
 }
 
+/// An erased caller's retained previews go, in the actor erase's own writer.
+pub(crate) fn erase_preview_actor_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::Result<()> {
+    ERASE_PREVIEWS.delete_from(&vault.store, wtxn, actor.as_bytes())?;
+    Ok(())
+}
+
 /// `vault.records.erase_preview`: what erasing `record` would take, read
 /// under the caller's own deletion authority. It also retains the preview's
 /// digest for this caller and record until it expires, which
@@ -247,6 +257,7 @@ pub fn confirm_record_erase(
             &["Preview the erase again and confirm what it shows now."],
         ));
     }
+    drop(txn);
     let outcome = memory.confirm_entity_erase(
         &preview,
         EraseOptions {
