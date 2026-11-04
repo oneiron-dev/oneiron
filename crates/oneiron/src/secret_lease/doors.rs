@@ -20,7 +20,6 @@ use crate::secret_record::{CustodyTier, SecretBinding, SecretCustodyFloor};
 use zeroize::Zeroizing;
 
 use crate::vault::Vault;
-use oneiron_store::secret_record::SecretCustodyFloorSource;
 
 // ---------------------------------------------------------------------------
 // Vault doors
@@ -133,7 +132,7 @@ impl Vault {
         rec: &crate::secret_record::SecretCustodyAdmission,
         effector: &str,
     ) -> Result<(u32, Zeroizing<Vec<u8>>)> {
-        let floor = self.store.resolve_secret_custody_floor(txn)?;
+        let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
         admit_record_use(rec, effector, CustodyTier::T0Doored, &floor)?;
         crate::credential_door::admit_materialization_in_txn(&self.store, txn, effector, None)?;
         let generation = rec.rotation_generation;
@@ -180,7 +179,7 @@ impl Vault {
         effector: &str,
     ) -> Result<()> {
         let (id, rec) = read_record_for_ref_in_txn(&self.store, txn, secret_ref)?;
-        let floor = self.store.resolve_secret_custody_floor(txn)?;
+        let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
         admit_record_use(&rec, effector, CustodyTier::T0Doored, &floor)?;
         crate::secret_custody::refuse_revoked_use_in_txn(self, txn, &id, rec.class, &rec.name)?;
         crate::credential_door::admit_materialization_in_txn(&self.store, txn, effector, None)?;
@@ -357,7 +356,7 @@ impl Vault {
         target_path: &Path,
     ) -> Result<EntityId> {
         let (id, rec) = read_record_for_ref_in_txn(&self.store, txn, &lease.secret_ref)?;
-        let floor = self.store.resolve_secret_custody_floor(txn)?;
+        let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
         admit_record_use(
             &rec,
             &lease.binding_effector,

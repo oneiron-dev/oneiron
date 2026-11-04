@@ -55,7 +55,6 @@ use crate::ports::ShortIdStoreRead;
 use crate::secret_lease::DoorInjectionReceipt;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::vault::Vault;
-use oneiron_store::secret_record::SecretCustodyFloorSource;
 
 /// The Gate reason code of the record each run-bound mint writes.
 pub const RUN_SECRET_FOUND_REASON: &str = "gate.secret.found";
@@ -240,7 +239,7 @@ impl Vault {
         let write = CustodyWrite::of(self);
         let mut value = Zeroizing::new(value.to_vec());
         self.with_write_txn(|wtxn| {
-            let floor = self.store.resolve_secret_custody_floor(&*wtxn)?;
+            let floor = SecretCustodyFloor::resolve(&self.store, &*wtxn)?;
             let id = self.store.clock.entity_id()?;
             let mut rec = SecretCustodyRecord {
                 schema_version: SECRET_CUSTODY_SCHEMA_VERSION,

@@ -17,7 +17,6 @@ use super::types::{
     SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
 use crate::error::SecretError;
-use oneiron_store::secret_record::SecretCustodyFloorSource;
 
 pub(crate) use self::admission::{SecretCustodyAdmission, read_secret_custody_admission_in_txn};
 
@@ -120,7 +119,7 @@ pub(crate) fn refuse_bindings_wider_than_live_floor(
     txn: &heed::RoTxn<'_>,
     rec: &SecretCustodyRecord,
 ) -> Result<TierBand> {
-    let live_band = store.resolve_secret_custody_floor(txn)?.band_for(rec.class);
+    let live_band = SecretCustodyFloor::resolve(store, txn)?.band_for(rec.class);
     for b in &rec.bindings {
         if b.tier_ceiling > live_band.max {
             return Err(Error::Secret(SecretError::ManifestWidensFloor {
