@@ -1,8 +1,8 @@
 //! Model-role bindings and calibrated verdict values.
 
-use crate::claim::{ConfidenceBand, VerdictBasis};
-use crate::error::{Error, Result};
-use oneiron_model::llm::{ModelId, ModelLocality, ModelTierRef};
+use crate::llm::{ModelId, ModelLocality, ModelTierRef};
+use oneiron_contracts::claim::{ConfidenceBand, VerdictBasis};
+use oneiron_contracts::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -140,7 +140,7 @@ pub struct ModelBinding {
     /// Whether the bound model, on every route this binding names, hears audio
     /// clips on the chat wire. A decision rung over the role reads audio only
     /// when this says so and the served model's catalog row admits
-    /// [`oneiron_model::llm::LlmCapability::AudioInput`]; absent is false.
+    /// [`crate::llm::LlmCapability::AudioInput`]; absent is false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reads_audio: bool,
 }
@@ -180,6 +180,6 @@ impl CalibratedVerdict {
     }
 }
 
-pub(crate) fn invalid(reason: &str) -> Error {
+pub fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
 }

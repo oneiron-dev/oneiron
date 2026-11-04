@@ -1,7 +1,7 @@
 //! Resolved extraction-teacher probe policy values.
 
-use crate::error::Result;
 use crate::model_binding::invalid;
+use oneiron_contracts::error::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -21,11 +21,7 @@ pub struct TeacherProbePolicy {
 }
 
 impl TeacherProbePolicy {
-    pub(crate) fn resolved(
-        vault_min: u32,
-        effective_min: u32,
-        holder: Option<&str>,
-    ) -> Result<Self> {
+    pub fn resolved(vault_min: u32, effective_min: u32, holder: Option<&str>) -> Result<Self> {
         let policy = Self {
             probe_id: TEACHER_PROBE_ID.into(),
             vault_min_f1_millionths: vault_min,
@@ -57,7 +53,7 @@ impl TeacherProbePolicy {
         Ok(())
     }
 
-    pub(crate) fn identity_hash(&self) -> Result<String> {
+    pub fn identity_hash(&self) -> Result<String> {
         self.validate()?;
         let bytes = serde_json::to_vec(self)
             .map_err(|e| invalid(&format!("teacher policy serialization failed: {e}")))?;
@@ -65,7 +61,7 @@ impl TeacherProbePolicy {
     }
 }
 
-pub(crate) fn valid_holder_ref(holder: &str) -> bool {
+pub fn valid_holder_ref(holder: &str) -> bool {
     holder.len() == 32
         && holder
             .bytes()
