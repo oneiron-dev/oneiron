@@ -1221,6 +1221,7 @@ vaultCustodyMembersDrainBegin(input: unknown): unknown
 vaultCustodyMembersDrainCommit(input: unknown): unknown
 vaultCustodyMembersDrainFolder(input: unknown): unknown
 vaultCustodyMembersReenrol(input: unknown): unknown
+vaultDreamerFollowerKeyframe(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown

@@ -1340,6 +1340,8 @@ class Oneiron:
             """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
         @property
         def custody(self) -> "Oneiron._VaultCustodyVerbs": ...
+        @property
+        def dreamer(self) -> "Oneiron._VaultDreamerVerbs": ...
     class _VaultCommitmentsVerbs:
         def create(self, spec: Facade.CommitmentCreateRequest) -> Facade.CommitmentCreateReceipt:
             """Creates an authored commitment series and its due index atomically, without approving a reminder."""
@@ -4101,6 +4103,12 @@ class Oneiron:
             """The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row."""
         def folder(self, spec: Facade.CustodyMemberRef) -> Facade.CustodySetRevision:
             """The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision."""
+    class _VaultDreamerVerbs:
+        @property
+        def follower(self) -> "Oneiron._VaultDreamerFollowerVerbs": ...
+    class _VaultDreamerFollowerVerbs:
+        def keyframe(self, spec: Facade.EmptyRequest) -> Facade.DreamerFollowerKeyframeResult:
+            """The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed."""
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""

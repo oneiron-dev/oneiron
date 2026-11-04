@@ -6662,6 +6662,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.dreamer.follower.keyframe",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorAnswerRequest,
@@ -7883,6 +7888,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.identity.events.get",
     "vault.identity.proposals.resolve",
     "vault.identity.proposals.for_pair",
+    "vault.dreamer.follower.keyframe",
     "self.browser.open",
     "self.browser.observe",
     "self.browser.find",
@@ -10418,6 +10424,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.identity.proposals.for_pair" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::IdentityPairProposals,
+        >(),
+        "vault.dreamer.follower.keyframe" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::DreamerFollowerKeyframeResult,
         >(),
         "self.browser.open" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserObservationPage,
@@ -18906,6 +18915,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.dreamer.follower.keyframe" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -23186,6 +23202,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.custody.members.reenrol" => {
             let _input: crate::task_verb::sdk::CustodyMemberReenrolRequest = decode(value.clone())?;
         }
+        "vault.dreamer.follower.keyframe" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
         "connector.answer" => {
             let _input: crate::task_verb::sdk::ConnectorAnswerRequest = decode(value.clone())?;
         }
@@ -25712,6 +25731,9 @@ pub fn invoke(
         }
         "vault.custody.members.reenrol" => {
             encode(vault_custody_members_reenrol(memory, decode(value)?)?)
+        }
+        "vault.dreamer.follower.keyframe" => {
+            encode(vault_dreamer_follower_keyframe(memory, decode(value)?)?)
         }
         "connector.answer" => encode(connector_answer(memory, decode(value)?)?),
         "self.browser.open" => encode(self_browser_open(memory, decode(value)?)?),
@@ -36093,6 +36115,16 @@ pub fn vault_custody_members_reenrol(
     crate::task_verb::sdk::custody_member_reenrol_as(
         memory.vault(),
         &memory.embedded_owner("vault.custody.members.reenrol")?,
+        input,
+    )
+}
+pub fn vault_dreamer_follower_keyframe(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::DreamerFollowerKeyframeResult> {
+    crate::task_verb::sdk::dreamer_follower_keyframe_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.dreamer.follower.keyframe")?,
         input,
     )
 }

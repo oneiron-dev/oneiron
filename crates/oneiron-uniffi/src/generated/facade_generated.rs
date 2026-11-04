@@ -5936,6 +5936,11 @@ export_facade! {
     let output = client.vault_custody_members_reenrol(&input)?;
     crate::codec::lift_record("vault.custody.members.reenrol", &output)
 };
+"vault.dreamer.follower.keyframe" => fn vault_dreamer_follower_keyframe(&self) -> DreamerFollowerKeyframeResult = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.dreamer.follower.keyframe")?;
+    let output = client.vault_dreamer_follower_keyframe(&input)?;
+    crate::codec::lift_record("vault.dreamer.follower.keyframe", &output)
+};
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
     let output = client.connector_answer(&input)?;

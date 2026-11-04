@@ -1213,6 +1213,7 @@ pub enum AgentVerb {
     VaultCustodyMembersDrainCommit,
     VaultCustodyMembersDrainFolder,
     VaultCustodyMembersReenrol,
+    VaultDreamerFollowerKeyframe,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -2463,6 +2464,7 @@ impl AgentVerb {
         Self::VaultCustodyMembersDrainCommit,
         Self::VaultCustodyMembersDrainFolder,
         Self::VaultCustodyMembersReenrol,
+        Self::VaultDreamerFollowerKeyframe,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -3750,6 +3752,7 @@ impl AgentVerb {
             Self::VaultCustodyMembersDrainCommit => "vault.custody.members.drain.commit",
             Self::VaultCustodyMembersDrainFolder => "vault.custody.members.drain.folder",
             Self::VaultCustodyMembersReenrol => "vault.custody.members.reenrol",
+            Self::VaultDreamerFollowerKeyframe => "vault.dreamer.follower.keyframe",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -4980,6 +4983,7 @@ impl AgentVerb {
                 | Self::VaultCustodyMembersDrainCommit
                 | Self::VaultCustodyMembersDrainFolder
                 | Self::VaultCustodyMembersReenrol
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -6259,6 +6263,7 @@ impl AgentVerb {
                 | Self::VaultCustodyMembersDrainCommit
                 | Self::VaultCustodyMembersDrainFolder
                 | Self::VaultCustodyMembersReenrol
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -7626,6 +7631,7 @@ impl AgentVerb {
                 | Self::VaultCustodyMembersDrainCommit
                 | Self::VaultCustodyMembersDrainFolder
                 | Self::VaultCustodyMembersReenrol
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -8371,6 +8377,7 @@ impl AgentVerb {
                 | Self::VaultCustodyMembersDrainCommit
                 | Self::VaultCustodyMembersDrainFolder
                 | Self::VaultCustodyMembersReenrol
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
@@ -9661,6 +9668,7 @@ impl AgentVerb {
             Self::VaultCustodyMembersDrainCommit => &["spec"],
             Self::VaultCustodyMembersDrainFolder => &["spec"],
             Self::VaultCustodyMembersReenrol => &["spec"],
+            Self::VaultDreamerFollowerKeyframe => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -10912,6 +10920,7 @@ impl AgentVerb {
             Self::VaultCustodyMembersDrainCommit => &["spec"],
             Self::VaultCustodyMembersDrainFolder => &["spec"],
             Self::VaultCustodyMembersReenrol => &["spec"],
+            Self::VaultDreamerFollowerKeyframe => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -14497,6 +14506,9 @@ impl AgentVerb {
             }
             Self::VaultCustodyMembersReenrol => {
                 "The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision."
+            }
+            Self::VaultDreamerFollowerKeyframe => {
+                "The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."
