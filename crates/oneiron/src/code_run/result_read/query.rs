@@ -1147,8 +1147,13 @@ fn table_rows(
     let mut limited = false;
     let mut header = Vec::new();
     let mut body_start = 0;
+    // The header reader stays live for the data phase (FIX 1188 round 2):
+    // its buffer holds read-ahead past the header already charged to the
+    // scan. A fresh data reader would discard it and spend the bound twice,
+    // and a bound the header spent leaves a zero-partial Limit that repeats
+    // the same cursor forever without reaching complete_row.
+    let mut lines = LineReader::new(body, 0);
     if let Some(delimiter) = delimiter {
-        let mut lines = LineReader::new(body, 0);
         let header_bytes = match lines.next(&mut scan)? {
             Line::Row(bytes) => {
                 // A quoted header field may span physical lines: join them into one
@@ -1227,7 +1232,10 @@ fn table_rows(
         }
     }
     let mut row = cursor.row.unwrap_or(0);
-    let mut lines = LineReader::new(body, cursor.offset.unwrap_or(body_start).max(body_start));
+    let data_start = cursor.offset.unwrap_or(body_start).max(body_start);
+    if data_start != lines.at {
+        lines = LineReader::new(body, data_start);
+    }
     let mut skipped = 0_u64;
     let (done, next) = 'rows: loop {
         let start = lines.at;
