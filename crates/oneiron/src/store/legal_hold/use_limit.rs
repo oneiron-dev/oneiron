@@ -4,7 +4,7 @@
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
-use super::notice;
+use super::{id_key, notice, standing_on_in_txn};
 use crate::deletion::{LegalHoldReason, LegalHoldUseLimit};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -107,4 +107,43 @@ pub(crate) fn use_limit_in_txn(
     }
     Ok(cooperative_restriction_active_in_txn(dbs, txn, record)?
         .then_some(RecordUseLimit::CooperativeReview))
+}
+
+/// The real legal-hold fact, for callers that report that exact reason.
+pub(crate) fn legal_hold_held_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    id: &[u8; 16],
+) -> Result<bool> {
+    Ok(!standing_on_in_txn(dbs, txn, &id_key(id))?.is_empty())
+}
+
+/// Whether a standing hold or a selected cooperative restriction keeps
+/// this exact record for a door with no Store handle. Not a hold-placement
+/// fact. Read inside the destroying transaction.
+pub(crate) fn held_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<bool> {
+    if legal_hold_held_in_txn(dbs, txn, id)? {
+        return Ok(true);
+    }
+    match EntityId::from_bytes(*id) {
+        Ok(record) => cooperative_restriction_active_in_txn(dbs, txn, &record),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Whether a standing hold or selected restriction keeps this claim's
+/// gate-decision partition. `None` remains the real-hold-only claim-free one.
+pub(crate) fn partition_held_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    claim: Option<&[u8; 16]>,
+) -> Result<bool> {
+    let key = claim.map_or([0; 17], id_key);
+    if !standing_on_in_txn(dbs, txn, &key)?.is_empty() {
+        return Ok(true);
+    }
+    match claim.and_then(|id| EntityId::from_bytes(*id).ok()) {
+        Some(record) => cooperative_restriction_active_in_txn(dbs, txn, &record),
+        None => Ok(false),
+    }
 }

@@ -20,7 +20,8 @@ mod use_limit;
 
 pub(crate) use use_limit::{
     CooperativeRestriction, CooperativeRestrictionKey, cooperative_restriction_active_in_txn,
-    legal_hold_use_limit_in_txn, use_limit_in_txn,
+    held_in_txn, legal_hold_held_in_txn, legal_hold_use_limit_in_txn, partition_held_in_txn,
+    use_limit_in_txn,
 };
 use use_limit::{USE_LIMITS, keep_use_limited_in_txn};
 
@@ -259,23 +260,6 @@ fn standing_row_in_txn(
         return Err(Error::CorruptedIndex("legal hold target"));
     };
     Ok(hold)
-}
-
-/// Whether a standing hold names the record or claim partition `id`, for a
-/// door with no store handle. Read inside the destroying transaction.
-pub(crate) fn held_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<bool> {
-    Ok(!standing_on_in_txn(dbs, txn, &id_key(id))?.is_empty())
-}
-
-/// Whether a standing hold names the gate-decision partition `claim`
-/// (`None`: the claim-free one).
-pub(crate) fn partition_held_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-    claim: Option<&[u8; 16]>,
-) -> Result<bool> {
-    let key = claim.map_or([0; 17], id_key);
-    Ok(!standing_on_in_txn(dbs, txn, &key)?.is_empty())
 }
 
 /// Writes `hold`, keeping its target index exact: a standing hold indexes
