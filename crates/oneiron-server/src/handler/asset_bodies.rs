@@ -153,7 +153,7 @@ impl AdmittedFollow {
         let (_, admitted) = self.windows.iter().find(|(admitted, _)| admitted == key)?;
         let mut used = self.used.borrow_mut();
         let copy = match (used.iter().rev().find(|(read, _)| read == key), admitted) {
-            (Some((_, copy)), _) | (None, AdmittedCopy::Held(copy)) => copy.clone(),
+            (Some((_, copy)), _) | (None, AdmittedCopy::Held { copy, .. }) => copy.clone(),
             (None, AdmittedCopy::Dropped(selector)) => {
                 rebuild(vault, manager, key, selector, self.peer?)?
             }
@@ -258,24 +258,36 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
                 authorize_sync_selector(server.vault.as_ref(), selector_grant_scope(), selector)
                     .is_ok()
             });
-            // A held copy froze the peer's world read settings at its fetch:
-            // rejudge it under what they say now, as the window-frame door
-            // judges the frames it releases. A window its world keeps home
-            // moves no bodies, and its transfer ends, as if unfollowed; a
-            // dropped copy is rebuilt under today's settings on its next use.
+            // Rebuild held copies under today's grant, pact ceiling and
+            // peer world settings. Reauthorizing a selector alone does not
+            // update the scope baked into its old copy. Dropped copies stay
+            // lazy, so this read still holds at most the cache's copy bound.
             let peer = state.peer_machine(server.vault());
             let windows = windows
                 .into_iter()
-                .filter(|(key, copy)| match copy {
-                    AdmittedCopy::Held(doc) => !oneiron::sync::window::export_withheld_for(
-                        server.vault.as_ref(),
-                        key,
-                        doc,
-                        &loro::VersionVector::default(),
-                        oneiron::sync::window::Withhold::Peer(peer),
-                    )
-                    .unwrap_or(true),
-                    AdmittedCopy::Dropped(_) => true,
+                .filter_map(|(key, admitted)| match admitted {
+                    AdmittedCopy::Held { selector, .. } => {
+                        let copy = rebuild(
+                            server.vault.as_ref(),
+                            &server.reassert_manager,
+                            &key,
+                            &selector,
+                            peer,
+                        )?;
+                        if oneiron::sync::window::export_withheld_for(
+                            server.vault.as_ref(),
+                            &key,
+                            &copy,
+                            &loro::VersionVector::default(),
+                            oneiron::sync::window::Withhold::Peer(peer),
+                        )
+                        .unwrap_or(true)
+                        {
+                            return None;
+                        }
+                        Some((key, AdmittedCopy::Held { copy, selector }))
+                    }
+                    admitted @ AdmittedCopy::Dropped(_) => Some((key, admitted)),
                 })
                 .collect::<Vec<_>>();
             let peer = windows

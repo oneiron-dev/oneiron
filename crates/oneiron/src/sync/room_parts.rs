@@ -90,17 +90,19 @@ pub(super) fn waits(map: &LoroMap, key: &str) -> bool {
 /// a waiting manifest with its present parts when its room is gone (FIX
 /// 12127).
 pub(super) fn waiting_manifests(map: &LoroMap) -> Vec<(String, Parts)> {
-    let mut waiting = Vec::new();
+    let mut manifests = Vec::new();
     map.for_each(|key, value| {
         if !is_part_key(key)
             && let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
             && let Some(parts) = manifest(&bytes)
-            && parts.keys().any(|part| !map_contains_binary(map, &part))
         {
-            waiting.push((key.to_owned(), parts));
+            manifests.push((key.to_owned(), parts));
         }
     });
-    waiting
+    manifests
+        .into_iter()
+        .filter(|(_, parts)| parts.keys().any(|part| !map_contains_binary(map, &part)))
+        .collect()
 }
 
 /// Each row `map` holds under a key `keep` takes, joined, with its key. A

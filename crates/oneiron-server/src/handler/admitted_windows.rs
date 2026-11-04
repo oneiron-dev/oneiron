@@ -41,7 +41,10 @@ struct Admitted {
 /// One admitted window as a body frame or poll reads it: its held copy, or,
 /// once dropped, the selector its next use filters it again by.
 pub(super) enum AdmittedCopy {
-    Held(LoroDoc),
+    Held {
+        copy: LoroDoc,
+        selector: SyncSelector,
+    },
     Dropped(SyncSelector),
 }
 
@@ -94,7 +97,10 @@ impl AdmittedWindows {
             .filter(|(_, admitted)| admits(&admitted.selector))
             .map(|(key, admitted)| {
                 let copy = match &admitted.copy {
-                    Some((_, doc)) => AdmittedCopy::Held(doc.clone()),
+                    Some((_, doc)) => AdmittedCopy::Held {
+                        copy: doc.clone(),
+                        selector: admitted.selector.clone(),
+                    },
                     None => AdmittedCopy::Dropped(admitted.selector.clone()),
                 };
                 (key.clone(), copy)
