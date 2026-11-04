@@ -166,6 +166,11 @@ pub struct FolderSourceFile {
     /// original was kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original: Option<FileOriginal>,
+    /// When the ledger first saw the file, kept across partial landings
+    /// that hold the meta back so the row stays pending (REVIEW-4381 P1);
+    /// 0 only for rows written before it.
+    #[serde(default)]
+    pub first_seen_at: u64,
 }
 
 impl FolderSourceFile {
@@ -213,9 +218,9 @@ pub struct FolderRescan {
     pub facts: HashMap<String, FileFacts>,
     /// The host read the folder whole: every present file carries its
     /// links, and the new notes' out-links resolved against every file. A
-    /// partial read keeps a new row's prior meta behind the read, so the row
-    /// stays pending until a later whole read reconciles the links it left
-    /// alone (REVIEW-4381 P1).
+    /// partial read lands no meta, so a later whole read reconciles the
+    /// links it left alone; the row still keeps when it first saw the file
+    /// (REVIEW-4381 P1).
     pub whole: bool,
 }
 

@@ -77,6 +77,7 @@ pub(super) fn read_files(
     counts: &mut NoteCounts,
     prior: Option<&HashMap<String, FileFacts>>,
     vault_dir: Option<&Path>,
+    vault_id: Option<(u64, u64)>,
 ) -> anyhow::Result<FilesRead> {
     let mut read = FilesRead::default();
     // The vault's folder as given and canonical: shown paths spell the
@@ -104,7 +105,8 @@ pub(super) fn read_files(
     let covers = vault_dirs
         .iter()
         .any(|dir| folder_root == *dir || folder_root.starts_with(dir));
-    read.vault_covers_folder = covers;
+    // Set once the identity-bound walk reports: a root at or under the
+    // vault by descriptor identity covers the folder too (REVIEW-4381 P1).
     // The root itself may be a link the person gave (theirs to follow):
     // entries then spell the given root while their bytes live under the
     // bound one, so a vault under the bound root would pass over uncompared
@@ -135,8 +137,9 @@ pub(super) fn read_files(
     let mut unopened_at = |shown: &Path| unopened.push(shown.to_path_buf());
     let mut unopened_dirs = Vec::new();
     let mut unopened_dir_at = |shown: &Path| unopened_dirs.push(shown.to_path_buf());
-    super::walk_files(
+    let identity_covers = super::walk_files(
         folder,
+        vault_id,
         &excluded,
         &mut unopened_at,
         &mut unopened_dir_at,
@@ -148,6 +151,7 @@ pub(super) fn read_files(
             read_file(path, file, shown, counts, &mut read, prior)
         },
     )?;
+    read.vault_covers_folder = covers || identity_covers;
     for shown in &unopened_dirs {
         match relative(folder, shown) {
             Some(path) => read.unopened_dirs.push(path),

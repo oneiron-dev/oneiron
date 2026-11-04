@@ -243,8 +243,10 @@ impl Vault {
             let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             for (note, id) in batch.notes.iter().zip(&ids) {
                 let key = file_key(landing.folder, &note.path);
-                // A file held by its name until now keeps when it was first seen.
-                let old = FILES.get(&self.store, txn, &key)?.and_then(|row| row.meta);
+                // A file held by its name until now keeps when it was first
+                // seen; its meta stays behind on a partial read either way.
+                let old_row = FILES.get(&self.store, txn, &key)?;
+                let old = old_row.as_ref().and_then(|row| row.meta);
                 let hash = text_hash(&note.markdown);
                 let row = FolderSourceFile {
                     path: note.path.clone(),
@@ -254,18 +256,16 @@ impl Vault {
                     landed_links: Vec::new(),
                     raw_hash: raw_hashes.get(&note.path).cloned(),
                     state: FolderFileState::Landed,
-                    // A partial read keeps the row's prior meta: its facts
-                    // are behind what this read saw (the mtime shortcut only
-                    // passes over a file whose meta matches), so the row
-                    // stays pending until a whole read reconciles the links
-                    // this scan left alone — and the file keeps when it was
-                    // first seen (REVIEW-4381 P1).
+                    // A partial read lands no meta: the row stays pending,
+                    // so the mtime shortcut re-reads it and a later whole
+                    // read reconciles the links this scan left alone.
                     meta: if whole {
                         next_meta(old, facts.get(&note.path).copied(), at, Some(at))
                     } else {
-                        old
+                        None
                     },
                     original: None,
+                    first_seen_at: old_row.map(|row| row.first_seen_at).unwrap_or(at),
                 };
                 FILES.put(&self.store, txn, &key, &row)?;
             }
@@ -400,6 +400,9 @@ impl Vault {
             state: FolderFileState::Landed,
             meta: None,
             original: None,
+            // No row yet: first sight is stamped when a whole read lands the
+            // meta (REVIEW-4381 P1).
+            first_seen_at: 0,
         });
         row.note = Some(id);
         row.raw_hash = raw_hash;
@@ -411,10 +414,14 @@ impl Vault {
         // (An empty recorded hash is a missing row, never a match.)
         let content_unchanged = !row.file_hash.is_empty() && row.file_hash == hash;
         if current == file.markdown || content_unchanged {
+            // An open proposal is the owner's unaccepted fork: its links are
+            // not the vault's to reconcile, and neither its state nor its
+            // landed hash moves until the owner decides (REVIEW-4381 P1).
+            let proposal_open = matches!(row.state, FolderFileState::Proposed { .. });
             // The note already holds the file's text; only its links may be
             // behind (their landing failed, or their target landed since).
             // A file the host could not resolve whole leaves them alone.
-            if let Some(links) = file.links.as_deref() {
+            if !proposal_open && let Some(links) = file.links.as_deref() {
                 match self.reconcile_present_file_links(
                     &landing.namespace,
                     &id,
@@ -437,16 +444,21 @@ impl Vault {
             // its meta, so the mtime shortcut re-reads it, and a later
             // whole read reconciles the links this scan left alone.
             row.file_hash = hash.clone();
-            if file.links.is_some() {
+            if file.links.is_some() && !proposal_open {
                 row.landed_hash = hash;
             }
-            row.state = FolderFileState::Landed;
+            if !proposal_open {
+                row.state = FolderFileState::Landed;
+            }
             if !retracted {
                 report.unchanged += 1;
             }
             return self.with_write_txn(|txn| {
                 if file.links.is_some() {
                     let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                    if row.first_seen_at == 0 {
+                        row.first_seen_at = at;
+                    }
                     row.meta = next_meta(row.meta, facts, at, Some(at));
                 }
                 FILES.put(&self.store, txn, &key, &row)
@@ -642,6 +654,7 @@ impl Vault {
                     state,
                     meta: Some(FileMeta::first(file.facts, at, None)),
                     original: None,
+                    first_seen_at: at,
                 };
                 FILES.put(&self.store, txn, &key, &row)?;
                 return Ok(Held::Named);

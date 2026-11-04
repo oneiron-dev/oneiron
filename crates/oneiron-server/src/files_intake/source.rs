@@ -179,7 +179,14 @@ pub(crate) fn rescan(
     let prior = prior_files(&ledger);
     let prior = RESCAN_MTIME_SHORTCUT.then_some(&prior);
     let (mut notes, mut name_only, mut facts, mut skipped, mut unopened_dirs, mut vault_covers) =
-        read_for_rescan(source, folder, &mut counts, prior, Some(vault.path()))?;
+        read_for_rescan(
+            source,
+            folder,
+            &mut counts,
+            prior,
+            Some(vault.path()),
+            vault.dir_identity(),
+        )?;
     let mut standings = standings_of(vault, &namespace, &notes)?;
     // A row a partial scan left pending (a Files source's ledger meta behind
     // what this scan read, or none) still owes its links: when no unreadable
@@ -224,7 +231,14 @@ pub(crate) fn rescan(
             skipped,
             unopened_dirs,
             vault_covers,
-        ) = read_for_rescan(source, folder, &mut counts, None, Some(vault.path()))?;
+        ) = read_for_rescan(
+            source,
+            folder,
+            &mut counts,
+            None,
+            Some(vault.path()),
+            vault.dir_identity(),
+        )?;
         standings = standings_of(vault, &namespace, &notes)?;
     }
     let mut warnings = crossed_rows(vault, &counts);
@@ -414,6 +428,7 @@ fn read_for_rescan(
     counts: &mut NoteCounts,
     prior: Option<&HashMap<String, FileFacts>>,
     vault_dir: Option<&Path>,
+    vault_id: Option<(u64, u64)>,
 ) -> anyhow::Result<(
     Vec<Note>,
     Vec<NameOnlyFile>,
@@ -422,25 +437,31 @@ fn read_for_rescan(
     Vec<String>,
     bool,
 )> {
-    let (mut notes, mut name_only, facts, mut skipped, unopened_dirs, vault_covers) = match &source
-        .files
-    {
-        Some(files) => {
-            let read = super::files::read_files(folder, &files.exclude, counts, prior, vault_dir)?;
-            (
-                read.notes,
-                read.name_only,
-                read.facts,
-                read.skipped,
-                read.unopened_dirs,
-                read.vault_covers_folder,
-            )
-        }
-        None => {
-            let (notes, name_only, facts, skipped) = read_folder_rescan(folder, counts, prior)?;
-            (notes, name_only, facts, skipped, Vec::new(), false)
-        }
-    };
+    let (mut notes, mut name_only, facts, mut skipped, unopened_dirs, vault_covers) =
+        match &source.files {
+            Some(files) => {
+                let read = super::files::read_files(
+                    folder,
+                    &files.exclude,
+                    counts,
+                    prior,
+                    vault_dir,
+                    vault_id,
+                )?;
+                (
+                    read.notes,
+                    read.name_only,
+                    read.facts,
+                    read.skipped,
+                    read.unopened_dirs,
+                    read.vault_covers_folder,
+                )
+            }
+            None => {
+                let (notes, name_only, facts, skipped) = read_folder_rescan(folder, counts, prior)?;
+                (notes, name_only, facts, skipped, Vec::new(), false)
+            }
+        };
     // A part goes with its file.
     notes.retain(|note| included(&source.include, note.file()));
     name_only.retain(|file| included(&source.include, &file.path));

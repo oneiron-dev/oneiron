@@ -71,11 +71,12 @@ fn walk_notes(
 #[cfg(not(unix))]
 fn walk_files(
     path: &std::path::Path,
+    _vault: Option<(u64, u64)>,
     _excluded: &dyn Fn(&std::path::Path) -> bool,
     _unopened: &mut dyn FnMut(&std::path::Path),
     _unopened_dir: &mut dyn FnMut(&std::path::Path),
     _visit: &mut dyn FnMut(&std::path::Path, std::fs::File) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     anyhow::bail!(
         "reading a Files source ({}) needs a unix host",
         path.display()
