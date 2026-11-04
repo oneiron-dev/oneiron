@@ -105,7 +105,11 @@ pub(crate) fn restore_pruned_in_txn(
     )?;
     // The check runs on final joined locators, not actor-part placeholders.
     let mut before = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
     for at in written.into_inner() {
+        if !seen.insert(at.clone()) {
+            continue;
+        }
         let value = dbs
             .vault_meta()
             .get(txn, &at.key)?
