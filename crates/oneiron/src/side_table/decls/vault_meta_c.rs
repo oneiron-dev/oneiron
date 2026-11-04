@@ -364,7 +364,7 @@ side_tables! {
         => crate::code_run::erase_type_diagnostics_actor_in_txn;
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
     /// id16(wait) + be64(generation).
-    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored [accepts: crate::code_run::code_run_wait_delivery_accepts_masked];
+    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored [accepts: crate::store::executor_wait_delivery::code_run_wait_delivery_accepts_masked];
     /// Who held each code-run wait's reply (FIX 5718): one row per run delivered a reply of the
     /// wait, at the generation it parked, naming the actor its run's replies are, or Erased once
     /// that actor's erase took them. It outlives the wait's waiter and delivery rows. The capsule
@@ -502,10 +502,10 @@ side_tables! {
     /// Immutable recorded contract baseline snapshot (public API names, schemas, command outputs),
     /// keyed by its own content digest; a differing value under the same id is corruption. Key:
     /// hex64.
-    CONTRACT_ORACLE_BASELINE: VaultMeta b"contract_oracle:baseline:v1:" Named Authored [accepts: crate::contract_oracle::contract_oracle_baseline_accepts_masked];
+    CONTRACT_ORACLE_BASELINE: VaultMeta b"contract_oracle:baseline:v1:" Named Authored [accepts: crate::store::contract_oracle::contract_oracle_baseline_accepts_masked];
     /// Immutable recorded verdict comparing a candidate snapshot against a recorded baseline (diffs
     /// plus test-pass state), keyed by its own content digest. Key: hex64.
-    CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named Authored [accepts: crate::contract_oracle::contract_oracle_verdict_accepts_masked];
+    CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named Authored [accepts: crate::store::contract_oracle::contract_oracle_verdict_accepts_masked];
     /// Actor id (id16) that created a room; an unrooted vault reads it as the room's owner. Key:
     /// id16 (room).
     CONVERSATION_CREATOR: VaultMeta b"conversation:creator:v1:" Raw;

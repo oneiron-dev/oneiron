@@ -13,7 +13,7 @@ use super::{
     VersionReconciliation,
 };
 use super::{DeckProposeRejection, DeckTransaction};
-use crate::claim::ClaimReadStatus;
+use crate::ports::ClaimReadStatus;
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentPatch, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
@@ -38,7 +38,7 @@ use crate::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
 };
 use crate::model_decision::{DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility};
-use crate::receipt::ReceiptRecord;
+use crate::store::receipt_row::ReceiptRecord;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::{MadeBy, MadeByTrigger};
