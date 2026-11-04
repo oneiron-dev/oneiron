@@ -1536,10 +1536,10 @@ export_facade! {
     let output = client.vault_slim_state(&input)?;
     crate::codec::lift_record("vault.slim.state", &output)
 };
-"vault.slim.resume_step" => fn vault_slim_resume_step(&self, input: SlimResumeStepRequest) -> SavedResumeStep = |client| {
+"vault.slim.resume_step" => fn vault_slim_resume_step(&self, input: SlimResumeStepRequest) -> WireJson = |client| {
     let input: oneiron::slim::public::SlimResumeStepRequest = crate::codec::lower_record("vault.slim.resume_step", input)?;
     let output = client.vault_slim_resume_step(&input)?;
-    crate::codec::lift_record("vault.slim.resume_step", &output)
+    crate::codec::encode("vault.slim.resume_step", &output)
 };
 "vault.slim.drop_heavy" => fn vault_slim_drop_heavy(&self, input: SlimDropRequest) -> SlimDropReceipt = |client| {
     let input: oneiron::slim::public::SlimDropRequest = crate::codec::lower_record("vault.slim.drop_heavy", input)?;
@@ -4411,15 +4411,15 @@ export_facade! {
     let output = client.vault_skills_attribution_positive_retire(&input)?;
     crate::codec::lift_record("vault.skills.attribution.positive.retire", &output)
 };
-"ai.steps.submit" => fn ai_steps_submit(&self, input: ModelStepSubmit) -> ModelStepReceipt = |client| {
+"ai.steps.submit" => fn ai_steps_submit(&self, input: ModelStepSubmit) -> WireJson = |client| {
     let input: oneiron::llm::model_step::ModelStepSubmit = crate::codec::lower_record("ai.steps.submit", input)?;
     let output = client.ai_steps_submit(&input)?;
-    crate::codec::lift_record("ai.steps.submit", &output)
+    crate::codec::encode("ai.steps.submit", &output)
 };
-"ai.steps.receipt" => fn ai_steps_receipt(&self, input: ModelStepReceiptRequest) -> ModelStepReceipt = |client| {
+"ai.steps.receipt" => fn ai_steps_receipt(&self, input: ModelStepReceiptRequest) -> WireJson = |client| {
     let input: oneiron::llm::model_step::ModelStepReceiptRequest = crate::codec::lower_record("ai.steps.receipt", input)?;
     let output = client.ai_steps_receipt(&input)?;
-    crate::codec::lift_record("ai.steps.receipt", &output)
+    crate::codec::encode("ai.steps.receipt", &output)
 };
 "ai.streams.open" => fn ai_streams_open(&self, input: ModelStreamOpen) -> ModelStreamOpened = |client| {
     let input: oneiron::llm::model_stream::ModelStreamOpen = crate::codec::lower_record("ai.streams.open", input)?;
@@ -5336,10 +5336,10 @@ export_facade! {
     let output = client.vault_consolidation_wake_status(&input)?;
     crate::codec::lift_record("vault.consolidation.wake.status", &output)
 };
-"vault.runs.step" => fn vault_runs_step(&self, input: SettledStepRequest) -> Option<SettledStepView> = |client| {
-    let input: oneiron::llm::model_step::SettledStepRequest = crate::codec::lower_record("vault.runs.step", input)?;
+"vault.runs.step" => fn vault_runs_step(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::llm::model_step::SettledStepRequest = crate::codec::decode("vault.runs.step", &input)?;
     let output = client.vault_runs_step(&input)?;
-    crate::codec::lift_record("vault.runs.step", &output)
+    crate::codec::encode("vault.runs.step", &output)
 };
 "vault.runs.checkpoint" => fn vault_runs_checkpoint(&self, input: CheckpointReadRequest) -> Option<CheckpointView> = |client| {
     let input: oneiron::engine_executor::checkpoint_read::CheckpointReadRequest = crate::codec::lower_record("vault.runs.checkpoint", input)?;
@@ -5356,10 +5356,10 @@ export_facade! {
     let output = client.vault_runs_program(&input)?;
     crate::codec::lift_record("vault.runs.program", &output)
 };
-"vault.runs.program_step" => fn vault_runs_program_step(&self, input: SettledProgramStepRequest) -> Option<SettledProgramStepView> = |client| {
+"vault.runs.program_step" => fn vault_runs_program_step(&self, input: SettledProgramStepRequest) -> WireJson = |client| {
     let input: oneiron::dreamer_runner::SettledProgramStepRequest = crate::codec::lower_record("vault.runs.program_step", input)?;
     let output = client.vault_runs_program_step(&input)?;
-    crate::codec::lift_record("vault.runs.program_step", &output)
+    crate::codec::encode("vault.runs.program_step", &output)
 };
 "vault.runs.program_checkpoint" => fn vault_runs_program_checkpoint(&self, input: ProgramCheckpointRequest) -> Option<ProgramCheckpointView> = |client| {
     let input: oneiron::dreamer_runner::ProgramCheckpointRequest = crate::codec::lower_record("vault.runs.program_checkpoint", input)?;
