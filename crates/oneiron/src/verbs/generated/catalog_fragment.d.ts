@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1271 code-mode rows (1231 host rows, 40 run rows), 4479 declarations.
-// Replies: 1076 fully typed, 183 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1271 code-mode rows (1231 host rows, 40 run rows), 4484 declarations.
+// Replies: 1084 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 118; unread shapes: EmbeddingSpace.evidence.
+// Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1969,7 +1969,8 @@ declare namespace Sdk {
   type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review?: string | null; deleted: string[]; recorded: string; holds: CourtesyDeleteHold[]; excluded: string[]; progress: CourtesyDeleteRecordProgress[] };
   type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; candidates: string[]; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null; holds: CourtesyDeleteHold[] };
   type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; reply_to?: string | null };
-  type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: unknown | null };
+  type VectorEvidenceFloors = { floor: number; strong: number };
+  type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: VectorEvidenceFloors | null };
   type SpaceRef = "text_index" | { declared: string };
   type SpaceMoveState = "open" | { swapped_in: { at: number; by_owner: boolean } } | { kept: { at: number; timed_out: boolean } } | { undone: { at: number } };
   type PairedInterval = { mean: number; low: number; high: number };
@@ -2224,7 +2225,10 @@ declare namespace Sdk {
   type SecretCustodyGetRequest = { name: string };
   type SecretCustodyLiveRequest = OwnerWorkReceipt & { manifest_text?: string | null };
   type SecretCustodyCandidateReply = { machine: string; profile: string; encryption_key_digest: string; suite: number; encryption_key_base64: string; this_install: boolean };
-  type SecretCustodyViewReply = { vault_id: string; secret_id: string; name: string; known: boolean; held_here: boolean; portable: boolean; status?: string | null; generation: number; seen: string; live: SecretCustodyLiveRequest[]; candidates: SecretCustodyCandidateReply[]; delivery: string };
+  type CustodyTier = "T0Doored" | "T1Leased" | "T2LocalRegistered";
+  type TierBand = { min: CustodyTier; max: CustodyTier };
+  type SecretCustodyFloor = { portable: TierBand; device_bound: TierBand; cross_vault: TierBand; rotation_max_age_secs?: number | null; env_bindings: Record<string, string> };
+  type SecretCustodyViewReply = { vault_id: string; secret_id: string; name: string; known: boolean; held_here: boolean; portable: boolean; status?: string | null; generation: number; seen: string; live: SecretCustodyLiveRequest[]; candidates: SecretCustodyCandidateReply[]; delivery: string; floor: SecretCustodyFloor };
   type SecretCustodyPermit = { machine: string; profile: string; encryption_key_digest: string };
   type SecretCustodySubmitRequest = { change: string; secret_id: string; generation: number; seen: string; holder: string; recipients: SecretCustodyPermit[]; manifest_ref?: string | null; input_base64: string };
   type WidenProposalState = "pending" | "approved" | "declined";
@@ -3417,7 +3421,8 @@ declare namespace Sdk {
   type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
   type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; presence?: TypedDecision | null; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null; evidence_cut_at_bytes?: number | null };
   type GraphAskSelection = { entity_type: number; limit: number };
-  type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null; posture?: string | null; criteria?: QuestionCriteria<string> | null };
+  type HostingPrivacyPosture = "managed" | "relay" | "self-host";
+  type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null; posture?: HostingPrivacyPosture | null; criteria?: QuestionCriteria<string> | null };
   type SourceConflict = "facet" | "project" | "world" | "relationship" | "scope_term" | "principal" | "unrepresentable";
   type OmittedNeighbor = { id: string; reason: SourceConflict };
   type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number; omitted?: OmittedNeighbor[] };
@@ -3430,10 +3435,10 @@ declare namespace Sdk {
   type QuestionAudience = "asker";
   type QuestionMedia = { images?: boolean; audio?: boolean };
   type ArtifactUnits = { artifact: string; selection: ArtifactAskUnits };
-  type QuestionDefinition<Q> = { question: Q; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria<string>; audience?: QuestionAudience; posture?: unknown | null; media?: QuestionMedia; deadline_ms?: number | null; artifacts?: ArtifactUnits[] };
+  type QuestionDefinition<Q> = { question: Q; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria<string>; audience?: QuestionAudience; posture?: HostingPrivacyPosture | null; media?: QuestionMedia; deadline_ms?: number | null; artifacts?: ArtifactUnits[] };
   type DecisionQuestionInput = { text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type QuestionDefinitionInput = QuestionDefinition<DecisionQuestionInput>;
-  type QuestionCreateRequest = { definition: unknown };
+  type QuestionCreateRequest = { definition: QuestionDefinitionInput };
   type QuestionAskerClass = "human" | "agent" | "system";
   type FrozenReadLane = { credential?: number[] | null; authority?: Scope | null; records?: string[]; worlds?: ScopeAxis<ScopeId> | null; room_facets?: EntityId | null; withheld?: string[] };
   type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number; asker_class?: QuestionAskerClass | null; read_lane: FrozenReadLane };
