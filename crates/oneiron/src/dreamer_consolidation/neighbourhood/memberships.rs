@@ -36,6 +36,7 @@ impl super::pages::ListingPage<'_> {
         &self,
     ) -> impl Iterator<Item = EntityId> + '_ {
         self.entities()
+            .iter()
             .flat_map(|(entity, _)| entity.memberships.iter().map(|membership| membership.unit))
     }
 
@@ -43,7 +44,7 @@ impl super::pages::ListingPage<'_> {
     pub(in crate::dreamer_consolidation) fn membership_bindings(
         &self,
     ) -> impl Iterator<Item = EntityId> + '_ {
-        self.entities().flat_map(|(entity, _)| {
+        self.entities().iter().flat_map(|(entity, _)| {
             entity
                 .memberships
                 .iter()
