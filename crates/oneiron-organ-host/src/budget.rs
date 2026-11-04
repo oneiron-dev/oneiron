@@ -277,25 +277,6 @@ impl Room {
         };
         Ok(())
     }
-
-    /// `bytes` more in `lease` for transient realloc scratch: the budget
-    /// only, never the machine's floor, which has no release for it. Given
-    /// back by [`Lease::shrink`] right after the realloc.
-    pub(crate) fn grow_transient(
-        &self,
-        lease: &mut Lease,
-        bytes: u64,
-        stopped: &dyn Fn() -> bool,
-    ) -> Result<(), Unroomed> {
-        let grown = self.shared.grow(bytes, stopped).ok_or(Unroomed::Stopped)?;
-        lease.memory += bytes;
-        lease.grown = Grown {
-            overcommit: lease.grown.overcommit.saturating_add(grown.overcommit),
-            peak: lease.grown.peak.max(grown.peak),
-            waited: lease.grown.waited + grown.waited,
-        };
-        Ok(())
-    }
 }
 
 fn lock_leases(leases: &Mutex<Leases>) -> MutexGuard<'_, Leases> {

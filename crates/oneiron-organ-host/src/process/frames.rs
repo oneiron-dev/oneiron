@@ -66,11 +66,11 @@ impl FrameBooking for Reading<'_> {
             .map_err(unroomed)
     }
 
-    fn scratch(&mut self, held: &mut Lease, len: u64) -> Result<(), FrameError> {
+    fn scratch(&mut self, len: u64) -> Result<Lease, FrameError> {
         let stopped = || self.stopped();
         self.inbox
             .room
-            .timing(|| self.room.grow_transient(held, len, &stopped))
+            .timing(|| self.room.lease(len, &stopped))
             .map_err(unroomed)
     }
 
@@ -123,6 +123,14 @@ impl FrameBooking for Handshake<'_> {
         let stopped = || self.expired() || self.lifeline.exited();
         let booked = self.room.grow(held, bytes, &stopped);
         self.settle(booked)
+    }
+
+    fn scratch(&mut self, len: u64) -> Result<Lease, FrameError> {
+        if self.expired() {
+            return Err(FrameError::TimedOut);
+        }
+        let stopped = || self.expired() || self.lifeline.exited();
+        self.settle(self.room.lease(len, &stopped))
     }
 
     fn body_gone(&mut self, held: &mut Lease, len: u64) {
