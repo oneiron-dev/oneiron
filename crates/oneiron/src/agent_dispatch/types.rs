@@ -428,7 +428,6 @@ pub use crate::team::spawn_need::CareLevel;
 
 pub use crate::team::spawn_override::SpawnOverride;
 
-
 pub use crate::team::spawn_need::SpawnNeed;
 
 /// Typed healer-slot outcome.

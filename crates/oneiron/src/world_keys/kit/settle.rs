@@ -21,12 +21,12 @@ use std::sync::{Condvar, Mutex, PoisonError};
 use super::{KITS, UNLISTED_KITS};
 use crate::Vault;
 use crate::error::Result;
+use crate::world_keys::keystore_error;
 use crate::{
-    store::recovery_kit::{KitId, KitPiecePair},
     recovery::KitPieceStore,
     store::recovery_kit::KitSecretKind,
+    store::recovery_kit::{KitId, KitPiecePair},
 };
-use crate::world_keys::keystore_error;
 
 /// The vault id and machine id that name one install's kit-piece slots.
 type VaultInstall = ([u8; 32], [u8; 16]);

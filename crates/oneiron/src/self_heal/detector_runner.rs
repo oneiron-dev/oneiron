@@ -4,8 +4,8 @@ use std::sync::atomic::Ordering;
 
 use super::diagnostic_codec::{encode_diagnostic_event_body, validate_token};
 use super::event::{
-    DeterministicDetector, DiagnosticEvent, DiagnosticObservation,
-    DiagnosticWorkingSet, MAX_REF_LEN, invalid_diagnostic,
+    DeterministicDetector, DiagnosticEvent, DiagnosticObservation, DiagnosticWorkingSet,
+    MAX_REF_LEN, invalid_diagnostic,
 };
 use super::untrusted_text::is_forbidden_text_scalar;
 use crate::Vault;

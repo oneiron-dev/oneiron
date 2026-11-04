@@ -4,8 +4,8 @@ use super::*;
 use crate::edge::EdgeInfo;
 use crate::error::{Error, Result};
 use crate::registry::*;
-use crate::store::{EngineScan};
-use crate::scan_check::{ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
 use crate::store::{ManifestDbs, Store};
 use crate::{EdgeKind, EntityId, Vault};
 use heed::{RoTxn, RwTxn};
@@ -188,6 +188,13 @@ fn query_prefixes(kind: u8, data: &[u8]) -> BTreeSet<Vec<u8>> {
             _ => None,
         })
         .collect()
+}
+
+/// Whether the named-entity index reads a query prefix from a `kind` row
+/// holding `data`: an ASSET record it reads none from may keep a manifest in
+/// its row in its place (FIX 12150).
+pub(crate) fn indexes_named_entity(kind: u8, data: &[u8]) -> bool {
+    !query_prefixes(kind, data).is_empty()
 }
 
 pub(crate) fn reindex_named_entities(

@@ -19,6 +19,7 @@
 //! A host that stops a vault between uses asks [`Vault::housekeeping_wake_at`]
 //! when it must run the vault again for a retirement that comes due.
 
+mod claim_vad_payment;
 mod report;
 mod schedule;
 mod sweeps;
@@ -27,6 +28,8 @@ mod sync_work;
 mod tests;
 mod wake;
 
+pub(crate) use self::claim_vad_payment::ClaimVadPayment;
+pub use self::claim_vad_payment::ClaimVadPaymentWorker;
 pub use self::report::{
     HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork,
 };
@@ -37,9 +40,11 @@ use crate::error::Result;
 
 use self::schedule::SweepState;
 
-pub use crate::store::housekeeping_schedule::{HousekeepingSweep, HostOnlyReason, HousekeepingBudget};
 pub(crate) use crate::store::housekeeping_schedule::HousekeepingHandle;
-use crate::store::housekeeping_schedule::{Deadline, Runner, MINUTE, HOUR, DAY};
+use crate::store::housekeeping_schedule::{DAY, Deadline, HOUR, MINUTE, Runner};
+pub use crate::store::housekeeping_schedule::{
+    HostOnlyReason, HousekeepingBudget, HousekeepingSweep,
+};
 
 /// Which sweeps a pass considers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

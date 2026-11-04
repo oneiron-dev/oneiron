@@ -12,12 +12,12 @@ use super::kernel::{
 // gated so the name is in scope for rustdoc without being an unused import.
 #[cfg(doc)]
 use super::kernel::ReceiptKind;
-use crate::store::attempt_manifest::ManifestEntry;
-use crate::store::attempt_manifest::ManifestKind;
 use crate::context_board::MemoriesSection;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
 use crate::receipt::prompt_stamp::PromptRecompileStamp;
+use crate::store::attempt_manifest::ManifestEntry;
+use crate::store::attempt_manifest::ManifestKind;
 
 const FIELD_MANIFEST_ENTRIES: &str = "manifest.entries";
 const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";

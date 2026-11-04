@@ -1,8 +1,8 @@
 //! Community query-scoring shells and the lower graph vocabulary.
 
-use std::collections::HashMap;
-use oneiron_retrieval::pipeline::ScoredEntity;
 pub use crate::config::community_graph::types::*;
+use oneiron_retrieval::pipeline::ScoredEntity;
+use std::collections::HashMap;
 
 pub struct CommunityBoostContext<'a> {
     pub ordered_seeds: &'a [ScoredEntity],

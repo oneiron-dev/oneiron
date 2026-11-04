@@ -100,4 +100,3 @@ pub(crate) fn reindex_identity_hints(
     }
     Ok(())
 }
-

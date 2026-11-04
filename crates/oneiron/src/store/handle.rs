@@ -528,6 +528,13 @@ impl SessionStoreView<'_> {
         self.overlay.install_txn_segment()
     }
 
+    /// Captures every accessor at the current write-segment position.
+    /// Sequential writers use this when a later index mutation must read the
+    /// preceding mutation's overlay writes rather than the original snapshot.
+    pub(crate) fn write_snapshot(&self) -> Result<SessionStoreView<'_>> {
+        self.base.session_view(self.overlay.clone())
+    }
+
     /// Captures entity rows at the current write-segment position for admission.
     /// Earlier staged dependencies are visible, but future ops are not. The
     /// caller's logical read view keeps its original immutable snapshot.
@@ -702,6 +709,41 @@ macro_rules! manifest_dbs {
                 &self.core.manifest_memo
             }
         }
+
+        /// The vault's canonical accessors built over its shared core, for a
+        /// write that runs where no [`Store`] view is held: the store's own
+        /// leader thread runs detached writes there (FIX 12023). It reads and
+        /// writes base rows, as [`Store`]'s accessors do.
+        pub(crate) struct CoreDbs<'c> {
+            core: &'c StoreCore,
+            $($name: $ty,)+
+        }
+
+        impl StoreCore {
+            /// This core's canonical accessors as a write target.
+            pub(crate) fn canonical_dbs(&self) -> CoreDbs<'_> {
+                CoreDbs {
+                    core: self,
+                    $($name: <$ty>::canonical(self.raw.$name),)+
+                }
+            }
+        }
+
+        impl ManifestDbs for CoreDbs<'_> {
+            $(fn $name(&self) -> &$ty { &self.$name })+
+
+            fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
+            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+                &self.core.pending_scan_checks
+            }
+            fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
+            fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
+            fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
+            fn is_union(&self) -> bool { false }
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
+                &self.core.manifest_memo
+            }
+        }
     };
 }
 
@@ -747,9 +789,11 @@ impl std::ops::Deref for Store {
 /// The deferred-commit leader holds a clone of the core (Engine ruling 10-30
 /// 23:09): it ends first, after the group it leads commits, so a clean close
 /// keeps every write it answered and no `Arc<StoreCore>` outlives the owner
-/// when `core` and then `owner` drop in their declared order.
+/// when `core` and then `owner` drop in their declared order. The detached
+/// writes still queued run before it ends, on this thread (FIX 12023).
 impl Drop for Store {
     fn drop(&mut self) {
+        self.finish_detached_writes(None);
         self.core.group_commit.stop_deferred_commit_leader();
     }
 }

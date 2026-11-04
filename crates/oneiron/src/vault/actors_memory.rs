@@ -5,9 +5,9 @@ use super::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, RegistryError, Result};
-use crate::write_envelope::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{StructuralKindRegistration, TypeByteZone};
 use crate::temporal::TimeRange;
+use crate::write_envelope::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 
 /// A session-scoped actor binding created by [`Vault::as_actor`]
 /// (ONE-1113 ruling, session ergonomics): the handle carries
@@ -192,7 +192,10 @@ impl Vault {
     /// `PERSON` is a typed refusal, never a retype, and a hard-deleted
     /// principal is not brought back. A PERSON may act as class `agent`.
     #[doc(hidden)]
-    pub fn ensure_agent_principal(&self, name: &str) -> oneiron_contracts::memory::MemoryResult<EntityId> {
+    pub fn ensure_agent_principal(
+        &self,
+        name: &str,
+    ) -> oneiron_contracts::memory::MemoryResult<EntityId> {
         if name.trim().is_empty() {
             return Err(Error::InvalidClaimBody("agent principal name").into());
         }

@@ -1,7 +1,7 @@
 //! Connect delivery and rejoin wire vocabulary.
-use serde::{Deserialize, Serialize};
 use crate::authority::ConnectWindow;
 use crate::federation::SelectorRange;
+use serde::{Deserialize, Serialize};
 
 /// One named sender world. Empty facet/band requests leave the pact ceiling alone.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -38,4 +38,3 @@ pub struct ConnectRejoined {
     pub status: ConnectRejoinStatus,
     pub request: Option<String>,
 }
-
