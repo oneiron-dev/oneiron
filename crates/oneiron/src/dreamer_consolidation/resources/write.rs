@@ -3,12 +3,14 @@
 use super::{BranchResources, FallbackOutputPin, SourcePin, document_version};
 use crate::claim::{ClaimSource, ScopedRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_consolidation::PromotionCandidate;
+use crate::dreamer_consolidation::conflict::candidate_probe_body;
 use crate::dreamer_consolidation::evidence::{
     ResolvedConflictOutput, VerifiedCandidate, VerifiedEvidenceSet,
 };
 use crate::dreamer_consolidation::stage_log::LandingTally;
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::turn_text::TurnText;
+use crate::dreamer_promotion::scope_with_taint;
 use crate::{EntityId, Result, Vault, WriteActor};
 use oneiron_model::llm::Scope;
 use std::collections::BTreeMap;
@@ -194,14 +196,24 @@ impl BranchResources<'_> {
             }
             let attachment_head = match matches.as_slice() {
                 [(id, true)] => Some(*id),
-                // Equivalent vetted heads already admitted by the branch need
-                // no further duplicate. Imported inputs keep their review path.
-                _ if evidence.meet() != ClaimSource::Imported
+                _ if matches.len() > 1
+                    && evidence.meet() != ClaimSource::Imported
                     && matches
                         .iter()
                         .all(|(id, equal)| *equal && !self.provisional.contains(id)) =>
                 {
-                    matches.first().map(|(id, _)| *id)
+                    let fresh = candidate_probe_body(&candidate.candidate)?;
+                    let (id, _) = matches[0];
+                    let head = &self.prior(id)?.body;
+                    // A named facet fixes the fresh stamp without relying on
+                    // the vault default. Other scopes keep the fresh path.
+                    let named_facet = super::signals::facet(fresh.scope.as_ref()).ok().flatten();
+                    let same_scope = named_facet == Some(fresh.scope_facet)
+                        && fresh.scope_facet == head.scope_facet
+                        && fresh.scope_project == head.scope_project
+                        && scope_with_taint(fresh.scope, evidence.meet())
+                            == scope_with_taint(head.scope.clone(), evidence.meet());
+                    same_scope.then_some(id)
                 }
                 _ => None,
             };
