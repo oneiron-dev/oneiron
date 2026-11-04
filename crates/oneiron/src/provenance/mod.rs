@@ -273,7 +273,9 @@ pub(crate) fn erase_row_provenance_without_attempt_payloads_in_txn(
     birth::erase_row_birth_in_txn(store, txn, row)?;
     // The cause is read before the descriptors go.
     let held: Vec<[u8; 32]> = if erase {
-        body::owned_bodies_in_txn(store, txn, row)?
+        let bodies = body::owned_bodies_in_txn(store, txn, row)?;
+        crate::code_run::erase_retained_result_marks_in_txn(store, txn, &bodies)?;
+        bodies
             .iter()
             .filter_map(|body| body.state.held().map(|held| held.blake3))
             .collect()
