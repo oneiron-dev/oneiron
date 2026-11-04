@@ -87496,19 +87496,16 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
-     "notable": [
-      "VaultPageSeal"
-     ],
+     "notable": [],
      "path": "src/world_keys/page_seal.rs",
      "purpose": "The maximum tier (OF-570): every LMDB page of a vault sealed under a page key",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
-      "fn": 13,
-      "re-export": 2,
-      "struct": 1
+      "crate-vis": 18,
+      "fn": 10,
+      "re-export": 3
      }
     },
     {
@@ -87731,7 +87728,7 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 17,
       "re-export": 3
      }
     },
@@ -91236,7 +91233,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 142,
+   "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6307,
    "test_files": 898
@@ -126771,7 +126768,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 13
+      "mod": 14
      }
     },
     {
@@ -127106,6 +127103,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SealOrigin",
+      "VaultDataKey",
+      "VaultPageSeal",
+      "WrapDigest"
+     ],
+     "path": "src/vault_page_seal.rs",
+     "purpose": "The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 17,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "WindowKey"
      ],
      "path": "src/window_key.rs",
@@ -127202,6 +127217,13 @@
      "layout": "file+dir",
      "purpose": "Per-store clock and id source"
     },
+    "vault_page_seal": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under…"
+    },
     "window_key": {
      "files": 1,
      "impl_vault": false,
@@ -127212,7 +127234,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 27,
+   "source_files": 28,
    "test_files": 1
   },
   "oneiron-uniffi": {

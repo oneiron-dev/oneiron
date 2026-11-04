@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6307 | 898 | 142 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6307 | 898 | 141 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 55 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 24 | 2 | 0 |
@@ -57,7 +57,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 49 | 12 | 0 |
 | [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1517 | 182 | 42 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
-| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 27 | 1 | 0 |
+| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 28 | 1 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 12 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 52 | 1 | 1 |
 | [oneiron-web-fetch](codemap/oneiron-web-fetch.md) | Web acquisition of the oneiron engine | 13 | 1 | 0 |
@@ -870,6 +870,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `secret_manifest` | file | 1 | m | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
 | `secret_record` | file | 1 | s | Secret custody floor and binding vocabulary used by the store layer |
 | `store_clock` | file+dir | 3 | m | Per-store clock and id source |
+| `vault_page_seal` | file | 1 | s | The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under… |
 | `window_key` | file | 1 | s | Monthly CRDT window keys and their timestamp conversion |
 
 ## oneiron-uniffi
