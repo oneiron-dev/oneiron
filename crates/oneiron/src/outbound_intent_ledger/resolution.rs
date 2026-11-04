@@ -86,6 +86,12 @@ pub(crate) struct ConnectorIntentBinding<'a> {
 
 impl ConnectorIntentBinding<'_> {
     pub(crate) fn verify(&self, record: &IntentLedgerRecord) -> IntentLedgerResult<()> {
+        // An erased row has no frozen request left to bind against (FIX
+        // 10957): its terminal state is the authority, and `from_record`
+        // settles it as that stop instead of erroring the reconcile.
+        if super::payload::payload_erased(record.payload())? {
+            return Ok(());
+        }
         let frozen: serde_json::Value = serde_json::from_slice(record.payload())
             .map_err(|_| IntentLedgerError::InvalidRecord("invalid frozen connector binding"))?;
         let intent = serde_json::to_value(self.intent)

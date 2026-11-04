@@ -86,187 +86,15 @@ use crate::error::{Error, SideTableRowProblem, StoreError};
 #[cfg(feature = "sync")]
 use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 
-/// Highest priority: a pending claim surfaced in user-visible retrieval.
-pub const EMBED_PRIORITY_SURFACED_HOT: u8 = 0;
-/// Server-originated sync materialization.
-pub const EMBED_PRIORITY_SERVER: u8 = 1;
-/// Local device write.
-pub const EMBED_PRIORITY_DEVICE: u8 = 2;
-/// Cold attach-embedder or model backfill.
-pub const EMBED_PRIORITY_BACKFILL: u8 = 3;
-
-/// Default pending-embedding lease duration.
 #[cfg(feature = "sync")]
-pub const DEFAULT_PENDING_EMBEDDING_LEASE_MS: u64 = 30_000;
-
-/// Default lease window for remote-routed embed work (E2: remote rungs get
-/// longer lease windows). 4x the local default.
-#[cfg(feature = "sync")]
-pub const DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS: u64 = 120_000;
-
-/// Where an embedder runs relative to the vault owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EmbedderLocality {
-    /// Runs on the same device as the vault.
-    OnDevice,
-    /// Runs on infrastructure controlled by the vault owner.
-    OwnerServer,
-    /// Runs on a third-party service.
-    ThirdParty,
-}
-
-/// Content supplied to an embedder and its egress predicate.
-///
-/// Match the variant before decoding: CLAIM carries its canonical record,
-/// while an epoch SUMMARY and a TURN carry only their already-read text.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PendingEmbeddingPayload {
-    /// Canonical MessagePack CLAIM body bytes, without the entity header.
-    ClaimBody(Vec<u8>),
-    /// UTF-8 prose from a validated epoch-summary body, without framing keys.
-    SummaryText(String),
-    /// A TURN's text: its visible MESSAGE children's text in message order,
-    /// one per line (ARCH-0004: the turn is the embedding unit).
-    TurnText(String),
-}
-
-/// One pending entity supplied to a host-injected embedder.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingEmbeddingInput {
-    pub entity_id: EntityId,
-    pub payload: PendingEmbeddingPayload,
-    /// Commits to the full stored body, not just the embedding payload.
-    pub pending_embedding_token: Vec<u8>,
-}
-
-/// Host-injected retrieval embedder.
-///
-/// The engine owns queueing, leases, and vector storage. Implementations own
-/// model execution and any locality-specific policy before returning vectors.
-pub trait Embedder: Send + Sync {
-    fn model_id(&self) -> &str;
-    fn dimensions(&self) -> usize;
-    fn locality(&self) -> EmbedderLocality;
-    fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>>;
-    /// The device and runtime that compute what [`Self::embed`] returns,
-    /// stored beside each vector it fills. Unknown unless overridden.
-    fn provenance(&self) -> EmbeddingProvenance {
-        EmbeddingProvenance::unknown()
-    }
-    /// [`Self::embed`], each vector with the device and runtime that computed
-    /// it. An embedder whose answers name their own (an endpoint that says)
-    /// overrides this; any other marks each with [`Self::provenance`].
-    fn embed_marked(
-        &self,
-        inputs: &[PendingEmbeddingInput],
-    ) -> Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
-        let provenance = self.provenance();
-        Ok(self
-            .embed(inputs)?
-            .into_iter()
-            .map(|vector| (vector, provenance.clone()))
-            .collect())
-    }
-
-    /// [`Self::embed_marked`] for an embedder off this device: `release`
-    /// judges the rows of each request it sends right before that request
-    /// leaves, and a refusal sends nothing and fails the embed. One that
-    /// sends a single request needs no more than this default.
-    fn embed_released(
-        &self,
-        inputs: &[PendingEmbeddingInput],
-        release: &dyn Fn(&[EntityId]) -> Result<()>,
-    ) -> Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
-        let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
-        release(&rows)?;
-        self.embed_marked(inputs)
-    }
-}
-
-/// Tri-state PII egress verdict for one pending entity (ONE-EMBED E6).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EgressDecision {
-    Allow,
-    Deny,
-    NoVerdict,
-}
-
-/// Host-supplied egress gate. The OneiroNER PII head's verdict lives
-/// host-side; the engine never knows what PII is. Consulted for EVERY
-/// entity routed to a non-OnDevice embedder, including epoch summaries.
-///
-/// Host trait impls invoked under a held txn/lock must be non-blocking
-/// cached lookups; hosts run arbitrary inference in the async phases the
-/// engine exposes for it.
-pub trait EgressPredicate: Send + Sync {
-    /// Egress verdict for one typed payload. `Deny` and `NoVerdict` both
-    /// route the entity to the local (OnDevice) embedder — fail-closed; a
-    /// missing verdict can never send bytes off-device and never stalls
-    /// the queue. On a primary rung, with no embedder on this device, they
-    /// leave it pending and unsent instead
-    /// ([`PendingEmbeddingReconciler::with_primary_rung`], FIX 10009).
-    ///
-    /// Called under a held write transaction: host trait impls invoked
-    /// under a held txn/lock must be non-blocking cached lookups; hosts run
-    /// arbitrary inference in the async phases the engine exposes for it.
-    /// That transaction may be one group commit shared with other writes:
-    /// `decide` must not call into the vault or wait on anything a vault
-    /// caller can hold while it writes, or the vault's writer deadlocks.
-    fn decide(&self, input: &PendingEmbeddingInput) -> EgressDecision;
-
-    /// Egress verdict for one stored document a third-party media embedder
-    /// would read: an ASSET's image or audio bytes, or a record's text
-    /// (FIX 382, [`crate::Vault::reconcile_media_embeddings_admitted`]).
-    /// Only `Allow` sends it; `Deny` and `NoVerdict` keep it home, unsent,
-    /// for a later pass. The default gives no verdict, so a gate written for
-    /// the text rung's rows keeps every stored document home.
-    ///
-    /// Called under a held read transaction: as [`Self::decide`], a
-    /// non-blocking cached lookup that never calls into the vault.
-    fn decide_media(&self, input: &MediaEmbeddingInput<'_>) -> EgressDecision {
-        let _ = input;
-        EgressDecision::NoVerdict
-    }
-}
-
-/// A configured non-OnDevice rung.
-#[cfg(feature = "sync")]
-pub struct RemoteRung {
-    pub embedder: std::sync::Arc<dyn Embedder>,
-    pub predicate: std::sync::Arc<dyn EgressPredicate>,
-    pub lease_duration_ms: u64,
-    /// The full `model@place` route id minted for this rung at build time
-    /// (FIX 11768 seam for L05): `None` when built without one (tests,
-    /// fixtures, primary rungs), in which case [`Self::offer_id`] is empty
-    /// and no ordered world admits it (fail-closed).
-    pub offer_id: Option<String>,
-}
-
-#[cfg(feature = "sync")]
-impl RemoteRung {
-    /// Builds a rung with the default remote lease window
-    /// ([`DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS`]).
-    #[must_use]
-    pub fn new(
-        embedder: std::sync::Arc<dyn Embedder>,
-        predicate: std::sync::Arc<dyn EgressPredicate>,
-    ) -> Self {
-        Self {
-            embedder,
-            predicate,
-            lease_duration_ms: DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS,
-            offer_id: None,
-        }
-    }
-
-    /// The full `model@place` route id carried from build time (FIX 11768
-    /// seam for L05), or empty when none was carried: an unidentified rung
-    /// matches no ordered world (fail-closed).
-    #[must_use]
-    pub fn offer_id(&self) -> String {
-        self.offer_id.clone().unwrap_or_default()
-    }
-}
+pub use crate::store::embedding::{
+    DEFAULT_PENDING_EMBEDDING_LEASE_MS, DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS, RemoteRung,
+};
+pub use crate::store::embedding::{
+    EMBED_PRIORITY_BACKFILL, EMBED_PRIORITY_DEVICE, EMBED_PRIORITY_SERVER,
+    EMBED_PRIORITY_SURFACED_HOT, EgressDecision, EgressPredicate, Embedder, EmbedderLocality,
+    PendingEmbeddingInput, PendingEmbeddingPayload,
+};
 
 /// Canonical rung-2 INT8-transport receipt: `codes[i] as f32 * scale`.
 /// Server sends int8+scale; the HOST dequantizes before returning vectors
@@ -539,8 +367,9 @@ impl PendingEmbeddingReconciler {
             // an error is: the rows fall back to the local embedder, whose
             // fills clear their leases, and the pass goes on.
             let dimensions = self.vault.config.dimensions;
+            let rung_endpoint = rung.endpoint();
             let answer = self
-                .embed_on(rung.embedder.as_ref(), &inputs)
+                .embed_on(rung.embedder.as_ref(), &inputs, &rung_endpoint)
                 .and_then(|vectors| {
                     if vectors.len() == remote_work.len()
                         && vectors.iter().all(|(vector, _)| vector.len() == dimensions)
@@ -603,7 +432,8 @@ impl PendingEmbeddingReconciler {
         }
         let inputs: Vec<PendingEmbeddingInput> =
             work.iter().map(|item| item.input.clone()).collect();
-        let vectors = self.embed_on(self.embedder.as_ref(), &inputs)?;
+        let endpoint = self.embedder.endpoint();
+        let vectors = self.embed_on(self.embedder.as_ref(), &inputs, &endpoint)?;
         if vectors.len() != work.len() {
             return Err(Error::InvariantViolation(
                 "embedder returned mismatched vector count",
@@ -615,19 +445,20 @@ impl PendingEmbeddingReconciler {
 
     /// `embedder`'s vectors for `inputs`, each marked with the device and
     /// runtime that computed it. One off this device sends each request only
-    /// once the vault releases its rows: none of them is one a device-local
-    /// world keeps (DEC-0005), whatever the host's egress list says. A
-    /// refusal fails the embed and sends nothing.
+    /// once the vault releases its rows toward `destination`: none of them is
+    /// one a device-local world keeps from it (DEC-0005), whatever the host's
+    /// egress list says. A refusal fails the embed and sends nothing.
     fn embed_on(
         &self,
         embedder: &dyn Embedder,
         inputs: &[PendingEmbeddingInput],
+        destination: &crate::settings::ReadDestination,
     ) -> Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
         if embedder.locality() == EmbedderLocality::OnDevice {
             return embedder.embed_marked(inputs);
         }
         embedder.embed_released(inputs, &|rows| {
-            if self.vault.rows_may_leave_device(rows)? {
+            if self.vault.rows_may_leave_for(rows, destination)? {
                 Ok(())
             } else {
                 Err(Error::UpstreamToolFailure {
@@ -699,13 +530,20 @@ impl PendingEmbeddingReconciler {
         // embedder on this device, or stay pending, unleased and unsent, while
         // the primary is off it too. Read in the writer, so every flag
         // committed before this pass is one it reads; the release reads again.
+        // Each rung judges its own destination (FIX 5588): Local and Remote
+        // are alternative recipients, never a meet.
         let primary_on_device = self.embedder.locality() == EmbedderLocality::OnDevice;
+        let primary_endpoint = self.embedder.endpoint();
+        let rung_endpoint = self.remote_rung.as_ref().map(RemoteRung::endpoint);
         self.vault.with_write_txn_grouped(|wtxn| {
-            let flagged = crate::settings::device_local_worlds_at(
-                &self.vault,
-                wtxn,
-                crate::claim::CallerLocality::OffDevice,
-            )?;
+            let flagged_primary =
+                crate::settings::device_local_worlds_for(&self.vault, wtxn, &primary_endpoint)?;
+            let flagged_remote = rung_endpoint
+                .as_ref()
+                .map(|endpoint| {
+                    crate::settings::device_local_worlds_for(&self.vault, wtxn, endpoint)
+                })
+                .transpose()?;
             for job in jobs {
                 if crate::vault::entity_revision::entity_has_pending_revision(
                     &self.vault.store,
@@ -741,16 +579,32 @@ impl PendingEmbeddingReconciler {
                     continue;
                 }
 
-                let device_local = crate::settings::device_only_withholds(
+                let kept_primary = crate::settings::device_only_withholds(
                     &self.vault.store,
                     wtxn,
-                    &flagged,
+                    &flagged_primary,
                     &job.entity_id,
                 )
                 .or_else(|error| match error {
                     Error::CorruptedIndex(_) => Ok(true),
                     error => Err(error),
                 })?;
+                let kept_remote = match flagged_remote.as_ref() {
+                    None => false,
+                    Some(flagged) => crate::settings::device_only_withholds(
+                        &self.vault.store,
+                        wtxn,
+                        flagged,
+                        &job.entity_id,
+                    )
+                    .or_else(|error| match error {
+                        Error::CorruptedIndex(_) => Ok(true),
+                        error => Err(error),
+                    })?,
+                };
+                // A row kept for the rung but not the primary still takes the
+                // primary; one kept for neither is routable.
+                let device_local = kept_primary || kept_remote;
                 if device_local {
                     batch.device_local += 1;
                     if !primary_on_device {

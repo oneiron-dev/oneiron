@@ -83,9 +83,10 @@ pub struct SecretCustodyView {
 /// The deposit carries no carrier key, and no surface holds one (FIX 7402):
 /// while the carrier wire is on, its recorder mints the input's key and
 /// seals the deposited input, with what it attaches, under that key before
-/// the request's digest exists, when it fits one row (one past it is kept
-/// as it lies, FIX 11140). The relayed input's head names the key's
-/// reference, which is what the holder asks the recorder for, live.
+/// the request's digest exists: whole when it fits one row, in numbered
+/// parts as it is read past it (FIX 11140, 12148). The relayed input's head
+/// names the key's reference, which is what the holder asks the recorder
+/// for, live.
 pub struct SealedCustodyChange<'a> {
     /// For a register, the `manifest_ref` the sealed record names, as the
     /// surface states it: this install attaches the manifest it resolves

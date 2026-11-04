@@ -20,8 +20,8 @@ use crate::dreamer_consolidation::evidence::EvidenceLocator;
 use crate::dreamer_consolidation::settle::decision_pages::{json_len, measure_state, split_pages};
 use crate::dreamer_consolidation::value_projection::rmpv_to_json;
 use crate::error::Result;
-use crate::llm::decision::catalogue::CORRECTION;
-use crate::llm::decision::{AnswerContract, DecisionQuestion, MAX_DECISION_STATE_BYTES};
+use crate::model_decision::catalogue::CORRECTION;
+use crate::model_decision::{AnswerContract, DecisionQuestion, MAX_DECISION_STATE_BYTES};
 
 /// One claim the listing shows that a candidate may correct: its id, its
 /// subject, and its predicate and value as the listing writes them.

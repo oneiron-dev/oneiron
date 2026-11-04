@@ -18,7 +18,7 @@ use super::{THING_DECIDE_PORT, THING_EXTRACT_PORT};
 use crate::code_run::HostInput;
 use crate::dreamer_consolidation::resources::ExtractionSlice;
 use crate::entity_id::EntityId;
-use crate::llm::Scope;
+use oneiron_model::llm::Scope;
 
 /// The manifest a scoped child reads first, by the name every reader child
 /// reads its primary input by.

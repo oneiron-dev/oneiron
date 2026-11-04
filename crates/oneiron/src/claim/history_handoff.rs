@@ -17,7 +17,7 @@
 use std::collections::BTreeSet;
 
 use crate::EntityId;
-use crate::authority::{AuthorityKey, AuthoritySignature, verify_authority_signature};
+use oneiron_authority::authority::{AuthorityKey, AuthoritySignature, verify_authority_signature};
 
 /// Signature domain, distinct from authority-log and machine-claim signatures.
 pub const CLAIM_HISTORY_HANDOFF_DOMAIN: &[u8] = b"oneiron/claim-history-handoff/v1";

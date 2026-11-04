@@ -297,7 +297,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
             held.dispatch.replayed = replayed;
             return Ok(held);
         }
-    } else if crate::llm::StepEffectBinding::from_frozen_payload(record.payload())?.is_some() {
+    } else if crate::model_step_effect::StepEffectBinding::from_frozen_payload(record.payload())?
+        .is_some()
+    {
         // Engine-owned Resume has no PreparedEffect. Its frozen step identity
         // still rechecks the resident restriction before a Pending live send.
         let txn = vault.store.env.write_txn()?;

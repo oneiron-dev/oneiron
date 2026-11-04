@@ -147,6 +147,8 @@ pub enum RetryableLlmError {
     /// result row and receipt that carry the error.
     #[error("stream cut ({0})")]
     TransportFault(TransportFault),
+    #[error("device admission stopped")]
+    DeviceAdmissionStopped,
 }
 
 /// What cut a call on its transport, as the transport typed it.
@@ -206,6 +208,17 @@ impl RetryableLlmError {
     #[must_use]
     pub fn not_sent(stage: &str, detail: impl Into<String>) -> Self {
         Self::fault(TransportFaultKind::NotSent, Some(stage), detail.into())
+    }
+
+    /// Whether this is the typed not-sent fault a caller named by `stage`.
+    #[must_use]
+    pub fn is_not_sent_stage(&self, stage: &str) -> bool {
+        matches!(
+            self,
+            Self::TransportFault(fault)
+                if fault.kind == TransportFaultKind::NotSent
+                    && fault.stage.as_deref() == Some(stage)
+        )
     }
 
     /// The I/O failed at `stage` after the call went out: it may have run.

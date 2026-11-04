@@ -133,8 +133,8 @@ side_tables! {
     OFFICE_BODY_ORACLE: VaultMeta b"office_body:oracle:v1:" Named
         => crate::office_body::erase_oracle_actor_in_txn;
     /// An office proposal: its header (opener, run root, opened at), member forks with each one's
-    /// verdict and answer, and its settlement. Key: id16 (artifact) + id16 (proposal).
-    OFFICE_BODY_PROPOSAL: VaultMeta b"office_body:proposal:v1:" Named
+    /// verdict and answer, and its settlement. Key: id16 (proposal); the header's artifact is its home.
+    OFFICE_BODY_PROPOSAL: VaultMeta b"office_body:proposal:v2:" Named
         => crate::office_body::erase_proposal_actor_in_txn;
     /// Durable receipt that a later save copied one off-record message into a turn its stretch had
     /// already promoted. Key: id16 (the message).

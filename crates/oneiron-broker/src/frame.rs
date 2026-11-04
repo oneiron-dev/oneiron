@@ -26,7 +26,7 @@ use crate::send::push_wiped;
 use crate::{CallHeader, Failure, Refusal, ReplyHeader};
 
 /// The frame protocol's version.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The largest body one segment carries: a buffered reply's, and a call's
 /// sent whole. The server transport's own bound.

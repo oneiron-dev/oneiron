@@ -7,12 +7,12 @@ use super::{DocAuthorization, EntityDoc, ForkStatus, TextAnchor, invalid, storag
 use crate::EdgeActorClass;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{ArtifactError, Error, Result};
-use crate::memory::MemoryResult;
 use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use heed::RoTxn;
+use oneiron_contracts::memory::MemoryResult;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 

@@ -526,7 +526,7 @@ pub(super) fn apply(
     doc: &mut EntityDoc,
     entity: EntityId,
     edit: &AnchoredEdit,
-    stamp: crate::provenance::ActorStamp,
+    stamp: crate::write_envelope::provenance::ActorStamp,
     replacement: &str,
     at: u64,
     sources: &[EntityId],

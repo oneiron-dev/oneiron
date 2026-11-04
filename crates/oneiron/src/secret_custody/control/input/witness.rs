@@ -19,9 +19,8 @@
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
-use super::{
-    INPUTS, InputDigests, MAX_INPUT_BYTES, RelayedInput, SealedFrame, held_input_in_txn, part_key,
-};
+use super::door_rows::DoorInput;
+use super::{INPUTS, MAX_INPUT_BYTES, RelayedInput, held_input_in_txn, part_key};
 use crate::Vault;
 use crate::authority::{
     AuthorityEntryHash, AuthorityKey, AuthorityOp, OwnerWorkBody, authority_entry_hash,
@@ -306,19 +305,18 @@ impl RelayedInput {
     }
 }
 
-/// Keeps the input `frame` holds, whose request names `digests`, row by row
-/// as [`SealedFrame::each_row`] reads it, never joined (FIX 11140): each row
-/// carries `input`'s sealing second, request and witness, the request's
-/// whole signed entry, beside its bytes. A witness past one row's bound
-/// travels in numbered parts instead, each signed with `signing`, the key
-/// that signed the request, and each input row carries a signed reference to
-/// them (FIX 8088). A request another key signed keeps today's inline form.
+/// Keeps the input `door` holds, row by row as [`DoorInput::keep_in_txn`]
+/// keeps it, never joined (FIX 11140, 12177): each row carries `input`'s
+/// sealing second, request and witness, the request's whole signed entry,
+/// beside its bytes. A witness past one row's bound travels in numbered
+/// parts instead, each signed with `signing`, the key that signed the
+/// request, and each input row carries a signed reference to them (FIX
+/// 8088). A request another key signed keeps today's inline form.
 pub(crate) fn keep_witnessed_input_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     mut input: RelayedInput,
-    frame: &SealedFrame<'_>,
-    digests: &InputDigests,
+    door: &DoorInput<'_>,
     signing: &SigningKey,
 ) -> Result<()> {
     match CUSTODY_INPUT_WITNESS_FORM {
@@ -330,9 +328,7 @@ pub(crate) fn keep_witnessed_input_in_txn(
             |entry| matches!(entry.signer_key(), AuthorityKey::Ed25519(key) if *key == signer),
         );
     if !signed {
-        return frame.each_row(&input, digests, |row| {
-            INPUTS.put(&vault.store, wtxn, &row.row_key(), &row.encode())
-        });
+        return door.keep_in_txn(vault, wtxn, &input, |_| {});
     }
     let witness = std::mem::take(&mut input.witness);
     let count =
@@ -342,7 +338,7 @@ pub(crate) fn keep_witnessed_input_in_txn(
     let group = WitnessGroup {
         sealed_at: input.sealed_at,
         request: input.request,
-        input: digests.digest,
+        input: door.digest(),
         commitment: digest(COMMIT_DOMAIN, &witness),
         count,
         signer,
@@ -361,9 +357,8 @@ pub(crate) fn keep_witnessed_input_in_txn(
         };
         WITNESSES.put(&vault.store, wtxn, &part.row_key(), &part.encode())?;
     }
-    frame.each_row(&input, digests, |mut row| {
+    door.keep_in_txn(vault, wtxn, &input, |row| {
         row.witness = row.reference(&group, signing);
-        INPUTS.put(&vault.store, wtxn, &row.row_key(), &row.encode())
     })
 }
 

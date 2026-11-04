@@ -13,7 +13,8 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand, ValueEnum};
 
 use super::{
-    RestoreWrapArgs, SecretBindArgs, SecretPendingArgs, SecretUnbindArgs, VaultUnlockArgs,
+    RestoreWrapArgs, SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs,
+    SecretShowSupplementArgs, SecretUnbindArgs, VaultUnlockArgs,
 };
 use crate::config::ServeArgs;
 
@@ -487,6 +488,16 @@ pub enum SecretsCommand {
     /// A restore's credentials pending on their source's evidence, and the
     /// typed confirm that keeps a batch without it.
     Pending(Box<SecretPendingArgs>),
+    /// Import one export secret supplement on this install, the recipient
+    /// machine your export named: reads the supplement read's JSON (`GET
+    /// /v1/core/export-secret-supplements/{request}`) from stdin, opens its
+    /// sealed copy here and restores its secret. Prints what the import did.
+    ImportSupplement(Box<SecretImportSupplementArgs>),
+    /// Read one export secret supplement on this stopped vault, by its
+    /// request's entry: the same supplement `GET
+    /// /v1/core/export-secret-supplements/{request}` returns. Prints the
+    /// read. Reads nothing from stdin.
+    ShowSupplement(Box<SecretShowSupplementArgs>),
 }
 
 /// A secret's custody class (ARCH-0069 S1).

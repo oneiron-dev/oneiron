@@ -23,13 +23,13 @@ use super::scope::{
 };
 use super::{GeneratedLens, LensIntentRecord, LensLoadAction, LensVersionStamp, lens_load_action};
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
-use crate::federation::ScopeAxis;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::MadeByTrigger;
 use crate::receipt::{LensApproval, LensProposalReceipt};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{PackInstallReceipt, PackInstallStatus};
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_authority::federation::ScopeAxis;
 
 /// Proposals by lens id. Key: id16.
 pub(super) const PROPOSALS: SideTable<EntityId, LensProposalRecord, Named> =

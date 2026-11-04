@@ -174,7 +174,7 @@ fn stored_body(
     let raw = vault.get_raw_in(txn, id)?.ok_or(Error::EntityNotFound)?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("identity candidate header"))?;
-    crate::ingest::identity_hint_body(
+    crate::store::identity_hints::identity_hint_body(
         header.entity_type,
         &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
     )

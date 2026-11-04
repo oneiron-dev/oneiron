@@ -59,14 +59,15 @@ pub use self::github::{
 };
 pub use self::owner::{
     FeedbackTriageBindingRequest, FeedbackTriageChild, FeedbackTriageErased, FeedbackTriageHold,
-    FeedbackTriageRun, FeedbackTriageRunRequest, FeedbackTriageStatus, FeedbackTriageStatusRequest,
+    FeedbackTriagePending, FeedbackTriageProgress, FeedbackTriageRun, FeedbackTriageRunRequest,
+    FeedbackTriageStatus, FeedbackTriageStatusRequest,
 };
 pub use self::source::{
     FeedbackTriageSourceError, FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault,
 };
 pub use self::work::{
-    FeedbackTriageNodeAnswer, FeedbackTriagePin, FeedbackTriageSpan, FeedbackTriageSplit,
-    FeedbackTriageStep, FeedbackTriageWork, FeedbackTriageWorkNode,
+    FeedbackTriageNodeAnswer, FeedbackTriageParkOutcome, FeedbackTriagePin, FeedbackTriageSpan,
+    FeedbackTriageSplit, FeedbackTriageStep, FeedbackTriageWork, FeedbackTriageWorkNode,
 };
 pub use self::work_store::{FeedbackTriageNodeInput, FeedbackTriageNodeJob};
 

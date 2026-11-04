@@ -18,9 +18,12 @@ use super::{
     QueueSealTarget,
 };
 use super::{CheckPhase, QueueCheckTarget, QueueReceiptLink, QueueTestedTarget};
-use crate::code_revision::{CodeRevision, queue_aggregation_session, queue_revision_id};
 use crate::error::{Error, Result};
 use crate::git_wire::lock_repository;
+use crate::store::{
+    code_revision_identity::{queue_aggregation_session, queue_revision_id},
+    code_revision_record::CodeRevision,
+};
 use crate::{EntityId, Vault};
 
 /// Where one seal stands when the driver takes it up.

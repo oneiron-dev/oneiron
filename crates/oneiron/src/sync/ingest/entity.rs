@@ -610,7 +610,7 @@ fn admit(
                     "a peer vault's embedding setup stays in that vault",
                 ));
             }
-            let fixed = crate::embed::EMBEDDING_SETUP_LEARNED_AT;
+            let fixed = crate::store::embedding::EMBEDDING_SETUP_LEARNED_AT;
             if (
                 header.learned_at,
                 header.occurred_start,
