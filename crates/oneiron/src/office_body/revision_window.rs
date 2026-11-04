@@ -24,6 +24,7 @@
 use super::author_token::DOCX_AUTHOR_TOKEN_MARKER;
 use super::*;
 use loro::{ChangeMeta, ExportMode, Frontiers, ID, IdSpan};
+use oneiron_docedit::DoceditError;
 use oneiron_docedit::docx_body::{DocxAnchor, DocxChange, DocxParagraph, DocxProjection};
 use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
@@ -127,6 +128,24 @@ fn window_actors(
 }
 
 /// The honored actor of `window[at]`; every window peer walked the history.
+/// Whether `error` failing this group's apply matches a cross-group shape
+/// the sequential path cannot project (FIX 595 review P1-2/P1-3): formatting
+/// over an earlier group's pending revision (the remark pass swallows the
+/// native conflict into an invalid transaction), or a delete over earlier
+/// groups' tracked segments or a moved copy (the native delete verb
+/// refuses). The caller falls back to the single-revision projection for
+/// the whole window instead of failing the export.
+fn needs_default_author_fallback(built: &[DocxChange], error: &DoceditError) -> bool {
+    match error {
+        DoceditError::InvalidTransaction(_) => built
+            .iter()
+            .any(|change| matches!(change, DocxChange::SetRuns { .. })),
+        DoceditError::Document(_) => built
+            .iter()
+            .any(|change| matches!(change, DocxChange::Delete { .. })),
+    }
+}
+
 fn group_actor(
     window: &[WindowChange],
     actors: &HashMap<u64, Option<EntityId>>,
@@ -224,12 +243,16 @@ fn run_anchor(
 impl Vault {
     /// FIX 595: a default-author DOCX body as sequential per-actor tracked
     /// revisions, projected in one in-memory session. `None` when every
-    /// group is empty, so a no-op keeps the original package.
+    /// group is empty, so a no-op keeps the original package. A group meeting
+    /// a cross-group shape (FIX 595 review P1-2/P1-3) falls back to one
+    /// default-author revision for the whole window, exactly the pre-PR
+    /// export, attributed to `default_actor` under a fresh token.
     pub(super) fn project_sequential_docx(
         &self,
         artifact: &EntityId,
         head: &OfficeBodyHead,
         at: u64,
+        default_actor: EntityId,
     ) -> Result<Option<DocxSequentialProjection>> {
         let doc = {
             let txn = self.store.env.read_txn()?;
@@ -459,11 +482,68 @@ impl Vault {
                     date: date.clone(),
                     group: group.finalize().to_hex()[..16].to_owned(),
                 };
-                let events = crate::office_body::document_resources()
-                    .docx(|| session.apply_group(&built, &revision))
-                    .map_err(|error| {
-                        docx_error(&error, "the body could not be projected onto its package")
-                    })?;
+                let gate = crate::office_body::document_resources()
+                    .docx(|| session.apply_group(&built, &revision));
+                let events = match gate {
+                    Ok(events) => events,
+                    Err(error) if needs_default_author_fallback(&built, &error) => {
+                        // Cross-group shape (FIX 595 review P1-2/P1-3): an
+                        // earlier group's pending revision blocks this group,
+                        // so project the whole window as one default-author
+                        // revision, exactly the pre-PR export, instead of
+                        // failing the export. Later groups cannot continue on
+                        // the session (order is verified per group against
+                        // body state), so the window collapses into one group
+                        // under a fresh token. A persistent single-shot
+                        // failure is not a sequential regression; the
+                        // single-shot error then replaces this one.
+                        let changes = docx::changes(&docx::read(&scratch)?, &live)?;
+                        if changes.is_empty() {
+                            return Ok(None);
+                        }
+                        let token = format!(
+                            "{DOCX_AUTHOR_TOKEN_MARKER}{}",
+                            self.new_entity_id()?.to_hex()
+                        );
+                        let mut group = blake3::Hasher::new();
+                        group.update(b"oneiron.office_body.docx_revision_group.v1\0");
+                        for part in [
+                            token.as_str(),
+                            date.as_str(),
+                            format!("{changes:?}").as_str(),
+                        ] {
+                            group.update(&(part.len() as u64).to_le_bytes());
+                            group.update(part.as_bytes());
+                        }
+                        let revision = DocxRevision {
+                            author: token.clone(),
+                            date: date.clone(),
+                            group: group.finalize().to_hex()[..16].to_owned(),
+                        };
+                        let bytes = crate::office_body::document_resources()
+                            .docx(|| project_docx(&source, &changes, &revision, limits))
+                            .map_err(|error| {
+                                docx_error(
+                                    &error,
+                                    "the body could not be projected onto its package",
+                                )
+                            })?;
+                        return Ok(Some(DocxSequentialProjection {
+                            bytes,
+                            changes: changes.len(),
+                            authors: vec![OfficeBodyExportAuthor {
+                                actor: Some(default_actor),
+                                token,
+                            }],
+                        }));
+                    }
+                    Err(error) => {
+                        return Err(docx_error(
+                            &error,
+                            "the body could not be projected onto its package",
+                        ));
+                    }
+                }?;
                 if let Some(events) = events {
                     if insert_loro.len() != events.inserted.len()
                         || moved_loro.len() != events.moved.len()
@@ -548,7 +628,9 @@ impl Vault {
         author: &author_token::ExportAuthor,
         at: u64,
     ) -> Result<OfficeBodyExport> {
-        let Some(projection) = self.project_sequential_docx(artifact, head, at)? else {
+        let Some(projection) =
+            self.project_sequential_docx(artifact, head, at, request.actor.entity_ref())?
+        else {
             return Ok(OfficeBodyExport {
                 frontier: head.frontier.clone(),
                 version: None,
