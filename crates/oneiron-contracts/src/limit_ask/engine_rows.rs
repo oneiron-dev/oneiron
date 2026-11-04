@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 136] = [
+    pub const ALL: [Self; 138] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -142,6 +142,8 @@ impl EngineLimit {
         Self::CommunityCacheBytes,
         Self::ConnectorManifestEntries,
         Self::SharedMergeEvidenceRows,
+        Self::ContextThirdParties,
+        Self::MemoryPinnedRefs,
     ];
 
     /// The config key that sets the row.
@@ -283,6 +285,8 @@ impl EngineLimit {
             Self::CommunityCacheBytes => "limits.community_cache_bytes",
             Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
+            Self::ContextThirdParties => "limits.context_third_parties",
+            Self::MemoryPinnedRefs => "limits.memory_pinned_refs",
         }
     }
 
@@ -492,6 +496,8 @@ impl EngineLimit {
             Self::ConnectorManifestEntries => 4_096,
             // The shared-merge reserve's old fixed refusal.
             Self::SharedMergeEvidenceRows => 4_096,
+            // Physical65/68's owner-ruled submitted-count bounds.
+            Self::ContextThirdParties | Self::MemoryPinnedRefs => 65_536,
         }
     }
 }
