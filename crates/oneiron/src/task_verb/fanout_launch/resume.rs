@@ -422,6 +422,20 @@ impl Memory<'_> {
                 "Deny this launch and re-cut.",
             ));
         }
+        // A held ask that lost a holder denies and re-asks (REVIEW-4453
+        // round 2): the scrubbed holder set must never launch reduced,
+        // however the live census reads. Denial stays available.
+        if launch
+            .recipient_scrub
+            .as_ref()
+            .is_some_and(|marker| marker.ask_holders > 0)
+        {
+            return Err(consult_refusal(
+                MEMORY_CODE_INVALID_STATE,
+                "held ask changed by erasure",
+                "Deny this launch and ask again.",
+            ));
+        }
         let task_refs: Vec<EntityId> = match &launch.payload {
             LaunchPayload::Wave {
                 cut,

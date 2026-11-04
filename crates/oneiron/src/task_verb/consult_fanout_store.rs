@@ -1,6 +1,6 @@
 //! Node-local frozen fan-out plans and transaction-owned surface sink.
 
-use super::fanout_launch::{FanoutRecipientScrub, scrub_statement_for};
+use super::fanout_launch::{FanoutRecipientScrub, scrub_pathology_for, scrub_statement_for};
 use super::task_actor::names_no_actor;
 use super::{
     ConsultFanOutMeter, ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutReceipt,
@@ -230,11 +230,13 @@ impl StoredFanout {
             row.plan_digest = estimate.plan_digest;
             row.estimate = estimate.clone();
             row.statement = Some(self.statement.clone());
+            scrub_pathology_for(row.pathology.as_mut(), &hex);
         }
         if let Some(row) = self.check_row.as_mut() {
             row.plan_digest = estimate.plan_digest;
             row.estimate = estimate.clone();
             row.statement = Some(self.statement.clone());
+            scrub_pathology_for(row.pathology.as_mut(), &hex);
         }
         let retired = prior
             .as_ref()

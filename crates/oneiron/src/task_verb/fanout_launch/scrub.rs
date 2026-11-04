@@ -68,6 +68,40 @@ pub(in crate::task_verb) fn scrub_statement_for(
     dropped || renamed
 }
 
+/// Rewrites an erased actor's refs in pause/check pathology evidence
+/// (REVIEW-4453 round 2): a rate-spike `peer_ref` or a consult-cycle
+/// `peer_path` entry naming it becomes the erased identity, so receipts
+/// and meter rows stop emitting the exact id after erasure.
+pub(in crate::task_verb) fn scrub_pathology_for(
+    pathology: Option<&mut crate::outbound_chokepoint::FanoutPathology>,
+    hex: &str,
+) -> bool {
+    use crate::outbound_chokepoint::FanoutPathology;
+    let Some(pathology) = pathology else {
+        return false;
+    };
+    match pathology {
+        FanoutPathology::PerPeerRateSpike { peer_ref, .. } => {
+            if peer_ref == hex {
+                *peer_ref = ERASED_CALL_IDENTITY.to_owned();
+                true
+            } else {
+                false
+            }
+        }
+        FanoutPathology::ConsultCycle { peer_path } => {
+            let mut renamed = false;
+            for peer in peer_path.iter_mut() {
+                if peer == hex {
+                    *peer = ERASED_CALL_IDENTITY.to_owned();
+                    renamed = true;
+                }
+            }
+            renamed
+        }
+    }
+}
+
 /// Rebuilds the scrubbed plan from the scrubbed payload plus the total
 /// `"erased"` bucket count: the single implementation the scrub transaction
 /// and the ack/resume re-proof share, so a mismatch detects corruption, not
@@ -180,11 +214,13 @@ impl StoredLaunch {
             row.plan_digest = estimate.plan_digest;
             row.estimate = estimate.clone();
             row.statement = Some(self.statement.clone());
+            scrub_pathology_for(row.pathology.as_mut(), &hex);
         }
         if let Some(row) = self.check_row.as_mut() {
             row.plan_digest = estimate.plan_digest;
             row.estimate = estimate.clone();
             row.statement = Some(self.statement.clone());
+            scrub_pathology_for(row.pathology.as_mut(), &hex);
         }
         let retired = prior
             .as_ref()
