@@ -124020,6 +124020,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/llama_metrics.rs",
+     "purpose": "Bearer binding for a managed llama.cpp worker's `/metrics` route",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -124046,7 +124056,7 @@
      "path": "src/models/worker_host/process.rs",
      "purpose": "One running worker process in its supervisor's custody: started in a process group of its own, reaped by one…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -127582,7 +127592,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 109,
+     "files": 110,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -127738,7 +127748,7 @@
    },
    "over_bar": 45,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1527,
+   "source_files": 1528,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
