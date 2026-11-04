@@ -22,6 +22,10 @@ const RESOLVED_SUCCESSOR_DOMAIN: &[u8] = b"oneiron:repo-proposal-resolved-succes
 /// The mask's text form of a handle, as it stands in reviewed content.
 const HANDLE_OPEN: &[u8] = b"[secret ";
 
+/// The detector kind a resolved successor's mask facts carry (L04 11:52):
+/// custody-bound substitution, never a scan-pattern hit.
+const RESOLVED_HANDLE_DETECTOR: &str = "gate.secret_scan.resolved_handle";
+
 /// The successor minted for `original`, if one stands: its derived id's
 /// row, verified to resolve this original.
 pub(super) fn successor_of(vault: &Vault, original: EntityId) -> Result<Option<EntityId>> {
@@ -136,6 +140,11 @@ pub(super) fn resolved_successor(
         }
     }
     let resolved = substitute(content, &spans, &values);
+    // Round-4 P1: the resolved bytes are new content under a new hash, so
+    // the successor's mask facts name them here, before the bytes move.
+    let raw_blake3 = *blake3::hash(&resolved).as_bytes();
+    let blob_oid = git_blob_oid(&resolved)?;
+    let resolved_ranges = resolved_span_ranges(&spans, &values)?;
     // The original's review carries only onto the proposal it actually
     // judged: the successor must re-redact to the original byte for byte
     // (Engine ruling on FIX 2938 F4).
@@ -156,7 +165,7 @@ pub(super) fn resolved_successor(
     )?;
     let mut successor = row.clone();
     successor.id = successor_id(row.id)?;
-    successor.files = vec![RepoProposedFile::ordinary(path, resolved)];
+    successor.files = vec![RepoProposedFile::ordinary(path.clone(), resolved)];
     successor.status = RepoProposalStatus::Approved;
     successor.resolves = Some(row.id);
     successor.settlement = None;
@@ -183,6 +192,39 @@ pub(super) fn resolved_successor(
     if PROPOSAL.get(&vault.store, &txn, &successor.id)?.is_none() {
         super::persist::PreparedRepoProposal::new(successor.clone(), encoded)?
             .persist_in_txn(vault, &mut txn)?;
+        // Round-4 P1 (L04 11:52): one secret-mark fact per substituted span,
+        // same writer txn, naming the resolved coords under the new hash —
+        // masked reads already join by hash and need no change.
+        let marked_at = crate::ports::recorded_at_in_txn(&vault.store, &mut txn)?;
+        let store_identity = landing_store_identity(&repo);
+        let store_id = crate::origin::lfs::lfs_repo_id(&store_identity)?;
+        for ((_, _, text), (start, end)) in spans.iter().zip(resolved_ranges.iter()) {
+            let (_, _, custody, handle) = values
+                .iter()
+                .find(|known| &known.0 == text)
+                .expect("every span resolved above");
+            let mark = crate::origin::secret_marks::RepoSecretMark {
+                schema_version: crate::origin::secret_marks::RepoSecretMark::SCHEMA,
+                operation_id: successor.id,
+                store_id,
+                store_identity: store_identity.clone(),
+                source: crate::origin::secret_marks::RepoSecretSource::Quarantine,
+                blob_oid: blob_oid.clone(),
+                raw_blake3,
+                path: Some(path.clone()),
+                detector_kind: RESOLVED_HANDLE_DETECTOR.to_owned(),
+                content_kind: crate::receive_scan::ReceiveBlobKind::Text,
+                placement: crate::origin::secret_marks::RepoSecretPlacement::Span {
+                    member: Vec::new(),
+                    start: *start,
+                    end: *end,
+                    custody: *custody,
+                    handle: handle.clone(),
+                },
+                marked_at,
+            };
+            crate::origin::secret_marks::put_repo_secret_mark_in_txn(vault, &mut txn, &mark)?;
+        }
     }
     original.status = RepoProposalStatus::Superseded;
     store(vault, &mut txn, &original)?;
@@ -190,19 +232,25 @@ pub(super) fn resolved_successor(
     Ok(Some(successor))
 }
 
-/// Each distinct span's bound value, read once per handle.
-fn spans_values(vault: &Vault, spans: &[(usize, usize, String)]) -> Result<Vec<(String, Vec<u8>)>> {
-    let mut values: Vec<(String, Vec<u8>)> = Vec::new();
+/// Each distinct span's bound value, read once per handle, with its
+/// custody record and canonical handle: the successor's mask facts name
+/// the resolved spans (round-4 P1).
+fn spans_values(
+    vault: &Vault,
+    spans: &[(usize, usize, String)],
+) -> Result<Vec<(String, Vec<u8>, EntityId, String)>> {
+    let mut values: Vec<(String, Vec<u8>, EntityId, String)> = Vec::new();
     let txn = vault.store.env.read_txn()?;
     for (_, _, text) in spans {
-        if values.iter().any(|(known, _)| known == text) {
+        if values.iter().any(|(known, _, _, _)| known == text) {
             continue;
         }
-        let (_, id) = crate::secret_custody::handle_record_in_txn(&vault.store, &txn, text)?;
+        let (handle, id) =
+            crate::secret_custody::handle_record_in_txn(&vault.store, &txn, text)?;
         let value = vault
             .get_secret_value_in_txn(&txn, &id, REPO_LANDING_EFFECTOR)?
             .ok_or(Error::EntityNotFound)?;
-        values.push((text.clone(), value));
+        values.push((text.clone(), value, id, handle));
     }
     Ok(values)
 }
@@ -227,6 +275,58 @@ fn substitute(
     }
     resolved.extend_from_slice(&content[at..]);
     resolved
+}
+
+/// Each substituted span's byte range in the resolved bytes (round-4 P1):
+/// the mask facts name resolved coords, so masked reads join the
+/// successor's new hash. Mirrors `substitute`'s walk.
+fn resolved_span_ranges(
+    spans: &[(usize, usize, String)],
+    values: &[(String, Vec<u8>, EntityId, String)],
+) -> Result<Vec<(u64, u64)>> {
+    let mut ranges = Vec::with_capacity(spans.len());
+    let mut at = 0usize;
+    let mut resolved = 0u64;
+    for (start, end, text) in spans {
+        let value_len = values
+            .iter()
+            .find(|known| &known.0 == text)
+            .expect("every span resolved above")
+            .1
+            .len();
+        resolved = resolved
+            .checked_add((start - at) as u64)
+            .and_then(|pos| pos.checked_add(value_len as u64))
+            .ok_or(Error::ArithmeticOverflow(
+                "a resolved successor's mask spans",
+            ))?;
+        ranges.push((resolved - value_len as u64, resolved));
+        at = *end;
+    }
+    Ok(ranges)
+}
+
+/// The git blob OID `bytes` hash to (L04 11:52): sha1 over the blob header
+/// plus the bytes, computed and never written — deterministic, so it
+/// matches the object if the bytes later land in git.
+fn git_blob_oid(bytes: &[u8]) -> Result<crate::git_wire::GitOid> {
+    let mut hasher = gix::hash::hasher(gix::hash::Kind::Sha1);
+    hasher.update(format!("blob {}\0", bytes.len()).as_bytes());
+    hasher.update(bytes);
+    let oid = hasher
+        .try_finalize()
+        .map_err(|_| Error::CorruptedIndex("resolved bytes blob hash"))?;
+    Ok(crate::git_wire::GitOid::parse_hex(oid.to_string())?)
+}
+
+/// The store a landing belongs to (L04 11:52): the landing RepoRef with its
+/// commit pin stripped — no canonical object-store identity exists at
+/// landing, and never the full RepoRef (it changes every push).
+fn landing_store_identity(repo: &RepoRef) -> String {
+    match repo {
+        RepoRef::LocalFolder { path, .. } => format!("local:{path}"),
+        RepoRef::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
+    }
 }
 
 /// Pushes `chunk` unless the re-redaction already exceeds the ordinary proposal
