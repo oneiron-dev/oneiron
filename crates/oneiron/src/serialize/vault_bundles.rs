@@ -1,6 +1,6 @@
 //! Build portable facets after every native body has passed credential nulling.
 use super::{ExportBody, export_source_tree};
-use crate::agent_def::KnowledgeFormat;
+use crate::batch::export::agent_knowledge_format::KnowledgeFormat;
 use crate::batch::export::{AgentBundleOmission, ExportAgentBundle, ExportEntity};
 use crate::entity_id::EntityId;
 use crate::error::Result;
