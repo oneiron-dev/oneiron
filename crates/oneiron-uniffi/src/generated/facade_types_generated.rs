@@ -5441,7 +5441,7 @@ pub enum TaskAskTarget {
     Guests(std::collections::HashMap<String, TaskAskGuest>),
 }
 
-/// `oneiron::model_decision::questions::records::OutcomeSource`.
+/// `oneiron_store::model_decision::questions::records::OutcomeSource`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -5468,7 +5468,7 @@ pub enum OutcomeSource {
     },
 }
 
-/// `oneiron::model_decision::questions::records::OutcomeBinding`.
+/// `oneiron_store::model_decision::questions::records::OutcomeBinding`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OutcomeBinding {
@@ -5484,7 +5484,7 @@ pub struct OutcomeBinding {
     pub linked_by: Option<String>,
 }
 
-/// `oneiron::model_decision::types::DecisionRung`.
+/// `oneiron_store::model_decision::types::DecisionRung`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DecisionRung {
     #[serde(rename = "rule")]
@@ -6377,7 +6377,7 @@ pub enum EscalationTrigger {
     RetryRequested,
 }
 
-/// `oneiron::model_decision::policy::Reversibility`.
+/// `oneiron_store::model_decision::policy::Reversibility`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum Reversibility {
     #[serde(rename = "reversible_read")]
@@ -13823,7 +13823,7 @@ pub struct SavedQueryMemoReceipt {
     pub evaluated_at: u64,
 }
 
-/// `oneiron::model_decision::types::ProviderPin`.
+/// `oneiron_store::model_decision::types::ProviderPin`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderPin {
@@ -17612,7 +17612,7 @@ pub struct TradeoffRule {
     pub choice: TradeoffChoice,
 }
 
-/// `oneiron::model_decision::types::DecisionBand`.
+/// `oneiron_store::model_decision::types::DecisionBand`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionBand {
@@ -29031,7 +29031,7 @@ pub struct Of360Ar3MetricTier {
     pub report: Of360EvalReport,
 }
 
-/// `oneiron::model_decision::types::EvidenceVersion`.
+/// `oneiron_store::model_decision::types::EvidenceVersion`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceVersion {
@@ -29041,7 +29041,7 @@ pub struct EvidenceVersion {
     pub body_hash: String,
 }
 
-/// `oneiron::model_decision::types::PairedReading`.
+/// `oneiron_store::model_decision::types::PairedReading`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PairedReading {
@@ -29055,7 +29055,7 @@ pub struct PairedReading {
     pub probability: f64,
 }
 
-/// `oneiron::model_decision::types::StopCause`.
+/// `oneiron_store::model_decision::types::StopCause`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum StopCause {
     #[serde(rename = "done")]
@@ -29066,7 +29066,7 @@ pub enum StopCause {
     ProviderFailure,
 }
 
-/// `oneiron::model_decision::types::ReasoningCause`.
+/// `oneiron_store::model_decision::types::ReasoningCause`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ReasoningCause {
     #[serde(rename = "paired_high")]
@@ -29077,7 +29077,7 @@ pub enum ReasoningCause {
     SecondMeasurement,
 }
 
-/// `oneiron::model_decision::types::Reasoning`.
+/// `oneiron_store::model_decision::types::Reasoning`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state", content = "cause")]
 pub enum Reasoning {
@@ -29091,7 +29091,7 @@ pub enum Reasoning {
     Cut(ReasoningCause),
 }
 
-/// `oneiron::model_decision::types::DecisionTime`.
+/// `oneiron_store::model_decision::types::DecisionTime`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionTime {
@@ -29131,7 +29131,7 @@ pub struct ImagePin {
     pub sent_height: u32,
 }
 
-/// `oneiron::model_decision::types::HostRuleRef`.
+/// `oneiron_store::model_decision::types::HostRuleRef`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HostRuleRef {
@@ -29141,7 +29141,7 @@ pub struct HostRuleRef {
     pub revision: u32,
 }
 
-/// `oneiron::model_decision::roles::RoleRank`.
+/// `oneiron_store::model_decision::roles::RoleRank`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RoleRank {
     #[serde(rename = "responsible")]
@@ -29152,7 +29152,7 @@ pub enum RoleRank {
     Owner,
 }
 
-/// `oneiron::model_decision::roles::AskAct`.
+/// `oneiron_store::model_decision::roles::AskAct`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AskAct {
     #[serde(rename = "judgment")]
@@ -29163,7 +29163,7 @@ pub enum AskAct {
     Payment,
 }
 
-/// `oneiron::model_decision::roles::HolderKind`.
+/// `oneiron_store::model_decision::roles::HolderKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum HolderKind {
     #[serde(rename = "person")]
@@ -29202,7 +29202,7 @@ pub struct ReceiptAsk {
     pub answered: Option<ReceiptAnswerer>,
 }
 
-/// `oneiron::model_decision::types::StateCut`.
+/// `oneiron_store::model_decision::types::StateCut`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct StateCut {
@@ -32134,7 +32134,7 @@ pub enum RelayClassifierMode {
     PatternGated,
 }
 
-/// `oneiron::model_decision::types::ImageBox`.
+/// `oneiron_store::model_decision::types::ImageBox`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ImageBox {
@@ -32148,7 +32148,7 @@ pub struct ImageBox {
     pub right: f64,
 }
 
-/// `oneiron::model_decision::types::ImagePoint`.
+/// `oneiron_store::model_decision::types::ImagePoint`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ImagePoint {
@@ -32158,7 +32158,7 @@ pub struct ImagePoint {
     pub y: f64,
 }
 
-/// `oneiron::model_decision::types::DecisionAnswer`.
+/// `oneiron_store::model_decision::types::DecisionAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind", content = "value")]
 #[serde(deny_unknown_fields)]
@@ -32177,7 +32177,7 @@ pub enum DecisionAnswer {
     Abstain,
 }
 
-/// `oneiron::model_decision::types::HumanAskReason`.
+/// `oneiron_store::model_decision::types::HumanAskReason`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum HumanAskReason {
     #[serde(rename = "disagreement")]
@@ -33414,7 +33414,7 @@ pub struct PolicySignature {
     pub sig: String,
 }
 
-/// `oneiron::model_decision::slides_policy::SlideReviewPrecedence`.
+/// `oneiron_store::model_decision::slides_policy::SlideReviewPrecedence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SlideReviewPrecedence {
     #[serde(rename = "nested_narrowing")]
@@ -33423,7 +33423,7 @@ pub enum SlideReviewPrecedence {
     HolderOverrideCappedAtVault,
 }
 
-/// `oneiron::model_decision::slides_policy::SlideReviewPolicyRow`.
+/// `oneiron_store::model_decision::slides_policy::SlideReviewPolicyRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "scope")]
 #[serde(deny_unknown_fields)]
@@ -34968,7 +34968,7 @@ pub enum CustodyTier {
     T2LocalRegistered,
 }
 
-/// `oneiron::secret_record::types::TierBand`.
+/// `oneiron_store::secret_record::TierBand`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct TierBand {
     #[serde(rename = "min")]
@@ -34977,7 +34977,7 @@ pub struct TierBand {
     pub max: CustodyTier,
 }
 
-/// `oneiron::secret_record::types::SecretCustodyFloor`.
+/// `oneiron_store::secret_record::SecretCustodyFloor`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SecretCustodyFloor {
     #[serde(rename = "portable")]
@@ -45584,7 +45584,7 @@ pub struct SlideReviewUnitInput {
     pub renderer: String,
 }
 
-/// `oneiron::model_decision::types::DecisionClass`.
+/// `oneiron_store::model_decision::types::DecisionClass`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DecisionClass {
     #[serde(rename = "retrieval")]
@@ -45603,7 +45603,7 @@ pub enum DecisionClass {
     Provenance,
 }
 
-/// `oneiron::model_decision::types::AnswerContract`.
+/// `oneiron_store::model_decision::types::AnswerContract`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -45628,7 +45628,7 @@ pub enum AnswerContract {
     Point,
 }
 
-/// `oneiron::model_decision::types::DecisionQuestion`.
+/// `oneiron_store::model_decision::types::DecisionQuestion`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionQuestion {
@@ -45670,7 +45670,7 @@ pub struct SlideReviewLabels {
     pub high: String,
 }
 
-/// `oneiron::model_decision::types::DecisionDial`.
+/// `oneiron_store::model_decision::types::DecisionDial`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionDial {
@@ -45806,7 +45806,7 @@ pub struct SlideLocation {
     pub bottom: i64,
 }
 
-/// `oneiron::model_decision::policy::BandMode`.
+/// `oneiron_store::model_decision::policy::BandMode`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum BandMode {
     #[serde(rename = "shadow")]
@@ -48674,7 +48674,7 @@ pub struct TaskAnswerRequest {
     pub word: TaskAskWord,
 }
 
-/// `oneiron::model_decision::questions::records::OutcomeLabel`.
+/// `oneiron_store::model_decision::questions::records::OutcomeLabel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OutcomeLabel {
@@ -48692,7 +48692,7 @@ pub struct OutcomeLabel {
     pub occurred_at: u64,
 }
 
-/// `oneiron::model_decision::questions::records::CalibrationPair`.
+/// `oneiron_store::model_decision::questions::records::CalibrationPair`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CalibrationPair {
@@ -55096,7 +55096,7 @@ pub struct GraphAskRequest {
     pub criteria: Option<QuestionCriteriaString>,
 }
 
-/// `oneiron::model_decision::questions::records::SourceConflict`.
+/// `oneiron_store::model_decision::questions::records::SourceConflict`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SourceConflict {
     #[serde(rename = "facet")]
@@ -55115,7 +55115,7 @@ pub enum SourceConflict {
     Unrepresentable,
 }
 
-/// `oneiron::model_decision::questions::records::OmittedNeighbor`.
+/// `oneiron_store::model_decision::questions::records::OmittedNeighbor`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OmittedNeighbor {
@@ -55200,7 +55200,7 @@ pub struct GraphAdmitRequest {
     pub decision: TypedDecision,
 }
 
-/// `oneiron::model_decision::types::DecisionQuestionInput`.
+/// `oneiron_store::model_decision::types::DecisionQuestionInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionQuestionInput {
@@ -55214,7 +55214,7 @@ pub struct DecisionQuestionInput {
     pub accept_type: bool,
 }
 
-/// `oneiron::model_decision::questions::records::QuestionActivation`.
+/// `oneiron_store::model_decision::questions::records::QuestionActivation`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum QuestionActivation {
     #[serde(rename = "one_off")]
@@ -55223,7 +55223,7 @@ pub enum QuestionActivation {
     Standing,
 }
 
-/// `oneiron::model_decision::questions::records::RefreshPolicy`.
+/// `oneiron_store::model_decision::questions::records::RefreshPolicy`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RefreshPolicy {
@@ -55237,14 +55237,14 @@ pub struct RefreshPolicy {
     pub every_seconds: Option<u64>,
 }
 
-/// `oneiron::model_decision::questions::records::QuestionAudience`.
+/// `oneiron_store::model_decision::questions::records::QuestionAudience`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum QuestionAudience {
     #[serde(rename = "asker")]
     Asker,
 }
 
-/// `oneiron::model_decision::questions::records::QuestionMedia`.
+/// `oneiron_store::model_decision::questions::records::QuestionMedia`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionMedia {
@@ -55450,7 +55450,7 @@ pub struct QuestionPaused {
     pub paused: bool,
 }
 
-/// `oneiron::model_decision::questions::recipe::GraphQuestionInput`.
+/// `oneiron_store::model_decision::questions::recipe::GraphQuestionInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GraphQuestionInput {
@@ -55506,7 +55506,7 @@ pub struct QuestionOutcomeWindowsRequest {
     pub id: String,
 }
 
-/// `oneiron::model_decision::questions::records::WindowOutcome`.
+/// `oneiron_store::model_decision::questions::records::WindowOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum WindowOutcome {
     #[serde(rename = "observed")]
@@ -55517,7 +55517,7 @@ pub enum WindowOutcome {
     Unknown,
 }
 
-/// `oneiron::model_decision::questions::records::OutcomeWindowClose`.
+/// `oneiron_store::model_decision::questions::records::OutcomeWindowClose`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OutcomeWindowClose {
@@ -55723,7 +55723,7 @@ pub struct QuestionScheduleRequest {
     pub id: String,
 }
 
-/// `oneiron::model_decision::questions::records::QuestionScheduleHead`.
+/// `oneiron_store::model_decision::questions::records::QuestionScheduleHead`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionScheduleHead {
@@ -55743,7 +55743,7 @@ pub struct QuestionScheduleHead {
     pub retry_at: Option<u64>,
 }
 
-/// `oneiron::model_decision::policy::DecisionBandReadRequest`.
+/// `oneiron_store::model_decision::policy::DecisionBandReadRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionBandReadRequest {
@@ -55755,7 +55755,7 @@ pub struct DecisionBandReadRequest {
     pub seed: DecisionBand,
 }
 
-/// `oneiron::model_decision::policy::LearnedBand`.
+/// `oneiron_store::model_decision::policy::LearnedBand`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LearnedBand {
@@ -55767,7 +55767,7 @@ pub struct LearnedBand {
     pub mode: BandMode,
 }
 
-/// `oneiron::model_decision::policy::DecisionBandLearnRequest`.
+/// `oneiron_store::model_decision::policy::DecisionBandLearnRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionBandLearnRequest {
@@ -55781,7 +55781,7 @@ pub struct DecisionBandLearnRequest {
     pub version: u32,
 }
 
-/// `oneiron::model_decision::policy::DecisionBandEnforceRequest`.
+/// `oneiron_store::model_decision::policy::DecisionBandEnforceRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionBandEnforceRequest {
