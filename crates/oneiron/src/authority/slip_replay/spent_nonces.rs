@@ -703,6 +703,25 @@ impl SpentNonces {
         true
     }
 
+    /// The highest proof clock a spend journaled here judged on (review #4484
+    /// Astra round 2 P1): the proof clock reads at or above it
+    /// ([`super::request_now_in_txn`]). 0 off this set's own process.
+    pub(super) fn proof_high(&self) -> u64 {
+        if self.in_own_process() {
+            self.lock().journal_high
+        } else {
+            0
+        }
+    }
+
+    /// Lets the proof clock go below the spends judged here, after an owner's
+    /// clock recovery set it back to the wall ([`Vault::recover_proof_clock`]).
+    pub(super) fn forget_proof_high(&self) {
+        if self.in_own_process() {
+            self.lock().journal_high = 0;
+        }
+    }
+
     /// Notes that the rows of a spend [`Self::admit`] took are queued on the
     /// detached door, where a swap's wait for them counts them.
     fn note_queued(&self) {
