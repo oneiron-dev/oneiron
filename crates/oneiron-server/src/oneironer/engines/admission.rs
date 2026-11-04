@@ -62,6 +62,16 @@ const NOT_PREFERRED_RANK: usize = 4;
 /// stack and platform row. Keys, never a worker.
 static OWNED: Mutex<BTreeSet<(PathBuf, String, &'static str)>> = Mutex::new(BTreeSet::new());
 
+/// A slot's platform rows' absence, by row: MLX first, Core ML second (FIX
+/// 7384). The admission writes each row's [`Absent::as_str`] here as it finds
+/// it, so the slot's status reads it without the admission's engine-internal
+/// enum.
+pub(crate) type PlatformAbsent = Arc<Mutex<[Option<&'static str>; 2]>>;
+/// Index of the MLX row in [`PlatformAbsent`].
+pub(crate) const MLX_ABSENT: usize = 0;
+/// Index of the Core ML row in [`PlatformAbsent`].
+pub(crate) const COREML_ABSENT: usize = 1;
+
 /// A slot's platform admission, prepared as the slot is built and started
 /// once by the serving build.
 pub(crate) struct Admission {
@@ -73,6 +83,8 @@ pub(crate) struct Admission {
     baseline_worker: WorkerId,
     /// The slot's card, which the worker must answer as.
     card: ModelCard,
+    /// Where each platform row's absence is retained for the slot's status.
+    absent: PlatformAbsent,
 }
 
 /// What the platform workers of one admission share: the one owner of its
@@ -96,6 +108,7 @@ impl Admission {
         baseline: Serving,
         baseline_worker: WorkerId,
         card: ModelCard,
+        absent: PlatformAbsent,
     ) -> Option<Self> {
         let pooled = config.runtime == OneironerRuntime::Auto
             && config.device == EmbedderDevice::Auto
@@ -107,6 +120,7 @@ impl Admission {
             baseline,
             baseline_worker,
             card,
+            absent,
         })
     }
 
@@ -143,14 +157,24 @@ impl Admission {
                 let spec = |claim| self.mlx_spec(&dir, &read, &candidate, &contest, claim);
                 self.add(MLX_ROW, &dir, &read.stack_sha16, spec);
             }
-            Err(absent) => absent.log(MLX_ROW),
+            Err(absent) => {
+                absent.log(MLX_ROW);
+                if let Ok(mut retained) = self.absent.lock() {
+                    retained[MLX_ABSENT] = Some(absent.as_str());
+                }
+            }
         }
         match candidate::discover_coreml(&dir, &read.manifest) {
             Ok(candidate) => {
                 let spec = |claim| self.coreml_spec(&dir, &read, &candidate, &contest, claim);
                 self.add(COREML_ROW, &dir, &read.stack_sha16, spec);
             }
-            Err(absent) => absent.log(COREML_ROW),
+            Err(absent) => {
+                absent.log(COREML_ROW);
+                if let Ok(mut retained) = self.absent.lock() {
+                    retained[COREML_ABSENT] = Some(absent.as_str());
+                }
+            }
         }
     }
 

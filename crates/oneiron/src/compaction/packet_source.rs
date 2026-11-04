@@ -104,14 +104,20 @@ fn host_log_shape(
     validate_snapshot_match(&p.snapshot, expected_snapshot)?;
     validate_turn_ids_non_empty(&p.turn_ids)?;
 
-    let session = crate::code_run::executor_compaction_session_id(log.run_ref, log.run_id)?;
+    let session = crate::store::executor_speech_identity::executor_compaction_session_id(
+        log.run_ref,
+        log.run_id,
+    )?;
     if p.session_ref != session {
         return Err(CompactionPacketError::UnknownSession {
             session: p.session_ref,
         }
         .into());
     }
-    let turn = crate::code_run::executor_speech_turn_id_for_run(log.run_ref, log.run_id)?;
+    let turn = crate::store::executor_speech_identity::executor_speech_turn_id_for_run(
+        log.run_ref,
+        log.run_id,
+    )?;
     if let Some(other) = p.turn_ids.iter().find(|id| **id != turn) {
         return Err(CompactionPacketError::TurnFromOtherSession {
             turn: *other,
