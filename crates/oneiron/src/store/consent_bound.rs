@@ -701,7 +701,6 @@ pub enum ConsentDecision {
 pub(crate) const SUBJECT_KIND_ACTOR: &str = "actor";
 pub(crate) const SUBJECT_KIND_AUDIENCE: &str = "audience";
 
-
 pub(crate) fn normalized_ref(label: &'static str, value: String) -> Result<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
