@@ -21,7 +21,7 @@ pub(super) fn admit_claim_put(
     id: EntityId,
     input: ClaimPutAdmission<'_>,
 ) -> Result<Option<ClaimBody>> {
-    crate::federation::guard_ruling_overwrite(
+    store.record_hooks.guard_ruling_overwrite(
         store,
         txn,
         &id,

@@ -142,6 +142,8 @@ mod scope_stamps;
 pub use scope_stamps::StoreScopeStamps;
 mod project_writes;
 pub use project_writes::StoreProjectWrites;
+mod record_hooks;
+pub use record_hooks::StoreRecordHooks;
 #[cfg(feature = "sync")]
 pub mod document_frame_tags;
 pub mod housekeeping_report;
