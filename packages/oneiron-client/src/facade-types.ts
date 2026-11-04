@@ -974,7 +974,7 @@ export type TaskRedo = { task_ref: EntityId; intent_key: string }
 export type WitnessAuthor = "user" | "companion" | "system"
 /** `oneiron::memory::witness::types::WitnessAssertions` */
 export type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] }
-/** `oneiron::store::conversation_record::QuoteSpan` */
+/** `oneiron_store::conversation_record::QuoteSpan` */
 export type QuoteSpan = { message: EntityId; start: number; end: number }
 /** `oneiron::memory::witness::stream::api_types::MessageBirth` */
 export type MessageBirth = { conversation_ref: string; turn_ref?: string | null; author: WitnessAuthor; message_type: string; metadata?: unknown | null; is_visible: boolean; order: number; occurred_at: number; assertions?: WitnessAssertions; quote?: QuoteSpan | null }
@@ -1370,7 +1370,7 @@ export type RetrievalWeightOrigin = "bootstrap" | "learned" | "owner_pin"
 export type RetrievalWeightRow = { signal: RetrievalBlendSignal; weight: number; origin: RetrievalWeightOrigin; pinned: boolean }
 /** `oneiron::store::retrieval_telemetry::types::RetrievalPolicyPin` */
 export type RetrievalPolicyPin = { signal: RetrievalBlendSignal; value: number }
-/** `oneiron::model_binding::ModelSlot` */
+/** `oneiron_model::model_binding::ModelSlot` */
 export type ModelSlot = "llm" | "embedder" | "oneironer"
 /** `oneiron_model::llm::call::ModelLocality` */
 export type ModelLocality = "on_device" | "own_server" | "third_party"
@@ -2246,7 +2246,7 @@ export type SkillOptimizeTradeoffResolveRequest = { proposal: EntityId; pending:
 export type SkillGovernanceSetRequest = { entity: EntityId; tier?: string | null }
 /** `oneiron::verbs::hub::HubHookBindRequest` */
 export type HubHookBindRequest = { pack: string }
-/** `oneiron::skill_hub::pack_catalog::hooks::HookActorClass` */
+/** `oneiron::store::pack_hook_actor_class::HookActorClass` */
 export type HookActorClass = "human" | "agent" | "system"
 /** `oneiron::skill_hub::pack_catalog::hooks::HookPhase` */
 export type HookPhase = "pre" | "post" | "fact"
@@ -3948,13 +3948,13 @@ export type SpaceMove = { candidate: string; incumbent: SpaceRef; kinds: InputKi
 export type SwitchOwner = string
 /** `oneiron::training_pack::types::TrainingOwner` */
 export type TrainingOwner = string
-/** `oneiron::model_binding::ModelRole` */
+/** `oneiron_model::model_binding::ModelRole` */
 export type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach" | "browser_planner"
 /** `oneiron_model::llm::call::ModelTierRef` */
 export type ModelTierRef = string
-/** `oneiron::model_binding::ModelDisposition` */
+/** `oneiron_model::model_binding::ModelDisposition` */
 export type ModelDisposition = "offline" | "served"
-/** `oneiron::model_binding::ModelBinding` */
+/** `oneiron_model::model_binding::ModelBinding` */
 export type ModelBinding = { model: ModelId; slot: ModelSlot; tier: ModelTierRef; route_models?: Record<string, ModelId>; disposition?: ModelDisposition | null; reads_audio?: boolean }
 /** `oneiron::training_pack::types::CheckpointFileKind` */
 export type CheckpointFileKind = "weights" | "tokenizer" | "config" | "template" | "adapter_config"
@@ -4256,9 +4256,9 @@ export type PolicyManifestReceipt = { manifest: PolicyManifestView; approval: Po
 export type PolicyManifestPropose = { manifest: PolicyManifest }
 /** `oneiron_contracts::claim::confidence::ConfidenceBand` */
 export type ConfidenceBand = "low" | "medium" | "high" | "certain"
-/** `oneiron::model_binding::VerdictMode` */
+/** `oneiron_model::model_binding::VerdictMode` */
 export type VerdictMode = "shadow" | "enforce"
-/** `oneiron::model_binding::VerdictBinding` */
+/** `oneiron_model::model_binding::VerdictBinding` */
 export type VerdictBinding = { model: ModelId; slot: ModelSlot; floor: ConfidenceBand; mode: VerdictMode }
 /** `oneiron::gate::policy_manifest_doors::types::GateCheckerView` */
 export type GateCheckerView = { binding?: VerdictBinding | null }
@@ -4280,15 +4280,15 @@ export type LearningBetaValue = { alpha: number; beta: number }
 export type LearningMeanValue = { mean: number; spread: number }
 /** `oneiron::learning::doors::MeasuredLearningValue` */
 export type MeasuredLearningValue = { form: "beta"; value: LearningBetaValue } | { form: "mean"; value: LearningMeanValue } | { form: "counts"; value: Record<string, number> }
-/** `oneiron::claim::learning_estimate::PriorOrigin` */
+/** `oneiron_base::learning_estimate::PriorOrigin` */
 export type PriorOrigin = "shipped" | "provenance" | "carried" | "parent" | "model" | "seed"
 /** `oneiron::learning::doors::LearningPriorValue` */
 export type LearningPriorValue = LearningBetaValue | LearningMeanValue | Record<string, number>
 /** `oneiron::learning::doors::LearningPriorView` */
 export type LearningPriorView = { origin: PriorOrigin; value: LearningPriorValue; weight_runs: number; from?: string | null }
-/** `oneiron::claim::learning_estimate::EstimateLabels` */
+/** `oneiron_base::learning_estimate::EstimateLabels` */
 export type EstimateLabels = { by_judge?: Record<string, number>; converted?: number; on_judge_model?: number; outcome_counts?: Record<string, number> | null }
-/** `oneiron::claim::learning_estimate::Window` */
+/** `oneiron_base::learning_estimate::Window` */
 export type LearningEstimateWindow = { half_life: number }
 /** `oneiron::learning::doors::MeasuredLearningEstimate` */
 export type MeasuredLearningEstimate = MeasuredLearningValue & { runs: number; prior: LearningPriorView; untested: boolean; of: string; labels: EstimateLabels; window: LearningEstimateWindow; ver: string }
@@ -6682,7 +6682,7 @@ export type ScoreObservation = { model: ModelId; benchmark: string; score: numbe
 export type ScoreSnapshot = { source: string; fetched_at: number; observations: ScoreObservation[]; source_rows?: EntityId[] | null }
 /** `oneiron::llm::catalog_doors::types::ModelCatalogRefresh` */
 export type ModelCatalogRefresh = { revision: string; expected_revision?: string | null; catalog: CatalogSeed; scores?: ScoreSnapshot[] }
-/** `oneiron::llm::registry::ModelScoreDiff` */
+/** `oneiron::store::model_score_diff::ModelScoreDiff` */
 export type ModelScoreDiff = { model: ModelId; source: string; benchmark: string; previous?: number | null; score: number; fetched_at: number }
 /** `oneiron::llm::catalog_doors::types::ModelCatalogRevision` */
 export type ModelCatalogRevision = { revision: string; previous_revision?: string | null; catalog: CatalogSeed; rows: ModelRegistryRow[]; score_diffs: ModelScoreDiff[]; refreshed_at: number }
@@ -6946,7 +6946,7 @@ export type DecisionBandEnforceRequest = { question: DecisionQuestion; reversibi
 export type DecisionAskAnswerRequest = { seq: number; answer: DecisionAnswer }
 /** `oneiron::llm::decision::asks::AskPrior` */
 export type AskPrior = { answer: DecisionAnswer; probability?: number | null; provider: ProviderPin; paired?: PairedReading | null; person?: PairedReading | null }
-/** `oneiron::llm::decision::ladder::roles::AskRole` */
+/** `oneiron::store::decision_ask_role::AskRole` */
 export type AskRole = { role: "responsible"; actor: string; project?: string | null } | { role: "board"; project: string } | { role: "owner" }
 /** `oneiron::llm::decision::ladder::roles::AskTo` */
 export type AskTo = { role: AskRole; ceiling: RoleRank; act: AskAct }
@@ -7434,31 +7434,31 @@ export type EsignSealedView = { attempt_ref: string; audit_chain_sha256: string;
 export type EsignSealTrail = { trail: "readable"; status: DocumentStatus } | { trail: "unreadable"; error: MemoryError }
 /** `oneiron::blob_artifact::esign::door::EsignSealView` */
 export type EsignSealView = EsignSealTrail & { document_ref: string; attempts: EsignSealAttemptView[]; sealed?: EsignSealedView | null; delivery_receipts: EsignDeliveryReceipt[] }
-/** `oneiron::core_write::shape::CoreWriteTextField` */
+/** `oneiron_store::core_write::shape::CoreWriteTextField` */
 export type CoreWriteTextField = { field: string; value: string }
-/** `oneiron::core_write::conversations::ConversationCreateInput` */
+/** `oneiron_store::core_write::conversations::ConversationCreateInput` */
 export type ConversationCreateInput = { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null }
-/** `oneiron::core_write::conversations::CoreEntityWriteReceipt` */
+/** `oneiron_store::core_write::conversations::CoreEntityWriteReceipt` */
 export type CoreEntityWriteReceipt = { id: string; entity_type: number; learned_at: number; body: unknown }
-/** `oneiron::core_write::conversations::ConversationTurnCreateInput` */
+/** `oneiron_store::core_write::conversations::ConversationTurnCreateInput` */
 export type ConversationTurnCreateInput = { conversation: string; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null }
-/** `oneiron::core_write::dag::CoreDagAddressMode` */
+/** `oneiron_store::core_write::dag::CoreDagAddressMode` */
 export type CoreDagAddressMode = "broadcast" | "direct"
-/** `oneiron::core_write::dag::CoreDagQuoteInput` */
+/** `oneiron_store::core_write::dag::CoreDagQuoteInput` */
 export type CoreDagQuoteInput = { message: string; start: number; end: number }
-/** `oneiron::core_write::dag::DagRecordAppendInput` */
+/** `oneiron_store::core_write::dag::DagRecordAppendInput` */
 export type DagRecordAppendInput = { conversation: string; parent?: string | null; reply_to?: string | null; containing_turn?: string | null; addr?: CoreDagAddressMode | null; to?: string[] | null; advance: boolean; body: unknown; text?: CoreWriteTextField[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: CoreDagQuoteInput | null; thread_audience?: string[] | null }
-/** `oneiron::store::conversation_record::DagReplyTarget` */
+/** `oneiron_store::conversation_record::DagReplyTarget` */
 export type DagReplyTarget = { kind: "turn"; record: EntityId; revision: string } | { kind: "message"; record: EntityId; revision: string; containing_turn: EntityId }
-/** `oneiron::core_write::dag::DagRecordAppendReceipt` */
+/** `oneiron_store::core_write::dag::DagRecordAppendReceipt` */
 export type DagRecordAppendReceipt = { id: string; head?: string | null; parent?: string | null; entity_type: number; containing_turn?: string | null; reply_target?: DagReplyTarget | null }
-/** `oneiron::core_write::batch::CoreBatchEntityInput` */
+/** `oneiron_store::core_write::batch::CoreBatchEntityInput` */
 export type CoreBatchEntityInput = { id?: string | null; entity_type: number; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null }
-/** `oneiron::core_write::batch::CoreBatchWriteInput` */
+/** `oneiron_store::core_write::batch::CoreBatchWriteInput` */
 export type CoreBatchWriteInput = { entities: CoreBatchEntityInput[] }
-/** `oneiron::core_write::batch::CoreBatchEntityReceipt` */
+/** `oneiron_store::core_write::batch::CoreBatchEntityReceipt` */
 export type CoreBatchEntityReceipt = { id: string; entity_type: number }
-/** `oneiron::core_write::batch::CoreBatchWriteReceipt` */
+/** `oneiron_store::core_write::batch::CoreBatchWriteReceipt` */
 export type CoreBatchWriteReceipt = { count: number; entities: CoreBatchEntityReceipt[] }
 /** `oneiron::memory::structural::types::BlobArtifactInput` */
 export type BlobArtifactInput = { id?: string | null; name: string; media_type: string; occurred_at: number; learned_at?: number | null }
@@ -8132,13 +8132,13 @@ export type ChannelIdentityBindRequest = { kind: "existing"; identity_ref: Entit
 export type ChannelIdentityRequest = { identity_ref: EntityId; request_ref?: EntityId | null }
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityReleaseRequest` */
 export type ChannelIdentityReleaseRequest = { identity_ref: EntityId; quarantine_until: number; request_ref?: EntityId | null }
-/** `oneiron::channel_identity_selection::selection_vocabulary::RelationshipContext` */
+/** `oneiron_authority::channel_selection_vocabulary::RelationshipContext` */
 export type RelationshipContext = "work_deal" | "scheduling_logistics" | "campaign_outreach" | "transactional_system" | "personal_friends" | "group_space"
 /** `oneiron::channel_identity_selection::selection_resolution::SelectionRuleScope` */
 export type SelectionRuleScope = { kind: "vault_default" } | { kind: "world"; world_ref: EntityId } | { kind: "relationship"; relationship_ref: EntityId } | { kind: "brief"; brief_ref: string } | { kind: "space"; space_ref: string }
-/** `oneiron::channel_identity_selection::selection_vocabulary::ChannelIdentityFace` */
+/** `oneiron_authority::channel_selection_vocabulary::ChannelIdentityFace` */
 export type ChannelIdentityFace = "delegated_owner_account" | "agent_named_address" | "side_domain_address" | "house_identity" | "companion_identity" | "named_group_participant"
-/** `oneiron::channel_identity_selection::selection_vocabulary::SelectionRuleWriterKind` */
+/** `oneiron_authority::channel_selection_vocabulary::SelectionRuleWriterKind` */
 export type SelectionRuleWriterKind = "system_default" | "owner" | "agent"
 /** `oneiron::channel_identity_selection::selection_rules::ChannelIdentitySelectionRule` */
 export type ChannelIdentitySelectionRule = { rule_id: string; relationship: RelationshipContext; scope: SelectionRuleScope; face: ChannelIdentityFace; pinned_identity_ref?: EntityId | null; priority: number; enabled: boolean; agent_amendable: boolean; updated_at: number; updated_by?: EntityId | null; writer_kind: SelectionRuleWriterKind }

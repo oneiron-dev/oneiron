@@ -8333,7 +8333,7 @@ pub struct WitnessAssertions {
     pub created: Vec<RecordRef>,
 }
 
-/// `oneiron::store::conversation_record::QuoteSpan`.
+/// `oneiron_store::conversation_record::QuoteSpan`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WireQuoteSpan {
@@ -11118,7 +11118,7 @@ pub struct RetrievalPolicyPin {
     pub value: f64,
 }
 
-/// `oneiron::model_binding::ModelSlot`.
+/// `oneiron_model::model_binding::ModelSlot`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ModelSlot {
     #[serde(rename = "llm")]
@@ -17847,7 +17847,7 @@ pub struct HubHookBindRequest {
     pub pack: String,
 }
 
-/// `oneiron::skill_hub::pack_catalog::hooks::HookActorClass`.
+/// `oneiron::store::pack_hook_actor_class::HookActorClass`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum HookActorClass {
     #[serde(rename = "human")]
@@ -31210,7 +31210,7 @@ pub struct SpaceMove {
     pub last_check: Option<SpaceMoveCheck>,
 }
 
-/// `oneiron::model_binding::ModelRole`.
+/// `oneiron_model::model_binding::ModelRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ModelRole {
     #[serde(rename = "retrieval_embedder")]
@@ -31251,7 +31251,7 @@ pub enum ModelRole {
     BrowserPlanner,
 }
 
-/// `oneiron::model_binding::ModelDisposition`.
+/// `oneiron_model::model_binding::ModelDisposition`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ModelDisposition {
     #[serde(rename = "offline")]
@@ -31260,7 +31260,7 @@ pub enum ModelDisposition {
     Served,
 }
 
-/// `oneiron::model_binding::ModelBinding`.
+/// `oneiron_model::model_binding::ModelBinding`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ModelBinding {
@@ -33617,7 +33617,7 @@ pub enum ConfidenceBand {
     Certain,
 }
 
-/// `oneiron::model_binding::VerdictMode`.
+/// `oneiron_model::model_binding::VerdictMode`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum VerdictMode {
     #[serde(rename = "shadow")]
@@ -33626,7 +33626,7 @@ pub enum VerdictMode {
     Enforce,
 }
 
-/// `oneiron::model_binding::VerdictBinding`.
+/// `oneiron_model::model_binding::VerdictBinding`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VerdictBinding {
@@ -33730,7 +33730,7 @@ pub struct LearningReadRequest {
     pub project_ref: Option<String>,
 }
 
-/// `oneiron::claim::learning_estimate::PriorOrigin`.
+/// `oneiron_base::learning_estimate::PriorOrigin`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum PriorOrigin {
     #[serde(rename = "shipped")]
@@ -33787,7 +33787,7 @@ pub struct LearningPriorView {
     pub from: Option<String>,
 }
 
-/// `oneiron::claim::learning_estimate::EstimateLabels`.
+/// `oneiron_base::learning_estimate::EstimateLabels`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EstimateLabels {
     #[serde(rename = "by_judge", default, skip_serializing_if = "Option::is_none")]
@@ -33808,7 +33808,7 @@ pub struct EstimateLabels {
     pub outcome_counts: Option<std::collections::HashMap<String, f64>>,
 }
 
-/// `oneiron::claim::learning_estimate::Window`.
+/// `oneiron_base::learning_estimate::Window`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LearningEstimateWindow {
     #[serde(rename = "half_life")]
@@ -53669,7 +53669,7 @@ pub struct ModelCatalogRefresh {
     pub scores: Option<Vec<ScoreSnapshot>>,
 }
 
-/// `oneiron::llm::registry::ModelScoreDiff`.
+/// `oneiron::store::model_score_diff::ModelScoreDiff`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ModelScoreDiff {
     #[serde(rename = "model")]
@@ -55837,7 +55837,7 @@ pub struct AskPrior {
     pub person: Option<PairedReading>,
 }
 
-/// `oneiron::llm::decision::ladder::roles::AskRole`.
+/// `oneiron::store::decision_ask_role::AskRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "role")]
 pub enum AskRole {
@@ -59504,7 +59504,7 @@ pub struct EsignSealView {
     pub esign_seal_trail: EsignSealTrail,
 }
 
-/// `oneiron::core_write::shape::CoreWriteTextField`.
+/// `oneiron_store::core_write::shape::CoreWriteTextField`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CoreWriteTextField {
     #[serde(rename = "field")]
@@ -59513,7 +59513,7 @@ pub struct CoreWriteTextField {
     pub value: String,
 }
 
-/// `oneiron::core_write::conversations::ConversationCreateInput`.
+/// `oneiron_store::core_write::conversations::ConversationCreateInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConversationCreateInput {
     #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
@@ -59542,7 +59542,7 @@ pub struct ConversationCreateInput {
     pub text: Option<Vec<CoreWriteTextField>>,
 }
 
-/// `oneiron::core_write::conversations::CoreEntityWriteReceipt`.
+/// `oneiron_store::core_write::conversations::CoreEntityWriteReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CoreEntityWriteReceipt {
     #[serde(rename = "id")]
@@ -59555,7 +59555,7 @@ pub struct CoreEntityWriteReceipt {
     pub body: crate::WireJson,
 }
 
-/// `oneiron::core_write::conversations::ConversationTurnCreateInput`.
+/// `oneiron_store::core_write::conversations::ConversationTurnCreateInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConversationTurnCreateInput {
     #[serde(rename = "conversation")]
@@ -59586,7 +59586,7 @@ pub struct ConversationTurnCreateInput {
     pub text: Option<Vec<CoreWriteTextField>>,
 }
 
-/// `oneiron::core_write::dag::CoreDagAddressMode`.
+/// `oneiron_store::core_write::dag::CoreDagAddressMode`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CoreDagAddressMode {
     #[serde(rename = "broadcast")]
@@ -59595,7 +59595,7 @@ pub enum CoreDagAddressMode {
     Direct,
 }
 
-/// `oneiron::core_write::dag::CoreDagQuoteInput`.
+/// `oneiron_store::core_write::dag::CoreDagQuoteInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CoreDagQuoteInput {
@@ -59607,7 +59607,7 @@ pub struct CoreDagQuoteInput {
     pub end: u32,
 }
 
-/// `oneiron::core_write::dag::DagRecordAppendInput`.
+/// `oneiron_store::core_write::dag::DagRecordAppendInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DagRecordAppendInput {
@@ -59663,7 +59663,7 @@ pub struct DagRecordAppendInput {
     pub thread_audience: Option<Vec<String>>,
 }
 
-/// `oneiron::store::conversation_record::DagReplyTarget`.
+/// `oneiron_store::conversation_record::DagReplyTarget`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -59686,7 +59686,7 @@ pub enum DagReplyTarget {
     },
 }
 
-/// `oneiron::core_write::dag::DagRecordAppendReceipt`.
+/// `oneiron_store::core_write::dag::DagRecordAppendReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DagRecordAppendReceipt {
     #[serde(rename = "id")]
@@ -59711,7 +59711,7 @@ pub struct DagRecordAppendReceipt {
     pub reply_target: Option<DagReplyTarget>,
 }
 
-/// `oneiron::core_write::batch::CoreBatchEntityInput`.
+/// `oneiron_store::core_write::batch::CoreBatchEntityInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CoreBatchEntityInput {
     #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
@@ -59742,14 +59742,14 @@ pub struct CoreBatchEntityInput {
     pub text: Option<Vec<CoreWriteTextField>>,
 }
 
-/// `oneiron::core_write::batch::CoreBatchWriteInput`.
+/// `oneiron_store::core_write::batch::CoreBatchWriteInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CoreBatchWriteInput {
     #[serde(rename = "entities")]
     pub entities: Vec<CoreBatchEntityInput>,
 }
 
-/// `oneiron::core_write::batch::CoreBatchEntityReceipt`.
+/// `oneiron_store::core_write::batch::CoreBatchEntityReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CoreBatchEntityReceipt {
     #[serde(rename = "id")]
@@ -59758,7 +59758,7 @@ pub struct CoreBatchEntityReceipt {
     pub entity_type: u8,
 }
 
-/// `oneiron::core_write::batch::CoreBatchWriteReceipt`.
+/// `oneiron_store::core_write::batch::CoreBatchWriteReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CoreBatchWriteReceipt {
     #[serde(rename = "count")]
@@ -65841,7 +65841,7 @@ pub struct ChannelIdentityReleaseRequest {
     pub request_ref: Option<String>,
 }
 
-/// `oneiron::channel_identity_selection::selection_vocabulary::RelationshipContext`.
+/// `oneiron_authority::channel_selection_vocabulary::RelationshipContext`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RelationshipContext {
     #[serde(rename = "work_deal")]
@@ -65887,7 +65887,7 @@ pub enum SelectionRuleScope {
     },
 }
 
-/// `oneiron::channel_identity_selection::selection_vocabulary::ChannelIdentityFace`.
+/// `oneiron_authority::channel_selection_vocabulary::ChannelIdentityFace`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ChannelIdentityFace {
     #[serde(rename = "delegated_owner_account")]
@@ -65904,7 +65904,7 @@ pub enum ChannelIdentityFace {
     NamedGroupParticipant,
 }
 
-/// `oneiron::channel_identity_selection::selection_vocabulary::SelectionRuleWriterKind`.
+/// `oneiron_authority::channel_selection_vocabulary::SelectionRuleWriterKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SelectionRuleWriterKind {
     #[serde(rename = "system_default")]
