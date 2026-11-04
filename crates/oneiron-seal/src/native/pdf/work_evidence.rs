@@ -452,7 +452,7 @@ const fn btree_entry_bytes<K, V>() -> usize {
 /// heap (stream bytes, dictionaries) is admitted where it is built.
 fn object_insert(ledger: &MemoryLedger) -> Result<(), WorkError> {
     ledger
-        .take(wide(btree_entry_bytes::<ObjectId, Object>()))
+        .admit_len::<u8>(btree_entry_bytes::<ObjectId, Object>())
         .map_err(WorkError::Memory)
 }
 
@@ -469,5 +469,5 @@ fn page_dict_insert(ledger: &MemoryLedger) -> Result<(), WorkError> {
         .and_then(|shares| shares.checked_add(40))
         .and_then(|shares| shares.checked_add(4))
         .ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
-    ledger.take(wide(bytes)).map_err(WorkError::Memory)
+    ledger.admit_len::<u8>(bytes).map_err(WorkError::Memory)
 }

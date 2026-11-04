@@ -284,14 +284,14 @@ impl VisualCopy<'_> {
                     content.push(b'\n');
                     check_content(&content, limits)?;
                 }
-                limits.ledger.take(wide(stream.content.len())).map_err(WorkError::Memory)?;
+                limits.ledger.admit_len::<u8>(stream.content.len()).map_err(WorkError::Memory)?;
                 Object::Stream(Stream::new(
                     self.dictionary(out, &stream.dict, depth, limits)?,
                     stream.content.clone(),
                 ))
             }
             Object::Name(bytes) | Object::String(bytes, _) => {
-                limits.ledger.take(wide(bytes.len())).map_err(WorkError::Memory)?;
+                limits.ledger.admit_len::<u8>(bytes.len()).map_err(WorkError::Memory)?;
                 value.clone()
             }
             _ => value.clone(),
@@ -315,7 +315,7 @@ impl VisualCopy<'_> {
         for (kind, members) in resources {
             if kind == b"ProcSet" {
                 let object = self.copy(out, members, depth + 1, limits)?;
-                limits.ledger.take(wide(kind.len())).map_err(WorkError::Memory)?;
+                limits.ledger.admit_len::<u8>(kind.len()).map_err(WorkError::Memory)?;
                 btree::<Vec<u8>, Object>(limits.ledger, 1)?;
                 copied.set(kind.clone(), object);
                 continue;
@@ -349,11 +349,11 @@ impl VisualCopy<'_> {
                     }
                 }
                 let object = self.copy(out, object, depth + 1, limits)?;
-                limits.ledger.take(wide(key.len())).map_err(WorkError::Memory)?;
+                limits.ledger.admit_len::<u8>(key.len()).map_err(WorkError::Memory)?;
                 btree::<Vec<u8>, Object>(limits.ledger, 1)?;
                 map.set(key.clone(), object);
             }
-            limits.ledger.take(wide(kind.len())).map_err(WorkError::Memory)?;
+            limits.ledger.admit_len::<u8>(kind.len()).map_err(WorkError::Memory)?;
             btree::<Vec<u8>, Object>(limits.ledger, 1)?;
             copied.set(kind.clone(), map);
         }
@@ -430,7 +430,7 @@ impl VisualCopy<'_> {
                         glyph_content(self.source, glyph, &mut content, 0, limits)?;
                         check_content(&content, limits)?;
                         let object = self.copy(out, glyph, depth + 1, limits)?;
-                        limits.ledger.take(wide(glyph_name.len())).map_err(WorkError::Memory)?;
+                        limits.ledger.admit_len::<u8>(glyph_name.len()).map_err(WorkError::Memory)?;
                         btree::<Vec<u8>, Object>(limits.ledger, 1)?;
                         glyphs.set(glyph_name.clone(), object);
                     }
@@ -438,7 +438,7 @@ impl VisualCopy<'_> {
                 } else {
                     self.copy(out, value, depth + 1, limits)?
                 };
-                limits.ledger.take(wide(key.len())).map_err(WorkError::Memory)?;
+                limits.ledger.admit_len::<u8>(key.len()).map_err(WorkError::Memory)?;
                 btree::<Vec<u8>, Object>(limits.ledger, 1)?;
                 copied.set(key.clone(), object);
             }
@@ -722,11 +722,6 @@ fn lopdf_error(limits: &WorkLimits, err: lopdf::Error) -> WorkError {
     )
 }
 
-/// A length as the ledger counts bytes.
-fn wide(bytes: usize) -> u64 {
-    u64::try_from(bytes).unwrap_or(u64::MAX)
-}
-
 fn floor(bytes: usize) -> SealMemoryRefusal {
     SealMemoryRefusal::Floor {
         needed: u64::try_from(bytes).unwrap_or(u64::MAX),
@@ -786,5 +781,5 @@ fn btree<K, V>(ledger: &MemoryLedger, entries: usize) -> Result<(), WorkError> {
         .checked_mul(entries)
         .and_then(|shares| shares.checked_add(btree_node_bytes::<K, V>()))
         .ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
-    ledger.take(wide(bytes)).map_err(WorkError::Memory)
+    ledger.admit_len::<u8>(bytes).map_err(WorkError::Memory)
 }
