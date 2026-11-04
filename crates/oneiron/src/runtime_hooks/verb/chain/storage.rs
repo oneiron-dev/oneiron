@@ -267,6 +267,8 @@ impl Chain<'_> {
                 .as_ref()
                 .filter(|original| original.len() <= MAX_PINNED_INPUT)
                 .cloned(),
+            had_landing: run.had_landing,
+            args_withheld: run.args_withheld,
             history_erased: false,
             input_hash: blake3::hash(run.input.as_bytes()).to_hex().to_string(),
             dependencies: run.dependencies.clone(),

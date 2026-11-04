@@ -47,6 +47,19 @@ pub(in crate::runtime_hooks) struct HookVerbRunRecord {
     /// oversize args, and records saved before the field existed.
     #[serde(default)]
     pub(in crate::runtime_hooks) landing_original: Option<String>,
+    /// Whether the live chain judged a restrictive landing on the caller's
+    /// args (FIX 2393): `None` for records saved before the field existed
+    /// (replay infers a landing as before), `Some(false)` when the call had
+    /// none (replay skips the repair instead of inventing one from later
+    /// seen args), `Some(true)` when it did (replay rebuilds it, or skips
+    /// an unavailable snapshot it cannot rebuild).
+    #[serde(default)]
+    pub(in crate::runtime_hooks) had_landing: Option<bool>,
+    /// Whether the live chain merged withheld markers before admission, the
+    /// recorded `args_withheld` condition (FIX 10084): replay merges only
+    /// when it held.
+    #[serde(default)]
+    pub(in crate::runtime_hooks) args_withheld: bool,
     /// The rows whose content that input showed: a replay runs it again only
     /// while the hook's current grant still shows each of them.
     #[serde(default, with = "crate::serialize::entity_ref::sequence")]

@@ -244,40 +244,69 @@ impl Replay<'_> {
                 // the static checks below; static rows only, as the saved
                 // input shows them.
                 // The landing the live chain repaired against was judged on
-                // the caller's own args, not on what this hook saw (an
-                // earlier hook may have moved the call off its restrictive
-                // row since): rebuild it from the saved original when the
-                // run kept one, and repair against the seen args as live
-                // did. Records saved before the field existed infer as
-                // before.
+                // the caller's own args (FIX 2393): the run records whether
+                // it had one. With none, replay skips the repair instead of
+                // inventing a landing from later seen args; without the
+                // record (older saves) it infers a held-call landing as
+                // before. A kept landing rebuilds from the saved original —
+                // held-call rows and the vault-free polymorphic rows alike —
+                // and repairs against the seen args as live did; an
+                // unavailable snapshot (oversize original, or a vault-read
+                // row) skips the repair.
                 let repaired;
                 let merged;
                 let next = match &before {
                     Some(before) => {
-                        let base = saved
-                            .landing_original
-                            .as_deref()
-                            .and_then(|original| serde_json::from_str(original).ok())
-                            .unwrap_or_else(|| before.clone());
-                        match crate::task_verb::revoke_lands::Landing::from_snapshot(
-                            &saved.verb,
-                            base,
-                            Vec::new(),
-                        ) {
-                            Some(mut landing) => {
-                                repaired = landing.select(before, next.clone(), &|_| Ok(())).0;
+                        repaired = match saved.had_landing {
+                            Some(true) => {
+                                let base: Option<serde_json::Value> = saved
+                                    .landing_original
+                                    .as_deref()
+                                    .and_then(|original| serde_json::from_str(original).ok());
+                                match base.and_then(|base| {
+                                    crate::task_verb::revoke_lands::Landing::from_recorded(
+                                        &saved.verb,
+                                        base,
+                                    )
+                                }) {
+                                    Some(mut landing) => {
+                                        landing.select(before, next.clone(), &|_| Ok(())).0
+                                    }
+                                    None => next.clone(),
+                                }
                             }
                             None => {
-                                repaired = next.clone();
+                                let base = saved
+                                    .landing_original
+                                    .as_deref()
+                                    .and_then(|original| serde_json::from_str(original).ok())
+                                    .unwrap_or_else(|| before.clone());
+                                match crate::task_verb::revoke_lands::Landing::from_snapshot(
+                                    &saved.verb,
+                                    base,
+                                    Vec::new(),
+                                ) {
+                                    Some(mut landing) => {
+                                        landing.select(before, next.clone(), &|_| Ok(())).0
+                                    }
+                                    None => next.clone(),
+                                }
                             }
-                        }
+                            Some(false) => next.clone(),
+                        };
                         // A narrowed hook's Rewrite keeps withheld markers
                         // where its grant hid values: the live chain merged
                         // them against the seen args before admission, so
-                        // replay merges against the saved seen args before
-                        // the static checks below. Without markers this
-                        // changes nothing.
-                        merged = merge_withheld(before, repaired);
+                        // replay merges against the saved seen args when the
+                        // recorded condition held — and checks the raw
+                        // rewrite when it did not, as live did. Records saved
+                        // before the condition existed keep the earlier
+                        // merge.
+                        if saved.args_withheld || saved.had_landing.is_none() {
+                            merged = merge_withheld(before, repaired);
+                        } else {
+                            merged = repaired;
+                        }
                         &merged
                     }
                     None => next,
@@ -314,17 +343,28 @@ impl Replay<'_> {
                 // browser table its browser shape — but a host hook can save a
                 // hook flavor of a host verb that matches neither
                 // (pre_compact_hooks without session_ref, pre_wake_hooks
-                // kind/scope plus queue_head). Each shape governs only the
-                // flavor the saved args show: the facade shape when the saved
-                // args validate under it, else the browser shape when they
-                // validate under that, else the host-door rules above alone.
-                let facade = before.as_ref().is_some_and(|before| {
+                // kind/scope plus queue_head). Each shape governs the flavor
+                // the call ran: the facade shape when the saved args validate
+                // under it, else the browser shape when they validate under
+                // that — or, when the caller's own args were already invalid,
+                // the verb's own tables (facade rows via input_schema, the
+                // browser/desktop surfaces), since sdk::invoke runs hooks
+                // before decoding and still refused the rewrite. Only an
+                // actual host-hook flavor, in neither table, runs on the
+                // host-door rules above alone.
+                let probe_facade = before.as_ref().is_some_and(|before| {
                     crate::task_verb::sdk::validate_input(&saved.verb, before).is_ok()
                 });
-                let browser = !facade
+                let probe_browser = !probe_facade
                     && before.as_ref().is_some_and(|before| {
                         crate::task_verb::sdk::validate_browser_input(&saved.verb, before).is_ok()
                     });
+                let unprobed = !probe_facade && !probe_browser;
+                let facade_known = crate::task_verb::sdk::input_schema(&saved.verb).is_some();
+                let browser_known = saved.verb.starts_with("self.browser.")
+                    || saved.verb.starts_with("self.desktop.");
+                let facade = probe_facade || (unprobed && facade_known);
+                let browser = !facade && (probe_browser || (unprobed && browser_known));
                 if facade
                     && let Err(error) = crate::task_verb::sdk::validate_input(&saved.verb, next)
                 {
