@@ -5,7 +5,6 @@ use super::codec::{
     encode_scope_summary_body, invalid, scope_value,
 };
 use crate::batch::EdgeValueFields;
-use crate::ports::{ClaimReadStatus};
 use crate::claim::{ScopedRead, ScopedReadActorKey};
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
@@ -17,6 +16,7 @@ use crate::conversation_dag::{
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::memory::Memory;
+use crate::ports::ClaimReadStatus;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
     ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
