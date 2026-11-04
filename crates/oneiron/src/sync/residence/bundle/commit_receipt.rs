@@ -24,7 +24,7 @@
 
 use super::super::bundle_turn::{hold_turn_in, published_in};
 use super::{
-    Asked, GENERATIONS, SealedBundleEntry, SealedBundleKitRoot, SealedBundleObject, denied,
+    Asked, GENERATIONS, STAGES, SealedBundleEntry, SealedBundleKitRoot, SealedBundleObject, denied,
     drop_stage_in, entries_in, entry_in, order, owner_machine, put_object_in, retire_in,
     sealed_digest_hex, sealed_generation_hex, stage_key, staged_whole,
 };
@@ -224,11 +224,23 @@ pub(super) fn commit(
             })
         }
     };
-    let (bundle, pads) = {
+    let (bundle, pads, staged_headers) = {
         let txn = vault.store.env.read_txn()?;
         (
             staged_whole(vault, &txn, machine, SealedBundleObject::Bundle)?,
             staged_whole(vault, &txn, machine, SealedBundleObject::Pads)?,
+            [
+                STAGES.get_bytes(
+                    &vault.store,
+                    &txn,
+                    &stage_key(machine, SealedBundleObject::Bundle),
+                )?,
+                STAGES.get_bytes(
+                    &vault.store,
+                    &txn,
+                    &stage_key(machine, SealedBundleObject::Pads),
+                )?,
+            ],
         )
     };
     let (Some((bundle_stage, bundle_bytes)), Some((pads_stage, pads_bytes))) = (bundle, pads)
@@ -296,8 +308,15 @@ pub(super) fn commit(
             &sealed_generation_hex(&generation),
             &entry.encode(),
         )?;
-        for object in [SealedBundleObject::Bundle, SealedBundleObject::Pads] {
-            drop_stage_in(vault, wtxn, &stage_key(machine, object))?;
+        for (object, staged_header) in [SealedBundleObject::Bundle, SealedBundleObject::Pads]
+            .into_iter()
+            .zip(&staged_headers)
+        {
+            let key = stage_key(machine, object);
+            // Another socket may already be staging this machine's next upload.
+            if STAGES.get_bytes(&vault.store, wtxn, &key)?.as_deref() == staged_header.as_deref() {
+                drop_stage_in(vault, wtxn, &key)?;
+            }
         }
         if let Some(request) = request {
             record_in(vault, wtxn, machine, request, &entry)?;
