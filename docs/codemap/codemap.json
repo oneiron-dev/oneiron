@@ -560,7 +560,7 @@
      "path": "src/agent_def/birth_custody.rs",
      "purpose": "Physical custody of captured agent source, without authorship or delete grants",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 7
      }
     },
     {
@@ -570,7 +570,7 @@
      "path": "src/agent_def/birth_dependencies.rs",
      "purpose": "Retirement of copied agent source when a captured input is erased",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -69357,6 +69357,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_birth_custody.rs",
+     "purpose": "Physical custody of a birthed agent's captured source, read side: which asset holds a child's source, which…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/agent_birth_identity.rs",
+     "purpose": "The derived id of the asset that carries a birthed agent's captured source",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AgentCeiling",
       "AgentWakeCadence",
@@ -71841,7 +71861,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 71,
+      "crate-vis": 73,
       "mod": 73,
       "re-export": 29
      }
@@ -89662,7 +89682,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 336,
+     "files": 338,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89902,7 +89922,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6225,
+   "source_files": 6227,
    "test_files": 898
   },
   "oneiron-android": {
