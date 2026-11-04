@@ -53,6 +53,8 @@ pub(crate) struct LadderGraphAnswerer<'s> {
     server: &'s SyncServer,
     /// Whose question the ladder answers: its receipt and asks name them.
     principal: EntityId,
+    /// The caller's bound session; standing work names none.
+    session: Option<String>,
     /// Who runs it: a Local-vision read is seated on a run of theirs.
     runner: WriteActor,
     /// Where a person ask goes; none holds the dial below the person.
@@ -77,6 +79,7 @@ impl<'s> LadderGraphAnswerer<'s> {
         asker: WriteActor,
         dial: DecisionDial,
         budget: Duration,
+        session_ref: Option<&str>,
     ) -> Result<Self> {
         if dial.first > dial.ceiling {
             return Err(Error::InvalidConfig(
@@ -91,6 +94,7 @@ impl<'s> LadderGraphAnswerer<'s> {
             Some(standing_ask_route(principal)),
             dial,
             budget,
+            session_ref,
         ))
     }
 
@@ -105,7 +109,7 @@ impl<'s> LadderGraphAnswerer<'s> {
         dial: DecisionDial,
         budget: Duration,
     ) -> Self {
-        Self::build(server, principal, runner, Some(to), dial, budget)
+        Self::build(server, principal, runner, Some(to), dial, budget, None)
     }
 
     fn build(
@@ -115,10 +119,12 @@ impl<'s> LadderGraphAnswerer<'s> {
         ask_to: Option<AskTo>,
         dial: DecisionDial,
         budget: Duration,
+        session_ref: Option<&str>,
     ) -> Self {
         Self {
             server,
             principal,
+            session: session_ref.map(str::to_owned),
             runner,
             ask_to,
             vision: LocalVisionModel::bound(&server.ai)
@@ -316,17 +322,23 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
                 None => return Ok(None),
             }
         }
-        let decision = ladder.run_media(
-            question,
+        let decision = crate::decision_verdict::with_model_call_context(
             self.principal,
-            &evidence,
-            images,
-            audio,
-            &state,
-            dial,
-            &host.bands(),
-            Reversibility::ReversibleRead,
-            &deadline,
+            self.session.as_deref(),
+            || {
+                ladder.run_media(
+                    question,
+                    self.principal,
+                    &evidence,
+                    images,
+                    audio,
+                    &state,
+                    dial,
+                    &host.bands(),
+                    Reversibility::ReversibleRead,
+                    &deadline,
+                )
+            },
         )?;
         Ok(Some(GraphDecision::Decision(Box::new(decision))))
     }
@@ -477,7 +489,7 @@ pub(crate) fn pump_due_while(
         may_start,
         |record, actor| {
             Ok(
-                HostUnitDecider::new(server, actor.actor_class(), "vault.artifacts.ask")
+                HostUnitDecider::new(server, actor.actor_class(), "vault.artifacts.ask", None)
                     .with_question(&record.definition),
             )
         },
