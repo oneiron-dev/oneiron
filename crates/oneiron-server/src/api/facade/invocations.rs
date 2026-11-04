@@ -91,7 +91,7 @@ pub(super) async fn facade_invocation_claim(
                 && auth.jti().is_none()
                 && auth.managed_owner().is_none()
                 && auth.instrument().is_some()
-                && !auth.account_key_still_live(server, &parts.headers).await
+                && !auth.account_key_still_live(&server, &parts.headers).await
             {
                 return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
                     .into_response();
