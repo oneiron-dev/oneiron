@@ -6,7 +6,6 @@ use rmpv::Value;
 
 use super::decode_docedit_resource::parse_docedit_resource_policy;
 use super::experiment_selection::parse_experiment_selection;
-use crate::gate::experiment_selection_policy::SelectionPolicyRow;
 use crate::gate::PackInstallPolicy;
 use crate::gate::SkillEditGoalPolicy;
 use crate::gate::ceiling::{
@@ -42,6 +41,7 @@ use crate::gate::constants::{
     POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
+use crate::gate::experiment_selection_policy::SelectionPolicyRow;
 use crate::gate::fanout_policy::{
     FanoutControls, FanoutPrecedence, FanoutScopedRow, parse_controls, parse_precedence,
     parse_scoped_rows,

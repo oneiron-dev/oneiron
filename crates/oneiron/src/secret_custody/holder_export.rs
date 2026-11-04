@@ -40,11 +40,12 @@ use zeroize::Zeroizing;
 
 pub(crate) use self::relay::KeptExportOutput;
 use self::relay::kept_output_in_txn;
+pub(crate) use self::relay::witnessed_output;
 #[cfg(feature = "sync")]
 pub(crate) use self::relay::{
     MAX_EXPORT_OUTPUT_WITNESS_BYTES, MAX_RELAYED_OUTPUT_BYTES, held_export_outputs,
     keep_relayed_export_output_in_txn, kept_export_output_sealed_at_in_txn,
-    relayed_export_output_due_in_txn, witnessed_output,
+    relayed_export_output_due_in_txn,
 };
 use self::sealed::{SupplementBinding, open_supplement, output_of, seal_supplement};
 use super::control::permits::{permit_for, permitted_keys};
@@ -218,11 +219,18 @@ impl Vault {
             .map_or(OwnerWorkStatus::RecordedAwaitingHolder, |receipt| {
                 receipt.status
             });
+        let kept = kept_output_in_txn(self, &txn, &request)?;
         let output = fold
             .owner_work_result(&request)
-            .and_then(|answer| answer.outcome.sealed_output().copied());
+            .and_then(|answer| answer.outcome.sealed_output().copied())
+            .or_else(|| {
+                // No folded result names it yet: a settled copy kept under a
+                // signed witness still reads, judged as the fold judges one.
+                kept.as_ref()
+                    .and_then(|kept| witnessed_output(&fold, &request, &kept.witness))
+            });
         let sealed = match output {
-            Some(output) => kept_output_in_txn(self, &txn, &request)?
+            Some(output) => kept
                 .map(|kept| kept.sealed)
                 .filter(|sealed| *blake3::hash(sealed).as_bytes() == output.digest),
             None => None,

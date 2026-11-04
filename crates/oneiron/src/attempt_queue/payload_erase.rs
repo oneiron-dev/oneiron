@@ -44,37 +44,30 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
-use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::agent_dispatch::{
-     agent_dispatch_actor, decode_agent_dispatch_input, record_dispatch_input,
+    agent_dispatch_actor, decode_agent_dispatch_input, record_dispatch_input,
 };
-use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_INPUT_KEYS;
-use crate::browser_library::{admission_payload_actor};
 use crate::attempt_queue::browser_admission::PROGRAM_ADMISSION_KIND;
-use crate::conversation::TurnActionAttempt;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_INPUT_KEYS;
 use crate::attempt_queue::turn_action_kind::TURN_ACTION_ATTEMPT_KIND;
-use crate::{
-    store::dispatch_attempt_kind::BYOA_ATTEMPT_KIND,
-    dispatch_byoa::{
-        ByoaAttemptPayload,
-        ByoaConnectorSpec,
-        ERASED_TASK_FAILURE_REASON,
-        RunnerTaskSource,
-        StagedInputPin,
-        decode_byoa_attempt_payload,
-        encode_byoa_attempt_payload,
-    },
-};
-use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
-use crate::dreamer_runner::{
-    decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
-};
+use crate::browser_library::admission_payload_actor;
+use crate::conversation::TurnActionAttempt;
+use crate::dreamer_runner::{decode_dreamer_attempt_payload, encode_dreamer_attempt_payload};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::store::Store;
+use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::write_envelope::WriteActor;
+use crate::{
+    dispatch_byoa::{
+        ByoaAttemptPayload, ByoaConnectorSpec, ERASED_TASK_FAILURE_REASON, RunnerTaskSource,
+        StagedInputPin, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
+    },
+    store::dispatch_attempt_kind::BYOA_ATTEMPT_KIND,
+};
 use oneiron_authority::federation::RepoAccessRefusal;
 
 use super::encoding::{decode_record, encode_record};
@@ -723,6 +716,43 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
                     "attempt payload fence: the requester's hard-delete marker could not be read"
                 );
             }
+        }
+        return;
+    }
+    if record.kind == crate::outbound::CONNECTOR_REPLY_JOB_KIND {
+        // A reply job whose agent, actor, receiving identity or known
+        // counterparty bears the marker writes back no event payload
+        // (FIX 10901), as the pass leaves it.
+        let Ok(job) = serde_json::from_slice::<crate::outbound::ConnectorReplyJob>(&record.payload)
+        else {
+            return;
+        };
+        if job.event.payload.is_null() {
+            return;
+        }
+        let mut erased = BTreeSet::new();
+        for id in job.named_ids() {
+            match store.port_deletion_marked(txn, DeletionMarker::HardDelete, &id) {
+                Ok(true) => {
+                    erased.insert(id);
+                }
+                Ok(false) => {}
+                Err(_) => {
+                    tracing::warn!(
+                        attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                        "attempt payload fence: a reply job's hard-delete marker could not be read"
+                    );
+                    return;
+                }
+            }
+        }
+        if !erased.is_empty()
+            && crate::outbound::erase_connector_reply_job_payload(record, &erased).is_err()
+        {
+            tracing::warn!(
+                attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                "attempt payload fence: an erased reply job's event payload could not be removed"
+            );
         }
         return;
     }

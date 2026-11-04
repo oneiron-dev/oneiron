@@ -114,7 +114,12 @@ impl Vault {
             .collect();
         let changed = match winner_index(&precedence) {
             Some(index) => {
-                crate::ports::EdgeStoreMaintenance::port_edge_stamp_provenance(&self.store, wtxn, subject, survivors[index].flags())?;
+                crate::ports::EdgeStoreMaintenance::port_edge_stamp_provenance(
+                    &self.store,
+                    wtxn,
+                    subject,
+                    survivors[index].flags(),
+                )?;
                 true
             }
             // No ACTIVE survivor. "The derived edge flag follows the Claim"
@@ -168,7 +173,11 @@ impl Vault {
                 )?;
                 Ok(true)
             }
-            None => crate::ports::EdgeStoreMaintenance::port_edge_clear_provenance(&self.store, wtxn, subject),
+            None => crate::ports::EdgeStoreMaintenance::port_edge_clear_provenance(
+                &self.store,
+                wtxn,
+                subject,
+            ),
         }
     }
 }

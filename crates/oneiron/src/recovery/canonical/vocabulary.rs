@@ -32,7 +32,9 @@ pub struct CanonicalTombstone {
 }
 
 pub use crate::store::canonical_document::{
-    CanonicalEntityDocument, CanonicalEntityDocumentHistory, CanonicalDocumentVersion, CanonicalDocumentPin, CanonicalSettleVerb, CanonicalForkStatus, CanonicalDocumentReceipt, CanonicalDocumentFork, CanonicalDocumentPurge,
+    CanonicalDocumentFork, CanonicalDocumentPin, CanonicalDocumentPurge, CanonicalDocumentReceipt,
+    CanonicalDocumentVersion, CanonicalEntityDocument, CanonicalEntityDocumentHistory,
+    CanonicalForkStatus, CanonicalSettleVerb,
 };
 
 /// World proof retained when a soft-deleted CLAIM has only its header left.

@@ -4,20 +4,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
+use crate::claim::learning_estimate::Estimate;
+use crate::claim::learning_estimate::EstimateValue;
+use crate::claim::learning_estimate::PriorOrigin;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
 use crate::learning::project::StoredEstimateClaim;
-use crate::claim::learning_estimate::Estimate;
-use crate::claim::learning_estimate::EstimateValue;
-use crate::claim::learning_estimate::PriorOrigin;
-use crate::receipt::task_type_ref::TypeRef;
-use crate::claim::learning_predicate::LearningPredicate;
-use crate::learning::{
-    LearningCell, LearningRead,
-};
+use crate::learning::{LearningCell, LearningRead};
 use crate::ports::EntityStoreRead;
+use crate::receipt::task_type_ref::TypeRef;
 use crate::skill::SkillRecord;
 use crate::temporal::TimeRange;
 
