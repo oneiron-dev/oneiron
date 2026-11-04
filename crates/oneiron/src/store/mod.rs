@@ -130,6 +130,7 @@ pub mod attempt_inputs;
 pub mod attempt_lease;
 pub mod attempt_manifest;
 pub mod attempt_outcomes;
+pub(crate) mod attempt_payload_route;
 pub mod attempt_read_producer;
 pub mod attempt_record;
 pub mod attempt_result;
@@ -290,6 +291,7 @@ mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
 pub(crate) mod world_pad_rows;
+pub mod world_authority;
 pub mod world_registration_keys;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
