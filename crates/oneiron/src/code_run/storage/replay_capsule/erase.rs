@@ -18,7 +18,6 @@
 
 use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::super::replay_capsule::{CapsuleContent, CapsuleRequest, StepReplayCapsule};
-use super::super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS};
 use super::super::response_erase::erase_actor_responses_in_txn;
 use super::{CAPSULES, FORKS, ForkRow};
 use crate::compaction::output::OutputRef;
@@ -178,8 +177,7 @@ fn release_bodies_in_txn(
         };
         let occurrence = ResultOccurrence::of(Some(owner), &output)?;
         let marks = occurrence.mark_key(&output.handle);
-        RAW_OUTPUT_TAINTS.delete(&vault.store, wtxn, &marks)?;
-        RAW_OUTPUT_SECRETS.delete(&vault.store, wtxn, &marks)?;
+        crate::code_run::drop_code_run_result_marks_in_txn(&vault.store, wtxn, &marks)?;
         release_body_in_txn(&vault.store, wtxn, &owner, &occurrence.id())?;
     }
     Ok(())
