@@ -17,7 +17,7 @@ impl HostSelfDispatcher<'_> {
         &self,
         site: ExecutorCallSite<'_>,
         call: SelfCall,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
         self.dispatch_bound(call, Some(site))
     }
 
@@ -128,7 +128,7 @@ impl SelfDispatcher for HostSelfDispatcher<'_> {
     ///
     /// Canonical dispatch keeps its existing path and captures no route.
     fn dispatch(&self, call: SelfCall) -> Result<SelfDispatchOutcome> {
-        self.dispatch_bound(call, None)
+        Ok(self.dispatch_bound(call, None)?.0)
     }
 }
 

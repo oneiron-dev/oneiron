@@ -16,7 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::*;
-use crate::disclosure::{AttendeeIdentityChoice, RoomParty};
+use crate::disclosure::AttendeeIdentityChoice;
 
 /// Where a handed-off speaker's new PERSON window is visible from.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,8 +88,11 @@ impl Vault {
                 _ => return Err(state("the owner named this speaker no contact")),
             };
             let fold = self.authority_view_readonly_in_txn(txn)?;
-            if crate::disclosure::bound_room_party_in(self, txn, &fold, request.person)?
-                != RoomParty::Contact(contact)
+            // FIX 6558: the contact the room knows the PERSON by (its sole
+            // linked Active contact), which a live co-Owner keeps beside its
+            // VaultOwner party; anything else keeps today's refusal.
+            if crate::disclosure::room_party_entry_in(self, txn, &fold, request.person)?.contact
+                != Some(contact)
             {
                 return Err(state("the named contact is not this PERSON's one contact"));
             }

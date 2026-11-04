@@ -15,16 +15,17 @@
 //! transaction of its own, and carried exactly as the door carries a revoke
 //! it can carry at once.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::custody_portable;
 use super::super::types::SecretCustodyStatus;
 use super::{CustodyKeptHere, SecretCustodyWork};
 use crate::authority::{ActSurface, AuthorityFold};
 use crate::error::{Error, Result, SecretError};
-use crate::side_table::{self, Named, SideTable};
+use crate::store::pending_custody_revoke::{PENDING, PendingRevoke};
+use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EntityId, Vault};
+
+pub(crate) use crate::store::pending_custody_revoke::erase_pending_revoke_actor_in_txn;
 
 /// How a portable secret's revoke reaches the owner's other machines when
 /// the install he revoked it on cannot carry his act yet (CALLS
@@ -48,24 +49,10 @@ enum CustodyRevokePendingCarry {
 const CUSTODY_REVOKE_PENDING_CARRY: CustodyRevokePendingCarry =
     CustodyRevokePendingCarry::CarryWhenSignerLoads;
 
-/// Each revoke this install still owes the owner's other machines, by
-/// custody record id.
-const PENDING: SideTable<EntityId, PendingRevoke, Named> =
-    SideTable::new(&side_table::SECRET_CUSTODY_PENDING_REVOKE);
-
-/// One revoke this install has not carried yet. It holds no value and no
-/// proof.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-struct PendingRevoke {
-    /// The owner PERSON the revoke is by.
-    owner: EntityId,
-    /// Where he decided it: audit only.
-    surface: ActSurface,
-    /// The second the revoke was made at: its transition's.
-    at: u64,
-    /// The generation it revoked.
-    generation: u32,
-}
+/// The Gate content kind of a pending revoke's carry outcome.
+const REVOKE_CARRY_CONTENT_KIND: &str = "secret_custody_revoke_carry";
+/// The owner no longer lives in the vault, so their pending revoke is not carried.
+const REVOKE_CARRY_OWNER_NOT_LIVE_REASON: &str = "gate.secret.custody.revoke_carry.owner_not_live";
 
 /// Whether `error` says this install's signing keys are not loaded here:
 /// the one failure a revoke's carry waits out.
@@ -112,25 +99,6 @@ pub(super) fn defer_revoke_in_txn(
             Ok(SecretCustodyWork::kept(CustodyKeptHere::CarryPending))
         }
     }
-}
-
-/// Erasing `actor` (FIX 3520): a revoke still owed for him is dropped, so
-/// no act is carried in his name. One-way, in the erase's own transaction.
-///
-/// # Errors
-///
-/// Storage errors, or a row that cannot be read.
-pub(crate) fn erase_pending_revoke_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    for (id, pending) in PENDING.scan(&vault.store, wtxn)? {
-        if pending.owner == *actor {
-            PENDING.delete(&vault.store, wtxn, &id)?;
-        }
-    }
-    Ok(())
 }
 
 impl Vault {
@@ -243,10 +211,15 @@ impl Vault {
                 && !fold.custody_revoked(&id)
         });
         let live = crate::policy_model::is_live_vault_owner_in_txn(self, txn, &pending.owner)?;
-        let (Some(record), true) = (record, live) else {
+        let Some(record) = record else {
             PENDING.delete(&self.store, txn, &id)?;
             return Ok(false);
         };
+        if !live {
+            self.append_owner_not_live_receipt_in_txn(txn, id, &pending)?;
+            PENDING.delete(&self.store, txn, &id)?;
+            return Ok(false);
+        }
         let carried = self
             .carry_revoke_for_in_txn(txn, pending.owner, pending.surface, id, &record, pending.at)?
             .is_some();
@@ -254,5 +227,43 @@ impl Vault {
             PENDING.delete(&self.store, txn, &id)?;
         }
         Ok(carried)
+    }
+
+    /// Records that `pending` was not carried because its owner is no longer
+    /// live. The caller deletes the intent in the same transaction.
+    fn append_owner_not_live_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        pending: &PendingRevoke,
+    ) -> Result<()> {
+        let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
+        let record = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id,
+            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
+            outcome: "deny".into(),
+            reason_codes: vec![REVOKE_CARRY_OWNER_NOT_LIVE_REASON.into()],
+            receipt_reasons: Vec::new(),
+            system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
+                REVOKE_CARRY_CONTENT_KIND,
+                vec![
+                    format!("record:{}", id.to_hex()),
+                    format!("owner:{}", pending.owner.to_hex()),
+                    format!("generation:{}", pending.generation),
+                ],
+            ),
+            actor_class: "human".into(),
+            actor_ref: Some(pending.owner.to_hex()),
+            content_kind: REVOKE_CARRY_CONTENT_KIND.into(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
+            claim_id: None,
+            grant_ref: None,
+            diff_handle: id.as_bytes().to_vec(),
+            read_frontier_hash: [0; 32],
+            context: Default::default(),
+            redacted_at: None,
+        };
+        self.store.append_gate_decision_in_txn(txn, &record)
     }
 }

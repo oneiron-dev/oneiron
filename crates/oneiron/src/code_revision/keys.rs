@@ -33,6 +33,11 @@ pub(super) const SESSION_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
 pub(super) const PARENT_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::CODE_REVISION_PARENT_INDEX);
 
+/// The checked Baseline a tested queue revision's chain ends at (a Baseline names itself),
+/// written when its seal is finalized (FIX 7390, 7391). Key: revision id.
+pub(super) const QUEUE_ROOTS: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::CODE_REVISION_QUEUE_ROOT);
+
 /// Index of forks by parent session, empty marker value. Key: parent session id + fork session id.
 pub(super) const FORK_PARENT_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::CODE_REVISION_FORK_PARENT_INDEX);

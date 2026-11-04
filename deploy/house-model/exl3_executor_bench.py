@@ -11,10 +11,12 @@ import hashlib
 import json
 import os
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
 
+import exl3_executor
 import exl3_server as worker
 import exl3_tools
 
@@ -40,6 +42,33 @@ def outside(path):
     if path.is_relative_to(source):
         raise ValueError("bench artifacts must stay outside the source tree")
     return path
+
+
+# Foreground/TTFT screen (FIX 11320) and grant-rounds screen (FIX 11328):
+# every executor round a driven request runs through is sampled; drive()
+# slices its own run's samples into its row.
+_sched_lock = threading.Lock()
+_sched_samples = []
+_sched_enabled = False
+
+
+def _install_choose_observer():
+    original_choose = exl3_executor.Executor.choose
+
+    def choose(self, jobs):
+        out = original_choose(self, jobs)
+        if _sched_enabled:
+            with _sched_lock:
+                _sched_samples.append((
+                    time.monotonic_ns(),
+                    self.round,
+                    bool(self.foreground_present),
+                    [(exl3_executor.job_foreground(job), getattr(job, "prefill_bound", "n/a"))
+                     for job in jobs],
+                ))
+        return out
+
+    exl3_executor.Executor.choose = choose
 
 
 def observe(exports=None):
@@ -105,6 +134,10 @@ def rejection(usage, ids, terminal):
 
 
 def drive(state, body, case_id, warmup=False):
+    global _sched_enabled
+    with _sched_lock:
+        sched_mark = len(_sched_samples)
+    _sched_enabled = True
     start = time.perf_counter_ns()
     first = [None, None]
     last = [None]
@@ -143,6 +176,8 @@ def drive(state, body, case_id, warmup=False):
             "status": "rejected" if error else "ok", "error": error,
             "ttft_any_ms": millis(first[0]), "ttft_text_ms": millis(first[1]),
             "t_last_ms": millis(last[0]), "wall_ms": millis(end),
+            "scheduling": _scheduling_row(sched_mark),
+            "grant_rounds": exl3_executor.EXECUTION_ROUNDS_PER_GRANT,
             "input_tokens": usage["prompt_tokens"], "output_tokens": usage["completion_tokens"],
             "finish_reason": finish, "native": result["timings"],
             "inference_calls": usage.get("inference_calls", []),
@@ -151,13 +186,39 @@ def drive(state, body, case_id, warmup=False):
             "request_sha256": usage.get("bench_request_sha256"), "native_stats": req.final_stats,
         }
     except Exception as error:
+        _disable_scheduling()
         return {"schema": "oneiron.infer-bench.row.v1", "arm_id": "executor", "case_id": case_id,
                 "status": "rejected", "error": f"{type(error).__name__}: {error}", "warmup": warmup,
-                "wall_ms": (time.perf_counter_ns() - start) / 1e6}
+                "wall_ms": (time.perf_counter_ns() - start) / 1e6,
+                "scheduling": None, "grant_rounds": exl3_executor.EXECUTION_ROUNDS_PER_GRANT}
     finally:
         if req is not None and not req.ended:
             scheduler.cancel(req)
         scheduler.settle()
+
+
+def _disable_scheduling():
+    global _sched_enabled
+    _sched_enabled = False
+
+
+def _scheduling_row(sched_mark):
+    """The executor rounds a driven request ran through: how many, whether
+    foreground work was present, and the prefill bounds its foreground Jobs
+    ran with (None = the Generator's own chunk). None when no round was
+    sampled."""
+    _disable_scheduling()
+    with _sched_lock:
+        sched = _sched_samples[sched_mark:]
+    if not sched:
+        return None
+    return {
+        "rounds": len({rnd for (_, rnd, _, _) in sched}),
+        "foreground_present": any(present for (_, _, present, _) in sched),
+        "foreground_prefill_bounds": sorted(
+            {bound for (_, _, _, jobs) in sched for (fg, bound) in jobs if fg},
+            key=repr),
+    }
 
 
 def main():
@@ -180,7 +241,13 @@ def main():
     p.add_argument("--model-id", default="qwen3.8-27b")
     p.add_argument("--weights-manifest")
     p.add_argument("--launch-manifest")
+    p.add_argument("--grant-rounds", type=int, default=None,
+                   help="FIX 11328: run the executor's choice for this many rounds before it "
+                        "chooses again (default: the module's EXECUTION_ROUNDS_PER_GRANT)")
     args = p.parse_args()
+    if args.grant_rounds is not None:
+        exl3_executor.EXECUTION_ROUNDS_PER_GRANT = args.grant_rounds
+    _install_choose_observer()
     if not args.serve and (args.requests is None or args.out is None):
         p.error("executor needs --requests and --out")
     if args.export_dir is not None:

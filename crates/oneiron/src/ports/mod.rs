@@ -81,7 +81,7 @@ pub(crate) use integrity::{
 pub(crate) use integrity::{
     invalidate_source_in_txn, keep_deleted_worlds_in_txn, keep_worlds_of_unmade_epoch_in_txn,
     record_dependency_in_txn, record_derived_edge_in_txn, record_withdrawn_in_txn,
-    retire_withdrawn_in_txn, source_has_dependents_in_txn, stale_in_txn,
+    retire_withdrawn_in_txn, source_has_dependents_in_txn, stage_stale_mark_in_txn, stale_in_txn,
     withdraw_from_lost_source_in_session_txn, withdraw_from_lost_source_in_txn,
     withdrawn_worlds_in,
 };
@@ -94,5 +94,6 @@ pub(crate) use time::{
 pub use time::{Clock, IdGen, StoreClock};
 mod manual_clock;
 pub(crate) use lmdb_visibility::removed_in_txn;
+pub(crate) use lmdb_visibility::{deletion_memo_scope, recall_memo_key};
 pub use manual_clock::ManualClock;
 pub(crate) use time::ID_FLOOR;

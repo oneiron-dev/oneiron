@@ -13,6 +13,11 @@
 //! ([`AssetBodySession::note_window`]). Nothing here holds a writer while it
 //! waits on the network, and no body length is refused.
 //!
+//! A federation lane moves bodies one way ([`AssetBodyLane`], FIX 12118):
+//! the granting side serves the bodies of the rows its selector admitted, the
+//! receiving side asks for those of the rows its admission took and lands
+//! them at the federated tier.
+//!
 //! Off the file plane no window binds a reference, nothing is owed or
 //! served, and a body frame is the unknown tag it was.
 
@@ -31,7 +36,9 @@ use crate::entity_id::EntityId;
 use crate::store::{ASSET_FILE_PLANE, AssetBodySpool};
 use crate::sync::WindowManager;
 use crate::sync::bridge::Materializer;
+use crate::sync::client::ImportTier;
 use crate::sync::loro_support::{TombstoneIndex, map_get_bytes};
+use crate::sync::selector::FederationAdmissionRole;
 use crate::sync::transport::{
     ASSET_BODY_FRAME_BYTES, ASSET_BODY_RETRY, AssetBodyAddress, AssetBodyData, AssetBodyEnd,
     AssetBodyReceipt, AssetBodyWant, TAG_ASSET_BODY_DATA, TAG_ASSET_BODY_END,
@@ -47,9 +54,54 @@ use crate::sync::types::WindowKey;
 /// beside the socket's other traffic; it bounds no body.
 pub const ASSET_BODY_FRAMES_PER_POLL: usize = 16;
 
+/// The lane a session moves bodies on (FIX 12118): which way they go, and
+/// the tier a body it receives lands at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetBodyLane {
+    /// One of the owner's own lanes: each side asks for the bodies its
+    /// windows bind that it lacks and serves the ones it holds; a body lands
+    /// at the own-device tier.
+    OwnDevice,
+    /// A federation lane's granting side: it serves the bodies its windows,
+    /// the copies the lane's selector admitted, bind, and asks for none.
+    FederationGrant,
+    /// A federation lane's receiving side: it asks only for the bodies of
+    /// the rows its federated admission took (`AssetBodySession::note_rows`)
+    /// and lands each at the federated tier under `role`; it serves none.
+    FederationReceive { role: FederationAdmissionRole },
+}
+
+impl AssetBodyLane {
+    /// Whether this side serves the other's Want.
+    const fn serves(self) -> bool {
+        !matches!(self, Self::FederationReceive { .. })
+    }
+
+    /// Whether this side asks for the bodies it owes.
+    const fn asks(self) -> bool {
+        !matches!(self, Self::FederationGrant)
+    }
+
+    /// Whether a poll scans every window this side follows for the bodies
+    /// it owes: only an own lane owes every body its windows bind.
+    const fn scans(self) -> bool {
+        matches!(self, Self::OwnDevice)
+    }
+
+    /// The tier a body this side receives lands at.
+    pub(super) const fn landing_tier(self) -> ImportTier {
+        match self {
+            Self::FederationReceive { role } => ImportTier::Federated(role),
+            Self::OwnDevice | Self::FederationGrant => ImportTier::OwnDevice,
+        }
+    }
+}
+
 /// What a session reads its side through, as the socket that owns it
 /// resolves it.
 pub struct AssetBodyPeer<'a> {
+    /// The lane the socket moves bodies on.
+    pub lane: AssetBodyLane,
     pub vault: &'a Vault,
     /// The windows' materializer: the lease vault the window's receipts
     /// verify against, and the live queries a landed body notifies.
@@ -61,15 +113,17 @@ pub struct AssetBodyPeer<'a> {
     pub windows: &'a dyn Fn() -> Vec<WindowKey>,
 }
 
-/// Runs `f` over the peer a sync client over `manager` is: its vault, its
-/// lease vault, and the live documents its manager holds.
+/// Runs `f` over the peer a sync client over `manager` is, on `lane`: its
+/// vault, its lease vault, and the live documents its manager holds.
 pub(crate) fn with_manager_peer<T>(
     manager: &WindowManager,
+    lane: AssetBodyLane,
     f: impl FnOnce(&AssetBodyPeer<'_>) -> T,
 ) -> T {
     let window = |key: &WindowKey| manager.window(key).map(|loaded| loaded.doc.clone());
     let windows = || manager.loaded_keys();
     f(&AssetBodyPeer {
+        lane,
         vault: manager.vault(),
         materializer: manager.materializer(),
         window: &window,
@@ -123,6 +177,9 @@ pub struct AssetBodySession {
     held: HashSet<(EntityId, [u8; 32])>,
     receiving: Option<Receiving>,
     sending: Option<Sending>,
+    /// The rows a received body birthed here on a federation lane's
+    /// receiving side, for the caller to release their stamps (FIX 12118).
+    births: Vec<(WindowKey, EntityId)>,
 }
 
 impl AssetBodySession {
@@ -155,26 +212,77 @@ impl AssetBodySession {
         let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         let entities = doc.get_map("entities");
         for body in bound {
-            let owed = (window.clone(), body.id);
-            if tombstones.contains(&body.id)
-                || self.held.contains(&(body.id, body.body_blake3))
-                || self.owed.get(&owed).is_some_and(|known| known.body == body)
-            {
-                continue;
-            }
             let carrier = map_get_bytes(&entities, &body.key()).unwrap_or_default();
-            if held_here(peer.vault, &body, &carrier).map_err(storage)? {
-                self.held.insert((body.id, body.body_blake3));
-                continue;
-            }
-            self.owed.insert(
-                owed,
-                Owed {
-                    body,
-                    next_ask: Instant::now(),
-                },
-            );
+            self.owe(peer, window, &tombstones, body, &carrier)?;
         }
+        Ok(())
+    }
+
+    /// Owes the body of each of `rows` that `doc`, the live document of
+    /// `window`, binds by reference and this side does not hold: the rows an
+    /// import just admitted there, on a lane that owes no other (FIX 12118).
+    ///
+    /// # Errors
+    ///
+    /// [`TransportError::Storage`] for a storage error.
+    pub(crate) fn note_rows(
+        &mut self,
+        peer: &AssetBodyPeer<'_>,
+        window: &WindowKey,
+        doc: &LoroDoc,
+        rows: &[EntityId],
+    ) -> Result<(), TransportError> {
+        if !ASSET_FILE_PLANE {
+            return Ok(());
+        }
+        let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+        let entities = doc.get_map("entities");
+        for id in rows {
+            if let Some(carrier) = map_get_bytes(&entities, &id.to_hex())
+                && let Some(body) = bound_in(doc, id, &carrier)
+            {
+                self.owe(peer, window, &tombstones, body, &carrier)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The rows a received body birthed here since the last take, on a
+    /// federation lane's receiving side: the caller releases the stamps the
+    /// peer's held lane keeps on them (FIX 12118).
+    pub(crate) fn take_federated_births(&mut self) -> Vec<(WindowKey, EntityId)> {
+        std::mem::take(&mut self.births)
+    }
+
+    /// Owes `body`, which `window` binds `carrier` with, unless a tombstone
+    /// or a delete here keeps the carrier from landing, this side holds the
+    /// body, or it is owed already.
+    fn owe(
+        &mut self,
+        peer: &AssetBodyPeer<'_>,
+        window: &WindowKey,
+        tombstones: &TombstoneIndex,
+        body: AssetBodyRef,
+        carrier: &[u8],
+    ) -> Result<(), TransportError> {
+        let owed = (window.clone(), body.id);
+        if tombstones.contains(&body.id)
+            || self.held.contains(&(body.id, body.body_blake3))
+            || self.owed.get(&owed).is_some_and(|known| known.body == body)
+        {
+            return Ok(());
+        }
+        if held_here(peer.vault, &body, carrier).map_err(storage)? {
+            self.held.insert((body.id, body.body_blake3));
+            return Ok(());
+        }
+        self.owed.insert(
+            owed,
+            Owed {
+                body,
+                next_ask: Instant::now(),
+            },
+        );
         Ok(())
     }
 
@@ -243,7 +351,7 @@ impl AssetBodySession {
         if !ASSET_FILE_PLANE {
             return Ok(out);
         }
-        if self.next_scan.is_none_or(|next| next <= now) {
+        if peer.lane.scans() && self.next_scan.is_none_or(|next| next <= now) {
             self.next_scan = Some(now + ASSET_BODY_RETRY);
             for key in (peer.windows)() {
                 if let Some(doc) = (peer.window)(&key) {
@@ -259,6 +367,7 @@ impl AssetBodySession {
             }
         }
         if self.receiving.is_none()
+            && peer.lane.asks()
             && let Some(want) = self.ask(peer, now, socket_max)?
         {
             out.push(want);
@@ -267,7 +376,8 @@ impl AssetBodySession {
     }
 
     /// Serves `want`, stopping the send it replaces: the peer asks for one
-    /// body at a time. A Want this side does not serve is ended at once.
+    /// body at a time. A Want this side does not serve is ended at once, as
+    /// is every Want on a lane that serves none.
     fn serve(
         &mut self,
         peer: &AssetBodyPeer<'_>,
@@ -277,7 +387,12 @@ impl AssetBodySession {
         if let Some(stopped) = self.sending.take() {
             out.push(end(stopped.attempt(), false)?);
         }
-        match Sending::open(peer, want) {
+        let opened = if peer.lane.serves() {
+            Sending::open(peer, want)
+        } else {
+            Ok(None)
+        };
+        match opened {
             Ok(Some(sending)) => self.sending = Some(sending),
             Ok(None) => out.push(end(want.attempt, false)?),
             Err(error) => {
@@ -328,6 +443,11 @@ impl AssetBodySession {
         else {
             return Ok(Vec::new());
         };
+        // On a federation lane's receiving side, a body that lands where no
+        // row was stored is its row's birth (FIX 12118); a failed read counts
+        // as stored, so nothing is released for it.
+        let birth = matches!(peer.lane, AssetBodyLane::FederationReceive { .. })
+            && matches!(stored(peer.vault, &body.id), Ok(false));
         let committed = end.complete
             && spool.received() == body.len
             && match landing::land(peer, &window, &body, spool) {
@@ -340,6 +460,9 @@ impl AssetBodySession {
         if committed {
             self.owed.remove(&(window.clone(), body.id));
             self.held.insert((body.id, body.body_blake3));
+            if birth {
+                self.births.push((window.clone(), body.id));
+            }
         } else {
             self.ask_later(&window, &body);
         }
@@ -443,6 +566,12 @@ fn held_here(vault: &Vault, body: &AssetBodyRef, carrier: &[u8]) -> crate::error
         stored.get(..ENTITY_METADATA_HEADER_LEN) == carrier.get(..ENTITY_METADATA_HEADER_LEN)
             && stored_body_is(&vault.store, &txn, &body.id, &stored, &body.facts())?,
     )
+}
+
+/// Whether this vault stores a row at `id`.
+fn stored(vault: &Vault, id: &EntityId) -> crate::error::Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    crate::ports::EntityStoreRead::port_entity_present(&vault.store, &txn, id)
 }
 
 /// `body`'s address in `window`, as the frames name it.

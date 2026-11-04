@@ -77,10 +77,16 @@ impl FallbackRegistry {
                 reason,
             })?;
         if message.content.is_empty()
-            || message
-                .content
-                .iter()
-                .all(|p| matches!(p, ContentPart::Text { text } | ContentPart::Reasoning { text, .. } if text.trim().is_empty()))
+            || message.content.iter().all(|p| match p {
+                ContentPart::Text { text } => text.trim().is_empty(),
+                ContentPart::Reasoning {
+                    text,
+                    signature,
+                    data,
+                    ..
+                } => text.trim().is_empty() && signature.is_none() && data.is_none(),
+                _ => false,
+            })
         {
             return Err(FallbackError::Empty(declared.name.clone()));
         }
@@ -177,6 +183,7 @@ impl DeterministicRunner for JsonRules {
             FatalLlmError::InvalidRequestDetail { .. } => "invalid_request",
             FatalLlmError::ContentFiltered => "content_filtered",
             FatalLlmError::EmptyResponse => "empty_response",
+            FatalLlmError::JobLost => "job_lost",
             FatalLlmError::Unsupported(_) => "unsupported",
             FatalLlmError::LabelRead(_) => "label_read",
             // Terminal, never a rule's trigger, the "fatal" row's included.

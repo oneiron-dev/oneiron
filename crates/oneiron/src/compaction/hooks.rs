@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::{CompactionWindowMessage, SwapPlan};
 use crate::error::VerbHookStop;
 use crate::runtime_hooks::verb::RoomHookCall;
-use crate::skill_hub::pack_catalog::HookActorClass;
+use crate::store::pack_hook_actor_class::HookActorClass;
 use crate::store::verb_invocation::InvocationId;
 use crate::{EntityId, Vault};
 use crate::{runtime_hooks::VerbCall, runtime_hooks::VerbHookPre, store::verb_domain::VerbDomain};

@@ -39,6 +39,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
+use std::time::Instant;
 
 use heed::RwTxn;
 
@@ -208,6 +209,19 @@ impl DetachedWrites {
                 .unwrap_or_else(PoisonError::into_inner),
         );
     }
+
+    /// [`Self::wait_settled`] until `deadline` at most (FIX 12023 W0):
+    /// whether every write queued when it began is decided by then.
+    pub(super) fn wait_settled_until(&self, deadline: Instant) -> bool {
+        let counts = self.counts();
+        let queued = counts.queued;
+        let timeout = deadline.saturating_duration_since(Instant::now());
+        let (counts, _) = self
+            .settled
+            .wait_timeout_while(counts, timeout, |now| now.settled < queued)
+            .unwrap_or_else(PoisonError::into_inner);
+        counts.settled >= queued
+    }
 }
 
 /// The detached writes one group ran, held until its commit is decided and
@@ -287,9 +301,7 @@ impl DetachedGroup<'_> {
     /// passed on.
     pub(super) fn release(self) {
         for vault in self.held {
-            if let Some(last) = Arc::into_inner(vault) {
-                close_vault_elsewhere(last);
-            }
+            release_vault_handle(vault);
         }
     }
 }
@@ -573,6 +585,16 @@ fn count_on_intent(
     txn: &mut RwTxn<'_>,
 ) -> Result<()> {
     intent.map_or(Ok(()), |intent| intent.count_commit_in_txn(dbs, txn))
+}
+
+/// Lets go of a vault handle taken on a thread that may be the store's
+/// leader: a group's, or an after-commit callback's that queues a write again
+/// (FIX 12023 W0). When it is the last, the vault closes on a thread of its
+/// own ([`close_vault_elsewhere`]).
+pub(crate) fn release_vault_handle(vault: Arc<Vault>) {
+    if let Some(last) = Arc::into_inner(vault) {
+        close_vault_elsewhere(last);
+    }
 }
 
 /// Closes a vault whose last handle a group took to run a detached write, on

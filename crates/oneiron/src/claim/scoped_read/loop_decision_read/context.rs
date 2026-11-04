@@ -15,7 +15,9 @@ use crate::EntityId;
 use crate::claim::scoped_read::ScopedRead;
 use crate::error::{Error, Result};
 use crate::gate::ClaimReadView;
-use crate::store::{GateDecisionReadContext, GateDecisionRecord, GateLoopFamily, GateReadPosition};
+use crate::store::{
+    GateDecisionReadContext, GateDecisionRecord, GateLoopFamily, GateReadAnchors, GateReadPosition,
+};
 use oneiron_authority::federation::{ScopeAxis, ScopeId};
 
 /// What a kept read context admitted: the rows the decision is about, for
@@ -78,6 +80,20 @@ impl<'v> ScopedRead<'v> {
             dependencies.extend(context.about.iter().copied());
             dependencies.extend(context.record);
             dependencies.extend(context.position.iter().flat_map(position_rows));
+            // FIX 11000 PARTLY: the admission stands on the anchor ids too,
+            // so a recheck reads the item again when one of them changes.
+            // Writers that attached none (old rows) add nothing.
+            if let Some(anchors) = &context.anchors {
+                dependencies.extend(
+                    anchors
+                        .threads()
+                        .iter()
+                        .flat_map(|anchor| [anchor.root, anchor.turn]),
+                );
+                dependencies.extend(anchors.reached().iter().copied());
+                dependencies.extend(anchors.rooms().iter().copied());
+                dependencies.extend(anchors.worlds().iter().copied());
+            }
         }
         Ok(Some(KeptAdmission {
             about: about.into_iter().collect(),
@@ -91,7 +107,11 @@ impl<'v> ScopedRead<'v> {
     /// its writer kept the record's position, passes its row's audience,
     /// facet and guest conjuncts and that position, with no status, evidence
     /// or landing asked (FIX 10999); and one that never landed sits where the
-    /// reader's Scope, grants and relationships read it.
+    /// reader's Scope, grants and relationships read it. Writer anchors
+    /// (FIX 11000 PARTLY) bind the writer-proof arms: an explicit
+    /// incomplete capture denies, and a complete capture additionally meets
+    /// today's live conjuncts; contexts whose writer attached none keep
+    /// today's verdicts, and the stored-row arm keeps today's verdicts.
     fn loop_read_context_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -138,14 +158,94 @@ impl<'v> ScopedRead<'v> {
             {
                 return Ok(false);
             }
+            // FIX 11000 PARTLY: the kept position also stands on the
+            // writer's anchors. The row conjuncts above keep today's
+            // verdicts; only the writer-proof step below is anchor-bound.
+            if !self.loop_anchors_admitted_in(txn, context.anchors.as_ref())? {
+                return Ok(false);
+            }
             return self.loop_position_admitted_in(txn, read, Some(&record), position);
         }
         match &context.position {
-            None => Ok(true),
+            // FIX 11000 PARTLY: a context with no position admits only
+            // past the writer's anchors; contexts whose writer attached
+            // none keep Ok(true), explicit incomplete captures deny.
+            None => self.loop_anchors_admitted_in(txn, context.anchors.as_ref()),
             Some(position) => {
+                if !self.loop_anchors_admitted_in(txn, context.anchors.as_ref())? {
+                    return Ok(false);
+                }
                 self.loop_position_admitted_in(txn, read, context.record.as_ref(), position)
             }
         }
+    }
+
+    /// Writer anchors on the kept position's admission (FIX 11000 PARTLY).
+    /// `None` (the writer attached none: rows written before anchors, or
+    /// writers outside the anchor scheme) keeps today's verdicts. An
+    /// explicit incomplete capture, or complete with empty worlds, denies:
+    /// failed, cyclic, unsupported and unknown-pending-birth captures never
+    /// admit through the writer-proof arms. Otherwise thread roots (placed
+    /// pairs' roots and reached roots) stand structurally under CURRENT —
+    /// the row exists, but root-turn content visibility never gates the
+    /// placed turn (FIX 10999) — while placed turns and rooms stand under
+    /// CONTENT through today's audience read. Anchor worlds contribute the
+    /// nonempty gate. An unbound agent's own-entry windows additionally meet
+    /// the candidate header's captured occurred start, never a live clock.
+    /// Content-free: ids and the candidate's own time, never body text.
+    fn loop_anchors_admitted_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        anchors: Option<&GateReadAnchors>,
+    ) -> Result<bool> {
+        let Some(anchors) = anchors else {
+            return Ok(true);
+        };
+        if !anchors.is_complete() || anchors.worlds().is_empty() {
+            return Ok(false);
+        }
+        let Some(occurred) = anchors.occurred() else {
+            return Ok(false);
+        };
+        for anchor in anchors.threads() {
+            if self.entity_record_in(txn, &anchor.root)?.is_none() {
+                return Ok(false);
+            }
+            let turn = crate::vault::live_entity_row_in_txn(&self.store_read(), txn, &anchor.turn)?;
+            if turn.live_type() != Some(crate::registry::ENTITY_TYPE_TURN)
+                || !self.audience_readable_in(txn, &anchor.turn)?
+            {
+                return Ok(false);
+            }
+        }
+        for root in anchors.reached() {
+            if self.entity_record_in(txn, root)?.is_none() {
+                return Ok(false);
+            }
+        }
+        for room in anchors.rooms() {
+            if !self.audience_readable_in(txn, room)? {
+                return Ok(false);
+            }
+        }
+        let class = self.actor_key.actor_class();
+        let unbound_agent = self.actor_key.room_turn.is_none()
+            && [crate::EdgeActorClass::Agent, crate::EdgeActorClass::System]
+                .into_iter()
+                .any(|agent| class == Some(agent.gate_actor_class()));
+        let Some(reader) = unbound_agent
+            .then(|| EntityId::from_hex(self.actor_key.actor_ref()).ok())
+            .flatten()
+        else {
+            return Ok(true);
+        };
+        Ok(crate::conversation::anchors_own_windows_admit_in(
+            self.vault,
+            txn,
+            anchors.rooms(),
+            reader,
+            occurred.start,
+        ))
     }
 
     /// A kept record position under the reader's live authority, as a stored

@@ -1,7 +1,8 @@
 //! `chunks`: a result cut into range refs, a page at a time. A chunk is a
-//! range of its parent named `<handle>#<start>-<end>` in the parent's own
-//! bytes, so a chunk of a range is a range of the same parent. No byte is
-//! copied and nothing is published: a chunk is read as its parent is.
+//! range of its parent named `<occurrence>#<start>-<end>` in the
+//! parent's own bytes, so a chunk of a range is a range of the same
+//! parent. No byte is copied and nothing is published: a chunk is read as
+//! its parent is.
 
 use super::{
     LinePos, ReadBounds, Reply, ResultBody, Scan, Seek, decode, floor_boundary, invalid_input,
@@ -74,8 +75,9 @@ fn entry(parent: &str, base: u64, start: u64, end: u64, cut: bool) -> Value {
     chunk
 }
 
-/// `chunks`: see the module. `parent` is the handle of the body the window
-/// is of.
+/// `chunks`: see the module. `parent` is the owner's immutable occurrence
+/// ref, else the caller's own name or handle when the read is foreign: the
+/// ref reparses to the exact occurrence.
 pub(super) fn chunks(
     body: &dyn ResultBody,
     reference: &str,
