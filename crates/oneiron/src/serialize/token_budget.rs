@@ -283,7 +283,7 @@ fn serialized_prepared_token_count(
     prepared: &PreparedPack,
     tokenizer: PackTokenizer,
 ) -> usize {
-    let bytes = serialize_prepared_pack(pack, config, prepared.clone());
+    let bytes = serialize_prepared_pack(pack, config, prepared.clone(), tokenizer);
     let text = std::str::from_utf8(&bytes).expect("context-pack serialization should be UTF-8");
     tokenizer.count(text)
 }

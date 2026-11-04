@@ -56,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/error/engine.rs` | src | m | — | — | — |
 | `src/memory/error/gate_denial.rs` | src | s | 1 struct | MemoryGateDenial | The Gate rejection a `MemoryError` carries when its engine cause was a Gate write rejection |
 | `src/posterior.rs` | src | s | 1 trait · 2 fn | Posterior | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
-| `src/record_layout.rs` | src | s | 6 const | — | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |
+| `src/record_layout.rs` | src | s | 1 struct · 1 fn · 6 const | EntityMetadataHeader | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |
 | `src/registry/artifact_kinds.rs` | src | s | 2 enum · 2 fn | ArtifactFamilyId, ArtifactFamilyKindId | Semantic artifact kinds under the one artifact family (ARCH-0078) |
 | `src/registry/families.rs` | src | s | 1 struct · 1 enum · 7 fn · 1 const | TypeByteFamily, TypeByteFamilyEntry | Byte-space v3.1 family allocation, independent of kind behavior |
 | `src/registry/mod.rs` | src | s | 12 re-export | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
