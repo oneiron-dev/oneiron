@@ -233,6 +233,12 @@ impl Restore<'_> {
     /// and publishes it ready.
     async fn import(&self) -> Result<Restored, (Cold, bool)> {
         let plaintext = self.open().await.ok_or((COLD, false))?;
+        // The region doubles the host copy: recheck room after the open
+        // took the first copy, before the session or region takes the
+        // second. A rejection runs the turn cold.
+        if fits_host(self.record.plaintext_bytes).await != Some(true) {
+            return Err((COLD, false));
+        }
         let created = self.create().await.ok_or((COLD, false))?;
         let target = SessionTarget {
             handle: created.handle,
