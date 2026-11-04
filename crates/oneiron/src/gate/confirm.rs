@@ -322,6 +322,7 @@ impl Vault {
                 // restriction read above and deferred completion allow but
                 // the resolved read refuses, so the repair is skipped and
                 // the restriction path below settles it.
+                let mut repaired = false;
                 if !self.deferred_claim_is_in_place_demotion_in_txn(
                     &*wtxn,
                     &binding.claim_id,
@@ -329,7 +330,7 @@ impl Vault {
                     let resolved = self
                         .get_claim_in_txn(&*wtxn, &binding.claim_id)?
                         .ok_or(Error::EntityNotFound)?;
-                    let repaired = resolved.approval == ClaimApprovalStatus::Proposed;
+                    repaired = resolved.approval == ClaimApprovalStatus::Proposed;
                     if repaired {
                         put_preauthorized_claim_status_in_txn(
                             self,
