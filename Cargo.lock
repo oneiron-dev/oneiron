@@ -7947,11 +7947,13 @@ dependencies = [
  "oneiron-guest",
  "oneiron-keystore",
  "oneiron-lens-wire",
+ "oneiron-linkedin-policy",
  "oneiron-model",
  "oneiron-policy-vocabulary",
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
  "oneiron-vault-contract",
@@ -8047,6 +8049,8 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-model",
  "oneiron-retrieval",
+ "rand 0.8.8",
+ "rand_distr 0.4.3",
  "schemars 0.8.22",
  "serde",
  "thiserror 2.0.20",
@@ -8369,6 +8373,14 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "oneiron-linkedin-policy"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "serde",
 ]
 
 [[package]]
@@ -8761,6 +8773,13 @@ dependencies = [
  "zeroize",
  "zip 0.6.6",
  "zstd 0.13.3",
+]
+
+[[package]]
+name = "oneiron-skill-attribution"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
 ]
 
 [[package]]

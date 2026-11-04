@@ -137,8 +137,7 @@ fn rewrite_version_claim_in_txn(
     if let Some(rmpv::Value::Map(entries)) = claim.evidence.as_mut() {
         entries.retain(|(key, _)| {
             key.as_str() != Some("machine_signature")
-                && key.as_str()
-                    != Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)
+                && key.as_str() != Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)
         });
     }
     vault.put_reserved_claim_in_txn(
