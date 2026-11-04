@@ -111,6 +111,7 @@ impl Package {
             editability: Editability::Unsigned,
             added: vec![Added::new(TYPES, SEED_TYPES.to_vec(), resources)?],
             resources: resources.clone(),
+            inflated: std::sync::Arc::default(),
         };
         package.check_budgets()?;
         Ok(package)

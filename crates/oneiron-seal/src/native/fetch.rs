@@ -225,6 +225,9 @@ mod http {
                 .into()
         }
 
+        /// The cached response for `key`, if one is kept and still valid:
+        /// the entry's body and content type shared (an `Arc` clone each),
+        /// copying nothing (FIX 8455).
         fn cache_get(&self, key: &CacheKey) -> Option<FetchResponse> {
             let mut cache = self.cache.lock().ok()?;
             let at = cache.entries.iter().position(|e| e.key == *key)?;
@@ -395,8 +398,11 @@ mod http {
         /// read races the same deadline (a stalled body is a Timeout, not an
         /// unbounded wait). No size cuts it short (Rule 5). Before the buffer
         /// grows, its new allocation is reserved while the old one's lease
-        /// still holds, so the moment both are live is reserved too. The
-        /// body keeps its lease; on an error the two drop together.
+        /// still holds, so the moment both are live is reserved too. Once
+        /// whole it drops its doubled capacity when an exact lease is to be
+        /// had (FIX 8457). The body keeps its lease, and `beside` for the
+        /// response's content type and shared header; on an error they drop
+        /// together.
         async fn stream_body<S>(
             &self,
             stream: &mut S,
@@ -425,6 +431,13 @@ mod http {
                     body.regrow(capacity, held).map_err(FetchError::Memory)?;
                 }
                 body.extend(&chunk).map_err(FetchError::Memory)?;
+            }
+            // Optional: without an exact lease the body keeps the capacity
+            // it has, and its lease.
+            if body.slack() > 0
+                && let Ok(exact) = self.lease(body.len(), deadline).await
+            {
+                body.shrink(exact);
             }
             Ok(FetchResponse {
                 body: Arc::new(body),
@@ -459,11 +472,11 @@ mod http {
     impl SealFetcher for SsrfGuardedHttpFetcher {
         async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, FetchError> {
             let key = Self::cache_key(&request);
+            let deadline =
+                tokio::time::Instant::now() + Duration::from_millis(self.policy.timeout_ms);
             if let Some(hit) = self.cache_get(&key) {
                 return Ok(hit);
             }
-            let deadline =
-                tokio::time::Instant::now() + Duration::from_millis(self.policy.timeout_ms);
             let mut url = request.url.clone();
             // Every hop is followed, its policy re-run, inside the deadline:
             // `max_redirects` is a threshold, never a refusal (Rule 5).

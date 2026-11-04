@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-/// One sweep the housekeeping pass knows. The engine runs the first fourteen;
+/// One sweep the housekeeping pass knows. The engine runs the first fifteen;
 /// the rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,6 +47,11 @@ pub enum HousekeepingSweep {
     /// Raises the found-key notices left due past one write's share (OF-560,
     /// FIX 2648), for a vault no later write comes to.
     FoundKeyNotices,
+    /// Moves anchored comments with their artifact's live DOCX or XLSX body
+    /// (FIX 2460), off every edit's and export's answer: stamps a body anchor
+    /// on a thread on a version the body holds, lands it on the newest export
+    /// and follows the body's edits.
+    AnnotationBodyAnchors,
     /// Due signing reminders.
     EsignReminders,
     /// Consult deadlines and their expiry digests.
@@ -102,7 +107,7 @@ pub(crate) const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -117,6 +122,7 @@ impl HousekeepingSweep {
         Self::SecretLiftHistory,
         Self::ClaimVadDebt,
         Self::FoundKeyNotices,
+        Self::AnnotationBodyAnchors,
         Self::EsignReminders,
         Self::ConsultSettlement,
         Self::PolicyHoldPrune,
@@ -142,6 +148,7 @@ impl HousekeepingSweep {
             Self::SecretLiftHistory => "secret_lift_history",
             Self::ClaimVadDebt => "claim_vad_debt",
             Self::FoundKeyNotices => "found_key_notices",
+            Self::AnnotationBodyAnchors => "annotation_body_anchors",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
             Self::PolicyHoldPrune => "policy_hold_prune",
@@ -165,7 +172,8 @@ impl HousekeepingSweep {
     /// VAD work runs at open, for an approval a stopped process left, and
     /// every fifteen minutes, behind the payment worker each write wakes
     /// (FIX 11702). The found-key drain looks for due notices every
-    /// fifteen minutes.
+    /// fifteen minutes. Comments follow their live body every minute and at
+    /// open, so a stopped process leaves none behind.
     pub(crate) const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -191,6 +199,10 @@ impl HousekeepingSweep {
             Self::SharedActMaturity => engine(HOUR),
             Self::ClaimVadDebt => Runner::Engine {
                 every: 15 * MINUTE,
+                at_open: true,
+            },
+            Self::AnnotationBodyAnchors => Runner::Engine {
+                every: MINUTE,
                 at_open: true,
             },
             Self::EsignReminders => Runner::Host(HostOnlyReason::NeedsAuthenticatedDispatch),
