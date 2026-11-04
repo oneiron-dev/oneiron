@@ -6,8 +6,7 @@ use crate::api::{
     Counter, Sha256Digest, VerifyCheck, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
     note_current,
 };
-use crate::error::{SealError, SealStage};
-use crate::memory::MemoryLedger;
+use crate::error::SealError;
 
 use super::super::{cms, pdf};
 use super::timestamp_evidence::{TimestampEvidence, TimestampKind, TimestampResult};
@@ -397,15 +396,6 @@ pub(super) fn unpadded_cms(contents: &[u8]) -> Option<&[u8]> {
     Some(first.full)
 }
 
-/// The operation ledger `ctx` runs under; a missing ledger is the
-/// verification's configuration error, never a verdict.
-fn operation_memory(ctx: &VerifyCtx<'_>) -> Result<std::sync::Arc<MemoryLedger>, SealError> {
-    ctx.limits
-        .memory
-        .ledger()
-        .map_err(|refusal| refusal.seal_error(SealStage::Verification))
-}
-
 /// Verify one CAdES-detached signature dictionary. On a parseable envelope
 /// the CMS certificate set is recorded in `covered` so the DSS binding can
 /// require the validation material to speak about this chain (§7.5 step 3).
@@ -417,7 +407,7 @@ pub(super) fn verify_cades_sig(
     anchors: &[pkix_chain::TrustAnchor],
     checks: &mut Checks,
     covered: &mut Vec<EmbeddedCert>,
-) -> Result<CadesEvidence, SealError> {
+) -> CadesEvidence {
     let br_ok = check_byte_range(bytes, e);
     checks.record(
         VerifyCheckKind::ByteRange,
@@ -434,19 +424,8 @@ pub(super) fn verify_cades_sig(
     } else {
         None
     };
-    let memory = operation_memory(ctx)?;
     let cms_der = unpadded_cms(&e.contents);
-    // Only an ordinary parse failure is an invalid envelope; a memory refusal
-    // propagates as the verification's resource error, never a verdict.
-    let parsed = if let Some(d) = cms_der {
-        match cms::parse_cms(d, &memory) {
-            Ok(parsed) => Some(parsed),
-            Err(err) if err.is_retryable() => return Err(err),
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
+    let parsed = cms_der.and_then(|d| cms::parse_cms(d).ok());
     let env_ok = parsed.as_ref().is_some_and(|p| {
         p.content_oid == cms::OID_SIGNED_DATA.as_bytes()
             && p.econtent.is_none()
@@ -486,27 +465,19 @@ pub(super) fn verify_cades_sig(
             false,
             VerifyFindingCode::CertificatePathInvalid,
         );
-        let timestamp = TimestampEvidence::NotEvaluated.project(
-            TimestampKind::Signature,
-            checks,
-            covered,
-            &memory,
-        )?;
-        return Ok(CadesEvidence {
+        let timestamp =
+            TimestampEvidence::NotEvaluated.project(TimestampKind::Signature, checks, covered);
+        return CadesEvidence {
             signer_chain: None,
             timestamp,
-        });
+        };
     };
-    for d in &parsed.certificates {
-        let cert = EmbeddedCert::from_der(d, &memory)
-            .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
-        if let Some(cert) = cert {
-            memory
-                .admit_len::<EmbeddedCert>(1)
-                .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
-            covered.push(cert);
-        }
-    }
+    covered.extend(
+        parsed
+            .certificates
+            .iter()
+            .filter_map(|d| EmbeddedCert::from_der(d)),
+    );
     verify_signer(ctx, anchors, checks, &parsed, spans_digest, covered)
 }
 
@@ -521,16 +492,9 @@ fn verify_signer(
     parsed: &cms::ParsedCms,
     spans_digest: Option<Sha256Digest>,
     covered: &mut Vec<EmbeddedCert>,
-) -> Result<CadesEvidence, SealError> {
-    let memory = operation_memory(ctx)?;
+) -> CadesEvidence {
     let signer = &parsed.signer;
-    // Only an ordinary attribute failure is an invalid envelope; a memory
-    // refusal propagates as the verification's resource error, never a check.
-    let md = match cms::check_baseline_attrs(signer, &memory) {
-        Ok(digest) => Some(digest),
-        Err(err) if err.is_retryable() => return Err(err),
-        Err(_) => None,
-    };
+    let md = cms::check_baseline_attrs(signer).ok();
     checks.record(
         VerifyCheckKind::SignedAttributes,
         md.is_some(),
@@ -542,29 +506,16 @@ fn verify_signer(
         digest_ok,
         VerifyFindingCode::DigestMismatch,
     );
-    let mut signer_idx = None;
-    for (i, c) in parsed.certificates.iter().enumerate() {
-        let (iss, ser) = match cms::issuer_and_serial(c, &memory) {
-            Ok(pair) => pair,
-            Err(err) if err.is_retryable() => return Err(err),
-            Err(_) => continue,
+    let signer_idx = parsed.certificates.iter().position(|c| {
+        let Ok((iss, ser)) = cms::issuer_and_serial(c) else {
+            return false;
         };
-        let mut bound = false;
-        for a in &parsed.signer.signed_attrs {
-            match cms::check_ess_binding(a, c, &iss, &ser, &memory) {
-                Ok(()) => {
-                    bound = true;
-                    break;
-                }
-                Err(err) if err.is_retryable() => return Err(err),
-                Err(_) => continue,
-            }
-        }
-        if bound {
-            signer_idx = Some(i);
-            break;
-        }
-    }
+        parsed
+            .signer
+            .signed_attrs
+            .iter()
+            .any(|a| cms::check_ess_binding(a, c, &iss, &ser).is_ok())
+    });
     checks.record(
         VerifyCheckKind::SigningCertificateBinding,
         signer_idx.is_some(),
@@ -581,20 +532,28 @@ fn verify_signer(
             false,
             VerifyFindingCode::CertificatePathInvalid,
         );
-        let timestamp = TimestampEvidence::for_signature(ctx.clock_ms, signer, anchors, &memory)?
-            .project(TimestampKind::Signature, checks, covered, &memory)?;
-        return Ok(CadesEvidence {
+        let timestamp = TimestampEvidence::for_signature(ctx.clock_ms, signer, anchors).project(
+            TimestampKind::Signature,
+            checks,
+            covered,
+        );
+        return CadesEvidence {
             signer_chain: None,
             timestamp,
-        });
+        };
     };
     let cert_der = &parsed.certificates[idx];
     let alg = cms::cert_signature_algorithm(cert_der);
     let sig_ok = match alg {
         Ok(a) => {
-            let input = cms::signed_attrs_signature_input(signer, &memory)?;
             cms::sig_alg_permitted(a, &signer.signature_alg_oid)
-                && cms::verify_signature_value(a, cert_der, &input, &signer.signature).is_ok()
+                && cms::verify_signature_value(
+                    a,
+                    cert_der,
+                    &cms::signed_attrs_signature_input(signer),
+                    &signer.signature,
+                )
+                .is_ok()
         }
         Err(_) => false,
     };
@@ -603,14 +562,7 @@ fn verify_signer(
         sig_ok,
         VerifyFindingCode::SignatureMismatch,
     );
-    let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered, &memory)?;
-    // The reordered chain below clones every certificate exactly once.
-    memory
-        .admit_len::<u8>(parsed.certificates.iter().map(Vec::len).sum())
-        .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
-    memory
-        .admit_len::<Vec<u8>>(parsed.certificates.len())
-        .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
+    let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered);
     let chain_ders: Vec<Vec<u8>> = std::iter::once(cert_der.clone())
         .chain(
             parsed
@@ -621,10 +573,10 @@ fn verify_signer(
                 .map(|(_, c)| c.clone()),
         )
         .collect();
-    Ok(CadesEvidence {
+    CadesEvidence {
         signer_chain: Some(chain_ders),
         timestamp,
-    })
+    }
 }
 
 /// Validate the optional `signatureTimeStampToken` unsigned attribute.
@@ -639,13 +591,11 @@ fn verify_ts_token(
     anchors: &[pkix_chain::TrustAnchor],
     checks: &mut Checks,
     covered: &mut Vec<EmbeddedCert>,
-    memory: &MemoryLedger,
-) -> Result<TimestampResult, SealError> {
-    TimestampEvidence::for_signature(clock_ms, signer, anchors, memory)?.project(
+) -> TimestampResult {
+    TimestampEvidence::for_signature(clock_ms, signer, anchors).project(
         TimestampKind::Signature,
         checks,
         covered,
-        memory,
     )
 }
 
@@ -666,8 +616,7 @@ pub(super) fn verify_doc_ts(
     is_last: bool,
     covered: &mut Vec<EmbeddedCert>,
     clock_ms: u64,
-    memory: &MemoryLedger,
-) -> Result<TimestampResult, SealError> {
+) -> TimestampResult {
     let br_ok = check_byte_range(bytes, e);
     checks.record(
         VerifyCheckKind::ByteRange,
@@ -691,6 +640,9 @@ pub(super) fn verify_doc_ts(
                 }
                 tail.is_empty()
             });
-    TimestampEvidence::for_document(bytes, e, anchors, clock_ms, br_ok && covers_end, memory)?
-        .project(TimestampKind::Document, checks, covered, memory)
+    TimestampEvidence::for_document(bytes, e, anchors, clock_ms, br_ok && covers_end).project(
+        TimestampKind::Document,
+        checks,
+        covered,
+    )
 }
