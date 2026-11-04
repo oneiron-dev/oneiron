@@ -33875,16 +33875,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/engine_delete_guards.rs",
-     "purpose": "The engine's implementation of the store layer's delete guards: each method forwards to the engine function…",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/engine_executor/attempt_cancels.rs",
      "purpose": "The step loops leased attempts are running in this vault (FIX 600), each under its attempt's root token, so…",
      "surface": {
@@ -34432,6 +34422,16 @@
      "purpose": "Reply normalization: fence/exec stripping, console-block scanning, and the structural gate",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_store_hooks.rs",
+     "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -71499,6 +71499,18 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "StoreHooks"
+     ],
+     "path": "src/store/hooks.rs",
+     "purpose": "The engine hooks every store opens with",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/host_issuer_custody.rs",
      "purpose": "The host issuer seed's custody client (FIX-LIST 10770, the remainder of FIX-LIST 3018): the escrow of a…",
@@ -72271,7 +72283,7 @@
      "surface": {
       "crate-vis": 64,
       "mod": 74,
-      "re-export": 25
+      "re-export": 27
      }
     },
     {
@@ -73312,6 +73324,18 @@
       "const": 2,
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StoreScopeStamps"
+     ],
+     "path": "src/store/scope_stamps.rs",
+     "purpose": "The record-scope stamp hooks the store layer's write and erase paths run, supplied by the engine when a…",
+     "surface": {
+      "trait": 1
      }
     },
     {
@@ -90301,19 +90325,19 @@
      "layout": "file+dir",
      "purpose": "—"
     },
-    "engine_delete_guards": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "The engine's implementation of the store layer's delete guards: each method forwards to the engine function…"
-    },
     "engine_executor": {
      "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Engine-native JS code-mode executor"
+    },
+    "engine_store_hooks": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
     "entity_doc": {
      "files": 41,
@@ -91079,7 +91103,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 325,
+     "files": 327,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91333,7 +91357,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6315,
+   "source_files": 6317,
    "test_files": 898
   },
   "oneiron-android": {
