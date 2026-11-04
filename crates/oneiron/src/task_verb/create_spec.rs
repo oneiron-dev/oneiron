@@ -21,6 +21,11 @@ pub struct TaskCreateSpec {
     pub consult: Option<ConsultPayload>,
     pub assignee: Option<TaskAssignee>,
     pub ttl: Option<TaskTtl>,
+    /// FIX685: the hook-chosen due/deadline stamp, Unix seconds. Absent
+    /// means no due annotation. It is display metadata only: never TTL
+    /// expiry, never a not-before wait, and it changes no dispatch, order,
+    /// readiness, status or settlement behavior.
+    pub due_at: Option<u64>,
     /// OF-543: the one task-type stamp, placed once. Absent means the
     /// create path places it (unsure uses the root) — a landed TASK and
     /// its receipts always carry one; see [`Self::resolved_type_ref`].
@@ -54,6 +59,7 @@ impl TaskCreateSpec {
             consult: None,
             assignee: None,
             ttl: None,
+            due_at: None,
             type_ref: None,
             brief: None,
             intent_key: None,
@@ -94,6 +100,13 @@ impl TaskCreateSpec {
     #[must_use]
     pub const fn with_ttl(mut self, ttl: TaskTtl) -> Self {
         self.ttl = Some(ttl);
+        self
+    }
+
+    /// Stamps the hook-chosen due/deadline annotation (FIX685).
+    #[must_use]
+    pub const fn with_due_at(mut self, due_at: u64) -> Self {
+        self.due_at = Some(due_at);
         self
     }
 
