@@ -14,10 +14,15 @@ later window persistence can make that tombstone durable without the rolled-back
 claim. Open-time recovery or cold-window rematerialization then runs the normal
 reason-aware replay. When that replay redeems the exact local sidecar and purges
 local state, it claims the original act for the original request and new receipt
-in that same transaction. An act already claimed by the same request can add its
-receipt. An act claimed by another request keeps the existing conflict result.
-The purge, receipt, gate-ledger append, act claim and sidecar removal commit or
-roll back together.
+in that same transaction, if the original act is still stored. An act already
+claimed by the same request can add its receipt. An act claimed by another
+request keeps the existing conflict result. If the owner withdrew the original
+act after interrupted publication, replay uses its existing receipt binder:
+it does not recreate or claim the absent act, nor does absence strand the purge
+and topology reservation. The presence check and claim share the purge writer;
+decode, storage, incomplete-act and conflicting-execution errors still propagate.
+The purge, receipt, gate-ledger append, any act claim and sidecar removal commit
+or roll back together. Withdrawal admission is unchanged.
 
 A remote tombstone supplies no act id. Without a redeemed local act binding,
 replay keeps its existing receipt-binding behavior for a claim already stored.

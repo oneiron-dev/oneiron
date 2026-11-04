@@ -379,13 +379,19 @@ impl Vault {
         )?;
         if let Some(request) = decoded.request_id.as_ref() {
             let request_text = uuid::Uuid::from_bytes(*request).to_string();
-            if let Some(act) = recovered_authority_act {
-                // Publication may have rolled back its claim after mutating
-                // the live document. Only the redeemed local sidecar supplies
-                // its original act; claim it with this purge and its receipt.
+            let recovered_act = recovered_authority_act
+                .map(EntityId::from_bytes)
+                .transpose()?
+                .map(|act| act.to_hex());
+            if let Some(act) = recovered_act.as_deref()
+                && self.pending_authority_act_in_txn(wtxn, act)?.is_some()
+            {
+                // Only an original act still present can be claimed. An owner
+                // may have withdrawn it after interrupted publication; replay
+                // then keeps the ordinary receipt binder, not a recreated act.
                 self.claim_completed_authority_act_in_txn(
                     wtxn,
-                    &EntityId::from_bytes(act)?.to_hex(),
+                    act,
                     request_text,
                     Some(receipt_id.to_hex()),
                 )?;
