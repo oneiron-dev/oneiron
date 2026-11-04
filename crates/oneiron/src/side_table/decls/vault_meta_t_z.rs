@@ -222,6 +222,10 @@ side_tables! {
     /// pinned to the exact bytes archived and naming the run. 32 bytes: the owner kept a restored
     /// attempt or record at that revision. Key: id16 (AttemptId, or a kept record's entity id).
     VAULT_CLEANUP_ATTEMPT_ARCHIVE: VaultMeta b"vault_cleanup.attempt_archive.v1/" Raw;
+    /// Explicit archived-attempt deletion: actual actor, time and optional originating run tag.
+    /// Key: id16 (AttemptId), not an entity id; contains no attempt payload.
+    VAULT_CLEANUP_ATTEMPT_DELETE: VaultMeta b"vault_cleanup.attempt_delete.v1:" Named Engine
+        => crate::vault_cleanup::erase_attempt_delete_actor_in_txn;
     /// One recorded vault-cleanup decision (accepted/auto), listing archived and skipped candidates.
     /// Key: id16.
     VAULT_CLEANUP_DIGEST: VaultMeta b"vault_cleanup.digest.v1:" Raw;
