@@ -15,7 +15,9 @@ use crate::EntityId;
 use crate::claim::scoped_read::ScopedRead;
 use crate::error::{Error, Result};
 use crate::gate::ClaimReadView;
-use crate::store::{GateDecisionReadContext, GateDecisionRecord, GateLoopFamily, GateReadPosition};
+use crate::store::{
+    GateDecisionReadContext, GateDecisionRecord, GateLoopFamily, GateReadAnchors, GateReadPosition,
+};
 use oneiron_authority::federation::{ScopeAxis, ScopeId};
 
 /// What a kept read context admitted: the rows the decision is about, for
@@ -78,6 +80,19 @@ impl<'v> ScopedRead<'v> {
             dependencies.extend(context.about.iter().copied());
             dependencies.extend(context.record);
             dependencies.extend(context.position.iter().flat_map(position_rows));
+            // FIX 11000 PARTLY: the admission stands on the anchor ids too,
+            // so a recheck reads the item again when one of them changes.
+            // Empty anchors (old rows) add nothing.
+            dependencies.extend(
+                context
+                    .anchors
+                    .threads()
+                    .iter()
+                    .flat_map(|anchor| [anchor.root, anchor.turn]),
+            );
+            dependencies.extend(context.anchors.reached().iter().copied());
+            dependencies.extend(context.anchors.rooms().iter().copied());
+            dependencies.extend(context.anchors.worlds().iter().copied());
         }
         Ok(Some(KeptAdmission {
             about: about.into_iter().collect(),
@@ -91,7 +106,10 @@ impl<'v> ScopedRead<'v> {
     /// its writer kept the record's position, passes its row's audience,
     /// facet and guest conjuncts and that position, with no status, evidence
     /// or landing asked (FIX 10999); and one that never landed sits where the
-    /// reader's Scope, grants and relationships read it.
+    /// reader's Scope, grants and relationships read it. Writer anchors
+    /// (FIX 11000 PARTLY) bind the writer-proof arms: incomplete anchors
+    /// deny, and complete anchors additionally meet today's live conjuncts;
+    /// the stored-row arm keeps today's verdicts.
     fn loop_read_context_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -138,14 +156,60 @@ impl<'v> ScopedRead<'v> {
             {
                 return Ok(false);
             }
+            // FIX 11000 PARTLY: the kept position also stands on the
+            // writer's anchors. The row conjuncts above keep today's
+            // verdicts; only the writer-proof step below is anchor-bound.
+            if !self.loop_anchors_admitted_in(txn, &context.anchors)? {
+                return Ok(false);
+            }
             return self.loop_position_admitted_in(txn, read, Some(&record), position);
         }
         match &context.position {
-            None => Ok(true),
+            // FIX 11000 PARTLY: a context with no position admits only
+            // past the writer's anchors; anchor-less contexts keep Ok(true).
+            None => self.loop_anchors_admitted_in(txn, &context.anchors),
             Some(position) => {
+                if !self.loop_anchors_admitted_in(txn, &context.anchors)? {
+                    return Ok(false);
+                }
                 self.loop_position_admitted_in(txn, read, context.record.as_ref(), position)
             }
         }
+    }
+
+    /// Writer anchors on the kept position's admission (FIX 11000 PARTLY).
+    /// True when the writer attached none, so old rows keep today's
+    /// verdicts. Otherwise only complete anchors with nonempty worlds
+    /// admit, and every anchor id meets today's live audience/peer/thread
+    /// device conjuncts (`audience_readable_in`: device, private threads,
+    /// own entry, and past narrowing the room/world ceilings with the
+    /// audience and peer reads). Incomplete or empty-world anchors deny, as
+    /// a missing ancestry does today. Anchor worlds contribute the nonempty
+    /// gate; their window-time refinement stays PARTLY. Content-free: only
+    /// id readability is asked, never body text.
+    fn loop_anchors_admitted_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        anchors: &GateReadAnchors,
+    ) -> Result<bool> {
+        if anchors.is_empty() {
+            return Ok(true);
+        }
+        if !anchors.is_complete() || anchors.worlds().is_empty() {
+            return Ok(false);
+        }
+        for id in anchors
+            .threads()
+            .iter()
+            .flat_map(|anchor| [anchor.root, anchor.turn])
+            .chain(anchors.reached().iter().copied())
+            .chain(anchors.rooms().iter().copied())
+        {
+            if !self.audience_readable_in(txn, &id)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// A kept record position under the reader's live authority, as a stored
