@@ -10,6 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use dom_query::{Document, NodeRef};
+use similar::{Algorithm, DiffTag, capture_diff_slices};
 
 use oneiron_docedit::retained_opc::{Limits, Package};
 use oneiron_docedit::xlsx_body::read_xlsx_cells;
@@ -229,10 +230,10 @@ pub(super) fn find_text(
     Ok(found)
 }
 
-/// Moves a Word span across one paragraph's edit. The text both sides share
-/// at the start and end is untouched; a boundary inside the changed stretch
-/// moves to its edge. An edit inside the span keeps it, a deletion of the
-/// whole span detaches it (`None`), a partial delete shrinks it.
+/// Moves a Word or HTML span across disjoint character edits. Boundaries
+/// inside one changed run move to its edges. A span detaches only when none
+/// of its original characters survives; partial deletes shrink it and edits
+/// inside a surviving span stay inside its boundaries.
 pub(super) fn remap_span(before: &str, after: &str, start: u64, end: u64) -> Option<(u64, u64)> {
     let before: Vec<char> = before.chars().collect();
     let after: Vec<char> = after.chars().collect();
@@ -240,31 +241,33 @@ pub(super) fn remap_span(before: &str, after: &str, start: u64, end: u64) -> Opt
     if start >= end || end > before.len() {
         return None;
     }
-    let shared = before.len().min(after.len());
-    let prefix = before
-        .iter()
-        .zip(&after)
-        .take_while(|(a, b)| a == b)
-        .count();
-    let suffix = before
-        .iter()
-        .rev()
-        .zip(after.iter().rev())
-        .take(shared - prefix)
-        .take_while(|(a, b)| a == b)
-        .count();
-    let before_end = before.len() - suffix;
-    let after_end = after.len() - suffix;
-    let map = |at: usize, inside: usize| {
-        if at <= prefix {
-            at
-        } else if at >= before_end {
-            at - before_end + after_end
-        } else {
-            inside
+    let edits = capture_diff_slices(Algorithm::Myers, &before, &after);
+    let survives = edits.iter().any(|edit| {
+        let (tag, old, _) = edit.as_tag_tuple();
+        tag == DiffTag::Equal && old.start < end && start < old.end
+    });
+    if !survives {
+        return None;
+    }
+    let map = |at: usize, trailing: bool| {
+        for edit in &edits {
+            let (tag, old, new) = edit.as_tag_tuple();
+            if at <= old.start {
+                return new.start;
+            }
+            if at < old.end {
+                return if tag == DiffTag::Equal {
+                    new.start + at - old.start
+                } else if trailing {
+                    new.end
+                } else {
+                    new.start
+                };
+            }
         }
+        after.len()
     };
-    let (new_start, new_end) = (map(start, prefix), map(end, after_end));
+    let (new_start, new_end) = (map(start, false), map(end, true));
     (new_start < new_end).then(|| (new_start as u64, new_end as u64))
 }
 
