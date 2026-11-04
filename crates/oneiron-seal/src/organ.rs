@@ -303,6 +303,12 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
             },
         })
         .collect();
+    // A shared output buffer is copied for the reply, so its bytes ride
+    // this call's reply reservation first; a sole owner's buffer moves
+    // without copying (FIX 8452).
+    if Arc::strong_count(&sealed.bytes) != 1 {
+        memory.reserve(sealed.bytes.len() as u64)?;
+    }
     let mut answer = report(
         &SealReport::Sealed {
             evidence_sha256: ByteBuf::from(sealed.evidence_sha256.to_vec()),
@@ -319,7 +325,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     answer.outputs.push(OutputBytes {
         name: SEALED_OUTPUT.to_owned(),
         media_type: PDF.to_owned(),
-        bytes: sealed.bytes,
+        bytes: crate::memory::AdmittedBytes::into_vec(sealed.bytes),
     });
     Ok(answer)
 }
