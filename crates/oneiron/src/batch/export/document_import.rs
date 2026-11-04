@@ -20,11 +20,11 @@ use super::{
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
-use crate::entity_id::EntityId;
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_WORKFLOW,
+    ENTITY_TYPE_EVENT, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW,
 };
 use crate::serialize::{ExportBody, ExportBodyFile};
 use crate::temporal::TimeRange;
@@ -240,7 +240,7 @@ impl Vault {
             // row index (FIX 2766, 3678): its body is built again when it
             // goes in, and a file body, which waits on nothing, is read from
             // the archive only then.
-            let waits_on = if matches!(row.body, ExportBody::File(_)) {
+            let mut waits_on = if matches!(row.body, ExportBody::File(_)) {
                 Vec::new()
             } else {
                 dependencies(
@@ -248,6 +248,18 @@ impl Vault {
                     &imported_body(&row, &archive.index, &archive.files)?,
                 )?
             };
+            // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
+            // non-default facet waits on its archived facet row, so the
+            // facet's put lands first and the masked initial put below finds
+            // a stored FACET. A facet the archive does not carry blocks
+            // nothing (it is never Waiting); the put then fails fail-closed.
+            if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN) {
+                if let Some(facet) = archived_birth_facet(&archive, &id)?
+                    && !waits_on.contains(&facet)
+                {
+                    waits_on.push(facet);
+                }
+            }
             archive
                 .index
                 .put(Tag::Pending, id.as_bytes(), &id_list(&waits_on))?;
@@ -518,10 +530,24 @@ fn insert_ready_row<R: Read + Seek>(
                 vault.put_skill_record_in_txn(wtxn, &id, &record, occurred, row.learned_at)
             }
         }
-        _ => vault
-            .batch_in()
-            .put(&id, row.entity_type, occurred, row.learned_at, &body)
-            .apply(wtxn),
+        _ => {
+            // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
+            // non-default facet is masked with its archived birth facet, so
+            // the initial put births it under the original facet instead of
+            // minting a destination-default stamp the archived FacetOf edge
+            // then breaks (FacetStampImmutable). Other rows keep today's
+            // unmasked put.
+            let mask = if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN) {
+                archived_birth_facet(&archive, &id)?
+            } else {
+                None
+            };
+            vault
+                .batch_in()
+                .mask(mask)
+                .put(&id, row.entity_type, occurred, row.learned_at, &body)
+                .apply(wtxn)
+        }
     }
 }
 
@@ -1158,6 +1184,26 @@ fn imported_body(
         }
         _ => Ok(bytes),
     }
+}
+
+/// The archived `FacetOf` target of EVENT/TURN row `id`, if the archive
+/// carries the stamp (blind-review P1b, REVIEW-4389). The dependency queue
+/// waits on it and the initial put is masked with it, so the row is born
+/// under its original facet; `None` keeps today's destination default.
+fn archived_birth_facet<R: Read + Seek>(
+    archive: &IndexedArchive<'_, R>,
+    id: &EntityId,
+) -> Result<Option<EntityId>> {
+    let mut prefix = Vec::with_capacity(ENTITY_ID_LEN + 1);
+    prefix.extend_from_slice(id.as_bytes());
+    prefix.push(EdgeKind::FacetOf as u8);
+    let Some((key, _)) = archive.index.next(Tag::Edge, &prefix, None)? else {
+        return Ok(None);
+    };
+    if key.len() != 2 * ENTITY_ID_LEN + 1 || !key.starts_with(&prefix) {
+        return Ok(None);
+    }
+    id_at(&key, ENTITY_ID_LEN + 1).map(Some)
 }
 
 fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {

@@ -251,15 +251,30 @@ pub(super) fn restore<R: Read + Seek>(
         rows.push((row, id, body));
         after = Some(row_key);
     }
-    let loc = archive
-        .index
-        .get(Tag::MappedEdge, &subject)?
-        .ok_or_else(|| invalid("provenance subject edge missing from archive"))?;
-    let edge = mapped_edge(
-        &archive.spool.parse::<ExportEdge>(Loc::decode(&loc)?)?,
-        &archive.index,
-    )?;
-    stage_edge(vault, txn, &edge, &archive.index)?;
+    // Blind-review P1c (REVIEW-4389): an authored cut (FIX 7755) keeps its
+    // active provenance Claim while the subject edge is gone, so a
+    // whole-vault export carries the wrapper without its edge. When the edge
+    // row is absent but both endpoints survive as archived entities, the
+    // cohort restores without staging — and never recreates — the deleted
+    // link. Any other absence stays a fail-closed archive defect.
+    let cut = match archive.index.get(Tag::MappedEdge, &subject)? {
+        Some(loc) => {
+            let edge = mapped_edge(
+                &archive.spool.parse::<ExportEdge>(Loc::decode(&loc)?)?,
+                &archive.index,
+            )?;
+            stage_edge(vault, txn, &edge, &archive.index)?;
+            false
+        }
+        None => {
+            let source = id_at(&subject, 0)?;
+            let target = id_at(&subject, ENTITY_ID_LEN + 1)?;
+            if archive.entity(&source)?.is_none() || archive.entity(&target)?.is_none() {
+                return Err(invalid("provenance subject edge missing from archive"));
+            }
+            true
+        }
+    };
     let new_ids = rows
         .iter()
         .filter_map(|(_, id, _)| {
@@ -270,7 +285,7 @@ pub(super) fn restore<R: Read + Seek>(
             }
         })
         .collect::<std::result::Result<BTreeSet<_>, _>>()?;
-    let (inserted, unchanged) = restore_cohort(vault, txn, &rows)?;
+    let (inserted, unchanged) = restore_cohort(vault, txn, &rows, cut)?;
     if inserted != new_ids.len() {
         return Err(Error::InvariantViolation("provenance import count drift"));
     }
@@ -284,6 +299,7 @@ fn restore_cohort(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     rows: &[(ExportEntity, EntityId, ClaimBody)],
+    cut: bool,
 ) -> Result<(usize, usize)> {
     let mut inserted = 0;
     let mut unchanged = 0;
@@ -312,6 +328,7 @@ fn restore_cohort(
                 end: row.occurred_end,
             },
             row.learned_at,
+            cut,
         )?;
         inserted += 1;
     }

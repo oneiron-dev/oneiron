@@ -60,6 +60,9 @@ pub(crate) fn archived_provenance_body(
 impl Vault {
     /// One new row, in ascending learned-at order. Closed history is staged in
     /// the same uncommitted transaction; caller must compare the final cohort.
+    /// `cut` marks an authored-cut cohort (blind-review P1c, REVIEW-4389):
+    /// its subject edge is gone, so the restore replays the claim chain
+    /// without the edge and never recreates the deleted link.
     pub(crate) fn restore_archived_provenance_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -67,6 +70,7 @@ impl Vault {
         body: &ClaimBody,
         occurred: TimeRange,
         learned_at: u64,
+        cut: bool,
     ) -> Result<()> {
         if body.source != Some(ClaimSource::Imported) {
             return Err(invalid("archive source floor missing"));
@@ -106,26 +110,28 @@ impl Vault {
         // their static-kind rejection while this restore replays its own.
         let allow_structural =
             edge_value_layout_for_kind(kind, false) == EdgeValueLayout::Structural;
-        self.restore_edge_provenance_in_txn(
-            txn,
-            EdgeProvenanceWrite {
-                claim_id: id,
-                subject: &EdgeRef::new(source, kind, target),
-                body: &record,
-                actor_class: class,
-                learned_at,
-                explicit_prior: None,
-                imported_evidence: Some(scope),
-                generated_evidence: None,
-            },
-            allow_structural,
-        )?;
+        let write = EdgeProvenanceWrite {
+            claim_id: id,
+            subject: &EdgeRef::new(source, kind, target),
+            body: &record,
+            actor_class: class,
+            learned_at,
+            explicit_prior: None,
+            imported_evidence: Some(scope),
+            generated_evidence: None,
+        };
+        if cut {
+            self.restore_cut_edge_provenance_in_txn(txn, write, allow_structural)?;
+        } else {
+            self.restore_edge_provenance_in_txn(txn, write, allow_structural)?;
+        }
         if body.lifecycle == ClaimLifecycleStatus::Retracted {
             self.retract_edge_provenance_in_txn(
                 txn,
                 id,
                 body.valid_to
                     .ok_or_else(|| invalid("retracted archive missing close time"))?,
+                cut,
             )?;
         }
         Ok(())

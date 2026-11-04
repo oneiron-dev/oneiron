@@ -166,6 +166,7 @@ impl Vault {
                     generated_evidence: None,
                 },
                 true,
+                false,
             )
         })
     }
@@ -209,6 +210,7 @@ impl Vault {
                     generated_evidence: None,
                 },
                 true,
+                false,
             )?;
             self.batch_in()
                 .delete_edge(&subject.source, subject.kind, &subject.target)
@@ -283,7 +285,9 @@ impl Vault {
     /// start) → [`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody); subject edge missing →
     /// [`Error::EdgeNotFound`].
     pub fn retract_edge_provenance(&self, claim_id: &EntityId, now: u64) -> Result<()> {
-        self.with_write_txn_grouped(|wtxn| self.retract_edge_provenance_in_txn(wtxn, claim_id, now))
+        self.with_write_txn_grouped(|wtxn| {
+            self.retract_edge_provenance_in_txn(wtxn, claim_id, now, false)
+        })
     }
 
     pub(crate) fn retract_edge_provenance_in_txn(
@@ -291,6 +295,7 @@ impl Vault {
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
         now: u64,
+        without_edge: bool,
     ) -> Result<()> {
         let claim = self.load_provenance_claim_in_txn(wtxn, claim_id)?;
         if claim.wrapper.lifecycle != ClaimLifecycleStatus::Active {
@@ -303,12 +308,14 @@ impl Vault {
             closed_claim_put_payload(&claim, &retracted, ClaimLifecycleStatus::Retracted)?;
 
         // The subject edge must still exist — the retraction KEEPS it and
-        // only refreshes the two flag bytes.
+        // only refreshes the two flag bytes. A cut restore skips this: the
+        // cut deleted the edge and only the claim's lifecycle change lands.
         let subject = claim.subject;
-        if self
-            .store
-            .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
-            .is_none()
+        if !without_edge
+            && self
+                .store
+                .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
+                .is_none()
         {
             return Err(Error::EdgeNotFound);
         }
@@ -351,7 +358,11 @@ impl Vault {
         // Blind-review P1: a structural subject keeps its 12-byte value — no
         // hot flags to restamp — so only the claim's own lifecycle change
         // lands; the edge bytes, PPR and graph version stay put.
-        if edge_value_layout_for_kind(subject.kind, false) != EdgeValueLayout::Structural {
+        // A cut restore never recreates the deleted link: no flag refresh,
+        // no invalidation, no version bump on the missing edge.
+        if !without_edge
+            && edge_value_layout_for_kind(subject.kind, false) != EdgeValueLayout::Structural
+        {
             restamp_edge_flags(&self.store, wtxn, &subject, flags)?;
             ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
             // The edge bytes changed without an edge BatchOp in this txn, so
@@ -497,7 +508,7 @@ impl Vault {
         wtxn: &mut RwTxn<'_>,
         write: EdgeProvenanceWrite<'_>,
     ) -> Result<()> {
-        self.write_edge_provenance_inner(wtxn, write, false)
+        self.write_edge_provenance_inner(wtxn, write, false, false)
     }
 
     /// Owning restore inlet for validated archive records (blind-review P1c,
@@ -512,7 +523,22 @@ impl Vault {
         write: EdgeProvenanceWrite<'_>,
         allow_structural: bool,
     ) -> Result<()> {
-        self.write_edge_provenance_inner(wtxn, write, allow_structural)
+        self.write_edge_provenance_inner(wtxn, write, allow_structural, false)
+    }
+
+    /// Owning restore inlet for an archived cut wrapper (blind-review P1c,
+    /// REVIEW-4389): the FIX 7755 cut kept the actor-stamped Claim while its
+    /// subject edge is gone, so the restore replays the claim chain without
+    /// the edge-existence check and without restamping (never recreating)
+    /// the deleted link. `allow_structural` rides as in
+    /// [`Self::restore_edge_provenance_in_txn`].
+    pub(crate) fn restore_cut_edge_provenance_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        write: EdgeProvenanceWrite<'_>,
+        allow_structural: bool,
+    ) -> Result<()> {
+        self.write_edge_provenance_inner(wtxn, write, allow_structural, true)
     }
 
     /// FIX 7755: [`Self::write_edge_provenance_in_txn`] with an explicit
@@ -524,6 +550,7 @@ impl Vault {
         wtxn: &mut RwTxn<'_>,
         write: EdgeProvenanceWrite<'_>,
         allow_structural: bool,
+        without_edge: bool,
     ) -> Result<()> {
         let EdgeProvenanceWrite {
             claim_id,
@@ -659,12 +686,13 @@ impl Vault {
             return Err(Error::Claim(ClaimError::ProvenanceClaimIdInUse));
         }
 
-        // Subject edge must exist — no upsert.
-
-        if self
-            .store
-            .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
-            .is_none()
+        // Subject edge must exist — no upsert. A cut restore skips this:
+        // the FIX 7755 cut deleted the edge and only its Claims land here.
+        if !without_edge
+            && self
+                .store
+                .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
+                .is_none()
         {
             return Err(Error::EdgeNotFound);
         }
@@ -878,7 +906,11 @@ impl Vault {
         // actor-stamped Claim above is the canonical fact, and the `ClaimOf`
         // edge the batch just staged already invalidated and versioned the
         // graph, so no flag restamp runs here.
-        if edge_value_layout_for_kind(subject.kind, false) == EdgeValueLayout::Structural {
+        // A cut restore never recreates the deleted link: no flag restamp,
+        // no invalidation, no version bump on the missing edge.
+        if without_edge
+            || edge_value_layout_for_kind(subject.kind, false) == EdgeValueLayout::Structural
+        {
             return Ok(());
         }
         restamp_edge_flags(&self.store, wtxn, subject, flags)?;
