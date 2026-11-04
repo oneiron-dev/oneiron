@@ -143,7 +143,7 @@ pub(super) fn read_codebase_snapshot(
         files.push(read_codebase_file_entry(&files_array, index, memory)?);
     }
     Ok(super::types::NapiCodebaseSnapshot {
-        project_id: read_required_js_string(&snapshot, "projectId", memory)?,
+        project_id: read_project_id(&snapshot, memory)?,
         repo_ref: read_required_js_string(&snapshot, "repoRef", memory)?,
         commit_hash: read_optional_js_string(&snapshot, "commitHash", memory)?,
         fork_hash: snapshot.get::<Option<Buffer>>("forkHash")?.flatten(),
@@ -176,6 +176,21 @@ fn read_codebase_file_entry(
         size_bytes: required_field(&entry, "sizeBytes")?,
         content: entry.get::<Option<Buffer>>("content")?.flatten(),
     })
+}
+
+/// Check the core's raw UTF-8 length limit before conversion can wait for
+/// memory. Core rejects whitespace rather than trimming it before validation.
+fn read_project_id(snapshot: &Object<'_>, memory: &mut CodebaseMemory) -> napi::Result<String> {
+    let js: napi::JsString<'_> = required_field(snapshot, "projectId")?;
+    let len = js.utf8_len()?;
+    let max = oneiron::codebase::CODEBASE_PROJECT_ID_MAX_BYTES;
+    if len > max {
+        return Err(napi::Error::new(
+            napi::Status::InvalidArg,
+            format!("codebase snapshot project_id must be <= {max} bytes, got {len}"),
+        ));
+    }
+    js_string_owned(js, len as u64, memory)
 }
 
 fn read_required_js_string(
