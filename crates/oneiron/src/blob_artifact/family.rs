@@ -11,7 +11,7 @@ use crate::Vault;
 use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::lens::RecordRef;
+use crate::store::record_ref::RecordRef;
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT};
 use crate::write_envelope::provenance::made_by::MadeBy;
 

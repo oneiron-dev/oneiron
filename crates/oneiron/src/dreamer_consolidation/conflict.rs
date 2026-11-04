@@ -223,14 +223,7 @@ pub struct CollapsedEvidence {
     pub duplicates_collapsed: u32,
 }
 
-/// Domain-separated hash over the bytes the orchestrator actually read.
-#[must_use]
-pub fn swarm_evidence_content_hash(entity_body_bytes: &[u8]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(DREAMER_EVIDENCE_HASH_DOMAIN);
-    hasher.update(entity_body_bytes);
-    *hasher.finalize().as_bytes()
-}
+pub use crate::store::consolidation_evidence::swarm_evidence_content_hash;
 
 /// The parent rereads every citation through one actor-scoped ledger snapshot.
 /// No child-supplied value can change the hash, trust, or dedup identity.
