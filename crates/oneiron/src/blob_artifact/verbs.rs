@@ -29,6 +29,7 @@ use crate::edit_settle::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::file_secret_marks::SecretSight;
 use crate::lens::RecordRef;
 use crate::llm::decision::TypedDecision;
 use crate::memory::{
@@ -38,11 +39,10 @@ use crate::model_decision::{
     DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
 };
 use crate::receipt::ReceiptRecord;
-use crate::file_secret_marks::SecretSight;
-use oneiron_authority::share_travel::{BornWith, TravelChoice, TravelKind};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::{MadeBy, MadeByTrigger};
+use oneiron_authority::share_travel::{BornWith, TravelChoice, TravelKind};
 
 /// One artifact, by ref.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

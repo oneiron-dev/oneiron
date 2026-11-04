@@ -229,7 +229,9 @@ pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
     rows.extend(
         crate::write_envelope::cohort_claims::claim_class_descriptors()
             .into_iter()
-            .filter(|row| row.predicate == crate::write_envelope::cohort_claims::PREDICATE_COMM_DO_NOT_CONTACT)
+            .filter(|row| {
+                row.predicate == crate::write_envelope::cohort_claims::PREDICATE_COMM_DO_NOT_CONTACT
+            })
             .map(|row| ClaimClassDescriptorRow {
                 predicate: row.predicate,
                 write_class: row.write_class,
@@ -240,7 +242,6 @@ pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
     );
     rows
 }
-
 
 /// Returns whether `predicate` belongs to the communication claim family.
 #[must_use]

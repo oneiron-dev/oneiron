@@ -19,13 +19,17 @@ mod store;
 mod tests;
 
 pub use piece::{KitId, KitPiece, PieceExport, RecoveryCode};
-pub(crate) use store::{KitPiecePair, KitPieceStore, join_kept_piece, vault_key_piece_install};
+pub(crate) use store::{
+    KitPiecePair, KitPieceStore, join_kept_piece, recovery_root_pending_piece_install,
+    recovery_root_piece_install, vault_key_piece_install,
+};
 
 const SALT_CONTEXT: &str = "oneiron/kit/v2/passphrase-salt";
 const TAG_CONTEXT: &str = "oneiron/kit/v2/tag";
 
 pub use crate::store::recovery_kit::{
-    KitSecretKind, PieceHome, CodeKeeping, KitMachine, KitCoverage, PassphraseCost, KitPassphrase, KitIssue, KitManifest, IssuedKit, RestoredKitSecret, KitError,
+    CodeKeeping, IssuedKit, KitCoverage, KitError, KitIssue, KitMachine, KitManifest,
+    KitPassphrase, KitSecretKind, PassphraseCost, PieceHome, RestoredKitSecret,
 };
 
 /// Issues a kit for a vault's data key on any valid custody, a hosted one included: the

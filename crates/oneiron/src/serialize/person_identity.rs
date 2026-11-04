@@ -1,12 +1,12 @@
 //! Pure PERSON baseline validation and JSON-compatible MessagePack decoding.
 
-use serde::{Serialize, Deserialize};
-use serde_json::Value as JsonValue;
-use rmpv::Value;
-use std::collections::BTreeSet;
+use super::msgpack_value_to_json;
 use crate::error::Result;
 use crate::write_envelope::person_identity::{body_fields, invalid_companion};
-use super::msgpack_value_to_json;
+use rmpv::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+use std::collections::BTreeSet;
 
 pub(crate) const BASELINE_KEY: &str = "persona_definition";
 

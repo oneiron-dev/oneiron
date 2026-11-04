@@ -10,7 +10,10 @@ use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
-pub(crate) use crate::write_envelope::vad_annotation::{VAD_ANNOTATION_CLAIM_PREDICATE, vad_annotation_claim_id, vad_annotation_claim_body, vad_annotation_from_value, VadAnnotationCleanup};
+pub(crate) use crate::write_envelope::vad_annotation::{
+    VAD_ANNOTATION_CLAIM_PREDICATE, VadAnnotationCleanup, vad_annotation_claim_body,
+    vad_annotation_claim_id, vad_annotation_from_value,
+};
 
 /// Legacy pre-CLAIM VAD metadata row, keyed by `entity_type(1) ++ id(16)`.
 /// Read (and deleted) only — every write now lands as a `VAD_ANNOTATION_CLAIM_PREDICATE`

@@ -5,7 +5,6 @@
 /// 10-18, behind this one constant.
 pub const ERASED_CALL_IDENTITY: &str = "erased";
 
-
 // Invalid UTF-8 and a non-container MessagePack first byte prevent opaque
 // carriers from falling through a text serializer. Whole export uses the
 // credential-safe source facet, never these bytes as another escape channel.

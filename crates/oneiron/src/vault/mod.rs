@@ -2,13 +2,13 @@
 //! entity / vector / edge / text / temporal operations. Also hosts
 //! edge-record helpers kept for Vault-facing compatibility.
 
-pub(crate) mod speculative_passes;
 mod actors_memory;
 mod database_digests;
 mod doctor_manifest;
 mod edges;
 mod entities;
 pub(crate) mod entity_revision;
+pub(crate) mod speculative_passes;
 #[cfg(feature = "sync")]
 pub(crate) use entity_revision::EntityRevisionChange;
 pub use entity_revision::{
@@ -20,6 +20,7 @@ mod open;
 mod places;
 mod raw_writes;
 
+pub(crate) mod code_consent_host;
 #[cfg(feature = "test-support")]
 mod read_fixture;
 mod reader_table;
@@ -28,7 +29,6 @@ mod response_bodies;
 mod retrieval_trace_key;
 mod search_retrieval;
 mod transactions;
-pub(crate) mod code_consent_host;
 mod vector_evidence;
 
 use crate::analyzer::MultilingualAnalyzer;
@@ -104,7 +104,8 @@ pub struct Vault {
     pub(crate) pending_owner_export_receipts:
         std::sync::Mutex<Vec<crate::share_travel::ExportTravel>>,
     /// One housekeeping pass at a time on this handle.
-    pub(crate) housekeeping: std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
+    pub(crate) housekeeping:
+        std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
@@ -215,8 +216,9 @@ pub struct Vault {
     /// The served host that drives an answered code consent wait's effect
     /// (DOOR-079 1a), installed once per open vault, never process-global
     /// ([`Vault::install_code_consent_effect_host`]). In memory only.
-    pub(crate) code_consent_host:
-        std::sync::OnceLock<std::sync::Arc<dyn crate::vault::code_consent_host::CodeConsentEffectHost>>,
+    pub(crate) code_consent_host: std::sync::OnceLock<
+        std::sync::Arc<dyn crate::vault::code_consent_host::CodeConsentEffectHost>,
+    >,
     /// The served host's check that a managed vault's attested owner is its
     /// live owner, which his queued work runs under (FIX 11090), installed
     /// once per open vault ([`Vault::install_managed_owner_check`]). In
