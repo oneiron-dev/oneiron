@@ -384,12 +384,6 @@ pub(crate) fn analyze(
             .map(|prior: &RevisionFact| prior.xref_offset);
         let (definitions, lexed) =
             definitions(&bytes[..end], previous_end, end, &doc, xref_offset, limits)?;
-        // The facts keep the definitions: charged to the operation as they
-        // are built (FIX 8452).
-        limits
-            .memory
-            .admit::<ObjectDefinition>(definitions.capacity())
-            .map_err(RevisionAnalysisError::Memory)?;
         work = work.saturating_add(lexed);
         if definitions.iter().any(|d| {
             d.byte_span.start >= d.byte_span.end
@@ -421,6 +415,11 @@ pub(crate) fn analyze(
                 }
             }
         }
+        // The parsed trailer belongs to this revision's parse pass. Keep an
+        // independently admitted copy, so ending the pass cannot return the
+        // retained graph's credit while the facts still own it.
+        admitted::dictionary(limits, &doc.trailer).map_err(RevisionAnalysisError::Memory)?;
+        let trailer = doc.trailer.clone();
         admitted::push(
             limits,
             &mut revisions,
@@ -429,7 +428,7 @@ pub(crate) fn analyze(
                 xref_offset,
                 prev_xref,
                 xref_style: doc.reference_table.cross_reference_type,
-                trailer: doc.trailer,
+                trailer,
                 definitions,
             },
         )
