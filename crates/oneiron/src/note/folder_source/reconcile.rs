@@ -460,7 +460,12 @@ impl Vault {
         // files on the unchanged path and reconcile pending links separately.
         // (An empty recorded hash is a missing row, never a match.)
         let content_unchanged = !row.file_hash.is_empty() && row.file_hash == hash;
-        if current == file.markdown || content_unchanged {
+        // A restored row's recorded hash can name unaccepted content: the
+        // file left while its proposal was open and came back unchanged.
+        // The shortcut admits it only when the note holds that text;
+        // otherwise the edit path below recreates the proposal instead of
+        // landing unaccepted links as the vault's own (REVIEW-4381 P1).
+        if current == file.markdown || (content_unchanged && !retracted) {
             // An open proposal is the owner's unaccepted fork: its links are
             // not the vault's to reconcile, and neither its state nor its
             // landed hash moves until the owner decides. A decided fork
@@ -531,15 +536,15 @@ impl Vault {
                     if row.first_seen_at == 0 {
                         row.first_seen_at = at;
                     }
-                    // A preserved row keeps its indexing history: its text
-                    // has not landed.
-                    let indexed_at = if preserve {
-                        row.meta
-                            .and_then(|meta| meta.indexed_at)
-                            .or(row.pending_indexed_at)
-                    } else {
-                        Some(at)
-                    };
+                    // The text did not change, so it was not reindexed:
+                    // keep when it was indexed, restoring what a pending
+                    // clear rode out beside the row. Only landing or
+                    // reindexed text takes the current time (REVIEW-4381 P1).
+                    let indexed_at = row
+                        .meta
+                        .and_then(|meta| meta.indexed_at)
+                        .or(row.pending_indexed_at)
+                        .or(Some(at));
                     row.meta = next_meta(row.meta, facts, at, indexed_at);
                     row.pending_indexed_at = None;
                 }

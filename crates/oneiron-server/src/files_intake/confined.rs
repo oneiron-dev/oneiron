@@ -262,14 +262,19 @@ fn is_vault_dir(dir: &OwnedFd, vault: (u64, u64)) -> bool {
 
 /// Whether `dir` sits at or under the vault's directory, walking up through
 /// open descriptors, never path strings: a root swapped, or a vault renamed,
-/// after the caller's strings were read still matches. Stops at the
-/// filesystem root; on any error the string checks decide alone.
+/// after the caller's strings were read still matches. The walk runs to the
+/// filesystem root with no depth cutoff: a fixed cap would report a deep
+/// source outside the vault, and after a vault rename the stale strings are
+/// gone, so the check must not stop early (REVIEW-4381 P1). Each step
+/// strictly ascends and the parent-equals-self test ends the walk at the
+/// root, so the loop always terminates; on any error the string checks
+/// decide alone.
 pub(crate) fn under_vault_dir(dir: &OwnedFd, vault: (u64, u64)) -> bool {
     let mut current = match dir.try_clone() {
         Ok(current) => current,
         Err(_) => return false,
     };
-    for _ in 0..128 {
+    loop {
         if is_vault_dir(&current, vault) {
             return true;
         }
@@ -289,7 +294,6 @@ pub(crate) fn under_vault_dir(dir: &OwnedFd, vault: (u64, u64)) -> bool {
         }
         current = parent;
     }
-    false
 }
 
 /// A walk that excludes nothing beyond its own profile.
