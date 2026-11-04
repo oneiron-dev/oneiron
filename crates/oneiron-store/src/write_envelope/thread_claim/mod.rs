@@ -91,7 +91,7 @@ pub(crate) const KEY_TO_THREAD_REF: &str = THREAD_ALIAS_BODY_KEYS[3];
 /// The only constructor is [`canonical_message_id`], so holding one of these
 /// is proof the token already survived the conservative gate.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CanonicalMessageId(pub(crate) String);
+pub struct CanonicalMessageId(pub String);
 
 impl CanonicalMessageId {
     /// The canonical token, exactly as it will be stored and hashed.
