@@ -693,7 +693,10 @@ impl SyncConnection {
             if ack.digest() != blake3::hash(&queued.encoded).as_bytes() {
                 return Err("home residence acknowledgment digest mismatch".into());
             }
-            if !ack.is_durable() {
+            if !ack.is_durable()
+                && client.update_verdict(&queued.window_key, &queued.encoded)
+                    != crate::sync::window::UpdateVerdict::Withheld
+            {
                 retained.insert(queued.seq);
                 held_back.insert(queued.window_key);
                 continue;
