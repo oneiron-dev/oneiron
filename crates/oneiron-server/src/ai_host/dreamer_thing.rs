@@ -27,7 +27,7 @@ use oneiron::dreamer_consolidation::{
     THING_CHILD_LOAN_REFUSED, THING_CHILD_RUNTIME_UNBOUND, THING_CHILD_SPAWN_REFUSED,
     ThingChildHost, ThingChildLaunch, ThingChildStart,
 };
-use oneiron::llm::{WorkClass, WorkContext};
+use oneiron::llm::{WorkClass, WorkContext, run_admission::{WorkCancel, lookup_work_parent}};
 use oneiron::{ModelId, ModelLocality, Vault};
 
 use self::generation::GenerationCount;
@@ -180,12 +180,27 @@ impl ThingChildHost for ServedThingChildHost {
             .child_cutoff()
             .saturating_sub(unix_millis_now());
         let deadline = Instant::now().checked_add(Duration::from_millis(left_ms));
+        // One cancellation identity for the child's device work (FIX 11961):
+        // the context admits under it, and the session trips it when the
+        // child stops, so in-flight device work aborts with the child.
+        let cancel = WorkCancel::new();
+        // A parent resolves only against the admission its ticket was
+        // taken on (FIX 11960): the pair travels together, and the admit
+        // filters a stale admission's number out.
+        let (parent_admission, parent) = lookup_work_parent(&parent_run).unzip();
         let run = self
             .runtime
             .undeclared_run(THING_CHILD_RUN, guard.clone())
+            // This child runs as its task: its admission records the ticket
+            // under it, and it parents on the ticket its parent run's
+            // admission took (FIX 11960). A miss parents nothing.
             .with_work_context(WorkContext {
                 class: WorkClass::Background,
                 deadline,
+                cancel: cancel.clone(),
+                entity: Some(task),
+                parent,
+                parent_admission,
                 ..Default::default()
             });
         let backend = CountedBackend::new(
@@ -217,6 +232,7 @@ impl ThingChildHost for ServedThingChildHost {
             parent_run,
             received,
             stop,
+            cancel,
             count,
         );
         let queued = enqueue_scoped_child(
