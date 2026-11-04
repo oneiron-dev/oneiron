@@ -15,6 +15,10 @@ mod replay_capsule;
 mod response_erase;
 mod response_owners;
 mod routing;
+mod secret_lift;
+pub(crate) use secret_lift::{
+    drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
+};
 mod session_write;
 mod spawn_erase;
 mod speech_identity;
@@ -41,8 +45,8 @@ pub(crate) use self::reader_jobs::{
 pub use self::reader_jobs::{ReaderJobs, SummaryMember, SummaryRead};
 pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
-    CodeRunResultBodyReader, StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
-    code_run_body_row_key, code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
+    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
+    code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
 };
 pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
@@ -64,6 +68,10 @@ pub(crate) use self::response_erase::{actor_gone, retire_actor_responses_in_txn}
 pub(crate) use self::response_owners::stamp_response_owner_in_txn;
 pub(crate) use self::routing::{
     ExecutorStorage, FeedbackRoute, SessionInstanceBind, require_facet_placement_in, unplaceable,
+};
+pub use self::secret_lift::{
+    CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
+    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
 pub(crate) use self::spawn_erase::erase_spawn_targets_in_txn;
 #[cfg(test)]

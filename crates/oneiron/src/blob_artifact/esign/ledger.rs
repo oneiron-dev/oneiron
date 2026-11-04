@@ -76,11 +76,11 @@ fn chain_read_in(
             Ok(row) => row,
             Err(unreadable) => return Ok(Err(unreadable)),
         };
-        held |= !crate::gate::claim_consolidation_eligible_in_txn(
+        held |= !vault.store.gate_hooks.claim_consolidation_eligible_in_txn(
             &vault.store,
             txn,
             &id,
-            crate::gate::ConsolidationReader::EsignLedger,
+            oneiron_store::consolidation_reader::ConsolidationReader::EsignLedger,
         )?;
         if rows.insert(row.sequence, row).is_some() {
             return Ok(Err(invalid("forked document event sequence")));
@@ -128,7 +128,7 @@ pub(crate) fn esign_document_page_in_txn(
     after: Option<EntityId>,
     limit: usize,
 ) -> Result<(Vec<EntityId>, Option<EntityId>)> {
-    let claims = crate::claim::claim_ids_for_predicate_page_in_txn(
+    let claims = crate::store::claim_projection::claim_ids_for_predicate_page_in_txn(
         &vault.store,
         txn,
         DRAFT_PREDICATE,

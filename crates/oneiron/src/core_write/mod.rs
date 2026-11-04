@@ -5,7 +5,6 @@
 
 mod batch;
 mod conversations;
-mod dag;
 pub mod shape;
 
 pub use batch::CoreWriteLane;
