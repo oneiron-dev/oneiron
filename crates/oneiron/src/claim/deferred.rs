@@ -448,13 +448,19 @@ impl Vault {
                 }
                 let decision = self
                     .supersede_granted_deferred_claim_in_txn(txn, id, &old, now, checker, closer)?;
-                self.store.close_pending_gate_consent_in_txn(
+                self.store.close_pending_gate_consent_as_in_txn(
                     txn,
                     id,
                     now,
                     "superseded",
                     vec!["gate.supersede.contradiction_closure".to_owned()],
                     None,
+                    if critical_confirmed {
+                        // Keep the outer Clear's existing obligation result.
+                        crate::store::TrayRemoval::Answered
+                    } else {
+                        crate::store::TrayRemoval::Unanswered
+                    },
                 )?;
                 let envelope = super::supersession_provenance::envelope(&body)?;
                 super::supersession_provenance::write_companion(
