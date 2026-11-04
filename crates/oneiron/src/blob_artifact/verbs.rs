@@ -524,7 +524,7 @@ impl Memory<'_> {
         let result_notices = notices
             .iter()
             .cloned()
-            .map(crate::share_travel::WorldRecipientNotice::in_result)
+            .map(|notice| notice.in_artifact_export_result(vault, self.destination()))
             .collect();
         // The hash names the copy beside it (FIX 5491): the sighted export's
         // own `content_hash` stays the stored version's, which its internal

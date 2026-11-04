@@ -144,6 +144,41 @@ impl WorldRecipientNotice {
         }
     }
 
+    /// An artifact export's display notice must not make its previously
+    /// readable file fail the destination's unchanged release scan. The
+    /// receipt keeps the original name and id.
+    pub(crate) fn in_artifact_export_result(self, vault: &Vault, actual: &ReadDestination) -> Self {
+        let mut notice = self.in_result();
+        if actual.is_off_device() && notice.world_name.is_some() {
+            let names_kept = serde_json::to_vec(&notice)
+                .ok()
+                .and_then(|bytes| names_kept_row(vault, actual, &bytes).ok())
+                .unwrap_or(true);
+            let name = notice
+                .world_name
+                .as_deref()
+                .expect("notice has a world name");
+            let reference = name
+                .split_once('@')
+                .map_or(name, |(reference, _)| reference);
+            let short_kept = crate::entity_id::parse_short_ref_syntax(reference).is_ok()
+                && match crate::memory::resolve_entity_ref(vault, reference) {
+                    Ok(row) => vault
+                        .release_hold_for(&[row], actual)
+                        .map_or(true, |hold| hold.is_some()),
+                    Err(_) => true,
+                };
+            if names_kept || short_kept {
+                notice.world_name = None;
+                notice.body = PACK_NOTICE_WORDING
+                    .export
+                    .replace("{world_name}", PACK_NOTICE_WORDING.unnamed)
+                    .replace("{reason}", &notice.reason);
+            }
+        }
+        notice
+    }
+
     /// An import lands in `world`, which `hold` keeps from this install. It
     /// rides on results alone (the install receipt and the preview), so it
     /// names the world by name.
