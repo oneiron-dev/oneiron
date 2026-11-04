@@ -544,6 +544,7 @@ impl JobQueue for Memory {
         record.state = AttemptState::Completed;
         record.lease_owner = None;
         record.updated_at = self.clock.now_recorded_at();
+        record.settled_at = Some(record.updated_at);
         record.last_error = None;
         record.backoff_until = None;
         Ok(CompleteOutcome::Completed(record.clone()))
@@ -565,6 +566,7 @@ impl JobQueue for Memory {
         record.state = AttemptState::Failed;
         record.lease_owner = None;
         record.updated_at = self.clock.now_recorded_at();
+        record.settled_at = Some(record.updated_at);
         record.last_error = Some(input.reason);
         record.backoff_until = None;
         Ok(FailOutcome::Failed(record.clone()))
