@@ -3045,7 +3045,11 @@ added to. If `--platforms` selects a row the placed bundle lacks, the fetch
 fails and names the remedy: fetch into a fresh `--into` root and point
 `model_dir` at the bundle there.
 
-The command prints one JSON object:
+The command prints one JSON object on stdout. While files download, it
+reports each file's written and pinned bytes to stderr: one line per whole
+percent off a terminal, one redrawing line per file on a terminal. Stderr
+carries byte counts only, never the token, and a failed stderr write never
+fails the fetch.
 
 ```json
 {"outcome": "downloaded", "stack_sha16": "b8cf6fb2f5d71020",
