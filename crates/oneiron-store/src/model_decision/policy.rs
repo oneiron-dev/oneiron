@@ -2,7 +2,7 @@
 
 use super::types::invalid;
 use super::{DecisionBand, DecisionQuestion};
-use crate::{EntityId, Result};
+use oneiron_contracts::{EntityId, Result};
 use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock};
 

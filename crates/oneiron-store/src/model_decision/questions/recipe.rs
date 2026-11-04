@@ -1,6 +1,6 @@
 //! Graph-question identities and explicit evidence joins.
 
-use crate::EntityId;
+use oneiron_contracts::EntityId;
 use serde::{Deserialize, Serialize};
 
 /// A skill pins the definition, including its outcome binding and decision dial.

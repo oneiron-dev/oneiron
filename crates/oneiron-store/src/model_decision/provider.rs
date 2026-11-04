@@ -4,7 +4,7 @@ use super::{
     AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, PairedReading, ProviderPin,
     invalid, paired_valid,
 };
-use crate::{EntityId, Result};
+use oneiron_contracts::{EntityId, Result};
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -33,7 +33,7 @@ pub struct PairedAnswer {
 
 impl PairedAnswer {
     /// The engine binds a reading to the provider that measured it.
-    pub(crate) fn bind(self, provider: ProviderPin) -> PairedReading {
+    pub fn bind(self, provider: ProviderPin) -> PairedReading {
         PairedReading {
             provider,
             question: self.question,
@@ -44,7 +44,7 @@ impl PairedAnswer {
 }
 
 impl ProviderDecision {
-    pub(crate) fn validate(&self, question: &DecisionQuestion) -> Result<()> {
+    pub fn validate(&self, question: &DecisionQuestion) -> Result<()> {
         if !question.contract.accepts(&self.answer)
             || match self.answer {
                 DecisionAnswer::Abstain => self.probability.is_some(),
@@ -75,7 +75,7 @@ impl ProviderDecision {
 
     /// The pin this answer's receipt names, of a provider pinned `pin`: the model that
     /// served it on `pin`'s rung and version, else `pin`.
-    pub(crate) fn answered_pin(&self, pin: &ProviderPin) -> Result<ProviderPin> {
+    pub fn answered_pin(&self, pin: &ProviderPin) -> Result<ProviderPin> {
         let Some(served) = &self.served else {
             return Ok(pin.clone());
         };
@@ -165,7 +165,7 @@ impl ProviderCapability {
     }
 }
 
-pub(crate) fn validate_pin(pin: &ProviderPin, rung: DecisionRung) -> Result<()> {
+pub fn validate_pin(pin: &ProviderPin, rung: DecisionRung) -> Result<()> {
     if pin.rung != rung
         || pin.model.trim().is_empty()
         || pin.version.trim().is_empty()

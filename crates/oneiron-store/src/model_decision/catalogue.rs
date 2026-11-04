@@ -5,8 +5,8 @@
 //! changed wording is a new question with its own bands.
 
 use super::{AnswerContract, DecisionClass, DecisionQuestion};
-use crate::entity_id::derived_domains::DECISION_QUESTION;
-use crate::{EntityId, Result};
+use oneiron_contracts::entity_id::derived_domains::DECISION_QUESTION;
+use oneiron_contracts::{EntityId, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuestionFamily {
@@ -331,7 +331,7 @@ may open. Meet each done-means criterion and keep to every constraint. Name cont
 the handles you were given; never invent a fact, a source or a handle. When the task cannot \
 be done from what you were given, say plainly what is missing instead of guessing.";
 
-/// One task-highway surface question ([`crate::task_verb::TaskDecisions`]): take this
+/// One task-highway surface question (`oneiron::task_verb::TaskDecisions`): take this
 /// proposal, does Done mean met, ask up now? Keyed by which.
 pub const TASK_SURFACE: QuestionFamily = QuestionFamily {
     name: "task_verb.surface",
