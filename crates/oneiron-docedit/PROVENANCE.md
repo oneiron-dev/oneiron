@@ -63,3 +63,13 @@ and `MAX_DOCX_XML_NODES`, `MAX_DOCX_XML_EXPANDED_BYTES`, `ParseBound` and `Parse
 operation's limits. A byte ceiling hit is `DocxError::Capacity` (`ErrorCode::CapacityExceeded`), a memory or
 deadline refusal is `DocxError::Resource` (`ErrorCode::ResourceRefused`), and both carry typed details. The
 writer refuses a package past classic ZIP's widths (65,534 entries, 0xFFFFFFFE bytes) as that format's limit.
+
+The move-deletion pairing change (2026-11-05, FIX 13294) touches `src/tracked_model.rs`.
+Within one tracked move range, each destination paragraph's inner deletions are
+paired with the source block at the same position, rather than always using the
+first source paragraph. The count includes siblings without inner deletions and
+non-paragraph blocks. Existing move and deletion gates, resolution order, and
+serialization are unchanged.
+The same pack (FIX 13299) advances the text-overlay cursor over the
+existing hard-break and opaque-inline placeholders, matching `extract_inlines_text`.
+The non-text inline nodes themselves are preserved unchanged.
