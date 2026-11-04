@@ -41,7 +41,7 @@ pub(crate) fn reserve<T>(
     limits
         .memory
         .ledger()?
-        .release(u64::try_from(old_bytes).unwrap_or(u64::MAX));
+        .release_admitted(u64::try_from(old_bytes).unwrap_or(u64::MAX));
     Ok(())
 }
 
