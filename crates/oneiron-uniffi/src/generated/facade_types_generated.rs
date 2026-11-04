@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1225 facade rows, 4461 generated types.
+// UniFFI census: 1225 facade rows, 4463 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1177.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -42854,7 +42854,7 @@ pub struct RefusalDial {
     pub logistics: Option<RefusalLevel>,
 }
 
-/// `oneiron::agent_def::models::AgentModel`.
+/// `oneiron::store::agent_model::AgentModel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentModel {
@@ -44055,6 +44055,30 @@ pub struct WorkflowDispatchRequest {
     pub task_ref: Option<String>,
 }
 
+/// `oneiron::settings::destination::CallerLocality`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CallerLocality {
+    #[serde(rename = "on_device")]
+    OnDevice,
+    #[serde(rename = "off_device")]
+    OffDevice,
+}
+
+/// `oneiron::agent_dispatch::caller_origin::CallerOrigin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(deny_unknown_fields)]
+pub enum CallerOrigin {
+    #[serde(rename = "connection")]
+    Connection {
+        #[serde(rename = "locality")]
+        locality: CallerLocality,
+    },
+    #[serde(rename = "native_host")]
+    NativeHost,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
 /// `oneiron::code_run::dispatcher::workflow_dispatch::operations::WorkflowStepCapture`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WorkflowStepCapture {
@@ -44064,6 +44088,8 @@ pub struct WorkflowStepCapture {
     pub agent_def_ref: String,
     #[serde(rename = "definition")]
     pub definition: AgentDefinitionSpec,
+    #[serde(rename = "caller_origin")]
+    pub caller_origin: CallerOrigin,
 }
 
 /// `oneiron::code_run::dispatcher::workflow_dispatch::operations::WorkflowStepRun`.
@@ -44394,6 +44420,8 @@ pub struct LaunchedMember {
     pub type_ref: TypeStamp,
     #[serde(rename = "team_ref", default, skip_serializing_if = "Option::is_none")]
     pub team_ref: Option<String>,
+    #[serde(rename = "caller_origin")]
+    pub caller_origin: CallerOrigin,
 }
 
 /// `oneiron::team::pattern::TeamAxis`.

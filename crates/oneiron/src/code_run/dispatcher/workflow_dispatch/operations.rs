@@ -212,6 +212,8 @@ pub struct WorkflowStepCapture {
     pub requested_agent_ref: EntityId,
     pub agent_def_ref: EntityId,
     pub definition: AgentDefinitionSpec,
+    /// The caller provenance this step captured at admission.
+    pub caller_origin: crate::agent_dispatch::CallerOrigin,
 }
 
 /// A settled step's attempt and the result it pinned.
@@ -260,6 +262,7 @@ fn run_view(status: &WorkflowDispatchStatus) -> MemoryResult<WorkflowRunView> {
                 requested_agent_ref: *requested,
                 agent_def_ref: frozen.target.agent_definition_ref()?,
                 definition: (&frozen.definition).into(),
+                caller_origin: frozen.caller_origin,
             })
         })
         .collect::<MemoryResult<_>>()?;
