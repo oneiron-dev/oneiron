@@ -979,19 +979,9 @@ impl Reader<'_> {
                 }
             }
 
-            let mut streams_to_process: std::collections::HashMap<u32, Vec<(u32, u16)>> =
-                std::collections::HashMap::new();
+            let mut streams_to_process: BTreeMap<u32, Vec<(u32, u16)>> = BTreeMap::new();
             if let Some(admission) = self.decode_admission.as_deref() {
-                // entry tuple plus two words of HashMap bucket share per grouped object.
-                admission.admit(
-                    object_streams
-                        .len()
-                        .checked_mul(size_of::<(u32, Vec<(u32, u16)>)>().saturating_add(2 * size_of::<usize>()))
-                        .ok_or(Error::DecodeAdmission(DecodeAdmissionError::MemoryFloor {
-                            needed: u64::MAX,
-                            available: 0,
-                        }))?,
-                )?;
+                decode_admission::admit_btree::<u32, Vec<(u32, u16)>>(admission, object_streams.len())?;
             }
             for (obj_num, container_id, index) in object_streams {
                 let bucket = streams_to_process.entry(container_id).or_default();
