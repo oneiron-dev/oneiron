@@ -14,9 +14,10 @@
 //! every bound journaled truncates the journal: the vault holds them all.
 //!
 //! Only the owned open, in its own process, appends, replays or truncates. A
-//! store without the writer lease renews in its writer, as before FIX 12023,
-//! and reads the journal's bound into the floor it commits there, so a lease
-//! holder's crash leaves no journaled time above it.
+//! store without the writer lease, or one whose journal fails, renews in its
+//! writer, as before FIX 12023, and reads the journal's bound into the floor
+//! it commits there, so a lease holder's crash leaves no journaled time
+//! above it.
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -86,18 +87,11 @@ impl LeaseJournal {
         journal
     }
 
-    /// The highest bound synced; 0 for none.
-    pub(super) fn covered(&self) -> u64 {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .covered
-    }
-
     /// Makes a decision at `now` durable before it is returned (condition
     /// 1): `true` when a synced bound already covers it, or once one is
     /// appended and fdatasynced. `false` on any failure, said in a warn: the
-    /// caller judges at the bound the vault already holds (condition 2).
+    /// caller renews the lease in its writer before it judges (condition 2;
+    /// L02 11-04 15:16).
     pub(super) fn cover(&self, now: u64) -> bool {
         if self.pid != std::process::id() {
             return false;
@@ -112,7 +106,7 @@ impl LeaseJournal {
                 Err(error) => {
                     tracing::warn!(
                         %error,
-                        "the clock lease journal did not open; the decision judges at the committed lease"
+                        "the clock lease journal did not open; the decision renews the lease in its writer"
                     );
                     return false;
                 }
@@ -132,7 +126,7 @@ impl LeaseJournal {
             Err(error) => {
                 tracing::warn!(
                     %error,
-                    "the clock lease journal append failed; the decision judges at the committed lease"
+                    "the clock lease journal append failed; the decision renews the lease in its writer"
                 );
                 // The append may have torn: the next open trims it.
                 state.file = None;

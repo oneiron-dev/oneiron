@@ -363,10 +363,10 @@ impl crate::store::Store {
     /// journal holds a bound that covers it, synced off the writer (review
     /// #4484 P1-B; L02 11-04 13:53 = A): a crash before the renewal commits
     /// replays that bound into the floor at the next owned open. When the
-    /// journal cannot take it, the decision judges at the bound the vault
-    /// already holds, never the advanced time. A store whose open did not
-    /// take the writer lease keeps no journal and renews in its writer, as
-    /// before FIX 12023.
+    /// journal cannot take it, the decision renews the lease in its writer
+    /// first, as before FIX 12023, so its exact time is durable before it is
+    /// returned (L02 11-04 15:16). A store whose open did not take the writer
+    /// lease keeps no journal and renews in its writer too.
     pub(crate) fn authorization_now(&self) -> Result<u64> {
         let clock = crate::store::ManifestDbs::clock(self);
         if let Some(now) = clock.leased_now() {
@@ -378,19 +378,15 @@ impl crate::store::Store {
         // One short snapshot reads the committed floor, and ends before the
         // decision opens its own: it holds no reader slot while a writer is
         // waited for.
-        let (now, committed) = {
+        let now = {
             let txn = self.env.read_txn()?;
             let (persisted, lease) = clock_floor_and_lease_in_txn(self, &txn)?;
-            (
-                clock.observe_leased_floor(persisted, lease)?,
-                persisted.max(lease),
-            )
+            clock.observe_leased_floor(persisted, lease)?
         };
-        let judged = if journal.cover(now) {
-            clock.judge(now)
-        } else {
-            clock.judge(now.min(committed.max(journal.covered())))
-        };
+        if !journal.cover(now) {
+            return self.renew_authorization_lease_in_writer();
+        }
+        let judged = clock.judge(now);
         if let Some(renewal) = clock.claim_lease_renewal() {
             let staged = Arc::new(AtomicU64::new(0));
             let lease = Arc::clone(&staged);
@@ -409,7 +405,8 @@ impl crate::store::Store {
 
     /// A lapsed lease renewed in this store's own writer before the decision
     /// judges, for a store that keeps no lease journal (its open took no
-    /// writer lease): the committed floor and lease, raised past every bound
+    /// writer lease) or whose journal failed: the committed floor and lease,
+    /// raised past every bound
     /// a lease holder's journal holds, so a crash it left never judges here
     /// below a time it took.
     fn renew_authorization_lease_in_writer(&self) -> Result<u64> {
