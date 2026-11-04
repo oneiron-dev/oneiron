@@ -16,6 +16,8 @@ pub enum ManifestKind {
     Skill,
     /// An `actor.*` claim row loaded into the attempt's pack.
     ActorClaim,
+    /// A selected workflow context row whose admitted body was rendered.
+    WorkflowContextRow,
 }
 
 impl ManifestKind {
@@ -26,6 +28,7 @@ impl ManifestKind {
             Self::SkillIndex => "skill_index",
             Self::Skill => "skill",
             Self::ActorClaim => "actor_claim",
+            Self::WorkflowContextRow => "workflow_context_row",
         }
     }
 }
