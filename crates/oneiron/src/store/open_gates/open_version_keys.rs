@@ -135,7 +135,7 @@ pub const DB_MANIFEST_VERSION: u16 = 2;
 
 pub(crate) const MODEL_ID_KEY: &[u8] = b"model_id";
 
-pub(crate) const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
+pub(crate) use oneiron_store::graph_version::GRAPH_VERSION_KEY;
 
 pub(crate) const HNSW_CONFIG_KEY: &[u8] = b"hnsw_config";
 
