@@ -49,6 +49,7 @@ mod dreamer_precommit;
 mod dreamer_retry_policy;
 pub(crate) mod edit_distance_thresholds;
 mod effect;
+pub(crate) mod esign_rate_policy;
 pub(crate) mod fanout_policy;
 mod foreign_agent;
 mod grants;
