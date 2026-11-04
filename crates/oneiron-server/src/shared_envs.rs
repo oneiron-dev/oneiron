@@ -104,6 +104,9 @@ struct ActiveLane {
 struct SharedEnvEntry {
     /// The canonical env dir, for diagnostics.
     path: PathBuf,
+    /// The home sync endpoint, for the leave POST's transport guard: a
+    /// non-direct URL keeps its retained reads but never sends the slip.
+    home_url: String,
     /// Strong: the host keeps the env open for archive reads and the owed
     /// orphan-body collect. The last handle drop closes the env.
     vault: Arc<Vault>,
@@ -125,6 +128,7 @@ struct SharedEnvEntry {
 struct OpenedEnv {
     key: SharedEnvKey,
     path: PathBuf,
+    home_url: String,
     vault: Arc<Vault>,
     connection: Arc<SyncConnection>,
     left: bool,
@@ -250,6 +254,7 @@ impl SharedEnvRegistry {
                     env.key,
                     SharedEnvEntry {
                         path: env.path,
+                        home_url: env.home_url,
                         vault: env.vault,
                         connection: env.connection,
                         lane,
@@ -298,7 +303,7 @@ impl SharedEnvRegistry {
     /// caller holds each handle so shutdown joins the checks. A refusal or
     /// failure (a 401 included) warns and retries, never reads as a leave.
     pub(crate) fn leave_check_round(&self, now: u64) -> Vec<tokio::task::JoinHandle<()>> {
-        let due: Vec<(SharedEnvKey, Arc<Vault>, Arc<SyncConnection>)> = {
+        let due: Vec<(SharedEnvKey, Arc<Vault>, Arc<SyncConnection>, bool)> = {
             let envs = self.lock();
             envs.iter()
                 .filter_map(|(key, entry)| {
@@ -307,16 +312,32 @@ impl SharedEnvRegistry {
                     {
                         return None;
                     }
+                    // The transport guard holds for every leave POST, not
+                    // just the open-time lane build: a non-direct home URL
+                    // keeps its retained reads but never sends the slip.
+                    let direct = direct_home_url(&entry.home_url, key.0).is_ok();
                     Some((
                         key.clone(),
                         Arc::clone(&entry.vault),
                         Arc::clone(&entry.connection),
+                        direct,
                     ))
                 })
                 .collect()
         };
         let mut checks = Vec::with_capacity(due.len());
-        for (key, vault, connection) in due {
+        for (key, vault, connection, direct) in due {
+            if !direct {
+                // Throttled like a clean round, so the misconfiguration
+                // warns hourly instead of every tick; the purge stays
+                // unconfirmed until the URL is direct.
+                self.note_leave_check(&key, now);
+                tracing::warn!(
+                    vault_id = key.0,
+                    "shared env home_url is not direct; its leave check stays unsent"
+                );
+                continue;
+            }
             // A receipt is not purge completion: every recorded left gets the
             // same idempotent confirmation again until it finishes.
             match oneiron::sync::shared_leave::has_left(&vault) {
@@ -647,6 +668,7 @@ fn open_one(
     Ok(OpenedEnv {
         key,
         path,
+        home_url: spec.home_url.clone(),
         vault,
         connection,
         left,
@@ -681,7 +703,25 @@ fn open_lane(
     let residence_mode = if residence_selector.is_some() {
         oneiron::sync::SyncResidenceMode::Opened
     } else {
-        // No live member grant: full replication has no Opened selector gate.
+        // No live member grant: full replication has no Opened selector
+        // gate. A saved Opened preference would still override this
+        // fallback inside `SyncConnection::new` and fail every reconnect
+        // with no selector, so the lane records All for a vault it owns
+        // while open.
+        let saved =
+            oneiron::sync::residence::load_device_sync_preference(&vault).map_err(|error| {
+                format!("shared env {vault_id} residence preference unreadable: {error:#}")
+            })?;
+        if saved.is_some_and(|preference| preference.mode != oneiron::sync::SyncResidenceMode::All)
+        {
+            oneiron::sync::residence::set_device_sync_preference(
+                &vault,
+                oneiron::sync::SyncResidenceMode::All,
+            )
+            .map_err(|error| {
+                format!("shared env {vault_id} residence preference not writable: {error:#}")
+            })?;
+        }
         oneiron::sync::SyncResidenceMode::All
     };
     let client_config = SyncClientConfig {
