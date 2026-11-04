@@ -280,6 +280,39 @@ pub(crate) fn erase_in_txn(
     state::forget_results_in_txn(store, txn, turns)
 }
 
+/// The exclusion hook, in the setter's transaction (FIX 12551(a)): the
+/// newly excluded conversations' framed words go, with the erase shape
+/// above, so content framed before the exclusion never rides a later ask.
+/// The frames name turns, not conversations, so the delta resolves
+/// through each candidate turn's conversation edge; folded words whose
+/// frames are already gone are found through the results. Spans stay
+/// queued and readings re-frame on demand, so un-excluding recovers.
+pub(crate) fn exclude_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    conversations: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if conversations.is_empty() {
+        return Ok(());
+    }
+    let store = &vault.store;
+    let mut candidates = state::result_turns_in_txn(store, txn)?;
+    for session in state::sessions_in_txn(store, txn)? {
+        for (_, frame) in state::frames_in_txn(store, txn, &session.key, 0)? {
+            candidates.insert(frame.turn);
+        }
+    }
+    let mut turns = Vec::new();
+    for turn in candidates {
+        if crate::dreamer_consolidation::redirty::conversation_in_txn(vault, txn, &turn)?
+            .is_some_and(|conversation| conversations.contains(&conversation))
+        {
+            turns.push(turn);
+        }
+    }
+    erase_in_txn(store, txn, &turns)
+}
+
 impl Vault {
     /// An explicit keyframe event (FIX 7510): every follower session folds
     /// its retained frames into a keyframe before its next suffix, once the
