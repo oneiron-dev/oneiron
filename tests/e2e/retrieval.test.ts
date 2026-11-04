@@ -451,7 +451,7 @@ suite.todo(test, "RETRIEVAL-04", "waits on caller ReadFilterInput bindings on re
 suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", async () => {
   const fixture = await scenario<{
     efforts: Facade.RecallEffort[]; deadlineMs: number; lateAnswer: string;
-    expected: { noRerankerReason: string; lightMediumModelLeases: number };
+    expected: { noRerankerReason: Facade.RerankSkip; lightMediumModelLeases: number };
   }>("RETRIEVAL-05");
   // Unconfigured is a separate fresh vault, not an error hidden by a fallback.
   const plain = await EngineFixture.start({ id: "RETRIEVAL-05-unconfigured", profile });
