@@ -5,7 +5,8 @@ use super::{
     model::*,
     principals::verify_owner,
 };
-use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
+use crate::consent::{AuthenticatedOwner};
+use crate::store::consent_bound::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
 impl Vault {

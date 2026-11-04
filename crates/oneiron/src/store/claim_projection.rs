@@ -1,0 +1,380 @@
+//! Rebuildable claim projections maintained at the shared put chokepoint.
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use crate::write_envelope::claim_body::ClaimBody;
+use crate::scan_check::ScanCount;
+use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
+use crate::store::EngineScan;
+use crate::store::Store;
+use crate::{EntityId, Error, Result};
+
+/// Posting-list row of one claim under its predicate's projection index.
+/// Key: bytes32 (blake3 of predicate) + id16.
+const PREDICATE_INDEX: SideTable<([u8; 32], EntityId), String, Raw> =
+    SideTable::new(&side_table::CLAIM_PREDICATE_INDEX);
+
+/// Posting-list row of one pending session-generated claim under its producing actor.
+/// Key: id16 (producer) + id16.
+pub(crate) const PENDING_PRODUCER: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::CLAIM_PENDING_PRODUCER);
+
+/// Catalog marker recording that at least one claim uses this predicate. Key: string.
+pub(crate) const PREDICATE_NAME: SideTable<String, (), Raw> =
+    SideTable::new(&side_table::CLAIM_PREDICATE_NAME);
+
+/// Posting-list row of one claim under its world, base reality under the reserved base id.
+/// Key: id16 (world) + id16 (claim).
+const WORLD_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::CLAIM_WORLD_INDEX);
+
+/// Reverse index: the projection-index keys written for one claim, so they can be removed
+/// together. Key: id16.
+const PROJECTION_REVERSE: SideTable<EntityId, Vec<Vec<u8>>, LegacyCompact> =
+    SideTable::new(&side_table::CLAIM_PROJECTION_REVERSE);
+
+fn predicate_hash(predicate: &str) -> [u8; 32] {
+    *blake3::hash(predicate.as_bytes()).as_bytes()
+}
+
+pub(crate) fn remove_claim_projection_index(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+) -> Result<()> {
+    let Some(keys) = PROJECTION_REVERSE.get(store, txn, &id)? else {
+        return Ok(());
+    };
+    for key in keys {
+        let orphan_check = if let Some(tail) = key.strip_prefix(PREDICATE_INDEX.decl().prefix) {
+            let (hash, tail_id) = tail
+                .split_at_checked(32)
+                .ok_or(Error::CorruptedIndex("claim projection reverse key"))?;
+            let hash: [u8; 32] = hash
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("claim projection reverse key"))?;
+            let tail_id = EntityId::from_bytes(
+                tail_id
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("claim projection reverse key"))?,
+            )?;
+            if tail_id != id {
+                return Err(Error::CorruptedIndex("claim projection reverse key"));
+            }
+            let predicate = PREDICATE_INDEX
+                .get(store, txn, &(hash, tail_id))?
+                .ok_or(Error::CorruptedIndex("claim predicate index value"))?;
+            PREDICATE_INDEX.delete(store, txn, &(hash, tail_id))?;
+            Some((hash, predicate))
+        } else if let Some(tail) = key.strip_prefix(PENDING_PRODUCER.decl().prefix) {
+            let (producer, tail_id) = tail
+                .split_at_checked(16)
+                .ok_or(Error::CorruptedIndex("claim projection reverse key"))?;
+            let producer = EntityId::from_bytes(
+                producer
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("claim projection reverse key"))?,
+            )?;
+            let tail_id = EntityId::from_bytes(
+                tail_id
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("claim projection reverse key"))?,
+            )?;
+            if tail_id != id {
+                return Err(Error::CorruptedIndex("claim projection reverse key"));
+            }
+            PENDING_PRODUCER.delete(store, txn, &(producer, tail_id))?;
+            None
+        } else if let Some(tail) = key.strip_prefix(WORLD_INDEX.decl().prefix) {
+            let (world, tail_id) = <(EntityId, EntityId)>::decode_key(tail)
+                .ok_or(Error::CorruptedIndex("claim projection reverse key"))?;
+            if tail_id != id {
+                return Err(Error::CorruptedIndex("claim projection reverse key"));
+            }
+            WORLD_INDEX.delete(store, txn, &(world, tail_id))?;
+            None
+        } else {
+            return Err(Error::CorruptedIndex("claim projection reverse key"));
+        };
+        if let Some((hash, predicate)) = orphan_check {
+            let any = PREDICATE_INDEX
+                .iter_from(store, txn, &hash)?
+                .next()
+                .transpose()?
+                .is_some();
+            if !any {
+                PREDICATE_NAME.delete(store, txn, &predicate)?;
+            }
+        }
+    }
+    PROJECTION_REVERSE.delete(store, txn, &id)?;
+    Ok(())
+}
+/// [`remove_claim_projection_index`] over raw `vault_meta` image rows in key
+/// order (FIX 6231): every predicate and pending-producer posting the
+/// claim's reverse row names goes, a predicate's name marker goes once no
+/// posting for that predicate remains, and the reverse row goes last. A
+/// posting the rows do not hold is already gone. Rows stay in order.
+///
+/// # Errors
+///
+/// [`Error::CorruptedIndex`] for a reverse key naming another claim's row or
+/// no projection's, and a row that does not decode.
+pub(crate) fn remove_claim_projection_index_in_rows(
+    rows: &mut Vec<(Vec<u8>, Vec<u8>)>,
+    id: EntityId,
+) -> Result<()> {
+    fn row_at(rows: &[(Vec<u8>, Vec<u8>)], key: &[u8]) -> Option<usize> {
+        rows.binary_search_by(|(row, _)| row.as_slice().cmp(key))
+            .ok()
+    }
+    let reverse = PROJECTION_REVERSE.key_bytes(&id);
+    let Some(at) = row_at(rows, &reverse) else {
+        return Ok(());
+    };
+    let keys = PROJECTION_REVERSE.decode_value(&rows[at].1)?;
+    for key in keys {
+        let owned_hash = if let Some(tail) = key.strip_prefix(PREDICATE_INDEX.decl().prefix) {
+            <([u8; 32], EntityId)>::decode_key(tail)
+                .filter(|(_, tail_id)| *tail_id == id)
+                .map(|(hash, _)| Some(hash))
+        } else if let Some(tail) = key.strip_prefix(PENDING_PRODUCER.decl().prefix) {
+            <(EntityId, EntityId)>::decode_key(tail)
+                .filter(|(_, tail_id)| *tail_id == id)
+                .map(|_| None)
+        } else if let Some(tail) = key.strip_prefix(WORLD_INDEX.decl().prefix) {
+            <(EntityId, EntityId)>::decode_key(tail)
+                .filter(|(_, tail_id)| *tail_id == id)
+                .map(|_| None)
+        } else {
+            None
+        }
+        .ok_or(Error::CorruptedIndex("claim projection reverse key"))?;
+        let Some(posting) = row_at(rows, &key) else {
+            continue;
+        };
+        let (_, value) = rows.remove(posting);
+        if let Some(hash) = owned_hash {
+            let predicate = PREDICATE_INDEX.decode_value(&value)?;
+            let mut postings = PREDICATE_INDEX.decl().prefix.to_vec();
+            postings.extend_from_slice(&hash);
+            let next = rows.partition_point(|(row, _)| row.as_slice() < postings.as_slice());
+            if !rows
+                .get(next)
+                .is_some_and(|(row, _)| row.starts_with(&postings))
+                && let Some(marker) = row_at(rows, &PREDICATE_NAME.key_bytes(&predicate))
+            {
+                rows.remove(marker);
+            }
+        }
+    }
+    if let Some(at) = row_at(rows, &reverse) {
+        rows.remove(at);
+    }
+    Ok(())
+}
+pub(crate) fn maintain_claim_projection_index(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
+    remove_claim_projection_index(store, txn, id)?;
+    let hash = predicate_hash(&body.predicate);
+    let mut reverse_keys = vec![PREDICATE_INDEX.key_bytes(&(hash, id))];
+    PREDICATE_INDEX.put(store, txn, &(hash, id), &body.predicate)?;
+    let world = body.world.unwrap_or_else(crate::write_envelope::claim_body::base_world_id);
+    reverse_keys.push(WORLD_INDEX.key_bytes(&(world, id)));
+    WORLD_INDEX.put(store, txn, &(world, id), &())?;
+    crate::blob_artifact::record_version_claim(store, txn, body)?;
+    if body.approval == ClaimApprovalStatus::Proposed
+        && body.lifecycle == ClaimLifecycleStatus::Active
+        && body.source == Some(ClaimSource::Generated)
+        && let Some(producer) = crate::store::claim_projection::session_claim_producer(body)
+    {
+        reverse_keys.push(PENDING_PRODUCER.key_bytes(&(producer, id)));
+        PENDING_PRODUCER.put(store, txn, &(producer, id), &())?;
+    }
+    PREDICATE_NAME.put(store, txn, &body.predicate, &())?;
+    PROJECTION_REVERSE.put(store, txn, &id, &reverse_keys)?;
+    Ok(())
+}
+/// Hands every claim id in `predicate`'s posting list to `visit`, in id order,
+/// under the caller's snapshot. The walk reads the whole list, however long
+/// (FIX 8659): past `count`'s threshold it raises the advisory
+/// [`EngineScan::PredicateClaimRows`] check of this predicate and reads on.
+fn walk_predicate_ids_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    mut count: ScanCount,
+    mut visit: impl FnMut(EntityId) -> Result<()>,
+) -> Result<()> {
+    let hash = predicate_hash(predicate);
+    for row in PREDICATE_INDEX.iter_from(store, txn, &hash)? {
+        count.row();
+        let ((_, id), _) = row?;
+        visit(id)?;
+    }
+    count.defer(store);
+    Ok(())
+}
+/// Hands every claim id in `predicate`'s posting list to `visit`, in id order,
+/// under the caller's snapshot and the vault's [`EngineScan::PredicateClaimRows`]
+/// threshold row. No count ends the walk; `visit` may.
+pub(crate) fn for_each_claim_id_for_predicate_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    visit: impl FnMut(EntityId) -> Result<()>,
+) -> Result<()> {
+    let count = ScanCount::start(
+        store,
+        txn,
+        EngineScan::PredicateClaimRows,
+        predicate.as_bytes(),
+    )?;
+    walk_predicate_ids_in_txn(store, txn, predicate, count, visit)
+}
+/// Every claim id in `predicate`'s posting list, however many.
+pub(crate) fn claim_ids_for_predicate_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+) -> Result<Vec<EntityId>> {
+    let mut ids = Vec::new();
+    for_each_claim_id_for_predicate_in_txn(store, txn, predicate, |id| {
+        ids.push(id);
+        Ok(())
+    })?;
+    Ok(ids)
+}
+/// A predicate index row: `(predicate hash, claim id)` and its value.
+type PredicateRow = Result<(([u8; 32], EntityId), String)>;
+
+/// One page of a predicate's posting list: at most `limit` claim ids after
+/// `after`, in id order. A walk that pages through every page reads each claim
+/// once, however long the list, without a whole-list ceiling.
+pub(crate) fn claim_ids_for_predicate_page_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    after: Option<EntityId>,
+    limit: usize,
+) -> Result<Vec<EntityId>> {
+    let hash = predicate_hash(predicate);
+    let after = after.map(|id| (hash, id));
+    let rows: Box<dyn Iterator<Item = PredicateRow> + '_> = match &after {
+        Some(after) => Box::new(PREDICATE_INDEX.iter_range(
+            store,
+            txn,
+            std::ops::Bound::Excluded(after),
+            std::ops::Bound::Unbounded,
+        )?),
+        None => Box::new(PREDICATE_INDEX.iter_from(store, txn, &hash)?),
+    };
+    let mut ids = Vec::new();
+    for row in rows {
+        let (key, _) = row?;
+        if key.0 != hash || ids.len() == limit {
+            break;
+        }
+        ids.push(key.1);
+    }
+    Ok(ids)
+}
+/// The first world after `after` (from the start when `None`) that holds a
+/// claim in the world index, in id order: one key read, however many claims
+/// the skipped world holds.
+pub(crate) fn next_claim_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    after: Option<EntityId>,
+) -> Result<Option<EntityId>> {
+    let last = after.map(|world| (world, EntityId::from_bytes_unchecked([0xff; 16])));
+    let start = match &last {
+        Some(last) => std::ops::Bound::Excluded(last),
+        None => std::ops::Bound::Unbounded,
+    };
+    WORLD_INDEX
+        .iter_range(store, txn, start, std::ops::Bound::Unbounded)?
+        .next()
+        .transpose()
+        .map(|row| row.map(|((world, _), ())| world))
+}
+
+/// One page of `world`'s claims in the world index: at most `limit` claim ids
+/// after `after`, in id order.
+pub(crate) fn claim_ids_for_world_page_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    world: EntityId,
+    after: Option<EntityId>,
+    limit: usize,
+) -> Result<Vec<EntityId>> {
+    let from = (
+        world,
+        after.unwrap_or_else(|| EntityId::from_bytes_unchecked([0; 16])),
+    );
+    let start = match after {
+        Some(_) => std::ops::Bound::Excluded(&from),
+        None => std::ops::Bound::Included(&from),
+    };
+    let mut ids = Vec::new();
+    for row in WORLD_INDEX.iter_range(store, txn, start, std::ops::Bound::Unbounded)? {
+        let ((row_world, id), ()) = row?;
+        if row_world != world || ids.len() == limit {
+            break;
+        }
+        ids.push(id);
+    }
+    Ok(ids)
+}
+/// Every claim id in the same posting list, with `limit` as the advisory
+/// check's threshold for a door whose number is authored data rather than
+/// the vault's row (FIX 8659). It is never a ceiling: the list is whole.
+pub(crate) fn claim_ids_for_predicate_bounded_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    limit: usize,
+) -> Result<Vec<EntityId>> {
+    let threshold = u64::try_from(limit).unwrap_or(u64::MAX);
+    let count = ScanCount::start_at(
+        EngineScan::PredicateClaimRows,
+        predicate.as_bytes(),
+        threshold,
+    );
+    let mut ids = Vec::new();
+    walk_predicate_ids_in_txn(store, txn, predicate, count, |id| {
+        ids.push(id);
+        Ok(())
+    })?;
+    Ok(ids)
+}
+
+use rmpv::Value;
+use crate::entity_id::ENTITY_ID_LEN;
+use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
+
+/// Reads the immutable writer identity already stamped by `WriteEnvelope`
+/// into candidate evidence. Missing, duplicate, malformed, or reserved actor
+/// refs fail closed by returning no producer match.
+pub(crate) fn session_claim_producer(body: &ClaimBody) -> Option<EntityId> {
+    let Value::Map(entries) = body.evidence.as_ref()? else {
+        return None;
+    };
+    let mut producer = None;
+    for (key, value) in entries {
+        if key.as_str() != Some(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY) {
+            continue;
+        }
+        if producer.is_some() {
+            return None;
+        }
+        let Value::Binary(bytes) = value else {
+            return None;
+        };
+        let actor_bytes: [u8; ENTITY_ID_LEN] = bytes.as_slice().try_into().ok()?;
+        producer = Some(EntityId::from_bytes(actor_bytes).ok()?);
+    }
+    producer
+}
