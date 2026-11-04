@@ -59,11 +59,9 @@ pub(super) fn unmarked_known(
             .iter()
             .find(|(at, _)| at.as_slice() == path)
             .map_or(&[][..], |(_, spans)| spans.as_slice());
-        for hit in known.spans(leaf) {
+        for hit in known.spans_except(leaf, &keep) {
             let (start, end) = (offset(hit.span.start)?, offset(hit.span.end)?);
-            if held.iter().any(|&(from, to)| from < end && start < to)
-                || leaf.get(hit.span.clone()).is_none_or(&keep)
-            {
+            if held.iter().any(|&(from, to)| from < end && start < to) {
                 continue;
             }
             found.push(KnownMark {

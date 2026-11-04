@@ -547,16 +547,16 @@ impl Store {
             !credential_intents_in_txn(self, &txn)?.is_empty()
                 || !owed_fences_in_txn(self, &txn)?.is_empty()
         };
-        if !owed {
-            return Ok(false);
+        if owed {
+            self.rediscover_credential_erases()?;
+            for kind in CREDENTIAL_PARENT_KINDS {
+                self.finish_custody_retirements(kind, |txn, intent| {
+                    credential_retirement_ready(self, txn, intent)
+                })?;
+            }
         }
-        self.rediscover_credential_erases()?;
-        for kind in CREDENTIAL_PARENT_KINDS {
-            self.finish_custody_retirements(kind, |txn, intent| {
-                credential_retirement_ready(self, txn, intent)
-            })?;
-        }
-        Ok(true)
+        self.drop_finished_cloud_registration_erasing_rows()?;
+        Ok(owed)
     }
 
     /// Whether the erase of credential `credential` has finished here, for
