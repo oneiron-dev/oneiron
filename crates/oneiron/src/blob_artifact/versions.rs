@@ -515,6 +515,7 @@ impl Vault {
             None,
             Some(made_by),
             true,
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )
     }
 
@@ -544,6 +545,35 @@ impl Vault {
             occurred,
             learned_at,
             None,
+        )
+    }
+
+    /// An artifact content writer's append, under that writer's actual read lane.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn append_blob_artifact_version_in_lane(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
+    ) -> Result<BlobArtifactVersion> {
+        self.append_blob_artifact_version_body_in_txn(
+            wtxn,
+            artifact_id,
+            VersionBody::Bytes(bytes),
+            provenance,
+            actor,
+            occurred,
+            learned_at,
+            None,
+            None,
+            None,
+            false,
+            lane,
         )
     }
 
@@ -593,6 +623,7 @@ impl Vault {
             None,
             None,
             false,
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )?;
         Ok((version, staged))
     }
@@ -679,6 +710,7 @@ impl Vault {
             calc_engine,
             made_by,
             false,
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )
     }
 
@@ -700,6 +732,7 @@ impl Vault {
         calc_engine: Option<&CalcEngineStamp>,
         made_by: Option<&MadeBy>,
         preserve_made_by: bool,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactVersion> {
         validate_provenance(provenance)?;
         if let Some(stamp) = calc_engine {
@@ -834,7 +867,7 @@ impl Vault {
         self.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
         self.batch_in()
             .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at)
-            .apply_actor(wtxn, &actor)?;
+            .apply_actor(wtxn, &actor, lane)?;
 
         let record = BlobArtifactVersion {
             version: next_version,

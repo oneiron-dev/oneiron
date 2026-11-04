@@ -15,6 +15,7 @@ impl Memory<'_> {
         &self,
         write: &ClaimWrite<'_>,
         approval: ClaimApprovalStatus,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<Option<EntityId>, Error> {
         let ClaimWrite {
             input,
@@ -53,7 +54,7 @@ impl Memory<'_> {
             end: occurred_at,
         };
         self.vault
-            .try_with_actor_content_write_txn(envelope.actor(), |content| {
+            .try_with_actor_content_write_txn(envelope.actor(), lane, |content| {
                 self.write_claim_in_txn(content, write, candidate, envelope, occurred)
             })
     }
