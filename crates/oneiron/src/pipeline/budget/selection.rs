@@ -170,17 +170,29 @@ impl ShareSelection {
     /// with remaining section room cover the need; the shortfall drains
     /// eagerly from ordinary support, each section capped by the room left
     /// after reserving the waiting row's own slot and every fit future
-    /// base's slot (round-2 blind P1s). Returns the need, the fit cover,
-    /// and the per-section drain plan the caller executes exactly.
+    /// base's slot (round-2 blind P1s). `held_cover` names already-held
+    /// critical claims that still wait on the same bases: their slots are
+    /// reserved first and the need covers them too, so one future base is
+    /// never promised to two waiting rows (#4451 round-3 blind P1). Returns
+    /// the need, the fit cover, and the per-section drain plan the caller
+    /// executes exactly.
     fn support_needed(
         &self,
         available: usize,
         needing_section: usize,
         support_counts: &[usize],
         future_critical: &VecDeque<usize>,
+        held_cover: &[usize],
     ) -> Option<(usize, usize, Vec<usize>)> {
-        let need = (0..=available).find(|&count| self.non_base_fits(self.base + count))?;
-        let claims = need + 1;
+        let held_count = held_cover.len();
+        let need = (0..=available).find(|&count| {
+            non_base_claims_fit(
+                self.base + count,
+                self.non_base + 1 + held_count,
+                self.fraction,
+            )
+        })?;
+        let claims = need + 1 + held_count;
         if self.total + claims > self.limit {
             return None;
         }
@@ -200,6 +212,10 @@ impl ShareSelection {
         if let Some(left) = room.get_mut(needing_section) {
             *left = left.saturating_sub(1);
         }
+        for &held in held_cover {
+            let section = self.sections[held];
+            room[section] = room[section].saturating_sub(1);
+        }
         let mut fit = Vec::new();
         for &index in future_critical.iter() {
             let section = self.sections[index];
@@ -210,12 +226,16 @@ impl ShareSelection {
         }
         let fit_future = fit.len();
         let needing_sec0 = usize::from(needing_section == 0);
+        let held_sec0 = held_cover
+            .iter()
+            .filter(|&&held| self.sections[held] == 0)
+            .count();
         let (claims_sec0, takes) = if fit_future >= need {
             let mut count = needing_sec0;
             for &index in fit.iter().take(need) {
                 count += usize::from(self.sections[index] == 0);
             }
-            (count, vec![0_usize; support_counts.len()])
+            (count + held_sec0, vec![0_usize; support_counts.len()])
         } else {
             // Filling a section must never cut the row its room was reserved
             // for: the drain takes only from room left after the waiting
@@ -228,6 +248,10 @@ impl ShareSelection {
                 .collect();
             if let Some(left) = room_after.get_mut(needing_section) {
                 *left = left.saturating_sub(1);
+            }
+            for &held in held_cover {
+                let section = self.sections[held];
+                room_after[section] = room_after[section].saturating_sub(1);
             }
             for &index in fit.iter() {
                 let section = self.sections[index];
@@ -251,7 +275,7 @@ impl ShareSelection {
                 future_sec0 += usize::from(self.sections[index] == 0);
             }
             let drained_sec0 = takes.first().copied().unwrap_or(0);
-            (needing_sec0 + drained_sec0 + future_sec0, takes)
+            (needing_sec0 + drained_sec0 + future_sec0 + held_sec0, takes)
         };
         let claim_room = self.caps.is_none_or(|caps| {
             self.used.get(ContextPackBudgetKind::Claim) + claims_sec0
@@ -300,11 +324,29 @@ impl ShareSelection {
                 if self.section_used[needing_section] < self.section_limits[needing_section] {
                     let support_total: usize = support.iter().map(VecDeque::len).sum();
                     let support_counts: Vec<usize> = support.iter().map(VecDeque::len).collect();
+                    // Round-3 blind P1 (REVIEW-4451.md): already-held critical
+                    // claims wait on the same future bases. Reserve the
+                    // fittable ones' slots and cover first, so one future
+                    // base is never promised to two waiting rows.
+                    let held_cover: Vec<usize> = self
+                        .held
+                        .iter()
+                        .copied()
+                        .filter(|&held| {
+                            let (held_row, held_kind, held_role) = &rows[held];
+                            *held_role == ShareRole::NonBaseClaim
+                                && critical.contains(&held_row.id)
+                                && self.section_used[self.sections[held]]
+                                    < self.section_limits[self.sections[held]]
+                                && self.fits(*held_kind, self.sections[held])
+                        })
+                        .collect();
                     if let Some((.., takes)) = self.support_needed(
                         support_total + future_critical.len(),
                         needing_section,
                         &support_counts,
                         &future_critical,
+                        &held_cover,
                     ) {
                         // Execute the priced per-section plan exactly: reserved
                         // slots are never taken here either.
