@@ -333,7 +333,13 @@ impl Job<'_> {
                     served,
                 } => {
                     let scored = seat_score::embed_similarity(&vector, &anchors, &task.labels);
-                    (serde_json::to_vec(&vector)?, served, scored)
+                    (
+                        serde_json::to_vec(&vector).map_err(|_| {
+                            oneiron::Error::InvariantViolation("an eval embedding did not encode")
+                        })?,
+                        served,
+                        scored,
+                    )
                 }
                 SeatGenerated::Spans { output, served } => {
                     let predicted = output
@@ -342,7 +348,13 @@ impl Job<'_> {
                         .map(|span| span.label.clone())
                         .collect::<Vec<_>>();
                     let scored = seat_score::tag_recall(&predicted, &task.labels);
-                    (serde_json::to_vec(&output)?, served, scored)
+                    (
+                        serde_json::to_vec(&output).map_err(|_| {
+                            oneiron::Error::InvariantViolation("an eval span output did not encode")
+                        })?,
+                        served,
+                        scored,
+                    )
                 }
                 SeatGenerated::Unavailable(reason) => {
                     return Ok(EvalLegRecord::unavailable(reason));
