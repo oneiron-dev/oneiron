@@ -7,11 +7,11 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::ClaimBody;
-use oneiron_contracts::error::{Error, Result};
 use crate::write_envelope::{
     WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
     WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY, envelope_carried_evidence,
 };
+use oneiron_contracts::error::{Error, Result};
 
 /// The evidence map key the typed citations ride under.
 pub const EVIDENCE_REFS_KEY: &str = "evidence_refs";

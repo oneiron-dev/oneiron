@@ -1667,8 +1667,8 @@ impl OfferLadder {
         if !media.takes(&bound) {
             return Ok(None);
         }
-        // Held through the answer, or a job's submission (FIX 8315).
-        let _lease = match self.hold_worker(index).await {
+        // Held through the answer or transferred to the submitted job (FIX 9193).
+        let lease = match self.hold_worker(index).await {
             Ok(lease) => lease,
             Err(error) => {
                 self.failed(index, error, false, walk)?;
@@ -1717,6 +1717,7 @@ impl OfferLadder {
             };
             return match submitted {
                 Ok(provider_job) => Ok(Some(MediaAnswer::Job(HeldJob {
+                    _worker: lease,
                     gate,
                     permit: Some(permit),
                     probe,

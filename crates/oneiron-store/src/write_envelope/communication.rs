@@ -1,8 +1,8 @@
 //! Communication predicate, error, send-override and descriptor-row vocabulary.
 
-use oneiron_contracts::error::{Error, Result};
 use crate::write_envelope::claim_body::ClaimBody;
 use oneiron_contracts::claim::{ClaimLifecycleStatus, ClaimSource};
+use oneiron_contracts::error::{Error, Result};
 
 /// Current schema version for `comm.*` claim values and comm-owned records.
 pub const COMM_SCHEMA_VERSION: u64 = 1;
@@ -256,11 +256,7 @@ pub fn is_comm_claim_predicate(predicate: &str) -> bool {
 /// Replication carries rulings the owner's own devices already admitted; a
 /// federated import (restamped `Imported`) is another vault's word and is
 /// refused even there.
-pub fn guard_send_override_put(
-    body: &ClaimBody,
-    typed_door: bool,
-    replicated: bool,
-) -> Result<()> {
+pub fn guard_send_override_put(body: &ClaimBody, typed_door: bool, replicated: bool) -> Result<()> {
     let imported = body.source == Some(ClaimSource::Imported);
     if body.predicate == PREDICATE_COMM_SEND_OVERRIDE
         && body.lifecycle == ClaimLifecycleStatus::Active

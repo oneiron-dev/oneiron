@@ -6,8 +6,10 @@ use super::{
     ReviewBundleExplanation, ReviewBundleInput, ReviewComplexity, ReviewExplainerCallReceipt,
     ReviewExplainerEscalation, ReviewExplainerOutput, ReviewExplainerReceipt,
 };
-use crate::attempt_queue::{AttemptId, AttemptRecord, ReadSetProducer};
+use crate::attempt_queue::AttemptRecord;
 use crate::inference_context::HostInferenceContext;
+use crate::store::attempt_id::AttemptId;
+use crate::store::attempt_read_producer::ReadSetProducer;
 use crate::{EntityId, Error, Vault};
 use oneiron_model::llm::{
     BudgetDenied, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
