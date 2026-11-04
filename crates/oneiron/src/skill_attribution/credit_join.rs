@@ -158,19 +158,8 @@ pub(crate) fn effective_credit_subjects_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     credit: &LateCreditReceipt,
-) -> Result<Vec<EntityId>> {
-    let (direct, shares) = match chain_in_txn(store, txn, &credit.receipt_id)?.pop() {
-        Some((_, last)) => (last.direct_subjects, last.shares),
-        None => (credit.direct_subjects.clone(), credit.shares.clone()),
-    };
-    let mut subjects: Vec<EntityId> = direct
-        .into_iter()
-        .flatten()
-        .chain(shares.into_iter().filter_map(|share| share.subject))
-        .collect();
-    subjects.sort();
-    subjects.dedup();
-    Ok(subjects)
+) -> Result<Option<Vec<EntityId>>> {
+    Ok(retained_masses_in_txn(store, txn, credit)?.map(|masses| masses.into_keys().collect()))
 }
 
 /// The decay `credit` was projected under: the frozen one, or, for a
@@ -421,15 +410,26 @@ pub(crate) fn standing_credit_observation_in_txn(
     credit: &LateCreditReceipt,
     subject: &EntityId,
 ) -> Result<StandingCreditObservation> {
+    let Some(masses) = retained_masses_in_txn(&vault.store, txn, credit)? else {
+        return Ok(StandingCreditObservation::Unknown);
+    };
+    Ok(match masses.get(subject) {
+        Some(mass) => StandingCreditObservation::Credited(credit.succeeded, *mass),
+        None => StandingCreditObservation::Uncredited,
+    })
+}
+
+/// The latest retained masses, or unknown when erasure hid their order.
+fn retained_masses_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+) -> Result<Option<BTreeMap<EntityId, f64>>> {
     if !credit.succeeded {
-        return Ok(if credit.direct_subjects.contains(&Some(*subject)) {
-            StandingCreditObservation::Credited(false, 1.0)
-        } else {
-            StandingCreditObservation::Uncredited
-        });
+        return Ok(Some(masses(&credit.direct_subjects, &[])));
     }
-    let mut chain = chain_in_txn(&vault.store, txn, &credit.receipt_id)?;
-    for (key, row) in ADJUSTMENT.scan_from(&vault.store, txn, b"erased\0")? {
+    let mut chain = chain_in_txn(store, txn, &credit.receipt_id)?;
+    for (key, row) in ADJUSTMENT.scan_from(store, txn, b"erased\0")? {
         if let CreditJoinRow::Adjustment(adjustment) = row
             && adjustment.base == credit.receipt_id
         {
@@ -447,10 +447,10 @@ pub(crate) fn standing_credit_observation_in_txn(
             .strip_prefix(&prefix)
             .and_then(|index| index.parse::<u64>().ok())
         else {
-            return Ok(StandingCreditObservation::Unknown);
+            return Ok(None);
         };
         if !seen.insert(index) {
-            return Ok(StandingCreditObservation::Unknown);
+            return Ok(None);
         }
         if latest.as_ref().is_none_or(|(prior, _)| index > *prior) {
             latest = Some((index, adjustment));
@@ -458,13 +458,10 @@ pub(crate) fn standing_credit_observation_in_txn(
     }
     let (direct, shares) = match latest {
         Some((_, last)) => (&last.direct_subjects, &last.shares),
-        None if credit.attribution.is_none() => return Ok(StandingCreditObservation::Unknown),
+        None if credit.attribution.is_none() => return Ok(None),
         None => (&credit.direct_subjects, &credit.shares),
     };
-    Ok(match masses(direct, shares).get(subject) {
-        Some(mass) => StandingCreditObservation::Credited(true, *mass),
-        None => StandingCreditObservation::Uncredited,
-    })
+    Ok(Some(masses(direct, shares)))
 }
 
 /// The observation a credit write for `subject` lands under `credit`'s
