@@ -163,9 +163,9 @@ fn encoded(value: &Value) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| invalid("docs encoding failed"))
 }
 /// The record one imported page's ASSET holds: its text beside the corpus,
-/// project, page and registry it was imported under.
+/// project and registry, and a blob reference to the exact source bytes.
 fn docs_asset_record(docs: &DocsExport, page: &DocsPage) -> Value {
-    json!({"corpus":docs.corpus_id,"project_id":docs.project_id.to_hex(),"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported"})
+    json!({"corpus":docs.corpus_id,"project_id":docs.project_id.to_hex(),"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported","blake3":blake3::hash(page.text.as_bytes()).to_hex().to_string(),"mime_type":"text/plain","byte_size":page.text.len() as u64})
 }
 fn put(id: EntityId, kind: u8, body: Value, now: u64) -> Result<BatchOp> {
     Ok(BatchOp::Put {
@@ -387,6 +387,10 @@ impl Vault {
                 .fingerprints
                 .push((asset.to_hex(), fingerprint.decision.clone()));
             let unchanged = matches!(fingerprint.decision, super::BlobBirthDecision::Unchanged(_));
+            let source_bytes_unchanged = matches!(
+                fingerprint.decision,
+                super::BlobBirthDecision::Unchanged(super::FingerprintRung::Asset)
+            );
             fingerprint_updates.push((asset, fingerprint));
             // The approve-once ceiling applies to this source revision, not to a
             // later replacement of the same stable page id.
@@ -406,6 +410,9 @@ impl Vault {
             // The page's ASSET goes in through the asset body plane, ahead of
             // the chunks derived from it.
             self.require_docs_put_kind(&txn, &asset, crate::registry::ENTITY_TYPE_ASSET)?;
+            if !source_bytes_unchanged {
+                crate::memory::release_asset_blob_in_txn(&self.store, &mut txn, &asset)?;
+            }
             self.put_asset_body_in_txn(
                 &mut txn,
                 &asset,
@@ -415,6 +422,17 @@ impl Vault {
                 },
                 now,
                 staged,
+            )?;
+            crate::memory::land_asset_blob_in_txn(
+                self,
+                &mut txn,
+                &asset,
+                page.text.as_bytes(),
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
             )?;
             births.extend(
                 RowBirth::written(writer, MadeByClass::Stated, "docs.import", &[], &[], now)
