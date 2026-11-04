@@ -105,7 +105,9 @@ pub(crate) fn tear_derived_rows_in_txn(
         erase(store, wtxn, id)?;
     }
     if physical {
-        crate::identity_topology::forget_claim_reassignments_in_txn(store, wtxn, id)?;
+        store
+            .record_hooks
+            .forget_claim_reassignments_in_txn(store, wtxn, id)?;
         crate::identity_redirect::forget_deleted_in_txn(store, wtxn, id)?;
     }
     Ok(())
