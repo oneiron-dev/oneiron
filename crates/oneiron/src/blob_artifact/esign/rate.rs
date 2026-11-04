@@ -331,8 +331,7 @@ impl Vault {
         COUNT
             .get(&self.store, &txn, &count_key(&document.to_hex(), recipient))?
             .map(|raw| {
-                let (window_started_at_secs, count, verb, actor_class, actor) =
-                    decode_count(&raw)?;
+                let (window_started_at_secs, count, verb, actor_class, actor) = decode_count(&raw)?;
                 Ok(EsignRateReceipt {
                     document: document.to_hex(),
                     recipient: recipient.map(str::to_owned),

@@ -179,7 +179,10 @@ pub(crate) fn parse_result_read_path(path: &str) -> Option<(OutputRef, Option<En
         let text = std::str::from_utf8(chunk).ok()?;
         digest[at] = u8::from_str_radix(text, 16).ok()?;
     }
-    let byte_len = len.parse::<u64>().ok().filter(|parsed| len == parsed.to_string())?;
+    let byte_len = len
+        .parse::<u64>()
+        .ok()
+        .filter(|parsed| len == parsed.to_string())?;
     let offset = offset
         .parse::<u64>()
         .ok()
