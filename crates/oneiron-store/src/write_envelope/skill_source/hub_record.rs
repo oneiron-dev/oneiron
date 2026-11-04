@@ -4,9 +4,9 @@
 
 use rmpv::Value;
 
+use crate::write_envelope::skill_record::SkillContentHash;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, Result};
-use crate::write_envelope::skill_record::SkillContentHash;
 
 use super::support::{
     MAX_HUB_TEXT_BYTES, decode_value, encode_value, exact_map, required_text, required_value,
