@@ -40,7 +40,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideKey, SideTable, SideTableDbs};
-use crate::store::{ManifestDbs, MediaKey, Store};
+use crate::store::{ManifestDbs, MediaKey, Store, StoreAttemptOperations};
 pub(crate) use shared_wait::{response_owed_to_all_in_txn, settle_shared_response_in_txn};
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
@@ -341,7 +341,12 @@ impl ResponseFamily {
     /// text), a decoded one, or, for a row its family recognizes that does
     /// not decode or whose stub does not encode, an opaque one (FIX 6227,
     /// 9390). A clip's raw bytes always carry: it bears no marker.
-    pub(crate) fn scan(self, key: &[u8], value: &[u8]) -> ResponseScan {
+    pub(crate) fn scan(
+        self,
+        operations: &dyn StoreAttemptOperations,
+        key: &[u8],
+        value: &[u8],
+    ) -> ResponseScan {
         // An opaque response's erased form holds nothing.
         if self != Self::MediaPart && is_opaque_erased(value) {
             return ResponseScan::NotResponse;
@@ -366,7 +371,9 @@ impl ResponseFamily {
             Self::WaitDelivery | Self::WaitSettled => {
                 crate::store::executor_wait_delivery::wait_reply_scan(value)
             }
-            Self::AttemptPayload => crate::attempt_queue::attempt_payload_scan(key, value),
+            Self::AttemptPayload => {
+                crate::store::attempt_payload_response::attempt_payload_scan(operations, key, value)
+            }
             Self::ModelStepSubmission => crate::llm::submission_carriage(value),
             Self::SavedQueryMemo => crate::store::query_memos::memo_carriage(value),
             Self::CentroidEvidence => {
@@ -385,9 +392,14 @@ impl ResponseFamily {
     /// response client (FIX 9179): it holds a response, or the erased form
     /// one leaves (the explicit marker, a wait's erased reply). Any other
     /// row of a mixed family stays where its family is classed.
-    pub(crate) fn placed_as_response(self, key: &[u8], value: &[u8]) -> bool {
+    pub(crate) fn placed_as_response(
+        self,
+        operations: &dyn StoreAttemptOperations,
+        key: &[u8],
+        value: &[u8],
+    ) -> bool {
         is_opaque_erased(value)
-            || self.scan(key, value) != ResponseScan::NotResponse
+            || self.scan(operations, key, value) != ResponseScan::NotResponse
             || (matches!(self, Self::WaitDelivery | Self::WaitSettled)
                 && crate::store::executor_wait_delivery::wait_reply_erased(value))
     }
@@ -466,7 +478,13 @@ impl ResponseFamily {
             Self::WaitSettled => {
                 crate::store::executor_wait_delivery::wait_settled_owners(store, txn, key)
             }
-            Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
+            Self::AttemptPayload => Ok(
+                crate::store::attempt_payload_response::attempt_payload_owners(
+                    store.attempt_operations,
+                    key,
+                    value,
+                ),
+            ),
             Self::ModelStepSubmission => Ok(crate::llm::submission_owners(value)),
             Self::SavedQueryMemo => Ok(crate::store::query_memos::memo_owners(value)),
             Self::CentroidEvidence => Ok(

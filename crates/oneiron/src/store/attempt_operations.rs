@@ -11,6 +11,7 @@ use crate::error::Result;
 use crate::store::Store;
 use crate::store::attempt_inputs::{ClaimAttempt, FailAttempt, RetryAttempt};
 use crate::store::attempt_outcomes::{ClaimOutcome, FailOutcome, RetryOutcome};
+use crate::store::attempt_record::AttemptRecord;
 
 /// The engine's attempt queue operations the store layer calls. A store holds
 /// one implementation from the moment it is assembled (see
@@ -66,6 +67,15 @@ pub(crate) trait StoreAttemptOperations: Send + Sync {
         wtxn: &mut RwTxn<'_>,
         input: RetryAttempt,
     ) -> Result<RetryOutcome>;
+
+    /// The engine's `attempt_queue::erase_dispatch_payload_text_target`: the
+    /// dispatch target's text leaves `record`, as a checkpoint image carries
+    /// the row; `false` when the row is no agent dispatch or holds none.
+    fn erase_dispatch_payload_text_target(&self, record: &mut AttemptRecord) -> Result<bool>;
+
+    /// The engine's `attempt_queue::dispatch_payload_actor`: who owns
+    /// `record`'s dispatch text, its target AGENT_DEF.
+    fn dispatch_payload_actor(&self, record: &AttemptRecord) -> Option<EntityId>;
 }
 
 /// The derived-row eraser the per-entity sweep names for FIX 10460: the
