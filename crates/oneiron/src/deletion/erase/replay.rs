@@ -320,6 +320,9 @@ impl Vault {
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
         HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
+        crate::store::centroid_evidence::erase_centroid_source_as_in_txn(
+            crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
+        )?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = captured.refs() {
