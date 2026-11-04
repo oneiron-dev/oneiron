@@ -5605,7 +5605,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/attempt_cancel.rs` | src | s | 7 struct · 5 enum | AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelReceiptKind, AttemptCancelState, AttemptCancellation, AttemptLanding, AttemptLandingReserve, AttemptResumePoint +4 | The graceful-cancel vocabulary an attempt row carries (ONE-1896): the landing and its trigger, the resume… |
 | `src/store/attempt_cleanup.rs` | src | s | 4 struct · 1 enum · 2 fn · 7 crate-vis | AttemptQueueCleanupMetricsSnapshot, AttemptQueueCleanupReport, AttemptQueueRetryReason, AttemptQueueRetryReasonCount, CleanupAttemptLeases | Per-store attempt cleanup reports and content-free counters |
 | `src/store/attempt_hold.rs` | src | s | 1 const | — | Reserved actor tokens for queued-attempt holds |
-| `src/store/attempt_id.rs` | src | s | 1 struct · 3 fn | AttemptId | Stable queued-attempt identifiers and their raw storage representation |
+| `src/store/attempt_id.rs` | src | s | 1 re-export | — | Stable queued-attempt identifiers: defined in `oneiron-store`, with the side-table raw codec the engine… |
 | `src/store/attempt_inputs.rs` | src | s | 7 struct · 2 enum · 1 fn · 1 crate-vis | AttemptEvent, AttemptInterventionEffect, AttemptInterventionKind, ClaimAttempt, CompleteAttempt, EnqueueAttempt, FailAttempt, RetryAttempt +1 | Queue admission inputs and durable intervention vocabulary |
 | `src/store/attempt_lease.rs` | src | s | 1 crate-vis | — | Lease-owner validation for queued-work storage ports |
 | `src/store/attempt_manifest.rs` | src | s | 1 struct · 1 enum · 5 fn | ManifestEntry, ManifestKind | Retained pack-manifest entries for queued work |
