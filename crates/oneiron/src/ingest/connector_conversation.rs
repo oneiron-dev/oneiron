@@ -61,6 +61,7 @@ impl Vault {
             author: WitnessAuthor::User,
             message_type: CONNECTOR_MESSAGE_TYPE.to_owned(),
             content: text.to_owned(),
+            parts: None,
             metadata: Some(json!({
                 "import": {
                     "source": CONNECTOR_IMPORT_SOURCE,
@@ -106,6 +107,7 @@ impl Vault {
             author: WitnessAuthor::Companion,
             message_type: CONNECTOR_MESSAGE_TYPE.to_owned(),
             content: text.to_owned(),
+            parts: None,
             metadata: Some(json!({
                 "import": {
                     "source": CONNECTOR_IMPORT_SOURCE,

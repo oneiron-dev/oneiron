@@ -562,7 +562,10 @@ impl EngineNativeExecutor<'_> {
             // beside the bindings they describe, and so does the seal of the
             // code consent wait the step parks on (DOOR-079 1b).
             let parked = parked_wait(&record, terminal_status.as_ref(), bridge_start);
-            let next_generation = self
+            // A flaky commit converts to success on one identical retry
+            // (FIX 1443): a first commit that actually landed fails the
+            // retry closed on its generation mismatch instead.
+            let next_generation = match self
                 .storage
                 .put_code_run_replay_record_with_receipts_if_generation(
                     &record,
@@ -570,7 +573,22 @@ impl EngineNativeExecutor<'_> {
                     repairs.healed().then_some(&config.model),
                     &host.receipts,
                     parked.as_ref(),
-                )?;
+                ) {
+                Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
+                    tracing::warn!(
+                        "{error:?}: step checkpoint commit hit a storage error; retrying once"
+                    );
+                    self.storage
+                        .put_code_run_replay_record_with_receipts_if_generation(
+                            &record,
+                            expected_generation,
+                            repairs.healed().then_some(&config.model),
+                            &host.receipts,
+                            parked.as_ref(),
+                        )?
+                }
+                result => result?,
+            };
             // The implicit bubble is downstream of its checkpoint commit. A
             // compare-and-put failure emits nothing. A terminal retry replays
             // this delivery under stable witness ids, so it can recover a

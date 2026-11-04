@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1223 facade rows, 4438 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1175.
+// UniFFI census: 1224 facade rows, 4442 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1176.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -24610,6 +24610,93 @@ pub struct OffRecordSessionRequest {
     pub session_ref: String,
 }
 
+/// `oneiron_model::llm::protocol::ReasoningPartKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ReasoningPartKind {
+    #[serde(rename = "full")]
+    Full,
+    #[serde(rename = "summary")]
+    Summary,
+    #[serde(rename = "encrypted")]
+    Encrypted,
+    #[serde(rename = "count")]
+    Count,
+}
+
+/// `oneiron_model::llm::protocol::ImageContent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "source")]
+pub enum ImageContent {
+    #[serde(rename = "base64")]
+    Base64 {
+        #[serde(rename = "data")]
+        data: String,
+    },
+    #[serde(rename = "url")]
+    Url {
+        #[serde(rename = "url")]
+        url: String,
+    },
+}
+
+/// `oneiron_model::llm::protocol::ContentPart`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ContentPart {
+    #[serde(rename = "text")]
+    Text {
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "reasoning")]
+    Reasoning {
+        #[serde(rename = "text")]
+        text: String,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+        #[serde(
+            rename = "reasoning_kind",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        reasoning_kind: Option<ReasoningPartKind>,
+        #[serde(rename = "data", default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+    },
+    #[serde(rename = "tool_call")]
+    ToolCall {
+        #[serde(rename = "call_id")]
+        call_id: String,
+        #[serde(rename = "name")]
+        name: String,
+        #[serde(rename = "input")]
+        input: crate::WireJson,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        #[serde(rename = "call_id")]
+        call_id: String,
+        #[serde(rename = "output")]
+        output: crate::WireJson,
+        #[serde(rename = "is_error", default, skip_serializing_if = "Option::is_none")]
+        is_error: Option<bool>,
+    },
+    #[serde(rename = "image")]
+    Image {
+        #[serde(rename = "media_type")]
+        media_type: String,
+        #[serde(rename = "image")]
+        image: ImageContent,
+    },
+    #[serde(rename = "audio")]
+    Audio {
+        #[serde(rename = "media_type")]
+        media_type: String,
+        #[serde(rename = "data")]
+        data: String,
+    },
+}
+
 /// `oneiron::memory::witness::types::WitnessMessage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -24622,6 +24709,8 @@ pub struct WireWitnessMessage {
     pub message_type: String,
     #[serde(rename = "content")]
     pub content: String,
+    #[serde(rename = "parts", default, skip_serializing_if = "Option::is_none")]
+    pub parts: Option<Vec<ContentPart>>,
     #[serde(rename = "metadata", default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<crate::WireJson>,
     #[serde(rename = "is_visible")]
@@ -37174,6 +37263,15 @@ pub struct AnnotationPinRequest {
     pub locator: AnnotationLocator,
 }
 
+/// `oneiron::anchored_annotation::wire::AnnotationBodyAnchorView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AnnotationBodyAnchorView {
+    #[serde(rename = "frontier")]
+    pub frontier: Vec<u8>,
+    #[serde(rename = "locator")]
+    pub locator: AnnotationLocator,
+}
+
 /// `oneiron::anchored_annotation::wire::AnnotationAnchorView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AnnotationAnchorView {
@@ -37185,6 +37283,8 @@ pub struct AnnotationAnchorView {
     pub locator: AnnotationLocator,
     #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
     pub quote: Option<String>,
+    #[serde(rename = "body", default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<AnnotationBodyAnchorView>,
 }
 
 /// `oneiron::anchored_annotation::wire::AnnotationThreadOpenRequest`.
@@ -50215,6 +50315,38 @@ pub struct CallableCardView {
     pub returns: crate::WireJson,
 }
 
+/// `oneiron::skill::call::frozen::amend::CallableAmendRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CallableAmendRequest {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "answer")]
+    pub answer: crate::WireJson,
+}
+
+/// `oneiron::skill::call::frozen::amend::CallableAmendOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CallableAmendOutcome {
+    #[serde(rename = "refrozen")]
+    Refrozen,
+    #[serde(rename = "no_case")]
+    NoCase,
+    #[serde(rename = "over_limit")]
+    OverLimit,
+}
+
+/// `oneiron::skill::call::frozen::amend::CallableAmendReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CallableAmendReceipt {
+    #[serde(rename = "outcome")]
+    pub outcome: CallableAmendOutcome,
+    #[serde(rename = "skill", default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
+}
+
 /// `oneiron::verbs::skill_execution::SkillPackReceiptRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -50752,93 +50884,6 @@ pub enum LlmMessageRole {
     Assistant,
     #[serde(rename = "tool")]
     Tool,
-}
-
-/// `oneiron_model::llm::protocol::ReasoningPartKind`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ReasoningPartKind {
-    #[serde(rename = "full")]
-    Full,
-    #[serde(rename = "summary")]
-    Summary,
-    #[serde(rename = "encrypted")]
-    Encrypted,
-    #[serde(rename = "count")]
-    Count,
-}
-
-/// `oneiron_model::llm::protocol::ImageContent`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "source")]
-pub enum ImageContent {
-    #[serde(rename = "base64")]
-    Base64 {
-        #[serde(rename = "data")]
-        data: String,
-    },
-    #[serde(rename = "url")]
-    Url {
-        #[serde(rename = "url")]
-        url: String,
-    },
-}
-
-/// `oneiron_model::llm::protocol::ContentPart`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "kind")]
-pub enum ContentPart {
-    #[serde(rename = "text")]
-    Text {
-        #[serde(rename = "text")]
-        text: String,
-    },
-    #[serde(rename = "reasoning")]
-    Reasoning {
-        #[serde(rename = "text")]
-        text: String,
-        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
-        signature: Option<String>,
-        #[serde(
-            rename = "reasoning_kind",
-            default,
-            skip_serializing_if = "Option::is_none"
-        )]
-        reasoning_kind: Option<ReasoningPartKind>,
-        #[serde(rename = "data", default, skip_serializing_if = "Option::is_none")]
-        data: Option<String>,
-    },
-    #[serde(rename = "tool_call")]
-    ToolCall {
-        #[serde(rename = "call_id")]
-        call_id: String,
-        #[serde(rename = "name")]
-        name: String,
-        #[serde(rename = "input")]
-        input: crate::WireJson,
-    },
-    #[serde(rename = "tool_result")]
-    ToolResult {
-        #[serde(rename = "call_id")]
-        call_id: String,
-        #[serde(rename = "output")]
-        output: crate::WireJson,
-        #[serde(rename = "is_error", default, skip_serializing_if = "Option::is_none")]
-        is_error: Option<bool>,
-    },
-    #[serde(rename = "image")]
-    Image {
-        #[serde(rename = "media_type")]
-        media_type: String,
-        #[serde(rename = "image")]
-        image: ImageContent,
-    },
-    #[serde(rename = "audio")]
-    Audio {
-        #[serde(rename = "media_type")]
-        media_type: String,
-        #[serde(rename = "data")]
-        data: String,
-    },
 }
 
 /// `oneiron_model::llm::protocol::LlmMessage`.
@@ -61765,6 +61810,12 @@ pub struct OfficeBodyExportRecord {
     pub version: u64,
     #[serde(rename = "frontier")]
     pub frontier: Vec<u8>,
+    #[serde(
+        rename = "rebind_frontier",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rebind_frontier: Option<Vec<u8>>,
     #[serde(rename = "source_version")]
     pub source_version: u64,
     #[serde(rename = "actor")]
@@ -61934,6 +61985,8 @@ pub enum SeriesField {
     Values,
     #[serde(rename = "family")]
     Family,
+    #[serde(rename = "plot")]
+    Plot,
     #[serde(rename = "x")]
     X,
     #[serde(rename = "bubble_size")]

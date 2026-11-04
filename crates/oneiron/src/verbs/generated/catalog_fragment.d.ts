@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1274 code-mode rows (1234 host rows, 40 run rows), 4494 declarations.
-// Replies: 1086 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1275 code-mode rows (1235 host rows, 40 run rows), 4498 declarations.
+// Replies: 1087 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 117; unread shapes: none.
+// Opaque serde_json::Value leaves: 118; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -535,7 +535,10 @@ declare namespace Sdk {
   type MessageDocumentState = { frontier: number[]; content: string };
   type MessageReplyAssertions = { message: EntityId; conversation: EntityId; turn: EntityId; writer: EntityId; writer_class: number; assertions: ReplyAssertions };
   type MessageDurability = { message_id: string; completion: MessageCompletion; latest_receipt?: MessageStreamReceipt | null; receipts: MessageStreamReceipt[]; next_after_generation?: string | null; document_exists: boolean; document_history: MessageDocumentState[]; birth_assertions?: MessageReplyAssertions | null };
-  type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null };
+  type ReasoningPartKind = "full" | "summary" | "encrypted" | "count";
+  type ImageContent = { source: "base64"; data: string } | { source: "url"; url: string };
+  type ContentPart = { kind: "text"; text: string } | { kind: "reasoning"; text: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { kind: "tool_call"; call_id: string; name: string; input: unknown } | { kind: "tool_result"; call_id: string; output: unknown; is_error?: boolean } | { kind: "image"; media_type: string; image: ImageContent } | { kind: "audio"; media_type: string; data: string };
+  type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; parts?: ContentPart[] | null; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null };
   type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions };
   type ScopedClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; scope: ClaimScope; sensitivity?: number | null; evidence_turn_refs?: string[]; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
   type CommitReceipt = { claim_short_id: string; approval: string; superseded_short_id?: string | null; receipt_ref: string; claim?: RecordRef | null; superseded?: RecordRef | null };
@@ -2394,7 +2397,8 @@ declare namespace Sdk {
   type ArtifactUnitView = { locator: AnnotationLocator; quote?: string | null };
   type ArtifactUnitsView = { status: "supported"; artifact_id: EntityId; version: number; content_hash: string; kind: ArtifactKind; units: ArtifactUnitView[] } | { status: "unsupported"; artifact_id: EntityId; kind: ArtifactKind; reason: string };
   type AnnotationPinRequest = { artifact_ref: string; version?: number | null; locator: AnnotationLocator };
-  type AnnotationAnchorView = { artifact_id: EntityId; version: number; locator: AnnotationLocator; quote?: string | null };
+  type AnnotationBodyAnchorView = { frontier: number[]; locator: AnnotationLocator };
+  type AnnotationAnchorView = { artifact_id: EntityId; version: number; locator: AnnotationLocator; quote?: string | null; body?: AnnotationBodyAnchorView | null };
   type AnnotationThreadOpenRequest = { artifact_ref: string; version: number; locator: AnnotationLocator; text: string };
   type AnnotationResolution = "pinned" | "mapped" | "drifted";
   type AnnotationDriftView = { drifted_at_version: number; pinned_version: number };
@@ -3174,6 +3178,9 @@ declare namespace Sdk {
   type SkillAuthoringReceipt = { skill_id: string; author: string; author_receipt: string; version: string };
   type SkillForkRequest = { parent: string; id?: string | null; skill_id: string };
   type CallableCardView = { skill: string; skill_id: string; version: string; desc: string; reference: string; arguments: unknown; returns: unknown };
+  type CallableAmendRequest = { receipt: string; seq: number; answer: unknown };
+  type CallableAmendOutcome = "refrozen" | "no_case" | "over_limit";
+  type CallableAmendReceipt = { outcome: CallableAmendOutcome; skill?: string | null };
   type SkillPackReceiptRequest = { attempt_receipt: string };
   type SkillPackReceipt = { receipt: ReceiptRecord; loaded_skills: string[]; attribution: PackAttributionFields };
   type SkillPackOutcomeRequest = { attempt_receipt: string; outcome_receipt: string; succeeded: boolean; axis: string; at: number; goal_revision?: string | null };
@@ -3208,9 +3215,6 @@ declare namespace Sdk {
   type ResponseFormat = { format: "text" } | { format: "json"; schema: unknown };
   type CallEnvelope = { scope?: ScopeScope; purpose: CallPurpose; class: CallClass; tier: TierPrecedence; response_format: ResponseFormat; locality: ModelLocality; seat_effort?: ReasoningEffort | null };
   type LlmMessageRole = "system" | "user" | "assistant" | "tool";
-  type ReasoningPartKind = "full" | "summary" | "encrypted" | "count";
-  type ImageContent = { source: "base64"; data: string } | { source: "url"; url: string };
-  type ContentPart = { kind: "text"; text: string } | { kind: "reasoning"; text: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { kind: "tool_call"; call_id: string; name: string; input: unknown } | { kind: "tool_result"; call_id: string; output: unknown; is_error?: boolean } | { kind: "image"; media_type: string; image: ImageContent } | { kind: "audio"; media_type: string; data: string };
   type LlmMessage = { role: LlmMessageRole; content: ContentPart[] };
   type LlmToolSpec = { name: string; description: string; input_schema: unknown };
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
@@ -3939,7 +3943,7 @@ declare namespace Sdk {
   type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
   type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type OfficeRecalcZone = { utc_offset_minutes: number; iana_timezone?: string | null };
-  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; recalc_zone?: OfficeRecalcZone | null; effects: string[] };
+  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; rebind_frontier?: number[] | null; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; recalc_zone?: OfficeRecalcZone | null; effects: string[] };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
   type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
@@ -3949,7 +3953,7 @@ declare namespace Sdk {
   type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
   type NodeMove = { node: NodeId; old_parent?: NodeId | null; new_parent?: NodeId | null; old_index?: number | null; new_index?: number | null; cross_slide: boolean };
   type OpaqueChange = { part: string; base?: number[] | null; proposal?: number[] | null };
-  type SeriesField = "name" | "values" | "family" | "x" | "bubble_size" | "bubble_3d" | "categories" | "order" | "existence";
+  type SeriesField = "name" | "values" | "family" | "plot" | "x" | "bubble_size" | "bubble_3d" | "categories" | "order" | "existence";
   type CategoryField = "levels" | "order" | "existence";
   type Conflict = { both_moved: { node: NodeId } } | { deleted_vs_edited: { node: NodeId; deleted_by_head: boolean } } | { text_vs_text: { node: NodeId } } | { geometry_vs_reparent: { node: NodeId } } | { both_replaced_opaque: { part: string } } | { payload_vs_payload: { node: NodeId } } | { cell_vs_cell: { node: NodeId; row: NodeId; column: NodeId } } | { series_vs_series: { node: NodeId; series: NodeId; field: SeriesField } } | { category_vs_category: { node: NodeId; owner?: NodeId | null; category: NodeId; field: CategoryField } };
   type RelationshipChange = { source: string; id: string; kind: string; before?: string | null; after?: string | null };
@@ -7386,6 +7390,10 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills. */
     bootstrap(input: Sdk.EmptyRequest): Promise<Sdk.BootstrapSkillView[] | StoredResult>;
+    callable: {
+      /** The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing. */
+      amend(input: Sdk.CallableAmendRequest): Promise<Sdk.CallableAmendReceipt | StoredResult>;
+    };
     code_auto_install: {
       /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
       set(input: Sdk.SkillCodeAutoInstallRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;

@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1223 facade rows, 4439 declarations.
-Inputs: 1151 of 1223 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1056 of 1223 fully typed, 167 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 121; unread shapes: 0.
+Census: 1224 facade rows, 4443 declarations.
+Inputs: 1151 of 1224 fully typed, 73 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1057 of 1224 fully typed, 167 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 122; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2773,11 +2773,48 @@ class MessageDurability(TypedDict):
     document_exists: bool
     document_history: list[MessageDocumentState]
     birth_assertions: NotRequired[MessageReplyAssertions | None]
+ReasoningPartKind = Literal["full", "summary", "encrypted", "count"]
+class ImageContentBase64(TypedDict):
+    source: Literal["base64"]
+    data: str
+class ImageContentUrl(TypedDict):
+    source: Literal["url"]
+    url: str
+ImageContent = ImageContentBase64 | ImageContentUrl
+class ContentPartText(TypedDict):
+    kind: Literal["text"]
+    text: str
+class ContentPartReasoning(TypedDict):
+    kind: Literal["reasoning"]
+    text: str
+    signature: NotRequired[str | None]
+    reasoning_kind: NotRequired[ReasoningPartKind]
+    data: NotRequired[str | None]
+class ContentPartToolCall(TypedDict):
+    kind: Literal["tool_call"]
+    call_id: str
+    name: str
+    input: Any
+class ContentPartToolResult(TypedDict):
+    kind: Literal["tool_result"]
+    call_id: str
+    output: Any
+    is_error: NotRequired[bool]
+class ContentPartImage(TypedDict):
+    kind: Literal["image"]
+    media_type: str
+    image: ImageContent
+class ContentPartAudio(TypedDict):
+    kind: Literal["audio"]
+    media_type: str
+    data: str
+ContentPart = ContentPartText | ContentPartReasoning | ContentPartToolCall | ContentPartToolResult | ContentPartImage | ContentPartAudio
 class WitnessMessage(TypedDict):
     id: NotRequired[str | None]
     author: WitnessAuthor
     message_type: str
     content: str
+    parts: NotRequired[list[ContentPart] | None]
     metadata: NotRequired[Any | None]
     is_visible: bool
     order: int
@@ -11770,11 +11807,15 @@ class AnnotationPinRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
     locator: AnnotationLocator
+class AnnotationBodyAnchorView(TypedDict):
+    frontier: list[int]
+    locator: AnnotationLocator
 class AnnotationAnchorView(TypedDict):
     artifact_id: EntityId
     version: int
     locator: AnnotationLocator
     quote: NotRequired[str | None]
+    body: NotRequired[AnnotationBodyAnchorView | None]
 class AnnotationThreadOpenRequest(TypedDict):
     artifact_ref: str
     version: int
@@ -15971,6 +16012,14 @@ class CallableCardView(TypedDict):
     reference: str
     arguments: Any
     returns: Any
+class CallableAmendRequest(TypedDict):
+    receipt: str
+    seq: int
+    answer: Any
+CallableAmendOutcome = Literal["refrozen", "no_case", "over_limit"]
+class CallableAmendReceipt(TypedDict):
+    outcome: CallableAmendOutcome
+    skill: NotRequired[str | None]
 class SkillPackReceiptRequest(TypedDict):
     attempt_receipt: str
 class SkillPackReceipt(TypedDict):
@@ -16115,42 +16164,6 @@ class ResponseFormatJson(TypedDict):
 ResponseFormat = ResponseFormatText | ResponseFormatJson
 CallEnvelope = TypedDict("CallEnvelope", {"scope": NotRequired[ScopeScope], "purpose": CallPurpose, "class": CallClass, "tier": TierPrecedence, "response_format": ResponseFormat, "locality": ModelLocality, "seat_effort": NotRequired[ReasoningEffort | None]})
 LlmMessageRole = Literal["system", "user", "assistant", "tool"]
-ReasoningPartKind = Literal["full", "summary", "encrypted", "count"]
-class ImageContentBase64(TypedDict):
-    source: Literal["base64"]
-    data: str
-class ImageContentUrl(TypedDict):
-    source: Literal["url"]
-    url: str
-ImageContent = ImageContentBase64 | ImageContentUrl
-class ContentPartText(TypedDict):
-    kind: Literal["text"]
-    text: str
-class ContentPartReasoning(TypedDict):
-    kind: Literal["reasoning"]
-    text: str
-    signature: NotRequired[str | None]
-    reasoning_kind: NotRequired[ReasoningPartKind]
-    data: NotRequired[str | None]
-class ContentPartToolCall(TypedDict):
-    kind: Literal["tool_call"]
-    call_id: str
-    name: str
-    input: Any
-class ContentPartToolResult(TypedDict):
-    kind: Literal["tool_result"]
-    call_id: str
-    output: Any
-    is_error: NotRequired[bool]
-class ContentPartImage(TypedDict):
-    kind: Literal["image"]
-    media_type: str
-    image: ImageContent
-class ContentPartAudio(TypedDict):
-    kind: Literal["audio"]
-    media_type: str
-    data: str
-ContentPart = ContentPartText | ContentPartReasoning | ContentPartToolCall | ContentPartToolResult | ContentPartImage | ContentPartAudio
 class LlmMessage(TypedDict):
     role: LlmMessageRole
     content: list[ContentPart]
@@ -19878,6 +19891,7 @@ class OfficeBodyExportRecord(TypedDict):
     artifact: EntityId
     version: int
     frontier: list[int]
+    rebind_frontier: NotRequired[list[int] | None]
     source_version: int
     actor: BodyActor
     author: str
@@ -19933,7 +19947,7 @@ class OpaqueChange(TypedDict):
     part: str
     base: NotRequired[list[int] | None]
     proposal: NotRequired[list[int] | None]
-SeriesField = Literal["name", "values", "family", "x", "bubble_size", "bubble_3d", "categories", "order", "existence"]
+SeriesField = Literal["name", "values", "family", "plot", "x", "bubble_size", "bubble_3d", "categories", "order", "existence"]
 CategoryField = Literal["levels", "order", "existence"]
 class ConflictBothMovedBody(TypedDict):
     node: NodeId

@@ -29,6 +29,15 @@ pub(crate) struct FacadeReleased {
 }
 
 impl FacadeReleased {
+    /// A reply sent as-is, with known rows retained for replay admission.
+    pub(crate) fn sent_with_rows(peer: PeerMachine, rows: Vec<EntityId>) -> Self {
+        Self {
+            peer,
+            rows: Some(rows),
+            withheld: None,
+        }
+    }
+
     /// The record the claim keeps beside `sent`, the reply that went out.
     pub(crate) fn kept(self, sent: &serde_json::Value) -> InvocationRelease {
         InvocationRelease {
