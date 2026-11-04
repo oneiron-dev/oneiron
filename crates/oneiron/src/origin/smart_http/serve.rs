@@ -31,13 +31,13 @@ use super::read_projection::RepoGitBackend;
 use super::recipient_serve::RepoGitReadContext;
 use super::serve_cmd::{IncomingQuarantines, ServeChild, ServeCommand, ServeRequest};
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::git_push::GitPushStamp;
 use crate::git_wire::{lock_repository, lock_repository_within, try_lock_repository};
 use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
+use crate::store::code_snapshot::RepoRef;
 
 /// Where a serve invocation writes its response.
 ///

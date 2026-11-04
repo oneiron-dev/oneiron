@@ -105,7 +105,7 @@ pub use self::projector::{
 };
 pub use self::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
-    HunkLabel, PreferenceProposal, classify_amendment, validate_share_vector,
+    HunkLabel, HunkRange, PreferenceProposal, classify_amendment, validate_share_vector,
 };
 pub use self::triage::{
     AgentDefinitionRef, ArtifactPublisher, RecentChange, RecentChanges, SkillAtVersion,
@@ -179,6 +179,3 @@ use crate::skill_attribution::{
 };
 #[cfg(test)]
 use crate::temporal::TimeRange;
-
-mod archive;
-pub(crate) use archive::{imported_skill_cost_body, validate_imported_skill_cost};

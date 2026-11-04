@@ -33,10 +33,10 @@ use heed::RoTxn;
 use super::types::REPO_OPAQUE_FILE_BYTES;
 use super::{RepoBodyProjection, project_repo_bytes_in_txn};
 use crate::Vault;
-use crate::codebase::snapshot_asset_entity_id;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
+use crate::store::code_snapshot::snapshot_asset_entity_id;
 
 mod derived;
 mod invalidate;
@@ -294,14 +294,16 @@ impl RepoIndexMarks {
         vault: &Vault,
         txn: &RoTxn<'_>,
         source: &[u8; 32],
-    ) -> Result<Option<crate::secret_custody::KeyPlaces>> {
+    ) -> Result<Option<crate::file_secret_marks::KeyPlaces>> {
         self.readable(source)?;
         let marks = self.facts.for_hash(source);
         if marks.is_empty() || marks.opaque() {
             return Ok(None);
         }
         let mut places = marks.places();
-        if let Some(row) = crate::secret_custody::masked_file_in_txn(&vault.store, txn, source)? {
+        if let Some(row) =
+            crate::store::file_key_masks::masked_file_in_txn(&vault.store, txn, source)?
+        {
             for (member, spans) in row.places() {
                 for span in spans {
                     crate::origin::secret_marks::add_place(&mut places, &member, span);

@@ -142,6 +142,11 @@ pub enum AuthorityOp {
     /// the carrier of his act, with the request in its causal past (FIX
     /// 4739). A main-log entry, value-free: ids only, never a result.
     OwnerWorkCancel(OwnerWorkCancel),
+    /// The owner's mark that he imported one export secret request's
+    /// supplement, signed by the install key of the install his import
+    /// committed on, with the request in its causal past (FIX 12062). A
+    /// main-log entry, value-free: ids only.
+    ExportSupplementImported(ExportSupplementImported),
     /// One numbered piece of a custody request's permit set past one row,
     /// signed by the key that signs the request, ahead of it in its causal
     /// past (FIX 11866). A main-log entry, value-free: ids and digests only.
@@ -249,6 +254,7 @@ impl AuthorityLogEntry {
             AuthorityOp::OwnerWorkRequest(request) => request.validate_entry(self)?,
             AuthorityOp::OwnerWorkResult(result) => result.validate_entry(self)?,
             AuthorityOp::OwnerWorkCancel(cancel) => cancel.validate_entry(self)?,
+            AuthorityOp::ExportSupplementImported(mark) => mark.validate_entry(self)?,
             AuthorityOp::CustodyPermitPiece(piece) => piece.validate_entry(self)?,
             AuthorityOp::CheckpointPolicySet(set) => set.validate_entry(self)?,
             AuthorityOp::HomeNodePick(pick) => pick.validate_entry(self)?,
@@ -481,6 +487,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::OwnerWorkRequest(request) => request.validate(),
         AuthorityOp::OwnerWorkResult(result) => result.validate(),
         AuthorityOp::OwnerWorkCancel(cancel) => cancel.validate(),
+        AuthorityOp::ExportSupplementImported(mark) => mark.validate(),
         AuthorityOp::CustodyPermitPiece(piece) => piece.validate(),
         AuthorityOp::CheckpointPolicySet(set) => set.validate(),
         AuthorityOp::HomeNodePick(pick) => pick.validate(),

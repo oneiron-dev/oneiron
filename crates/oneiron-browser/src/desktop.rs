@@ -93,15 +93,16 @@ use crate::{
     EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FieldWriter, FindInput, FindOutput,
     HandoverInput, HandoverOutput, HotkeyInput, ImageOutput, KeyInput, NoDecider, NoWriter,
     Observation, ObservationPage, ObserveInput, OpenInput, PartialTree, PointInput, PressGrants,
-    PressMode, ReceiptEvidenceSink, RoutineDecider, Row, RowSecret, ScreenshotInput,
-    ScreenshotOutput, ScreenshotTrigger, ScrollInput, SecretCustody, SecretKind, SecretNote,
-    SelectInput, SendPolicy, TakeoverRecord, TextProvenance, TypeInput, ViewInput, WaitForInput,
-    WaitForOutput, WindowInput, WindowSwitch, WindowSwitchCause, WindowsInput, WindowsOutput,
-    ZoomInput,
+    PressMode, ReceiptEvidenceSink, ReceiptOutcome, RoutineDecider, Row, RowSecret,
+    ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, ScrollInput, SecretCustody, SecretKind,
+    SecretNote, SelectInput, SendPolicy, TakeoverRecord, TextProvenance, TypeInput, ViewInput,
+    WaitForInput, WaitForOutput, WindowInput, WindowSwitch, WindowSwitchCause, WindowsInput,
+    WindowsOutput, ZoomInput,
 };
 use images::{looks_as_it_did, mask};
 use oneiron_container::{GuestLimits, SessionLease, SessionManifest, SessionTransport};
 use serde_json::{Value, json};
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -160,6 +161,13 @@ pub struct DesktopSession {
     unread: Option<EffectReceipt>,
     /// Whether the running act's input was sent (FIX 12134).
     input_sent: bool,
+    /// Whether the running act's input failed after the guest took part
+    /// of it (FIX 12257): its outcome is unknown.
+    input_unknown: bool,
+    /// The running verb's input calls the guest took (FIX 12257): an act
+    /// reads it around its input, as a browser act reads its written
+    /// calls.
+    input_delivered: Cell<u64>,
     receipts: Vec<EffectReceipt>,
     receipt_seq: u64,
     decider: Option<Box<dyn RoutineDecider>>,
@@ -434,12 +442,32 @@ impl DesktopSession {
                 words: String::new(),
             });
         }
+        // Taken: a later input call that fails leaves this one's effect
+        // standing, its outcome unknown (FIX 12257).
+        self.input_delivered
+            .set(self.input_delivered.get().saturating_add(1));
         Ok(())
     }
 
     /// The windows on screen.
     fn listed(&self) -> Result<Vec<Listed>, BrowserError> {
-        let reply = self.tool("list_windows", json!({"on_screen_only": true}))?;
+        self.listed_until(None)
+    }
+
+    /// The windows on screen, giving the RPC no longer than `until` when
+    /// set: a settle poll's recovery never stretches past its cap (FIX
+    /// 3782, REVIEW-4454 P1).
+    fn listed_until(&self, until: Option<Instant>) -> Result<Vec<Listed>, BrowserError> {
+        let bound = match until {
+            Some(until) => {
+                Instant::now() + CALL.min(until.saturating_duration_since(Instant::now()))
+            }
+            None => Instant::now() + CALL,
+        };
+        let reply = self
+            .mcp
+            .tool("list_windows", json!({"on_screen_only": true}), bound)
+            .map_err(BrowserError::from)?;
         Ok(reply
             .output
             .get("windows")

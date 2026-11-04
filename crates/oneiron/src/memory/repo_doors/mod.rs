@@ -41,9 +41,9 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedReadActorKey};
 use crate::error::{Error, Result};
 use crate::federation::repo_access::RepoMembership;
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 use crate::task_verb::HostBinding;
 use crate::{EntityId, Vault, WriteActor};
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 
 use super::{Memory, MemoryError, MemoryResult};
 
@@ -209,15 +209,9 @@ pub(crate) fn refusal_error(refusal: RepoAccessRefusal) -> MemoryError {
 /// Whether `code` is one of the typed repo refusals, or one of a run
 /// proposal's or export's typed holds.
 pub(crate) fn is_repo_refusal_code(code: &str) -> bool {
-    [
-        RepoAccessRefusal::NoMembership,
-        RepoAccessRefusal::WrongRepo,
-        RepoAccessRefusal::WrongRef,
-        RepoAccessRefusal::PathOutsideScope,
-        RepoAccessRefusal::StaleLease,
-    ]
-    .iter()
-    .any(|refusal| refusal.public_code() == code)
+    RepoAccessRefusal::ALL
+        .iter()
+        .any(|refusal| refusal.public_code() == code)
         || [
             REPO_REVIEW_POLICY_REQUIRED,
             REPO_PROVENANCE_REQUIRED,

@@ -51,11 +51,10 @@ use crate::calendar::CalendarError;
 use crate::calendar::tz::{WallTime, utc_to_wall, wall_to_utc};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::commitment::CommitmentStatus;
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::entity_id::derived_domains::{COMMITMENT_INSTANCE, COMMITMENT_PROJECTION_ACTOR};
+use crate::entity_id::derived_domains::COMMITMENT_INSTANCE;
 use crate::temporal::TimeRange;
-use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 
 /// Default projection lead: one day before the due instant.
 pub const DEFAULT_LEAD: u64 = 86_400;
@@ -151,26 +150,18 @@ impl From<ScheduleError> for crate::Error {
 /// Result alias for the schedule layer.
 pub type ScheduleResult<T> = std::result::Result<T, ScheduleError>;
 
-/// One concrete occurrence of a series: the instant it is owed, the valid-time
-/// window it covers, and which slot of that window it is.
-///
-/// `ordinal` matters only for [`Schedule::Quota`], where every slot of a window
-/// shares one due instant (the window's inclusive end) and is distinguished
-/// solely by its position. Once/Interval occurrences are always ordinal 0.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommitmentOccurrence {
-    /// When this occurrence is owed.
-    pub due_at: u64,
-    /// The occurrence's valid-time window; must contain `due_at`.
-    pub window: TimeRange,
-    /// Slot index inside `window`.
-    pub ordinal: u32,
+pub use crate::store::commitment_due_record::CommitmentOccurrence;
+
+/// Schedule-layer construction and validation of a stored occurrence.
+pub trait CommitmentOccurrenceSchedule: Sized {
+    fn new(due_at: u64, window: TimeRange, ordinal: u32) -> ScheduleResult<Self>;
+    fn validate(&self) -> ScheduleResult<()>;
 }
 
-impl CommitmentOccurrence {
+impl CommitmentOccurrenceSchedule for CommitmentOccurrence {
     /// Creates an occurrence, rejecting an inverted window or a `due_at`
     /// outside it.
-    pub fn new(due_at: u64, window: TimeRange, ordinal: u32) -> ScheduleResult<Self> {
+    fn new(due_at: u64, window: TimeRange, ordinal: u32) -> ScheduleResult<Self> {
         let occurrence = Self {
             due_at,
             window,
@@ -180,7 +171,7 @@ impl CommitmentOccurrence {
         Ok(occurrence)
     }
 
-    pub(crate) fn validate(&self) -> ScheduleResult<()> {
+    fn validate(&self) -> ScheduleResult<()> {
         if self.window.end < self.window.start {
             return Err(ScheduleError::Invalid(
                 "commitment occurrence window is inverted",
@@ -344,16 +335,7 @@ impl CommitmentInstanceOutcome {
     }
 }
 
-/// The pinned System actor for engine projection writes.
-///
-/// Derived, not minted (`EntityId::derive` over a fixed domain): the
-/// projector's identity must survive a reopen and be the same on every device.
-pub fn commitment_projection_actor() -> crate::Result<WriteActor> {
-    Ok(WriteActor::new(
-        EntityId::derive(COMMITMENT_PROJECTION_ACTOR, &[])?,
-        EdgeActorClass::System,
-    ))
-}
+pub use crate::write_envelope::commitment_actor::commitment_projection_actor;
 
 /// The pinned envelope every projected instance is written under: System actor,
 /// `Generated` source, a fixed provenance string, and `Auto` approval.

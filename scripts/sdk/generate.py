@@ -27,10 +27,10 @@ BROWSER_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'brows
 for row in HOST_ROWS:
     host = row['host']
     if (row.get('context') not in ('run', 'browser', 'board') or not {'input', 'description'} <= set(host)
-            or set(host) - {'input', 'output', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'openapi'}
+            or set(host) - {'input', 'output', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'host_door_precheck', 'openapi'}
             or ('output' in host and row.get('context') != 'board')
-            or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session', 'host_door_lists', 'openapi') if key in host)):
-        raise ValueError(f'{row["name"]}: a host projection names the public input and description, with optional caller, session, lists and OpenAPI flags')
+            or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session', 'host_door_lists', 'host_door_precheck', 'openapi') if key in host)):
+        raise ValueError(f'{row["name"]}: a host projection names the public input and description, with optional caller, session, lists, pre-check and OpenAPI flags')
 def host_synthetic(row):
     return {'name': row['name'], 'input': row['host']['input'],
      'output': row['host'].get('output', row['output']),
@@ -42,6 +42,7 @@ def host_synthetic(row):
      # object says so (FIX 4709), its door then answering `Listed` or
      # `MaybeListed` as an explicit host row does.
      'host_door_lists': row.get('context') == 'browser' or row['host'].get('host_door_lists', False),
+     'host_door_precheck': row['host'].get('host_door_precheck', True),
      'openapi': row['host'].get('openapi', False),
      'admission': {'unrestricted_record_scope': True}, 'section': False}
 ROWS = [row for row in MANIFEST['verbs'] if 'call' in row and row not in HOST_BROWSER_ROWS] + [
@@ -135,6 +136,12 @@ for row in ROWS:
     # an empty list standing in for it, and the call's answer goes unlisted.
     if row.get('host_door_lists') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door lists its rows')
+    # `host_door_precheck: false` marks a host door whose door checks no
+    # caller before the row's hooks run (FIX 1763). Every other host door is
+    # a `HostDoorRow` that `host_doors::door_admits` matches with no
+    # catch-all, so a new host door names its check or fails to compile.
+    if row.get('host_door_precheck', True) is not True and (row['host_door_precheck'] is not False or not row.get('host_door')):
+        raise ValueError(f'{row["name"]}: host_door_precheck is only a host door\'s, and only false')
     # `host_door_lens_owner` hands a live lens door the owner its card is held
     # for (OF-181, FIX 2612), never a field of its input: the facade call's
     # host-bound creating run and subscription (`FacadeCall::lens_owner`), or
@@ -204,6 +211,15 @@ for row in ROWS:
             or row.get('context', 'memory') != 'memory'
             or any(admission.get(other) for other in ('owner_grade', 'claim_record_scope', 'credential_record_scope', 'scoped_export', 'born_record_scope'))):
         raise ValueError(f'{row["name"]}: require_granted_scope is only a non-Read lane_record_scope facade row\'s, with no other record-scope admission, and on a host door only a caller or listing one')
+    # FIX 9609: `mcp_off_runtime` marks a plain memory row whose MCP arm runs
+    # its engine call on a blocking thread, on a surface rebuilt there
+    # (`mcp_off_runtime_row`), because the call may wait out a host deadline.
+    # Only a plain memory row reaches that helper: no ladder, no turn, no
+    # other door shape, no owner-grade admission.
+    if row.get('mcp_off_runtime') and (row.get('task_decisions') or row.get('task_work') or row.get('host_door')
+                                        or row.get('server_door') or row.get('context', 'memory') != 'memory'
+                                        or row.get('admission', {}).get('owner_grade')):
+        raise ValueError(f'{row["name"]}: mcp_off_runtime is only a plain memory row\'s, with no ladder, turn or door')
 # OF-063: `refs` lists a row's typed record-ref slots as JSON pointers into its
 # input, `*` taking every item of an array. The row's generated engine fn checks
 # that each ref there resolves under the writer's own scoped read before the
@@ -913,6 +929,13 @@ def mcp_input_dispatch(row):
                      '// Derived from the rows its reads listed, on a refusal too.\n'
                      'served.extend(listed);\n'
                      'let output = output.map_err(mcp_facade_error)?;\n')
+        elif row.get('mcp_off_runtime'):
+            # Its blocking host call stays off the runtime; the typed row
+            # alone crosses to the worker, on a surface rebuilt there.
+            body += (f'let (output, listed) = Box::pin(mcp_off_runtime_row(server, tool, actor, surface, move |memory| oneiron::task_verb::sdk::{method}(memory, input))).await?;\n'
+                     '// Derived from the rows its reads listed, on a refusal too.\n'
+                     'served.extend(listed);\n'
+                     'let output = output.map_err(mcp_facade_error)?;\n')
         elif name in CALL_HOME_DOORS:
             # Its page as the plain arm reads it, then the home's references.
             body += ('let asked = (input.query.clone(), input.limit);\n'
@@ -925,7 +948,14 @@ def mcp_input_dispatch(row):
         if 'mcp_served_output' in row:
             body += f'served.extend({row["mcp_served_output"]});\n'
     if row.get('lands_turn'):
-        body += 'server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);\n'
+        if name == 'self.inbox.concern.move':
+            body += ('if matches!(&output, oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome::Applied '
+                     '{ receipt, .. } if matches!(receipt.link, '
+                     'oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveLink::Note { .. })) {\n'
+                     'server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);\n'
+                     '}\n')
+        else:
+            body += 'server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);\n'
     if 'mcp_result' in row:
         body += f'let (value, source) = {row["mcp_result"]}; Ok((value, source, McpCarrierPolicy::Drain, None))'
         return f'{json.dumps(name)} => {{\n{body} }},\n'
@@ -1107,7 +1137,7 @@ async fn execute_agent_verb_row(
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
-        let run_writes = surface.run.as_ref().and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
+        let run_writes = surface.run.as_ref().and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
         crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks)).await
     }
 
@@ -1607,7 +1637,18 @@ def facade_dispatch(facade_rows):
                       'let output = facade_output(output?)?;\nlet rows = Some(listed);')
         landed = ''
         if r.get('lands_turn'):
-            landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
+            if name == 'self.inbox.concern.move':
+                # P1 REVIEW-4395 (L13 08:49 YES): the wake reads the COMMITTED
+                # result through facade_invoke_concern_move's row_tapped tap
+                # BEFORE post-hook redaction, never the request (a hook may
+                # rewrite Note to Steer/AskCoach or back) nor the post-hook
+                # output view (a valid Redact of /receipt would suppress the
+                # wake). MCP's typed Applied-with-Note-link check is unchanged.
+                result = ('{ let (output, wake) = facade_invoke_concern_move(server, call, actor, class, value, &producers)?; '
+                          'if wake { server.ai.turn_landed_by(server.vault(), actor, class); } '
+                          'output };')
+            else:
+                landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
         # A born door's landing judges its record bounds, so only the grant is
         # left to check; so does a lane door whose engine door judges the
         # credential's lane in each snapshot (`require_granted_scope`).
@@ -1709,6 +1750,40 @@ match verb {{
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
     return routes, dispatch
 
+HOST_DOOR_ROWS_DOC = '''//! The host-door rows whose door checks its caller before the row's verb
+//! hooks run (FIX 1763), one variant each, named as `AgentVerb` names it.
+//! `host_doors::door_admits` matches every one with no catch-all arm, so a
+//! new host door fails to compile until it names its check there. A row
+//! whose table entry says `"host_door_precheck": false` checks nothing
+//! before its hooks; those rows:
+'''
+
+def host_door_rows(facade_rows):
+    'The `HostDoorRow` enum `door_admits` matches, and the host doors it leaves out.'
+    variant = lambda r: ''.join(part.title() for part in r['name'].replace('.', '_').split('_'))
+    doors = [r for r in facade_rows if r.get('host_door')]
+    checked = [r for r in doors if r.get('host_door_precheck', True)]
+    out = HEADER + HOST_DOOR_ROWS_DOC + ''.join(f'//! - `{r["name"]}`\n' for r in doors if r not in checked)
+    out += '/// A host-door row whose door checks its caller first.\n'
+    out += '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(in crate::api::facade) enum HostDoorRow {\n'
+    out += ''.join(f'    {variant(r)},\n' for r in checked) + '}\n'
+    out += 'impl HostDoorRow {\n    /// The row `verb` names, when it is one.\n'
+    out += '    pub(in crate::api::facade) fn from_verb(verb: &str) -> Option<Self> {\n        Some(match verb {\n'
+    out += ''.join(f'            {json.dumps(r["name"])} => Self::{variant(r)},\n' for r in checked)
+    out += '            _ => return None,\n        })\n    }\n}\n'
+    return out
+
+# FIX 10471: `rust_feature` gates one CORE Rust typed emission behind a Cargo
+# feature, so a featureless build keeps no reference to the gated
+# implementation. The field is the one source: every CORE emitter in
+# `outputs()` reads it through this helper, and every other surface (SERVER
+# MCP input/args, routes/dispatch, remote/native, TS/HTTP/catalog) stays
+# unconditional.
+def core_cfg(row):
+    'The cfg attribute gating one CORE Rust typed emission of this row, or empty.'
+    feature = row.get('rust_feature')
+    return f'#[cfg(feature = "{feature}")] ' if feature else ''
+
 def outputs():
     facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"] + BOARD_HOST_ROWS
     core = HEADER
@@ -1725,7 +1800,7 @@ def outputs():
     core += "// GLOBAL STATE: compiled verb schemas are immutable, vault-independent metadata; share one table across callers.\n"
     core += "static SCHEMAS: std::sync::LazyLock<std::collections::HashMap<&'static str, serde_json::Value>> = std::sync::LazyLock::new(|| std::collections::HashMap::from([\n"
     for r in SCHEMA_ROWS:
-        core += f'({json.dumps(r["name"])}, crate::code_run::vault_read::request_schema::<{r["input"]}>()),\n'
+        core += f'{core_cfg(r)}({json.dumps(r["name"])}, crate::code_run::vault_read::request_schema::<{r["input"]}>()),\n'
     core += "])); SCHEMAS.get(verb) }\n"
     # DOOR-115: the rows the OpenAPI document publishes, and each one's answer
     # schema, read from its `output` type as `input_schema` reads its input.
@@ -1735,7 +1810,7 @@ def outputs():
     core += "/// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.\n"
     core += "pub fn output_schema(verb: &str) -> Option<serde_json::Value> { Some(match verb {\n"
     for r in openapi_rows:
-        core += f'{json.dumps(r["name"])} => crate::code_run::vault_read::request_schema::<{r["output"]}>(),\n'
+        core += f'{core_cfg(r)}{json.dumps(r["name"])} => crate::code_run::vault_read::request_schema::<{r["output"]}>(),\n'
     core += "_ => return None, }) }\n"
     # A board row's facade door takes its host projection, not the board
     # shape `input_schema` states for MCP and code mode: the OpenAPI
@@ -1751,7 +1826,7 @@ def outputs():
     core += "pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> { mcp_arguments_schema_from_input(verb, input_schema(verb)?) }\n"
     core += "pub fn mcp_arguments_schema_from_input(verb: &str, schema: &serde_json::Value) -> Option<serde_json::Value> { let mut properties = serde_json::Map::new(); let required: &[&str] = match verb {\n"
     for r in mcp_rows():
-        core += f'{json.dumps(r["name"])} => {{\n'
+        core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{\n'
         for field, path in r['mcp_fields'].items():
             pointer = '' if path == '$' else ''.join('/properties/' + part for part in path.removeprefix('=').split('.'))
             if path == '$':
@@ -1768,9 +1843,9 @@ def outputs():
             # One verb, two served shapes: the board/MCP shape and the
             # facade's host projection. Either admits; each door decodes
             # its own shape after this check.
-            core += f'{json.dumps(r["name"])} => {{ if decode::<{r["input"]}>(value.clone()).is_err() {{ let _host: {board_host_input[r["name"]]} = decode(value.clone())?; }} }},\n'
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{ if decode::<{r["input"]}>(value.clone()).is_err() {{ let _host: {board_host_input[r["name"]]} = decode(value.clone())?; }} }},\n'
         else:
-            core += f'{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
     core += '_ => return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), } Ok(()) }\n'
     # Code mode binds its own guest, so a rewrite there validates the original
     # browser input, never the public live-run attachment wrapper.
@@ -1792,9 +1867,9 @@ def outputs():
         if r.get('board_host'):
             # No memory fn of this name: it is the board fn's. An embedded
             # handle answers the host-only refusal, as other host rows do.
-            core += f'{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
         else:
-            core += f'{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
     core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n})\n}\n'
     # A browser row's one door: code mode hands its whole input to the run's
     # browser session and takes the verb's whole output back.
@@ -1813,11 +1888,11 @@ def outputs():
         result = record_refs_check(r) + result
         result = prose_links_check(r) + result
         if r.get('context') == 'browser':
-            core += f"pub fn {method}(driver: &mut dyn oneiron_browser::BrowserDriver, {binding}: {r['input']}) -> Result<{r['output']}, oneiron_browser::BrowserError> {{ {result} }}\n"
+            core += f"{core_cfg(r)}pub fn {method}(driver: &mut dyn oneiron_browser::BrowserDriver, {binding}: {r['input']}) -> Result<{r['output']}, oneiron_browser::BrowserError> {{ {result} }}\n"
         elif r.get('context') == 'board':
-            core += f"pub fn {method}<S: crate::board_verb::LiveBoardSource>(context: &mut crate::board_verb::BoardVerbContext<'_, S>, {binding}: {r['input']}) -> Result<{r['output']}, crate::board_verb::BoardVerbError> {{ {result} }}\n"
+            core += f"{core_cfg(r)}pub fn {method}<S: crate::board_verb::LiveBoardSource>(context: &mut crate::board_verb::BoardVerbContext<'_, S>, {binding}: {r['input']}) -> Result<{r['output']}, crate::board_verb::BoardVerbError> {{ {result} }}\n"
         else:
-            core += f"pub fn {method}(memory: &Memory<'_>, {binding}: {r['input']}) -> MemoryResult<{r['output']}> {{ {checks} {result} }}\n"
+            core += f"{core_cfg(r)}pub fn {method}(memory: &Memory<'_>, {binding}: {r['input']}) -> MemoryResult<{r['output']}> {{ {checks} {result} }}\n"
     # FIX 1210: the record-ref check a row's engine fn runs before its call,
     # alone, for a door that refuses a ref its caller cannot read before that
     # fn runs: the refusal is receipted as the fn's would be, and no call runs.
@@ -1956,6 +2031,7 @@ def outputs():
         'crates/oneiron/src/verbs/generated/verb_catalog.rs':catalog,
         'crates/oneiron-server/src/api/facade/generated/agent_verbs.rs':server,
         'crates/oneiron-server/src/api/facade/generated/dispatch.rs':dispatch,
+        'crates/oneiron-server/src/api/facade/generated/host_door_rows.rs':host_door_rows(facade_rows),
         'crates/oneiron-remote/src/generated/agent_verbs.rs':remote,
         'crates/oneiron-napi/src/facade/client/generated/agent_verbs.rs':napi,
         # FIX 8907: the MCP dispatch is a whole-file child of tasks_response.

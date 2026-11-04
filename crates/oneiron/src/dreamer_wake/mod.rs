@@ -37,7 +37,7 @@ pub(crate) use self::arc_backstop::arc_policy_in_txn;
 pub use self::deadline::*;
 pub use self::driver::*;
 pub(crate) use self::driver::{
-    check_host_wake_rewrite, llm_waits_on_owner_act, waits_on_owner_act,
+    check_host_wake_rewrite, executor_error_ends_pass, llm_waits_on_owner_act, waits_on_owner_act,
 };
 pub use self::grain::*;
 pub use self::legibility::*;
@@ -62,6 +62,11 @@ pub use self::program::{
 pub use self::projector::ProjectorPolicy;
 pub(crate) use self::projector::apply_in_txn as apply_projection_in_txn;
 pub(crate) use self::projector::held_round_members_away_in_txn;
+pub(crate) use self::projector::round_id as projection_round_id;
+pub(crate) use self::projector::{
+    carrier_round_live_in_txn, note_assignment_in_txn, reading_current_in_txn, reading_of_text,
+    take_chunk_words_in_txn, take_reading_in_txn, take_returned_in_txn, words_taken_in_txn,
+};
 pub use self::recipe::*;
 pub use self::recipes::WakeRecipePolicy;
 pub use self::scheduling::*;
@@ -77,6 +82,7 @@ pub use self::sieve::{
 pub mod sieve_doors;
 pub use self::sieve::evidence as sieve_evidence;
 pub use self::types::*;
+pub(crate) use self::types::{executor_panic_error, is_executor_panic_error};
 
 /// The erase hook, in the erasing transaction before the graph is torn down.
 /// The shared physical tear calls it for every delete door (facade, batch,
@@ -220,3 +226,7 @@ use rmpv::Value;
 
 #[cfg(test)]
 pub(crate) use tests::block_on_ready;
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::follower::dreamer_follower_result_accepts_masked;

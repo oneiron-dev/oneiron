@@ -263,7 +263,7 @@ impl LocalCustody<'_> {
             return Ok((item, self.get_or_create(&subject.at(0))?));
         }
         let mut key_ref = [0u8; 32];
-        crate::world_keys::os_fill(&mut key_ref)?;
+        crate::key_material::os_fill(&mut key_ref)?;
         let item = ErasableItem {
             purpose,
             parent: *parent,

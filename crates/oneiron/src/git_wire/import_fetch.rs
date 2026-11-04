@@ -24,8 +24,8 @@ use super::execution_context::GitCommandSpec;
 use super::failure::{classify_failure, invalid};
 use super::process::{GitWireProcessOutput, spawn_git};
 use super::{GitOid, GitRefName, GitWire, GitWireOperation, GitWireRepo};
-use crate::codebase::RepoRef;
 use crate::error::Result;
+use crate::store::code_snapshot::RepoRef;
 
 mod profile;
 pub(super) use profile::ImportProcessProfile;

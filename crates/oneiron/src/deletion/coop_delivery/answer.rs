@@ -17,9 +17,9 @@ use super::{
     INCOMING, IncomingCooperativeDeletion, MAX_REASON_CODE_LEN, hex, invalid,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::deletion::SafeDeleteReason;
 use crate::deletion::{LegalHold, LegalHoldKind, LegalHoldTarget};
 use crate::edge::EdgeActorClass;
-use crate::memory::SafeDeleteReason;
 use crate::store::legal_hold::{self as hold_store, HoldActor};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -369,7 +369,7 @@ fn hold_for_ask(
         .map(|world| EntityId::from_hex(world).ok())
         .collect();
     let (covered, excluded) = match worlds {
-        Some(worlds) => crate::federation::courtesy_scope::split_recipient_copies_in_txn(
+        Some(worlds) => vault.store.record_hooks.split_recipient_copies_in_txn(
             vault,
             txn,
             pact_id,

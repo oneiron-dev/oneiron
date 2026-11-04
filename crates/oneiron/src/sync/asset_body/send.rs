@@ -13,8 +13,8 @@ use super::stored_body_is;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead as _;
-use crate::result_body::ResultBodyPin;
 use crate::store::asset_file_in_txn;
+use crate::store::result_body_pins::ResultBodyPin;
 use crate::sync::loro_support::{TombstoneIndex, map_get_bytes};
 use crate::sync::transport::{
     AssetBodyData, AssetBodyEnd, AssetBodyWant, asset_body_frame_bytes, encode_asset_body_data,
@@ -34,6 +34,7 @@ enum Source {
 /// One body this side sends.
 pub(super) struct Sending {
     attempt: [u8; 16],
+    window: WindowKey,
     body: AssetBodyRef,
     source: Source,
     sent: u64,
@@ -111,6 +112,7 @@ impl Sending {
             };
         Ok(Some(Self {
             attempt: want.attempt,
+            window,
             body,
             source,
             sent: 0,
@@ -144,6 +146,9 @@ impl Sending {
             frames: Vec::new(),
             ended: false,
         };
+        if !self.still_bound(peer) {
+            return self.end(sent, false);
+        }
         for _ in 0..frames.max(1) {
             if self.sent == self.body.len {
                 let complete = *self.hasher.finalize().as_bytes() == self.body.body_blake3;
@@ -170,6 +175,18 @@ impl Sending {
             self.sent += take as u64;
         }
         Ok(sent)
+    }
+
+    /// Whether the window this socket now moves bodies for still binds
+    /// this send's exact reference and has not tombstoned its owner.
+    fn still_bound(&self, peer: &AssetBodyPeer<'_>) -> bool {
+        let Some(doc) = (peer.window)(&self.window) else {
+            return false;
+        };
+        !TombstoneIndex::build(&doc.get_map("tombstones")).contains(&self.body.id)
+            && map_get_bytes(&doc.get_map("entities"), &self.body.id.to_hex()).is_some_and(
+                |carrier| bound_in(&doc, &self.body.id, &carrier).as_ref() == Some(&self.body),
+            )
     }
 
     fn end(

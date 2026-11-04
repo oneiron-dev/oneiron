@@ -20,11 +20,14 @@ use super::super::container::{Stop, holds_spans, is_sealed, walk_members};
 use super::{REASON_KNOWN_VALUE, offset};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::secret_custody::{
-    KeptValues, KeyPlaces, KeySpan, KnownValues, MASKED_FILE_BAND, MaskedFile, MemberStep,
-    masked_file_in_txn, put_masked_file_in_txn,
-};
+use crate::file_secret_marks::KeyPlaces;
+use crate::file_secret_marks::KeySpan;
+use crate::file_secret_marks::MemberStep;
+use crate::secret_custody::KeptValues;
 use crate::store::Store;
+use crate::store::file_key_masks::{MASKED_FILE_BAND, MaskedFile};
+use crate::store::file_key_masks::{masked_file_in_txn, put_masked_file_in_txn};
+use crate::store::known_value_index::KnownValues;
 
 /// One known value a file's mark does not cover yet: the member that holds
 /// it (none for the file's own bytes), its span there, and its record.
@@ -45,7 +48,7 @@ pub(super) fn unmarked_known(
     keep: impl Fn(&[u8]) -> bool,
     prior: &KeyPlaces,
 ) -> Result<Vec<KnownMark>> {
-    if is_sealed(bytes) {
+    if is_sealed(bytes, None) {
         return Ok(Vec::new());
     }
     let mut found = Vec::new();
@@ -57,11 +60,9 @@ pub(super) fn unmarked_known(
             .iter()
             .find(|(at, _)| at.as_slice() == path)
             .map_or(&[][..], |(_, spans)| spans.as_slice());
-        for hit in known.spans(leaf) {
+        for hit in known.spans_except(leaf, &keep) {
             let (start, end) = (offset(hit.span.start)?, offset(hit.span.end)?);
-            if held.iter().any(|&(from, to)| from < end && start < to)
-                || leaf.get(hit.span.clone()).is_none_or(&keep)
-            {
+            if held.iter().any(|&(from, to)| from < end && start < to) {
                 continue;
             }
             found.push(KnownMark {
@@ -76,7 +77,7 @@ pub(super) fn unmarked_known(
     let mut visit = |path: &[MemberStep], member: &[u8]| -> std::result::Result<(), Stop> {
         read_leaf(path, member).map_err(Stop::Fail)
     };
-    match walk_members(bytes, &mut visit) {
+    match walk_members(bytes, &mut visit, None) {
         Ok(()) | Err(Stop::Refuse(_)) => Ok(found),
         Err(Stop::Fail(error)) => Err(error),
     }
@@ -130,7 +131,9 @@ pub(crate) fn remark_known_file_in_txn(
         return Ok(false);
     };
     put_masked_file_in_txn(store, wtxn, &hash, &mark)?;
-    crate::federation::record_scope::restrict_stamp_in_txn(store, wtxn, *record, MASKED_FILE_BAND)?;
+    store
+        .scope_stamps
+        .restrict_stamp_in_txn(store, wtxn, *record, MASKED_FILE_BAND)?;
     Ok(true)
 }
 

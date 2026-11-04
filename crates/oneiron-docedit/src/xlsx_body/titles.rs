@@ -98,7 +98,12 @@ fn part_titles(bytes: &[u8], tree: &XmlTree, moves: &TitleMoves<'_>) -> Option<V
         .map(|(_, node)| node)
         .filter(|node| node.namespace == VT)
         .collect();
-    if old.is_empty() || groups.iter().map(|&(_, n)| n).sum::<usize>() != titles.len() {
+    if old.is_empty()
+        || groups
+            .iter()
+            .try_fold(0usize, |sum, &(_, n)| sum.checked_add(n))
+            != Some(titles.len())
+    {
         return None;
     }
     let mut found = None;

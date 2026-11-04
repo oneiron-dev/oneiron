@@ -2,7 +2,7 @@
 
 mod answer_actor;
 pub use answer_actor::AnswerActor;
-pub(crate) use answer_actor::{erase_ask_actor_in_txn, erase_rule_actor_in_txn};
+pub(crate) use answer_actor::erase_ask_actor_in_txn;
 mod asks;
 pub(crate) use asks::WORLD_PRIVACY_ASK_QUEUE;
 pub use asks::{AskAnswer, AskGrantDraft, AskPrior, DecisionAsk, DecisionAsks};
@@ -15,7 +15,7 @@ pub use generated::{
 };
 mod held;
 pub use held::HeldLadder;
-pub use held::{cut_text, fit_reserve_state, fit_state};
+pub use held::{cut_text, fit_reserve_state, fit_state, fit_state_with_budget};
 mod ladder;
 mod local;
 mod locate;

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::receipt::hex_lower;
+use crate::receipt::{ReceiptKind, hex_lower};
 use crate::runtime_hooks::block::HookBlock;
 use crate::runtime_hooks::lineage::LineageLink;
 use crate::runtime_hooks::outcome::{BlockRequest, HookOutcome};
@@ -38,6 +38,22 @@ use run::RunRecord;
 
 /// Receipts the input's tail carries.
 const RECEIPT_TAIL: usize = 8;
+/// The tail's kinds: the full receipt family (FIX 1429).
+const RECEIPT_TAIL_KINDS: [ReceiptKind; 13] = [
+    ReceiptKind::Outbound,
+    ReceiptKind::Gate,
+    ReceiptKind::IdentityLifecycle,
+    ReceiptKind::ScopedRead,
+    ReceiptKind::Share,
+    ReceiptKind::ArtifactSettle,
+    ReceiptKind::ProposalOutcome,
+    ReceiptKind::CommitmentLifecycle,
+    ReceiptKind::Extraction,
+    ReceiptKind::ServedForm,
+    ReceiptKind::Hook,
+    ReceiptKind::ReferenceRefusal,
+    ReceiptKind::TaskLifecycle,
+];
 /// The host verb a pre-hook may never skip: a skipped compaction overflows
 /// the next turn (ARCH-0080 §5).
 const COMPACT: &str = "host.compact";
@@ -191,6 +207,7 @@ pub(super) fn pre(
             carry: Some(carry),
             landing: None,
             session: None,
+            resumed_ask: None,
         }));
     }
     // A resumed call with no sandbox runs no hook after the asking one, as a
@@ -211,6 +228,7 @@ pub(super) fn pre(
     );
     chain.landing = landing.as_mut();
     chain.expired = expired;
+    let resumed_ask = token.clone();
     let ended = chain.pre(&hooks, start, args, check, token, resume)?;
     Ok(ended.map(|args| VerbHookPre {
         call,
@@ -218,6 +236,7 @@ pub(super) fn pre(
         carry: Some(carry),
         landing,
         session: None,
+        resumed_ask,
     }))
 }
 
@@ -274,6 +293,7 @@ fn through(call: VerbCall, args: Value) -> Result<Stopped<VerbHookPre>> {
         carry: None,
         landing: None,
         session: None,
+        resumed_ask: None,
     }))
 }
 
@@ -359,9 +379,10 @@ impl<'c> Chain<'c> {
         now: u64,
         turn: Option<Arc<TaskWorkTurn>>,
     ) -> Self {
+        let kinds = RECEIPT_TAIL_KINDS.map(|kind| kind.as_str().to_owned());
         let tail = vault
             .memory(call.actor, filter::edge_class(call.class))
-            .receipts(RECEIPT_TAIL)
+            .receipts_of_kinds(RECEIPT_TAIL, &kinds)
             .ok()
             .and_then(|receipts| serde_json::to_value(receipts).ok())
             .unwrap_or_else(|| Value::Array(Vec::new()));

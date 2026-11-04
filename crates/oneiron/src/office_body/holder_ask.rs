@@ -1,31 +1,47 @@
 //! Holder asks for office proposals (DEC-0006: "The rest wait together as one
 //! review bundle, offered to every holder whose power covers them"). When a
-//! settlement leaves members waiting, one ask TASK goes to every holder of
-//! the artifact's office edits, or to the vault's owners when no standing
-//! grant names one. A holder's definitive answer lands as that holder for
+//! settlement leaves members waiting, one ask TASK per member artifact goes
+//! to every holder of that artifact's office edits, or to the vault's owners
+//! when no standing grant names one. A holder's definitive answer lands as
+//! that holder for
 //! the ask's recorded forks; a hold, an unknown or silence lands nothing
 //! (ARCH-0040: "Only a ledger record from a holder surface satisfies
 //! approval").
+//!
+//! Live DOCX/XLSX edits without a grant ask the vault's owners instead
+//! (FIX 596): a definitive owner ACCEPT mints the standing
+//! `entity.office.edit` grant for the editor on the artifact in the ask's
+//! settling transaction; the editor's retry carries the ops and lands
+//! through the normal grant check. Nothing auto-applies.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
+use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::side_table::{self, Named, SideTable};
 use crate::task_verb::{
     AskAuthorityScope, ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason,
     TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
-    TaskAskSpec, TaskAskTarget,
+    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
 };
 use crate::write_envelope::WriteActor;
 
 use super::consent::{PROPOSALS, let_go_in_txn, office_scope, settle_in_txn};
+
+mod live_edit;
 use super::support::{loro_kind, open_fork};
 use super::{MemberVerdict, ProposalAsk, ProposalSettleRequest, ReviewedFork, SettleVerdict};
+pub(super) use live_edit::LIVE_EDIT_GROUPS;
+pub(crate) use live_edit::{
+    LiveEditAskOutcome, guard_live_edit_word, is_live_edit_ask, may_cut_live_edit,
+    resolve_live_edit_holder_ask_in_txn,
+};
 
 /// The intent prefix of an office proposal's holder ask; with the proposal
 /// and the waiting set's revision it keys one ask, so a repeat replays it.
@@ -35,41 +51,58 @@ const REVISION_DOMAIN: &[u8] = b"oneiron.office.proposal_ask.v1";
 /// forks, reject discards them, each as the answering holder.
 const ACCEPT: &str = "accept";
 const REJECT: &str = "reject";
-
 impl Memory<'_> {
-    /// Ask the holders of `artifact`'s office edits about the members of
-    /// `proposal` that wait, once per waiting set. An ask admission refuses
-    /// only the ask: the settlement stands, the refusal is kept on the
-    /// proposal (`ask_refused`), and its reason is returned for the settle
-    /// or merge result to say no holder was asked.
-    pub(super) fn ask_office_holders(
-        &self,
-        artifact: &EntityId,
-        proposal: &EntityId,
-    ) -> Option<String> {
+    /// Ask each waiting member artifact's holders once per waiting set. Ask
+    /// admission refuses only that artifact's ask: the settlement stands,
+    /// the refusal is kept on the proposal, and all refusal reasons are
+    /// returned for the settle or merge result to say no holder was asked.
+    pub(super) fn ask_office_holders(&self, proposal: &EntityId) -> Option<String> {
         if !self.has_task_work_turn() {
-            return self
-                .task_work_memory()
-                .ask_office_holders(artifact, proposal);
+            return self.task_work_memory().ask_office_holders(proposal);
         }
-        let error = self.raise_office_holder_ask(artifact, proposal).err()?;
-        tracing::warn!(
-            proposal = %proposal.to_hex(),
-            %error,
-            "office proposal holder ask refused"
-        );
-        let reason = error.to_string();
-        if let Err(error) = self
-            .vault()
-            .record_office_proposal_ask_refused(artifact, proposal, &reason)
-        {
+        let artifacts = match self.vault().office_body_proposal(proposal) {
+            Ok(Some(record)) => record
+                .members
+                .iter()
+                .filter(|member| member.verdict == MemberVerdict::Waiting)
+                .map(|member| member.artifact)
+                .collect::<BTreeSet<_>>(),
+            Ok(None) => return None,
+            Err(error) => {
+                tracing::warn!(
+                    proposal = %proposal.to_hex(),
+                    %error,
+                    "office proposal holder ask could not read its members"
+                );
+                return Some(error.to_string());
+            }
+        };
+        let mut reasons = Vec::new();
+        for artifact in artifacts {
+            let Err(error) = self.raise_office_holder_ask(&artifact, proposal) else {
+                continue;
+            };
             tracing::warn!(
                 proposal = %proposal.to_hex(),
+                artifact = %artifact.to_hex(),
                 %error,
-                "office proposal ask refusal not recorded"
+                "office proposal holder ask refused"
             );
+            let reason = error.to_string();
+            if let Err(error) = self
+                .vault()
+                .record_office_proposal_ask_refused(proposal, &artifact, &reason)
+            {
+                tracing::warn!(
+                    proposal = %proposal.to_hex(),
+                    artifact = %artifact.to_hex(),
+                    %error,
+                    "office proposal ask refusal not recorded"
+                );
+            }
+            reasons.push(reason);
         }
-        Some(reason)
+        (!reasons.is_empty()).then(|| reasons.join("; "))
     }
 
     fn raise_office_holder_ask(
@@ -78,13 +111,15 @@ impl Memory<'_> {
         proposal: &EntityId,
     ) -> MemoryResult<()> {
         let vault = self.vault();
-        let Some(record) = vault.office_body_proposal(artifact, proposal)? else {
+        let Some(record) = vault.office_body_proposal(proposal)? else {
             return Ok(());
         };
         let forks: Vec<EntityId> = record
             .members
             .iter()
-            .filter(|member| member.verdict == MemberVerdict::Waiting)
+            .filter(|member| {
+                member.artifact == *artifact && member.verdict == MemberVerdict::Waiting
+            })
             .map(|member| member.fork)
             .collect();
         if record.settlement.is_some() || forks.is_empty() {
@@ -115,7 +150,7 @@ impl Memory<'_> {
         let version = vault
             .blob_artifact_head(artifact)?
             .ok_or_else(|| MemoryError::not_found("the office artifact has no version"))?;
-        let revision = waiting_revision(proposal, &forks);
+        let revision = waiting_revision(proposal, artifact, &forks);
         let mut question = TaskAskQuestion::new(ConsultPayloadRef::Claim(version.claim_id));
         question.revision = revision;
         question.options = BTreeMap::from([
@@ -135,12 +170,16 @@ impl Memory<'_> {
             forks.len()
         ));
         let mut spec = TaskAskSpec::shorthand(Some(who), question, None, TaskAskDefault::Hold);
-        spec.intent_key = format!("{ASK_INTENT}/{}/{revision}", proposal.to_hex());
+        spec.intent_key = format!(
+            "{ASK_INTENT}/{}/{}/{revision}",
+            proposal.to_hex(),
+            artifact.to_hex()
+        );
         let receipt = self.tasks_ask(&spec)?;
         vault.record_office_proposal_ask(
-            artifact,
             proposal,
             ProposalAsk {
+                artifact: *artifact,
                 ask: receipt.handle.group_ref,
                 forks,
                 at: vault.now_recorded_at(),
@@ -152,10 +191,11 @@ impl Memory<'_> {
 
 /// One waiting set's revision: the same forks waiting in a proposal ask once;
 /// a fork joining or landing makes a new set, asked anew.
-fn waiting_revision(proposal: &EntityId, forks: &[EntityId]) -> u64 {
+fn waiting_revision(proposal: &EntityId, artifact: &EntityId, forks: &[EntityId]) -> u64 {
     let mut hasher = blake3::Hasher::new();
     hasher.update(REVISION_DOMAIN);
     hasher.update(proposal.as_bytes());
+    hasher.update(artifact.as_bytes());
     for fork in forks {
         hasher.update(fork.as_bytes());
     }
@@ -275,9 +315,9 @@ fn proposal_for_holder_ask(
     txn: &mut RwTxn<'_>,
     ask: &EntityId,
 ) -> Result<Option<(EntityId, EntityId, ProposalAsk)>> {
-    for ((artifact, proposal), record) in PROPOSALS.scan(&vault.store, txn)? {
+    for (proposal, record) in PROPOSALS.scan(&vault.store, txn)? {
         if let Some(found) = record.asks.iter().find(|held| held.ask == *ask) {
-            return Ok(Some((artifact, proposal, found.clone())));
+            return Ok(Some((found.artifact, proposal, found.clone())));
         }
     }
     Ok(None)
@@ -299,7 +339,7 @@ fn settle_holder_answer_in_txn(
     let Some((artifact, proposal, asked)) = proposal_for_holder_ask(vault, txn, ask)? else {
         return Ok(());
     };
-    let Some(record) = PROPOSALS.get(&vault.store, txn, &(artifact, proposal))? else {
+    let Some(record) = PROPOSALS.get(&vault.store, txn, &proposal)? else {
         return Ok(());
     };
     if record.settlement.is_some() {
@@ -309,10 +349,11 @@ fn settle_holder_answer_in_txn(
         .forks
         .iter()
         .filter(|fork| {
-            record
-                .members
-                .iter()
-                .any(|member| member.fork == **fork && member.verdict == MemberVerdict::Waiting)
+            record.members.iter().any(|member| {
+                member.artifact == artifact
+                    && member.fork == **fork
+                    && member.verdict == MemberVerdict::Waiting
+            })
         })
         .copied()
         .collect();
@@ -362,22 +403,23 @@ fn settle_holder_answer_in_txn(
             Err(error) => return Err(error),
         };
         pins.push(ReviewedFork {
+            artifact,
             fork: *fork,
+            head: head.frontier.clone(),
             fork_head: doc.oplog_frontiers().encode(),
         });
     }
     let request = ProposalSettleRequest {
         verdict,
         scope: None,
-        head: &head.frontier,
         reviewed: &pins,
         reason: None,
     };
     match settle_in_txn(
         vault,
         txn,
-        &artifact,
         &proposal,
+        None,
         &request,
         WriteActor::new(holder, class),
     ) {

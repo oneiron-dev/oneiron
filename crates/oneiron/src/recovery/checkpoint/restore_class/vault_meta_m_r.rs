@@ -32,6 +32,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MODEL_STEP_SUBMISSION, CONTENT),
     (&t::MODEL_STREAM, CONTENT),
     (&t::PORTS_NAMED_ENTITY_INDEX, CONTENT),
+    (&t::NATIVE_MAIL_MAILBOX_SKIPPED, CONTENT),
     (&t::NOTE_ERASE_AUTHORITY_FLOOR, CONTENT),
     (&t::NOTE_ERASE_PENDING, CONTENT),
     (&t::NOTE_ERASE_SOURCE, CONTENT),
@@ -56,11 +57,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::NOTE_TOMBSTONE_PROPOSAL, CONTENT),
     (&t::NOTE_TOMBSTONE_REVIEW, CONTENT),
     (&t::OFFICE_BODY_EXPORT, CONTENT),
+    (&t::OFFICE_BODY_EXPORT_AUTHOR, CONTENT),
     (&t::OFFICE_BODY_FORK, CONTENT),
     (&t::OFFICE_BODY_FORK_PROPOSAL, CONTENT),
     (&t::OFFICE_BODY_HEAD, CONTENT),
     (&t::OFFICE_BODY_ORACLE, CONTENT),
     (&t::OFFICE_BODY_PROPOSAL, CONTENT),
+    (&t::OFFICE_LIVE_EDIT_ASK_GROUP, CONTENT),
     (&t::OFF_RECORD_COPY_RECEIPT, CONTENT),
     (&t::OFF_RECORD_PROMOTE_RECEIPT, CONTENT),
     (&t::ORG_ADMIN_POLICY, ORG_ADMIN_GRANTS),
@@ -129,6 +132,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF, LIVE),
     (&t::SKILL_HUB_PACK_BUILTIN_SEED, CONTENT),
     (&t::SKILL_HUB_PACK_CANDIDATE, CONTENT),
+    // An ask stands with the binding claims it describes.
+    (&t::SKILL_HUB_PACK_HOOK_PROPOSAL, CONTENT),
     (&t::SKILL_HUB_PACK_INSTALL, CONTENT),
     (&t::SKILL_HUB_PACK_PREDICATE, CONTENT),
     (&t::SKILL_HUB_PACK_SETUP, LIVE),
@@ -188,6 +193,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // A cached stamp token follows the image's token claims (FIX 10930): the restore's
     // actor sweep drops an erased actor's again, and a writer checks its claim on each read.
     (&t::PROVENANCE_ACTOR_STAMP_TOKEN, CONTENT),
+    // A token-use row follows the image's documents (FIX 11965): it names a token a restored
+    // document's history names.
+    (&t::PROVENANCE_ACTOR_STAMP_TOKEN_USE, CONTENT),
     (&t::PROVENANCE_BIRTH_BY_TRIGGER, CONTENT),
     (&t::PROVENANCE_BODY, CONTENT),
     (&t::PROVENANCE_BODY_DIGEST, CONTENT),
@@ -222,10 +230,16 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::RECEIPT_FAMILY_INDEX_VERSION, CONTENT),
     // A restore never rolls back which kit is current, or revives a replaced one.
     (&t::RECOVERY_KIT, LIVE),
+    // A restore never revives an already-swept unlisted kit's name (FIX 12202).
+    (&t::RECOVERY_KIT_UNLISTED_SWEEP, LIVE),
     (&t::IDENTITY_REDIRECT, CONTENT),
     (&t::REPO_CONFLICT_RECONCILIATION_INDEX, CONTENT),
     (&t::REPO_DERIVED_INDEX_COPY, CONTENT),
     (&t::REPO_DERIVED_SOURCE_BLOB, CONTENT),
+    (&t::REPO_MANIFEST_BY_CODE, CONTENT),
+    // A restore never makes this machine a repo's refs writer again (FIX 6870).
+    (&t::REPO_MANIFEST_MINTED, LIVE),
+    (&t::REPO_MANIFEST, CONTENT),
     (&t::REPO_MUTATION_OPLOG, CONTENT),
     (&t::REPO_MUTATION_PROPOSAL, CONTENT),
     (&t::REPO_MUTATION_PROPOSAL_OP, CONTENT),

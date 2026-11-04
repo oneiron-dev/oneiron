@@ -30,30 +30,7 @@ const TICK: Duration = Duration::from_secs(15);
 /// The clock one hold's ask runs under.
 const ASK_BUDGET: Duration = Duration::from_secs(30);
 
-/// Starts the hold worker on the server's runtime.
-pub(crate) fn spawn(server: Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
-    let weak = Arc::downgrade(&server);
-    drop(server);
-    tokio::spawn(async move {
-        let mut every = tokio::time::interval(TICK);
-        every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        loop {
-            every.tick().await;
-            let Some(server) = weak.upgrade() else {
-                break;
-            };
-            match tokio::task::spawn_blocking(move || tick(&server)).await {
-                Ok(Err(error)) => {
-                    tracing::warn!(%error, "esign hold pass failed; it runs again next tick");
-                }
-                Err(error) => tracing::warn!(%error, "esign hold pass stopped"),
-                Ok(Ok(())) => {}
-            }
-        }
-    })
-}
-
-/// [`spawn`] for a host whose passes wait on an admission (managed serve's
+/// Starts the hold worker for a host whose passes wait on an admission (managed serve's
 /// reap freeze): a pass runs only while `admit` gives a guard, which it
 /// holds to the pass's end; a refused tick waits for the next.
 pub(crate) fn spawn_admitted(

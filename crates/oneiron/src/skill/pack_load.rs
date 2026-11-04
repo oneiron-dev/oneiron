@@ -34,15 +34,7 @@ enum LoadResident {
     Attempt,
 }
 
-/// The one runtime admission invariant used by the load door and hub installs.
-#[must_use]
-pub(crate) fn skill_loadable(record: &SkillRecord) -> bool {
-    record.lifecycle_status == SkillLifecycle::Active
-        && matches!(
-            record.approval_status,
-            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-        )
-}
+pub(crate) use crate::write_envelope::skill_record::skill_loadable;
 
 impl Vault {
     /// Bind one live attempt to its executing actor (PERSON, AGENT_DEF or
@@ -692,13 +684,24 @@ impl Vault {
             let body = self
                 .get_claim_in_txn(txn, claim)?
                 .ok_or(Error::EntityNotFound)?;
-            if body.predicate.starts_with("actor.")
-                && !matches!(&body.subject,
-                    crate::claim::ClaimSubject::Entity(actor) if Some(*actor) == resident)
-            {
-                return Err(Error::InvalidClaimBody(
-                    "actor self-model belongs to a different resident",
-                ));
+            if body.predicate.starts_with("actor.") {
+                let allowed = match resident {
+                    Some(resident) => {
+                        // A resident's shells merged into it read as its own
+                        // (FIX 9073): the redirect authority names them.
+                        crate::skill_reliability::redirect_equivalent_subjects_in_txn(
+                            self, &*txn, &resident,
+                        )?
+                    }
+                    None => Vec::new(),
+                };
+                if !matches!(&body.subject,
+                    crate::claim::ClaimSubject::Entity(actor) if allowed.contains(actor))
+                {
+                    return Err(Error::InvalidClaimBody(
+                        "actor self-model belongs to a different resident",
+                    ));
+                }
             }
             // A claim whose every cited TURN is erased has no live support,
             // however late it replicated (FIX 8643): it is not loaded.

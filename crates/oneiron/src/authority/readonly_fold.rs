@@ -13,12 +13,16 @@ use std::sync::Arc;
 
 mod adopted;
 mod arriving;
+mod held_rows;
+mod row_receipts;
 #[cfg(feature = "sync")]
 mod stored_records;
 
 pub(super) use adopted::adopted_history_request_in_txn;
 use adopted::fold_adopted_in_txn;
 pub(super) use arriving::{ArrivingFold, authority_view_with_rows_for_store_in_txn};
+use held_rows::HeldRows;
+use row_receipts::RowReceipts;
 #[cfg(feature = "sync")]
 pub(crate) use stored_records::folded_vault_id_of_records;
 
@@ -105,22 +109,73 @@ pub(crate) struct AuthorityCachedFold {
     continuation: Option<Arc<AuthorityContinuation>>,
 }
 
+/// A successful local-checkpoint coverage check, carried only in this cache.
+#[derive(Clone, Copy)]
+struct CheckpointCoverageProof {
+    /// The head at which every covered hash was held. `None` proves that no
+    /// checkpoint head existed then.
+    head: Option<[u8; 32]>,
+}
+
 /// What a later generation's fold resumes from (OF-469): the last committed
 /// fold's base, and the store id of each row it folded, so that fold reads
 /// only the stored rows past it. It lives in this cache alone and reopens
 /// empty: no row, checkpoint or format carries it.
 pub(crate) struct AuthorityContinuation {
     base: super::fold_resume::FoldBase,
-    ids: BTreeMap<crate::EntityId, AuthorityEntryHash>,
+    /// Persistent, so the next continuation shares it and adds only the
+    /// tail's (FIX 12308).
+    ids: im::OrdMap<crate::EntityId, AuthorityEntryHash>,
+    /// The highest store-order sequence this fold read (FIX 12369), where
+    /// the fold read the whole stored log under a complete store-order
+    /// index: its `ids` are then exactly the rows sequenced up to it, and
+    /// the next fold range-scans only the rows past it. None where the
+    /// index cannot vouch for that (an adopted image's fold, an incomplete
+    /// index): the next fold takes the type-index scan.
+    max_seq: Option<u64>,
+    /// The last successful checkpoint coverage check. An unchanged head and
+    /// a whole indexed baseline let the next fold reuse it instead of
+    /// decoding every covered hash again.
+    checkpoint_coverage: Option<CheckpointCoverageProof>,
 }
 
 impl AuthorityContinuation {
-    fn of(base: super::fold_resume::FoldBase) -> Option<Self> {
+    fn of(
+        base: super::fold_resume::FoldBase,
+        max_seq: Option<u64>,
+        checkpoint_coverage: CheckpointCoverageProof,
+    ) -> Option<Self> {
         let ids = base
             .hashes()
             .map(|hash| Some((authority_log_entity_id_from_hash(hash).ok()?, *hash)))
             .collect::<Option<_>>()?;
-        Some(Self { base, ids })
+        Some(Self {
+            base,
+            ids,
+            max_seq,
+            checkpoint_coverage: Some(checkpoint_coverage),
+        })
+    }
+
+    /// [`Self::of`] for `base`, resumed from `baseline` past `tail`: only
+    /// the tail's rows map anew (FIX 12282), into the baseline's shared map.
+    fn past<'a>(
+        baseline: &'a Self,
+        base: super::fold_resume::FoldBase,
+        tail: impl IntoIterator<Item = &'a AuthorityEntryHash>,
+        max_seq: Option<u64>,
+        checkpoint_coverage: CheckpointCoverageProof,
+    ) -> Option<Self> {
+        let mut ids = baseline.ids.clone();
+        for hash in tail {
+            ids.insert(authority_log_entity_id_from_hash(hash).ok()?, *hash);
+        }
+        Some(Self {
+            base,
+            ids,
+            max_seq,
+            checkpoint_coverage: Some(checkpoint_coverage),
+        })
     }
 }
 
@@ -497,20 +552,9 @@ fn fold_stored_tail_in_txn(
     {
         return Ok(fold);
     }
-    let mut held = BTreeSet::new();
+    // The baseline's rows are counted, not inserted (FIX 12331).
     let mut tail = Vec::new();
-    for id in authority_log_ids_in_txn(store, txn)? {
-        // The store id is the row's content hash, and a stored authority
-        // row's body never changes: the baseline already read this one.
-        if let Some(hash) = baseline.and_then(|baseline| baseline.ids.get(&id)) {
-            held.insert(*hash);
-            continue;
-        }
-        let entry = decode_authority_log_entry_body(&authority_log_body_in_txn(store, txn, &id)?)?;
-        let hash = authority_entry_hash(&entry)?;
-        held.insert(hash);
-        tail.push((hash, entry));
-    }
+    let mut held = HeldRows::scan_in_txn(store, txn, baseline, &mut tail)?;
     let mut unstored = Vec::new();
     for (hash, entry) in arriving {
         if held.insert(*hash) {
@@ -518,27 +562,38 @@ fn fold_stored_tail_in_txn(
             unstored.push(entry.clone());
         }
     }
-    // An arriving row is first seen now; no sidecar records it yet.
-    let first_seen_of = |hash: &AuthorityEntryHash, backfilled: bool| {
-        if arriving.contains_key(hash) {
-            Ok(key.now_secs)
-        } else {
-            readonly_first_seen_for(store, txn, hash, backfilled, key.now_secs)
-        }
+    let checkpoint_head = super::checkpoint::checkpoint_head_in_txn(store, txn)?;
+    // A previous fold proved every hash covered by this same head was held.
+    // Reuse that proof only when the indexed baseline is whole; any doubt
+    // reads the coverage set exactly as before.
+    let coverage_proven = baseline
+        .and_then(|baseline| baseline.checkpoint_coverage)
+        .is_some_and(|proof| proof.head == checkpoint_head)
+        && held.holds_baseline();
+    let checkpoint = if coverage_proven {
+        None
+    } else {
+        super::checkpoint::checkpoint_head_coverage_in_txn(store, txn)?
     };
-    let checkpoint = super::checkpoint::checkpoint_head_coverage_in_txn(store, txn)?;
-    let mut named = required.clone();
-    if let Some((_, covered)) = &checkpoint {
-        named.extend(covered.iter().copied());
-    }
-    if let Some(baseline) = baseline {
-        named.extend(baseline.ids.values().copied());
-    }
-    if !named.is_subset(&held) {
+    // Each row a fold names is held: the baseline's by its count, every
+    // other one by hash.
+    let named_held = held.holds_baseline()
+        && required
+            .iter()
+            .chain(checkpoint.iter().flat_map(|(_, covered)| covered))
+            .all(|hash| held.contains(hash));
+    if !named_held {
+        let mut named = required.clone();
+        if let Some((_, covered)) = &checkpoint {
+            named.extend(covered.iter().copied());
+        }
+        if let Some(baseline) = baseline {
+            named.extend(baseline.ids.values().copied());
+        }
         let baseline_parents = baseline
             .into_iter()
             .flat_map(|baseline| baseline.base.parents())
-            .filter(|(hash, _)| held.contains(*hash))
+            .filter(|(hash, _)| held.contains(hash))
             .flat_map(|(_, parents)| parents.iter().copied());
         let tail_parents = tail
             .iter()
@@ -549,7 +604,7 @@ fn fold_stored_tail_in_txn(
             vault_id: baseline
                 .and_then(|baseline| baseline.base.vault_id())
                 .or_else(|| tail.iter().find_map(|(_, entry)| entry.vault_id)),
-            checkpoint: checkpoint.map(|(head, _)| head),
+            checkpoint: checkpoint.map(|(head, _)| head).or(checkpoint_head),
             missing: named,
         }));
     }
@@ -569,39 +624,58 @@ fn fold_stored_tail_in_txn(
     if let Some(baseline) = baseline {
         tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, rows = tail.len(), "authority fold past the cached base");
         let tail: Vec<_> = tail.iter().map(|(hash, entry)| (*hash, entry)).collect();
-        let rows = baseline.base.rows_with(&tail);
-        let mut first_seen_at_secs = BTreeMap::new();
-        for row in &rows {
-            if let Some(hash) = row.hash {
-                let first_seen = first_seen_of(&hash, backfilled)?;
-                first_seen_at_secs.insert(hash, first_seen);
-            }
-        }
-        let observations =
-            super::sequence_observation::authority_local_observations_of_rows_in_txn(
-                store, txn, &rows,
-            )?;
+        // Only the tail's receipts and an unpinned base row's are read, and
+        // only those rows are visited (FIX 1854, FIX 12282).
+        let receipts = RowReceipts::past_base_in_txn(
+            store,
+            txn,
+            &baseline.base,
+            &tail,
+            arriving,
+            backfilled,
+            now_secs,
+        )?;
         if let Some((fold, base)) = super::fold_resume::fold_stored_tail(
             super::fold_resume::StoredTail {
                 tail: &tail,
-                first_seen_at_secs: &first_seen_at_secs,
+                first_seen_at_secs: &receipts.first_seen_at_secs,
                 now_secs,
                 peer_consent_roots: &peer_consent_roots,
-                observations: &observations,
+                observations: &receipts.observations,
+                pinned: &receipts.pinned,
                 posture,
                 pin: key.pin.as_ref(),
             },
             &baseline.base,
         ) {
-            let next_deadline_secs =
-                next_deadline(key, &fold, &base.projected_rows(), &first_seen_at_secs);
+            // The base's first-seen seconds are every row's, the carried too.
+            let next_deadline_secs = next_deadline(
+                &fold,
+                base.stale_roster_deadline(
+                    &fold,
+                    key.now_secs,
+                    key.policy.stale_roster_window_secs,
+                ),
+            );
             return Ok(AuthorityTailFold::Complete {
                 view: AuthorityView {
                     fold: Arc::new(fold),
                     generation: key.generation,
                 },
                 next_deadline_secs,
-                continuation: AuthorityContinuation::of(base),
+                continuation: AuthorityContinuation::past(
+                    baseline,
+                    base,
+                    tail.iter().map(|(hash, _)| hash),
+                    if baseline.max_seq.is_some() {
+                        super::store_order::complete_max_in_txn(store, txn)?
+                    } else {
+                        None
+                    },
+                    CheckpointCoverageProof {
+                        head: checkpoint_head,
+                    },
+                ),
             });
         }
     }
@@ -611,13 +685,16 @@ fn fold_stored_tail_in_txn(
         .map(|(_, body)| decode_authority_log_entry_body(&body))
         .collect::<Result<Vec<_>>>()?;
     entries.extend(unstored);
-    let mut first_seen_at_secs = BTreeMap::new();
+    let mut rows = Vec::with_capacity(entries.len());
     for entry in &entries {
         let hash = authority_entry_hash(entry)?;
-        let first_seen = first_seen_of(&hash, backfilled)?;
-        first_seen_at_secs.insert(hash, first_seen);
+        rows.push(super::fold_resume::RowMeta::of(Some(hash), entry));
     }
-    let observations = authority_local_observations_in_txn(store, txn, &entries)?;
+    let RowReceipts {
+        first_seen_at_secs,
+        observations,
+        pinned,
+    } = RowReceipts::read_in_txn(store, txn, &rows, arriving, backfilled, now_secs)?;
     let (fold, base) = super::fold_resume::fold_stored_log(
         super::fold_resume::StoredLog {
             entries: &entries,
@@ -630,38 +707,45 @@ fn fold_stored_tail_in_txn(
         },
         None,
     );
-    let next_deadline_secs = next_deadline(key, &fold, &entries, &first_seen_at_secs);
+    let next_deadline_secs = next_deadline(
+        &fold,
+        next_stale_roster_deadline(
+            &entries,
+            &fold,
+            &first_seen_at_secs,
+            key.now_secs,
+            key.policy.stale_roster_window_secs,
+        ),
+    );
+    let max_seq = super::store_order::complete_max_in_txn(store, txn)?;
     Ok(AuthorityTailFold::Complete {
         view: AuthorityView {
             fold: Arc::new(fold),
             generation: key.generation,
         },
         next_deadline_secs,
-        continuation: base.and_then(AuthorityContinuation::of),
+        continuation: base.map(|base| base.with_pinned(pinned)).and_then(|base| {
+            AuthorityContinuation::of(
+                base,
+                max_seq,
+                CheckpointCoverageProof {
+                    head: checkpoint_head,
+                },
+            )
+        }),
     })
 }
 
-/// The next second `fold` changes on its own. The fold's only
-/// clock-sensitive transition is stale-roster approval expiry, here and in
-/// the fold with no vouch that bounds this install's view. Slip TTL is
-/// checked by each caller against its own snapshot clock, not frozen into
-/// this authority view.
-fn next_deadline<E: std::borrow::Borrow<AuthorityLogEntry>>(
-    key: AuthorityCacheKey,
-    fold: &AuthorityFold,
-    rows: &[E],
-    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
-) -> Option<u64> {
-    next_stale_roster_deadline(
-        rows,
-        fold,
-        first_seen_at_secs,
-        key.now_secs,
-        key.policy.stale_roster_window_secs,
-    )
-    .into_iter()
-    .chain(fold.install.no_vouch_deadline)
-    .min()
+/// The next second `fold` changes on its own, with `stale_roster` the next
+/// stale-roster deadline of its rows. The fold's only clock-sensitive
+/// transition is stale-roster approval expiry, here and in the fold with no
+/// vouch that bounds this install's view. Slip TTL is checked by each caller
+/// against its own snapshot clock, not frozen into this authority view.
+fn next_deadline(fold: &AuthorityFold, stale_roster: Option<u64>) -> Option<u64> {
+    stale_roster
+        .into_iter()
+        .chain(fold.install.no_vouch_deadline)
+        .min()
 }
 
 /// First-seen seconds for ONE entry inside a readonly fold, reproducing the
@@ -693,15 +777,26 @@ fn readonly_first_seen_for(
     backfilled: bool,
     now_secs: u64,
 ) -> Result<u64> {
+    Ok(readonly_first_seen_receipt(store, txn, hash, backfilled)?.unwrap_or(now_secs))
+}
+
+/// [`readonly_first_seen_for`]'s sidecar seconds: None where the marker is
+/// absent and no sidecar holds the row, so the answer is the clock's.
+fn readonly_first_seen_receipt(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    hash: &AuthorityEntryHash,
+    backfilled: bool,
+) -> Result<Option<u64>> {
     let corrupt = || Error::CorruptedIndex(AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT);
     // A decode failure (present but undecodable) and an absent row both surface as `Err`/`Ok`
     // here without distinguishing the LMDB-level case from the shape case, unlike the
     // pre-migration hand decode; in practice the only way to reach a non-8-byte row is exactly
     // the corruption this maps to.
     match AUTHORITY_FIRST_SEEN.get(store, txn, &authority_first_seen_sidecar_key(hash)) {
-        Ok(Some(secs)) => Ok(secs),
+        Ok(Some(secs)) => Ok(Some(secs)),
         Ok(None) if backfilled => Err(corrupt()),
-        Ok(None) => Ok(now_secs),
+        Ok(None) => Ok(None),
         Err(_) => Err(corrupt()),
     }
 }

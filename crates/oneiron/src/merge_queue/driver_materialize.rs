@@ -17,13 +17,13 @@ use super::{
     QueueStageOverlap,
 };
 use crate::EntityId;
-use crate::codebase::RepoRef;
-use crate::contract_oracle::invalid;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{
     GitOid, GitWire, lock_repository, redact_bridged_failure, run_bridged_git_argv,
 };
-use crate::repo_mutation::proposal::RepoProposalOperation;
+use crate::store::code_snapshot::RepoRef;
+use crate::store::contract_oracle::invalid;
+use crate::store::repo_proposal_record::RepoProposalOperation;
 
 /// What the overlap preflight found for one batch.
 pub(super) enum QueueOverlapFinding {

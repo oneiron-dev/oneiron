@@ -70,6 +70,9 @@ side_tables! {
     /// Device-only in-progress marker between a received BulkTransfer chunk and its BulkTransferDone.
     /// Key: yyyy-mm.
     SYNC_BULK_TRANSFER_MARKER: SyncState b"bulk:w:" Raw;
+    /// Stored-review keys already reported unreadable (FIX 5251): each
+    /// unreadable review is named once. Presence-only, empty value. Key: bytes.
+    CRITIC_UNREADABLE_REPORTED: SyncState b"critic:unreadable_reported:v1:" Raw;
     /// An entity document's snapshot (document family). Key: hex32.
     DOCUMENT_SNAPSHOT: SyncState b"d:e:" Raw;
     /// ARCH-0023b document family: the root document's full CRDT snapshot (server-write-only
@@ -188,8 +191,9 @@ side_tables! {
     /// Durable provenance row (source/tier/thread/message/surface-event) for one ingested LinkedIn
     /// message. Key: hex16 (same hash as the seen marker).
     LINKEDIN_INBOX_SYNC_PROVENANCE: SyncState b"linkedin:inbox_sync:provenance:v1:" LegacyJson;
-    /// Claim-then-finalize dedupe marker for one polled LinkedIn inbox message. Key: hex16 (truncated
-    /// blake3 of receiving address/session/thread/message).
+    /// Claim-then-finalize dedupe marker for one polled LinkedIn inbox message, or a seat's poll
+    /// cursor. Message key: hex16 (truncated blake3 of receiving address/session/thread/message).
+    /// Cursor key: `cursor:` + hex16 (truncated blake3 of receiving address/session).
     LINKEDIN_INBOX_SYNC_SEEN: SyncState b"linkedin:inbox_sync:seen:v1:" Raw;
     /// Durable pending-mirror marker a local write leaves in its own transaction (FIX 7957, FIX
     /// 9599): the window owes the row's carrier, or the removal of the edge's key, until that

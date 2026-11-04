@@ -5,7 +5,7 @@
 
 use crate::dreamer_runner::DreamerParkCause;
 use crate::error::ErrorKind;
-use crate::llm::{FatalLlmError, LlmError, RetryableLlmError, SpentKind};
+use oneiron_model::llm::{FatalLlmError, LlmError, RetryableLlmError, SpentKind};
 
 /// Whether an executor error of `kind` waits on an owner act: an authority,
 /// grant, consent, approval or hold that nothing but the owner (or the
@@ -48,14 +48,22 @@ pub(crate) const fn waits_on_owner_act(kind: ErrorKind) -> bool {
     )
 }
 
+/// Whether an executor error of `kind` ends the pass where it
+/// stands: the same owner-act rule, named for the executor's
+/// partition window, whose finishes must stop at such an error
+/// instead of committing later slots past it (FIX 12487 round 2).
+pub(crate) const fn executor_error_ends_pass(kind: ErrorKind) -> bool {
+    waits_on_owner_act(kind)
+}
+
 /// Whether a failed model call waits on an owner act (FIX 7382): a budget
 /// denial, spent prepaid credit (the owner tops up), a world kept on the
 /// device (world privacy), a world order that names none of its routes
 /// (world privacy, FIX 11768), a failed login, a capability the routed model
 /// lacks (the owner routes a capable one), or an answer an erase took
 /// (terminal by its own contract). A rate limit, a spent usage window, a
-/// provider outage and a refused or unreadable reply do not. Exhaustive, so
-/// a new variant is classified here.
+/// provider outage, a lost media job (FIX 11464) and a refused or unreadable
+/// reply do not. Exhaustive, so a new variant is classified here.
 pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
     match error {
         LlmError::BudgetDenied(_) => true,
@@ -74,7 +82,8 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
             | RetryableLlmError::ServerError
             | RetryableLlmError::Timeout
             | RetryableLlmError::StreamCut
-            | RetryableLlmError::TransportFault(_) => false,
+            | RetryableLlmError::TransportFault(_)
+            | RetryableLlmError::DeviceAdmissionStopped => false,
         },
         LlmError::Fatal(fatal) => match fatal {
             FatalLlmError::Auth | FatalLlmError::Unsupported(_) | FatalLlmError::ResponseErased => {
@@ -84,6 +93,7 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
             | FatalLlmError::InvalidRequestDetail { .. }
             | FatalLlmError::ContentFiltered
             | FatalLlmError::EmptyResponse
+            | FatalLlmError::JobLost
             | FatalLlmError::LabelRead(_) => false,
         },
     }

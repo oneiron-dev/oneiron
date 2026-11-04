@@ -279,7 +279,7 @@ impl Vault {
             .map_err(|_| Error::InvariantViolation("gate decision retention manifest encode"))?;
         let now = self.store.clock.now_recorded_at();
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
-        let expected = crate::gate::GateDecisionRetentionPolicy {
+        let expected = crate::store::GateDecisionRetentionPolicy {
             horizon_secs: horizon.unwrap_or(current.horizon_secs),
             max_sweep_rows: budget.unwrap_or(current.max_sweep_rows),
             ..current
@@ -489,9 +489,11 @@ impl Vault {
         operational_refs.extend(crate::artifact_hosting::artifact_publish_gate_refs_in_txn(
             self, &txn,
         )?);
-        operational_refs.extend(crate::workspace_roster::project_mint_gate_refs_in_txn(
-            self, &txn,
-        )?);
+        operational_refs.extend(
+            self.store
+                .project_writes
+                .project_mint_gate_refs_in_txn(self, &txn)?,
+        );
         operational_refs.extend(crate::memory::claim_conflict_ruling_gate_refs_in_txn(
             &self.store,
             &txn,

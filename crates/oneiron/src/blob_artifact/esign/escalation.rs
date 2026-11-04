@@ -16,14 +16,15 @@
 //! document's sender to void or send again. A recipient whose signature the
 //! law keeps with a natural person is never automated, so it never reaches
 //! this path.
-use super::ceremony::sign;
+use super::ceremony::{sign, signed_event};
 use super::ledger::state_in;
 use super::model::*;
-use crate::llm::decision::catalogue;
-use crate::llm::decision::{
-    AnswerActor, AnswerContract, AskRole, DecisionAsk, DecisionQuestion, RoleRank,
-};
+use crate::llm::decision::DecisionAsk;
+use crate::model_decision::AnswerActor;
+use crate::model_decision::catalogue;
+use crate::model_decision::{AnswerContract, DecisionQuestion, RoleRank};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::decision_ask_role::AskRole;
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -39,8 +40,8 @@ pub const HOLD_DECLINE: &str = "decline";
 /// before it climbs to the next role up its chain (CALLS "OF-415 held
 /// signing climb"). At the vault owners it waits on: no unanswered ask
 /// signs or lapses.
-pub const ESIGN_ASK_CLIMB_HOURS: crate::learning_setting::SettingSpec =
-    crate::learning_setting::SettingSpec {
+pub const ESIGN_ASK_CLIMB_HOURS: crate::store::setting_seed::SettingSpec =
+    crate::store::setting_seed::SettingSpec {
         key: "esign.ask.climb_hours",
         min: 1.0,
         max: 720.0,
@@ -108,6 +109,8 @@ pub struct HeldSigning {
     pub next: Option<String>,
     /// Who called: the recipient's actor, IP and user agent at the hold.
     pub actor: EsignAuditActor,
+    /// Authentication, disclosure and consent carried by the accepted act.
+    pub evidence: EsignSigningEvidence,
     pub held_at: u64,
     /// Complete calls this hold covers, the first included.
     pub calls: u64,
@@ -203,6 +206,7 @@ pub(super) fn hold(
     title: &str,
     recipient: &EsignRecipient,
     next: &Option<String>,
+    evidence: EsignSigningEvidence,
     actor: &EsignAuditActor,
     now: u64,
 ) -> Result<HeldSigning> {
@@ -221,6 +225,7 @@ pub(super) fn hold(
             principal_ref: recipient.principal_ref.clone(),
             next: next.clone(),
             actor: actor.clone(),
+            evidence,
             held_at: now,
             calls: 1,
             state: HeldSigningState::Held,
@@ -384,10 +389,12 @@ impl Vault {
                         .ok_or_else(|| invalid("the hold's allowing answerer was erased"))?;
                     let id = EntityId::from_hex(document)?;
                     let state = state_in(self, txn, id)?;
-                    let signed = EsignEvent::Signed {
-                        recipient: recipient.to_owned(),
-                        next: held.next.clone(),
+                    let evidence = EsignSigningEvidence {
+                        intent: EsignSigningIntent::HeldAllow,
+                        ..held.evidence.clone()
                     };
+                    let signed =
+                        signed_event(&state.document, recipient, &held.next, evidence.clone());
                     let lands = state.status == DocumentStatus::Pending
                         && state.rejection.is_none()
                         && now < state.document.expires_at
@@ -402,7 +409,9 @@ impl Vault {
                             ),
                             ..held.actor.clone()
                         };
-                        sign(self, txn, id, &state, recipient, &held.next, actor, now)?;
+                        sign(
+                            self, txn, id, &state, recipient, &held.next, evidence, actor, now,
+                        )?;
                         HeldSigningState::Allowed { at: now }
                     } else {
                         HeldSigningState::Superseded { at: now }
@@ -413,4 +422,42 @@ impl Vault {
             Ok(held)
         })
     }
+}
+
+/// An erased actor's held-ask waits forget it (FIX 5223): a wait timed at
+/// `AskRole::Responsible` naming the actor names no one
+/// ([`AnswerActor::Erased`]), keeping its project, rank and `since`, so the
+/// climb still walks that project's boards. A hold asked at its first role
+/// (`wait: None`), at another role, or already settled is left as it is; the
+/// signed audit trail is never rewritten, and an erased allower still lands
+/// nothing (the [`HeldSigningAnswer::Allow`] refusal). A row that does not
+/// decode names no one and stays.
+///
+/// # Errors
+/// A storage failure.
+pub(crate) fn erase_held_signing_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    for key in HELD.scan_keys(&vault.store, wtxn, &[])? {
+        let Some(mut held) = HELD.get_lenient(&vault.store, wtxn, &key)? else {
+            continue;
+        };
+        let HeldSigningState::Asked {
+            wait: Some(wait), ..
+        } = &mut held.state
+        else {
+            continue;
+        };
+        let AskRole::Responsible { actor: named, .. } = &mut wait.role else {
+            continue;
+        };
+        if *named != AnswerActor::Actor(*actor) {
+            continue;
+        }
+        *named = AnswerActor::Erased;
+        HELD.put(&vault.store, wtxn, &key, &held)?;
+    }
+    Ok(())
 }

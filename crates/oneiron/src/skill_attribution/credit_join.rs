@@ -30,8 +30,11 @@ use super::contribution::{followed_in_txn, with_recorded_checks_in_txn};
 use super::contribution_targets::CheckedEdge;
 use super::late_credit::{CREDIT_RECEIPT, LateCreditReceipt, LateCreditShare, shares_in_txn};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::claim::learning_evidence::LearningEvidence;
+use crate::claim::learning_evidence::Observation;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::entity_id::EntityId;
-use crate::learning::{LearningCell, LearningEvidence, LearningPredicate, Observation};
+use crate::learning::LearningCell;
 use crate::receipt::{PackAttributionFields, PackLearningContext};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -145,6 +148,29 @@ pub(super) fn latest_direct_in_txn(
             || credit.direct_subjects.clone(),
             |(_, last)| last.direct_subjects,
         ))
+}
+
+/// Every subject the credit stands with now: the latest adjustment's direct
+/// subjects and shares, else the sealed receipt's own (REVIEW-4322 P1). A
+/// subject a later adjustment adds still governs the person rows that fold
+/// this credit.
+pub(crate) fn effective_credit_subjects_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+) -> Result<Vec<EntityId>> {
+    let (direct, shares) = match chain_in_txn(store, txn, &credit.receipt_id)?.pop() {
+        Some((_, last)) => (last.direct_subjects, last.shares),
+        None => (credit.direct_subjects.clone(), credit.shares.clone()),
+    };
+    let mut subjects: Vec<EntityId> = direct
+        .into_iter()
+        .flatten()
+        .chain(shares.into_iter().filter_map(|share| share.subject))
+        .collect();
+    subjects.sort();
+    subjects.dedup();
+    Ok(subjects)
 }
 
 /// The decay `credit` was projected under: the frozen one, or, for a

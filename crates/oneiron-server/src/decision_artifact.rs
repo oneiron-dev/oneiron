@@ -11,7 +11,8 @@ use oneiron::edit_roundtrip::{UnitCall, UnitDecider};
 use oneiron::edit_settle::ReaskShape;
 use oneiron::llm::decision::questions::{QuestionCriteria, QuestionDefinition};
 use oneiron::llm::decision::{
-    DecisionDial, DecisionImage, DecisionQuestion, DecisionRung, LocatedDecision, TypedDecision,
+    DecisionAudio, DecisionDial, DecisionImage, DecisionLadder, DecisionQuestion, DecisionRung,
+    LocatedDecision, TypedDecision,
 };
 use oneiron::{EdgeActorClass, HostingPrivacyPosture, Result};
 use serde_json::Value;
@@ -27,6 +28,8 @@ pub(crate) struct HostUnitDecider<'s> {
     class: EdgeActorClass,
     /// The run label a vision seat's read is recorded under.
     label: &'static str,
+    /// The live caller's bound session, absent on standing work.
+    session: Option<String>,
     /// A standing question's criteria, beside each unit's state.
     criteria: QuestionCriteria,
     /// A standing question's posture where it is stricter than the vault's.
@@ -34,11 +37,17 @@ pub(crate) struct HostUnitDecider<'s> {
 }
 
 impl<'s> HostUnitDecider<'s> {
-    pub(crate) fn new(server: &'s SyncServer, class: EdgeActorClass, label: &'static str) -> Self {
+    pub(crate) fn new(
+        server: &'s SyncServer,
+        class: EdgeActorClass,
+        label: &'static str,
+        session_ref: Option<&str>,
+    ) -> Self {
         Self {
             server,
             class,
             label,
+            session: session_ref.map(str::to_owned),
             criteria: QuestionCriteria::default(),
             posture: None,
         }
@@ -84,9 +93,44 @@ impl UnitDecider for HostUnitDecider<'_> {
             .then_some(DecisionRung::Local)
     }
 
+    /// A rung this decider climbs hears audio: the Big rung over a model
+    /// its binding says hears it (FIX 11481c).
+    fn reads_audio(&self) -> bool {
+        self.postured(self.server.decision_host().ladder().ladder())
+            .first_media_reader(DecisionRung::Rule, DecisionRung::Big, false, true)
+            .is_some()
+    }
+
+    /// The rung a call carrying `images` and `audio` starts at: the first
+    /// in the dial reading every medium it carries (FIX 11481c). A call
+    /// with no clips starts as [`Self::first_taking`] starts it.
+    fn first_taking_media(
+        &self,
+        question: &DecisionQuestion,
+        dial: DecisionDial,
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+    ) -> Option<DecisionRung> {
+        // FIX 11481c scope: a located call stays images-only, as
+        // `run_located` hears no audio, so clips on one find no rung
+        // here and are listed with no reader.
+        if question.contract.locates() && !audio.is_empty() {
+            return None;
+        }
+        if audio.is_empty() {
+            return self.first_taking(question, dial, images);
+        }
+        self.postured(self.server.decision_host().ladder().ladder())
+            .first_media_reader(dial.first, dial.ceiling, !images.is_empty(), true)
+    }
+
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision> {
         let state = self.state(call.state);
-        ladder_decide(self.server, self.ladder_call(call, &state))
+        crate::decision_verdict::with_model_call_context(
+            call.principal,
+            self.session.as_deref(),
+            || ladder_decide(self.server, self.ladder_call(call, &state)),
+        )
     }
 
     /// Presence first on the host's ladder, its images seated as
@@ -94,6 +138,21 @@ impl UnitDecider for HostUnitDecider<'_> {
     fn decide_located(&self, call: &UnitCall<'_>) -> Result<LocatedDecision> {
         let state = self.state(call.state);
         ladder_located(self.server, self.ladder_call(call, &state))
+    }
+}
+
+impl<'s> HostUnitDecider<'s> {
+    /// The host's ladder under this decider's posture, as [`ladder_decide`]
+    /// runs it (FIX 11481c).
+    fn postured<'l>(&self, ladder: DecisionLadder<'l>) -> DecisionLadder<'l>
+    where
+        's: 'l,
+    {
+        let server: &'l SyncServer = self.server;
+        match self.posture {
+            Some(posture) => server.decision_host().under_posture(ladder, posture),
+            None => ladder,
+        }
     }
 }
 
@@ -106,6 +165,7 @@ impl HostUnitDecider<'_> {
             question: call.question,
             evidence: call.evidence,
             images: call.images,
+            audio: call.audio,
             state,
             dial: call.dial,
             policy: call.policy,
@@ -153,7 +213,7 @@ pub(crate) fn pump_answer_wakes_while(
             vault.wake_answer_proposer(
                 &wake,
                 actor,
-                &HostUnitDecider::new(server, actor.actor_class(), "vault.artifacts.ask"),
+                &HostUnitDecider::new(server, actor.actor_class(), "vault.artifacts.ask", None),
                 host.dial(DecisionRung::Big),
                 &host.bands(),
                 renderer

@@ -71,26 +71,25 @@ fn range_flag(tree: &XmlTree, owner: usize) -> Option<bool> {
 /// more. The count of labels written.
 ///
 /// The last argument is the part's `(part bytes, package bytes left)` from
-/// `Package::xml_replacement_budget`. Each label is composed once (FIX
-/// 6159); the part these edits and the ones already in `edits` would write
-/// is measured from the bytes built, every removal counted, and refused with
-/// the error its replacement would return before any edit joins `edits`.
-/// Below both bounds the bytes are as they were.
+/// `Package::xml_replacement_budget`. Each label's length is counted first
+/// without building its bytes; the part these edits and the ones already in
+/// `edits` would write is measured from those lengths, every removal
+/// counted, and refused with the error its replacement would return before
+/// any edit joins `edits`. Only below both bounds is each label composed
+/// once (FIX 6159), the bytes as they were.
 pub(super) fn unlink_ranges(
     bytes: &[u8],
     tree: &XmlTree,
     edits: &mut Vec<xml::Splice>,
     (part_bytes, package_left): (usize, usize),
 ) -> Result<u32, LiveError> {
-    let mut built = Vec::new();
-    let labels = walk::<Vec<u8>>(bytes, tree, &mut |range, value| {
-        built.push((range, value));
-    });
-    let planned: Vec<(Range<usize>, usize)> = edits
+    let mut planned: Vec<(Range<usize>, usize)> = edits
         .iter()
-        .chain(&built)
         .map(|(range, value)| (range.clone(), value.len()))
         .collect();
+    walk::<usize>(bytes, tree, &mut |range, len| {
+        planned.push((range, len));
+    });
     let written = spliced_len(bytes.len(), planned)?;
     if written > part_bytes {
         return Err(retained_opc::Error::Edit("edited part size limit").into());
@@ -98,6 +97,10 @@ pub(super) fn unlink_ranges(
     if written > package_left {
         return Err(retained_opc::Error::Edit("edited package size limit").into());
     }
+    let mut built = Vec::new();
+    let labels = walk::<Vec<u8>>(bytes, tree, &mut |range, value| {
+        built.push((range, value));
+    });
     edits.extend(built);
     Ok(labels)
 }
@@ -133,6 +136,24 @@ impl Value for Vec<u8> {
 
     fn is_empty(&self) -> bool {
         <[u8]>::is_empty(self)
+    }
+}
+
+impl Value for usize {
+    fn put(&mut self, markup: &[u8]) {
+        *self = self.saturating_add(markup.len());
+    }
+
+    fn put_text(&mut self, text: &str) {
+        *self = self.saturating_add(escape_text(text).as_bytes().len());
+    }
+
+    fn append(&mut self, other: Self) {
+        *self = self.saturating_add(other);
+    }
+
+    fn is_empty(&self) -> bool {
+        *self == 0
     }
 }
 

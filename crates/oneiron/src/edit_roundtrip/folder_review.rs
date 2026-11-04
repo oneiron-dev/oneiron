@@ -143,7 +143,7 @@ impl Vault {
                     Vec::new(),
                 ),
                 None => file_content(
-                    &self.sighted_asset_bytes(file, request.sight)?,
+                    &self.sighted_asset_bytes_with_digest(file, &pin.body_hash, request.sight)?,
                     &body.media_type,
                     &pin,
                     package_limits,

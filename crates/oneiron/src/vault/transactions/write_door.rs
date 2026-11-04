@@ -4,12 +4,22 @@
 use crate::Vault;
 use crate::error::Error;
 use crate::store::{BackupWriteClass, Callback, Rows};
-#[cfg(feature = "sync")]
-use crate::sync::federation_burst::check_active_in_txn as check_federation_imports_in_txn;
 
 /// How many owed claim VADs one write door pass pays after its commit
 /// (FIX 11923, L01 12:1x).
 const WRITE_DOOR_OWED_VAD_DRAIN: u64 = 16;
+
+/// The engine's federation import recheck for a write in a build with sync.
+#[cfg(feature = "sync")]
+fn check_federation_imports_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<()> {
+    vault
+        .store
+        .sync_hooks
+        .check_federation_imports_in_txn(vault, txn)
+}
 
 /// A build without sync runs no federation import, so a write has no
 /// import authority to recheck (FIX 4248).
@@ -171,7 +181,17 @@ impl Vault {
         // A replicated, replayed or composed authority row stamps the worlds
         // of a pact it ended, as the authority door does (H213).
         stale_sweep.finish()?;
-        // Approval is durable now, with its debt. The canonical consolidator
+        // Approval is durable now, with its debt (FIX 9598). With a payment
+        // worker attached, the door hands the consolidations to it, wakes it
+        // on every write, as its own drain below ran on every write, and
+        // answers at once; the worker pays them in this order, then the
+        // older debts, as the door did here (FIX 11702, Engine 10-31 04:1x).
+        if self.claim_vad_payment_worker_attached() {
+            self.hand_claim_vads_for_payment(approved_vad_ids);
+            return Ok(result);
+        }
+        // With none (an embedded SDK, the CLI), nothing pays after the
+        // answer, so the door pays before it. The canonical consolidator
         // opens its own writer; its failure is returned without rolling back
         // Approved, and the debt stays for the housekeeping pass (FIX 9598,
         // 10680). The clock is observed only when there is an approval to
@@ -194,10 +214,12 @@ impl Vault {
 
     /// Pays up to [`WRITE_DOOR_OWED_VAD_DRAIN`] owed claim VADs after a
     /// commit, so a debt an earlier commit left is paid by a later one (FIX
-    /// 11923, L01 12:1x). A pass that tries debts and settles none records
-    /// the owed count, and writes skip the drain while that count stands: a
-    /// new debt, or one the housekeeping sweep settles, changes it.
-    fn drain_owed_claim_vads_after_commit(&self) -> crate::error::Result<()> {
+    /// 11923, L01 12:1x): on the door's calling thread, or in the payment
+    /// worker the door wakes (FIX 11702). A pass that tries debts and settles
+    /// none records the owed count, and writes skip the drain while that
+    /// count stands: a new debt, or one the housekeeping sweep settles,
+    /// changes it.
+    pub(crate) fn drain_owed_claim_vads_after_commit(&self) -> crate::error::Result<()> {
         use std::sync::atomic::Ordering;
         let owed = {
             let txn = self.store.env.read_txn()?;
@@ -235,12 +257,14 @@ impl Vault {
                 .federation_stale_sweep_owed
                 .load(std::sync::atomic::Ordering::Acquire),
             // raise_found_key_notices_in_txn
-            crate::secret_custody::found_key_notices_due_in_txn(self, &txn)?,
+            crate::store::found_key_notice_queue::found_key_notices_due_in_txn(self, &txn)?,
             // rederive_changed_in_txn, unless this thread defers it
             !crate::scope_summary::rederive_deferred()
                 && crate::scope_summary::rederive_owed_in_txn(self, &txn)?,
-            // drain_owed_claim_vads_after_commit (FIX 11858, 11923)
-            {
+            // drain_owed_claim_vads_after_commit (FIX 11858, 11923), unless a
+            // payment worker pays it: the empty commit's wakes wake that
+            // worker, as the door's commit does (FIX 11702)
+            !self.claim_vad_payment_worker_attached() && {
                 let owed = crate::store::owed_claim_vad_count_in_txn(&self.store, &txn)?;
                 owed > 0
                     && owed
@@ -253,10 +277,14 @@ impl Vault {
     }
 
     /// The wakes an empty write's commit sends, sent with no write: every
-    /// attempt observer and the owner's waiting shed look again (FIX 11664).
+    /// attempt observer and the owner's waiting shed look again (FIX 11664),
+    /// and an attached claim VAD payment worker pays older debts (FIX 11702).
     #[doc(hidden)]
     pub fn send_empty_commit_wakes(&self) {
         self.store.notify_attempt_observers();
         self.wake_owner_shed();
+        if self.claim_vad_payment_worker_attached() {
+            self.wake_claim_vad_payment();
+        }
     }
 }

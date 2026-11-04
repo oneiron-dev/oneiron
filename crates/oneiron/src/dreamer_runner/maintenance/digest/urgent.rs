@@ -30,9 +30,10 @@ use crate::dreamer_runner::{
     EnqueueDreamerAttemptOutcome,
 };
 use crate::dreamer_wake::DreamerAttemptExecution;
-use crate::llm::decision::catalogue::URGENT_DIGEST_HARM;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionQuestion, TypedDecision, cut_text, fit_state,
+use crate::llm::decision::TypedDecision;
+use crate::model_decision::catalogue::URGENT_DIGEST_HARM;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionQuestion, cut_text, fit_state,
 };
 use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
 

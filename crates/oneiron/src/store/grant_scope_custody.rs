@@ -49,7 +49,7 @@ fn archived() -> Error {
 /// The random source failed.
 pub(crate) fn new_scope_key() -> Result<Zeroizing<[u8; 32]>> {
     let mut key = Zeroizing::new([0u8; 32]);
-    crate::world_keys::os_fill(&mut key[..])?;
+    crate::key_material::os_fill(&mut key[..])?;
     Ok(key)
 }
 
@@ -109,7 +109,7 @@ pub(crate) fn install_scope_key(
         }
         None => {
             let mut key_ref = [0u8; 32];
-            crate::world_keys::os_fill(&mut key_ref)?;
+            crate::key_material::os_fill(&mut key_ref)?;
             let item = ErasableItem {
                 purpose: ErasablePurpose::GrantScope,
                 parent: *grant.as_bytes(),

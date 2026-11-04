@@ -31,15 +31,19 @@ pub(crate) enum IntentRecoveryEntry {
 pub(crate) fn intent_recovery_entries(
     vault: &Vault,
 ) -> IntentLedgerResult<Vec<IntentRecoveryEntry>> {
-    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+    // The custody guard before the snapshot: a sealed row opens here (FIX
+    // 10958). A row whose key will not open reports Corrupt, not an error
+    // that aborts the whole walk.
+    let rtxn = vault.store.custody_snapshot()?;
     let mut entries = Vec::new();
     for row in ledger_rows(vault, &rtxn)? {
         let (key, value) = row?;
         entries.push(match decode_record_in_txn(vault, &rtxn, &key, &value) {
             Ok(record) => IntentRecoveryEntry::Valid(record),
-            Err(IntentLedgerError::InvalidRecord(_)) => {
-                IntentRecoveryEntry::Corrupt(id_from_ledger_key(&key))
-            }
+            Err(
+                IntentLedgerError::InvalidRecord(_)
+                | IntentLedgerError::Engine(Error::CorruptedIndex(_)),
+            ) => IntentRecoveryEntry::Corrupt(id_from_ledger_key(&key)),
             Err(error) => return Err(error),
         });
     }
@@ -222,13 +226,19 @@ pub(crate) fn execute_outbound_call<S: OutboundSender + ?Sized>(
 /// transaction, creating the prefix iterator, and advancing a failed iterator
 /// all stay top-level errors.
 pub fn intent_ledger_records(vault: &Vault) -> IntentLedgerResult<IntentLedgerListing> {
-    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+    // The custody guard before the snapshot, and a sealed row whose key
+    // will not open lands in `corrupt` like any other damaged row (FIX
+    // 10958); only substrate failures stay top-level errors.
+    let rtxn = vault.store.custody_snapshot()?;
     let mut listing = IntentLedgerListing::default();
     for row in ledger_rows(vault, &rtxn)? {
         let (key, value) = row?;
         match decode_record_in_txn(vault, &rtxn, &key, &value) {
             Ok(record) => listing.records.push(record),
-            Err(error @ IntentLedgerError::InvalidRecord(_)) => {
+            Err(
+                error @ (IntentLedgerError::InvalidRecord(_)
+                | IntentLedgerError::Engine(Error::CorruptedIndex(_))),
+            ) => {
                 listing.corrupt.push(IntentLedgerCorruptRow {
                     key: key.into_boxed_slice(),
                     error,

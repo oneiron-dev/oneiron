@@ -92,86 +92,7 @@ pub trait HumanDecisionQueue: Send + Sync {
     }
 }
 
-/// A role an ask can go to (Q3 by role). A role names authority, not a person: the host
-/// resolves who holds it when the ask is queued, and the answer door rechecks it. The
-/// model asks for escalation; it never names the role or the actor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "role", rename_all = "snake_case")]
-pub enum AskRole {
-    /// The actor responsible for what the question is over (a schedule's, a question's or
-    /// a unit's), as the caller binds it, and no one once it was erased (FIX 4588); with a
-    /// project, the chain then walks that project's boards.
-    Responsible {
-        #[serde(with = "crate::llm::decision::codec::answer_actor")]
-        #[schemars(with = "String")]
-        actor: crate::llm::decision::AnswerActor,
-        #[serde(default, with = "crate::llm::decision::codec::optional_entity")]
-        #[schemars(with = "Option<String>")]
-        project: Option<EntityId>,
-    },
-    /// A project's effective board; the chain then walks its parents' boards.
-    Board {
-        #[serde(with = "crate::llm::decision::codec::entity")]
-        #[schemars(with = "String")]
-        project: EntityId,
-    },
-    /// The vault's live owners, where every chain ends.
-    Owner,
-}
-
-impl AskRole {
-    /// Where the role sits on a chain.
-    #[must_use]
-    pub fn rank(&self) -> RoleRank {
-        match self {
-            Self::Responsible { .. } => RoleRank::Responsible,
-            Self::Board { .. } => RoleRank::Board,
-            Self::Owner => RoleRank::Owner,
-        }
-    }
-}
-
-/// How far up a chain a role sits: an ask climbs from its role toward the owners.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum RoleRank {
-    Responsible,
-    Board,
-    Owner,
-}
-
-/// What an answer to an ask authorises. An e-signature or a person-authorised payment
-/// resolves only to a natural person, whoever else holds the role.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum AskAct {
-    #[default]
-    Judgment,
-    ESignature,
-    Payment,
-}
-
-impl AskAct {
-    /// Whether only a natural person may answer.
-    #[must_use]
-    pub fn person_only(self) -> bool {
-        matches!(self, Self::ESignature | Self::Payment)
-    }
-}
+pub use crate::store::decision_ask_role::AskRole;
 
 /// Who a call's ask goes to: bound by the caller from trusted context, never from
 /// model-authored state.
@@ -205,14 +126,6 @@ impl AskTo {
     }
 }
 
-/// Whether a role holder is a natural person or a bound agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HolderKind {
-    Person,
-    Agent,
-}
-
 /// A live actor holding a role.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -239,3 +152,5 @@ pub trait AskRoleResolver: Send + Sync {
     /// to the ceiling has one: the ask stays unresolved, never with wider authority.
     fn next_role(&self, to: &AskTo, after: Option<&AskRole>) -> VaultResult<Option<ResolvedRole>>;
 }
+
+pub use crate::model_decision::{AskAct, HolderKind, RoleRank};

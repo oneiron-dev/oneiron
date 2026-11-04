@@ -15,8 +15,8 @@ use crate::store::{
     Diagnostics, GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, GateSystemNoticeRecord,
-    PENDING_GATE_CONSENT_KEY_PREFIX, RawDatabases, Store, StoreCore, StoreEnv, StoreOwner,
-    active_write_txn_depth, decode_pending_gate_consent, gate_decision_upper_bound,
+    PENDING_GATE_CONSENT_KEY_PREFIX, RawDatabases, Store, StoreCore, StoreEnv, StoreHooks,
+    StoreOwner, active_write_txn_depth, decode_pending_gate_consent, gate_decision_upper_bound,
     load_structural_kind_registry, pending_gate_consent_claim_id_from_key,
     pending_gate_consent_upper_bound, seed_default_policy_manifest_in_txn,
 };
@@ -67,6 +67,7 @@ impl Store {
         path: impl AsRef<Path>,
         config: &VaultConfig,
         analyzer: &MultilingualAnalyzer,
+        hooks: StoreHooks,
     ) -> Result<Self> {
         if config.skip_text_index_manifest_check {
             return Err(Error::InvalidConfig(
@@ -88,7 +89,7 @@ impl Store {
             // environment instead of being dropped with the transaction.
             rtxn.commit()?;
             drop(db_open_guard);
-            Self::assemble(env, raw, registered_path, config)?
+            Self::assemble(env, raw, registered_path, config, hooks)?
         };
 
         verify_existing_hnsw_config(&store, config)?;
@@ -97,6 +98,9 @@ impl Store {
         crate::vault::verify_text_index_manifest(&store, analyzer)?;
 
         store.reconcile_existing_open()?;
+        // A crashed lease holder's journaled decision times rise into this
+        // store's clock floor before its first decision (review #4484).
+        store.observe_authorization_lease_journal()?;
         Ok(store)
     }
 
@@ -108,6 +112,7 @@ impl Store {
         raw: RawDatabases,
         registered_path: RegisteredPath,
         config: &VaultConfig,
+        hooks: StoreHooks,
     ) -> Result<Self> {
         let vault_meta_view = OverlayDb::canonical(raw.vault_meta);
         let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta_view)?);
@@ -184,11 +189,19 @@ impl Store {
             act_causal_points: Mutex::new(None),
             authority_handoff_equivocations: crate::authority::HandoffEquivocations::default(),
             project_forks: crate::workspace_roster::ProjectForks::default(),
+            delete_guards: hooks.delete_guards,
+            scope_stamps: hooks.scope_stamps,
+            project_writes: hooks.project_writes,
+            record_hooks: hooks.record_hooks,
+            actor_scrubs: hooks.actor_scrubs,
+            #[cfg(feature = "sync")]
+            sync_hooks: hooks.sync_hooks,
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
             policy_fold_cache: Default::default(),
             machine_history_issuer: Mutex::new(None),
+            machine_history_runtime: crate::claim::MachineHistoryRuntime::default(),
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
-            pending_scan_checks: crate::scan_check::PendingScanChecks::default(),
+            pending_scan_checks: crate::store::PendingScanChecks::default(),
             limit_watch: crate::limit_ask::LimitWatch::new(config.limits.clone()),
             deadline_jobs: crate::store::DeadlineJobs::default(),
             tombstone_scope_probes: crate::deletion::TombstoneScopeProbes::default(),
@@ -196,14 +209,14 @@ impl Store {
             body_seal: crate::store::BodySealSlot::default(),
             reader_job_runner: std::sync::RwLock::new(None),
             result_memory: std::sync::RwLock::new(std::sync::Arc::new(
-                crate::result_memory::ResultMemoryPool::new(
+                crate::store::result_memory::ResultMemoryPool::new(
                     config
                         .limits
                         .bound(crate::limit_ask::EngineLimit::CodeResultMemoryBytes),
                 ),
             )),
             inference_snapshots: crate::inference_snapshot::SnapshotLifecycle::default(),
-            l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
+            l2_base_cache: Mutex::new(crate::store::l2_evidence::L2BaseCache::default()),
             legal_hold_refusals: crate::store::legal_hold::LegalHoldRefusals::default(),
             backup_hold_rechecks: tokio::sync::watch::channel(0).0,
             clock,
@@ -235,6 +248,7 @@ impl Store {
             #[cfg(not(unix))]
             _env: env,
             _registered_path: registered_path,
+            opened_with_writer_lease: false,
         };
         Ok(Self {
             entities: OverlayDb::canonical(core.raw.entities),
@@ -334,7 +348,7 @@ impl Store {
             actor_class: "system".to_owned(),
             actor_ref: None,
             content_kind: "policy_manifest".to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            policy_manifest_version: crate::store::policy_record::POLICY_SCHEMA_VERSION.to_owned(),
             claim_id: None,
             grant_ref: None,
             diff_handle: id.as_bytes().to_vec(),
@@ -385,7 +399,7 @@ impl Store {
         if !open_seeds_default(&crate::gate::resolve_policy_manifest(self, wtxn)?) {
             return Ok(None);
         }
-        let id = crate::gate::default_policy_manifest_id()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
         seed_default_policy_manifest_in_txn(
             &self.entities,
             &self.sync_state,

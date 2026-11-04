@@ -146,8 +146,9 @@ mod actor_stamp;
 pub use actor_stamp::ActorStamp;
 pub(crate) use actor_stamp::{
     actor_stamp, actor_stamp_in_txn, actor_stamp_tokens_remain_in_txn,
-    erase_actor_stamp_cache_in_txn, erase_actor_stamp_tokens_in_txn,
-    release_held_actor_stamps_in_txn, resolve_actor_stamp, resolve_actor_stamp_in_txn,
+    erase_actor_stamp_cache_in_txn, erase_actor_stamp_tokens_in_txn, erase_actor_stamp_uses_in_txn,
+    record_actor_stamp_uses_in_txn, release_held_actor_stamps_in_txn, resolve_actor_stamp,
+    resolve_actor_stamp_in, resolve_actor_stamp_in_txn, tokens_named_since,
 };
 mod actor_substrate;
 mod archive;
@@ -155,6 +156,8 @@ pub mod birth;
 pub mod body;
 pub(crate) use archive::archived_provenance_body;
 mod codec;
+mod conversation_sources;
+pub(crate) use conversation_sources::claim_conversation_sources_in;
 mod derived_attachment;
 pub(crate) use derived_attachment::support_project;
 mod edge_ref;

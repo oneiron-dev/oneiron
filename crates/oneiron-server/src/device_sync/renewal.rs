@@ -556,10 +556,20 @@ async fn renew_mesh(
         .await
         .map_err(|_| Failure::Failed("the renewal over the mesh timed out".to_owned()))??;
     if !status.is_success() {
-        let reason = format!(
-            "home answered {status}: {}",
-            String::from_utf8_lossy(&bytes)
-        );
+        // The class still follows the status alone, as a mesh refusal always
+        // has; only the reason stopped carrying the raw body into the log
+        // (FIX 6153). Like the origin path's refusal, it names the error
+        // envelope's code and message, or that there was no envelope.
+        let reason = match serde_json::from_slice::<ErrorEnvelope>(&bytes)
+            .ok()
+            .map(|envelope| envelope.error)
+            .filter(|error| !error.code.is_empty())
+        {
+            Some(error) => format!("{}: {}", error.code, error.message),
+            None => format!(
+                "the home answered {status} with a body that is not an Oneiron error envelope"
+            ),
+        };
         return Err(match status.as_u16() {
             401 | 403 => Failure::Refused(reason),
             400 => Failure::Unusable(reason),

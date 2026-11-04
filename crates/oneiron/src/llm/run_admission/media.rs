@@ -11,14 +11,14 @@ use super::super::media::{
     MediaRequest, MediaResponse, MediaUsage,
 };
 use super::super::{
-    BudgetLease, BudgetSettlement, DispatchBinding, DispatchRefused, FatalLlmError,
-    InferenceCallReceipt, LlmResult, LlmUsage, ModelId,
+    BudgetLease, BudgetSettlement, DispatchBinding, DispatchRefused, DispatchRelease,
+    FatalLlmError, InferenceCallReceipt, LlmError, LlmResult, LlmUsage, ModelId,
 };
 use super::admission::{RunDenied, RunInner};
 use super::gate::Dispatch;
 use super::media_job::MediaJobBindings;
 use super::permit::RunPermit;
-use super::receipt::RunStreamUsage;
+use super::receipt::{RunOverageSource, RunStreamUsage};
 use super::settle::CallOutcome;
 
 /// Keys a media adapter stamps into [`MediaUsage::raw_provider`](super::super::media::MediaUsage)
@@ -120,6 +120,33 @@ impl MediaGate {
     ) -> Result<MediaResponse, InterruptedMediaCall> {
         let mut opened = self.open(&request, lease)?;
         let answer = self.inner.run_progress(request, lease).await;
+        let served = answer.as_ref().ok().and_then(served_model);
+        opened.finish(served, answer.is_ok());
+        answer
+    }
+
+    /// [`Self::run_progress`] with a caller's release forwarded through the
+    /// same opened permit and dispatch receipt.
+    pub async fn run_progress_released(
+        &self,
+        request: MediaRequest,
+        lease: &BudgetLease,
+        release: Option<DispatchRelease<'_>>,
+    ) -> Result<MediaResponse, InterruptedMediaCall> {
+        let mut opened = self.open(&request, lease)?;
+        let answer = self
+            .inner
+            .run_progress_released(request, lease, release)
+            .await;
+        let refused_before_send = answer.as_ref().err().is_some_and(|stopped| {
+            matches!(
+                &stopped.error,
+                LlmError::Retryable(retry) if retry.is_not_sent_stage("media_release")
+            )
+        }) && lease.physical_attempts() == 0;
+        if refused_before_send {
+            opened.dispatch = None;
+        }
         let served = answer.as_ref().ok().and_then(served_model);
         opened.finish(served, answer.is_ok());
         answer
@@ -448,17 +475,27 @@ fn served_model(response: &MediaResponse) -> Option<String> {
 impl RunPermit {
     /// Settles a media call that answered: the token units its usage
     /// counts ([`MediaUsage::token_units`](super::super::media::MediaUsage::token_units)),
-    /// or its reservation when it counted none. `inference_calls` is what its
-    /// backend reported ([`MediaUsage::inference_calls`](super::super::media::MediaUsage::inference_calls)),
+    /// or its reservation when it counted none. `source` is where the
+    /// counted units came from: the provider's token report, or the
+    /// host/caller's own native count at its row's rates (FIX 11481).
+    /// `inference_calls` is what its backend reported
+    /// ([`MediaUsage::inference_calls`](super::super::media::MediaUsage::inference_calls)),
     /// kept on its receipt beside its quantity and never part of its charge
     /// (FIX 8314).
     pub fn settle_media(
         self,
         units: Option<u64>,
         inference_calls: Vec<InferenceCallReceipt>,
+        source: RunOverageSource,
     ) -> Result<BudgetSettlement, RunDenied> {
         match units {
-            Some(units) => self.settle_with(CallOutcome::Used(units), inference_calls),
+            Some(units) => {
+                let outcome = match source {
+                    RunOverageSource::ProviderReported => CallOutcome::Used(units),
+                    RunOverageSource::Counted => CallOutcome::UsedCounted(units),
+                };
+                self.settle_with(outcome, inference_calls)
+            }
             None => self.settle_with(CallOutcome::Answered(&LlmUsage::zero()), inference_calls),
         }
     }
@@ -477,9 +514,15 @@ impl RunPermit {
         if progress.is_empty() {
             return self.settle(CallOutcome::Failed);
         }
+        let source = if progress.usage.is_provider_counted() {
+            RunOverageSource::ProviderReported
+        } else {
+            RunOverageSource::Counted
+        };
         self.settle_media(
             progress.usage.token_units(operation, caps),
             progress.usage.inference_calls(),
+            source,
         )
     }
 

@@ -3,10 +3,10 @@ use super::batch_index::put_batch_index;
 use super::types::QueueRecord;
 use super::{BatchState, MergeBatch, MergeQueue, MergeQueuePointers, RepoQueueOrder};
 use crate::{
-    contract_oracle::{ContractOracle, WorkspaceGraph, invalid},
     error::{Error, Result},
     git_wire::lock_repository,
     side_table::{self, Named, SideTable},
+    store::contract_oracle::{ContractOracle, WorkspaceGraph, invalid},
 };
 
 /// One repo's queue state: a singleton row per repo, keyed by the repo's hex identity.
@@ -17,6 +17,11 @@ pub(super) const QUEUE_STATE: SideTable<String, QueueRecord, Named> =
 /// One repo's batches are read by the `{repo_hex}:` prefix (`repo_batches_in_txn`).
 pub(super) const BATCHES: SideTable<String, MergeBatch, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_BATCH);
+/// Whether a masked copy of a `MERGE_QUEUE_BATCH` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn merge_queue_batch_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<MergeBatch, Named>(bytes)
+}
 
 impl MergeQueue<'_> {
     pub fn initialize(

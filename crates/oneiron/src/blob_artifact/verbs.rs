@@ -13,7 +13,6 @@ use super::{
     VersionReconciliation,
 };
 use super::{DeckProposeRejection, DeckTransaction};
-use crate::claim::ClaimReadStatus;
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentPatch, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
@@ -31,19 +30,19 @@ use crate::edit_settle::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::file_secret_marks::SecretSight;
 use crate::lens::RecordRef;
-use crate::llm::decision::{
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, ResolvedMedia, Reversibility, TypedDecision,
-};
+use crate::llm::decision::{ResolvedMedia, TypedDecision};
 use crate::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
 };
-use crate::provenance::made_by::{MadeBy, MadeByTrigger};
-use crate::receipt::ReceiptRecord;
-use crate::secret_custody::SecretSight;
-use crate::share_travel::{BornWith, TravelChoice, TravelKind};
+use crate::model_decision::{DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility};
+use crate::ports::ClaimReadStatus;
+use crate::store::receipt_row::ReceiptRecord;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::provenance::made_by::{MadeBy, MadeByTrigger};
+use oneiron_authority::share_travel::{BornWith, TravelChoice, TravelKind};
 
 /// One artifact, by ref.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -232,7 +231,7 @@ pub struct SlideReviewUnitInput {
 /// answered), each answered unit's judgment and the comment it became, as
 /// that proposal's manifest keeps them, the units the ladder left
 /// unanswered, and those it refused.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideReviewOutcome {
     pub proposed: Option<PendingProposalView>,
     /// Each answered unit's judgment: its decision and receipt, the managed
@@ -248,7 +247,7 @@ pub struct SlideReviewOutcome {
 
 /// A unit the review would not ask as given, and the slide unit it offers
 /// instead, if any.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideUnitRefused {
     pub target: PptxCommentTarget,
     pub reason: SlideUnitRefusalReason,
@@ -500,7 +499,10 @@ impl Memory<'_> {
             self.born_with_text_for_reader(&file.artifact_id, &file.made_by, &travel)?
         };
         let born_with = travel.project(text);
-        let content_hash = super::hash_hex(&file.content_hash);
+        // The hash names the copy beside it (FIX 5491): the sighted export's
+        // own `content_hash` stays the stored version's, which its internal
+        // readers (deck doors) bind their edits to.
+        let content_hash = super::hash_hex(blake3::hash(&file.bytes).as_bytes());
         vault.record_export_travel(
             file.artifact_id.to_hex(),
             file.version,

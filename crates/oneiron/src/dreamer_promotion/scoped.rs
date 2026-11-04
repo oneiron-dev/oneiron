@@ -299,6 +299,7 @@ fn attach_evidence(
     // (FIX 11439).
     let mut carried: Option<String> = None;
     let outcome = vault.with_write_txn_grouped(|txn| {
+        let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("promotion attach");
         // Source grants are judged at this writer's own clock.
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
@@ -331,6 +332,7 @@ fn attach_evidence(
                 defer_metrics_until_commit: false,
                 transition: None,
                 owner_authored: None,
+                pending_prompt: None,
             },
             &policy,
             crate::gate::GateWriteMode {
@@ -399,7 +401,7 @@ fn attach_ref(
     (head, source): (EntityId, EntityId),
     evidence: &VerifiedEvidenceSet,
     answers: &[ResolvedConflictOutput],
-    auto_write_rate: crate::own_rate::OwnRate,
+    auto_write_rate: crate::store::own_rate_record::OwnRate,
 ) -> Result<Vec<ResolvedConflictOutput>> {
     let evidence_meet = evidence.meet();
     let locators = evidence.verified_locators();
@@ -574,7 +576,7 @@ fn attach_ref(
     crate::own_rate::count_in_txn(
         &vault.store,
         txn,
-        crate::own_rate::OwnRateKind::AutoWrite,
+        crate::store::own_rate_record::OwnRateKind::AutoWrite,
         run.agent_actor.entity_ref(),
         vault.store.clock.now_recorded_at(),
         auto_write_rate,

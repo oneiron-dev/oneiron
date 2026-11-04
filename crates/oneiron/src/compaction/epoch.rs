@@ -294,12 +294,16 @@ impl EpochPlacement {
         txn: &mut heed::RwTxn<'_>,
         summary: EntityId,
     ) -> Result<()> {
-        let world = self.world.unwrap_or_else(crate::claim::base_world_id);
+        let world = self
+            .world
+            .unwrap_or_else(oneiron_contracts::claim::base_world_id);
         let facet = match self.facet {
             Some(facet) => facet,
             None => crate::claim::default_facet_in(store, txn)?,
         };
-        crate::federation::record_scope::settle_epoch_birth(store, txn, summary, world, facet)
+        store
+            .scope_stamps
+            .settle_epoch_birth(store, txn, summary, world, facet)
     }
 }
 
@@ -913,7 +917,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
                         kind: EdgeKind::DerivedFrom,
                         tgt: *target,
                         weight: 1.0,
-                        vad: crate::affect::Vad::NEUTRAL,
+                        vad: oneiron_contracts::affect::Vad::NEUTRAL,
                     },
                 ),
             )?;
@@ -958,7 +962,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
             super::epoch_intent::epoch_birth(request, byline, at, intent_id, trigger)
         {
             let birth = super::self_writer::link_writer(birth, writer)?;
-            crate::provenance::birth::stamp_row_birth_in_txn(&view, wtxn, &summary_id, &birth)?;
+            crate::store::birth_record::stamp_row_birth_in_txn(&view, wtxn, &summary_id, &birth)?;
         }
         extra(
             &view,

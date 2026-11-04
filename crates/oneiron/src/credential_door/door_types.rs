@@ -1,6 +1,6 @@
 //! Door constants, floor names and prefixes, error type, and small naming helpers.
 
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 
 // The one-shot lifetime ceiling and the floor-name predicate are defined in
 // `oneiron-authority`: the authority log's slip checks apply the same bounds.
@@ -15,9 +15,7 @@ pub(super) const DOOR_SCAN_ALWAYS_ON: bool = true;
 /// (FIX 9777).
 pub(super) const DOOR_MAX_LEASE_TTL_SECS: u64 = 3600;
 
-/// The receive-pack door's effector — the scope every door-issued lease and
-/// door injection is bound to by default.
-pub(crate) const DOOR_RECEIVE_PACK_EFFECTOR: &str = "door:receive-pack";
+pub(crate) use crate::receive_scan::DOOR_RECEIVE_PACK_EFFECTOR;
 
 /// Every effector this door knows how to be. The dial may narrow this set to
 /// a subset; a row naming anything outside it is a widen and fails closed.
@@ -140,74 +138,7 @@ pub(crate) enum DoorDenyReason {
     ChannelOutsideSlip,
 }
 
-/// One pushed blob as the transport hands it to the door. A data seam: the
-/// quarantine extraction that fills it belongs to the transport owner.
-///
-/// `Debug` redacts `content` — those bytes are exactly the ones that may be
-/// secret-shaped, and a diagnostic print is not a place for them.
-#[derive(Clone, PartialEq, Eq)]
-pub(crate) struct PushedBlob {
-    /// Repository-relative path of the blob.
-    pub(crate) path: String,
-    /// The blob's object id (hex).
-    pub(crate) oid: String,
-    /// The blob's whole content as raw bytes: what the push makes durable.
-    pub(crate) content: Vec<u8>,
-}
-
-impl PushedBlob {
-    /// The content as lines, split on `\n` with no line reshaped: a trailing
-    /// newline ends the last line rather than adding an empty one, an empty
-    /// blob has no line, and CR, NUL and every other byte survive untouched.
-    /// Each line borrows the content, so a blob costs the door its own bytes
-    /// and nothing per line.
-    pub(crate) fn lines(&self) -> impl Iterator<Item = &[u8]> {
-        let content = (!self.content.is_empty()).then_some(self.content.as_slice());
-        content.into_iter().flat_map(|content| {
-            content
-                .strip_suffix(b"\n")
-                .unwrap_or(content)
-                .split(|byte| *byte == b'\n')
-        })
-    }
-}
-
-impl std::fmt::Debug for PushedBlob {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PushedBlob")
-            .field("path", &self.path)
-            .field("oid", &self.oid)
-            .field(
-                "content",
-                &format_args!("<redacted {} bytes>", self.content.len()),
-            )
-            .finish()
-    }
-}
-
-/// How the door read one blob.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReceiveBlobKind {
-    /// Valid UTF-8 with no NUL byte: read line by line, as before.
-    Text,
-    /// Any other bytes: the custody automaton, then the release reader.
-    Binary,
-}
-
-/// One detector hit on one pushed blob: where it is and which rule named
-/// it. It carries no byte of the blob, so its `Debug` and every error made
-/// from it are safe to print.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ReceiveScanHit {
-    /// The blob's repository-relative path.
-    pub(crate) path: String,
-    /// The blob's object id (hex).
-    pub(crate) oid: String,
-    /// The detector's reason code.
-    pub(crate) reason: &'static str,
-    /// How the blob was read.
-    pub(crate) content_kind: ReceiveBlobKind,
-}
+pub(crate) use crate::receive_scan::{PushedBlob, ReceiveBlobKind, ReceiveScanHit};
 
 /// What the ONE disposition does with a push's hits (FIX 7608, owner
 /// ruling SECRETS-IN-REPOS = A). It is chosen in exactly one statement of
@@ -225,55 +156,7 @@ pub(super) enum ReceiveScanDisposition {
     AdmitMarked,
 }
 
-/// The verdict of a pre-receive scan. A verdict is a scan OUTCOME: an
-/// unscannable blob is not a verdict, it is an error.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum DoorScanVerdict {
-    /// Every added line scanned, nothing matched.
-    Clean,
-    /// The push is refused; each proposal names one offending path.
-    Rejected {
-        /// One proposal per offending blob.
-        proposals: Vec<CheckoutSecretLiftProposal>,
-        /// The value-free hits the proposals were made from, one each.
-        hits: Vec<ReceiveScanHit>,
-    },
-    /// The push is admitted with each hit marked (FIX 7608): the transport
-    /// carries the hits to the admitted intent, whose transaction writes
-    /// their marks or refuses the push whole.
-    AdmitMarked {
-        /// The value-free hits to mark.
-        hits: Vec<ReceiveScanHit>,
-    },
-}
-
-/// "Lift this into the vault instead" — the door's advice when a push carries
-/// secret-shaped bytes.
-///
-/// Path, detector reason, and a suggested NAME. Never the matched line, never
-/// the token, never any value bytes: the proposal travels back to whoever
-/// pushed, and it must be safe to print.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CheckoutSecretLiftProposal {
-    /// The offending blob's path.
-    pub(crate) path: String,
-    /// The detector's reason code (e.g. `gate.secret_scan.github_token`).
-    pub(crate) reason: &'static str,
-    /// A suggested custody name for the lifted secret, derived from the repo
-    /// and path only.
-    pub(crate) suggested_secret_name: String,
-}
-
-impl CheckoutSecretLiftProposal {
-    /// Builds a proposal from non-secret addressing data only.
-    pub(super) fn new(repo: &RepoRef, path: &str, reason: &'static str) -> Self {
-        Self {
-            path: path.to_owned(),
-            reason,
-            suggested_secret_name: format!("{}.{}", repo_slug(repo), path_slug(path)),
-        }
-    }
-}
+pub(crate) use crate::origin::receive_scan_verdict::{CheckoutSecretLiftProposal, DoorScanVerdict};
 
 /// The repo identity a slip binds, WITHOUT the commit: a push door authorizes
 /// against the repository, not against one revision of it.
@@ -281,35 +164,6 @@ pub(super) fn repo_record(repo: &RepoRef) -> String {
     match repo {
         RepoRef::LocalFolder { path, .. } => format!("local:{path}"),
         RepoRef::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
-    }
-}
-
-/// A short, name-shaped slug for the repository.
-fn repo_slug(repo: &RepoRef) -> String {
-    match repo {
-        RepoRef::LocalFolder { path, .. } => path_slug(path.rsplit('/').next().unwrap_or(path)),
-        RepoRef::GitHubAtCommit { owner, repo, .. } => {
-            format!("{}_{}", path_slug(owner), path_slug(repo))
-        }
-    }
-}
-
-/// Lowercases and folds everything that is not `[a-z0-9]` into `_` so a
-/// suggested name is a name and carries no path punctuation.
-fn path_slug(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for ch in input.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-        } else if !out.ends_with('_') {
-            out.push('_');
-        }
-    }
-    let trimmed = out.trim_matches('_');
-    if trimmed.is_empty() {
-        "unnamed".to_owned()
-    } else {
-        trimmed.to_owned()
     }
 }
 

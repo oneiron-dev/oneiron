@@ -280,6 +280,16 @@ export_facade! {
     let output = client.self_memory_diary_query(&input)?;
     crate::codec::lift_record("self.memory.diary.query", &output)
 };
+"self.memory.pads.read" => fn self_memory_pads_read(&self, input: DiaryQueryRequest) -> DiaryQueryOutcome = |client| {
+    let input: oneiron::task_verb::sdk::DiaryQueryRequest = crate::codec::lower_record("self.memory.pads.read", input)?;
+    let output = client.self_memory_pads_read(&input)?;
+    crate::codec::lift_record("self.memory.pads.read", &output)
+};
+"self.memory.pads.admin_reads" => fn self_memory_pads_admin_reads(&self, input: AdminPadReadsRequest) -> AdminPadReadsView = |client| {
+    let input: oneiron::task_verb::sdk::AdminPadReadsRequest = crate::codec::lower_record("self.memory.pads.admin_reads", input)?;
+    let output = client.self_memory_pads_admin_reads(&input)?;
+    crate::codec::lift_record("self.memory.pads.admin_reads", &output)
+};
 "cancel" => fn cancel(&self, task_ref: String) -> TaskCancelReceipt = |client| {
     let output = client.cancel(&task_ref)?;
     crate::codec::lift_record("cancel", &output)
@@ -1071,6 +1081,21 @@ export_facade! {
     let output = client.self_inbox_lens(&input)?;
     crate::codec::lift_record("self.inbox.lens", &output)
 };
+"self.inbox.get" => fn self_inbox_get(&self, input: InboxItemRequest) -> InboxItemView = |client| {
+    let input: oneiron::agent_inbox_lens::InboxItemRequest = crate::codec::lower_record("self.inbox.get", input)?;
+    let output = client.self_inbox_get(&input)?;
+    crate::codec::lift_record("self.inbox.get", &output)
+};
+"self.inbox.done" => fn self_inbox_done(&self, input: InboxItemRequest) -> InboxItemMarked = |client| {
+    let input: oneiron::agent_inbox_lens::InboxItemRequest = crate::codec::lower_record("self.inbox.done", input)?;
+    let output = client.self_inbox_done(&input)?;
+    crate::codec::lift_record("self.inbox.done", &output)
+};
+"self.inbox.later" => fn self_inbox_later(&self, input: InboxItemLaterRequest) -> InboxItemMarked = |client| {
+    let input: oneiron::agent_inbox_lens::InboxItemLaterRequest = crate::codec::lower_record("self.inbox.later", input)?;
+    let output = client.self_inbox_later(&input)?;
+    crate::codec::lift_record("self.inbox.later", &output)
+};
 "vault.skills.bootstrap" => fn vault_skills_bootstrap(&self) -> Vec<BootstrapSkillView> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.skills.bootstrap")?;
     let output = client.vault_skills_bootstrap(&input)?;
@@ -1851,6 +1876,16 @@ export_facade! {
     let output = client.vault_federation_connect_rejoin(&input)?;
     crate::codec::lift_record("vault.federation.connect.rejoin", &output)
 };
+"vault.federation.connect.world_privacy.export" => fn vault_federation_connect_world_privacy_export(&self, input: ForeignWorldPrivacyExportRequest) -> ForeignWorldPrivacyDelivery = |client| {
+    let input: oneiron::policy_model::ForeignWorldPrivacyExportRequest = crate::codec::lower_record("vault.federation.connect.world_privacy.export", input)?;
+    let output = client.vault_federation_connect_world_privacy_export(&input)?;
+    crate::codec::lift_record("vault.federation.connect.world_privacy.export", &output)
+};
+"vault.federation.connect.world_privacy.receive" => fn vault_federation_connect_world_privacy_receive(&self, input: ForeignWorldPrivacyDelivery) -> WorldPrivacyRequest = |client| {
+    let input: oneiron::policy_model::ForeignWorldPrivacyDelivery = crate::codec::lower_record("vault.federation.connect.world_privacy.receive", input)?;
+    let output = client.vault_federation_connect_world_privacy_receive(&input)?;
+    crate::codec::lift_record("vault.federation.connect.world_privacy.receive", &output)
+};
 "vault.trusted_contacts.name" => fn vault_trusted_contacts_name(&self, input: TrustedContactNameRequest) -> TrustedContact = |client| {
     let input: oneiron::task_verb::sdk::TrustedContactNameRequest = crate::codec::lower_record("vault.trusted_contacts.name", input)?;
     let output = client.vault_trusted_contacts_name(&input)?;
@@ -2471,6 +2506,11 @@ export_facade! {
     let output = client.vault_legal_holds_lift_and_erase(&input)?;
     crate::codec::lift_record("vault.legal_holds.lift_and_erase", &output)
 };
+"vault.legal_holds.withdraw_erase" => fn vault_legal_holds_withdraw_erase(&self, input: LegalHoldWithdrawEraseRequest) -> LegalHoldErasesWithdrawn = |client| {
+    let input: oneiron::task_verb::sdk::LegalHoldWithdrawEraseRequest = crate::codec::lower_record("vault.legal_holds.withdraw_erase", input)?;
+    let output = client.vault_legal_holds_withdraw_erase(&input)?;
+    crate::codec::lift_record("vault.legal_holds.withdraw_erase", &output)
+};
 "vault.courtesy_delete.send" => fn vault_courtesy_delete_send(&self, input: CourtesyDeleteSendRequest) -> CourtesyDeleteSent = |client| {
     let input: oneiron::task_verb::sdk::CourtesyDeleteSendRequest = crate::codec::lower_record("vault.courtesy_delete.send", input)?;
     let output = client.vault_courtesy_delete_send(&input)?;
@@ -2600,6 +2640,11 @@ export_facade! {
     let input: oneiron::consent::lifecycle::CreateStandingGrantRequest = crate::codec::lower_record("vault.consent.create_standing_grant", input)?;
     let output = client.vault_consent_create_standing_grant(&input)?;
     crate::codec::lift_record("vault.consent.create_standing_grant", &output)
+};
+"vault.consent.create_auto_weave_grant" => fn vault_consent_create_auto_weave_grant(&self, input: AutoWeaveGrantRequest) -> ConsentActReceipt = |client| {
+    let input: oneiron::consent::lifecycle::AutoWeaveGrantRequest = crate::codec::lower_record("vault.consent.create_auto_weave_grant", input)?;
+    let output = client.vault_consent_create_auto_weave_grant(&input)?;
+    crate::codec::lift_record("vault.consent.create_auto_weave_grant", &output)
 };
 "vault.consent.registry" => fn vault_consent_registry(&self, input: ConsentRegistryQuery) -> ConsentRegistry = |client| {
     let input: oneiron::consent::ConsentRegistryQuery = crate::codec::lower_record("vault.consent.registry", input)?;
@@ -4265,6 +4310,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.skills.callables")?;
     let output = client.self_skills_callables(&input)?;
     crate::codec::lift_record("self.skills.callables", &output)
+};
+"vault.skills.callable.amend" => fn vault_skills_callable_amend(&self, input: CallableAmendRequest) -> CallableAmendReceipt = |client| {
+    let input: oneiron::skill::helper::CallableAmendRequest = crate::codec::lower_record("vault.skills.callable.amend", input)?;
+    let output = client.vault_skills_callable_amend(&input)?;
+    crate::codec::lift_record("vault.skills.callable.amend", &output)
 };
 "vault.skills.pack_receipt" => fn vault_skills_pack_receipt(&self, input: SkillPackReceiptRequest) -> SkillPackReceipt = |client| {
     let input: oneiron::task_verb::sdk::SkillPackReceiptRequest = crate::codec::lower_record("vault.skills.pack_receipt", input)?;

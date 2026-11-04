@@ -56,10 +56,11 @@ side_tables! {
     /// staged to retire) or still owed. Never a value, key, name or count; a re-entered credential
     /// takes a new id. Key: id16 (custody record id).
     SECRET_CUSTODY_ERASE: VaultMeta b"secret_custody:erase:v1:" Raw Engine;
-    /// The sealed copy one export secret request's holder committed (FIX 4624(b)): the custody
-    /// value sealed to the recipient machine the owner chose, in its numbered envelopes, kept for
-    /// the owner to fetch. Holds no plaintext; its signed result names its digest. Key: hash32 (the
-    /// request's entry hash).
+    /// The sealed copy one export secret request's holder committed (FIX 4624(b)): the second it
+    /// was sealed at, the request, then the custody value sealed to the recipient machine the owner
+    /// chose, in its numbered envelopes, kept for the owner to fetch by its holder and by each
+    /// install a window relays it to (FIX 11843). Holds no plaintext; its signed result names the
+    /// copy's digest. Key: hash32 (the request's entry hash).
     SECRET_CUSTODY_EXPORT_OUTPUT: VaultMeta b"secret_custody:export_output:v1:" Raw Ciphertext;
     SECRET_CUSTODY_INPUT: VaultMeta b"secret_custody:input:v1:" Raw Ciphertext;
     /// Name index mapping a live secret-custody record's name to its EntityId, then the name's
@@ -77,7 +78,7 @@ side_tables! {
     /// it was made at and the generation it revoked, until a pass that can sign carries it. Holds
     /// no value and no proof. Key: id16 (custody record id).
     SECRET_CUSTODY_PENDING_REVOKE: VaultMeta b"secret_custody:pending_revoke:v1:" Named Engine
-        => crate::secret_custody::erase_pending_revoke_actor_in_txn;
+        => crate::store::pending_custody_revoke::erase_pending_revoke_actor_in_txn;
     /// The rewrap request whose bindings this vault took into one custody record it holds as a
     /// receiver (CALLS CUSTODY_REBIND_PENDING_FLOOR): a replay of its carrier never applies again,
     /// while a carrier kept as this vault's latest whose bindings the live floor refused stays
@@ -120,6 +121,9 @@ side_tables! {
     /// A record whose found keys still owe the owner their needs-you notice: raised at the next
     /// write's commit boundary, then removed. Key: id16 (the record).
     SECRET_FOUND_KEY_DUE: VaultMeta b"secret_found_key_due:v1:" Named;
+    /// A custody handle's owner-set display label and its Gate receipt. The custody name stays the
+    /// identity; this label changes presentation only and holds no value. Key: id16 (custody record id).
+    SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Custody;
     /// Each custody record's committed known-value history (KS-3): the slot of each entry typed
     /// custody holds for it (`KnownValueEntry`, item = the record's id) with the record generation
     /// it was written at, never a value, length, tag or fingerprint. Canonical, so an image
@@ -207,7 +211,7 @@ side_tables! {
     /// only relays a caller-encoded `&[u8]` (`crate::receipt::send_receipt_txn`
     /// already ran `rmp_serde::to_vec_named` before calling in); binding it
     /// `Named` here would re-encode already-encoded bytes on every write.
-    SEND_RECEIPT_SUMMARY: VaultMeta b"send_receipt:v0:" Raw Authored;
+    SEND_RECEIPT_SUMMARY: VaultMeta b"send_receipt:v0:" Raw Authored [accepts: crate::store::send_receipt_summary_accepts_masked];
     /// Connector-send attempt audit row. Key: id16 + bytes32.
     ///
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as
@@ -229,11 +233,11 @@ side_tables! {
     /// the deployment's `[backup]` section decides. Key: ().
     BACKUP_POLICY: VaultMeta b"settings:backup:v1:policy" Named;
     /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
-    CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named Authored;
+    CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named Authored [accepts: crate::settings::customization_event_accepts_masked];
     /// Monotonic sequence counter for customization change-notification events. Key: ().
     CUSTOMIZATION_EVENT_SEQUENCE: VaultMeta b"settings:customization:v1:event_sequence" Raw;
     /// Persisted four-layer (accent/type/mode/world) client customization profile. Key: ().
-    CUSTOMIZATION_SETTINGS: VaultMeta b"settings:customization:v1:profile" Named Authored;
+    CUSTOMIZATION_SETTINGS: VaultMeta b"settings:customization:v1:profile" Named Authored [accepts: crate::settings::customization_settings_accepts_masked];
     /// OF-365: the owner's disclosure-mode knob (always_ask / auto / always_yes; absent means
     /// auto). Value: the mode's ASCII name. Key: ().
     DISCLOSURE_OFFER_MODE: VaultMeta b"settings:disclosure:v1:offer_mode" Raw;
@@ -241,7 +245,7 @@ side_tables! {
     /// Key: ().
     DREAMER_ACTION_MODE_POLICY: VaultMeta b"settings:dreamer:action_mode:v1" LegacyJson;
     /// Owner-set rubric dial for the memory-curator maintenance pass. Key: ().
-    DREAMER_CURATOR_RUBRIC: VaultMeta b"settings:dreamer:curator:rubric:v1" LegacyJson Authored;
+    DREAMER_CURATOR_RUBRIC: VaultMeta b"settings:dreamer:curator:rubric:v1" LegacyJson Authored [accepts: crate::dreamer_runner::dreamer_curator_rubric_accepts_masked];
     /// Owner-set retune thresholds for the tuning-harness evaluation loop. Key: ().
     DREAMER_HARNESS_THRESHOLDS: VaultMeta b"settings:dreamer:harness:thresholds:v1" LegacyJson;
     /// Owner-set cadence dial for the proactivity digest. Key: ().
@@ -249,13 +253,13 @@ side_tables! {
     /// Owner-confirmed digest policy claim revision. Key: id16, value: hash32.
     DREAMER_PROACTIVITY_CONFIRMED: VaultMeta b"settings:dreamer:proactivity:confirmed:v1:" Raw;
     /// Owner-confirmed presentation row. Key: singleton.
-    DREAMER_PROACTIVITY_PRESENTATION: VaultMeta b"settings:dreamer:proactivity:presentation:v1" LegacyJson Authored;
+    DREAMER_PROACTIVITY_PRESENTATION: VaultMeta b"settings:dreamer:proactivity:presentation:v1" LegacyJson Authored [accepts: crate::dreamer_runner::dreamer_proactivity_presentation_accepts_masked];
     /// Owner-set projector surprise policy. Key: ().
     DREAMER_PROJECTOR_POLICY: VaultMeta b"settings:dreamer:projector-policy:v1" LegacyJson;
     /// Owner-set continuous sieve policy. Key: ().
     DREAMER_SIEVE_POLICY: VaultMeta b"settings:dreamer:sieve-policy:v1" LegacyJson;
     /// Owner-set relationship-stewardship rules. Key: ().
-    DREAMER_STEWARDSHIP_RULES: VaultMeta b"settings:dreamer:stewardship:rules:v1" LegacyJson Authored;
+    DREAMER_STEWARDSHIP_RULES: VaultMeta b"settings:dreamer:stewardship:rules:v1" LegacyJson Authored [accepts: crate::dreamer_runner::dreamer_stewardship_rules_accepts_masked];
     /// Owner on/off dial for proactive Dreamer plugin suggestions. Key: ().
     PLUGIN_SUGGESTIONS_ENABLED: VaultMeta b"settings:dreamer:v1:plugin_suggestions_enabled" Raw;
     /// Owner-controlled wake thresholds. Key: ().
@@ -266,7 +270,7 @@ side_tables! {
     /// The owner's standing quota fallback for one model offer (OF-305): the engine model id its
     /// calls go to while the offer is parked, set by a `use_fallback` answer. Owner policy, kept
     /// apart from the deployment's runtime cooldowns. Key: hex64 (the offer's cooldown key).
-    MODEL_OWNER_FALLBACK: VaultMeta b"settings:models:v1:fallback:" Raw Authored;
+    MODEL_OWNER_FALLBACK: VaultMeta b"settings:models:v1:fallback:" Raw Authored [accepts: crate::settings::model_owner_fallback_accepts_masked];
     /// The owner's Responses `store` switch (OF-602): on, a provider keeps each response and a
     /// reconnected socket resumes the chain. Absent is off. Key: ().
     MODEL_OWNER_RESPONSES_STORE: VaultMeta b"settings:models:v1:responses_store" Named;
@@ -274,6 +278,9 @@ side_tables! {
     /// defaults), recorded in the commit that changed it (WILL-PLAN L13 row 01). Key:
     /// u64be(sequence).
     POLICY_SETTING_ACT: VaultMeta b"settings:owner_act:v1:" Named;
+    /// The owner's grant/revoke act on an access grant in the commit that changed it
+    /// (FIX 10980). Writer-trusted local receipt, not a signed op. Key: u64be(sequence).
+    ACCESS_GRANT_OWNER_ACT: VaultMeta b"settings:owner_act_access_grant:v1:" Named;
     /// Publisher share dial: explicit owner-set enabled/disabled token. Key: ().
     EDIT_DISTANCE_PUBLISHER_ENABLED: VaultMeta b"settings:publisher:v1:enabled" Raw;
     /// Install-profile default for the publisher share dial. Key: ().
@@ -331,13 +338,15 @@ side_tables! {
     /// One holder's delivery of one export-first removal archive: the delivery version it was
     /// last sent and the one it acknowledged, never the archive (FIX 3215, 3396). Key: hex32
     /// (removed person) ":" hex32 (receipt id) ":" hex64 (holder binding key).
-    SHARED_ACT_REMOVAL_DELIVERY: VaultMeta b"shared-act:removal-delivery:v1:" Named;
+    SHARED_ACT_REMOVAL_DELIVERY: VaultMeta b"shared-act:removal-delivery:v1:" Named
+        => crate::Vault::erase_removal_archive_actor_in_txn;
     /// The record ids an export-first removal's export counted, beside its
     /// receipt (FIX 11886). Key: hex32 (receipt id).
     SHARED_ACT_REMOVAL_EXPORT_RECORDS: VaultMeta b"shared-act:removal-export-records:v1:" Named;
     /// An export-first removal's archive, delivered to the removed Owner alone and kept for them
     /// until its term ends (FIX 1300). Key: hex32 (removed Owner) ":" hex32 (receipt id).
-    SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named;
+    SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named
+        => crate::Vault::erase_removal_archive_actor_in_txn;
     /// One delivery of a removal archive a removed person's device took in: its digest, what
     /// it holds and when, never the archive (FIX 11197). Key: hex32 (person) ":" hex32 (receipt
     /// id) ":" decimal (delivery version).
@@ -396,7 +405,7 @@ side_tables! {
     /// and skill (each nil once erased), label, share, judge revision, time. Key: hash32 (blake3
     /// of the terminal pack receipt id) + u64be (evidence sequence).
     SKILL_ATTRIBUTION_CAUSE: VaultMeta b"skill_attribution:cause:v1:" Named Engine
-        => crate::skill_attribution::erase_attribution_cause_entity_in_txn;
+        => crate::store::skill_attribution_causes::erase_attribution_cause_entity_in_txn;
     /// One run's matched-fork contribution checks for one experiment (its outcome, goal revision,
     /// axis and target: a loaded skill or a used edge): the measured verdict and the pair it was
     /// read from (both fork receipts and results, the anchor, the axis, the edge), and each pair
@@ -441,7 +450,7 @@ side_tables! {
     /// One recorded outcome-evidence row (hand-rolled MessagePack map) awaiting attribution routing,
     /// keyed by sequence; its skill and its actor are each nil once erased. Key: u64be.
     SKILL_ATTRIBUTION_EVIDENCE: VaultMeta b"skill_attribution:evidence:v1:" Raw
-        => crate::skill_attribution::erase_attribution_evidence_skill_in_txn;
+        => crate::store::skill_attribution_evidence::erase_attribution_evidence_skill_in_txn;
     /// Monotonic counter (u64be) minting the next evidence sequence number. Key: ().
     SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE: VaultMeta b"skill_attribution:evidence_sequence:v1" Raw;
     /// Judge revision (UTF-8) that routed one judgment, stamped once. Key: u64be (evidence
@@ -451,7 +460,7 @@ side_tables! {
     /// charges an erased skill stays with its subject nil, the edit proposals naming it go, and a
     /// lapse charging an erased actor stays with its subject nil. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw
-        => crate::skill_attribution::erase_attribution_judgment_skill_in_txn;
+        => crate::store::skill_attribution_judgments::erase_attribution_judgment_skill_in_txn;
     /// Frozen anchored pack outcome, eligible used lineage chains and shares; an erased entity's
     /// id is redacted where it is named. Key: credit receipt id.
     SKILL_ATTRIBUTION_LATE_CREDIT: VaultMeta b"skill_attribution:late_credit:v1:" Named
@@ -461,12 +470,12 @@ side_tables! {
     /// A positive skill proposal: a succeeded deviation or uncovered step that taught its skill;
     /// one naming an erased skill or actor goes. Key: u64be (evidence sequence).
     SKILL_ATTRIBUTION_POSITIVE_PROPOSAL: VaultMeta b"skill_attribution:positive_proposal:v1:" Named
-        => crate::skill_attribution::erase_positive_proposals_in_txn;
+        => crate::store::positive_skill_proposals::erase_positive_proposals_in_txn;
     /// One skill's site knowledge a run's browser was shown (FIX 11436): the run, the scope and
     /// seq of the observation, the skill, its revision, the BLAKE3 of the knowledge and when.
     /// Key: id16 (run) + id16 (skill) + be64 (seq) + 8 (scope hash).
     SKILL_ATTRIBUTION_SITE_EXPOSURE: VaultMeta b"skill_attribution:site_exposure:v1:" Named Engine
-        => crate::skill_attribution::erase_site_exposure_in_txn;
+        => crate::store::site_skill_exposure::erase_site_exposure_in_txn;
     /// Highest judgment sequence (u64be) the sweep has already applied to skill-reliability/actor-
     /// claim projections. Key: ().
     SKILL_ATTRIBUTION_SWEEP_APPLIED_CURSOR: VaultMeta b"skill_attribution:sweep_applied:v1" Raw;

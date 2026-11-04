@@ -7,6 +7,7 @@ mod annotation_as;
 mod claim_vad;
 mod consolidation;
 pub mod coping;
+mod processed;
 pub mod state_index;
 pub mod state_inputs;
 mod trigger;
@@ -26,6 +27,8 @@ pub use self::claim_vad::{
 use self::claim_vad::{
     claim_vad_evidence_value, claim_vad_value, collect_claim_turn_evidence_refs, mean_vad,
 };
+pub use self::processed::AFFECT_PROCESSED_PREDICATE;
+pub(crate) use self::processed::processed_subjects;
 pub use self::trigger::{
     AFFECT_TRIGGER_PREDICATE, AffectTriggerValue, VadDelta, affect_trigger_claim_candidate,
     affect_trigger_value, decode_affect_trigger_claim, decode_affect_trigger_value,

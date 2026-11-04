@@ -351,20 +351,33 @@ impl EngineNativeExecutor<'_> {
         if record.bindings.is_empty() {
             return Ok(None);
         }
+        // A refused door check withholds previews here; a later read names
+        // the refusal.
+        let served_rows = record
+            .agent_verb_rows()
+            .zip(record.callable_rows.as_deref())
+            .map(|(mut rows, callable)| {
+                rows.extend_from_slice(callable);
+                rows
+            });
+        let served_rows_withheld = self
+            .gated_write
+            .withholds_retained(served_rows.as_deref())
+            .unwrap_or(true);
         let mut lines = vec![
             "Results bound in this run (describe(name) gives a card; a card's `read` path reads \
              it a chunk at a time):"
                 .to_owned(),
         ];
         for binding in record.bindings.iter().rev().take(BRIEF_BINDINGS) {
-            let Some(output) = record
-                .outputs
-                .iter()
-                .find(|output| output.handle == binding.handle)
-            else {
+            let Some(output) = record.outputs.iter().find(|output| {
+                output.handle == binding.handle
+                    && (binding.path.is_empty() || output.path == binding.path)
+            }) else {
                 return Err(Error::CorruptedIndex("executor result binding").into());
             };
-            let preview: String = if clean_for_context(&self.storage, Some(record.run_id), output)?
+            let preview: String = if !served_rows_withheld
+                && clean_for_context(&self.storage, Some(record.run_id), output)?
             {
                 output
                     .preview

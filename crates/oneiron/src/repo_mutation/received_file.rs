@@ -10,46 +10,26 @@
 //! enters its queue's same checks once, on its own; with one set it waits
 //! for that policy's critics or the owner's Approve and his explicit
 //! enqueue, like any other proposal.
-use std::collections::BTreeMap;
-
 use heed::{RoTxn, RwTxn};
 
 use super::proposal::persist::PreparedRepoProposal;
-use super::proposal::{
-    PROPOSAL, RepoProposal, RepoProposalOperation, RepoProposalStatus, RepoProposedFile, invalid,
-};
+use super::proposal::{PROPOSAL, RepoProposal, RepoProposalOperation, RepoProposalStatus, invalid};
 use super::snapshot::SnapshotCustody;
 use super::types::{RepoMutationOperation, RepoMutationRequest};
 use crate::code_document::CodeOpProvenance;
-use crate::codebase::{RepoRef, entity_id_from_hash_material};
+use crate::codebase::RepoRef;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitOid, GitWireRepo};
+use crate::git_wire::GitWireRepo;
 use crate::merge_queue::MergeProposal;
 use crate::secret_snapshot::SnapshotWithhold;
 use crate::{EntityId, Vault};
 
 pub(crate) mod tree;
 
-/// What one resolved candidate proposes: its deterministic identities,
-/// the queue's folder and the exact base commit, its pusher, fork and push
-/// provenance, and every file with its exact state change.
-pub(crate) struct ReceivedFilesProposalInput {
-    pub(crate) candidate: EntityId,
-    pub(crate) proposal: EntityId,
-    pub(crate) folder: String,
-    pub(crate) base_commit: GitOid,
-    pub(crate) pusher: EntityId,
-    pub(crate) session: EntityId,
-    pub(crate) provenance: EntityId,
-    pub(crate) message: String,
-    pub(crate) files: Vec<RepoProposedFile>,
-    pub(crate) created_at: u64,
-    /// Each file translated from a masked copy, by path, with its canonical
-    /// ORIGINAL's own key bytes (FIX 10276): the only secret its custody
-    /// check admits. Empty for every ordinary push.
-    pub(crate) original_spans: BTreeMap<String, Vec<Vec<u8>>>,
-}
+pub(crate) use crate::store::repo_proposal_record::{
+    ReceivedFilesProposalInput, received_file_operation, received_proposal_id,
+};
 
 /// Whether `content` at `path`, which custody withholds as `withheld`,
 /// holds no secret but its canonical ORIGINAL's own keys `keys` (FIX
@@ -81,29 +61,6 @@ fn holds_only_original_keys(
         rest = kept;
     }
     custody.withholds(path, &rest).is_none()
-}
-
-/// The deterministic id of a received bundle's proposal.
-///
-/// # Errors
-/// An id derivation failure.
-pub(crate) fn received_proposal_id(candidate: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:push-candidate-proposal:v1",
-        &[candidate.as_bytes()],
-    )
-}
-
-/// The deterministic document operation one bundle file lowers to, distinct
-/// from the receive audit's own operation ids.
-///
-/// # Errors
-/// An id derivation failure.
-pub(crate) fn received_file_operation(proposal: EntityId, source: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:push-candidate-file-op:v1",
-        &[proposal.as_bytes(), source.as_bytes()],
-    )
 }
 
 impl Vault {
@@ -174,6 +131,7 @@ impl Vault {
             policy_critiques: Vec::new(),
             queue_review: None,
             status: RepoProposalStatus::Proposed,
+            resolves: None,
             settlement: None,
             operation_seq: None,
             created_at: input.created_at,

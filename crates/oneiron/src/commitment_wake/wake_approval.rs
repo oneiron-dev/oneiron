@@ -6,10 +6,11 @@ use crate::Vault;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, session_claim_producer,
 };
-use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::{Memory, MemoryError, MemoryResult, OutboundDraftInput, OutboundIntentReceipt};
+use crate::memory::{Memory, OutboundDraftInput, OutboundIntentReceipt};
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 use super::wake_event::{
     COMMITMENT_WAKE_PROPOSAL_SCHEMA_VERSION, COMMITMENT_WAKE_TRIGGER, CommitmentWakeDue,
@@ -19,8 +20,11 @@ use super::wake_event::{
     PROVENANCE_KEY_JOB_ID, PROVENANCE_KEY_RUN, PROVENANCE_KEY_SURFACE, commitment_trigger_ref,
     required_string, required_u64,
 };
-use super::wake_fire::{WakeEligibility, current_wake_eligibility};
+use super::wake_fire::{
+    WakeEligibility, current_wake_eligibility, current_wake_eligibility_in_txn,
+};
 use super::wake_proposal::CommitmentWakeProposalDraft;
+use crate::commitment::decode_commitment_claim;
 use crate::error::ClaimError;
 
 // ---------------------------------------------------------------------------
@@ -85,6 +89,12 @@ impl ApprovedCommitmentWake {
         self.bound_actor
     }
 
+    /// The content the approved send carries, when it names one.
+    #[must_use]
+    pub fn content_ref(&self) -> Option<&str> {
+        self.content_ref.as_deref()
+    }
+
     /// The canonical commitment receipt reference.
     #[must_use]
     pub fn trigger_ref(&self) -> String {
@@ -132,6 +142,41 @@ pub fn approved_commitment_wake(
         "commitment wake proposal carries no envelope actor",
     ))?;
     require_live_commitment(vault, &fields.instance_id)?;
+    Ok(ApprovedCommitmentWake {
+        proposal_claim_id: *proposal_claim_id,
+        instance_id: fields.instance_id,
+        phase: fields.phase,
+        run_id,
+        idempotency_key: fields.idempotency_key,
+        verb: fields.verb,
+        channel: fields.channel,
+        target: fields.target,
+        on_behalf_of: fields.on_behalf_of,
+        content_ref: fields.content_ref,
+        dedupe_key: fields.dedupe_key,
+        occurred_at: fields.occurred_at,
+        bound_actor,
+    })
+}
+
+/// [`approved_commitment_wake`] through the caller's transaction: the same
+/// shape, provenance and liveness checks, for an approval the caller commits
+/// beside its own write.
+pub(super) fn approved_commitment_wake_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    proposal_claim_id: &EntityId,
+) -> Result<ApprovedCommitmentWake> {
+    let body = vault
+        .get_claim_in_txn(txn, proposal_claim_id)?
+        .ok_or(Error::EntityNotFound)?;
+    require_approved_proposal_shape(&body)?;
+    let fields = decode_commitment_wake_proposal(&body.value)?;
+    let run_id = require_proposal_provenance(&body, &fields)?;
+    let bound_actor = session_claim_producer(&body).ok_or(Error::InvalidClaimBody(
+        "commitment wake proposal carries no envelope actor",
+    ))?;
+    require_live_commitment_in_txn(vault, txn, &fields.instance_id)?;
     Ok(ApprovedCommitmentWake {
         proposal_claim_id: *proposal_claim_id,
         instance_id: fields.instance_id,
@@ -212,6 +257,32 @@ fn require_proposal_provenance(body: &ClaimBody, fields: &ProposalFields) -> Res
         ));
     }
     Ok(run.to_owned())
+}
+
+/// [`require_live_commitment`] through the caller's transaction.
+fn require_live_commitment_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    instance_id: &EntityId,
+) -> Result<()> {
+    let head = vault.commitment_head_in_txn(txn, instance_id)?;
+    let body = vault
+        .get_claim_in_txn(txn, &head)?
+        .ok_or(Error::InvalidClaimBody(
+            "commitment wake proposal names a missing commitment",
+        ))?;
+    let record = decode_commitment_claim(&body)?.ok_or(Error::InvalidClaimBody(
+        "commitment wake proposal names a missing commitment",
+    ))?;
+    if !matches!(
+        current_wake_eligibility_in_txn(vault, txn, &record)?,
+        WakeEligibility::Eligible
+    ) {
+        return Err(Error::InvalidClaimBody(
+            "commitment wake proposal names a closed or ineligible commitment",
+        ));
+    }
+    Ok(())
 }
 
 fn require_live_commitment(vault: &Vault, instance_id: &EntityId) -> Result<()> {
@@ -445,8 +516,8 @@ pub(crate) fn scheduled_commitment_wake_authorised(
     else {
         return Ok(true);
     };
-    if crate::outbound::OutboundIntentSource::parse(&intent.intent_source)
-        != Some(crate::outbound::OutboundIntentSource::Commitment)
+    if crate::store::outbound_trigger::OutboundIntentSource::parse(&intent.intent_source)
+        != Some(crate::store::outbound_trigger::OutboundIntentSource::Commitment)
     {
         return Ok(true);
     }

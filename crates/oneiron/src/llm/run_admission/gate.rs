@@ -9,7 +9,7 @@ use futures_core::Stream;
 use super::super::{
     BrokerIsolation, BudgetLease, DispatchBinding, FatalLlmError, LlmBackend, LlmCapability,
     LlmError, LlmGenerateFuture, LlmRequest, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult,
-    LlmUsage, ModelId, SingleRouteBackend,
+    LlmUsage, ModelId, SingleRouteBackend, WorkContext,
 };
 use super::admission::{RunDenied, RunInner};
 
@@ -34,6 +34,8 @@ pub struct GatedBackend {
     inner: Arc<dyn SingleRouteBackend>,
     /// The offer this gate sends for. A call's own model takes the subject.
     offer: DispatchBinding,
+    /// One gate is one work tree; clones of this context share its cancel Arc.
+    work_context: WorkContext,
 }
 
 impl GatedBackend {
@@ -41,8 +43,14 @@ impl GatedBackend {
         run: Arc<RunInner>,
         inner: Arc<dyn SingleRouteBackend>,
         offer: DispatchBinding,
+        work_context: WorkContext,
     ) -> Self {
-        Self { run, inner, offer }
+        Self {
+            run,
+            inner,
+            offer,
+            work_context,
+        }
     }
 
     /// The digest of the exact bytes the wrapped backend would send for
@@ -156,6 +164,7 @@ impl LlmBackend for GatedBackend {
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
             let digest = self.open(&request, lease, false)?;
+            lease.attach_work_context(self.work_context.clone());
             let mut pending = self.pending(&request, lease, digest);
             let result = self.inner.generate(request, lease).await;
             match &result {
@@ -168,6 +177,7 @@ impl LlmBackend for GatedBackend {
 
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         let digest = self.open(&request, lease, true)?;
+        lease.attach_work_context(self.work_context.clone());
         let pending = self.pending(&request, lease, digest);
         let inner = self.inner.stream(request, lease)?;
         Ok(LlmStream::new(GatedStream { inner, pending }))

@@ -51,7 +51,7 @@ pub(crate) use bundle::{
     PadObjectRefillSource, capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
     current_pad_objects_in_txn, generations_an_install_retires_in_txn, index_in,
     install_captured_pad_objects_in_txn, pad_objects_identity_in_txn, read_back_captured_in_txn,
-    read_back_pad_objects_in_txn, refill_pad_object,
+    read_back_put_back_in_txn, refill_pad_object,
 };
 pub(crate) use bundle::{held_pad_object, holds_sealed_bundle, read_back_generation_in};
 pub use bundle_access::{
@@ -62,6 +62,7 @@ pub use bundle_access::{
 pub use bundle_payload::RecoveryCheckpointTrust;
 pub use bundle_payload::SealedBundleTake;
 pub use bundle_payload::SealedKitRestore;
+pub(crate) use bundle_payload::sealed_bundle_awaiting_reader;
 pub use bundle_stage::{SealedBundleStaged, sealed_bundle_stages};
 pub(crate) use bundle_turn::SEALED_BUNDLE_PUBLISH_LEASE_SECS;
 pub use bundle_turn::ask_sealed_bundle_turn;
@@ -649,6 +650,7 @@ pub fn promotion_covers_full_window_for(
             super::room_facts::ROOM_FACTS_MAP,
             super::document_pins::DOCUMENT_PINS_MAP,
             super::message_docs::MESSAGE_DOCS_MAP,
+            super::repo_manifests::REPO_MANIFESTS_MAP,
             super::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
             super::ingest::PEER_ORIGIN_MAP,
         ] {

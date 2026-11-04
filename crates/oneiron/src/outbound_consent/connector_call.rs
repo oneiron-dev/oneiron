@@ -134,6 +134,12 @@ pub(super) struct PendingConnectorCall {
     /// that sends the call writes its own use records, linked to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) secret_use: Option<SecretUseContext>,
+    /// A recovery sweep minted this row without live presentation context.
+    /// The next matching live pass adopts it and clears the marker.
+    pub(super) sweep_minted: bool,
+    /// The frozen producer forced `dry_run` from the mutation intent, so the
+    /// sweep-minted comparison ignores that one argument before live adoption.
+    pub(super) sweep_dry_run_forced: bool,
     /// This pass runs inside a live `self.use` of the call, whose own
     /// records keep its send (FIX 2822). Never stored.
     #[serde(skip)]

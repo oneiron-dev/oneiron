@@ -12,7 +12,8 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
+use crate::store::EngineScan;
 use crate::temporal::TimeRange;
 use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
@@ -141,7 +142,7 @@ impl Vault {
             let fold = self.authority_fold_readonly_in_txn(rtxn)?;
             let projection = history(&self.store, rtxn, &fold, *id)?;
             // A superseded history's same-id successor is an ordinary claim.
-            if !projection.admits_successor_by(crate::memory::claim_author(&body))
+            if !projection.admits_successor_by(crate::claim::claim_author(&body))
                 || crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
             {
                 return Ok(Some(super::history_projection::project_machine_claim(
@@ -399,26 +400,4 @@ pub(crate) fn facet_refs_in_port<P: crate::ports::EdgeStoreRead>(
     Ok(facets)
 }
 
-/// Reads the immutable writer identity already stamped by `WriteEnvelope`
-/// into candidate evidence. Missing, duplicate, malformed, or reserved actor
-/// refs fail closed by returning no producer match.
-pub(crate) fn session_claim_producer(body: &ClaimBody) -> Option<EntityId> {
-    let Value::Map(entries) = body.evidence.as_ref()? else {
-        return None;
-    };
-    let mut producer = None;
-    for (key, value) in entries {
-        if key.as_str() != Some(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY) {
-            continue;
-        }
-        if producer.is_some() {
-            return None;
-        }
-        let Value::Binary(bytes) = value else {
-            return None;
-        };
-        let actor_bytes: [u8; ENTITY_ID_LEN] = bytes.as_slice().try_into().ok()?;
-        producer = Some(EntityId::from_bytes(actor_bytes).ok()?);
-    }
-    producer
-}
+pub(crate) use crate::store::claim_projection::session_claim_producer;

@@ -4,7 +4,6 @@ use super::publication::{OriginPublicationReceipt, OriginPublicationRequest};
 use super::residence::OriginAuthorityLease;
 use super::tree::{OriginTreeFile, start_tree_count};
 use crate::Vault;
-use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
@@ -12,6 +11,7 @@ use crate::git_wire::{
     lock_repository,
 };
 use crate::side_table::{self, Raw, SideKey, SideTable};
+use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
 use std::collections::BTreeMap;
 
@@ -268,8 +268,8 @@ impl Vault {
     fn document_files(
         &self,
         repo: &GitWireRepo,
-        revision: &crate::code_revision::CodeRevision,
-        metadata: &crate::code_revision::CodeCommitMetadata,
+        revision: &crate::store::code_revision_record::CodeRevision,
+        metadata: &crate::store::code_commit_metadata::CodeCommitMetadata,
     ) -> Result<BTreeMap<String, OriginTreeFile>> {
         if revision.file_frontiers.is_empty() {
             return Err(Error::InvariantViolation(
@@ -277,7 +277,8 @@ impl Vault {
             ));
         }
         let mut files = BTreeMap::new();
-        let target_scope = crate::repo_mutation::canonical_mutation_scope(repo.repo_root())?;
+        let target_scope =
+            crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
         for frontier in revision.file_frontiers.values() {
             if frontier.repo != target_scope {
                 return Err(Error::InvariantViolation(
@@ -293,7 +294,7 @@ impl Vault {
                             .file_modes
                             .get(&frontier.document_id)
                             .copied()
-                            .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE),
+                            .unwrap_or(crate::store::code_snapshot::DEFAULT_CODE_FILE_MODE),
                         content,
                     },
                 )

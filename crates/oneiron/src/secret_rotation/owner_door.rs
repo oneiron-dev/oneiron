@@ -7,16 +7,21 @@
 
 use super::{RECEIPTS, RotationKind, RotationReceipt, encode_rotation_receipt_body};
 use crate::Vault;
-use crate::authority::{ActSurface, CustodyChange};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result, SecretError};
+use crate::secret_custody::ActiveChange;
+use crate::secret_custody::Material;
+use crate::secret_custody::{SecretCustodyWork, SecretRevoked, SecretRotated};
 use crate::secret_custody::{
-    ActiveChange, CustodyKeptHere, CustodyPlan, Material, SecretCustodyRecord, SecretCustodyStatus,
-    SecretCustodyWork, SecretRevoked, SecretRotated, custody_portable, put_secret_custody_in_txn,
-    read_secret_custody_meta_in_txn, refuse_bindings_wider_than_live_floor,
-    refuse_revoked_use_in_txn, resolve_secret_ref_in_txn,
+    put_secret_custody_in_txn, read_secret_custody_meta_in_txn,
+    refuse_bindings_wider_than_live_floor, refuse_revoked_use_in_txn,
 };
+use crate::secret_record::custody_portable;
+use crate::secret_record::{CustodyKeptHere, CustodyPlan};
+use crate::secret_record::{SecretCustodyRecord, SecretCustodyStatus};
 use crate::side_table::HexId;
+use crate::store::secret_name_index::resolve_secret_ref_in_txn;
+use oneiron_authority::authority::{ActSurface, CustodyChange};
 use zeroize::Zeroize;
 
 impl Vault {
@@ -90,7 +95,7 @@ impl Vault {
     ) -> Result<SecretRotated> {
         // A cloud registration slot rotates only with its successor tokens
         // (G7), never from an owner's value.
-        if crate::secret_custody::is_cloud_registration_slot(secret_ref) {
+        if crate::secret_record::is_cloud_registration_slot(secret_ref) {
             return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
                 "a cloud registration slot's name is the engine's own",
             )));
@@ -279,8 +284,8 @@ impl Vault {
             &self.store,
             wtxn,
             &id,
-            crate::secret_custody::FoundKeySettled {
-                action: crate::secret_custody::FoundKeyAction::Rotate,
+            crate::secret_record::FoundKeySettled {
+                action: crate::secret_record::FoundKeyAction::Rotate,
                 by: None,
                 at,
                 receipt: format!("rotation:{}", receipt.receipt_id.to_hex()),

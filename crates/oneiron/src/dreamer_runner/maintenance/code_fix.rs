@@ -48,15 +48,17 @@ use self::work::{
 use super::coach::COACH_CODE_FIX_FACET;
 use super::coach_heal::HealRoute;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
+use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::failure_signals::{
     CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplay,
     ExactReplayRequest, FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft,
     InventedMessage, ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_source_snapshot,
 };
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::catalogue::CODE_FIX_JUDGMENT;
-use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility,
+use crate::llm::decision::DecisionLadder;
+use crate::model_decision::catalogue::CODE_FIX_JUDGMENT;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, Named, SideTable};
@@ -167,9 +169,15 @@ impl CandidateRun {
     }
 }
 
-/// A candidate's run and the record it sealed, queued in the write that
-/// keeps the run.
-type SealedRun = (CandidateRun, Option<SealedCodeFix>);
+/// A candidate's run, the record it sealed, and the captured step an
+/// engine pair ran from: queued in the write that keeps the run, which holds
+/// a judged pair to that same step (FIX 7027). The capsule never persists;
+/// the kept [`CandidateRun`] stays content-free.
+type SealedRun = (
+    CandidateRun,
+    Option<SealedCodeFix>,
+    Option<StepReplayCapsule>,
+);
 
 /// A first run's result, its records sealed and not yet queued.
 struct Unkept {
@@ -711,14 +719,14 @@ impl Vault {
         let failure_class = replay.job.failure_class;
         let mut candidates = Vec::with_capacity(replay.candidates.len());
         for (candidate_id, kind) in &replay.candidates {
-            let (shadow, fidelity, engine) = match kind.engine_pin() {
+            let (shadow, fidelity, engine, capsule) = match kind.engine_pin() {
                 None => {
                     let shadow = replay.shadow_replay(&replay.job.source, candidate_id)?;
-                    (shadow, replay.fidelity(), None)
+                    (shadow, replay.fidelity(), None, None)
                 }
                 Some(pin) => {
                     let pair = replay.engine_pair(candidate_id, pin)?;
-                    (pair.shadow, pair.fidelity, Some(pair.run))
+                    (pair.shadow, pair.fidelity, Some(pair.run), pair.capsule)
                 }
             };
             let outcome = match shadow {
@@ -753,7 +761,7 @@ impl Vault {
                 engine,
                 grant,
             };
-            candidates.push((run, sealed));
+            candidates.push((run, sealed, capsule));
         }
         Ok(candidates)
     }
