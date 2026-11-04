@@ -369,7 +369,7 @@ fn hold_for_ask(
         .map(|world| EntityId::from_hex(world).ok())
         .collect();
     let (covered, excluded) = match worlds {
-        Some(worlds) => crate::federation::courtesy_scope::split_recipient_copies_in_txn(
+        Some(worlds) => vault.store.record_hooks.split_recipient_copies_in_txn(
             vault,
             txn,
             pact_id,

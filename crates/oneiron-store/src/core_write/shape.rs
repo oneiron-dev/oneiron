@@ -337,10 +337,7 @@ pub fn entity_id(value: &str, field: &str) -> MemoryResult<EntityId> {
 }
 
 /// The entity `field` names, if any.
-pub fn optional_entity_id(
-    value: Option<&str>,
-    field: &str,
-) -> MemoryResult<Option<EntityId>> {
+pub fn optional_entity_id(value: Option<&str>, field: &str) -> MemoryResult<Option<EntityId>> {
     value.map(|value| entity_id(value, field)).transpose()
 }
 
