@@ -5,14 +5,21 @@ use std::time::Instant;
 use super::{MachineMemory, MemoryLease, MemoryRefusal};
 
 #[cfg(unix)]
-impl oneiron_organ_host::FloorLease for MemoryLease {
+struct OrganLease(MemoryLease);
+
+#[cfg(unix)]
+impl oneiron_organ_host::FloorLease for OrganLease {
     fn grow(
         &mut self,
         more: u64,
         deadline: Instant,
         stopped: &dyn Fn() -> bool,
     ) -> Result<(), oneiron_organ_host::FloorRefusal> {
-        MemoryLease::grow(self, more, deadline, stopped).map_err(organ_refusal)
+        MemoryLease::grow_pending(&mut self.0, more, deadline, stopped).map_err(organ_refusal)
+    }
+
+    fn shrink(&mut self, bytes: u64) {
+        MemoryLease::shrink(&mut self.0, bytes);
     }
 
     fn grow_untimed(
@@ -20,7 +27,7 @@ impl oneiron_organ_host::FloorLease for MemoryLease {
         more: u64,
         stopped: &dyn Fn() -> bool,
     ) -> Result<(), oneiron_organ_host::FloorRefusal> {
-        MemoryLease::grow_untimed(self, more, stopped).map_err(organ_refusal)
+        MemoryLease::grow_untimed(&mut self.0, more, stopped).map_err(organ_refusal)
     }
 }
 
@@ -58,7 +65,7 @@ fn organ_lease(
     leased: Result<MemoryLease, MemoryRefusal>,
 ) -> Result<Box<dyn oneiron_organ_host::FloorLease>, oneiron_organ_host::FloorRefusal> {
     leased
-        .map(|lease| Box::new(lease) as Box<dyn oneiron_organ_host::FloorLease>)
+        .map(|lease| Box::new(OrganLease(lease)) as Box<dyn oneiron_organ_host::FloorLease>)
         .map_err(organ_refusal)
 }
 
