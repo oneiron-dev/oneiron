@@ -4,13 +4,13 @@ use std::collections::BTreeSet;
 
 use rmpv::Value;
 
-use oneiron_contracts::entity_id::EntityId;
 use crate::write_envelope::claim_body::ClaimBody;
 use crate::write_envelope::claim_body::ClaimSubject;
 use crate::write_envelope::claim_body::RelationshipScope;
 use oneiron_contracts::claim::ClaimApprovalStatus;
 use oneiron_contracts::claim::ClaimLifecycleStatus;
 use oneiron_contracts::claim::ClaimSource;
+use oneiron_contracts::entity_id::EntityId;
 
 pub mod actor_predicate;
 pub mod actor_tokens;
@@ -417,7 +417,11 @@ impl ClaimCandidate {
         let mut entries = match self.evidence.take() {
             Some(Value::Map(entries)) => entries,
             None => Vec::new(),
-            Some(_) => return Err(oneiron_contracts::error::Error::InvalidClaimBody("evidence must be a map")),
+            Some(_) => {
+                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
+                    "evidence must be a map",
+                ));
+            }
         };
         entries.retain(|(name, _)| name.as_str() != Some(key));
         entries.push((
@@ -493,11 +497,18 @@ impl ClaimCandidate {
     }
 
     /// Derived answers cannot disclose their input through a broader reader.
-    pub fn with_private_reader(mut self, principal: EntityId) -> oneiron_contracts::error::Result<Self> {
+    pub fn with_private_reader(
+        mut self,
+        principal: EntityId,
+    ) -> oneiron_contracts::error::Result<Self> {
         let mut scope = match self.scope.take() {
             Some(Value::Map(scope)) => scope,
             None => Vec::new(),
-            Some(_) => return Err(oneiron_contracts::error::Error::InvalidClaimBody("scope must be a map")),
+            Some(_) => {
+                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
+                    "scope must be a map",
+                ));
+            }
         };
         scope.retain(|(key, _)| key.as_str() != Some("typed_question_principal"));
         scope.push((
@@ -508,11 +519,18 @@ impl ClaimCandidate {
         Ok(self)
     }
 
-    pub fn with_evidence_taint(mut self, taint: ClaimSource) -> oneiron_contracts::error::Result<Self> {
+    pub fn with_evidence_taint(
+        mut self,
+        taint: ClaimSource,
+    ) -> oneiron_contracts::error::Result<Self> {
         let mut entries = match self.scope.take() {
             Some(Value::Map(entries)) => entries,
             None => Vec::new(),
-            Some(_) => return Err(oneiron_contracts::error::Error::InvalidClaimBody("scope must be a map")),
+            Some(_) => {
+                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
+                    "scope must be a map",
+                ));
+            }
         };
         entries.retain(|(key, _)| key.as_str() != Some("evidence_taint"));
         entries.push((Value::from("evidence_taint"), Value::from(taint.as_str())));
@@ -534,7 +552,11 @@ impl ClaimCandidate {
         let mut entries = match self.scope.take() {
             Some(Value::Map(entries)) => entries,
             None => Vec::new(),
-            Some(_) => return Err(oneiron_contracts::error::Error::InvalidClaimBody("scope must be a map")),
+            Some(_) => {
+                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
+                    "scope must be a map",
+                ));
+            }
         };
         entries.retain(|(entry, _)| entry.as_str() != Some(key));
         if let Some(weight) = weight {
