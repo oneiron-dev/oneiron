@@ -3,9 +3,9 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1223 facade rows, 4385 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1159.
-// WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), vault.slim.resume_step (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), ai.steps.submit (result), ai.steps.receipt (result), vault.questions.create (result), vault.questions.read (result), vault.runs.program_step (result), self.skills.call (result), vault.embedding_spaces.declare (input and result), vault.questions.edit (input and result), vault.runs.step (input and result).
+// UniFFI census: 1223 facade rows, 4434 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1175.
+// WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
     clippy::large_enum_variant,
@@ -20535,6 +20535,69 @@ pub enum SlimResumeStepRequest {
     },
 }
 
+/// `oneiron_store::model_step_record::StepProgression`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum StepProgression {
+    #[serde(rename = "started")]
+    Started,
+    #[serde(rename = "response_received")]
+    ResponseReceived,
+    #[serde(rename = "logged")]
+    Logged,
+    #[serde(rename = "finished")]
+    Finished,
+}
+
+/// `oneiron_store::model_step_record::ModelStepCheckpoint`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ModelStepCheckpoint {
+    #[serde(rename = "progression")]
+    pub progression: StepProgression,
+    #[serde(
+        rename = "updated_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub updated_ms: Option<u64>,
+    #[serde(rename = "claim_ref", default, skip_serializing_if = "Option::is_none")]
+    pub claim_ref: Option<String>,
+}
+
+/// `oneiron::slim::public::SavedIntentState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SavedIntentState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "abandoned")]
+    Abandoned,
+    #[serde(rename = "deferred")]
+    Deferred,
+}
+
+/// `oneiron::slim::public::SavedResumeStep`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum SavedResumeStep {
+    #[serde(rename = "model")]
+    Model {
+        #[serde(rename = "attempt_id")]
+        attempt_id: String,
+        #[serde(rename = "step_hash")]
+        step_hash: String,
+        #[serde(rename = "checkpoint")]
+        checkpoint: ModelStepCheckpoint,
+    },
+    #[serde(rename = "outbound_intent")]
+    OutboundIntent {
+        #[serde(rename = "step")]
+        step: SlimResumeStep,
+        #[serde(rename = "state")]
+        state: SavedIntentState,
+    },
+}
+
 /// `oneiron::slim::ShedCause`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ShedCause {
@@ -30827,34 +30890,28 @@ pub struct CourtesyDeleteAnswerRequest {
     pub reply_to: Option<String>,
 }
 
-/// `oneiron::verbs::embedding_space::EmbeddingSpaceBindRequest`.
+/// `oneiron_base::config::VectorEvidenceFloors`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct EmbeddingSpaceBindRequest {
-    #[serde(rename = "kind")]
-    pub kind: InputKind,
-    #[serde(rename = "space", default, skip_serializing_if = "Option::is_none")]
-    pub space: Option<String>,
+pub struct VectorEvidenceFloors {
+    #[serde(rename = "floor")]
+    pub floor: f64,
+    #[serde(rename = "strong")]
+    pub strong: f64,
 }
 
-/// `oneiron::verbs::embedding_space::EmbeddingSpaceRequest`.
+/// `oneiron::store::embedding::EmbeddingSpace`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct EmbeddingSpaceRequest {
-    #[serde(rename = "space")]
-    pub space: String,
-}
-
-/// `oneiron::verbs::embedding_space::EmbeddingSpaceMoveRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct EmbeddingSpaceMoveRequest {
-    #[serde(rename = "candidate")]
-    pub candidate: String,
-    #[serde(rename = "incumbent", default, skip_serializing_if = "Option::is_none")]
-    pub incumbent: Option<String>,
-    #[serde(rename = "margin", default, skip_serializing_if = "Option::is_none")]
-    pub margin: Option<f64>,
+pub struct EmbeddingSpace {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "dimensions")]
+    pub dimensions: u64,
+    #[serde(rename = "accepts")]
+    pub accepts: Vec<InputKind>,
+    #[serde(rename = "query_towers")]
+    pub query_towers: Vec<InputKind>,
+    #[serde(rename = "evidence", default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<VectorEvidenceFloors>,
 }
 
 /// `oneiron::embed::space_move::SpaceRef`.
@@ -31012,6 +31069,444 @@ pub struct SpaceMove {
         skip_serializing_if = "Option::is_none"
     )]
     pub last_check: Option<SpaceMoveCheck>,
+}
+
+/// `oneiron::model_binding::ModelRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ModelRole {
+    #[serde(rename = "retrieval_embedder")]
+    RetrievalEmbedder,
+    #[serde(rename = "reranker")]
+    Reranker,
+    #[serde(rename = "extraction_encoder")]
+    ExtractionEncoder,
+    #[serde(rename = "extraction_teacher")]
+    ExtractionTeacher,
+    #[serde(rename = "generative_reasoner")]
+    GenerativeReasoner,
+    #[serde(rename = "local_reasoner")]
+    LocalReasoner,
+    #[serde(rename = "checker")]
+    Checker,
+    #[serde(rename = "dreamer_current")]
+    DreamerCurrent,
+    #[serde(rename = "dreamer_target")]
+    DreamerTarget,
+    #[serde(rename = "dreamer_distilled")]
+    DreamerDistilled,
+    #[serde(rename = "asr")]
+    Asr,
+    #[serde(rename = "captioner")]
+    Captioner,
+    #[serde(rename = "doc_parsing")]
+    DocParsing,
+    #[serde(rename = "audio_vad")]
+    AudioVad,
+    #[serde(rename = "tts_deferred")]
+    TtsDeferred,
+    #[serde(rename = "local_vision")]
+    LocalVision,
+    #[serde(rename = "coach")]
+    Coach,
+    #[serde(rename = "browser_planner")]
+    BrowserPlanner,
+}
+
+/// `oneiron::model_binding::ModelDisposition`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ModelDisposition {
+    #[serde(rename = "offline")]
+    Offline,
+    #[serde(rename = "served")]
+    Served,
+}
+
+/// `oneiron::model_binding::ModelBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ModelBinding {
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "slot")]
+    pub slot: ModelSlot,
+    #[serde(rename = "tier")]
+    pub tier: String,
+    #[serde(
+        rename = "route_models",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub route_models: Option<std::collections::HashMap<String, String>>,
+    #[serde(
+        rename = "disposition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub disposition: Option<ModelDisposition>,
+    #[serde(
+        rename = "reads_audio",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reads_audio: Option<bool>,
+}
+
+/// `oneiron::training_pack::types::CheckpointFileKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CheckpointFileKind {
+    #[serde(rename = "weights")]
+    Weights,
+    #[serde(rename = "tokenizer")]
+    Tokenizer,
+    #[serde(rename = "config")]
+    Config,
+    #[serde(rename = "template")]
+    Template,
+    #[serde(rename = "adapter_config")]
+    AdapterConfig,
+}
+
+/// `oneiron::training_pack::types::SourcePin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SourcePin {
+    #[serde(rename = "repository")]
+    pub repository: String,
+    #[serde(rename = "revision")]
+    pub revision: String,
+}
+
+/// `oneiron::training_pack::types::ArtifactPin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ArtifactPin {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+    #[serde(rename = "blake3")]
+    pub blake3: Vec<u8>,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+}
+
+/// `oneiron::training_pack::types::CheckpointFilePin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CheckpointFilePin {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "kind")]
+    pub kind: CheckpointFileKind,
+    #[serde(rename = "source")]
+    pub source: SourcePin,
+    #[serde(rename = "content")]
+    pub content: ArtifactPin,
+    #[serde(rename = "declared_blake3")]
+    pub declared_blake3: Vec<u8>,
+}
+
+/// `oneiron::training_pack::types::PinnedCheckpoint`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PinnedCheckpoint {
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "files")]
+    pub files: Vec<CheckpointFilePin>,
+}
+
+/// `oneiron::training_pack::types::CalibrationResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalibrationResult {
+    #[serde(rename = "temperature")]
+    pub temperature: f64,
+    #[serde(rename = "brier_score")]
+    pub brier_score: f64,
+    #[serde(rename = "calibration_error")]
+    pub calibration_error: f64,
+}
+
+/// `oneiron::training_pack::types::HeldOutResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HeldOutResult {
+    #[serde(rename = "exposure")]
+    pub exposure: String,
+    #[serde(rename = "checkpoint_blake3")]
+    pub checkpoint_blake3: Vec<u8>,
+    #[serde(rename = "held_out_blake3")]
+    pub held_out_blake3: Vec<u8>,
+    #[serde(rename = "harness")]
+    pub harness: SourcePin,
+    #[serde(rename = "cases")]
+    pub cases: u64,
+    #[serde(rename = "metrics")]
+    pub metrics: std::collections::HashMap<String, f64>,
+    #[serde(
+        rename = "calibration",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub calibration: Option<CalibrationResult>,
+    #[serde(rename = "verifier_logs")]
+    pub verifier_logs: Vec<ArtifactPin>,
+    #[serde(rename = "passed")]
+    pub passed: bool,
+}
+
+/// `oneiron::training_pack::types::QuestionExportCheck`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QuestionExportCheck {
+    #[serde(rename = "finite")]
+    pub finite: bool,
+    #[serde(rename = "tokens_match")]
+    pub tokens_match: bool,
+    #[serde(rename = "passed")]
+    pub passed: bool,
+}
+
+/// `oneiron::training_pack::types::CandleParityCheck`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CandleParityCheck {
+    #[serde(rename = "tokens_match")]
+    pub tokens_match: bool,
+    #[serde(
+        rename = "token_mismatches",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub token_mismatches: Option<Vec<String>>,
+    #[serde(
+        rename = "logits_match",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub logits_match: Option<bool>,
+}
+
+/// `oneiron::training_pack::types::ExportCheck`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ExportCheck {
+    #[serde(rename = "hash_mismatches")]
+    pub hash_mismatches: Vec<String>,
+    #[serde(rename = "probe_coverage_matches")]
+    pub probe_coverage_matches: bool,
+    #[serde(rename = "probe_checkpoints_match")]
+    pub probe_checkpoints_match: bool,
+    #[serde(rename = "settings_match")]
+    pub settings_match: bool,
+    #[serde(rename = "harness_matches")]
+    pub harness_matches: bool,
+    #[serde(rename = "argmax_flips")]
+    pub argmax_flips: u64,
+    #[serde(rename = "max_logit_difference")]
+    pub max_logit_difference: f64,
+    #[serde(rename = "tolerance")]
+    pub tolerance: f64,
+    #[serde(
+        rename = "question_check",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub question_check: Option<QuestionExportCheck>,
+    #[serde(
+        rename = "candle_parity",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub candle_parity: Option<CandleParityCheck>,
+}
+
+/// `oneiron::skill_optimize::training_choice::SwapChoice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum SwapChoice {
+    #[serde(rename = "evaluated")]
+    Evaluated,
+    #[serde(rename = "explicit_override")]
+    ExplicitOverride {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::training_pack::types::RoleSwapReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RoleSwapReceipt {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "run")]
+    pub run: String,
+    #[serde(rename = "owner")]
+    pub owner: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "role")]
+    pub role: ModelRole,
+    #[serde(rename = "previous", default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<ModelBinding>,
+    #[serde(rename = "binding")]
+    pub binding: ModelBinding,
+    #[serde(rename = "checkpoint")]
+    pub checkpoint: PinnedCheckpoint,
+    #[serde(
+        rename = "evaluation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub evaluation: Option<HeldOutResult>,
+    #[serde(rename = "checks")]
+    pub checks: ExportCheck,
+    #[serde(rename = "exact_hash_overlaps")]
+    pub exact_hash_overlaps: u64,
+    #[serde(
+        rename = "promotion_exposure",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub promotion_exposure: Option<EvalExposure>,
+    #[serde(rename = "choice")]
+    pub choice: SwapChoice,
+}
+
+/// `oneiron::embed::binding_move::BindingSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum BindingSource {
+    #[serde(rename = "offer")]
+    Offer {
+        #[serde(rename = "offer")]
+        offer: String,
+        #[serde(rename = "owner")]
+        owner: String,
+    },
+    #[serde(rename = "training")]
+    Training {
+        #[serde(rename = "receipt")]
+        receipt: RoleSwapReceipt,
+    },
+}
+
+/// `oneiron::embed::binding_move::BindingMoveLink`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BindingMoveLink {
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "incumbent")]
+    pub incumbent: SpaceRef,
+    #[serde(rename = "started_at")]
+    pub started_at: u64,
+}
+
+/// `oneiron::embed::binding_move::BindingNotApplied`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BindingNotApplied {
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "stale")]
+    Stale,
+    #[serde(rename = "refused")]
+    Refused {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::embed::binding_move::BindingMoveState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum BindingMoveState {
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "filling")]
+    Filling,
+    #[serde(rename = "applied")]
+    Applied {
+        #[serde(rename = "at")]
+        at: u64,
+        #[serde(rename = "verdict", default, skip_serializing_if = "Option::is_none")]
+        verdict: Option<NotWorse>,
+    },
+    #[serde(rename = "not_applied")]
+    NotApplied {
+        #[serde(rename = "at")]
+        at: u64,
+        #[serde(rename = "why")]
+        why: BindingNotApplied,
+    },
+    #[serde(rename = "undone")]
+    Undone {
+        #[serde(rename = "at")]
+        at: u64,
+        #[serde(rename = "owner")]
+        owner: String,
+    },
+}
+
+/// `oneiron::embed::binding_move::PendingEmbedderBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PendingEmbedderBinding {
+    #[serde(rename = "source")]
+    pub source: BindingSource,
+    #[serde(rename = "previous", default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<ModelBinding>,
+    #[serde(rename = "binding")]
+    pub binding: ModelBinding,
+    #[serde(rename = "staged_at")]
+    pub staged_at: u64,
+    #[serde(rename = "link", default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<BindingMoveLink>,
+    #[serde(rename = "refill", default, skip_serializing_if = "Option::is_none")]
+    pub refill: Option<EmbeddingSpace>,
+    #[serde(rename = "state")]
+    pub state: BindingMoveState,
+}
+
+/// `oneiron::verbs::embedding_space::EmbeddingSpacesView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EmbeddingSpacesView {
+    #[serde(rename = "spaces")]
+    pub spaces: Vec<EmbeddingSpace>,
+    #[serde(rename = "text_index")]
+    pub text_index: EmbeddingSpace,
+    #[serde(rename = "slots")]
+    pub slots: std::collections::HashMap<String, String>,
+    #[serde(rename = "moves")]
+    pub moves: Vec<SpaceMove>,
+    #[serde(rename = "probes")]
+    pub probes: std::collections::HashMap<String, u64>,
+    #[serde(rename = "refused")]
+    pub refused: std::collections::HashMap<String, u64>,
+    #[serde(rename = "binding_moves")]
+    pub binding_moves: Vec<PendingEmbedderBinding>,
+}
+
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceBindRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddingSpaceBindRequest {
+    #[serde(rename = "kind")]
+    pub kind: InputKind,
+    #[serde(rename = "space", default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+}
+
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddingSpaceRequest {
+    #[serde(rename = "space")]
+    pub space: String,
+}
+
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceMoveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddingSpaceMoveRequest {
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "incumbent", default, skip_serializing_if = "Option::is_none")]
+    pub incumbent: Option<String>,
+    #[serde(rename = "margin", default, skip_serializing_if = "Option::is_none")]
+    pub margin: Option<f64>,
 }
 
 /// `oneiron::verbs::embedding_space::EmbeddingSpaceCandidateRequest`.
@@ -34272,6 +34767,45 @@ pub struct SecretCustodyCandidateReply {
     pub this_install: bool,
 }
 
+/// `oneiron_contracts::secret_custody::CustodyTier`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CustodyTier {
+    #[serde(rename = "T0Doored")]
+    T0Doored,
+    #[serde(rename = "T1Leased")]
+    T1Leased,
+    #[serde(rename = "T2LocalRegistered")]
+    T2LocalRegistered,
+}
+
+/// `oneiron::secret_record::types::TierBand`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TierBand {
+    #[serde(rename = "min")]
+    pub min: CustodyTier,
+    #[serde(rename = "max")]
+    pub max: CustodyTier,
+}
+
+/// `oneiron::secret_record::types::SecretCustodyFloor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SecretCustodyFloor {
+    #[serde(rename = "portable")]
+    pub portable: TierBand,
+    #[serde(rename = "device_bound")]
+    pub device_bound: TierBand,
+    #[serde(rename = "cross_vault")]
+    pub cross_vault: TierBand,
+    #[serde(
+        rename = "rotation_max_age_secs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rotation_max_age_secs: Option<u64>,
+    #[serde(rename = "env_bindings")]
+    pub env_bindings: std::collections::HashMap<String, String>,
+}
+
 /// `oneiron::verbs::secret_custody::SecretCustodyViewReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -34300,6 +34834,8 @@ pub struct SecretCustodyViewReply {
     pub candidates: Vec<SecretCustodyCandidateReply>,
     #[serde(rename = "delivery")]
     pub delivery: String,
+    #[serde(rename = "floor")]
+    pub floor: SecretCustodyFloor,
 }
 
 /// `oneiron::verbs::secret_custody::SecretCustodyPermit`.
@@ -49731,45 +50267,6 @@ pub struct SkillPackCreditRequest {
     pub receipt_id: String,
 }
 
-/// `oneiron::model_binding::ModelDisposition`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ModelDisposition {
-    #[serde(rename = "offline")]
-    Offline,
-    #[serde(rename = "served")]
-    Served,
-}
-
-/// `oneiron::model_binding::ModelBinding`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ModelBinding {
-    #[serde(rename = "model")]
-    pub model: String,
-    #[serde(rename = "slot")]
-    pub slot: ModelSlot,
-    #[serde(rename = "tier")]
-    pub tier: String,
-    #[serde(
-        rename = "route_models",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub route_models: Option<std::collections::HashMap<String, String>>,
-    #[serde(
-        rename = "disposition",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub disposition: Option<ModelDisposition>,
-    #[serde(
-        rename = "reads_audio",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub reads_audio: Option<bool>,
-}
-
 /// `oneiron::llm::seat::policy::SeatPrecedence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SeatPrecedence {
@@ -50094,47 +50591,6 @@ pub struct ModelRouteReplace {
     pub slot: ModelSlot,
     #[serde(rename = "route")]
     pub route: ModelLocality,
-}
-
-/// `oneiron::model_binding::ModelRole`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ModelRole {
-    #[serde(rename = "retrieval_embedder")]
-    RetrievalEmbedder,
-    #[serde(rename = "reranker")]
-    Reranker,
-    #[serde(rename = "extraction_encoder")]
-    ExtractionEncoder,
-    #[serde(rename = "extraction_teacher")]
-    ExtractionTeacher,
-    #[serde(rename = "generative_reasoner")]
-    GenerativeReasoner,
-    #[serde(rename = "local_reasoner")]
-    LocalReasoner,
-    #[serde(rename = "checker")]
-    Checker,
-    #[serde(rename = "dreamer_current")]
-    DreamerCurrent,
-    #[serde(rename = "dreamer_target")]
-    DreamerTarget,
-    #[serde(rename = "dreamer_distilled")]
-    DreamerDistilled,
-    #[serde(rename = "asr")]
-    Asr,
-    #[serde(rename = "captioner")]
-    Captioner,
-    #[serde(rename = "doc_parsing")]
-    DocParsing,
-    #[serde(rename = "audio_vad")]
-    AudioVad,
-    #[serde(rename = "tts_deferred")]
-    TtsDeferred,
-    #[serde(rename = "local_vision")]
-    LocalVision,
-    #[serde(rename = "coach")]
-    Coach,
-    #[serde(rename = "browser_planner")]
-    BrowserPlanner,
 }
 
 /// `oneiron::llm::manifest::doors::ModelRoleRead`.
@@ -51215,6 +51671,289 @@ pub struct ModelStepSubmit {
     pub request: LlmRequest,
     #[serde(rename = "retry", default, skip_serializing_if = "Option::is_none")]
     pub retry: Option<ModelStepRetryPolicy>,
+}
+
+/// `oneiron_model::llm::catalog::LlmCapability`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LlmCapability {
+    #[serde(rename = "streaming")]
+    Streaming,
+    #[serde(rename = "tool_calling")]
+    ToolCalling,
+    #[serde(rename = "tool_results")]
+    ToolResults,
+    #[serde(rename = "image_input")]
+    ImageInput,
+    #[serde(rename = "json_response")]
+    JsonResponse,
+    #[serde(rename = "reasoning")]
+    Reasoning,
+    #[serde(rename = "voice")]
+    Voice,
+    #[serde(rename = "assistant_prefill")]
+    AssistantPrefill,
+    #[serde(rename = "audio_input")]
+    AudioInput,
+    #[serde(rename = "reasoning_content_history")]
+    ReasoningContentHistory,
+    #[serde(rename = "token_logprobs")]
+    TokenLogprobs,
+}
+
+/// `oneiron_model::llm::error::UnsupportedCapability`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct UnsupportedCapability {
+    #[serde(rename = "capability")]
+    pub capability: LlmCapability,
+    #[serde(rename = "model", default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// `oneiron_model::llm::error::LabelReadFailure`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LabelReadFailure {
+    #[serde(rename = "EmittedText")]
+    EmittedText,
+    #[serde(rename = "NotEosStop")]
+    NotEosStop,
+    #[serde(rename = "MissingLabels")]
+    MissingLabels,
+    #[serde(rename = "Malformed")]
+    Malformed,
+}
+
+/// `oneiron_model::llm::error::FatalLlmError`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FatalLlmError {
+    #[serde(rename = "InvalidRequest")]
+    InvalidRequest,
+    #[serde(rename = "InvalidRequestDetail")]
+    InvalidRequestDetail {
+        #[serde(rename = "message")]
+        message: String,
+    },
+    #[serde(rename = "Auth")]
+    Auth,
+    #[serde(rename = "ContentFiltered")]
+    ContentFiltered,
+    #[serde(rename = "EmptyResponse")]
+    EmptyResponse,
+    #[serde(rename = "Unsupported")]
+    Unsupported(UnsupportedCapability),
+    #[serde(rename = "LabelRead")]
+    LabelRead(LabelReadFailure),
+    #[serde(rename = "ResponseErased")]
+    ResponseErased,
+    #[serde(rename = "JobLost")]
+    JobLost,
+}
+
+/// `oneiron::llm::step::public::ModelStepFailureClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ModelStepFailureClass {
+    #[serde(rename = "retryable")]
+    Retryable,
+    #[serde(rename = "fatal")]
+    Fatal,
+    #[serde(rename = "budget_denied")]
+    BudgetDenied,
+    #[serde(rename = "schema_validation")]
+    SchemaValidation,
+    #[serde(rename = "fallback")]
+    Fallback,
+    #[serde(rename = "finalize_refused")]
+    FinalizeRefused,
+    #[serde(rename = "deadline_hard_cut")]
+    DeadlineHardCut,
+    #[serde(rename = "engine")]
+    Engine,
+}
+
+/// `oneiron_model::llm::error::TransportFaultKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TransportFaultKind {
+    #[serde(rename = "not_sent")]
+    NotSent,
+    #[serde(rename = "io_after_send")]
+    IoAfterSend,
+    #[serde(rename = "refused")]
+    Refused,
+    #[serde(rename = "unexpected_frame")]
+    UnexpectedFrame,
+    #[serde(rename = "ended_with_error")]
+    EndedWithError,
+}
+
+/// `oneiron_model::llm::error::TransportFault`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TransportFault {
+    #[serde(rename = "kind")]
+    pub kind: TransportFaultKind,
+    #[serde(rename = "stage", default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    #[serde(rename = "detail")]
+    pub detail: String,
+}
+
+/// `oneiron_model::llm::error::RetryableLlmError`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RetryableLlmError {
+    #[serde(rename = "RateLimited")]
+    RateLimited {
+        #[serde(
+            rename = "retry_after",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        retry_after: Option<u64>,
+        #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
+        resets_at: Option<Vec<u64>>,
+    },
+    #[serde(rename = "QuotaSpent")]
+    QuotaSpent {
+        #[serde(rename = "kind")]
+        kind: SpentKind,
+        #[serde(
+            rename = "retry_after",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        retry_after: Option<u64>,
+        #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
+        resets_at: Option<Vec<u64>>,
+    },
+    #[serde(rename = "KeptOnDevice")]
+    KeptOnDevice {
+        #[serde(
+            rename = "retry_after",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        retry_after: Option<u64>,
+        #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
+        resets_at: Option<Vec<u64>>,
+        #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    #[serde(rename = "WorldRouteNotAdmitted")]
+    WorldRouteNotAdmitted,
+    #[serde(rename = "ServerError")]
+    ServerError,
+    #[serde(rename = "Timeout")]
+    Timeout,
+    #[serde(rename = "StreamCut")]
+    StreamCut,
+    #[serde(rename = "TransportFault")]
+    TransportFault(TransportFault),
+    #[serde(rename = "DeviceAdmissionStopped")]
+    DeviceAdmissionStopped,
+}
+
+/// `oneiron_model::llm::error::BudgetDenied`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BudgetDenied {
+    #[serde(rename = "Exhausted")]
+    Exhausted,
+    #[serde(rename = "LeaseInvalid")]
+    LeaseInvalid,
+    #[serde(rename = "AdmissionDenied")]
+    AdmissionDenied,
+    #[serde(rename = "HostCheck")]
+    HostCheck,
+}
+
+/// `oneiron_model::llm::error::LlmError`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LlmError {
+    #[serde(rename = "Retryable")]
+    Retryable(RetryableLlmError),
+    #[serde(rename = "Fatal")]
+    Fatal(FatalLlmError),
+    #[serde(rename = "BudgetDenied")]
+    BudgetDenied(BudgetDenied),
+}
+
+/// `oneiron::llm::step::public::ModelStepFailure`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ModelStepFailure {
+    #[serde(rename = "class")]
+    pub class: ModelStepFailureClass,
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(rename = "llm", default, skip_serializing_if = "Option::is_none")]
+    pub llm: Option<LlmError>,
+    #[serde(
+        rename = "validation_attempts",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub validation_attempts: Option<u8>,
+    #[serde(rename = "validation_errors")]
+    pub validation_errors: Vec<String>,
+    #[serde(
+        rename = "spent_usage",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub spent_usage: Option<LlmUsage>,
+}
+
+/// `oneiron::llm::step::public::ModelStepResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+pub enum ModelStepResult {
+    #[serde(rename = "finished")]
+    Finished {
+        #[serde(rename = "response")]
+        response: LlmResponse,
+        #[serde(rename = "json", default, skip_serializing_if = "Option::is_none")]
+        json: Option<crate::WireJson>,
+        #[serde(rename = "memoized")]
+        memoized: bool,
+        #[serde(
+            rename = "fallback_source",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        fallback_source: Option<FatalLlmError>,
+        #[serde(rename = "claim_ref")]
+        claim_ref: String,
+    },
+    #[serde(rename = "failed")]
+    Failed {
+        #[serde(rename = "failure")]
+        failure: ModelStepFailure,
+    },
+    #[serde(rename = "budget_denied")]
+    BudgetDenied {
+        #[serde(rename = "trap_ref")]
+        trap_ref: String,
+    },
+    #[serde(rename = "erased")]
+    Erased,
+}
+
+/// `oneiron::llm::step::public::ModelStepReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ModelStepReceipt {
+    #[serde(rename = "step_ref")]
+    pub step_ref: String,
+    #[serde(rename = "step_hash")]
+    pub step_hash: String,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "retry")]
+    pub retry: ModelStepRetryPolicy,
+    #[serde(
+        rename = "progression",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub progression: Option<StepProgression>,
+    #[serde(rename = "result", default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<ModelStepResult>,
 }
 
 /// `oneiron::llm::step::public::ModelStepReceiptRequest`.
@@ -52467,33 +53206,6 @@ pub struct LlmCatalogCost {
     pub cache_write_per_million: Option<String>,
     #[serde(rename = "currency", default, skip_serializing_if = "Option::is_none")]
     pub currency: Option<String>,
-}
-
-/// `oneiron_model::llm::catalog::LlmCapability`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum LlmCapability {
-    #[serde(rename = "streaming")]
-    Streaming,
-    #[serde(rename = "tool_calling")]
-    ToolCalling,
-    #[serde(rename = "tool_results")]
-    ToolResults,
-    #[serde(rename = "image_input")]
-    ImageInput,
-    #[serde(rename = "json_response")]
-    JsonResponse,
-    #[serde(rename = "reasoning")]
-    Reasoning,
-    #[serde(rename = "voice")]
-    Voice,
-    #[serde(rename = "assistant_prefill")]
-    AssistantPrefill,
-    #[serde(rename = "audio_input")]
-    AudioInput,
-    #[serde(rename = "reasoning_content_history")]
-    ReasoningContentHistory,
-    #[serde(rename = "token_logprobs")]
-    TokenLogprobs,
 }
 
 /// `oneiron_model::llm::catalog::LlmCatalogEntry`.
@@ -53809,160 +54521,6 @@ pub struct AiVideoJobRequest {
     pub job: String,
 }
 
-/// `oneiron_model::llm::error::TransportFaultKind`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TransportFaultKind {
-    #[serde(rename = "not_sent")]
-    NotSent,
-    #[serde(rename = "io_after_send")]
-    IoAfterSend,
-    #[serde(rename = "refused")]
-    Refused,
-    #[serde(rename = "unexpected_frame")]
-    UnexpectedFrame,
-    #[serde(rename = "ended_with_error")]
-    EndedWithError,
-}
-
-/// `oneiron_model::llm::error::TransportFault`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct TransportFault {
-    #[serde(rename = "kind")]
-    pub kind: TransportFaultKind,
-    #[serde(rename = "stage", default, skip_serializing_if = "Option::is_none")]
-    pub stage: Option<String>,
-    #[serde(rename = "detail")]
-    pub detail: String,
-}
-
-/// `oneiron_model::llm::error::RetryableLlmError`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum RetryableLlmError {
-    #[serde(rename = "RateLimited")]
-    RateLimited {
-        #[serde(
-            rename = "retry_after",
-            default,
-            skip_serializing_if = "Option::is_none"
-        )]
-        retry_after: Option<u64>,
-        #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
-        resets_at: Option<Vec<u64>>,
-    },
-    #[serde(rename = "QuotaSpent")]
-    QuotaSpent {
-        #[serde(rename = "kind")]
-        kind: SpentKind,
-        #[serde(
-            rename = "retry_after",
-            default,
-            skip_serializing_if = "Option::is_none"
-        )]
-        retry_after: Option<u64>,
-        #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
-        resets_at: Option<Vec<u64>>,
-    },
-    #[serde(rename = "KeptOnDevice")]
-    KeptOnDevice {
-        #[serde(
-            rename = "retry_after",
-            default,
-            skip_serializing_if = "Option::is_none"
-        )]
-        retry_after: Option<u64>,
-        #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
-        resets_at: Option<Vec<u64>>,
-        #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
-        reason: Option<String>,
-    },
-    #[serde(rename = "WorldRouteNotAdmitted")]
-    WorldRouteNotAdmitted,
-    #[serde(rename = "ServerError")]
-    ServerError,
-    #[serde(rename = "Timeout")]
-    Timeout,
-    #[serde(rename = "StreamCut")]
-    StreamCut,
-    #[serde(rename = "TransportFault")]
-    TransportFault(TransportFault),
-    #[serde(rename = "DeviceAdmissionStopped")]
-    DeviceAdmissionStopped,
-}
-
-/// `oneiron_model::llm::error::UnsupportedCapability`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct UnsupportedCapability {
-    #[serde(rename = "capability")]
-    pub capability: LlmCapability,
-    #[serde(rename = "model", default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-/// `oneiron_model::llm::error::LabelReadFailure`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum LabelReadFailure {
-    #[serde(rename = "EmittedText")]
-    EmittedText,
-    #[serde(rename = "NotEosStop")]
-    NotEosStop,
-    #[serde(rename = "MissingLabels")]
-    MissingLabels,
-    #[serde(rename = "Malformed")]
-    Malformed,
-}
-
-/// `oneiron_model::llm::error::FatalLlmError`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum FatalLlmError {
-    #[serde(rename = "InvalidRequest")]
-    InvalidRequest,
-    #[serde(rename = "InvalidRequestDetail")]
-    InvalidRequestDetail {
-        #[serde(rename = "message")]
-        message: String,
-    },
-    #[serde(rename = "Auth")]
-    Auth,
-    #[serde(rename = "ContentFiltered")]
-    ContentFiltered,
-    #[serde(rename = "EmptyResponse")]
-    EmptyResponse,
-    #[serde(rename = "Unsupported")]
-    Unsupported(UnsupportedCapability),
-    #[serde(rename = "LabelRead")]
-    LabelRead(LabelReadFailure),
-    #[serde(rename = "ResponseErased")]
-    ResponseErased,
-    #[serde(rename = "JobLost")]
-    JobLost,
-}
-
-/// `oneiron_model::llm::error::BudgetDenied`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum BudgetDenied {
-    #[serde(rename = "Exhausted")]
-    Exhausted,
-    #[serde(rename = "LeaseInvalid")]
-    LeaseInvalid,
-    #[serde(rename = "AdmissionDenied")]
-    AdmissionDenied,
-    #[serde(rename = "HostCheck")]
-    HostCheck,
-}
-
-/// `oneiron_model::llm::error::LlmError`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum LlmError {
-    #[serde(rename = "Retryable")]
-    Retryable(RetryableLlmError),
-    #[serde(rename = "Fatal")]
-    Fatal(FatalLlmError),
-    #[serde(rename = "BudgetDenied")]
-    BudgetDenied(BudgetDenied),
-}
-
 /// `oneiron::verbs::host::AiVideoJob`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
@@ -54161,6 +54719,17 @@ pub struct GraphAskSelection {
     pub limit: u64,
 }
 
+/// `oneiron_base::config::HostingPrivacyPosture`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HostingPrivacyPosture {
+    #[serde(rename = "managed")]
+    Hosted,
+    #[serde(rename = "relay")]
+    Relay,
+    #[serde(rename = "self-host")]
+    SelfHostLocal,
+}
+
 /// `oneiron::llm::decision::questions::criteria::QuestionCriteria` with `Line` = `String`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -54200,7 +54769,7 @@ pub struct GraphAskRequest {
     )]
     pub unit_deadline_ms: Option<u64>,
     #[serde(rename = "posture", default, skip_serializing_if = "Option::is_none")]
-    pub posture: Option<String>,
+    pub posture: Option<HostingPrivacyPosture>,
     #[serde(rename = "criteria", default, skip_serializing_if = "Option::is_none")]
     pub criteria: Option<QuestionCriteriaString>,
 }
@@ -54309,12 +54878,247 @@ pub struct GraphAdmitRequest {
     pub decision: TypedDecision,
 }
 
+/// `oneiron::model_decision::types::DecisionQuestionInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionQuestionInput {
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "class")]
+    pub class: DecisionClass,
+    #[serde(rename = "contract")]
+    pub contract: AnswerContract,
+    #[serde(rename = "accept_type")]
+    pub accept_type: bool,
+}
+
+/// `oneiron::model_decision::types::DecisionDial`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionDial {
+    #[serde(rename = "first")]
+    pub first: DecisionRung,
+    #[serde(rename = "ceiling")]
+    pub ceiling: DecisionRung,
+    #[serde(rename = "band")]
+    pub band: DecisionBand,
+}
+
+/// `oneiron::model_decision::questions::records::QuestionActivation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QuestionActivation {
+    #[serde(rename = "one_off")]
+    OneOff,
+    #[serde(rename = "standing")]
+    Standing,
+}
+
+/// `oneiron::model_decision::questions::records::RefreshPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RefreshPolicy {
+    #[serde(rename = "on_arrival")]
+    pub on_arrival: bool,
+    #[serde(
+        rename = "every_seconds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub every_seconds: Option<u64>,
+}
+
+/// `oneiron::model_decision::questions::records::QuestionAudience`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QuestionAudience {
+    #[serde(rename = "asker")]
+    Asker,
+}
+
+/// `oneiron::model_decision::questions::records::QuestionMedia`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionMedia {
+    #[serde(rename = "images", default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<bool>,
+    #[serde(rename = "audio", default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<bool>,
+}
+
+/// `oneiron::llm::decision::questions::records::ArtifactUnits`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactUnits {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "selection")]
+    pub selection: ArtifactAskUnits,
+}
+
+/// `oneiron::llm::decision::questions::records::QuestionDefinition` with `Q` = `DecisionQuestionInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionDefinitionDecisionQuestionInput {
+    #[serde(rename = "question")]
+    pub question: DecisionQuestionInput,
+    #[serde(rename = "adapter")]
+    pub adapter: String,
+    #[serde(rename = "units")]
+    pub units: Vec<String>,
+    #[serde(rename = "recipe")]
+    pub recipe: String,
+    #[serde(rename = "profile")]
+    pub profile: String,
+    #[serde(rename = "dial")]
+    pub dial: DecisionDial,
+    #[serde(rename = "activation")]
+    pub activation: QuestionActivation,
+    #[serde(rename = "refresh")]
+    pub refresh: RefreshPolicy,
+    #[serde(rename = "delivery")]
+    pub delivery: String,
+    #[serde(rename = "learning")]
+    pub learning: bool,
+    #[serde(rename = "binding", default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<OutcomeBinding>,
+    #[serde(rename = "criteria", default, skip_serializing_if = "Option::is_none")]
+    pub criteria: Option<QuestionCriteriaString>,
+    #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<QuestionAudience>,
+    #[serde(rename = "posture", default, skip_serializing_if = "Option::is_none")]
+    pub posture: Option<HostingPrivacyPosture>,
+    #[serde(rename = "media", default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<QuestionMedia>,
+    #[serde(
+        rename = "deadline_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_ms: Option<u64>,
+    #[serde(rename = "artifacts", default, skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<Vec<ArtifactUnits>>,
+}
+
 /// `oneiron::receipt::questions::QuestionCreateRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionCreateRequest {
     #[serde(rename = "definition")]
-    pub definition: crate::WireJson,
+    pub definition: QuestionDefinitionDecisionQuestionInput,
+}
+
+/// `oneiron::llm::decision::questions::records::QuestionDefinition` with `Q` = `DecisionQuestion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionDefinitionDecisionQuestion {
+    #[serde(rename = "question")]
+    pub question: DecisionQuestion,
+    #[serde(rename = "adapter")]
+    pub adapter: String,
+    #[serde(rename = "units")]
+    pub units: Vec<String>,
+    #[serde(rename = "recipe")]
+    pub recipe: String,
+    #[serde(rename = "profile")]
+    pub profile: String,
+    #[serde(rename = "dial")]
+    pub dial: DecisionDial,
+    #[serde(rename = "activation")]
+    pub activation: QuestionActivation,
+    #[serde(rename = "refresh")]
+    pub refresh: RefreshPolicy,
+    #[serde(rename = "delivery")]
+    pub delivery: String,
+    #[serde(rename = "learning")]
+    pub learning: bool,
+    #[serde(rename = "binding", default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<OutcomeBinding>,
+    #[serde(rename = "criteria", default, skip_serializing_if = "Option::is_none")]
+    pub criteria: Option<QuestionCriteriaString>,
+    #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<QuestionAudience>,
+    #[serde(rename = "posture", default, skip_serializing_if = "Option::is_none")]
+    pub posture: Option<HostingPrivacyPosture>,
+    #[serde(rename = "media", default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<QuestionMedia>,
+    #[serde(
+        rename = "deadline_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_ms: Option<u64>,
+    #[serde(rename = "artifacts", default, skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<Vec<ArtifactUnits>>,
+}
+
+/// `oneiron::llm::decision::questions::records::QuestionAskerClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QuestionAskerClass {
+    #[serde(rename = "human")]
+    Human,
+    #[serde(rename = "agent")]
+    Agent,
+    #[serde(rename = "system")]
+    System,
+}
+
+/// `oneiron::claim::scoped_read::frozen::FrozenReadLane`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FrozenReadLane {
+    #[serde(
+        rename = "credential",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub credential: Option<Vec<u8>>,
+    #[serde(rename = "authority", default, skip_serializing_if = "Option::is_none")]
+    pub authority: Option<Scope>,
+    #[serde(rename = "records", default, skip_serializing_if = "Option::is_none")]
+    pub records: Option<Vec<String>>,
+    #[serde(rename = "worlds", default, skip_serializing_if = "Option::is_none")]
+    pub worlds: Option<ScopeAxisScopeId>,
+    #[serde(
+        rename = "room_facets",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub room_facets: Option<String>,
+    #[serde(rename = "withheld", default, skip_serializing_if = "Option::is_none")]
+    pub withheld: Option<Vec<String>>,
+}
+
+/// `oneiron::llm::decision::questions::records::QuestionRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionRecord {
+    #[serde(rename = "schema_version")]
+    pub schema_version: u32,
+    #[serde(rename = "principal")]
+    pub principal: String,
+    #[serde(rename = "definition")]
+    pub definition: QuestionDefinitionDecisionQuestion,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(
+        rename = "asker_class",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub asker_class: Option<QuestionAskerClass>,
+    #[serde(rename = "read_lane")]
+    pub read_lane: FrozenReadLane,
+}
+
+/// `oneiron::receipt::questions::QuestionEditRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionEditRequest {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "expected_version")]
+    pub expected_version: u32,
+    #[serde(rename = "definition")]
+    pub definition: QuestionDefinitionDecisionQuestionInput,
 }
 
 /// `oneiron::receipt::questions::QuestionPauseRequest`.
@@ -61702,6 +62506,37 @@ pub struct DreamerWakeView {
     pub live: Option<DreamerWakeLiveView>,
 }
 
+/// `oneiron_store::model_step_record::SettledStepRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SettledStepRequest {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+    #[serde(rename = "step_hash")]
+    pub step_hash: String,
+}
+
+/// `oneiron_store::model_step_record::SettledStepView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SettledStepView {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+    #[serde(rename = "run_id", default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "step_hash")]
+    pub step_hash: String,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "purpose")]
+    pub purpose: String,
+    #[serde(rename = "params_hash")]
+    pub params_hash: String,
+    #[serde(rename = "response")]
+    pub response: LlmResponse,
+}
+
 /// `oneiron::engine_executor::checkpoint_read::CheckpointReadRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -62131,6 +62966,58 @@ pub struct SettledProgramStepRequest {
     pub root: String,
     #[serde(rename = "step_ref")]
     pub step_ref: String,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramResultAvailability`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ProgramResultAvailability {
+    #[serde(rename = "readable")]
+    Readable,
+    #[serde(rename = "withheld")]
+    Withheld,
+    #[serde(rename = "absent")]
+    Absent,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::SettledProgramStepView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SettledProgramStepView {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "code_run")]
+    pub code_run: String,
+    #[serde(rename = "step_ref")]
+    pub step_ref: String,
+    #[serde(rename = "issue")]
+    pub issue: ProgramStepIssueView,
+    #[serde(rename = "settled_at")]
+    pub settled_at: u64,
+    #[serde(rename = "result_digest")]
+    pub result_digest: String,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(rename = "availability")]
+    pub availability: ProgramResultAvailability,
+    #[serde(
+        rename = "model_step",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model_step: Option<SettledStepView>,
+    #[serde(
+        rename = "body_base64",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub body_base64: Option<String>,
 }
 
 /// `oneiron::dreamer_runner::program::read::views::ProgramCheckpointRequest`.

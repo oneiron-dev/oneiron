@@ -10,5 +10,6 @@
   "diversity_scale": 3,
   "recency_window_ms": 86400000,
   "extraction_parallelism": 8,
-  "extraction_turns_per_child": 16
+  "extraction_turns_per_child": 16,
+  "partition_extraction_parallelism": 8
 }
