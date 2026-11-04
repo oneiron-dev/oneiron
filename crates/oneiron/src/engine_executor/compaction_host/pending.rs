@@ -186,14 +186,7 @@ impl EngineNativeExecutor<'_> {
         // A sealing or build error after the pre-chain keeps the unlanded
         // pre-chain records in the room (REVIEW-4357 P1): without a flight
         // the hooks never reach a post chain, and no post hooks run here.
-        let build = |window,
-                     pins,
-                     note|
-         -> EngineExecutorResult<(
-            Vec<crate::EntityId>,
-            crate::EntityId,
-            crate::compaction::CompactionRequest,
-        )> {
+        let built = (|| -> EngineExecutorResult<crate::compaction::CompactionRequest> {
             let captured = newest.map_or(0, |row| row.calls());
             let calls = usize::try_from(captured)
                 .ok()
@@ -240,12 +233,15 @@ impl EngineNativeExecutor<'_> {
             let request = driver.request_for_log(
                 request_id, &session, window, pins, sources, prior, calls, note, run_id,
             )?;
-            Ok((sources, request_id, request))
+            Ok(request)
+        })();
+        let request = match built {
+            Ok(request) => request,
+            Err(error) => {
+                self.keep_unlanded_compact_hooks(hooks);
+                return Err(error);
+            }
         };
-        let (sources, request_id, request) = build(window, pins, note).map_err(|error| {
-            self.keep_unlanded_compact_hooks(hooks);
-            error
-        })?;
         Ok(Ok(Some((request, hooks))))
     }
 }
