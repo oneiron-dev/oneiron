@@ -1235,14 +1235,14 @@ mod program {
             )
             .unwrap();
             assert!(
-            sync::copy_judged(
-                &source,
-                &doc,
-                &partial,
-                crate::machine_destination::Destination::Unknown,
-            )
-            .is_err()
-        );
+                sync::copy_judged(
+                    &source,
+                    &doc,
+                    &partial,
+                    crate::machine_destination::Destination::Unknown,
+                )
+                .is_err()
+            );
             source
                 .delete_entity_with_reason(&note, DeleteReason::UserDelete)
                 .unwrap();
