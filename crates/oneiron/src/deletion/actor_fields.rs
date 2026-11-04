@@ -81,7 +81,7 @@ fn scrub_actor_fields_in_txn(
     // on soft deletes that keep attribution (FIX 11060, FIX 812, FIX 6640).
     // Marker-only replay and checkpoint restore reach this sweep, so a
     // restored receipt never brings back a hard-erased actor.
-    crate::context_board::scrub_section_fit_receipt_actors_in_txn(&vault.store, wtxn, actor)?;
+    crate::context_board::scrub_section_fit_receipt_actors_in_txn(vault, wtxn, actor)?;
     for scrub in crate::side_table::actor_scrubs() {
         scrub(vault, wtxn, actor)?;
     }

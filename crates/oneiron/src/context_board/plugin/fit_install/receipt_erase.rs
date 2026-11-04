@@ -10,6 +10,7 @@
 //! deletes that keep attribution (FIX 812, FIX 6640).
 use super::super::claim::{PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload};
 use super::{PREDICATE_SKILL_SECTION_FIT, map_entry};
+use crate::Vault;
 use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -63,12 +64,12 @@ pub(crate) fn erase_section_fit_receipts_in_txn(
 /// either order with the hook's whole-delete above: a receipt gone already
 /// reads back absent and is left alone.
 pub(crate) fn scrub_section_fit_receipt_actors_in_txn(
-    store: &Store,
+    vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    for receipt in actor_receipts_in_txn(store, wtxn, actor)? {
-        scrub_receipt_actor_in_txn(store, wtxn, &receipt)?;
+    for receipt in actor_receipts_in_txn(&vault.store, wtxn, actor)? {
+        scrub_receipt_actor_in_txn(vault, wtxn, &receipt)?;
     }
     Ok(())
 }
@@ -211,14 +212,18 @@ fn actor_receipts_in_txn(
 
 /// Rewrites `receipt` with only its actor leaf scrubbed to `""`, keeping its
 /// id, header, status and scope stamp (FIX 11060). The leaf sits outside
-/// `fields()`, so the install still authorizes. A receipt that does not
-/// decode, names no actor, or is no receipt stays as it is.
+/// `fields()`, so the install still authorizes. The rewrite goes through the
+/// reserved claim door with the header times preserved (origin's actor-erase
+/// precedent), so the short-id hash, text index and pending-embedding token
+/// follow the scrubbed bytes. A receipt that does not decode, names no
+/// actor, or is no receipt stays as it is.
 fn scrub_receipt_actor_in_txn(
-    store: &Store,
+    vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     receipt: &EntityId,
 ) -> Result<()> {
-    let Some(stored) = crate::ports::EntityStoreRead::port_entity_record(store, wtxn, receipt)?
+    let Some(stored) =
+        crate::ports::EntityStoreRead::port_entity_record(&vault.store, wtxn, receipt)?
     else {
         return Ok(());
     };
@@ -244,17 +249,12 @@ fn scrub_receipt_actor_in_txn(
     if !scrubbed {
         return Ok(());
     }
-    let data = crate::claim::encode_claim_body(&body)?;
-    crate::claim::validate_claim_body_and_decode_in_txn(store, wtxn, &data, true)?;
-    let next = crate::ports::EntityRecord {
-        entity_type: stored.entity_type,
-        occurred: stored.occurred,
-        learned_at: stored.learned_at,
-        body: data,
-    };
-    let encoded = next.encode();
-    crate::ports::EntityStoreStaging::port_stage_entity_row(store, wtxn, receipt, &encoded)?;
-    crate::vault::entity_revision::remove_entity_revisions(store, wtxn, receipt)?;
-    crate::vault::entity_revision::capture_entity_revision(store, wtxn, receipt, &encoded)?;
+    vault.put_reserved_claim_in_txn(wtxn, receipt, &body, stored.occurred, stored.learned_at)?;
+    crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, receipt)?;
+    let staged =
+        crate::ports::EntityStoreRead::port_entity_record(&vault.store, wtxn, receipt)?
+            .ok_or(crate::error::Error::EntityNotFound)?;
+    let encoded = staged.encode();
+    crate::vault::entity_revision::capture_entity_revision(&vault.store, wtxn, receipt, &encoded)?;
     Ok(())
 }
