@@ -192,6 +192,8 @@ fn classify_dial_delta(
     delta.loosened |= proposed.verified_at_max_age_secs > current.verified_at_max_age_secs;
     delta.loosened |= proposed.jurisdiction_confidence_floor_millis
         < current.jurisdiction_confidence_floor_millis;
+    delta.loosened |= proposed.campaign_complaint_pause_threshold_ppm
+        > current.campaign_complaint_pause_threshold_ppm;
     delta.loosened |= proposed.strict_pole_jurisdiction != current.strict_pole_jurisdiction;
     delta.loosened |= current
         .prohibited_list_provenance_classes
@@ -200,6 +202,8 @@ fn classify_dial_delta(
     delta.tightened |= proposed.verified_at_max_age_secs < current.verified_at_max_age_secs;
     delta.tightened |= proposed.jurisdiction_confidence_floor_millis
         > current.jurisdiction_confidence_floor_millis;
+    delta.tightened |= proposed.campaign_complaint_pause_threshold_ppm
+        < current.campaign_complaint_pause_threshold_ppm;
     delta.tightened |= proposed
         .prohibited_list_provenance_classes
         .iter()

@@ -61,9 +61,7 @@ use crate::api::{
     SignatureAlgorithm, SigningIdentity, TsaEndpoint,
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
-use crate::memory::{
-    AdmittedBytes, AdmittedStr, SealMemory, SealMemoryProvider, SealMemoryRefusal,
-};
+use crate::memory::{AdmittedBytes, SealMemory, SealMemoryProvider, SealMemoryRefusal};
 use crate::native::NativeSealEngine;
 
 mod report;
@@ -215,6 +213,11 @@ enum Failure {
     InputInvalid {
         code: InputInvalidCode,
     },
+    /// The engine's revisions held too little: the CMS needed `needed` DER
+    /// bytes, for the engine to write a larger revision (FIX 6270).
+    ContentsShort {
+        needed: u64,
+    },
 }
 
 impl Failure {
@@ -273,8 +276,18 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
         .collect::<Result<Vec<_>, OrganError>>()?;
     let (observed, engine) = engine(args.config, args.now_ms, began, call.asker())?;
     let failed = |err: SealError| -> Result<Answer, OrganError> {
-        let failure = SealReport::Failed(Failure::of(err, None, &memory)?);
-        report(&failure, &observed, &memory)
+        let failure = match err {
+            // Past the largest revision the engine wrote, the DER bytes the
+            // CMS needed are the call's own count (FIX 6270).
+            SealError::Fatal {
+                stage: SealStage::PdfIncrementalUpdate,
+                code: FatalCode::ContentsCapacityExceeded,
+            } => Failure::ContentsShort {
+                needed: observed.observed().contents_bytes,
+            },
+            err => Failure::of(err, None, &memory)?,
+        };
+        report(&SealReport::Failed(failure), &observed, &memory)
     };
     let engine = match engine {
         Ok(engine) => engine,
@@ -303,12 +316,6 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
             },
         })
         .collect();
-    // A shared output buffer is copied for the reply, so its bytes ride
-    // this call's reply reservation first; a sole owner's buffer moves
-    // without copying (FIX 8452).
-    if Arc::strong_count(&sealed.bytes) != 1 {
-        memory.reserve(sealed.bytes.len() as u64)?;
-    }
     let mut answer = report(
         &SealReport::Sealed {
             evidence_sha256: ByteBuf::from(sealed.evidence_sha256.to_vec()),
@@ -325,7 +332,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     answer.outputs.push(OutputBytes {
         name: SEALED_OUTPUT.to_owned(),
         media_type: PDF.to_owned(),
-        bytes: crate::memory::AdmittedBytes::into_vec(sealed.bytes),
+        bytes: sealed.bytes,
     });
     Ok(answer)
 }
@@ -664,7 +671,7 @@ impl SealFetcher for AskedFetcher {
         if !(200..300).contains(&answer.status) {
             return Err(FetchError::InvalidResponse);
         }
-        let body = match reply.data {
+        let mut body = match reply.data {
             // A region's bytes came reserved before the runtime copied them
             // (FIX 8454): that copy is adopted whole with what holds it, and
             // nothing copies it again. Inline bytes take a lease of their own.
@@ -674,19 +681,18 @@ impl SealFetcher for AskedFetcher {
                     .then(|| Box::new(memory) as Box<dyn Send>);
                 AdmittedBytes::adopt(&self.memory, bytes, held).map_err(FetchError::Memory)?
             }
-            None => AdmittedBytes::shared_empty(&self.memory).map_err(FetchError::Memory)?,
+            None => AdmittedBytes::empty(),
         };
-        // The answer's text is admitted before it is copied, and shared
-        // (FIX 8455): the reservation is the copy's own.
-        let content_type = match answer.content_type {
-            None => None,
-            Some(text) => Some(Arc::new(
-                AdmittedStr::copy_from(&self.memory, &text).map_err(FetchError::Memory)?,
-            )),
-        };
+        // The answer's content type and the header around the body are held
+        // with it (FIX 8455).
+        let beside = self
+            .memory
+            .lease(AdmittedBytes::beside_bytes(answer.content_type.as_deref()))
+            .map_err(FetchError::Memory)?;
+        body.hold_beside(beside);
         Ok(FetchResponse {
             body: Arc::new(body),
-            content_type,
+            content_type: answer.content_type,
         })
     }
 }

@@ -19,18 +19,24 @@
 
 mod attachments;
 mod axis;
+mod conditional;
 mod coordinates;
 mod header;
 mod insert;
 mod layout;
+mod links;
 mod model;
 mod project;
 mod read;
 mod retain;
 mod titles;
 
+pub use conditional::{
+    XlsxConditionalFormat, XlsxConditionalOperator, XlsxConditionalRule, check_conditional,
+    shift_conditional_range,
+};
 pub use header::header_rename;
-pub use insert::calculated_fill;
+pub use insert::{XlsxLines, calculated_fill, shift_lines};
 
 use crate::edit::xml::{
     Splice, escape_attribute, insert_end, next_part, replace_text, set_attribute, splice,
@@ -46,7 +52,8 @@ pub use crate::xlsx_shift::{
 use crate::xlsx_shift::{drop_table_columns, shift_formula};
 use crate::xlsx_styles::write_formats;
 pub use crate::xlsx_styles::{
-    XlsxBorder, XlsxColor, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat, XlsxNumberFormat, check_format,
+    XlsxBorder, XlsxColor, XlsxDifferentialFormat, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat,
+    XlsxNumberFormat, check_differential_format, check_format,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
