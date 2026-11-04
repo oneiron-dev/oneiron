@@ -1833,16 +1833,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/anchored_annotation/body_anchor.rs",
-     "purpose": "The body-frontier anchor (FIX 2460; ARCH-0075 section 4, the body)",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
      "path": "src/anchored_annotation/codec.rs",
      "purpose": "MessagePack claim codecs, map accessors, envelope builders, and malformed-claim quarantine",
      "surface": {
@@ -1878,30 +1868,10 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/anchored_annotation/deck_anchor.rs",
-     "purpose": "The deck arm of the body-frontier anchor (FIX 12264; ARCH-0075 section 4, the body)",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/anchored_annotation/docx_settle.rs",
      "purpose": "Atomic managed annotation writes accompanying settled paragraph answers",
      "surface": {
       "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/anchored_annotation/failed_stamps.rs",
-     "purpose": "The body-anchor sweep's memo of failed stamps (FIX 12276, FIX 12326)",
-     "surface": {
-      "crate-vis": 4
      }
     },
     {
@@ -1923,7 +1893,6 @@
       "Anchor",
       "AnnotationComment",
       "AnnotationThread",
-      "BodyAnchor",
       "DriftMarker",
       "Locator",
       "ReanchorOp",
@@ -1939,7 +1908,7 @@
       "crate-vis": 8,
       "enum": 4,
       "fn": 9,
-      "struct": 8
+      "struct": 7
      }
     },
     {
@@ -2049,7 +2018,6 @@
      "notable": [
       "AnnotationAnchorView",
       "AnnotationAssignRequest",
-      "AnnotationBodyAnchorView",
       "AnnotationBriefView",
       "AnnotationCommentRequest",
       "AnnotationCommentView",
@@ -2070,7 +2038,7 @@
      "purpose": "Typed wire shapes for artifact units and anchored comment threads",
      "surface": {
       "enum": 4,
-      "struct": 14
+      "struct": 13
      }
     },
     {
@@ -7824,7 +7792,7 @@
      "path": "src/batch/secret_scan/mask/carrier.rs",
      "purpose": "The batch door's file mark (owner ruling C2) for a carrier's stored text no door rewrites (OF-067, Engine…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 20
      }
     },
     {
@@ -8888,7 +8856,7 @@
      "path": "src/blob_artifact/esign/render/admitted.rs",
      "purpose": "A PDF inspection's memory, admitted by its host before the parse allocates it (FIX 8065)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "trait": 1
      }
     },
@@ -8940,16 +8908,6 @@
      "purpose": "Linear lexical framing; the PDF parser validates the single bounded operand",
      "surface": {
       "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/blob_artifact/esign/render/preflight/trees.rs",
-     "purpose": "The memory a parsed object tree holds, on its inspection's host (FIX 12230)",
-     "surface": {
-      "crate-vis": 3
      }
     },
     {
@@ -52163,16 +52121,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/office_body/annotation_units.rs",
-     "purpose": "What an anchored comment reads of a live office body (FIX 2460; decks, FIX 12264): the frontier a version…",
-     "surface": {
-      "crate-vis": 8
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/office_body/author_token.rs",
      "purpose": "A DOCX export's default author (FIX 4513, Engine ruling B 10-19): the bytes carry an opaque token, not the…",
      "surface": {
@@ -52311,20 +52259,10 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/office_body/masked_view.rs",
-     "purpose": "A typed body's view as a reader masked from lifted keys reads it (OF-067): the body read, a fork's diff and…",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/office_body/mod.rs",
      "purpose": "Live office body records and Vault doors",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "re-export": 13
      }
     },
@@ -52339,7 +52277,7 @@
      "path": "src/office_body/pptx.rs",
      "purpose": "The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) as a Loro document on the typed-body door…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 7,
       "re-export": 3,
       "struct": 3
@@ -66372,24 +66310,7 @@
      "purpose": "Frozen callable cases (FIX 12093)",
      "surface": {
       "crate-vis": 3,
-      "fn": 2,
-      "re-export": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CallableAmendOutcome",
-      "CallableAmendReceipt",
-      "CallableAmendRequest"
-     ],
-     "path": "src/skill/call/frozen/amend.rs",
-     "purpose": "A caller's correction of one callable call's answer (FIX 12214)",
-     "surface": {
-      "enum": 1,
-      "fn": 1,
-      "struct": 2
+      "fn": 2
      }
     },
     {
@@ -66409,7 +66330,7 @@
      "path": "src/skill/call/frozen/index.rs",
      "purpose": "The frozen cases' index (FIX 12180): each case under the rows it was made from, or under its caller's…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -82948,7 +82869,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1252
+      "fn": 1251
      }
     },
     {
@@ -89695,7 +89616,7 @@
      "purpose": "Agent run status is part of the context-board projection vocabulary"
     },
     "anchored_annotation": {
-     "files": 21,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -89737,7 +89658,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 78,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90598,7 +90519,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 40,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90962,7 +90883,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 30,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91286,7 +91207,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6281,
+   "source_files": 6274,
    "test_files": 900
   },
   "oneiron-android": {
@@ -97097,7 +97018,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 66,
+      "const": 65,
       "crate-vis": 1
      }
     },
@@ -98990,7 +98911,7 @@
      "path": "src/edit/text.rs",
      "purpose": "`set_text`, `replace_run_text` and `set_run_props`",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 13
      }
     },
     {
@@ -99001,16 +98922,6 @@
      "purpose": "The new XML the text mapping writes: a run with new text, a run of the paragraph's end properties, and new…",
      "surface": {
       "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/edit/text/field_cut.rs",
-     "purpose": "A table cell's field-aware cut (FIX 12227): where the retained text mapping refuses because new text would…",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -100667,7 +100578,7 @@
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
-     "files": 25,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -100774,7 +100685,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 158,
+   "source_files": 157,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -104313,7 +104224,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1220
+      "fn": 1219
      }
     },
     {
@@ -105831,7 +105742,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1221
+      "fn": 1220
      }
     },
     {
@@ -108462,7 +108373,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/chat/delivery.rs",
@@ -109794,9 +109705,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/esign/parse_lease.rs",
-     "purpose": "A PDF inspection's parse on this machine's memory (FIX 8065): the editor's geometry door, the anonymous one…",
+     "purpose": "The geometry door's PDF parse on this machine's memory (FIX 8065)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -109826,7 +109737,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 32
      }
     },
     {
@@ -110410,13 +110321,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/errors.rs",
      "purpose": "The facade's error envelope: an engine `MemoryError` or an `ApiError` as one HTTP reply",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -110565,16 +110476,6 @@
      "notable": [],
      "path": "src/api/facade/generated/dispatch.rs",
      "purpose": "The facade's one admission and typed call per verb-table row (OF-489)",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "XL",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/facade/generated/host_door_rows.rs",
-     "purpose": "The host-door rows whose door checks its caller before the row's verb hooks run (FIX 1763), one variant…",
      "surface": {
       "crate-vis": 2
      }
@@ -110906,7 +110807,7 @@
      "path": "src/api/facade/invocations.rs",
      "purpose": "The facade's invocation claims: one call per client-named invocation id (OF-580)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 15
      }
     },
     {
@@ -111605,16 +111506,6 @@
      "notable": [],
      "path": "src/api/facade/stream_recovery_doors.rs",
      "purpose": "The stream seeds the vault's open could not replay (FIX 11933), read under the caller's own owner credential",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/facade/streamed_claims.rs",
-     "purpose": "A door's invocation claim held through a streamed reply (FIX 2004): the reply is saved for each duplicate…",
      "surface": {
       "crate-vis": 1
      }
@@ -112736,7 +112627,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 54
+      "crate-vis": 53
      }
     },
     {
@@ -112906,7 +112797,77 @@
      "path": "src/api/openapi/owner_paths.rs",
      "purpose": "The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner` route, with the SDK row whose input…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/owner_rest_paths.rs",
+     "purpose": "The REST shapes of owner routes that mirror no SDK row (FIX 4782, FIX 10289, FIX 11103, FIX 11611): each…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/owner_rest_paths/routes_backups_to_signing_keys.rs",
+     "purpose": "The REST shapes of the row-less `/v1/owner` routes from `/backups` through `/owner-signing-keys` that parts…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/owner_rest_paths/routes_coach.rs",
+     "purpose": "The REST shape of `PUT /v1/owner/coach/training-checkpoints` (FIX 12086): a raw byte body, not JSON, with…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/owner_rest_paths/routes_packs.rs",
+     "purpose": "The REST shapes of the row-less `/v1/owner` routes under `/packs` (FIX 11611 part D): one [`super::bind`]…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/owner_rest_paths/routes_pads_to_runs.rs",
+     "purpose": "The REST shapes of the row-less `/v1/owner` routes from `/pads` through `/runs` (FIX 11611 part D): one…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/owner_rest_paths/routes_secret_scan_to_skills.rs",
+     "purpose": "The REST shapes of the row-less `/v1/owner` routes from `/secret-scan` through `/skills/judge` (FIX 11611…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/owner_rest_paths/routes_space_posting_to_worlds.rs",
+     "purpose": "The REST shapes of the row-less `/v1/owner` routes from `/space-posting` through `/worlds/privacy` (FIX…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -113776,7 +113737,7 @@
      "path": "src/api/owner_routes/skill_judge_routes.rs",
      "purpose": "`/v1/owner/skills/judge`: the serve skill judge (OF-495)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -124900,7 +124861,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 646,
+     "files": 651,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -125404,9 +125365,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 36,
+   "over_bar": 35,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1492,
+   "source_files": 1497,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -125721,7 +125682,6 @@
       "Anchor",
       "AnnotationAnchorView",
       "AnnotationAssignRequest",
-      "AnnotationBodyAnchorView",
       "AnnotationBriefView",
       "AnnotationCommentRequest",
       "AnnotationCommentView",
@@ -125782,6 +125742,7 @@
       "ArtifactExportRequest",
       "ArtifactKind",
       "ArtifactLinkToken",
+      "ArtifactPin",
       "ArtifactPointer",
       "ArtifactPointerChannel",
       "ArtifactPointerRequest",
@@ -125802,6 +125763,7 @@
       "ArtifactServeTier",
       "ArtifactUnitReceipt",
       "ArtifactUnitView",
+      "ArtifactUnits",
       "ArtifactUnitsRequest",
       "ArtifactUnitsView",
       "ArtifactUnpublished",
@@ -125893,6 +125855,10 @@
       "BatchStopCause",
       "BeginMessageStreamRequest",
       "BillingAccountFiling",
+      "BindingMoveLink",
+      "BindingMoveState",
+      "BindingNotApplied",
+      "BindingSource",
       "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
@@ -126033,6 +125999,7 @@
       "CalendarSel",
       "CalendarSyncOutcome",
       "CalibrationPair",
+      "CalibrationResult",
       "CallAttemptRef",
       "CallClass",
       "CallEnvelope",
@@ -126041,9 +126008,6 @@
       "CallReceipt",
       "CallReceiptRequest",
       "CallTransport",
-      "CallableAmendOutcome",
-      "CallableAmendReceipt",
-      "CallableAmendRequest",
       "CallableCardView",
       "CampaignActionProvenance",
       "CampaignArchiveAdmission",
@@ -126096,12 +126060,14 @@
       "CancelStreamRequest",
       "CandidateLabel",
       "CandidateRef",
+      "CandleParityCheck",
       "Care",
       "CareLevel",
       "CaseDecision",
       "CatalogSeed",
       "CatastropheClass",
       "CategoryField",
+      "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
       "ChannelIdentityBindRequest",
@@ -126175,6 +126141,8 @@
       "CheckoutTakeoverInput",
       "CheckoutTeardownInput",
       "CheckoutTornDown",
+      "CheckpointFileKind",
+      "CheckpointFilePin",
       "CheckpointReadRequest",
       "CheckpointResumeView",
       "CheckpointStepView",
@@ -126723,9 +126691,11 @@
       "DecisionBandLearnRequest",
       "DecisionBandReadRequest",
       "DecisionClass",
+      "DecisionDial",
       "DecisionMedia",
       "DecisionMediaRef",
       "DecisionQuestion",
+      "DecisionQuestionInput",
       "DecisionReceipt",
       "DecisionRung",
       "DecisionTime",
@@ -126910,6 +126880,7 @@
       "EditNoteRequest",
       "EffectReceipt",
       "EmbeddingMatchEvidence",
+      "EmbeddingSpace",
       "EmbeddingSpaceBindRequest",
       "EmbeddingSpaceCandidateRequest",
       "EmbeddingSpaceMoveChecked",
@@ -126921,6 +126892,7 @@
       "EmbeddingSpaceProbePutRequest",
       "EmbeddingSpaceProbes",
       "EmbeddingSpaceRequest",
+      "EmbeddingSpacesView",
       "EncoderExecution",
       "EncoderOutput",
       "EngineSwitchRecord",
@@ -126978,6 +126950,7 @@
       "EsignSigningSignatureView",
       "EsignVoidRequest",
       "EstimateLabels",
+      "EstimateWindow",
       "EvalAuthoringInventory",
       "EvalAuthoringRef",
       "EvalAuthoringReport",
@@ -127040,6 +127013,7 @@
       "ExplainScoreEvidence",
       "ExportAnswer",
       "ExportChannel",
+      "ExportCheck",
       "ExportDiaryRead",
       "ExportTransfer",
       "ExportTransferPiece",
@@ -127205,6 +127179,7 @@
       "FreeTimeSchedule",
       "FreeTimeSpendView",
       "FreeTimeSplit",
+      "FrozenReadLane",
       "FrozenTrialCase",
       "GateCheckerReceipt",
       "GateCheckerSet",
@@ -127344,6 +127319,7 @@
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
+      "HeldOutResult",
       "HeldOutSelection",
       "HolderExportRequest",
       "HolderExportState",
@@ -127389,6 +127365,7 @@
       "HostedPassEvidence",
       "HostedPlaneAttestation",
       "HostedRelayDecision",
+      "HostingPrivacyPosture",
       "HubAdmissionReceipt",
       "HubConsentOutcome",
       "HubConsentReceipt",
@@ -127566,7 +127543,6 @@
       "LearningCellKey",
       "LearningCellView",
       "LearningChoiceValue",
-      "LearningEstimateWindow",
       "LearningEvidenceView",
       "LearningHeadView",
       "LearningMeanValue",
@@ -128303,6 +128279,7 @@
       "PendingActMatured",
       "PendingActStarted",
       "PendingAuthorityAct",
+      "PendingEmbedderBinding",
       "PendingProposalKind",
       "PendingProposalView",
       "PendingRootRequestView",
@@ -128323,6 +128300,7 @@
       "PersonaSnapshotPreviewRequest",
       "PersonaSnapshotPreviewRow",
       "PersonaSnapshotTextEdit",
+      "PinnedCheckpoint",
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
@@ -128524,14 +128502,22 @@
       "QualificationLimits",
       "QualificationPlan",
       "Quarantine",
+      "QuestionActivation",
       "QuestionAnswer",
       "QuestionAnswersPage",
       "QuestionAnswersReply",
       "QuestionAnswersRequest",
+      "QuestionAskerClass",
+      "QuestionAudience",
       "QuestionBackfillRequest",
       "QuestionCreateRequest",
       "QuestionCriteriaCriterion",
       "QuestionCriteriaString",
+      "QuestionDefinitionDecisionQuestion",
+      "QuestionDefinitionDecisionQuestionInput",
+      "QuestionEditRequest",
+      "QuestionExportCheck",
+      "QuestionMedia",
       "QuestionOutcomeWindowsRequest",
       "QuestionOutcomes",
       "QuestionOutcomesProjectRequest",
@@ -128540,6 +128526,7 @@
       "QuestionPauseRequest",
       "QuestionPaused",
       "QuestionReadRequest",
+      "QuestionRecord",
       "QuestionRefreshRequest",
       "QuestionScheduleHead",
       "QuestionScheduleRequest",
@@ -128604,6 +128591,7 @@
       "RecordedStep",
       "RecordingGap",
       "RecordingGapKind",
+      "RefreshPolicy",
       "RefusalDial",
       "RefusalLevel",
       "RefusalOutcome",
@@ -128858,6 +128846,7 @@
       "RevokeGrantRequest",
       "RoleHolder",
       "RoleRank",
+      "RoleSwapReceipt",
       "RoomClaimOutcome",
       "RoomClaimReceipt",
       "RoomClaimRequest",
@@ -129412,6 +129401,7 @@
       "SnapshotSecretLiftProposal",
       "SourceConflict",
       "SourceFamily",
+      "SourcePin",
       "SourceSpan",
       "SourceTrust",
       "SourceTrustRow",
@@ -129533,6 +129523,7 @@
       "SupportHolderClass",
       "SupportRepair",
       "SurfaceBand",
+      "SwapChoice",
       "SwitchCarried",
       "SwitchComponent",
       "SwitchEngineInput",
@@ -129632,7 +129623,6 @@
       "TaskTtl",
       "TaskTypeNodeSpec",
       "TaskTypeNodeView",
-      "TaskTypeRefTypeRef",
       "TaskTypeTreePin",
       "TaskTypeTreePinReceipt",
       "TaskTypeTreeRead",
@@ -129792,6 +129782,7 @@
       "Vad",
       "VadAnnotationSource",
       "VadBadge",
+      "VectorEvidenceFloors",
       "VectorPutReceipt",
       "VectorPutRequest",
       "VectorRefinement",
@@ -130002,8 +129993,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1086,
-      "struct": 3305
+      "enum": 1094,
+      "struct": 3327
      }
     },
     {
