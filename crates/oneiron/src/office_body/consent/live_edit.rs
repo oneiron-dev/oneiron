@@ -20,7 +20,7 @@ use crate::error::Result;
 const OFFICE_LIVE_EDIT_OPERATION: &str = "office.body.live_edit";
 /// The scope of office edits to `artifact`: what a standing grant names to
 /// land a fork there, and whose holders a waiting member is asked of.
-pub(super) fn office_scope(artifact: &EntityId) -> Result<(ActionClass, ActionEnvelope)> {
+pub(crate) fn office_scope(artifact: &EntityId) -> Result<(ActionClass, ActionEnvelope)> {
     let target = format!("entity:{}", artifact.to_hex());
     Ok((
         ActionClass::new(OFFICE_BODY_EDIT_CLASS)?,
@@ -28,7 +28,7 @@ pub(super) fn office_scope(artifact: &EntityId) -> Result<(ActionClass, ActionEn
     ))
 }
 
-pub(super) fn office_effect_for(
+pub(crate) fn office_effect_for(
     operation: &str,
     artifact: &EntityId,
     subject: &EntityId,
@@ -37,7 +37,7 @@ pub(super) fn office_effect_for(
         .with_action_requirement(office_bound(artifact, subject)?)
 }
 
-pub(super) fn office_bound(artifact: &EntityId, opener: &EntityId) -> Result<GrantBound> {
+pub(crate) fn office_bound(artifact: &EntityId, opener: &EntityId) -> Result<GrantBound> {
     let (class, envelope) = office_scope(artifact)?;
     GrantBound::action(ActorBound::new(opener.to_hex())?, class, envelope)
 }
@@ -45,7 +45,7 @@ pub(super) fn office_bound(artifact: &EntityId, opener: &EntityId) -> Result<Gra
 /// A live DOCX/XLSX edit by `editor` on `artifact` as the evaluator reads it
 /// (FIX 596): the same class-agnostic subject and scope as a merge, receipts
 /// under the live-edit operation.
-pub(super) fn live_edit_effect(artifact: &EntityId, editor: &EntityId) -> Result<ComposedEffect> {
+pub(crate) fn live_edit_effect(artifact: &EntityId, editor: &EntityId) -> Result<ComposedEffect> {
     office_effect_for(OFFICE_LIVE_EDIT_OPERATION, artifact, editor)
 }
 
@@ -53,13 +53,13 @@ pub(super) fn live_edit_effect(artifact: &EntityId, editor: &EntityId) -> Result
 /// `artifact` (FIX 596), minted by someone outside `excluded`; `None` when
 /// none does. The candidate mirrors the merge path exactly, so only
 /// class-agnostic `entity.office.edit` grants cover it.
-pub(super) fn covering_live_grant(
+pub(crate) fn covering_live_grant(
     grants: &[(StandingConsentGrant, Option<EntityId>)],
     excluded: &BTreeSet<EntityId>,
     artifact: &EntityId,
     editor: &EntityId,
 ) -> Result<Option<String>> {
-    covering_grant_for(
+    super::covering_grant_for(
         OFFICE_LIVE_EDIT_OPERATION,
         grants,
         excluded,
@@ -82,7 +82,7 @@ pub(crate) enum LiveEditAdmission {
 }
 
 /// [`LiveEditAdmission`] in the caller's transaction.
-pub(super) fn live_edit_admission_in_txn(
+pub(crate) fn live_edit_admission_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     artifact: &EntityId,
@@ -105,7 +105,7 @@ pub(super) fn live_edit_admission_in_txn(
 /// Mints the standing `entity.office.edit` grant for `editor` on `artifact`
 /// as `owner`'s own act answering the live-edit ask (FIX 596): the same
 /// class-agnostic subject the live gate checks, revocable like any grant.
-pub(super) fn mint_live_edit_grant_in_txn(
+pub(crate) fn mint_live_edit_grant_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
     owner: &AuthenticatedOwner,
@@ -120,7 +120,7 @@ pub(super) fn mint_live_edit_grant_in_txn(
 /// skips the re-mint, so repeated ACCEPTs never churn the row. Only an
 /// issuer outside the editor's lineage counts: a self-minted identical row
 /// would not cover the edit and must not wedge the ask.
-pub(super) fn identical_live_edit_grant_active_in_txn(
+pub(crate) fn identical_live_edit_grant_active_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     artifact: &EntityId,
@@ -135,16 +135,18 @@ pub(super) fn identical_live_edit_grant_active_in_txn(
     Ok(false)
 }
 
-/// Whether a live DOCX/XLSX edit by `editor` on `artifact` is admitted
-/// (FIX 596), for the verb's post-`InvalidConfig` disambiguation: the
-/// same check the committing writer runs, recording nothing.
-pub(super) fn live_edit_admission(
-    &self,
-    artifact: &EntityId,
-    editor: &EntityId,
-) -> Result<consent::LiveEditAdmission> {
-    let txn = self.store.env.read_txn()?;
-    consent::live_edit_admission_in_txn(self, &txn, artifact, editor)
+impl Vault {
+    /// Whether a live DOCX/XLSX edit by `editor` on `artifact` is admitted
+    /// (FIX 596), for the verb's post-`InvalidConfig` disambiguation: the
+    /// same check the committing writer runs, recording nothing.
+    pub(crate) fn live_edit_admission(
+        &self,
+        artifact: &EntityId,
+        editor: &EntityId,
+    ) -> Result<LiveEditAdmission> {
+        let txn = self.store.env.read_txn()?;
+        live_edit_admission_in_txn(self, &txn, artifact, editor)
+    }
 }
 
 /// Admits a live DOCX/XLSX edit by `editor` on `artifact` in the committing
@@ -152,20 +154,20 @@ pub(super) fn live_edit_admission(
 /// beside the edit, and without either the writer fails fast so the verb
 /// raises the owner ask. A grant revoked between the verb's read and this
 /// commit fails the commit closed.
-pub(super) fn admit_live_edit_in_txn(
+pub(crate) fn admit_live_edit_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
     artifact: &EntityId,
     editor: &EntityId,
 ) -> Result<()> {
-    match consent::live_edit_admission_in_txn(vault, wtxn, artifact, editor)? {
-        consent::LiveEditAdmission::Owner => Ok(()),
-        consent::LiveEditAdmission::Grant { grant_ref } => {
-            let effect = consent::live_edit_effect(artifact, editor)?;
+    match live_edit_admission_in_txn(vault, wtxn, artifact, editor)? {
+        LiveEditAdmission::Owner => Ok(()),
+        LiveEditAdmission::Grant { grant_ref } => {
+            let effect = live_edit_effect(artifact, editor)?;
             vault.record_standing_grant_use_in_txn(wtxn, &grant_ref, effect.digest())?;
             Ok(())
         }
-        consent::LiveEditAdmission::NeedsAsk => Err(invalid(&format!(
+        LiveEditAdmission::NeedsAsk => Err(invalid(&format!(
             "live edits by {} on artifact {} need a standing entity.office.edit grant; the owner is asked",
             editor.to_hex(),
             artifact.to_hex(),

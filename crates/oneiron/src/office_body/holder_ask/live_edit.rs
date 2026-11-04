@@ -16,12 +16,12 @@ use crate::task_verb::{
     TaskAskStatus, TaskAskTarget, TaskAskWord,
 };
 
-use super::SettleVerdict;
-use super::consent::{
+use super::super::consent::{
     LiveEditAdmission, identical_live_edit_grant_active_in_txn, live_edit_admission_in_txn,
     mint_live_edit_grant_in_txn,
 };
-use super::support::loro_kind;
+use super::super::support::loro_kind;
+use super::SettleVerdict;
 
 /// The intent prefix of a live-edit holder ask (FIX 596); with the artifact,
 /// the editor and the owner set's revision it keys one ask, so a repeat
@@ -68,17 +68,17 @@ pub(super) struct LiveEditRoute {
 }
 
 /// `ask group` → the live-edit route it carries (FIX 596).
-pub(super) const LIVE_EDIT_GROUPS: SideTable<EntityId, LiveEditRoute, Named> =
+pub(crate) const LIVE_EDIT_GROUPS: SideTable<EntityId, LiveEditRoute, Named> =
     SideTable::new(&side_table::OFFICE_LIVE_EDIT_ASK_GROUP);
 
-impl Memory {
+impl Memory<'_> {
     /// Asks the vault's live owners whether `editor` may edit `artifact`'s
     /// live body (FIX 596): one ask per (artifact, editor, owner set). The
     /// spec is static — artifact and editor hexes but no frontier or op
     /// data — so every retry replays the same group under the replay law.
     /// The route binds in the admission commit, so an ask never exists
     /// without the row its guard reads; a replay backfills it.
-    pub(super) fn raise_live_edit_holder_ask(
+    pub(crate) fn raise_live_edit_holder_ask(
         &self,
         artifact: &EntityId,
         editor: &EntityId,
@@ -149,7 +149,7 @@ impl Memory {
     /// accepted on a definitive owner ACCEPT while its coverage still
     /// holds, rejected on a definitive owner REJECT, lapsed once settled
     /// any other way or once the granted coverage no longer holds.
-    pub(super) fn live_edit_ask_outcome(&self, ask: &EntityId) -> MemoryResult<LiveEditAskOutcome> {
+    pub(crate) fn live_edit_ask_outcome(&self, ask: &EntityId) -> MemoryResult<LiveEditAskOutcome> {
         if !self.has_task_work_turn() {
             return self.task_work_memory().live_edit_ask_outcome(ask);
         }
