@@ -550,6 +550,9 @@ struct Started {
     turn: EntityId,
     answering: Answering,
     credential: TurnCredential,
+    /// The caller's proved connection and known rows for the cached reply.
+    peer: oneiron::authority::PeerMachine,
+    reply_rows: Vec<EntityId>,
     /// Why the call goes without the context board the turn read (FIX
     /// 8136).
     board_omitted: Option<recall::BoardOmission>,
