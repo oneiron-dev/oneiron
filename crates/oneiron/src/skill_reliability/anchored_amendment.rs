@@ -150,6 +150,17 @@ pub(super) fn effective_evidence_in_txn(
 ) -> Result<AnchoredEffect> {
     let row = &held.row;
     if let Some(share) = amended.get(&held.attempt) {
+        if row.pack_attribution.is_none() {
+            let Some(credit) = late_credit_receipt_in_txn(vault, txn, &held.receipt)? else {
+                return Ok(AnchoredEffect::Stand);
+            };
+            if matches!(
+                standing_credit_observation_in_txn(vault, txn, &credit, &held.subject)?,
+                StandingCreditObservation::Unknown
+            ) {
+                return Ok(AnchoredEffect::Stand);
+            }
+        }
         let evidence = restated(held, false, f64::from(*share));
         return Ok(if matches_row(row, &evidence) {
             AnchoredEffect::Stand
@@ -270,7 +281,7 @@ pub(super) fn mint_flipped_from_credit_in_txn(
                 txn,
                 &credit,
             )?
-            .contains(skill);
+            .is_some_and(|subjects| subjects.contains(skill));
         }
         if !names {
             continue;
