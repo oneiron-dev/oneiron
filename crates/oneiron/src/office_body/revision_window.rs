@@ -682,6 +682,7 @@ impl Vault {
                 artifact: *artifact,
                 version: version.version,
                 frontier: head.frontier.clone(),
+                rebind_frontier: None,
                 source_version: head.source_version,
                 actor: BodyActor::Actor(request.actor.entity_ref()),
                 author: author.shown.clone(),
@@ -691,7 +692,6 @@ impl Vault {
                 recalc: None,
                 recalc_zone: Some(request.zone.clone()),
                 effects: Vec::new(),
-                rebind_frontier: None,
             };
             EXPORTS.put(
                 &self.store,
