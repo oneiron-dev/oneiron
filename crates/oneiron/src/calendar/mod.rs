@@ -201,6 +201,7 @@ pub use claims::{
     CalendarSuccessorValue, CalendarTimeKind, CalendarTimeKindValue, ClaimClassDescriptorRow,
     claim_class_descriptors, is_calendar_claim_predicate,
 };
+pub(crate) use connectors::calendar_connector_write_accepts_masked;
 pub use connectors::{
     CALDAV_SYNC_ATTEMPT_KIND, CALENDAR_CONNECTOR_PULL_VERB, CALENDAR_CONNECTOR_WRITE_VERB,
     CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig,

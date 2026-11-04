@@ -6,7 +6,7 @@ side_tables! {
     /// bytes32.
     /// Owner-installed CalDAV seats, cursors and kill switches. Key: seat name.
     CALENDAR_CONNECTOR_SEAT: VaultMeta b"calendar.connector-seat.v1:" Named;
-    CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson Authored;
+    CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson Authored [accepts: crate::calendar::calendar_connector_write_accepts_masked];
     /// Owner-installed ICS feed configuration and last public completion. Key: system name.
     CALENDAR_ICS_FEED_CONFIG: VaultMeta b"calendar.ics-feed-config.v1:" Named;
     /// Per-feed poll cursor. Key: bytes32.
