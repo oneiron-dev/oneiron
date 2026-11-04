@@ -47,7 +47,9 @@ pub(super) fn record_fork_uses_in_txn(
     fork: &EntityDoc,
     base: &[u8],
 ) -> Result<()> {
-    let base = fork.doc.frontiers_to_vv(&super::document::decode_frontier(base)?);
+    let base = fork
+        .doc
+        .frontiers_to_vv(&super::document::decode_frontier(base)?);
     record_token_uses_in_txn(store, txn, entity, fork, base.as_ref())
 }
 

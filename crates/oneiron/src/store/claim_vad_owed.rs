@@ -60,11 +60,7 @@ pub(crate) fn settle_claim_vad_in_txn(
 /// # Errors
 ///
 /// Storage errors.
-pub(crate) fn claim_vad_owed_in_txn(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
+pub(crate) fn claim_vad_owed_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     OWED.contains(store, txn, id)
 }
 
