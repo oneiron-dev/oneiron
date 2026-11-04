@@ -567,6 +567,9 @@ side_tables! {
     /// connection id, pseudonymous recipient id, status and timestamps only (OF-273). Key:
     /// bytes16(nonce) + bytes32(recipient pseudonym).
     COOPERATIVE_DELETION_NOTICE: VaultMeta b"cooperative_deletion:notice:v1:" Named;
+    /// Recipient-selected storage-only restriction, independent of legal holds.
+    /// Key: id16(record) + bytes32(pact) + bytes16(request nonce).
+    COOPERATIVE_RESTRICTION: VaultMeta b"cooperative_deletion:restriction:v1:" Named;
     /// One signed ReRoot row of a pact's former peer, kept because it extends the walk from the
     /// key the pact pinned to the root that peer's courtesy asks and answers now carry (FIX 3014).
     /// Key: bytes32(pact) + hash32(authority entry).

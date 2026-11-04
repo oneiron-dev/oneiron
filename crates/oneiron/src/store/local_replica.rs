@@ -346,12 +346,16 @@ impl<'a> Census<'a> {
         let kind = header.entity_type;
         let reason = if self.keep.kinds.contains(&kind) {
             KeepReason::Kind(kind)
-        } else if crate::store::legal_hold::held_in_txn(self.store, txn, id.as_bytes())?
-            || crate::world_keys::held_pad_world_in_txn(self.store, txn, raw)?
+        } else if crate::store::legal_hold::legal_hold_held_in_txn(self.store, txn, id.as_bytes())?
+            || crate::world_keys::legal_hold_pad_world_in_txn(self.store, txn, raw)?
         {
             // A pad whose world or sealed claim is held stays too, whatever
             // kinds the caller keeps (OF-470).
             KeepReason::LegalHold
+        } else if crate::store::legal_hold::held_in_txn(self.store, txn, id.as_bytes())?
+            || crate::world_keys::held_pad_world_in_txn(self.store, txn, raw)?
+        {
+            KeepReason::Guarded
         } else if self.keep.bound_actors && (self.bound.contains(id) || is_base_agent_actor(id)?) {
             KeepReason::BoundActor
         } else if self.tombstones.contains(id) {
