@@ -223,13 +223,15 @@ side_tables! {
     /// deck transaction (ARCH-0077 managed id history). Key: id16.
     BLOB_ARTIFACT_DECK_ID_MARKS: VaultMeta b"blob_artifact:deck_id_marks:v1:" Named;
     /// Blob artifact head version. Key: id16.
-    BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw;
+    BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw
+        => crate::blob_artifact::erase::erase_blob_artifact_version_actor_in_txn;
     /// Monotonic last version, retained after deletion. Key: id16; value: u64be.
     BLOB_ARTIFACT_HIGHWATER: VaultMeta b"blob_artifact:highwater:v1:" Raw;
     /// Edit proposal settlement ledger row. Key: id16 + hash32.
     EDIT_SETTLE_RECORD: VaultMeta b"blob_artifact:settlement:v1:" Raw;
     /// Blob artifact version record. Key: id16 + u64be.
-    BLOB_ARTIFACT_VERSION: VaultMeta b"blob_artifact:version:v1:" Raw;
+    BLOB_ARTIFACT_VERSION: VaultMeta b"blob_artifact:version:v1:" Raw
+        => crate::blob_artifact::erase::erase_blob_artifact_version_actor_in_txn;
     /// Which artifacts hold which bytes: one row per artifact and content hash a `blob.version`
     /// claim named here, replicated claims included, kept until the artifact's delete. Key:
     /// bytes32 + id16 (artifact).
