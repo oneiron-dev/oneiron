@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, Result};
+use oneiron_contracts::error::{Error, Result};
 
 use super::{
     LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS,
@@ -467,7 +467,7 @@ impl LinkedInSeatPolicyDecision {
 
     /// The verdict for a LinkedIn effect dispatched with no current seat
     /// facts: the kill switch, caps and cadence never ran, so it is held.
-    pub(crate) fn seat_policy_missing() -> Self {
+    pub fn seat_policy_missing() -> Self {
         Self::hold("linkedin.seat_policy_missing", BTreeMap::new())
     }
 

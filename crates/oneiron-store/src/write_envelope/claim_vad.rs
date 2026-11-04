@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 
 use rmpv::Value;
 
-use oneiron_contracts::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::affect::{Vad, VadAnnotation};
+use oneiron_contracts::entity_id::{ENTITY_ID_LEN, EntityId};
 pub const CLAIM_VAD_REAPPRAISAL_PREDICATE: &str = "affect.claim_vad";
 const CLAIM_VAD_KEY_VALENCE: &str = "valence";
 const CLAIM_VAD_KEY_AROUSAL: &str = "arousal";

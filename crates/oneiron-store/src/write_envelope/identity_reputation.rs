@@ -2,10 +2,10 @@
 
 use rmpv::Value;
 
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::error::{Error, Result};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::error::{Error, Result};
 
 pub const IDENTITY_REPUTATION_SCHEMA_VERSION: u64 = 1;
 
@@ -216,7 +216,10 @@ impl IdentityReputation {
         }
     }
 
-    pub fn claim_bodies(&self, identity_ref: EntityId) -> oneiron_contracts::error::Result<Vec<ClaimBody>> {
+    pub fn claim_bodies(
+        &self,
+        identity_ref: EntityId,
+    ) -> oneiron_contracts::error::Result<Vec<ClaimBody>> {
         IDENTITY_REPUTATION_CLAIM_PREDICATES
             .iter()
             .filter_map(|predicate| {

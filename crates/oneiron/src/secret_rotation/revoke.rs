@@ -11,7 +11,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{
     drop_revoked_copies_in_txn, put_stored_custody_in_txn, read_stored_custody_in_txn,
-    resolve_secret_ref_in_txn,
 };
 use crate::secret_lease::{
     SecretLeaseStatus, teardown_local_registration_in_txn, write_secret_lease_in_txn,
@@ -20,6 +19,7 @@ use crate::secret_record::StoredValue;
 use crate::secret_record::{SecretCustodyRecord, SecretCustodyStatus};
 use crate::side_table::HexId;
 use crate::store::Store;
+use crate::store::secret_name_index::resolve_secret_ref_in_txn;
 
 /// What a revoke erases at rest (CALLS CUSTODY_REVOKE_ERASE).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

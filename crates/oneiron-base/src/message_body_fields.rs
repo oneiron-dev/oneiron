@@ -9,12 +9,12 @@ const MAX_DEPTH: usize = 32;
 /// The keys of a MESSAGE body the window reads. `content` and `author` hold
 /// the strings' bytes as stored, not yet read as text.
 #[derive(Default)]
-pub(super) struct MessageFields<'a> {
-    pub(super) content: &'a [u8],
-    pub(super) author: &'a [u8],
-    pub(super) is_visible: bool,
-    pub(super) stale: bool,
-    pub(super) order: u32,
+pub struct MessageFields<'a> {
+    pub content: &'a [u8],
+    pub author: &'a [u8],
+    pub is_visible: bool,
+    pub stale: bool,
+    pub order: u32,
 }
 
 /// The top-level `content`, `author`, `is_visible`, `stale` and `order` keys
@@ -22,7 +22,7 @@ pub(super) struct MessageFields<'a> {
 /// body that is not a well-formed map, or whose `content` is not a string,
 /// `is_visible` not a boolean or `order` not an integer a `u32` holds. Any
 /// other key, a non-string `author` and a non-boolean `stale` are skipped.
-pub(super) fn message_fields(body: &[u8]) -> Option<MessageFields<'_>> {
+pub fn message_fields(body: &[u8]) -> Option<MessageFields<'_>> {
     let mut rd = body;
     let entries = match byte(&mut rd)? {
         marker @ 0x80..=0x8f => usize::from(marker & 0x0f),
@@ -62,7 +62,7 @@ pub(super) fn message_fields(body: &[u8]) -> Option<MessageFields<'_>> {
 /// The newest characters of `text`, at most `count`, and how many; `None`
 /// for bytes that do not end in that many characters of UTF-8. It reads back
 /// from the end, at most four bytes for each character it keeps.
-pub(super) fn newest_chars(text: &[u8], count: usize) -> Option<(&str, usize)> {
+pub fn newest_chars(text: &[u8], count: usize) -> Option<(&str, usize)> {
     let mut start = text.len();
     let mut taken = 0;
     for (at, byte) in text.iter().enumerate().rev().take(count.saturating_mul(4)) {

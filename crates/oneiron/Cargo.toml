@@ -24,6 +24,7 @@ doctest = true
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
 oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
+oneiron-linkedin-policy = { version = "0.1.0", path = "../oneiron-linkedin-policy" }
 oneiron-skill-attribution = { version = "0.1.0", path = "../oneiron-skill-attribution" }
 oneiron-web-fetch = { version = "0.1.0", path = "../oneiron-web-fetch" }
 oneiron-lens-wire = { version = "0.1.0", path = "../oneiron-lens-wire" }
@@ -260,6 +261,7 @@ test-hooks = ["oneiron-model/test-hooks"]
 test-support = [
     "oneiron-contracts/test-support",
     "oneiron-base/test-support",
+    "oneiron-docedit/test-support",
     "oneiron-model/test-support",
     "oneiron-keystore/test-keystore",
 ]

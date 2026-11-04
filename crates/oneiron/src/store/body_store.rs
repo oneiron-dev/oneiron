@@ -31,7 +31,7 @@ use rustix::fs::{
 use rustix::io::Errno;
 
 use super::Store;
-use crate::secret_custody::{KnownSource, KnownSweep, KnownValues};
+use crate::store::known_value_index::{KnownSource, KnownSweep, KnownValues};
 use crate::{Error, Result};
 
 mod finish_pinned;

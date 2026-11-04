@@ -47,7 +47,7 @@ pub(super) struct RollingKey {
 impl RollingKey {
     /// The rolling key of the index whose master is `master`.
     pub(super) fn derive(master: &[u8; 32]) -> Self {
-        let key = crate::world_keys::derive_guarded(ROLLING_CONTEXT, &[&master[..]]);
+        let key = crate::key_material::derive_guarded(ROLLING_CONTEXT, &[&master[..]]);
         let word_at = |at: usize| {
             let mut bytes = [0; 4];
             bytes.copy_from_slice(&key[at..at + 4]);

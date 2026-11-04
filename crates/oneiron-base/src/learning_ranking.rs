@@ -4,12 +4,12 @@
 //! Fractional own runs (credit shares, faded mass) count as they are; a
 //! borrowed prior adds weight to its arm's estimate, never own runs.
 
-use super::Estimate;
+use crate::learning_estimate::Estimate;
 
 /// `arms` ranked by `mean + bonus(total, exploration)`, each with its
 /// score, highest first and ties by `key`. `total` is the set's own runs
 /// rounded up, at least one, so an all-new set still explores.
-pub(crate) fn rank_by_estimate<T, K: Ord>(
+pub fn rank_by_estimate<T, K: Ord>(
     arms: Vec<T>,
     exploration: f64,
     estimate: impl Fn(&T) -> &Estimate,

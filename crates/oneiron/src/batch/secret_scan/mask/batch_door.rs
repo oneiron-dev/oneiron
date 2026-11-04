@@ -13,9 +13,10 @@ use super::{MaskedFiles, Masker, marked_files, op_record, put_file_marks_in_txn,
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::secret_custody::{KeptValues, KnownValues};
+use crate::secret_custody::KeptValues;
 use crate::secret_record::CustodyWrite;
 use crate::store::Store;
+use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
 
 /// The batch door with mask on write. `masks` is false for a replayed batch,

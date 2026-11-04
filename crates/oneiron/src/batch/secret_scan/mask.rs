@@ -59,10 +59,7 @@ use crate::file_secret_marks::MemberStep;
 use crate::ports::ShortIdStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::secret_custody::KeptValues;
-use crate::secret_custody::{KnownValues, MASKED_FILE_BAND, MaskedFile};
-use crate::secret_custody::{
-    masked_file_in_txn, note_found_keys_in_txn, put_masked_file_in_txn, register_custody_in_txn,
-};
+use crate::secret_custody::{note_found_keys_in_txn, register_custody_in_txn};
 use crate::secret_record::CustodyClass;
 use crate::secret_record::{CustodyWrite, FoundNote};
 use crate::secret_record::{
@@ -70,6 +67,9 @@ use crate::secret_record::{
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::store::file_key_masks::{MASKED_FILE_BAND, MaskedFile};
+use crate::store::file_key_masks::{masked_file_in_txn, put_masked_file_in_txn};
+use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 use text_spans::{file_spans, merged, occurrences, secret_spans};

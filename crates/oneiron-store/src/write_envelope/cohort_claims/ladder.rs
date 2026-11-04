@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{EvidenceBasis, StageEvidenceClass, StageKey};
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::error::Result;
 use oneiron_contracts::error::Error;
+use oneiron_contracts::error::Result;
 
 /// The ratified D+3 bump delay for no-show recovery, offered as preset data.
 ///

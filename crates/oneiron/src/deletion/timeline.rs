@@ -93,7 +93,7 @@ fn row_window(
     }
     // A live pad rides its world's windows (`sync::types::entity_world`).
     let world = if pad {
-        crate::world_keys::pad_body_world(raw).and_then(Result::ok)
+        crate::store::world_pad_rows::pad_body_world(raw).and_then(Result::ok)
     } else {
         crate::write_envelope::claim_body::decode_claim_body(
             &raw[ENTITY_METADATA_HEADER_LEN..],

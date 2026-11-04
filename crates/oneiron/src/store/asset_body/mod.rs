@@ -396,7 +396,7 @@ pub(crate) fn file_put_body_in_txn(
     // A marked file keeps its row: a serving door reads its keys' spans over
     // the bytes it holds. Any other stays there too, with no instance minted
     // inside this writer.
-    crate::secret_custody::masked_file_in_txn(store, txn, &AssetBodyFacts::of(data).blake3)?;
+    crate::store::file_key_masks::masked_file_in_txn(store, txn, &AssetBodyFacts::of(data).blake3)?;
     Ok(None)
 }
 

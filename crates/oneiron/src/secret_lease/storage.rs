@@ -12,13 +12,14 @@ use super::types::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
 use crate::secret_custody::RevealAuthority;
-use crate::secret_custody::{resolve_secret_ref_in_txn, reveal_value_in_txn};
+use crate::secret_custody::reveal_value_in_txn;
 use crate::secret_record::CustodyTier;
 use crate::secret_record::SecretCustodyAdmission;
 use crate::secret_record::SecretCustodyFloor;
 use crate::secret_record::read_secret_custody_admission_in_txn;
 use crate::side_table::HexId;
 use crate::store::Store;
+use crate::store::secret_name_index::resolve_secret_ref_in_txn;
 use crate::vault::Vault;
 
 // ---------------------------------------------------------------------------

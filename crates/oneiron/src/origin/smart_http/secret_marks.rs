@@ -35,7 +35,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 use crate::receive_scan::{PushedBlob, ReceiveBlobKind, ReceiveScanHit};
-use crate::secret_custody::KnownSource;
+use crate::store::known_value_index::KnownSource;
 
 /// A record's frame: its place, its payload's length, its payload's BLAKE3.
 const FRAME_HEADER_BYTES: usize = 8 + 8 + 32;

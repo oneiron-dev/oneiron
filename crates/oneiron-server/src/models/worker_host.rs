@@ -435,9 +435,9 @@ pub(super) fn admit_bound_work(
         // A parent resolves only against the admission its ticket was
         // taken on (FIX 11960): the same number on another admission is
         // unrelated work, and parents nothing.
-        request.parent = context.parent.filter(|_| {
-            context.parent_admission == Some(admission.admission_id())
-        });
+        request.parent = context
+            .parent
+            .filter(|_| context.parent_admission == Some(admission.admission_id()));
         request.cancel = context.cancel.shared();
         request.cancel_changed = context.cancel.shared_notify();
         let ticket = admission.enqueue(request);

@@ -588,7 +588,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
     let (mut imported, mut withheld) = (0, 0);
     // The values custody knows, read in this writer and kept no longer
     // (KS-3): each body's sweep replaces them with their handles.
-    let swept = crate::secret_custody::KnownValues::load_in_writer(&vault.store, wtxn)?
+    let swept = crate::store::known_value_index::KnownValues::load_in_writer(&vault.store, wtxn)?
         .map(std::sync::Arc::new);
     let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
     while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {

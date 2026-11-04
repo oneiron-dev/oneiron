@@ -174,7 +174,7 @@ impl SelectionRuleWriterKind {
     }
 }
 
-pub(super) fn is_valid_ref_token(value: &str) -> bool {
+pub fn is_valid_ref_token(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= SELECTION_REF_MAX_BYTES
         && value

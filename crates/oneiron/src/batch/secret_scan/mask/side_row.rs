@@ -40,8 +40,9 @@ use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
 use crate::entity_id::{EntityId, derived_domains::SIDE_ROW_MASK};
 use crate::error::{Error, Result};
-use crate::secret_custody::{KeptValues, KnownValues};
+use crate::secret_custody::KeptValues;
 use crate::side_table::{CodecName, RefPath, RefStep, SideTableDbs, SideTableDecl};
+use crate::store::known_value_index::KnownValues;
 
 /// One part of a row the wall reads.
 #[derive(Debug, Clone)]

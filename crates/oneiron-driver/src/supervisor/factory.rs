@@ -16,8 +16,8 @@ use oneiron::dreamer_wake::{
 };
 use oneiron::edge::EdgeActorClass;
 use oneiron::fanout_auto::FanoutDecisions;
-use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::llm::run_admission::WorkCancel;
+use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::skill_optimize::{HeldOutReplayNotes, SkillOptimizeAuthor};
 use oneiron::{
     BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationDecisions,

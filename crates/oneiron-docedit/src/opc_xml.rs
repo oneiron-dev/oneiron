@@ -10,20 +10,20 @@ const REL_ATTR_NS: &[u8] = b"http://schemas.openxmlformats.org/officeDocument/20
 const PACKAGE_REL_NS: &[u8] = b"http://schemas.openxmlformats.org/package/2006/relationships";
 const CONTENT_NS: &[u8] = b"http://schemas.openxmlformats.org/package/2006/content-types";
 
-pub(super) struct Element {
+pub struct Element {
     name: String,
     namespace: Option<String>,
     attrs: Vec<(String, Option<String>, String)>,
 }
 
 impl Element {
-    pub(super) fn attribute(&self, name: &str) -> Option<&str> {
+    pub fn attribute(&self, name: &str) -> Option<&str> {
         self.attrs
             .iter()
             .find(|(key, ns, _)| key == name && ns.is_none())
             .map(|(_, _, value)| value.as_str())
     }
-    pub(super) fn relationship_id(&self) -> Option<&str> {
+    pub fn relationship_id(&self) -> Option<&str> {
         self.attrs
             .iter()
             .find(|(key, ns, _)| {
@@ -31,7 +31,7 @@ impl Element {
             })
             .map(|(_, _, value)| value.as_str())
     }
-    pub(super) fn is(&self, name: &str, namespace: &[u8]) -> bool {
+    pub fn is(&self, name: &str, namespace: &[u8]) -> bool {
         self.name == name
             && self
                 .namespace
@@ -78,7 +78,7 @@ fn element(
     })
 }
 
-pub(super) fn elements(xml: &[u8]) -> std::result::Result<Vec<Element>, &'static str> {
+pub fn elements(xml: &[u8]) -> std::result::Result<Vec<Element>, &'static str> {
     let xml = std::str::from_utf8(xml).map_err(|_| "XML is not UTF-8")?;
     let mut reader = NsReader::from_str(xml);
     let mut out = Vec::new();
@@ -92,7 +92,7 @@ pub(super) fn elements(xml: &[u8]) -> std::result::Result<Vec<Element>, &'static
     }
 }
 
-pub(super) fn external_refs(xml: &[u8]) -> std::result::Result<Vec<String>, &'static str> {
+pub fn external_refs(xml: &[u8]) -> std::result::Result<Vec<String>, &'static str> {
     elements(xml)?
         .into_iter()
         .filter(|e| e.is("externalReference", SHEET_NS))
@@ -105,14 +105,14 @@ pub(super) fn external_refs(xml: &[u8]) -> std::result::Result<Vec<String>, &'st
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct ExternalRelationship {
+pub struct ExternalRelationship {
     pub id: String,
     pub target: String,
     pub kind: String,
     pub mode: Option<String>,
 }
 
-pub(super) fn external_relationships(
+pub fn external_relationships(
     xml: &[u8],
 ) -> std::result::Result<Vec<ExternalRelationship>, &'static str> {
     elements(xml)?
@@ -143,7 +143,7 @@ pub(super) fn external_relationships(
 }
 
 /// `(Target, TargetMode)` of every package relationship in a `.rels` part.
-pub(super) fn relationship_targets(
+pub fn relationship_targets(
     xml: &[u8],
 ) -> std::result::Result<Vec<(String, Option<String>)>, &'static str> {
     Ok(elements(xml)?
@@ -157,7 +157,7 @@ pub(super) fn relationship_targets(
 }
 
 /// Every `Override` PartName in `[Content_Types].xml`.
-pub(super) fn override_part_names(xml: &[u8]) -> std::result::Result<Vec<String>, &'static str> {
+pub fn override_part_names(xml: &[u8]) -> std::result::Result<Vec<String>, &'static str> {
     Ok(elements(xml)?
         .into_iter()
         .filter(|e| e.is("Override", CONTENT_NS))
@@ -165,10 +165,7 @@ pub(super) fn override_part_names(xml: &[u8]) -> std::result::Result<Vec<String>
         .collect())
 }
 
-pub(super) fn content_type(
-    xml: &[u8],
-    part: &str,
-) -> std::result::Result<Option<String>, &'static str> {
+pub fn content_type(xml: &[u8], part: &str) -> std::result::Result<Option<String>, &'static str> {
     let elements = elements(xml)?;
     let override_name = format!("/{part}");
     if let Some(item) = elements.iter().find(|e| {
@@ -186,7 +183,7 @@ pub(super) fn content_type(
 
 /// Read decoded formula text, including namespace-qualified `<f>` and XML
 /// entities. The validator refuses parse errors rather than trusting a scan.
-pub(super) fn formulas(xml: &str) -> std::result::Result<Vec<String>, &'static str> {
+pub fn formulas(xml: &str) -> std::result::Result<Vec<String>, &'static str> {
     let mut reader = NsReader::from_str(xml);
     let mut out = Vec::new();
     let mut formula: Option<String> = None;

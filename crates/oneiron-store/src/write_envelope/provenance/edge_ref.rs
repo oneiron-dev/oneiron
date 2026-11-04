@@ -1,9 +1,9 @@
 //! Pinned predicate, body-key vocabulary, EdgeRef addressing, and supersession status.
 
+use crate::write_envelope::claim_body::{ClaimSubject, EDGE_REF_LEN as CLAIM_EDGE_REF_LEN};
 use oneiron_base::edge::EdgeKind;
 use oneiron_contracts::entity_id::{ENTITY_ID_LEN, EntityId};
 use oneiron_contracts::error::{ClaimError, Error, Result};
-use crate::write_envelope::claim_body::{ClaimSubject, EDGE_REF_LEN as CLAIM_EDGE_REF_LEN};
 
 /// The pinned predicate for edge-provenance Claims (contracts.ts
 /// `edgeProvenanceClaim.predicate`). Lives in the reserved `edge.*`

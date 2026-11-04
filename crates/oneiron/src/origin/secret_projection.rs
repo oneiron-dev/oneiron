@@ -57,7 +57,7 @@ use crate::batch::secret_scan::project_marked_retained_repo_blob;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::git_wire::GitOid;
-use crate::secret_custody::masked_file_in_txn;
+use crate::store::file_key_masks::masked_file_in_txn;
 
 /// Who a repo read serves, as the door that admitted it binds it. Every
 /// arm but [`Self::Masked`] holds a proof its door already judged; none is
