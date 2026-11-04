@@ -16,29 +16,29 @@ pub const DELIVERY_WINDOW_CLAIM_PREDICATES: [&str; 3] = [
     PREDICATE_DELIVERY_WINDOW_CHANNEL,
 ];
 
-pub(super) const KEY_SCHEMA_VERSION: &str = "schema_version";
+pub const KEY_SCHEMA_VERSION: &str = "schema_version";
 
-pub(super) const KEY_APPLIES_TO: &str = "applies_to";
+pub const KEY_APPLIES_TO: &str = "applies_to";
 
-pub(super) const KEY_WINDOW: &str = "window";
+pub const KEY_WINDOW: &str = "window";
 
-pub(super) const KEY_START_MINUTE: &str = "start_minute";
+pub const KEY_START_MINUTE: &str = "start_minute";
 
-pub(super) const KEY_END_MINUTE: &str = "end_minute";
+pub const KEY_END_MINUTE: &str = "end_minute";
 
-pub(super) const KEY_TZ: &str = "tz";
+pub const KEY_TZ: &str = "tz";
 
-pub(super) const KEY_WHEN: &str = "when";
+pub const KEY_WHEN: &str = "when";
 
-pub(super) const KEY_CHANNEL: &str = "channel";
+pub const KEY_CHANNEL: &str = "channel";
 
-pub(super) const KEY_REASON: &str = "reason";
+pub const KEY_REASON: &str = "reason";
 
-pub(super) const MAX_REASON_BYTES: usize = 128;
+pub const MAX_REASON_BYTES: usize = 128;
 
-pub(super) const MAX_CHANNEL_BYTES: usize = 128;
+pub const MAX_CHANNEL_BYTES: usize = 128;
 
-pub(super) const MINUTES_PER_DAY: u16 = 24 * 60;
+pub const MINUTES_PER_DAY: u16 = 24 * 60;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum DeliveryWindowDecision {
@@ -64,7 +64,7 @@ pub enum DeliveryWindowDecision {
 }
 
 impl DeliveryWindowDecision {
-    pub(crate) fn policy_trace(&self) -> String {
+    pub fn policy_trace(&self) -> String {
         match self {
             Self::DeliverNow => "delivery_window.no_restriction".to_owned(),
             Self::DeliverNowWithApnsCap { reason, .. } => {

@@ -7942,6 +7942,7 @@ dependencies = [
  "oneiron-container",
  "oneiron-contracts",
  "oneiron-crypto",
+ "oneiron-delivery-vocabulary",
  "oneiron-docedit",
  "oneiron-guest",
  "oneiron-keystore",
@@ -8218,6 +8219,15 @@ dependencies = [
  "thiserror 2.0.20",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-delivery-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "schemars 0.8.22",
+ "serde",
 ]
 
 [[package]]

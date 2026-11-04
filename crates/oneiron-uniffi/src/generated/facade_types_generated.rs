@@ -66109,7 +66109,7 @@ pub struct DeliveryWindowTimeWindow {
     pub end_minute: u16,
 }
 
-/// `oneiron::delivery_window::types::DeliveryWindowContextCondition`.
+/// `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowContextCondition`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DeliveryWindowContextCondition {
     #[serde(rename = "calendar_busy")]
@@ -66226,7 +66226,7 @@ pub struct DeliveryWindowPolicyRetractRequest {
     pub claim_ref: String,
 }
 
-/// `oneiron::delivery_window::types::DeliveryWindowVerbClass`.
+/// `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowVerbClass`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DeliveryWindowVerbClass {
     #[serde(rename = "ambient")]
@@ -66235,7 +66235,7 @@ pub enum DeliveryWindowVerbClass {
     Interrupt,
 }
 
-/// `oneiron::delivery_window::types::DeliveryWindowApnsInterruptionLevel`.
+/// `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowApnsInterruptionLevel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DeliveryWindowApnsInterruptionLevel {
     #[serde(rename = "Passive")]
@@ -66288,7 +66288,7 @@ pub struct DeliveryWindowEvaluateRequest {
     pub apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
 }
 
-/// `oneiron::delivery_window::types::DeliveryWindowDecision`.
+/// `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowDecision`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DeliveryWindowDecision {
     #[serde(rename = "DeliverNow")]
@@ -66325,7 +66325,7 @@ pub enum DeliveryWindowDecision {
     },
 }
 
-/// `oneiron::delivery_window::types::DeliveryWindowMatch`.
+/// `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowMatch`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DeliveryWindowMatch {
     #[serde(rename = "predicate")]
@@ -66336,7 +66336,7 @@ pub struct DeliveryWindowMatch {
     pub retry_at: Option<u64>,
 }
 
-/// `oneiron::delivery_window::types::DeliveryWindowLadderRung`.
+/// `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowLadderRung`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DeliveryWindowLadderRung {
     #[serde(rename = "HumanExplicitInstant")]
@@ -66351,7 +66351,7 @@ pub enum DeliveryWindowLadderRung {
     MissingLocalMinute,
 }
 
-/// `oneiron::delivery_window::types::DeliveryWindowResolution`.
+/// `oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowResolution`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DeliveryWindowResolution {
     #[serde(rename = "observed")]
