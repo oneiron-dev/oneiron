@@ -10,8 +10,8 @@
 
 use rmpv::Value;
 
-use oneiron_contracts::error::{Error, Result};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use oneiron_contracts::error::{Error, Result};
 
 /// One captured audio segment, subject = the ASSET entity holding its bytes.
 pub const PREDICATE_VOICE_SEGMENT: &str = "voice.segment";
