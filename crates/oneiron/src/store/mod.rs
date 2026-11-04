@@ -156,6 +156,8 @@ mod project_writes;
 pub use project_writes::StoreProjectWrites;
 mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
+pub(crate) mod attempt_operations;
+pub(crate) use attempt_operations::StoreAttemptOperations;
 pub(crate) mod actor_scrubs;
 pub use actor_scrubs::StoreActorScrubs;
 #[cfg(feature = "sync")]

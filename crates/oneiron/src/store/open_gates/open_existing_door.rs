@@ -196,6 +196,7 @@ impl Store {
             actor_scrubs: hooks.actor_scrubs,
             #[cfg(feature = "sync")]
             sync_hooks: hooks.sync_hooks,
+            attempt_operations: hooks.attempt_operations,
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
             policy_fold_cache: Default::default(),
             machine_history_issuer: Mutex::new(None),

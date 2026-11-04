@@ -37,6 +37,7 @@ pub(crate) const ENGINE_STORE_HOOKS: StoreHooks = StoreHooks {
     actor_scrubs: &EngineActorScrubs,
     #[cfg(feature = "sync")]
     sync_hooks: &EngineSyncHooks,
+    attempt_operations: &EngineAttemptOperations,
 };
 
 /// The engine's delete guards.
@@ -669,5 +670,63 @@ impl StoreActorScrubs for EngineActorScrubs {
         actor: &EntityId,
     ) -> Result<()> {
         crate::workspace_roster::erase_member_intent_actor_in_txn(vault, wtxn, actor)
+    }
+}
+
+/// The engine's attempt queue operations.
+pub(crate) struct EngineAttemptOperations;
+
+impl crate::store::StoreAttemptOperations for EngineAttemptOperations {
+    fn erase_attempt_payload_actor_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, actor)
+    }
+
+    fn erase_attempt_payload_actors_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        actors: &BTreeSet<EntityId>,
+    ) -> Result<()> {
+        crate::attempt_queue::erase_attempt_payload_actors_in_txn(store, txn, actors)
+    }
+
+    fn erase_model_step_failure_reasons_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        owner: &EntityId,
+    ) -> Result<()> {
+        crate::attempt_queue::erase_model_step_failure_reasons_in_txn(store, wtxn, owner)
+    }
+
+    fn claim_kind(
+        &self,
+        vault: &crate::Vault,
+        kind: &str,
+        input: crate::store::attempt_inputs::ClaimAttempt,
+    ) -> Result<crate::store::attempt_outcomes::ClaimOutcome> {
+        crate::attempt_queue::AttemptQueue::new(vault).claim_kind(kind, input)
+    }
+
+    fn fail(
+        &self,
+        vault: &crate::Vault,
+        input: crate::store::attempt_inputs::FailAttempt,
+    ) -> Result<crate::store::attempt_outcomes::FailOutcome> {
+        crate::attempt_queue::AttemptQueue::new(vault).fail(input)
+    }
+
+    fn retry_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        input: crate::store::attempt_inputs::RetryAttempt,
+    ) -> Result<crate::store::attempt_outcomes::RetryOutcome> {
+        crate::attempt_queue::AttemptQueue::new(vault).retry_in_txn(wtxn, input)
     }
 }
