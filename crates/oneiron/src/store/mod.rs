@@ -152,6 +152,7 @@ pub(crate) mod loro_tombstones;
 pub mod materialization_event;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
+pub mod pack_hook_actor_class;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
 pub(crate) mod project_kind;
