@@ -66807,7 +66807,6 @@
      "path": "src/skill_hub/claim_refinement.rs",
      "purpose": "Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission",
      "surface": {
-      "crate-vis": 2,
       "enum": 1,
       "fn": 10,
       "struct": 3
@@ -67029,7 +67028,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 21,
       "mod": 2,
       "re-export": 21
      }
@@ -67757,7 +67756,7 @@
      "path": "src/skill_hub/refinement_admission.rs",
      "purpose": "Content-free refinement identity and the transaction-local exact-admission capability",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 8
      }
     },
     {
@@ -67781,17 +67780,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "SharedSkillDelta",
-      "SharedSkillLane"
-     ],
+     "notable": [],
      "path": "src/skill_hub/shared_delta.rs",
      "purpose": "Submitted-byte federation merge-back and company PR staging",
      "surface": {
       "crate-vis": 3,
-      "enum": 1,
       "fn": 4,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -69985,6 +69980,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SharedSkillDelta",
+      "SharedSkillLane"
+     ],
+     "path": "src/store/claim_refinement_control.rs",
+     "purpose": "A refinement candidate's content-free control row, the claim base's reserved held-out labels and the offered…",
+     "surface": {
+      "crate-vis": 16,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/claim_vad_owed.rs",
      "purpose": "Owed claim VAD consolidation (FIX 9598)",
@@ -70648,12 +70658,9 @@
       "EgressPredicate",
       "Embedder",
       "EmbedderLocality",
-      "EmbeddingDevice",
       "EmbeddingMatchEvidence",
-      "EmbeddingProvenance",
       "EmbeddingProvenanceCount",
       "EmbeddingSpace",
-      "InputKind",
       "KindSlotBindings",
       "MediaEmbedReport",
       "MediaEmbedder",
@@ -70665,11 +70672,12 @@
      "path": "src/store/embedding.rs",
      "purpose": "Embedding space, input, provenance and host-provider vocabulary",
      "surface": {
-      "const": 10,
-      "crate-vis": 9,
-      "enum": 5,
-      "fn": 11,
-      "struct": 9,
+      "const": 9,
+      "crate-vis": 6,
+      "enum": 3,
+      "fn": 7,
+      "re-export": 2,
+      "struct": 8,
       "trait": 3,
       "type": 1
      }
@@ -71965,7 +71973,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 90,
-      "mod": 84,
+      "mod": 85,
       "re-export": 31
      }
     },
@@ -90061,7 +90069,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 367,
+     "files": 368,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90301,7 +90309,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6263,
+   "source_files": 6264,
    "test_files": 898
   },
   "oneiron-android": {
@@ -126268,6 +126276,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BatchOp"
+     ],
+     "path": "src/batch_op.rs",
+     "purpose": "The batch op vocabulary: one write a batch applies, as the engine's batch builder records it",
+     "surface": {
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "SealedBundleGeneration"
      ],
      "path": "src/bundle_generations.rs",
@@ -126568,6 +126588,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EmbeddingDevice",
+      "EmbeddingProvenance",
+      "InputKind"
+     ],
+     "path": "src/embedding_vocabulary.rs",
+     "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "KeySpan",
       "MemberStep",
       "SecretSight"
@@ -126624,7 +126661,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 23
+      "mod": 25
      }
     },
     {
@@ -128053,6 +128090,13 @@
     }
    ],
    "modules": {
+    "batch_op": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The batch op vocabulary: one write a batch applies, as the engine's batch builder records it"
+    },
     "bundle_generations": {
      "files": 1,
      "impl_vault": false,
@@ -128094,6 +128138,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages…"
+    },
+    "embedding_vocabulary": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and…"
     },
     "file_secret_marks": {
      "files": 1,
@@ -128217,7 +128268,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 121,
+   "source_files": 123,
    "test_files": 1
   },
   "oneiron-uniffi": {
