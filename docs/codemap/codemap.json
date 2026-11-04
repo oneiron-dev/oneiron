@@ -39840,16 +39840,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/hnsw/entry_point.rs",
-     "purpose": "Tarjan-SCC entry-point selection",
-     "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
      "path": "src/hnsw/insert.rs",
      "purpose": "Insert, localized refresh, and backlink attachment",
      "surface": {
@@ -42531,8 +42521,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 204,
-      "re-export": 100
+      "mod": 202,
+      "re-export": 102
      }
     },
     {
@@ -50499,28 +50489,6 @@
       "fn": 10,
       "struct": 10,
       "trait": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CalibratedVerdict",
-      "ModelBinding",
-      "ModelDisposition",
-      "ModelRole",
-      "ModelSlot",
-      "VerdictBinding",
-      "VerdictMode"
-     ],
-     "path": "src/model_binding.rs",
-     "purpose": "Model-role bindings and calibrated verdict values",
-     "surface": {
-      "const": 1,
-      "crate-vis": 1,
-      "enum": 4,
-      "fn": 4,
-      "struct": 3
      }
     },
     {
@@ -80076,21 +80044,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "TeacherProbePolicy"
-     ],
-     "path": "src/teacher_probe_policy.rs",
-     "purpose": "Resolved extraction-teacher probe policy values",
-     "surface": {
-      "const": 1,
-      "crate-vis": 3,
-      "fn": 2,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/team/choice_learning.rs",
      "purpose": "What the planner learned under a spawn choice (FIX 3159; ARCH-0003 #learning-settings: a learned value…",
@@ -89176,7 +89129,7 @@
      "purpose": "Counts reported by rebuildable index and window heap drops"
     },
     "hnsw": {
-     "files": 13,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -89363,13 +89316,6 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Durable batched speculation over real detached worktrees"
-    },
-    "model_binding": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Model-role bindings and calibrated verdict values"
     },
     "model_decision": {
      "files": 1,
@@ -89903,13 +89849,6 @@
      "layout": "file",
      "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…"
     },
-    "teacher_probe_policy": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Resolved extraction-teacher probe policy values"
-    },
     "team": {
      "files": 19,
      "impl_vault": false,
@@ -90081,7 +90020,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6231,
+   "source_files": 6228,
    "test_files": 898
   },
   "oneiron-android": {
@@ -102876,7 +102815,7 @@
      "path": "src/lib.rs",
      "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
      "surface": {
-      "mod": 2
+      "mod": 4
      }
     },
     {
@@ -103710,6 +103649,41 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalibratedVerdict",
+      "ModelBinding",
+      "ModelDisposition",
+      "ModelRole",
+      "ModelSlot",
+      "VerdictBinding",
+      "VerdictMode"
+     ],
+     "path": "src/model_binding.rs",
+     "purpose": "Model-role bindings and calibrated verdict values",
+     "surface": {
+      "const": 1,
+      "enum": 4,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TeacherProbePolicy"
+     ],
+     "path": "src/teacher_probe_policy.rs",
+     "purpose": "Resolved extraction-teacher probe policy values",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/widened_seams.rs",
@@ -103731,11 +103705,25 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Engine-facing LLM invocation seam"
+    },
+    "model_binding": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Model-role bindings and calibrated verdict values"
+    },
+    "teacher_probe_policy": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Resolved extraction-teacher probe policy values"
     }
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 49,
+   "source_files": 51,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -106154,13 +106142,23 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/hnsw_entry_point.rs",
+     "purpose": "Tarjan-SCC entry-point selection for an HNSW graph rebuild (the engine's `hnsw::rebuild` calls it)",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
      "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
      "surface": {
-      "mod": 4
+      "mod": 5
      }
     },
     {
@@ -106206,6 +106204,13 @@
      "layout": "file+dir",
      "purpose": "Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity…"
     },
+    "hnsw_entry_point": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Tarjan-SCC entry-point selection for an HNSW graph rebuild (the engine's `hnsw::rebuild` calls it)"
+    },
     "pipeline": {
      "files": 1,
      "impl_vault": false,
@@ -106216,7 +106221,7 @@
    },
    "over_bar": 0,
    "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
-   "source_files": 19,
+   "source_files": 20,
    "test_files": 5
   },
   "oneiron-run-budget": {
