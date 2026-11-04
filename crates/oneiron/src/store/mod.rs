@@ -130,7 +130,7 @@ pub mod checkout_task;
 pub use oneiron_store::checkpoint_host_recipient;
 pub mod code_tree_blob;
 pub mod conversation_body;
-pub mod conversation_record;
+pub use oneiron_store::conversation_record;
 pub mod custody_retirement_status;
 mod delete_guards;
 pub use delete_guards::StoreDeleteGuards;
