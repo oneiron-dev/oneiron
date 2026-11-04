@@ -23,7 +23,8 @@ fn absent() -> MemoryError {
 
 impl SummaryScope {
     fn selector(&self, memory: &Memory<'_>) -> MemoryResult<ScopeSelector> {
-        let resolve = |value: &str| crate::vault::entity_refs::resolve_entity_ref(memory.vault(), value);
+        let resolve =
+            |value: &str| crate::vault::entity_refs::resolve_entity_ref(memory.vault(), value);
         Ok(ScopeSelector {
             conversation: resolve(&self.conversation_ref)?,
             session: self.session.as_deref().map(resolve).transpose()?,
@@ -99,7 +100,9 @@ impl Memory<'_> {
                     land_on: input
                         .land_on
                         .as_deref()
-                        .map(|value| crate::vault::entity_refs::resolve_entity_ref(self.vault(), value))
+                        .map(|value| {
+                            crate::vault::entity_refs::resolve_entity_ref(self.vault(), value)
+                        })
                         .transpose()?,
                     as_record: input.as_record,
                 }
@@ -165,7 +168,8 @@ impl Memory<'_> {
         &self,
         input: &SummaryReadRequest,
     ) -> MemoryResult<ScopedReadResult<Option<SummaryReadView>>> {
-        let summary = crate::vault::entity_refs::resolve_entity_ref(self.vault(), &input.summary_ref)?;
+        let summary =
+            crate::vault::entity_refs::resolve_entity_ref(self.vault(), &input.summary_ref)?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         lane.read_projected(&[PointRead::id(summary)], None, |txn, rows| {
             let Some(row) = rows

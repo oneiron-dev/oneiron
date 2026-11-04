@@ -33,10 +33,10 @@ pub mod body_tags;
 mod born_from;
 pub(crate) mod checkpoint;
 mod create;
-pub mod deck_creation;
 pub mod deck_context;
-pub mod deck_inspection;
+pub mod deck_creation;
 mod deck_doors;
+pub mod deck_inspection;
 pub(crate) mod erase;
 mod family;
 mod holders;
@@ -49,11 +49,11 @@ mod references;
 mod review_request;
 pub mod slide_review;
 mod store_keys;
+pub mod unit_refusal;
 mod verbs;
 mod version_codec;
 mod version_rows;
 mod versions;
-pub mod unit_refusal;
 
 pub(crate) use self::body::validate_blob_artifact_body_bytes;
 pub use self::body::{

@@ -1,12 +1,12 @@
 //! Converted-skill source linkage and reverse-index maintenance.
 
-use std::collections::HashSet;
-use rmpv::Value;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::write_envelope::skill_record::SkillRecord;
+use rmpv::Value;
+use std::collections::HashSet;
 
 /// Provenance key carrying the source message/turn ids a converted skill was
 /// derived from, as an array of 32-char entity-id hex strings.
@@ -89,4 +89,3 @@ pub(crate) fn maintain_skill_source_index_for_put(
     }
     Ok(())
 }
-
