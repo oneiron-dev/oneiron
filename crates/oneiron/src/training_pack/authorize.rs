@@ -45,9 +45,9 @@ fn training_run_job_target(input: &Value) -> Result<(EntityId, [u8; 32])> {
 
 impl TrainingDeclarationPin {
     /// The facts of `declaration` a dispatch checks, read through its own
-    /// accessors: its teachers with their target and purpose, and its budget
-    /// line. Its aliases, connector names and custody overrides have no
-    /// public reader and are not pinned. An undeclared run is refused.
+    /// accessors: its teachers with their aliases, target and purpose, its
+    /// budget line, its connector names and its custody overrides. An
+    /// undeclared run is refused.
     pub fn of(declaration: &RunDeclaration) -> Result<Self> {
         if !declaration.is_declared() {
             return Err(invalid("a training run is admitted under a declared run"));
@@ -55,10 +55,16 @@ impl TrainingDeclarationPin {
         Ok(Self {
             teachers: declaration.teachers().map(|teachers| TrainingTeachersPin {
                 models: teachers.models().cloned().collect(),
+                aliases: teachers
+                    .aliases()
+                    .map(|(selector, model)| (selector.clone(), model.clone()))
+                    .collect(),
                 target: teachers.target().to_owned(),
                 purpose: teachers.purpose().to_owned(),
             }),
             budget: declaration.budget().clone(),
+            connectors: declaration.connectors().cloned().collect(),
+            custody_overrides: declaration.custody_overrides().cloned().collect(),
         })
     }
 }
@@ -86,7 +92,8 @@ impl Vault {
     /// The owner's authorization of one prepared run at the exact spec they
     /// saw, under the declaration the host admits it with, in `txn`. It
     /// queues the run for the host's Coach in the same commit. The same
-    /// choice again returns the run as it stands; any other state refuses.
+    /// choice again returns the run as it stands; a still-authorized run
+    /// with a changed choice is authorized again; any other state refuses.
     #[expect(
         clippy::too_many_arguments,
         reason = "the owner door's arguments, its writer and the authorization's source"
@@ -123,8 +130,18 @@ impl Vault {
         if repeated {
             return Ok(run);
         }
+        if run.state == TrainingState::Authorized {
+            run.authorization = Some(authorization);
+            run.hold = None;
+            RUNS.put(&self.store, txn, id, &run)?;
+            // The owner's own authorization: its job is queued rootless.
+            enqueue_coach_training_run_in_txn(self, txn, id, &run.spec_blake3, None, None, at)?;
+            return Ok(run);
+        }
         if run.state != TrainingState::Prepared {
-            return Err(invalid("only a prepared run is authorized, and only once"));
+            return Err(invalid(
+                "only a prepared run is authorized, or an authorized run on a changed choice",
+            ));
         }
         run.state = TrainingState::Authorized;
         run.authorization = Some(authorization);
@@ -204,12 +221,14 @@ impl Vault {
     }
 
     /// The run a `coach.training_run` job's input names, while it still
-    /// waits on the host at that spec; `None` once it moved on.
+    /// waits on the host at that spec or is still running there; `None`
+    /// once it moved on. A Running run with a live waiter is harmless: the
+    /// recover arm polls, and poll-None is a no-op.
     pub(crate) fn queued_training_run(&self, input: &Value) -> Result<Option<TrainingRun>> {
         let (id, spec) = training_run_job_target(input)?;
-        Ok(self
-            .training_run(&id)?
-            .filter(|run| run.spec_blake3 == spec && run.awaits_host()))
+        Ok(self.training_run(&id)?.filter(|run| {
+            run.spec_blake3 == spec && (run.awaits_host() || run.state == TrainingState::Running)
+        }))
     }
 
     /// Queues each run that waits on the host for its Coach job again, for
@@ -223,6 +242,41 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         let runs = self.authorized_training_runs()?;
+        if runs.is_empty() {
+            return Ok(());
+        }
+        self.with_write_txn_grouped(|txn| {
+            for run in &runs {
+                enqueue_coach_training_run_in_txn(
+                    self,
+                    txn,
+                    &run.id,
+                    &run.spec_blake3,
+                    parent_attempt,
+                    run_id.map(str::to_owned),
+                    now,
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Queues each still-Running run for its Coach job again, for the
+    /// nightly offer pass; the queue's dedupe keeps one job per run. The
+    /// recover arm polls each for its terminal receipt, so a run whose
+    /// waiter was lost completes without a new dispatch. Lineage as
+    /// [`Self::requeue_authorized_training_runs`].
+    pub(crate) fn requeue_running_training_runs(
+        &self,
+        parent_attempt: Option<AttemptId>,
+        run_id: Option<&str>,
+        now: u64,
+    ) -> Result<()> {
+        let runs: Vec<TrainingRun> = self
+            .training_runs()?
+            .into_iter()
+            .filter(|run| run.state == TrainingState::Running)
+            .collect();
         if runs.is_empty() {
             return Ok(());
         }
