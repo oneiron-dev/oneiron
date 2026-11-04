@@ -306,10 +306,12 @@ fn cuts_text(step: &FeedbackTriageStep) -> bool {
 impl Vault {
     /// Plans one step of a long revision's triage as the Coach, under its
     /// leased `coach.feedback_triage` job (FIX 7549), and parks the job on
-    /// its children: the step, a child for every node it owes, and the park
-    /// commit in one write, and only while the job holds its lease. The job
-    /// stays the revision's owner; the child that completes a level, or the
-    /// next sweep, wakes it as the same try.
+    /// the children it owes: the step, those children and the park commit in
+    /// one write, only while the job holds its lease. A `Wait` whose fresh
+    /// graph owes nothing returns `Ready` without parking or rewriting the
+    /// handoff, so the same leased run continues. Otherwise the job stays
+    /// the revision's owner; the child that completes a level, or the next
+    /// sweep, wakes it as the same try.
     ///
     /// # Errors
     ///
@@ -322,7 +324,7 @@ impl Vault {
         attempt: &DreamerAdmittedAttempt,
         step: FeedbackTriageStep,
         now: u64,
-    ) -> Result<FeedbackTriageWork> {
+    ) -> Result<super::FeedbackTriageParkOutcome> {
         self.require_coach_attempt(attempt, COACH_FEEDBACK_TRIAGE_FACET)?;
         let record = &attempt.status.attempt;
         let lease_owner = record.lease_owner.as_deref().ok_or_else(lost_lease)?;
@@ -336,7 +338,7 @@ impl Vault {
         } else {
             None
         };
-        let work = self.with_write_txn_grouped(|txn| {
+        let outcome = self.with_write_txn_grouped(|txn| {
             let mut handoff = job_handoff_in_txn(self, txn, attempt)?;
             if handoff.result.is_some() || handoff.attempt != attempt_ref(record.id)? {
                 return Err(invalid_job());
@@ -348,10 +350,13 @@ impl Vault {
             if !queue.holds_lease_in_txn(txn, record.id, lease_owner, record.attempt_count)? {
                 return Err(lost_lease());
             }
-            // The park renews the lease it parks under: a lease reclaim that
-            // read the parked set before this write finds the lease live
-            // under its own writer and leaves it (FIX 10304).
-            queue.renew_lease_in_txn(txn, record.id, lease_owner, record.attempt_count, now)?;
+            let waiting = matches!(&step, FeedbackTriageStep::Wait);
+            // FIX 12546: an empty-split Repartition only swaps the pin; like
+            // Wait it can finish without parking when the level is complete.
+            let repartition_ready = matches!(
+                &step,
+                FeedbackTriageStep::Repartition { splits, .. } if splits.is_empty()
+            );
             let mut work = work::apply(handoff.work.take(), step, text.as_deref(), now)?;
             let owner = Owner {
                 source_ref: &handoff.source_ref,
@@ -359,7 +364,26 @@ impl Vault {
                 parent: record.id,
                 run_id: record.run_id.as_deref(),
             };
-            enqueue_owed_in_txn(self, txn, &owner, &mut work, now)?;
+            let queued = enqueue_owed_in_txn(self, txn, &owner, &mut work, now)?;
+            if waiting && queued == 0 && !work.owed() {
+                return Ok(super::FeedbackTriageParkOutcome::Ready(work));
+            }
+            if repartition_ready && queued == 0 && !work.owed() {
+                // The pin changed, so unlike Wait this persists the handoff
+                // before the host continues on it.
+                handoff.work = Some(work.clone());
+                HANDOFFS.put(
+                    &self.store,
+                    txn,
+                    &handoff_key(&handoff.source_ref),
+                    &handoff,
+                )?;
+                return Ok(super::FeedbackTriageParkOutcome::Ready(work));
+            }
+            // The park renews the lease it parks under: a lease reclaim that
+            // read the parked set before this write finds the lease live
+            // under its own writer and leaves it (FIX 10304).
+            queue.renew_lease_in_txn(txn, record.id, lease_owner, record.attempt_count, now)?;
             let parked = DreamerRunnerStore::new(self).park_if_current_lease_in_txn(
                 txn,
                 ParkDreamerAttempt {
@@ -385,10 +409,10 @@ impl Vault {
                 &handoff_key(&handoff.source_ref),
                 &handoff,
             )?;
-            Ok(work)
+            Ok(super::FeedbackTriageParkOutcome::Parked(work))
         })?;
         self.store.notify_attempt_observers();
-        Ok(work)
+        Ok(outcome)
     }
 
     /// What a leased part or synthesis child answers (FIX 7549): a part's

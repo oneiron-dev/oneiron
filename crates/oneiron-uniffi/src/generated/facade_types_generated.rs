@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1222 facade rows, 4393 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1163.
+// UniFFI census: 1219 facade rows, 4387 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1160.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.questions.create (result), vault.questions.read (result), self.skills.call (result), vault.embedding_spaces.declare (input and result), vault.questions.edit (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -15527,19 +15527,6 @@ pub struct InboxLensDiaryReview {
     pub reason: String,
 }
 
-/// `oneiron::agent_inbox_lens::read_state::AgentInboxReadState`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum AgentInboxReadState {
-    #[serde(rename = "new")]
-    New,
-    #[serde(rename = "open")]
-    Open,
-    #[serde(rename = "later")]
-    Later,
-    #[serde(rename = "done")]
-    Done,
-}
-
 /// `oneiron::agent_inbox_lens::serve::InboxLensRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct InboxLensRow {
@@ -15591,12 +15578,6 @@ pub struct InboxLensRow {
     pub sender: Option<String>,
     #[serde(rename = "widening", default, skip_serializing_if = "Option::is_none")]
     pub widening: Option<ConsultWidening>,
-    #[serde(
-        rename = "read_state",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub read_state: Option<AgentInboxReadState>,
 }
 
 /// `oneiron::agent_inbox_lens::serve::InboxConcernGroup`.
@@ -15918,69 +15899,6 @@ pub enum InboxGroupResolution {
         #[serde(rename = "receipt")]
         receipt: ShapeApplyReceipt,
     },
-}
-
-/// `oneiron::agent_inbox_lens::read_state::InboxItemRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct InboxItemRequest {
-    #[serde(rename = "item_id")]
-    pub item_id: String,
-}
-
-/// `oneiron::agent_inbox_lens::read_state::InboxItemMessage`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct InboxItemMessage {
-    #[serde(rename = "identity")]
-    pub identity: String,
-    #[serde(rename = "channel")]
-    pub channel: String,
-    #[serde(rename = "payload_ref")]
-    pub payload_ref: String,
-    #[serde(rename = "occurred_at")]
-    pub occurred_at: u64,
-    #[serde(rename = "text")]
-    pub text: String,
-    #[serde(rename = "claims_not_instructions")]
-    pub claims_not_instructions: bool,
-}
-
-/// `oneiron::agent_inbox_lens::read_state::InboxItemView`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct InboxItemView {
-    #[serde(rename = "item")]
-    pub item: InboxLensRow,
-    #[serde(rename = "messages")]
-    pub messages: Vec<InboxItemMessage>,
-    #[serde(
-        rename = "notification",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub notification: Option<NotificationRow>,
-    #[serde(rename = "lens", default, skip_serializing_if = "Option::is_none")]
-    pub lens: Option<GeneratedLens>,
-}
-
-/// `oneiron::agent_inbox_lens::read_state::InboxItemMarked`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct InboxItemMarked {
-    #[serde(rename = "item_id")]
-    pub item_id: String,
-    #[serde(rename = "read_state")]
-    pub read_state: AgentInboxReadState,
-    #[serde(rename = "until", default, skip_serializing_if = "Option::is_none")]
-    pub until: Option<u64>,
-}
-
-/// `oneiron::agent_inbox_lens::read_state::InboxItemLaterRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct InboxItemLaterRequest {
-    #[serde(rename = "item_id")]
-    pub item_id: String,
-    #[serde(rename = "until", default, skip_serializing_if = "Option::is_none")]
-    pub until: Option<u64>,
 }
 
 /// `oneiron::write_envelope::skill_source::hub_record::HubPin`.
@@ -18448,8 +18366,6 @@ pub struct ConnectorPackView {
     pub consent_required: bool,
     #[serde(rename = "stamped")]
     pub stamped: bool,
-    #[serde(rename = "staged")]
-    pub staged: bool,
     #[serde(rename = "manifest")]
     pub manifest: SlateManifest,
     #[serde(rename = "rows")]
@@ -36309,11 +36225,6 @@ pub enum ArtifactPublishVerbStatus {
     Proposed,
     #[serde(rename = "published")]
     Published,
-    #[serde(rename = "paced")]
-    Paced {
-        #[serde(rename = "retry_at")]
-        retry_at: u64,
-    },
 }
 
 /// `oneiron::artifact_hosting::vocabulary::ArtifactPointer`.
@@ -51407,6 +51318,8 @@ pub enum RetryableLlmError {
     StreamCut,
     #[serde(rename = "TransportFault")]
     TransportFault(TransportFault),
+    #[serde(rename = "DeviceAdmissionStopped")]
+    DeviceAdmissionStopped,
 }
 
 /// `oneiron_model::llm::error::BudgetDenied`.
@@ -61996,6 +61909,8 @@ pub struct OwedWakeHoldView {
         skip_serializing_if = "Option::is_none"
     )]
     pub expires_at: Option<u64>,
+    #[serde(rename = "expired", default, skip_serializing_if = "Option::is_none")]
+    pub expired: Option<bool>,
 }
 
 /// `oneiron::dreamer_runner::program::read::views::TurnProgramOwedWakeItem`.
