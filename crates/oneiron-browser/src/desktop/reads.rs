@@ -33,6 +33,16 @@ impl DesktopSession {
         let read = match self.walk(key, shot, on, until) {
             Ok(snapshot) => Ok(snapshot),
             Err(error) => {
+                // A read past its deadline reports the timeout, never a
+                // fresh recovery RPC past it (FIX 3782).
+                if until.is_some_and(|until| Instant::now() >= until)
+                    && matches!(
+                        error,
+                        BrowserError::CallTimeout(_) | BrowserError::Timeout(_)
+                    )
+                {
+                    return Err(error);
+                }
                 let listed = self.listed()?;
                 if listed.iter().any(|window| window.key == key) {
                     return Err(error);
@@ -126,12 +136,16 @@ impl DesktopSession {
             if !shot {
                 arguments["include_screenshot"] = Value::Bool(false);
             }
-            // The call's bound leaves the walk its whole time, never past
-            // `until`: a hung walk fails at the deadline instead of
-            // stretching a settle past its cap (FIX 3782).
+            // A settle poll's bound leaves the walk its whole time,
+            // never past `until`: a hung walk fails at the deadline instead
+            // of stretching a settle past its cap (FIX 3782). Other reads
+            // (wait_for) keep the whole bound so an in-flight walk finishes
+            // and supplies its cut result.
             let mut bound = CALL + Duration::from_millis(asked.unwrap_or(0));
-            if let Some(until) = until {
-                bound = bound.min(until.saturating_duration_since(Instant::now()));
+            if self.polling {
+                if let Some(until) = until {
+                    bound = bound.min(until.saturating_duration_since(Instant::now()));
+                }
             }
             let reply = self
                 .mcp
@@ -248,7 +262,17 @@ impl DesktopSession {
                 std::thread::sleep(cap.saturating_duration_since(now));
                 return Ok(());
             }
-            let print = self.fingerprint(Some(cap))?;
+            let print = match self.fingerprint(Some(cap)) {
+                Ok(print) => print,
+                // The cap expired under the poll: the settle is done, not
+                // failed (FIX 3782).
+                Err(BrowserError::CallTimeout(_) | BrowserError::Timeout(_))
+                    if Instant::now() >= cap =>
+                {
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
             // Fresh clock: the fingerprint above takes whole walks.
             let now = Instant::now();
             if print != last {
