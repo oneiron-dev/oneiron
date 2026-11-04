@@ -4,9 +4,9 @@
 use super::*;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
+use crate::batch::shared_vault_write::SharedVaultWrite;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::SharedVaultWrite;
 use crate::write_envelope::WriteActor;
 use oneiron_authority::federation::Scope;
 use std::collections::{BTreeMap, BTreeSet};
