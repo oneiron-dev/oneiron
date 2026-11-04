@@ -203,7 +203,7 @@ pub(super) enum Retry {
 /// The proceed answer a resumed chain uses up in its own commit: the
 /// invocation's key and the ask it answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct AskToken {
+pub(crate) struct AskToken {
     key: [u8; 16],
     ask: EntityId,
     /// `<pack>/<hook>`: the asking hook.
@@ -343,6 +343,28 @@ pub(super) fn consume_in_txn(
     row.ready = false;
     ASKS.put(&vault.store, txn, &token.key, &row)?;
     credential::forget_in_txn(vault, txn, token.key)?;
+    Ok(true)
+}
+
+/// Re-opens the consumed ask `token` names (FIX 1431), in the same grouped
+/// write the caller holds: flips `Consumed` back to `Open` only when the row
+/// still names this ask and holds no outcome, else no-ops false. A retried
+/// call then resumes through the ordinary Resume path instead of meeting
+/// Skipped "already used".
+pub(super) fn reopen_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    token: &AskToken,
+) -> Result<bool> {
+    let Some(mut row) = ASKS.get(&vault.store, txn, &token.key)? else {
+        return Ok(false);
+    };
+    if row.state != VerbAskState::Consumed || row.ask != token.ask || row.outcome.is_some() {
+        return Ok(false);
+    }
+    row.state = VerbAskState::Open;
+    row.consumed_at = None;
+    ASKS.put(&vault.store, txn, &token.key, &row)?;
     Ok(true)
 }
 

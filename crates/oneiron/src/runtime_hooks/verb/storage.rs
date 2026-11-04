@@ -373,6 +373,29 @@ impl SessionHookKeep {
         }
     }
 
+    /// Clears the used mark `use_ask` set (FIX 1431), under the same guard:
+    /// false when no used call of that ask stands there. `used_at` clears
+    /// with it so the prune horizon keeps the re-opened pause.
+    pub(super) fn unuse_ask(
+        &self,
+        key: &SessionHookKey,
+        invocation: [u8; 16],
+        ask: EntityId,
+    ) -> bool {
+        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        match kept
+            .get_mut(key)
+            .and_then(|kept| kept.asks.get_mut(&invocation))
+        {
+            Some(row) if row.ask.ask == ask && row.ask.used => {
+                row.ask.used = false;
+                row.used_at = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Forgets the paused calls `cutoff` (vault-clock seconds) left behind,
     /// as the drain's pass forgets saved ones (`ask::prune`, FIX 5528): a
     /// used one used before it, and an unused one paused before it whose ask
@@ -704,6 +727,7 @@ impl Vault {
                     carry: None,
                     landing: None,
                     session: Some(hooks.carry()),
+                    resumed_ask: None,
                 }));
             }
         };

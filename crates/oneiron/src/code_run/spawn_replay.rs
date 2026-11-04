@@ -140,7 +140,7 @@ fn barrier_ask() -> Value {
     request_map(vec![("state", Value::from("barrier"))])
 }
 
-fn is_barrier_ask(value: &Value) -> bool {
+pub(super) fn is_barrier_ask(value: &Value) -> bool {
     *value == barrier_ask()
 }
 
@@ -159,7 +159,7 @@ fn barrier_hit(stored: &Value, offered: &Value) -> Result<bool> {
 }
 
 /// The ask a spawn request's fields hold, when they hold the key.
-fn ask_of(fields: &[(Value, Value)]) -> Option<&Value> {
+pub(super) fn ask_of(fields: &[(Value, Value)]) -> Option<&Value> {
     fields
         .iter()
         .find_map(|(key, value)| (key.as_str() == Some(ASK_KEY)).then_some(value))
@@ -186,7 +186,7 @@ fn erased_ask() -> Value {
     ])
 }
 
-fn is_erased_ask(value: &Value) -> bool {
+pub(super) fn is_erased_ask(value: &Value) -> bool {
     *value == erased_ask()
 }
 

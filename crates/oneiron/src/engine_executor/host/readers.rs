@@ -46,7 +46,7 @@ impl RecordingJsHost<'_, '_> {
         &mut self,
         seq: u64,
         mut spawn: SelfReaderSpawnCall,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
         if self.gated_write.reader_child().is_none() {
             match self.delegate_source(&spawn.source)? {
                 Ok(source) => spawn.bound = Some(source),
@@ -65,8 +65,12 @@ impl RecordingJsHost<'_, '_> {
             step_start: self.step_start,
             earlier: &self.bridge_calls,
         };
-        self.gated_write
-            .dispatch_for_executor_run(site, SelfCall::ReaderSpawn(Box::new(spawn)))
+        Ok((
+            self.gated_write
+                .dispatch_for_executor_run(site, SelfCall::ReaderSpawn(Box::new(spawn)))?
+                .0,
+            None,
+        ))
     }
 
     /// `summarize(r, {group?, ...})`: every member resolved in this run and
@@ -79,7 +83,7 @@ impl RecordingJsHost<'_, '_> {
         &mut self,
         seq: u64,
         mut call: SelfSummarizeCall,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
         if self.gated_write.reader_child().is_none() {
             let members: Vec<String> = call.members().into_iter().map(str::to_owned).collect();
             let mut bound = Vec::with_capacity(members.len());
@@ -120,8 +124,12 @@ impl RecordingJsHost<'_, '_> {
             step_start: self.step_start,
             earlier: &self.bridge_calls,
         };
-        self.gated_write
-            .dispatch_for_executor_run(site, SelfCall::Summarize(Box::new(call)))
+        Ok((
+            self.gated_write
+                .dispatch_for_executor_run(site, SelfCall::Summarize(Box::new(call)))?
+                .0,
+            None,
+        ))
     }
 
     /// A reader child's `tasks.update({task_ref, resultRef})`: its finding
@@ -132,12 +140,15 @@ impl RecordingJsHost<'_, '_> {
         &mut self,
         seq: u64,
         mut report: SelfReaderReportCall,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
         let failed = |code: &str| {
-            SelfDispatchOutcome::Failed(SelfFailedResult {
-                effect: SelfEffect::ReaderReport,
-                error: code.to_owned(),
-            })
+            (
+                SelfDispatchOutcome::Failed(SelfFailedResult {
+                    effect: SelfEffect::ReaderReport,
+                    error: code.to_owned(),
+                }),
+                None,
+            )
         };
         if self.gated_write.reader_child().is_some() {
             let storage = self.storage.ok_or(Error::InvalidConfig(
@@ -171,7 +182,11 @@ impl RecordingJsHost<'_, '_> {
             step_start: self.step_start,
             earlier: &self.bridge_calls,
         };
-        self.gated_write
-            .dispatch_for_executor_run(site, SelfCall::ReaderReport(report))
+        Ok((
+            self.gated_write
+                .dispatch_for_executor_run(site, SelfCall::ReaderReport(report))?
+                .0,
+            None,
+        ))
     }
 }

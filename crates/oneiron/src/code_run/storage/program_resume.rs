@@ -334,8 +334,19 @@ impl CodeRunBridgeCall {
         let request = self_call_request_value(&stamped)?;
         // A spawn row's erased ask answers only from a coherent row (FIX 9180).
         self.validate_spawn_coherence()?;
+        // A rewritten call replays as it dispatched (FIX 1442): its rewritten
+        // request matches first, and the guest's call it replaced decides
+        // whenever the rewritten one does not hit.
+        let matched = match &self.rewritten_request {
+            Some(rewritten)
+                if replay_request_match(self.effect, rewritten, &request)?.is_hit() =>
+            {
+                ReplayRequestMatch::Hit
+            }
+            _ => replay_request_match(self.effect, &self.request, &request)?,
+        };
         Ok(
-            match replay_request_match(self.effect, &self.request, &request)? {
+            match matched {
                 ReplayRequestMatch::Hit => ProgramRowAnswer::Settled(Box::new(
                     decode_self_dispatch_outcome(&self.outcome)?,
                 )),
