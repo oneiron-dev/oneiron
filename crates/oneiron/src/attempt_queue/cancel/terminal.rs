@@ -93,6 +93,7 @@ impl AttemptQueue<'_> {
         record.backoff_until = None;
         record.last_error = None;
         record.updated_at = input.now;
+        record.settled_at = Some(input.now);
         record.cancel_state.cancellation = Some(AttemptCancellation {
             mode: CancelMode::Landed,
             grounds: None,
@@ -268,6 +269,12 @@ impl AttemptQueue<'_> {
         )?;
         self.delete_dedupe_entry_for_record(wtxn, &record)?;
         self.notify_settled_in_txn(wtxn, &record)?;
+        // FIX 900: a force-cancelled child settles its spend lease in the
+        // same write (OF-532); idempotent, a no-op when unmetered.
+        if let Some(vault) = self.vault {
+            crate::agent_dispatch::AgentDispatcher::new(vault)
+                .settle_child_in_txn(wtxn, &record.id, input.now)?;
+        }
         Ok(ForceCancelOutcome::Cancelled(record))
     }
 
@@ -521,6 +528,7 @@ pub(in crate::attempt_queue) fn force_cancel_record(
     record.backoff_until = None;
     record.last_error = None;
     record.updated_at = now;
+    record.settled_at = Some(now);
     record.cancel_state.pressure.pending = 0;
     record.cancel_state.cancellation = Some(AttemptCancellation {
         mode: CancelMode::Forced,
@@ -586,6 +594,7 @@ fn landing_successor(
         dedupe_actor_ref: source.dedupe_actor_ref.clone(),
         created_at: now,
         updated_at: now,
+        settled_at: None,
         events: Vec::new(),
         manifest: Vec::new(),
         executor_model: None,
