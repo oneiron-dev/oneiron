@@ -205,23 +205,26 @@ impl Store {
         copy_leaf(CustodyKind::CredentialValue, custody.read(&id)?.expose())
     }
 
-    /// The published/retired/missing state of a credential value's key,
-    /// without reading key bytes or opening its value. The caller holds a
-    /// writer, or took the custody read guard before its snapshot. This
-    /// takes no second guard; a live entry is not proof of readability.
+    /// Whether a credential value's key is missing or retired, without
+    /// reading key bytes or opening its value. The caller holds a writer,
+    /// or took the custody read guard before its snapshot. This takes no
+    /// second guard; false is not proof of value readability.
     ///
     /// # Errors
     /// Custody faults, never absence.
-    pub(crate) fn credential_value_entry_state(
+    pub(crate) fn credential_value_key_unavailable(
         &self,
         credential: &EntityId,
         generation: u32,
-    ) -> Result<EntryState> {
+    ) -> Result<bool> {
         let Some(custody) = self.core.key_custody.local() else {
-            return Ok(EntryState::Missing);
+            return Ok(true);
         };
         let id = value_subject(custody.binding(), credential)?.at(u64::from(generation));
-        custody.state(&id)
+        Ok(matches!(
+            custody.state(&id)?,
+            EntryState::Missing | EntryState::Retired
+        ))
     }
 
     /// The key connector call `call_ref`'s resume state at `generation` is

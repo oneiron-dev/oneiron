@@ -56,7 +56,6 @@ use crate::secret_custody::{
     CredentialDisposition, CredentialRoute, ImageCredentialRow, PendingRestoreStage,
     PlannedCredentials,
 };
-use crate::store::key_custody::EntryState;
 use crate::store::{CredentialFences, CustodyPlan, Store};
 use crate::{EntityId, Vault};
 
@@ -101,13 +100,13 @@ pub(super) fn source_key_unavailable_in_txn(
     if bytes.is_empty() {
         return None;
     }
-    match store.credential_value_entry_state(&credential, generation) {
-        Ok(EntryState::Missing | EntryState::Retired) => Some(UnavailableCredentialKey {
+    match store.credential_value_key_unavailable(&credential, generation) {
+        Ok(true) => Some(UnavailableCredentialKey {
             credential,
             generation,
             raw_digest: *blake3::hash(raw).as_bytes(),
         }),
-        Ok(EntryState::Live) | Err(_) => None,
+        Ok(false) | Err(_) => None,
     }
 }
 
