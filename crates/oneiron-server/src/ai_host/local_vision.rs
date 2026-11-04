@@ -250,7 +250,7 @@ impl DecisionModel for LocalVisionModel {
                         Some(caller.principal),
                     );
                 let evidence = run.initiated_by(Some(caller.principal));
-                crate::api::llm::record_raw_response(
+                crate::api::record_raw_response(
                     &self.vault,
                     &admitted.ladder,
                     &evidence,
