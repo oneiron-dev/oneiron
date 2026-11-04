@@ -672,7 +672,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/lift_history/carriers.rs` | src | s | 5 crate-vis | — | Carriers no door rewrites |
 | `src/batch/secret_scan/lift_history/frontier.rs` | src | s | 2 crate-vis | — | A typed body's text at an earlier frontier holding a key no mark places (OF-067, FIX 8996) |
 | `src/batch/secret_scan/lift_history/loro_blocks.rs` | src | s | 2 crate-vis | — | Loro blocks a carrier stores, read decompressed before the census scans them (OF-067) |
-| `src/batch/secret_scan/lift_history/mod.rs` | src | L | 8 struct · 4 enum · 8 fn · 1 re-export · 5 crate-vis | LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger, SecretLiftClose, SecretLiftHistoryProposal +4 | The historical lift sweep (OF-067; ARCH-0069 #mask-on-write) |
+| `src/batch/secret_scan/lift_history/mod.rs` | src | L | 8 struct · 4 enum · 8 fn · 1 re-export · 6 crate-vis | LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger, SecretLiftClose, SecretLiftHistoryProposal +4 | The historical lift sweep (OF-067; ARCH-0069 #mask-on-write) |
 | `src/batch/secret_scan/lift_history/notice.rs` | src | s | 2 crate-vis | — | The needs-you notice of the lift proposals (OF-067) |
 | `src/batch/secret_scan/lift_history/projection.rs` | src | s | 1 fn · 1 crate-vis | — | The lift sweep's state as a caller toward one destination may read it (FIX 8165): its proposals and their… |
 | `src/batch/secret_scan/lift_history/proposals.rs` | src | m | 7 crate-vis | — | Closing a lift proposal (OF-067) |
@@ -681,6 +681,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/lift_history/repo_rows.rs` | src | s | 2 crate-vis | — | Repo-mutation oplog and proposal rows (FIX 2890) |
 | `src/batch/secret_scan/lift_history/retained.rs` | src | s | 3 crate-vis | — | Retained carriers with a door of their own (OF-067, Engine ruling D = a) |
 | `src/batch/secret_scan/lift_history/side_rows.rs` | src | s | 4 crate-vis | — | The side tables the catalog classes as authored |
+| `src/batch/secret_scan/lift_history/sync_text.rs` | src | s | 1 crate-vis | — | A sync write's text holding a hit no rule places (FIX 11792) |
 | `src/batch/secret_scan/mask.rs` | src | m | 14 crate-vis | — | Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the… |
 | `src/batch/secret_scan/mask/admit.rs` | src | s | 8 crate-vis | — | Mask on write for content a writer stores outside the batch door (OF-067): a message stream's seed, a NOTE's… |
 | `src/batch/secret_scan/mask/batch_door.rs` | src | s | 1 crate-vis | — | The batch door with mask on write (OF-560): the door's scan, a plan on a copy of the batch's ops, the… |
@@ -3438,7 +3439,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/tests/support.rs` | test | m | 52 crate-vis | — | Shared fixtures and helpers for the lens behaviour tests |
 | `src/lens/tests/surface_dispatch.rs` | test | s | — | — | Client interactions remain frame-bound plans behind the existing write gate |
 | `src/lens/tests/versioning.rs` | test | s | — | — | Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs |
-| `src/lib.rs` | src | m | 202 mod · 103 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 203 mod · 103 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 4 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/linear_sync/approval.rs` | src | m | 2 struct · 2 enum · 4 fn · 5 crate-vis | LinearEffectAdmission, LinearEffectHold, LinearEffectRole, LinearRoleApproval | FIX 6424 part 2a (Engine 10-20 21:0x rulings 1, 2 and 8): the owner's approve-once asks on one Linear mirror… |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 3 crate-vis | — | Stable link keys, operation/event digests, field hashes |
@@ -4905,6 +4906,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/tests.rs` | test | s | — | — | — |
 | `src/recovery/validation.rs` | src | m | 5 crate-vis | — | Fail-closed whole-payload validation before a recovery mutation |
 | `src/recovery/work.rs` | src | s | 8 crate-vis | — | A canonical window recovery as resumable work (Rule 5, FIX 8821) |
+| `src/registry/export.rs` | src | s | 2 struct · 1 fn | RegistrySnapshot, ZoneRow | Engine-owned kind/family/zone export (FIX 7830) |
 | `src/registry/pack_byte_map/doors.rs` | src | m | 6 fn · 11 crate-vis | — | Local installation commands and name-based instance admission |
 | `src/registry/pack_byte_map/hex_bytes.rs` | src | s | 2 crate-vis | — | Canonical hex identities, never opaque byte-array credential containers |
 | `src/registry/pack_byte_map/mod.rs` | src | s | 1 re-export | — | Per-vault runtime-kind handles |

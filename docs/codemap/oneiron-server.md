@@ -848,7 +848,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_consent_host.rs` | src | s | 6 crate-vis | — | The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on… |
 | `src/code_consent_host/browser.rs` | src | s | 1 crate-vis | — | The served host's answered pass over a held browser act (FIX 10423) |
 | `src/code_consent_host/desktop.rs` | src | s | 1 crate-vis | — | The served host's answered pass over a held desktop act (FIX 11499): [`browser`]'s twin for the desktop… |
-| `src/commands.rs` | src | L | 1 struct · 13 fn · 1 const · 24 re-export · 10 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
+| `src/commands.rs` | src | L | 1 struct · 13 fn · 1 const · 25 re-export · 10 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/account.rs` | src | s | 1 fn | — | `oneiron account`: the owner's cloud registration on a stopped vault (G7) |
 | `src/commands/api.rs` | src | m | 1 fn · 19 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/credential_file.rs` | src | m | 13 crate-vis | — | A file holding a credential, readable by its owner alone |
@@ -900,6 +900,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/owner/vault_key/unlocked_open.rs` | src | s | 9 crate-vis | — | The one opener every owner command that opens the vault data key shares (FIX 1489, 1945, 2201, 2559): this… |
 | `src/commands/reembed.rs` | src | s | 1 fn · 1 crate-vis | — | `reembed`: moves a stopped vault to the configured embedding space |
 | `src/commands/reembed/tests.rs` | test | m | — | — | Rows for the `reembed` door |
+| `src/commands/registry.rs` | src | s | 1 fn | — | `oneiron registry`: print the engine-owned kind/family/zone registry as JSON |
 | `src/commands/seat.rs` | src | s | 4 fn | — | `oneiron seat …`: the owner's official-seat sign-in surface (OF-375) |
 | `src/commands/serve.rs` | src | m | 1 re-export · 11 crate-vis | — | The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then… |
 | `src/commands/serve/hooks.rs` | src | s | 2 crate-vis | — | The vault's one hook sandbox and the fact-hook runner that runs on it, for plain and managed serve |
