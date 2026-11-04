@@ -151,14 +151,17 @@ impl Vault {
             return Err(invalid("the synced ref holds another pack"));
         }
         let ask = self.prepare_pack_install(source_id, &pinned, &publisher, &OwnerAskedFit)?;
-        let disposition = self.install_pack(&ask)?;
-        if let PackInstallDisposition::Installed(receipt) = &disposition {
+        let disposition = self.with_write_txn_grouped(|txn| {
+            let disposition = self.install_pack_in_txn(txn, &ask)?;
+            if let PackInstallDisposition::Installed(receipt) = &disposition {
+                // The update's receipt and same-capability hook bindings
+                // become visible together; wider hooks still ask the owner.
+                self.follow_pack_hook_update_in_txn(txn, owner, receipt, source_id, &source)?;
+            }
+            Ok(disposition)
+        })?;
+        if matches!(disposition, PackInstallDisposition::Installed(_)) {
             self.mark_hub_ref(&tracked, &revision, true)?;
-            // A hook pack's update lands Candidate until its test; one that
-            // installs here takes its hooks with it, under the update rule.
-            self.with_write_txn_grouped(|txn| {
-                self.follow_pack_hook_update_in_txn(txn, owner, receipt, source_id, &source)
-            })?;
         }
         Ok(disposition)
     }
