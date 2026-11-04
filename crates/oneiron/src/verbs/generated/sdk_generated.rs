@@ -7599,6 +7599,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
+    "vault.artifacts.review_slides",
     "vault.artifacts.admit",
     "vault.artifacts.propose_outline",
     "vault.artifacts.outline",
@@ -9636,6 +9637,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.workspace.roster" => crate::code_run::vault_read::request_schema::<
             Vec<crate::workspace_roster::WorkspaceRosterEntry>,
+        >(),
+        "vault.artifacts.review_slides" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ActAnswer<crate::blob_artifact::SlideReviewOutcome>,
         >(),
         "vault.artifacts.admit" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::ArtifactAskOutcome,
