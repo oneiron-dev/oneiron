@@ -42,8 +42,21 @@ struct OwnEntryMemo {
     /// Whole answers per `(row, reader, BLAKE3 of the revision served)`, over
     /// base rows only: a row judged again by a later stage of one recall.
     answers: HashMap<(EntityId, EntityId, [u8; 32]), bool>,
-    /// The snapshot kept, and whether that snapshot keeps anything.
-    at: Option<(usize, bool)>,
+    /// The store (its environment's address) and snapshot kept, and whether
+    /// that snapshot keeps anything.
+    at: Option<(usize, usize, bool)>,
+}
+
+/// What [`AudienceCache::own_entry_readable_raw`]'s judgement found.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OwnEntry {
+    /// Every window and source admits the row.
+    Reads,
+    /// A window the row sits in does not admit it.
+    Denied,
+    /// A header, a room door or a source did not read: the row is omitted
+    /// as before, and the memo keeps nothing for it.
+    Omitted,
 }
 
 /// Whether a row that occurred at `at` stands inside one of `windows`: no
@@ -75,9 +88,10 @@ impl AudienceCache {
         let Ok(mut own) = self.own_entry.lock() else {
             return false;
         };
+        let store = std::ptr::from_ref(&vault.store.env) as usize;
         let id = txn.id();
-        if let Some((kept, keeps)) = own.at
-            && kept == id
+        if let Some((kept_store, kept, keeps)) = own.at
+            && (kept_store, kept) == (store, id)
         {
             return keeps;
         }
@@ -98,7 +112,7 @@ impl AudienceCache {
                 .flatten()
         });
         let keeps = committed == Some(id);
-        own.at = Some((id, keeps));
+        own.at = Some((store, id, keeps));
         keeps
     }
 }
@@ -181,8 +195,12 @@ impl AudienceCache {
         {
             return Ok(kept);
         }
-        let answer = self.own_entry_judged(vault, dbs, txn, id, raw, reader, keep)?;
+        let judged = self.own_entry_judged(vault, dbs, txn, id, raw, reader, keep)?;
+        let answer = judged == OwnEntry::Reads;
+        // A row omitted because a header, a door or a source did not read is
+        // never kept: only a judgement is (L09 11-04 14:02).
         if let Some(key) = key
+            && judged != OwnEntry::Omitted
             && let Ok(mut own) = self.own_entry.lock()
         {
             own.answers.insert(key, answer);
@@ -202,7 +220,7 @@ impl AudienceCache {
         raw: &[u8],
         reader: EntityId,
         keep: bool,
-    ) -> Result<bool> {
+    ) -> Result<OwnEntry> {
         let mut pending = vec![(id, raw.to_vec())];
         for live in base_and_view_rows_in(vault, dbs, txn, id)? {
             if live.as_slice() != raw {
@@ -212,7 +230,7 @@ impl AudienceCache {
         let mut seen = BTreeSet::from([id]);
         while let Some((id, bytes)) = pending.pop() {
             let Some(h) = EntityMetadataHeader::parse(&bytes) else {
-                return Ok(false);
+                return Ok(OwnEntry::Omitted);
             };
             // The room's own record is the room, not its history.
             for room in rooms_of_revision_in(vault, dbs, txn, id, &bytes)? {
@@ -234,7 +252,7 @@ impl AudienceCache {
                         let Ok(windows) = crate::workspace_roster::own_room_windows_in_txn(
                             vault, txn, room, reader,
                         ) else {
-                            return Ok(false);
+                            return Ok(OwnEntry::Omitted);
                         };
                         let admits = own_windows_admit(&windows, h.occurred_start);
                         if keep && let Ok(mut own) = self.own_entry.lock() {
@@ -244,14 +262,14 @@ impl AudienceCache {
                     }
                 };
                 if !admits {
-                    return Ok(false);
+                    return Ok(OwnEntry::Denied);
                 }
             }
             let mut sources =
                 match crate::scope_summary::word_sources_through_in(vault, dbs, txn, &id, &bytes) {
                     Ok(crate::scope_summary::WordSources::From(sources)) => sources,
                     Ok(_) => Vec::new(),
-                    Err(_) => return Ok(false),
+                    Err(_) => return Ok(OwnEntry::Omitted),
                 };
             if h.entity_type == ENTITY_TYPE_CLAIM
                 && let Some(body) = bytes.get(ENTITY_METADATA_HEADER_LEN..)
@@ -268,7 +286,7 @@ impl AudienceCache {
                 }
             }
         }
-        Ok(true)
+        Ok(OwnEntry::Reads)
     }
     /// The row's own rules at `depth` under the row asked about, its covers
     /// aside: they are walked on the heap ([`covers`], FIX 9113). A cover

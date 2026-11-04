@@ -148,6 +148,11 @@ fn thread_walk_kept(
         return Ok(walk);
     }
     let walk = thread_walk_in(vault, dbs, txn, id, raw)?;
+    // A walk that denies every viewer may come from sources that did not
+    // read: only a found walk is kept (L09 11-04 14:02).
+    if walk.is_none() {
+        return Ok(walk);
+    }
     WALK_MEMO.with(|memo| {
         let mut memo = memo.borrow_mut();
         if memo.at != Some(key) {
