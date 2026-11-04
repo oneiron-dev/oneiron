@@ -237,7 +237,7 @@ export type HealthOtherSession = { attempt: EntityId; generation: number; at: nu
 export type HealthSilenceActivity = { own_call_at?: number | null; own_step_at?: number | null; actor_only_at?: number | null; stream_at?: number | null; tool_finished_at?: number | null; other_session?: HealthOtherSession | null }
 /** `oneiron::dreamer_runner::maintenance::agent_health::moves::ConcernMoveBasis` */
 export type ConcernMoveBasis = { digest: string }
-/** `oneiron::attempt_queue::run_signal::RunSignalState` */
+/** `oneiron::store::attempt_run_signal::RunSignalState` */
 export type RunSignalState = "Pending" | "Settled" | "RefusedCancelUnavailable"
 /** `oneiron::dreamer_runner::maintenance::agent_health::moves::ConcernMoveLink` */
 export type ConcernMoveLink = { kind: "note"; room: string; turn?: string | null; messages: string[] } | { kind: "steer"; task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState; run_differs_from_card_attempt: boolean }
@@ -583,7 +583,7 @@ export type TasksOverflow = { known_omitted_rows: number; source_exhausted: bool
 export type TasksSection = { rows: TaskRow[]; overflow?: TasksOverflow | null }
 /** `oneiron::vault_shape::card::ShapeCard` */
 export type ShapeCard = { seed_id?: string | null; counts: Record<string, number>; open_applies: number; reach: ShapeReach; line: string }
-/** `oneiron::store::attempt_id::AttemptId` */
+/** `oneiron_store::attempt_id::AttemptId` */
 export type AttemptId = { bytes: number[] }
 /** `oneiron::task_verb::route_receipts::TaskRouteOutcome` */
 export type TaskRouteOutcome = { DreamerAttempt: { attempt_ref: AttemptId } } | { AgentDispatch: { attempt_ref: AttemptId; agent_def_ref: EntityId } } | { PeerSyncedOnly: { actor_ref: EntityId } } | { ChildAddressed: { actor_ref: EntityId } } | { HumanFollowup: { actor_ref: EntityId } }
@@ -815,21 +815,21 @@ export type FanoutLaunchRequest = { launch_ref: EntityId }
 export type SelfBudgetRequest = { attempt: string; run?: string | null }
 /** `oneiron::agent_dispatch::budget_doors::SpendLeaseView` */
 export type SpendLeaseView = { lease: SpendScope; spend: SpendRead }
-/** `oneiron::attempt_queue::cancel::types::AttemptLandingReserve` */
+/** `oneiron::store::attempt_cancel::AttemptLandingReserve` */
 export type AttemptLandingReserve = { limit_units?: number; reserve_units?: number; spent_units?: number; dial_generation?: number | null }
-/** `oneiron::attempt_queue::cancel::types::LandingTrigger` */
+/** `oneiron::store::attempt_cancel::LandingTrigger` */
 export type LandingTrigger = "cancel_request" | "budget_warning" | "lease_warning"
-/** `oneiron::attempt_queue::cancel::types::AttemptLanding` */
+/** `oneiron::store::attempt_cancel::AttemptLanding` */
 export type AttemptLanding = { trigger: LandingTrigger; requested_by: string; entered_at: number; status?: string | null }
-/** `oneiron::attempt_queue::cancel::types::AttemptCancelReceiptKind` */
+/** `oneiron::store::attempt_cancel::AttemptCancelReceiptKind` */
 export type AttemptCancelReceiptKind = "soft_requested" | "landing_accepted" | "soft_rejected" | "resume_point_recorded" | "reserve_spent" | "landed" | "force_cancelled"
-/** `oneiron::attempt_queue::cancel::types::CancelStanding` */
+/** `oneiron::store::attempt_cancel::CancelStanding` */
 export type CancelStanding = "peer_agent" | "healer" | "automation" | "authority" | "none"
-/** `oneiron::attempt_queue::cancel::types::ForceCancelGrounds` */
+/** `oneiron::store::attempt_cancel::ForceCancelGrounds` */
 export type ForceCancelGrounds = "owner" | "lease_expiry" | "criticality"
-/** `oneiron::attempt_queue::cancel::types::AttemptResumePoint` */
+/** `oneiron::store::attempt_cancel::AttemptResumePoint` */
 export type AttemptResumePoint = { marker: string; artifact_ref?: string | null; recorded_at: number }
-/** `oneiron::attempt_queue::cancel::types::AttemptCancelReceipt` */
+/** `oneiron::store::attempt_cancel::AttemptCancelReceipt` */
 export type AttemptCancelReceipt = { sequence: number; at: number; actor: string; kind: AttemptCancelReceiptKind; standing?: CancelStanding | null; trigger?: LandingTrigger | null; grounds?: ForceCancelGrounds | null; status?: string | null; reason?: string | null; resume_point?: AttemptResumePoint | null; reserve_units?: number; request_sequence?: number | null }
 /** `oneiron::agent_dispatch::budget_hold::BudgetHoldState` */
 export type BudgetHoldState = "warned" | "held" | "resumed"
@@ -4054,7 +4054,7 @@ export type PolicyOutboundRequest = { subject: PolicyClassifySubject; content: s
 /** `oneiron::policy_model::enforce::PolicyEnforcementAction` */
 export type PolicyEnforcementAction = "allow" | "warn" | "reword" | "block" | "route_to_help" | "hold" | "skipped"
 /** `oneiron::policy_model::verdict::PolicySkipReason` */
-export type PolicySkipReason = "no-backend" | "no-document" | "backend-unavailable" | "response-unusable" | "budget-exhausted" | "policy-moving"
+export type PolicySkipReason = "no-backend" | "no-document" | "backend-unavailable" | "response-unusable" | "budget-exhausted" | "admission-denied" | "policy-moving"
 /** `oneiron::policy_model::verdict::PolicyClassifyDecision` */
 export type PolicyClassifyDecision = "allow" | "warn" | "reword" | "block" | "route-to-help" | "hold" | { skipped: PolicySkipReason }
 /** `oneiron::policy_model::verdict::PolicyVerdictCategory` */
@@ -5655,25 +5655,25 @@ export type SpawnIntentReply = { intent_key: string; phase: SpawnPhase; placed?:
 export type CancelForceRequest = { task_ref: EntityId; reason?: string | null }
 /** `oneiron::context_board::agent_run_status::AgentRunStatus` */
 export type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned" | "cancelled"
-/** `oneiron::attempt_queue::run_signal::RunAskQuestion` */
+/** `oneiron::store::attempt_run_signal::RunAskQuestion` */
 export type RunAskQuestion = { who: string; prompt: string; options: string[]; deadline?: number | null }
-/** `oneiron::attempt_queue::run_signal::RunAskAnswerKind` */
+/** `oneiron::store::attempt_run_signal::RunAskAnswerKind` */
 export type RunAskAnswerKind = "Word" | "Companion" | "Default" | "Unknown"
-/** `oneiron::attempt_queue::run_signal::RunAskAnswer` */
+/** `oneiron::store::attempt_run_signal::RunAskAnswer` */
 export type RunAskAnswer = { who: string; answer: string; kind: RunAskAnswerKind; at: number }
-/** `oneiron::attempt_queue::run_signal::RunAsk` */
+/** `oneiron::store::attempt_run_signal::RunAsk` */
 export type RunAsk = { handle: string; questions: RunAskQuestion[]; answers: RunAskAnswer[] }
-/** `oneiron::attempt_queue::run_signal::RunSignalKind` */
+/** `oneiron::store::attempt_run_signal::RunSignalKind` */
 export type RunSignalKind = { Steer: { instruction: string } } | { Interject: { content: string } } | { Cancel: { standing: CancelStanding; reason?: string | null } } | { AskAnswer: { handle: string; who: string; answer: string; kind: RunAskAnswerKind } }
-/** `oneiron::attempt_queue::run_signal::RunBranchSignal` */
+/** `oneiron::store::attempt_run_signal::RunBranchSignal` */
 export type RunBranchSignal = { key: string; actor: string; kind: RunSignalKind; state: RunSignalState }
-/** `oneiron::attempt_queue::cancel::types::CancelMode` */
+/** `oneiron::store::attempt_cancel::CancelMode` */
 export type CancelMode = "landed" | "forced"
-/** `oneiron::attempt_queue::cancel::types::AttemptCancellation` */
+/** `oneiron::store::attempt_cancel::AttemptCancellation` */
 export type AttemptCancellation = { mode: CancelMode; grounds?: ForceCancelGrounds | null; actor: string; at: number; reason?: string | null; trigger?: LandingTrigger | null; reserve_units: number; reserve_spent_units: number }
-/** `oneiron::attempt_queue::cancel::types::AttemptCancelPressure` */
+/** `oneiron::store::attempt_cancel::AttemptCancelPressure` */
 export type AttemptCancelPressure = { requests?: number; rejections?: number; pending?: number }
-/** `oneiron::attempt_queue::cancel::types::AttemptCancelState` */
+/** `oneiron::store::attempt_cancel::AttemptCancelState` */
 export type AttemptCancelState = { landing?: AttemptLanding | null; resume_point?: AttemptResumePoint | null; cancellation?: AttemptCancellation | null; pressure?: AttemptCancelPressure; receipts?: AttemptCancelReceipt[]; reserve?: AttemptLandingReserve }
 /** `oneiron::task_verb::run_doors::RunBranchView` */
 export type RunBranchView = { branch: string; run_id?: string | null; state: AttemptState; agent_status: AgentRunStatus; attempt_count: number; result_ref?: string | null; last_error?: string | null; asks: RunAsk[]; signals: RunBranchSignal[]; cancel_state: AttemptCancelState }
@@ -6472,7 +6472,7 @@ export type AmendmentShareView = { class: AttributionLabel; share: number; subje
 /** `oneiron::verbs::skill_attribution::AmendmentJudgmentView` */
 export type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; engine_ver: string; at: number; rejected: boolean; executor?: string | null; type_ref?: TaskTypeRefTypeRef | null; judge?: string | null; judge_model?: string | null; on_judge_model: boolean }
 /** `oneiron::verbs::skill_attribution::ProposalDeltaSettlement` */
-export type ProposalDeltaSettlement = { receipt_id: string; artifact_ref?: EntityId | null; proposed_text: string; final_text: string; delta?: AmendmentDeltaView | null; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] }
+export type ProposalDeltaSettlement = { receipt_id: string; artifact_ref?: EntityId | null; proposed_text: string; final_text: string; delta?: AmendmentDeltaView | null; recorded_delta?: AmendmentDeltaView | null; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] }
 /** `oneiron::verbs::skill_attribution::ProposalDeltaReadRequest` */
 export type ProposalDeltaReadRequest = { receipt_id: string; artifact_ref?: EntityId | null }
 /** `oneiron::verbs::skill_attribution::ProposalOpSpanView` */
@@ -6595,7 +6595,7 @@ export type ContextReceiptFields = { persona_compile_stamp: string; activated_me
 export type ContextEmitReceipt = { receipt_ref: string; occurred_at: number; actor: string; conversation_id: string; request_digest: string; result_digest: string; context: ContextReceiptFields }
 /** `oneiron::store::attempt_manifest::ManifestKind` */
 export type ManifestKind = "skill_index" | "skill" | "actor_claim"
-/** `oneiron::vault::entity_revision::types::RevisionRef` */
+/** `oneiron::store::revision_ref::RevisionRef` */
 export type RevisionRef = number[]
 /** `oneiron::store::attempt_manifest::ManifestEntry` */
 export type ManifestEntry = { kind: ManifestKind; reference: string; version: string; at: number; revision?: [EntityId, RevisionRef] | null }
@@ -7975,17 +7975,17 @@ export type SieveEvidenceCursor = { learned_at: number; turn: EntityId }
 export type SieveEvidenceView = { turn: EntityId; reading?: number[] | null; cursor?: SieveEvidenceCursor | null; owed: boolean; continuing: boolean }
 /** `oneiron::dreamer_wake::policy::observation::WakeCadenceRequest` */
 export type WakeCadenceRequest = Record<string, never>
-/** `oneiron::dreamer_wake::policy::AgentWakeRole` */
+/** `oneiron::store::dreamer_wake_policy::AgentWakeRole` */
 export type AgentWakeRole = "companion" | "leader" | "worker"
-/** `oneiron::dreamer_wake::policy::CadencePrecedence` */
+/** `oneiron::store::dreamer_wake_policy::CadencePrecedence` */
 export type CadencePrecedence = "vault_floor" | "agent_override"
-/** `oneiron::dreamer_wake::policy::AgentWakeTriggers` */
+/** `oneiron::store::dreamer_wake_policy::AgentWakeTriggers` */
 export type AgentWakeTriggers = { cadence: boolean; surprise: boolean; agency: boolean; event: boolean }
-/** `oneiron::dreamer_wake::policy::AgentWakePolicy` */
+/** `oneiron::store::dreamer_wake_policy::AgentWakePolicy` */
 export type AgentWakePolicy = { absent_role: AgentWakeRole; precedence: CadencePrecedence; companion: AgentWakeTriggers; leader: AgentWakeTriggers; worker: AgentWakeTriggers }
-/** `oneiron::dreamer_wake::policy::WeaveRecipePriority` */
+/** `oneiron::store::dreamer_wake_policy::WeaveRecipePriority` */
 export type WeaveRecipePriority = "before_connector_event" | "after_connector_event"
-/** `oneiron::dreamer_wake::policy::DreamerWakePolicy` */
+/** `oneiron::store::dreamer_wake_policy::DreamerWakePolicy` */
 export type DreamerWakePolicy = { wake_grain_turns: number; agent_cadence: AgentWakePolicy; new_records: number; longest_wait_secs: number; nightly_secs: number; idle_secs: number; quiet_weave_secs: number; weave_recipe_priority: WeaveRecipePriority; surprise_permille: number }
 /** `oneiron::dreamer_wake::policy::WakeIdleState` */
 export type WakeIdleState = { running_turns: boolean; live_background_work: boolean; compute_available: boolean; last_inbound_at: number }

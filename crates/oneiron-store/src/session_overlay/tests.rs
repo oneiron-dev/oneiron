@@ -1,9 +1,9 @@
 use super::*;
-use crate::error::OffRecordError;
 use crate::overlay_db::OverlayDb;
-use crate::temporal::TimeRange;
 use heed::types::Bytes;
 use heed::{Database, DatabaseFlags, Env, EnvOpenOptions};
+use oneiron_contracts::error::OffRecordError;
+use oneiron_contracts::temporal::TimeRange;
 use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 use std::time::{Duration, Instant};
 
