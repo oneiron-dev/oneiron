@@ -568,7 +568,11 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
         } else {
             0
         };
-        let guard = if scratch > 0 { Some(booking.scratch(scratch)?) } else { None };
+        let guard = if scratch > 0 {
+            Some(booking.scratch(scratch)?)
+        } else {
+            None
+        };
         booking.more(&mut held, u64::from(len))?;
         recv_body(stream, wait, &mut body, len)?;
         drop(guard);
