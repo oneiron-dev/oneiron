@@ -160,19 +160,29 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         prior: Option<&CatalogSeed>,
+        prior_source: Option<EntityId>,
     ) -> Result<()> {
         let seed = CatalogSeed::from_installed_pack_in_txn(self, txn)?;
         // The new receipt no longer names the prior pack's source, so a row
         // copied from that pack is stored under its currency contract before
-        // the refresh reads it, and reads as stored after (FIX 9534).
-        if let Some(prior) = prior {
-            let packs: BTreeSet<EntityId> = prior
-                .rows
-                .iter()
-                .filter_map(|row| row.source_rows.as_deref())
-                .flatten()
-                .copied()
-                .collect();
+        // the refresh reads it, and reads as stored after (FIX 9534). The
+        // receipt's source is kept even when the prior catalog no longer
+        // parses (FIX 10865).
+        let mut packs: BTreeSet<EntityId> = prior
+            .map(|prior| {
+                prior
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.source_rows.as_deref())
+                    .flatten()
+                    .copied()
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(source) = prior_source {
+            packs.insert(source);
+        }
+        if !packs.is_empty() {
             super::REGISTRY_ROW.keep_pack_rows(&self.store, txn, &packs)?;
         }
         self.refresh_model_catalog_in_txn(txn, &seed, prior)

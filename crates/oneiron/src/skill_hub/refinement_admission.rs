@@ -3,7 +3,10 @@
 //! can bind a consented usefulness-yes and held-out win to promoted bytes.
 
 use super::{ClaimRefinementMergeReceipt, SharedSkillMergeReceipt, package_codec::invalid};
-use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use crate::side_table::{self, LegacyJson, SideTable};
+use crate::store::skill_refinement_origin::{
+    CLAIM_ORIGIN, SKILL_ORIGIN, declares_refinement, declares_skill_refinement,
+};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
@@ -12,12 +15,6 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-// Permanent candidate origin, keyed only by entity ID. The value is the hash
-// of the first native Proposed bytes, never the body or an approval receipt.
-const CLAIM_ORIGIN: SideTable<EntityId, [u8; 32], Raw> =
-    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_CLAIM_ORIGIN);
-const SKILL_ORIGIN: SideTable<EntityId, [u8; 32], Raw> =
-    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_SKILL_ORIGIN);
 /// Content-free refinement control row for one candidate.
 const CONTROL: SideTable<EntityId, RefinementControl, LegacyJson> =
     SideTable::new(&side_table::SKILL_HUB_REFINEMENT_CONTROL);
@@ -296,22 +293,6 @@ fn continues_admitted_refinement(
     Ok(declares_refinement(&prior))
 }
 
-fn declares_refinement(body: &crate::claim::ClaimBody) -> bool {
-    body.evidence.as_ref().is_some_and(|evidence| {
-        evidence.as_map().is_some_and(|fields| {
-            fields.iter().any(|(key, value)| {
-                key.as_str() == Some("provenance") && value.as_str() == Some("claim-refinement")
-            })
-        })
-    })
-}
-fn declares_skill_refinement(record: &crate::skill::SkillRecord) -> bool {
-    record.provenance.as_map().is_some_and(|fields| {
-        fields.iter().any(|(key, value)| {
-            key.as_str() == Some("source") && value.as_str() == Some("shared-skill-delta")
-        })
-    })
-}
 /// The useful-upstream requirement survives replay, same-byte aliases and
 /// deletion even when the receiver has no locally submitted delta row.
 pub(crate) fn skill_refinement_origin_in_txn(
@@ -321,40 +302,6 @@ pub(crate) fn skill_refinement_origin_in_txn(
 ) -> Result<bool> {
     Ok(SKILL_ORIGIN.get(store, txn, id)?.is_some())
 }
-/// The ordinary put chokepoint stages the first native Candidate/Proposed
-/// origin after validation, for local and replicated writes alike. Delete
-/// never removes these content-free facts.
-pub(crate) fn stage_refinement_origin(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-    claim: Option<&crate::claim::ClaimBody>,
-    skill: Option<&crate::skill::SkillRecord>,
-    data: &[u8],
-) -> Result<()> {
-    let table = if claim.is_some_and(|body| {
-        body.approval == crate::claim::ClaimApprovalStatus::Proposed && declares_refinement(body)
-    }) {
-        CLAIM_ORIGIN
-    } else if skill.is_some_and(|record| {
-        record.lifecycle_status == crate::skill::SkillLifecycle::Candidate
-            && declares_skill_refinement(record)
-    }) {
-        SKILL_ORIGIN
-    } else {
-        return Ok(());
-    };
-    let digest = blake3::hash(data);
-    if let Some(prior) = table.get(store, txn, id)? {
-        if prior != *digest.as_bytes() {
-            return Err(invalid("refinement origin changed"));
-        }
-    } else {
-        table.put(store, txn, id, digest.as_bytes())?;
-    }
-    Ok(())
-}
-
 /// The shared materialization door asks this BEFORE any gate or entity write.
 pub(crate) fn validate_refinement_admission(
     store: &Store,
