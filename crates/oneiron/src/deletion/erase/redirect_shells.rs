@@ -8,7 +8,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         head: &EntityId,
     ) -> Result<()> {
-        let shells = crate::identity_redirect::inbound_redirect_shells_in_txn(
+        let shells = crate::store::identity_redirect_rows::inbound_redirect_shells_in_txn(
             &self.store,
             txn,
             &BTreeSet::from([*head]),
@@ -48,7 +48,7 @@ impl Vault {
         head: &EntityId,
         act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
     ) -> Result<(BTreeSet<EntityId>, Vec<EntityId>)> {
-        let shells = crate::identity_redirect::inbound_redirect_shells_in_txn(
+        let shells = crate::store::identity_redirect_rows::inbound_redirect_shells_in_txn(
             &self.store,
             &*wtxn,
             &BTreeSet::from([*head]),

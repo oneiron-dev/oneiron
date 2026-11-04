@@ -10,7 +10,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Vec<EntityId>> {
-        let mut affected = crate::identity_redirect::inbound_redirect_shells_in_txn(
+        let mut affected = crate::store::identity_redirect_rows::inbound_redirect_shells_in_txn(
             &self.store,
             txn,
             &BTreeSet::from([*id]),

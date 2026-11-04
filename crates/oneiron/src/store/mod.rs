@@ -470,3 +470,9 @@ pub mod repo_import_predicate;
 
 pub(crate) mod task_authority_guard;
 pub(crate) mod vad_annotation;
+
+pub(crate) mod container_output;
+pub(crate) mod live_speaker_calls;
+pub mod record_ref;
+
+pub(crate) mod identity_redirect_rows;
