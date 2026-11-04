@@ -127,10 +127,7 @@ impl SecretBinding {
 
 #[doc(hidden)]
 pub trait SecretCustodyFloorSource {
-    fn resolve_secret_custody_floor(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<SecretCustodyFloor>;
+    fn resolve_secret_custody_floor(&self, txn: &heed::RoTxn<'_>) -> Result<SecretCustodyFloor>;
 }
 
 impl SecretCustodyFloor {
