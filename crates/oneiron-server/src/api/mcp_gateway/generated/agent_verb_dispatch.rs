@@ -47,6 +47,7 @@ pub(crate) fn mcp_agent_verb_input(
     match tool {
         "vault.commitments.create" => a.spec.clone().ok_or_else(invalid),
         "vault.commitments.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.commitments.ledger" => a.spec.clone().ok_or_else(invalid),
         "vault.commitments.instances" => a.spec.clone().ok_or_else(invalid),
         "vault.commitments.proposals" => a.spec.clone().ok_or_else(invalid),
         "vault.commitments.fulfill" => a.spec.clone().ok_or_else(invalid),
@@ -1503,6 +1504,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.commitments.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.commitments.ledger" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.commitments.instances" => {
@@ -5541,6 +5545,24 @@ async fn execute_agent_verb_row_on(
             let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_commitments_get(
                 server, auth, input,
             ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.commitments.ledger" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.commitments.ledger", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::commitment_doors::CommitmentLedgerRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_commitments_ledger(server, auth, input),
+            )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(

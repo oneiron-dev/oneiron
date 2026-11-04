@@ -27,8 +27,9 @@ pub(crate) use self::codec::{
 #[cfg(test)]
 pub(crate) use self::lifecycle::rematerialize_contact_cache_in_txn;
 pub(crate) use self::lifecycle::{
-    ClaimHeadWriter, drop_contact_index_rows_in_txn, rematerialize_party_contact_cache_in_txn,
-    retire_family_claims_for_batch_delete_in_txn, supersede_family_owned_claim_in_txn,
+    ClaimHeadWriter, counterparty_contact_label_sources_in_txn, drop_contact_index_rows_in_txn,
+    rematerialize_party_contact_cache_in_txn, retire_family_claims_for_batch_delete_in_txn,
+    supersede_family_owned_claim_in_txn,
 };
 pub use self::lifecycle::{drop_contact_cache_row, rematerialize_contact_cache};
 // The facade erase paths' hook (`deletion/erase/active_store.rs`, a seam that
