@@ -176,6 +176,23 @@ pub(super) enum LaunchPayload {
     },
 }
 
+/// The plan-identity projection of a wave payload (FIX 4973): borrowed,
+/// `Serialize`-only, encoding exactly as the old external
+/// `{"wave": {"cut": ..., "creator_origin": ...}}` with field order `cut`
+/// then `creator_origin`. The creator is the original five-field intent
+/// (`None` for a caller-only root witness); recorded caller provenance
+/// stays in `StoredLaunch.payload` outside the digest.
+#[derive(Serialize)]
+struct WavePayloadIdentity<'a> {
+    wave: WaveIdentity<'a>,
+}
+
+#[derive(Serialize)]
+struct WaveIdentity<'a> {
+    cut: &'a WavePlan,
+    creator_origin: Option<super::create_origin::TaskCreateOriginIdentity<'a>>,
+}
+
 impl LaunchPayload {
     fn wave(cut: &ValidatedWavePlan, origin: Option<&TaskCreateOrigin>) -> Self {
         Self::Wave {
@@ -196,18 +213,42 @@ impl LaunchPayload {
         }
     }
 
+    /// The bytes the plan digest binds (FIX 4973): a wave hashes its
+    /// borrowed identity projection (cut plus the creator's original
+    /// five-field intent, caller provenance outside); asks hash the whole
+    /// payload exactly as before.
+    fn identity_bytes(&self) -> Result<Vec<u8>> {
+        match self {
+            Self::Wave {
+                cut,
+                creator_origin,
+            } => encode(&WavePayloadIdentity {
+                wave: WaveIdentity {
+                    cut,
+                    creator_origin: creator_origin
+                        .as_ref()
+                        .and_then(TaskCreateOrigin::intent_identity),
+                },
+            }),
+            Self::Ask { .. } | Self::AdmittedAsk { .. } => encode(self),
+        }
+    }
+
     /// The counted plan this payload launches. Its plan_ref binds the hash
-    /// of the WHOLE payload, so the frozen digest moves with any field, not
-    /// only with peer counts. Edges run from the launch's root (the epic, the
-    /// ask group), never from the actor, so a cut that assigns its own actor
-    /// is no consult cycle.
+    /// of the payload's plan identity (FIX 4973: a wave binds its cut plus
+    /// the creator's original five-field intent; the recorded caller
+    /// provenance rides in `StoredLaunch.payload` outside the digest), so
+    /// the frozen digest moves with any semantic field, not only with peer
+    /// counts. Edges run from the launch's root (the epic, the ask group),
+    /// never from the actor, so a cut that assigns its own actor is no
+    /// consult cycle.
     fn plan(
         &self,
         launch_ref: EntityId,
         actor: EntityId,
         mode: ConsultFanOutMode,
     ) -> Result<FanoutPlan> {
-        let payload_hash = blake3::hash(&encode(self)?).to_hex().to_string();
+        let payload_hash = blake3::hash(&self.identity_bytes()?).to_hex().to_string();
         let (root, brief_ref, targets): (String, String, Vec<String>) = match self {
             Self::Wave { cut, .. } => (
                 cut.epic_task_ref.to_hex(),
