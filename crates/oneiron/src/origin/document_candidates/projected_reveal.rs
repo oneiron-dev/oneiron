@@ -21,7 +21,8 @@ use crate::git_wire::GitOid;
 use crate::origin::secret_marks::{RepoBlobAddress, RepoMarkFacts, RepoSecretMarkLookup};
 use crate::origin::secret_projection::claims::{RepoProjectionClaim, RepoProjectionRecord};
 use crate::origin::secret_projection::recipient::RepoProjectionRevealBinding;
-use crate::secret_custody::{RepoFileKeys, RepoFileOriginal, RepoFileRevealTarget};
+use crate::secret_custody::RepoFileRevealTarget;
+use crate::secret_record::{RepoFileKeys, RepoFileOriginal};
 use crate::{EntityId, Vault};
 
 /// What one held proposal's files are checked against: the recipient its

@@ -9,7 +9,7 @@ use crate::secret_lease::VaultInstant;
 pub(super) enum DoorGrant {
     Checkout {
         ticket: String,
-        scope: crate::federation::Scope,
+        scope: oneiron_authority::federation::Scope,
     },
     #[cfg(test)]
     Witnessed(crate::federation::Scope),
@@ -172,7 +172,7 @@ impl DoorCredential {
         Ok(())
     }
 
-    fn scope(&self) -> &crate::federation::Scope {
+    fn scope(&self) -> &oneiron_authority::federation::Scope {
         match &self.grant {
             DoorGrant::Checkout { scope, .. } => scope,
             #[cfg(test)]

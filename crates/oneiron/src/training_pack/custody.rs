@@ -85,6 +85,50 @@ pub(super) fn keep_bytes(
     })
 }
 
+/// [`keep_bytes`] of the bytes `body` yields (FIX 12091): staged as they
+/// stream, and filed under an instance of `mint`, minted before `txn`
+/// opened, once the asset plane files them. What the staged body leaves to
+/// hold comes back with the pin, its bytes already dropped: hold it until
+/// `txn` has committed or aborted.
+pub(super) fn keep_reader(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    run: EntityId,
+    name: &str,
+    body: &mut dyn std::io::Read,
+    mint: Option<&crate::store::BodyMint>,
+) -> Result<(ArtifactPin, crate::store::StagedHold)> {
+    let artifact = vault.store.clock.entity_id()?;
+    let at = vault.store.clock.now_recorded_at();
+    let occurred = TimeRange { start: at, end: at };
+    let record =
+        encode_blob_artifact_body(&BlobArtifactBody::new(name, "application/octet-stream"))?;
+    vault
+        .batch_in()
+        .put(&artifact, ENTITY_TYPE_BLOB_ARTIFACT, occurred, at, &record)
+        .apply(txn)?;
+    let (version, staged) = vault.append_blob_artifact_version_from_reader_in_txn(
+        txn,
+        &artifact,
+        body,
+        mint,
+        &BlobVersionProvenance::AgentRun {
+            run_ref: format!("training_pack:{}", run.to_hex()),
+        },
+        WriteActor::new(actor, EdgeActorClass::Human),
+        occurred,
+        at,
+    )?;
+    let pin = ArtifactPin {
+        artifact,
+        version: version.version,
+        blake3: version.content_hash,
+        bytes: staged.facts().len,
+    };
+    Ok((pin, staged.into_hold()))
+}
+
 pub(super) fn read_pin(vault: &Vault, txn: &heed::RoTxn<'_>, pin: &ArtifactPin) -> Result<Vec<u8>> {
     let metadata = vault
         .blob_artifact_version_metadata_in_txn(txn, &pin.artifact, pin.version)?

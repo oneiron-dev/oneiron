@@ -21,8 +21,8 @@ use std::rc::Rc;
 
 use super::access_gate::HeldAuthority;
 use super::*;
-use crate::federation::Scope;
 use crate::gate::{ClaimReadPolicy, ClaimReadView};
+use oneiron_authority::federation::Scope;
 
 /// Readers one serving txn holds class verdicts for. A further reader's
 /// classes are judged, never held.
@@ -449,12 +449,12 @@ impl<'v> ScopedRead<'v> {
 
     /// Every per-item or time conjunct of the CLAIM row `raw` of `id`, with
     /// `body` and principal audience `principal`, past its standing (L02
-    /// 04:5x condition 2), in the row admission's order: its audience
+    /// 04:5x condition 2), in the row admission's order: the claim's live
+    /// support, a mined preference's decay at the judged time, the
+    /// credential's records and channel caveats, the proof's liveness now,
+    /// its causal standing under its writers' revocations, and its audience
     /// (device, private threads, own entry, asked worlds, room turn and
-    /// peers), the credential's records and channel caveats, the proof's
-    /// liveness now, the claim's live support, a mined preference's decay at
-    /// the judged time, and its causal standing under its writers'
-    /// revocations.
+    /// peers).
     fn per_item_judge_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -464,11 +464,7 @@ impl<'v> ScopedRead<'v> {
         principal: Option<EntityId>,
         authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
-        if !self.audience_readable_raw_in(rtxn, id, raw, authority)?
-            || !self.credential_allows_row_in(rtxn, id)
-            || !self.proof_live_in(rtxn)?
-            || !crate::claim::has_live_support_in_txn(&self.store_read(), rtxn, body)?
-        {
+        if !crate::claim::has_live_support_in_txn(&self.store_read(), rtxn, body)? {
             return Ok(false);
         }
         // A mined preference with no principal is the class's to refuse.
@@ -478,7 +474,13 @@ impl<'v> ScopedRead<'v> {
         {
             return Ok(false);
         }
-        self.claim_causally_admitted_in(rtxn, id, body)
+        if !self.credential_allows_row_in(rtxn, id)
+            || !self.proof_live_in(rtxn)?
+            || !self.claim_causally_admitted_in(rtxn, id, body)?
+        {
+            return Ok(false);
+        }
+        self.audience_readable_raw_in(rtxn, id, raw, authority)
     }
 
     /// The reader this lane's class verdicts are judged and held for under

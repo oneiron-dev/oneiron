@@ -137,7 +137,8 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     let commitment_projection_actor_ref = commitment_projection_actor()?.entity_ref().to_hex();
     // The conversation-mirror MACHINE attests connector-observed reactions
     // (OF-372). Derived the same way, so a moved domain fails closed too.
-    let conversation_mirror_actor_ref = crate::reaction::conversation_mirror_actor_id()?.to_hex();
+    let conversation_mirror_actor_ref =
+        crate::claim::reaction_record::conversation_mirror_actor_id()?.to_hex();
     let policy_values: serde_json::Value =
         serde_json::from_str(include_str!("policy_value_defaults.json"))
             .expect("valid shipped policy values");
@@ -147,8 +148,8 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     let entries = vec![
         (Value::from("policy_values"), policy_values),
         (
-            Value::from(crate::failure_signals::policy::POLICY_KEY),
-            crate::failure_signals::policy::default_row(),
+            Value::from(crate::gate::failure_signal_policy::POLICY_KEY),
+            crate::gate::failure_signal_policy::default_row(),
         ),
         (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
@@ -185,7 +186,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             Value::from(SEEDED_PROJECT_DEPTH_MAX),
         ),
         (
-            Value::from(crate::skill_optimize::policy::MANIFEST_KEY),
+            Value::from(crate::gate::judge_calibration::MANIFEST_KEY),
             Value::Map(vec![
                 (Value::from("ask_minutes"), Value::from(1)),
                 (Value::from("max_context_bytes"), Value::from(512)),
@@ -285,7 +286,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
         ),
         (
             Value::from("goal_limits"),
-            crate::workspace_roster::GoalLimits::default().encode(),
+            crate::policy_model::goal_limits::GoalLimits::default().encode(),
         ),
         (
             Value::from(POLICY_RULES_KEY),
@@ -353,7 +354,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::reaction::PREDICATE_CONVERSATION_REACTION),
+                        Value::from(crate::claim::reaction_record::PREDICATE_CONVERSATION_REACTION),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -367,7 +368,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::reaction::PREDICATE_CONVERSATION_REACTION_ECHO),
+                        Value::from(
+                            crate::claim::reaction_record::PREDICATE_CONVERSATION_REACTION_ECHO,
+                        ),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -384,7 +387,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::comm::PREDICATE_COMM_LAST_TOUCH),
+                        Value::from(
+                            crate::write_envelope::communication::PREDICATE_COMM_LAST_TOUCH,
+                        ),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -468,7 +473,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
-                        Value::from(crate::voice_segment::PREDICATE_VOICE_SEGMENT),
+                        Value::from(crate::write_envelope::voice_segment::PREDICATE_VOICE_SEGMENT),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -846,7 +851,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
         ),
         (
             Value::from(POLICY_SLIDE_REVIEW_KEY),
-            crate::llm::decision::SlideReviewPolicy::default_rows(),
+            crate::model_decision::SlideReviewPolicy::default_rows(),
         ),
         super::docx_budget::default_entry(),
         (
@@ -1167,7 +1172,7 @@ fn teacher_probe_default_entry() -> (Value, Value) {
         Value::Map(vec![
             (
                 Value::from("probe_id"),
-                Value::from(crate::llm::manifest::TEACHER_PROBE_ID),
+                Value::from(crate::teacher_probe_policy::TEACHER_PROBE_ID),
             ),
             (Value::from("min_f1_millionths"), Value::from(800_000_u64)),
             (Value::from("holders"), Value::Array(Vec::new())),
@@ -1266,8 +1271,9 @@ fn default_gate_decision_retention_entry() -> (Value, Value) {
 }
 
 fn federation_grant_default_rows() -> Value {
+    use crate::federation::FederationGrantRole as Role;
     use crate::federation::grant_policy::{GrantPolicyRow as Row, encode_row};
-    use crate::federation::{FederationGrantRole as Role, Scope, ScopeAxis};
+    use oneiron_authority::federation::{Scope, ScopeAxis};
     let scope = |verbs: &[&str]| {
         let mut scope = Scope::top();
         scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
@@ -1308,8 +1314,8 @@ fn federation_grant_default_rows() -> Value {
             // content. The mint names its worlds; this row names none.
             Row::ConnectGuestCeiling {
                 scope: Scope {
-                    sensitivity: crate::federation::SensitivityCeiling::AtMost(
-                        crate::federation::Sensitivity::Private,
+                    sensitivity: oneiron_authority::federation::SensitivityCeiling::AtMost(
+                        oneiron_authority::federation::Sensitivity::Private,
                     ),
                     ..scope(&["read", "propose"])
                 },
@@ -1360,7 +1366,7 @@ fn compilation_route(
 /// The vault-wide search policy ships as data, not a Rust threshold or
 /// hard-coded stagnation branch. The manifest resolver composes edits by scope.
 fn default_experiment_selection_rows() -> Value {
-    let rows: Vec<crate::autoreason_campaign::selection::SelectionPolicyRow> =
+    let rows: Vec<crate::gate::experiment_selection_policy::SelectionPolicyRow> =
         serde_json::from_str(include_str!(
             "../autoreason_campaign/selection_defaults.json"
         ))
@@ -1401,9 +1407,10 @@ pub(crate) fn default_consult_fanout_approval_threshold() -> u32 {
 }
 
 /// Caller-side builder values come from the same shipped data the vault seeds.
-pub(crate) fn default_consult_fanout_policy() -> crate::task_verb::ConsultFanOutPolicy {
+pub(crate) fn default_consult_fanout_policy()
+-> crate::gate::consult_fanout_values::ConsultFanOutPolicy {
     let shipped = shipped_consult_fanout_rows();
-    crate::task_verb::ConsultFanOutPolicy {
+    crate::gate::consult_fanout_values::ConsultFanOutPolicy {
         approval_threshold: shipped.threshold,
         mode: shipped.controls.mode,
         peer_rate: shipped.controls.peer_rate.clone(),

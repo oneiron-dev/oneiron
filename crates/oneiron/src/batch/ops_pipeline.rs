@@ -235,7 +235,7 @@ pub(super) fn check_decode_point_taint_guard(
 
 /// Entity refs a decoded CLAIM body carries: its subject and its world scope.
 pub(super) fn check_claim_body_refs(
-    body: &crate::claim::ClaimBody,
+    body: &crate::write_envelope::claim_body::ClaimBody,
     check: &impl Fn(&EntityId) -> Result<()>,
 ) -> Result<()> {
     check_claim_subject_refs(body.subject, check)?;
@@ -251,12 +251,12 @@ pub(super) fn check_claim_body_refs(
 /// Entity refs a [`crate::claim::ClaimSubject`] carries: the entity itself, or
 /// BOTH endpoints of an edge subject.
 pub(super) fn check_claim_subject_refs(
-    subject: crate::claim::ClaimSubject,
+    subject: crate::write_envelope::claim_body::ClaimSubject,
     check: &impl Fn(&EntityId) -> Result<()>,
 ) -> Result<()> {
     match subject {
-        crate::claim::ClaimSubject::Entity(id) => check(&id),
-        crate::claim::ClaimSubject::Edge { source, target, .. } => {
+        crate::write_envelope::claim_body::ClaimSubject::Entity(id) => check(&id),
+        crate::write_envelope::claim_body::ClaimSubject::Edge { source, target, .. } => {
             check(&source)?;
             check(&target)
         }
@@ -523,7 +523,7 @@ pub(crate) fn apply_ops_session(
                 stage_edge_rows(view, wtxn, src, *kind, tgt, &value)?;
             }
             BatchOp::Text { id, fields } => {
-                crate::bm25::index_text(view, wtxn, analyzer, id, fields)?;
+                crate::store::text_index::index_text(view, wtxn, analyzer, id, fields)?;
             }
             BatchOp::Vector {
                 id,
@@ -596,7 +596,7 @@ pub(crate) fn apply_ops_session(
         }
         let changed = crate::vault::entity_revision::publish_room_revision(view, wtxn, id)?;
         if changed && !texts.contains(id) {
-            crate::bm25::deindex_text(view, wtxn, id)?;
+            crate::store::text_index::deindex_text(view, wtxn, id)?;
         }
         if !vectors.contains(id) && (changed || !view.vectors.stages_row(id.as_bytes())) {
             hide_vector_of_another_body(view, wtxn, id)?;
@@ -671,11 +671,11 @@ pub(super) fn contains_text_op(ops: &[BatchOp]) -> bool {
                 && *allow_reserved_predicate
                 && id
                     .as_bytes()
-                    .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
-                && crate::claim::decode_claim_body(data, true)
+                    .starts_with(&crate::write_envelope::claim_body::lexical_query_hint::LEXICAL_QUERY_HINT_ID_PREFIX)
+                && crate::write_envelope::claim_body::decode_claim_body(data, true)
                     .ok()
                     .is_some_and(|body| {
-                        body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT
+                        body.predicate == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
                     })
         }
         _ => false,

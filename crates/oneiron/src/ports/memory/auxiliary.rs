@@ -442,7 +442,7 @@ impl JobQueue for Memory {
         kind: Option<&str>,
         input: ClaimAttempt,
     ) -> Result<ClaimOutcome> {
-        crate::attempt_queue::validate_lease_owner(&input.lease_owner)?;
+        crate::store::attempt_lease::validate_lease_owner(&input.lease_owner)?;
         let now = self.clock.now_recorded_at();
         let cutoff = input.now.min(now);
         let mut candidates: Vec<_> = txn
@@ -489,7 +489,7 @@ impl JobQueue for Memory {
         id: AttemptId,
         input: ClaimAttempt,
     ) -> Result<ClaimOutcome> {
-        crate::attempt_queue::validate_lease_owner(&input.lease_owner)?;
+        crate::store::attempt_lease::validate_lease_owner(&input.lease_owner)?;
         let now = self.clock.now_recorded_at();
         let record = txn
             .jobs

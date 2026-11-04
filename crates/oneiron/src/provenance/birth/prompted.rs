@@ -8,38 +8,12 @@
 
 use heed::RoTxn;
 
-use super::{RowBirth, row_birth_in_txn};
+use super::row_birth_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::provenance::made_by::{MadeByClass, MadeByInputRole};
 use crate::store::ManifestDbs;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-use crate::write_envelope::WriteActor;
-
-impl RowBirth {
-    /// The birth of a row `actor` wrote through `door` at `at`, made of a
-    /// model's answer to a prompt that carried the rows `prompt` (each named
-    /// once, in order), whose bytes as the model read them are `read`.
-    /// `None` when the prompt carried no row: the row keeps the birth its
-    /// writer gives it.
-    pub(crate) fn prompted(
-        actor: WriteActor,
-        class: MadeByClass,
-        door: &str,
-        prompt: &[EntityId],
-        read: &[&[u8]],
-        at: u64,
-    ) -> Option<Self> {
-        if prompt.is_empty() {
-            return None;
-        }
-        let mut birth = Self::written(actor, class, door, prompt, read, at)?;
-        for input in &mut birth.made_by.inputs {
-            input.role = MadeByInputRole::Prompt;
-        }
-        Some(birth)
-    }
-}
+use crate::write_envelope::provenance::made_by::MadeByInputRole;
 
 /// The rows `row`'s birth names as prompt inputs: the rows a model's prompt
 /// carried when it wrote `row`'s words. Empty for a row born with none, or

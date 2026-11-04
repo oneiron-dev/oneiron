@@ -32,10 +32,10 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, WindowDeletionRows};
-use crate::provenance::EdgeRef;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::write_envelope::provenance::EdgeRef;
 
 /// Whether a SoftErase has scrubbed the classified body since.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,7 +275,7 @@ impl Vault {
         reason: DeleteReason,
     ) -> Result<Option<EntityId>> {
         let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-        let error = match crate::claim::decode_claim_body(body, true) {
+        let error = match crate::write_envelope::claim_body::decode_claim_body(body, true) {
             Ok(claim) => return Ok(claim.world),
             Err(error) => error,
         };

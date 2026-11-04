@@ -196,7 +196,7 @@ fn grant_names_act(
         && grant.confers_at(at)
         && matches!(
             &grant.authority_scope.verbs,
-            crate::federation::ScopeAxis::Some(verbs) if verbs.contains(grant_verb(act))
+            oneiron_authority::federation::ScopeAxis::Some(verbs) if verbs.contains(grant_verb(act))
         )
 }
 
@@ -211,7 +211,7 @@ fn grant_names_world(grant: &crate::federation::FederationGrant, world: EntityId
     grant
         .authority_scope
         .worlds
-        .contains(&crate::federation::ScopeId(world))
+        .contains(&oneiron_authority::federation::ScopeId(world))
 }
 
 /// What this replica holds of an agent act's Grant.
@@ -520,7 +520,7 @@ impl crate::Vault {
                 && grant.confers_at(now)
                 && matches!(
                     &grant.authority_scope.verbs,
-                    crate::federation::ScopeAxis::Some(verbs)
+                    oneiron_authority::federation::ScopeAxis::Some(verbs)
                         if verbs.contains(WEAVE_DIGEST_SETTINGS_GRANT_VERB)
                 )
                 && (grant.delegated_by == Some(owner) || sole_owner)

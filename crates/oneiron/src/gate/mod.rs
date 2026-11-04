@@ -8,7 +8,13 @@ mod auto_signals;
 mod bundle;
 mod ceiling;
 pub(crate) mod class_policy;
+pub(crate) mod consult_fanout_values;
+pub(crate) mod curator_proposal;
+pub(crate) mod failure_signal_delivery;
+pub(crate) mod fanout_mode;
 pub(crate) mod manifest_authenticity;
+pub(crate) mod task_assignee;
+pub(crate) mod training_ask_kind;
 #[cfg(test)]
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
 pub(crate) use manifest_authenticity::{seeded_manifest_key, trusted_manifest_key};
@@ -22,6 +28,9 @@ pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
 mod decode;
 mod default_manifest;
+pub(crate) mod experiment_selection_policy;
+pub(crate) mod failure_signal_policy;
+pub(crate) mod team_review;
 /// A policy manifest's bytes as the owner's install door stores them, its
 /// optional notification table made explicit. A vault-shape manifest row
 /// (ARCH-0070) reads as landed against these.
@@ -32,6 +41,7 @@ mod definition_ceiling;
 mod delegation_chain;
 mod docedit_resource;
 pub(crate) use docedit_resource::shipped_docedit_package_limits;
+pub(crate) mod dispatch_compliance;
 mod docx_budget;
 mod doors;
 mod dreamer_grant;
@@ -44,6 +54,7 @@ mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
 mod input;
+pub(crate) mod judge_calibration;
 pub(crate) mod mail_policy;
 mod message_address;
 pub(crate) use message_address::message_address_refusal;
@@ -289,3 +300,5 @@ use crate::write_envelope::WriteEnvelope;
 use rmpv::Value;
 #[cfg(test)]
 use std::io::Cursor;
+
+pub(crate) mod voice_ref_limits;

@@ -56,8 +56,8 @@ pub(super) fn dispatch_put_type(
             &body,
             fixed.replicated,
         )?;
-        dispatch.is_lexical_query_hint_claim =
-            body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
+        dispatch.is_lexical_query_hint_claim = body.predicate
+            == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT;
         if dispatch.is_lexical_query_hint_claim {
             super::super::lexical_hint::validate_lexical_query_hint(
                 store,
@@ -71,8 +71,11 @@ pub(super) fn dispatch_put_type(
             crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &fixed.id)?
             && crate::batch::EntityMetadataHeader::parse(&prior)
                 .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
-            && crate::claim::decode_claim_body(&prior[ENTITY_METADATA_HEADER_LEN..], true)
-                .is_ok_and(|stored| stored.scope_facet != body.scope_facet)
+            && crate::write_envelope::claim_body::decode_claim_body(
+                &prior[ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )
+            .is_ok_and(|stored| stored.scope_facet != body.scope_facet)
         {
             return Err(Error::Registry(RegistryError::FacetStampImmutable {
                 src: fixed.id,
@@ -137,7 +140,7 @@ pub(super) fn dispatch_put_type(
             fixed.own_device,
         )?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
-        crate::code_artifact::validate_code_artifact_body_bytes(data)?;
+        crate::store::code_artifact_body::validate_code_artifact_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
         crate::blob_artifact::validate_blob_artifact_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
@@ -166,10 +169,10 @@ pub(super) fn dispatch_put_type(
                 fixed.posture,
             )?;
         } else {
-            crate::authority::validate_authority_log_entry_body_bytes(data)?;
+            oneiron_authority::authority::validate_authority_log_entry_body_bytes(data)?;
         }
-        let entry = crate::authority::decode_authority_log_entry_body(data)?;
-        let entry_hash = crate::authority::authority_entry_hash(&entry)?;
+        let entry = oneiron_authority::authority::decode_authority_log_entry_body(data)?;
+        let entry_hash = oneiron_authority::authority::authority_entry_hash(&entry)?;
         // ONE-1604-D1 chokepoint: every materialization path funnels through
         // here, so the store-key bind, the append-only guard, and the
         // cross-type dominance verdict are computed on every import/replay
@@ -216,31 +219,35 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == ENTITY_TYPE_COUNTERPARTY_CONTACT {
         crate::counterparty_contact::validate_counterparty_contact_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_COMM_RECORD {
-        crate::comm::validate_comm_record_body_bytes(data)?;
+        crate::write_envelope::communication_record::validate_comm_record_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_DIAGNOSTIC {
-        crate::self_heal::validate_diagnostic_event_admission(&fixed.id, fixed.occurred, data)?;
+        crate::store::diagnostic_record::validate_diagnostic_event_admission(
+            &fixed.id,
+            fixed.occurred,
+            data,
+        )?;
         crate::self_heal::reject_off_record_diagnostic_sources(store, data)?;
     } else if fixed.entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_PSYCH_PROFILE {
-        crate::psych_profile::validate_psych_profile_body_bytes(data)?;
+        crate::write_envelope::profile_snapshot::validate_psych_profile_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT {
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
-        crate::skill_hub::decode_skill_hub_record(data)?;
+        crate::write_envelope::skill_source::decode_skill_hub_record(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
-        crate::comm::decode_claim_class_descriptor(data)?;
+        crate::store::claim_descriptors::decode_claim_class_descriptor(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_MODEL {
         // SCAN C046: a MODEL body is the engine's pinned shape on every door.
         // A replica's that fails it is the peer's bytes, refused as a claim
         // body is (quarantined, the batch goes on), never stored to wedge
         // the model substrate.
-        crate::provenance::decode_model_entity_body(data)
+        crate::write_envelope::provenance::actor_substrate::decode_model_entity_body(data)
             .map_err(|_| Error::InvalidClaimBody("MODEL entity body"))?;
     } else if fixed.entity_type == ENTITY_TYPE_SKILL {
-        let decoded = crate::skill::decode_skill_record(data)?;
+        let decoded = crate::write_envelope::skill_record::decode_skill_record(data)?;
         crate::skill::resident::validate_owner_put_in_txn(
             store,
             wtxn,
@@ -280,7 +287,7 @@ pub(super) fn dispatch_put_type(
         // (`validate_child_of_batch`), which already sees this put and every
         // pair it re-judges. A second per-op rule reading half-applied state
         // could only disagree with it.
-        crate::habit::task_role_from_body_bytes(data)?;
+        crate::write_envelope::task_body::task_role_from_body_bytes(data)?;
         // STO-03: the streak counters are DERIVED, so an inbound value is
         // discarded here — at the one arm every road to a TASK body converges
         // on, for every role. The public doors already refused the keys
@@ -290,7 +297,7 @@ pub(super) fn dispatch_put_type(
         // every other role: the tail reducer visits `Habit` rows alone, so a
         // peer-minted counter on a `Task` or `HabitCheckin` row would simply
         // be stored and never overwritten.
-        task_body_without_streaks = crate::habit::strip_streak_fields(data)?;
+        task_body_without_streaks = crate::write_envelope::task_body::strip_streak_fields(data)?;
     }
     Ok(DispatchCarry {
         task_body_without_streaks,

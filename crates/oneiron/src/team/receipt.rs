@@ -16,15 +16,18 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::agent_dispatch::{
-    CoordinationPattern, load_team_type_tree_at_in_txn, load_team_type_tree_in_txn,
-};
+use crate::agent_dispatch::{load_team_type_tree_at_in_txn, load_team_type_tree_in_txn};
+use crate::attempt_queue::source_rows::union_source_rows;
+use crate::claim::learning_evidence::Anchor;
+use crate::claim::learning_evidence::EvidenceSource;
+use crate::claim::learning_evidence::LearningEvidence;
+use crate::claim::learning_evidence::Observation;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::learning::{Anchor, EvidenceSource, LearningEvidence, Observation, TypeRef};
+use crate::receipt::task_type_ref::TypeRef;
 use crate::side_table::{self, Named, SideTable};
-use crate::skill_optimize::union_source_rows;
 use crate::task_type::TypeTree;
+use crate::team::team_shape::CoordinationPattern;
 
 use super::pattern::{TeamAxis, TeamPattern, model_mix, pattern_cell};
 

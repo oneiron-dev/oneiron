@@ -2,9 +2,9 @@ use super::*;
 
 use heed::RwTxn;
 
-use crate::embed::EmbeddingProvenance;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::embedding::EmbeddingProvenance;
 use crate::store::{ManifestDbs, Store};
 
 pub(super) struct AppliedVector {

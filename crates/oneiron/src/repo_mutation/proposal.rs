@@ -90,14 +90,7 @@ fn op_key(repo: &RepoRef, seq: u64) -> OpKey {
     OpKey { repo_key_hash, seq }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum RepoProposalStatus {
-    Proposed,
-    Approved,
-    Applied,
-    Failed,
-    Rejected,
-}
+pub use crate::store::repo_proposal_record::RepoProposalStatus;
 
 /// A bounded, immutable file change plus all the critic evidence that judged it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,27 +142,7 @@ pub struct RepoProposal {
     pub opener_lineage: Vec<[u8; 32]>,
 }
 
-/// The complete reviewed operation identity. File bytes remain on `RepoProposal`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RepoProposalOperation {
-    CommitFile,
-    ResolveConflictFile {
-        #[serde(with = "entity_serde")]
-        branch_subject: EntityId,
-        #[serde(with = "entity_serde")]
-        open_conflict_claim_id: EntityId,
-        branch_name: String,
-    },
-    /// Every file of one accepted pushed ref update, as ONE reviewed
-    /// bundle (G4 PR2): it lands through its merge queue only.
-    ReceivedFiles {
-        #[serde(with = "entity_serde")]
-        candidate: EntityId,
-    },
-    /// Every file of one native reviewed bundle (FIX 7608 slice 5), each
-    /// with its exact state change: it lands through its merge queue only.
-    CommitFiles,
-}
+pub use crate::store::repo_proposal_record::RepoProposalOperation;
 
 pub(super) fn invalid(reason: &'static str) -> Error {
     Error::Code(CodeError::InvalidRepoMutationRecord(reason))
@@ -652,21 +625,7 @@ pub(super) fn proposal_snapshot_recorded(
     Ok(found)
 }
 
-mod entity_serde {
-    use crate::entity_id::EntityId;
-    use serde::{Deserialize, Deserializer, Serializer};
-    pub(super) fn serialize<S: Serializer>(
-        id: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&id.to_hex())
-    }
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
-        EntityId::from_hex(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+use crate::store::repo_proposal_record::entity_serde;
 
 /// Check claim and branch bindings before the document edit or Git mutation.
 pub(super) fn validate_conflict(
