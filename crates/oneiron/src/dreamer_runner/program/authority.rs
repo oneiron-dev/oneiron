@@ -653,7 +653,7 @@ pub(crate) fn program_actor_for_attempt_in_txn(
     if stamp.attempt_id != *id.as_bytes() {
         return None;
     }
-    let class = EdgeActorClass::try_from_u8(stamp.actor_class).ok()?;
+    let class = EdgeActorClass::try_from_u8(stamp.actor_class)?;
     Some(WriteActor::new(stamp.actor, class))
 }
 
