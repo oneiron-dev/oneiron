@@ -441,10 +441,9 @@ fn answer_app_message(
             }
             return Ok(None);
         }
-        // FIX 6458: an old home with no actor session hands its home state on
-        // as its machine alone. Only the home handoff's own calls run on a
-        // socket that bound no actor, under its owner-grade upgrade, each
-        // judged for the machine it proved now; any other call needs a bind.
+        // Home handoff and exact pad calls can run without a bound actor,
+        // under the owner-grade upgrade and the machine it proves now.
+        // Any other call needs a bind.
         if state.bound_auth.is_none()
             && context.is_none()
             && crate::livequery::machine_handoff_method(&request.method)
