@@ -140,8 +140,8 @@ mod hooks;
 pub use hooks::StoreHooks;
 mod scope_stamps;
 pub use scope_stamps::StoreScopeStamps;
-#[cfg(feature = "sync")]
 pub mod document_frame_tags;
+pub mod framing;
 pub mod housekeeping_report;
 pub mod housekeeping_schedule;
 #[cfg(feature = "sync")]
@@ -168,7 +168,6 @@ pub mod result_memory;
 pub use oneiron_store::retained_memory;
 pub mod sandbox_import;
 pub mod verb_invocation;
-#[cfg(feature = "sync")]
 pub mod window_protocol;
 #[cfg(feature = "sync")]
 pub(crate) mod window_rows;
