@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
-    TaskAskAnswer, TaskAskDefault, TaskAskOptionId, TaskAskQuestion, TaskAskSource, TaskAskSpec,
-    TaskAskTarget, TaskAskWord,
+    TaskAskAnswer, TaskAskDefault, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskSource,
+    TaskAskSpec, TaskAskTarget, TaskAskWord,
 };
 use super::{ConsultPayloadRef, TaskAssignee};
 use crate::code_run::{
@@ -96,7 +96,7 @@ fn ask_spec(row: &CodeConsentWaitRow) -> MemoryResult<TaskAskSpec> {
         .map(|choice| {
             Ok((
                 TaskAskOptionId::new(choice.as_str())?,
-                choice_label(choice, row),
+                TaskAskOption::new(choice_label(choice, row)),
             ))
         })
         .collect::<MemoryResult<BTreeMap<_, _>>>()?;

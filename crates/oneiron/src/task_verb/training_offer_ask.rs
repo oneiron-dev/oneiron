@@ -22,8 +22,9 @@ use serde::{Deserialize, Serialize};
 
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
-    TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOptionId, TaskAskQuestion,
-    TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskTarget, TaskAskWord,
+    TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption, TaskAskOptionId,
+    TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
+    TaskAskTarget, TaskAskWord,
 };
 use super::{ConsultPayloadRef, TaskAssignee};
 use crate::consent::AuthenticatedOwner;
@@ -247,7 +248,10 @@ fn offer_ask_spec(
     let mut options = BTreeMap::new();
     for (id, answer, label) in OPTIONS {
         if fits(&offer.candidate, answer) {
-            options.insert(TaskAskOptionId::new(id)?, label.to_owned());
+            options.insert(
+                TaskAskOptionId::new(id)?,
+                TaskAskOption::new(label.to_owned()),
+            );
         }
     }
     what.options = options;
