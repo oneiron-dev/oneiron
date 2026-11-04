@@ -3,9 +3,9 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1222 facade rows, 4393 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1163.
-// WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.questions.create (result), vault.questions.read (result), self.skills.call (result), vault.embedding_spaces.declare (input and result), vault.questions.edit (input and result).
+// UniFFI census: 1223 facade rows, 4385 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1159.
+// WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), vault.slim.resume_step (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), ai.steps.submit (result), ai.steps.receipt (result), vault.questions.create (result), vault.questions.read (result), vault.runs.program_step (result), self.skills.call (result), vault.embedding_spaces.declare (input and result), vault.questions.edit (input and result), vault.runs.step (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
     clippy::large_enum_variant,
@@ -20535,69 +20535,6 @@ pub enum SlimResumeStepRequest {
     },
 }
 
-/// `oneiron::model_step_record::StepProgression`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum StepProgression {
-    #[serde(rename = "started")]
-    Started,
-    #[serde(rename = "response_received")]
-    ResponseReceived,
-    #[serde(rename = "logged")]
-    Logged,
-    #[serde(rename = "finished")]
-    Finished,
-}
-
-/// `oneiron::model_step_record::ModelStepCheckpoint`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ModelStepCheckpoint {
-    #[serde(rename = "progression")]
-    pub progression: StepProgression,
-    #[serde(
-        rename = "updated_ms",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub updated_ms: Option<u64>,
-    #[serde(rename = "claim_ref", default, skip_serializing_if = "Option::is_none")]
-    pub claim_ref: Option<String>,
-}
-
-/// `oneiron::slim::public::SavedIntentState`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum SavedIntentState {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "done")]
-    Done,
-    #[serde(rename = "abandoned")]
-    Abandoned,
-    #[serde(rename = "deferred")]
-    Deferred,
-}
-
-/// `oneiron::slim::public::SavedResumeStep`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "kind")]
-pub enum SavedResumeStep {
-    #[serde(rename = "model")]
-    Model {
-        #[serde(rename = "attempt_id")]
-        attempt_id: String,
-        #[serde(rename = "step_hash")]
-        step_hash: String,
-        #[serde(rename = "checkpoint")]
-        checkpoint: ModelStepCheckpoint,
-    },
-    #[serde(rename = "outbound_intent")]
-    OutboundIntent {
-        #[serde(rename = "step")]
-        step: SlimResumeStep,
-        #[serde(rename = "state")]
-        state: SavedIntentState,
-    },
-}
-
 /// `oneiron::slim::ShedCause`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ShedCause {
@@ -30425,6 +30362,8 @@ pub enum LegalHoldEventKind {
     LiftAndEraseConfirmed,
     #[serde(rename = "erase_confirmed")]
     EraseConfirmed,
+    #[serde(rename = "erase_withdrawn")]
+    EraseWithdrawn,
     #[serde(rename = "erase_completed")]
     EraseCompleted,
     #[serde(rename = "lifted")]
@@ -30452,6 +30391,8 @@ pub enum LegalHoldReason {
     PrivacyEraseKept,
     #[serde(rename = "owner_confirmed")]
     OwnerConfirmed,
+    #[serde(rename = "owner_withdrew")]
+    OwnerWithdrew,
     #[serde(rename = "completion_pending")]
     CompletionPending,
     #[serde(rename = "receipt_completed")]
@@ -30664,6 +30605,45 @@ pub struct LegalHoldLiftAndErased {
     pub records: Vec<LegalHoldErasedRecord>,
     #[serde(rename = "changed", default, skip_serializing_if = "Option::is_none")]
     pub changed: Option<LiftAndEraseShownState>,
+}
+
+/// `oneiron::verbs::legal_hold::LegalHoldWithdrawEraseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldWithdrawEraseRequest {
+    #[serde(rename = "records")]
+    pub records: Vec<String>,
+}
+
+/// `oneiron::deletion::legal_hold::types::EraseWithdrawal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EraseWithdrawal {
+    #[serde(rename = "withdrawn")]
+    Withdrawn,
+    #[serde(rename = "not_waiting")]
+    NotWaiting,
+    #[serde(rename = "confirmed_by_another_owner")]
+    ConfirmedByAnotherOwner,
+    #[serde(rename = "under_way")]
+    UnderWay,
+}
+
+/// `oneiron::verbs::legal_hold::LegalHoldWithdrawnErase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldWithdrawnErase {
+    #[serde(rename = "record")]
+    pub record: String,
+    #[serde(rename = "status")]
+    pub status: EraseWithdrawal,
+}
+
+/// `oneiron::verbs::legal_hold::LegalHoldErasesWithdrawn`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldErasesWithdrawn {
+    #[serde(rename = "records")]
+    pub records: Vec<LegalHoldWithdrawnErase>,
 }
 
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteSendRequest`.
@@ -51235,287 +51215,6 @@ pub struct ModelStepSubmit {
     pub retry: Option<ModelStepRetryPolicy>,
 }
 
-/// `oneiron_model::llm::catalog::LlmCapability`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum LlmCapability {
-    #[serde(rename = "streaming")]
-    Streaming,
-    #[serde(rename = "tool_calling")]
-    ToolCalling,
-    #[serde(rename = "tool_results")]
-    ToolResults,
-    #[serde(rename = "image_input")]
-    ImageInput,
-    #[serde(rename = "json_response")]
-    JsonResponse,
-    #[serde(rename = "reasoning")]
-    Reasoning,
-    #[serde(rename = "voice")]
-    Voice,
-    #[serde(rename = "assistant_prefill")]
-    AssistantPrefill,
-    #[serde(rename = "audio_input")]
-    AudioInput,
-    #[serde(rename = "reasoning_content_history")]
-    ReasoningContentHistory,
-    #[serde(rename = "token_logprobs")]
-    TokenLogprobs,
-}
-
-/// `oneiron_model::llm::error::UnsupportedCapability`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct UnsupportedCapability {
-    #[serde(rename = "capability")]
-    pub capability: LlmCapability,
-    #[serde(rename = "model", default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-/// `oneiron_model::llm::error::LabelReadFailure`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum LabelReadFailure {
-    #[serde(rename = "EmittedText")]
-    EmittedText,
-    #[serde(rename = "NotEosStop")]
-    NotEosStop,
-    #[serde(rename = "MissingLabels")]
-    MissingLabels,
-    #[serde(rename = "Malformed")]
-    Malformed,
-}
-
-/// `oneiron_model::llm::error::FatalLlmError`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum FatalLlmError {
-    #[serde(rename = "InvalidRequest")]
-    InvalidRequest,
-    #[serde(rename = "InvalidRequestDetail")]
-    InvalidRequestDetail {
-        #[serde(rename = "message")]
-        message: String,
-    },
-    #[serde(rename = "Auth")]
-    Auth,
-    #[serde(rename = "ContentFiltered")]
-    ContentFiltered,
-    #[serde(rename = "EmptyResponse")]
-    EmptyResponse,
-    #[serde(rename = "Unsupported")]
-    Unsupported(UnsupportedCapability),
-    #[serde(rename = "LabelRead")]
-    LabelRead(LabelReadFailure),
-    #[serde(rename = "ResponseErased")]
-    ResponseErased,
-}
-
-/// `oneiron::llm::step::public::ModelStepFailureClass`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ModelStepFailureClass {
-    #[serde(rename = "retryable")]
-    Retryable,
-    #[serde(rename = "fatal")]
-    Fatal,
-    #[serde(rename = "budget_denied")]
-    BudgetDenied,
-    #[serde(rename = "schema_validation")]
-    SchemaValidation,
-    #[serde(rename = "fallback")]
-    Fallback,
-    #[serde(rename = "finalize_refused")]
-    FinalizeRefused,
-    #[serde(rename = "deadline_hard_cut")]
-    DeadlineHardCut,
-    #[serde(rename = "engine")]
-    Engine,
-}
-
-/// `oneiron_model::llm::error::TransportFaultKind`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TransportFaultKind {
-    #[serde(rename = "not_sent")]
-    NotSent,
-    #[serde(rename = "io_after_send")]
-    IoAfterSend,
-    #[serde(rename = "refused")]
-    Refused,
-    #[serde(rename = "unexpected_frame")]
-    UnexpectedFrame,
-    #[serde(rename = "ended_with_error")]
-    EndedWithError,
-}
-
-/// `oneiron_model::llm::error::TransportFault`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct TransportFault {
-    #[serde(rename = "kind")]
-    pub kind: TransportFaultKind,
-    #[serde(rename = "stage", default, skip_serializing_if = "Option::is_none")]
-    pub stage: Option<String>,
-    #[serde(rename = "detail")]
-    pub detail: String,
-}
-
-/// `oneiron_model::llm::error::RetryableLlmError`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum RetryableLlmError {
-    #[serde(rename = "RateLimited")]
-    RateLimited {
-        #[serde(
-            rename = "retry_after",
-            default,
-            skip_serializing_if = "Option::is_none"
-        )]
-        retry_after: Option<u64>,
-        #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
-        resets_at: Option<Vec<u64>>,
-    },
-    #[serde(rename = "QuotaSpent")]
-    QuotaSpent {
-        #[serde(rename = "kind")]
-        kind: SpentKind,
-        #[serde(
-            rename = "retry_after",
-            default,
-            skip_serializing_if = "Option::is_none"
-        )]
-        retry_after: Option<u64>,
-        #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
-        resets_at: Option<Vec<u64>>,
-    },
-    #[serde(rename = "KeptOnDevice")]
-    KeptOnDevice {
-        #[serde(
-            rename = "retry_after",
-            default,
-            skip_serializing_if = "Option::is_none"
-        )]
-        retry_after: Option<u64>,
-        #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
-        resets_at: Option<Vec<u64>>,
-        #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
-        reason: Option<String>,
-    },
-    #[serde(rename = "WorldRouteNotAdmitted")]
-    WorldRouteNotAdmitted,
-    #[serde(rename = "ServerError")]
-    ServerError,
-    #[serde(rename = "Timeout")]
-    Timeout,
-    #[serde(rename = "StreamCut")]
-    StreamCut,
-    #[serde(rename = "TransportFault")]
-    TransportFault(TransportFault),
-    #[serde(rename = "DeviceAdmissionStopped")]
-    DeviceAdmissionStopped,
-}
-
-/// `oneiron_model::llm::error::BudgetDenied`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum BudgetDenied {
-    #[serde(rename = "Exhausted")]
-    Exhausted,
-    #[serde(rename = "LeaseInvalid")]
-    LeaseInvalid,
-    #[serde(rename = "AdmissionDenied")]
-    AdmissionDenied,
-    #[serde(rename = "HostCheck")]
-    HostCheck,
-}
-
-/// `oneiron_model::llm::error::LlmError`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum LlmError {
-    #[serde(rename = "Retryable")]
-    Retryable(RetryableLlmError),
-    #[serde(rename = "Fatal")]
-    Fatal(FatalLlmError),
-    #[serde(rename = "BudgetDenied")]
-    BudgetDenied(BudgetDenied),
-}
-
-/// `oneiron::llm::step::public::ModelStepFailure`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ModelStepFailure {
-    #[serde(rename = "class")]
-    pub class: ModelStepFailureClass,
-    #[serde(rename = "message")]
-    pub message: String,
-    #[serde(rename = "llm", default, skip_serializing_if = "Option::is_none")]
-    pub llm: Option<LlmError>,
-    #[serde(
-        rename = "validation_attempts",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub validation_attempts: Option<u8>,
-    #[serde(rename = "validation_errors")]
-    pub validation_errors: Vec<String>,
-    #[serde(
-        rename = "spent_usage",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub spent_usage: Option<LlmUsage>,
-}
-
-/// `oneiron::llm::step::public::ModelStepResult`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "status")]
-pub enum ModelStepResult {
-    #[serde(rename = "finished")]
-    Finished {
-        #[serde(rename = "response")]
-        response: LlmResponse,
-        #[serde(rename = "json", default, skip_serializing_if = "Option::is_none")]
-        json: Option<crate::WireJson>,
-        #[serde(rename = "memoized")]
-        memoized: bool,
-        #[serde(
-            rename = "fallback_source",
-            default,
-            skip_serializing_if = "Option::is_none"
-        )]
-        fallback_source: Option<FatalLlmError>,
-        #[serde(rename = "claim_ref")]
-        claim_ref: String,
-    },
-    #[serde(rename = "failed")]
-    Failed {
-        #[serde(rename = "failure")]
-        failure: ModelStepFailure,
-    },
-    #[serde(rename = "budget_denied")]
-    BudgetDenied {
-        #[serde(rename = "trap_ref")]
-        trap_ref: String,
-    },
-    #[serde(rename = "erased")]
-    Erased,
-}
-
-/// `oneiron::llm::step::public::ModelStepReceipt`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ModelStepReceipt {
-    #[serde(rename = "step_ref")]
-    pub step_ref: String,
-    #[serde(rename = "step_hash")]
-    pub step_hash: String,
-    #[serde(rename = "model")]
-    pub model: String,
-    #[serde(rename = "retry")]
-    pub retry: ModelStepRetryPolicy,
-    #[serde(
-        rename = "progression",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub progression: Option<StepProgression>,
-    #[serde(rename = "result", default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<ModelStepResult>,
-}
-
 /// `oneiron::llm::step::public::ModelStepReceiptRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -52766,6 +52465,33 @@ pub struct LlmCatalogCost {
     pub cache_write_per_million: Option<String>,
     #[serde(rename = "currency", default, skip_serializing_if = "Option::is_none")]
     pub currency: Option<String>,
+}
+
+/// `oneiron_model::llm::catalog::LlmCapability`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LlmCapability {
+    #[serde(rename = "streaming")]
+    Streaming,
+    #[serde(rename = "tool_calling")]
+    ToolCalling,
+    #[serde(rename = "tool_results")]
+    ToolResults,
+    #[serde(rename = "image_input")]
+    ImageInput,
+    #[serde(rename = "json_response")]
+    JsonResponse,
+    #[serde(rename = "reasoning")]
+    Reasoning,
+    #[serde(rename = "voice")]
+    Voice,
+    #[serde(rename = "assistant_prefill")]
+    AssistantPrefill,
+    #[serde(rename = "audio_input")]
+    AudioInput,
+    #[serde(rename = "reasoning_content_history")]
+    ReasoningContentHistory,
+    #[serde(rename = "token_logprobs")]
+    TokenLogprobs,
 }
 
 /// `oneiron_model::llm::catalog::LlmCatalogEntry`.
@@ -54079,6 +53805,158 @@ pub struct AiVideoTicket {
 pub struct AiVideoJobRequest {
     #[serde(rename = "job")]
     pub job: String,
+}
+
+/// `oneiron_model::llm::error::TransportFaultKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TransportFaultKind {
+    #[serde(rename = "not_sent")]
+    NotSent,
+    #[serde(rename = "io_after_send")]
+    IoAfterSend,
+    #[serde(rename = "refused")]
+    Refused,
+    #[serde(rename = "unexpected_frame")]
+    UnexpectedFrame,
+    #[serde(rename = "ended_with_error")]
+    EndedWithError,
+}
+
+/// `oneiron_model::llm::error::TransportFault`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TransportFault {
+    #[serde(rename = "kind")]
+    pub kind: TransportFaultKind,
+    #[serde(rename = "stage", default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    #[serde(rename = "detail")]
+    pub detail: String,
+}
+
+/// `oneiron_model::llm::error::RetryableLlmError`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RetryableLlmError {
+    #[serde(rename = "RateLimited")]
+    RateLimited {
+        #[serde(
+            rename = "retry_after",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        retry_after: Option<u64>,
+        #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
+        resets_at: Option<Vec<u64>>,
+    },
+    #[serde(rename = "QuotaSpent")]
+    QuotaSpent {
+        #[serde(rename = "kind")]
+        kind: SpentKind,
+        #[serde(
+            rename = "retry_after",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        retry_after: Option<u64>,
+        #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
+        resets_at: Option<Vec<u64>>,
+    },
+    #[serde(rename = "KeptOnDevice")]
+    KeptOnDevice {
+        #[serde(
+            rename = "retry_after",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        retry_after: Option<u64>,
+        #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
+        resets_at: Option<Vec<u64>>,
+        #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    #[serde(rename = "WorldRouteNotAdmitted")]
+    WorldRouteNotAdmitted,
+    #[serde(rename = "ServerError")]
+    ServerError,
+    #[serde(rename = "Timeout")]
+    Timeout,
+    #[serde(rename = "StreamCut")]
+    StreamCut,
+    #[serde(rename = "TransportFault")]
+    TransportFault(TransportFault),
+    #[serde(rename = "DeviceAdmissionStopped")]
+    DeviceAdmissionStopped,
+}
+
+/// `oneiron_model::llm::error::UnsupportedCapability`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct UnsupportedCapability {
+    #[serde(rename = "capability")]
+    pub capability: LlmCapability,
+    #[serde(rename = "model", default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// `oneiron_model::llm::error::LabelReadFailure`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LabelReadFailure {
+    #[serde(rename = "EmittedText")]
+    EmittedText,
+    #[serde(rename = "NotEosStop")]
+    NotEosStop,
+    #[serde(rename = "MissingLabels")]
+    MissingLabels,
+    #[serde(rename = "Malformed")]
+    Malformed,
+}
+
+/// `oneiron_model::llm::error::FatalLlmError`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FatalLlmError {
+    #[serde(rename = "InvalidRequest")]
+    InvalidRequest,
+    #[serde(rename = "InvalidRequestDetail")]
+    InvalidRequestDetail {
+        #[serde(rename = "message")]
+        message: String,
+    },
+    #[serde(rename = "Auth")]
+    Auth,
+    #[serde(rename = "ContentFiltered")]
+    ContentFiltered,
+    #[serde(rename = "EmptyResponse")]
+    EmptyResponse,
+    #[serde(rename = "Unsupported")]
+    Unsupported(UnsupportedCapability),
+    #[serde(rename = "LabelRead")]
+    LabelRead(LabelReadFailure),
+    #[serde(rename = "ResponseErased")]
+    ResponseErased,
+}
+
+/// `oneiron_model::llm::error::BudgetDenied`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BudgetDenied {
+    #[serde(rename = "Exhausted")]
+    Exhausted,
+    #[serde(rename = "LeaseInvalid")]
+    LeaseInvalid,
+    #[serde(rename = "AdmissionDenied")]
+    AdmissionDenied,
+    #[serde(rename = "HostCheck")]
+    HostCheck,
+}
+
+/// `oneiron_model::llm::error::LlmError`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LlmError {
+    #[serde(rename = "Retryable")]
+    Retryable(RetryableLlmError),
+    #[serde(rename = "Fatal")]
+    Fatal(FatalLlmError),
+    #[serde(rename = "BudgetDenied")]
+    BudgetDenied(BudgetDenied),
 }
 
 /// `oneiron::verbs::host::AiVideoJob`.
@@ -61820,37 +61698,6 @@ pub struct DreamerWakeView {
     pub live: Option<DreamerWakeLiveView>,
 }
 
-/// `oneiron::model_step_record::SettledStepRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct SettledStepRequest {
-    #[serde(rename = "job_ref")]
-    pub job_ref: String,
-    #[serde(rename = "step_hash")]
-    pub step_hash: String,
-}
-
-/// `oneiron::model_step_record::SettledStepView`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct SettledStepView {
-    #[serde(rename = "job_ref")]
-    pub job_ref: String,
-    #[serde(rename = "run_id", default, skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<String>,
-    #[serde(rename = "claim_ref")]
-    pub claim_ref: String,
-    #[serde(rename = "step_hash")]
-    pub step_hash: String,
-    #[serde(rename = "model")]
-    pub model: String,
-    #[serde(rename = "purpose")]
-    pub purpose: String,
-    #[serde(rename = "params_hash")]
-    pub params_hash: String,
-    #[serde(rename = "response")]
-    pub response: LlmResponse,
-}
-
 /// `oneiron::engine_executor::checkpoint_read::CheckpointReadRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -62280,58 +62127,6 @@ pub struct SettledProgramStepRequest {
     pub root: String,
     #[serde(rename = "step_ref")]
     pub step_ref: String,
-}
-
-/// `oneiron::dreamer_runner::program::read::views::ProgramResultAvailability`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ProgramResultAvailability {
-    #[serde(rename = "readable")]
-    Readable,
-    #[serde(rename = "withheld")]
-    Withheld,
-    #[serde(rename = "absent")]
-    Absent,
-}
-
-/// `oneiron::dreamer_runner::program::read::views::SettledProgramStepView`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct SettledProgramStepView {
-    #[serde(rename = "root")]
-    pub root: String,
-    #[serde(rename = "attempt")]
-    pub attempt: String,
-    #[serde(rename = "actor")]
-    pub actor: String,
-    #[serde(rename = "code_run")]
-    pub code_run: String,
-    #[serde(rename = "step_ref")]
-    pub step_ref: String,
-    #[serde(rename = "issue")]
-    pub issue: ProgramStepIssueView,
-    #[serde(rename = "settled_at")]
-    pub settled_at: u64,
-    #[serde(rename = "result_digest")]
-    pub result_digest: String,
-    #[serde(
-        rename = "result_ref",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub result_ref: Option<String>,
-    #[serde(rename = "availability")]
-    pub availability: ProgramResultAvailability,
-    #[serde(
-        rename = "model_step",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub model_step: Option<SettledStepView>,
-    #[serde(
-        rename = "body_base64",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub body_base64: Option<String>,
 }
 
 /// `oneiron::dreamer_runner::program::read::views::ProgramCheckpointRequest`.

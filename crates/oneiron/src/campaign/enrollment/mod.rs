@@ -43,6 +43,9 @@ mod step_connector;
 mod storage;
 mod target;
 
+pub(crate) use self::approval::{
+    drop_enrollment_asks_of_call_in_txn, erase_enrollment_ask_actor_in_txn,
+};
 pub(crate) use self::manual::manual_enrollment_candidate_in_txn;
 pub(crate) use self::reconcile::{
     IntakeSource, Reconciled, effective_member_in_txn, keep_isolation_stamps, reconcile,
