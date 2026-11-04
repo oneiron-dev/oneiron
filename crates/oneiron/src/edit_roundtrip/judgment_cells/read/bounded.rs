@@ -1,35 +1,75 @@
-//! Bounded sparse-read admission for named-sheet cells (FIX 9817).
-//! `Bounds` splits retained (cumulative live-until-end) from scratch (peak
-//! temporaries); workbook/rels resolution streams under it. Parent `read`
-//! owns grid parsing; this module owns admission only.
+//! Bounded sparse-read admission for named-sheet cells (FIX 9817, 13218, 13219).
+//! `Bounds` splits the read's live bytes by owner lifetime: the returned
+//! cells map, the shared-string cache, and one scope per temporary. Each
+//! scope reserves before its bytes allocate, names its actual live bytes
+//! after, and releases them when they free, in both live and None-live
+//! reads; freed temporaries never linger in the operation's charge.
+//! Parent `read` owns grid parsing; this module owns admission only.
 
 use super::super::{REL_NS, SHEET_NS, invalid};
 use crate::edit_roundtrip::session_validate::resolve_part_path;
+use crate::edit_roundtrip::{CellRef, CellValue};
 use crate::error::{Error, Result};
 use crate::office_body::{document_refused, machine_memory_refused};
-use oneiron_docedit::resource::{Hold, ResourceRefusal, Resources, wide};
+use oneiron_docedit::resource::{ResourceAllocation, ResourceRefusal, Resources, wide};
 use oneiron_docedit::retained_opc::Package as RetainedPackage;
 use quick_xml::events::Event;
 use quick_xml::name::ResolveResult;
 use quick_xml::reader::NsReader;
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 /// Relationship-attribute namespace for `r:id` (sheet to worksheet rel).
 const REL_ATTR_NS: &[u8] = b"http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
-/// Explicit deadline plus port for the bounded sparse read (FIX 9817).
+/// The bounded read's cells with their allocation scope (FIX 13218): the
+/// scope holds the map's live bytes and releases them when the map frees,
+/// in both live and None-live reads. Field order frees the map before the
+/// scope. Callers name only `cells`.
+pub(crate) struct BoundedSheetCells {
+    pub(crate) cells: BTreeMap<CellRef, CellValue>,
+    _memory: Box<dyn ResourceAllocation>,
+}
+
+impl BoundedSheetCells {
+    pub(super) fn new(
+        cells: BTreeMap<CellRef, CellValue>,
+        memory: Box<dyn ResourceAllocation>,
+    ) -> Self {
+        Self {
+            cells,
+            _memory: memory,
+        }
+    }
+}
+
+/// An owned temporary with its allocation scope (FIX 13218): the scope
+/// holds the value's actual live bytes and releases them when the value
+/// frees. Field order frees the value before the scope. `scope` is `None`
+/// on the legacy path. A consumer either drops the whole value (release)
+/// or moves the value on and drops the scope after marking the target
+/// (transfer: target marked before source release).
+pub(super) struct Scoped<T> {
+    pub(super) value: T,
+    pub(super) scope: Option<Box<dyn ResourceAllocation>>,
+}
+
+/// Explicit deadline plus port for the bounded sparse read (FIX 9817, 13218).
 /// `MeasuringPort` never stops at a deadline, so the clock is checked
-/// alongside every port checkpoint. Retained holds cumulative live-until-end
-/// (wanted values, cells/cache nodes); scratch holds peak temporaries
-/// (attrmaps, decoded Cows, discarded shared prefix, workbook temps) via
-/// `covered`, never cumulative volume. Both drop with the read; the live
-/// reading carries the returned map after that.
+/// alongside every port checkpoint. The cells scope holds the returned
+/// map's cumulative live bytes and travels with it; the cache scope holds
+/// the shared-string cache's and releases when the cache frees. Every
+/// other allocation takes a fresh temp scope via [`Bounds::temp`], grown
+/// before it allocates and acked to its actual live bytes after, so freed
+/// temporaries release on drop instead of lingering in the charge.
 pub(super) struct Bounds<'a> {
     resources: &'a Resources,
     deadline: Instant,
-    retained: Hold,
-    scratch: Hold,
-    covered: u64,
+    cells: Box<dyn ResourceAllocation>,
+    cells_live: u64,
+    cache: Box<dyn ResourceAllocation>,
+    cache_live: u64,
 }
 
 impl<'a> Bounds<'a> {
@@ -37,9 +77,10 @@ impl<'a> Bounds<'a> {
         Self {
             resources,
             deadline,
-            retained: resources.hold(),
-            scratch: resources.hold(),
-            covered: 0,
+            cells: resources.allocation(),
+            cells_live: 0,
+            cache: resources.allocation(),
+            cache_live: 0,
         }
     }
 
@@ -57,21 +98,13 @@ impl<'a> Bounds<'a> {
         Ok(())
     }
 
-    /// Reserve `bytes` (all measured) for retained live-until-end.
-    pub(super) fn take_retained(&mut self, bytes: u64) -> Result<()> {
+    /// Checkpoint, then reserve before a cells-map allocation. The caller
+    /// allocates, then names the new total via [`Self::mark_cells`] before
+    /// the next take on this scope: `materialized` consumes all pending.
+    pub(super) fn take_cells(&mut self, bytes: u64, measured: u64) -> Result<()> {
         self.checkpoint()?;
-        self.retained.take(bytes).map_err(machine_memory_refused)?;
-        if Instant::now() >= self.deadline {
-            return Err(document_refused(ResourceRefusal::Deadline));
-        }
-        Ok(())
-    }
-
-    /// Reserve `bytes` of which only `measured` were measured, for retained.
-    pub(super) fn take_retained_estimate(&mut self, bytes: u64, measured: u64) -> Result<()> {
-        self.checkpoint()?;
-        self.retained
-            .take_estimate(bytes, measured)
+        self.cells
+            .grow(bytes, measured)
             .map_err(machine_memory_refused)?;
         if Instant::now() >= self.deadline {
             return Err(document_refused(ResourceRefusal::Deadline));
@@ -79,39 +112,58 @@ impl<'a> Bounds<'a> {
         Ok(())
     }
 
-    /// Hand retained bytes allocated so far to the live reading (resource.rs
-    /// "lasts until they are"): drop the retained hold (returning its pending
-    /// where live carries, absorbing its total where it cannot, FIX 10589)
-    /// and start fresh, so later takes do not double-count history. Scratch
-    /// peak is untouched.
-    pub(super) fn hand_retained(&mut self) {
-        self.retained = self.resources.hold();
+    /// Name the cells map's TOTAL live bytes after an allocation, release
+    /// or ownership transfer. Never waits or refuses.
+    pub(super) fn mark_cells(&mut self, total: u64) {
+        self.cells_live = total;
+        self.cells.materialized(total);
     }
 
-    /// Cover `bytes` of scratch live (peak, not volume): only growth past
-    /// `covered` reaches the port. For temporaries dropped before the read
-    /// ends (attrmaps, decoded Cows, discarded prefix, workbook temps).
-    pub(super) fn cover(&mut self, bytes: u64) -> Result<()> {
-        self.cover_estimate(bytes, bytes)
+    /// The cells map's live bytes named so far.
+    pub(super) fn live_cells(&self) -> u64 {
+        self.cells_live
     }
 
-    /// `cover` for `bytes` of which only `measured` were measured.
-    pub(super) fn cover_estimate(&mut self, bytes: u64, measured: u64) -> Result<()> {
+    /// Checkpoint, then reserve before a shared-cache allocation; see
+    /// [`Self::take_cells`] for the take/allocate/mark cycle.
+    pub(super) fn take_cache(&mut self, bytes: u64, measured: u64) -> Result<()> {
         self.checkpoint()?;
-        if bytes > self.covered {
-            let more = bytes - self.covered;
-            // Only the uncovered growth is new; measured past covered is at
-            // most the growth (estimates never hit the floor at once).
-            let measured_more = measured.saturating_sub(self.covered).min(more);
-            self.scratch
-                .take_estimate(more, measured_more)
-                .map_err(machine_memory_refused)?;
-            self.covered = bytes;
-        }
+        self.cache
+            .grow(bytes, measured)
+            .map_err(machine_memory_refused)?;
         if Instant::now() >= self.deadline {
             return Err(document_refused(ResourceRefusal::Deadline));
         }
         Ok(())
+    }
+
+    /// Name the shared cache's TOTAL live bytes. Never waits or refuses.
+    pub(super) fn mark_cache(&mut self, total: u64) {
+        self.cache_live = total;
+        self.cache.materialized(total);
+    }
+
+    /// The shared cache's live bytes named so far.
+    pub(super) fn live_cache(&self) -> u64 {
+        self.cache_live
+    }
+
+    /// Release the shared cache's charge once the cache itself is freed.
+    pub(super) fn release_cache(&mut self) {
+        self.mark_cache(0);
+    }
+
+    /// A fresh scope for one temporary: grow it before the temporary
+    /// allocates, ack its actual live bytes after, drop it with the
+    /// temporary.
+    pub(super) fn temp(&self) -> Box<dyn ResourceAllocation> {
+        self.resources.allocation()
+    }
+
+    /// The cells scope, returned with the map; the cache scope drops here,
+    /// already released beside the freed cache.
+    pub(super) fn into_cells_scope(self) -> Box<dyn ResourceAllocation> {
+        self.cells
     }
 }
 
@@ -123,75 +175,160 @@ pub(super) fn checkpoint(bounds: &Option<Bounds<'_>>) -> Result<()> {
     Ok(())
 }
 
-/// Reserve retained when bounded; no-op for the legacy path.
-pub(super) fn reserve_retained(bounds: &mut Option<Bounds<'_>>, bytes: u64) -> Result<()> {
-    if let Some(b) = bounds {
-        b.take_retained(bytes)?;
-    }
-    Ok(())
+/// A fresh temp scope when bounded; `None` for the legacy path.
+pub(super) fn temp_scope(bounds: &Option<Bounds<'_>>) -> Option<Box<dyn ResourceAllocation>> {
+    bounds.as_ref().map(Bounds::temp)
 }
 
-/// Reserve a retained estimate when bounded; no-op for the legacy path.
-pub(super) fn reserve_retained_estimate(
-    bounds: &mut Option<Bounds<'_>>,
+/// Checkpoint, then grow a temp scope before its allocation; no-op for the
+/// legacy path.
+pub(super) fn grow_temp(
+    scope: &mut Option<Box<dyn ResourceAllocation>>,
+    bounds: &Option<Bounds<'_>>,
     bytes: u64,
     measured: u64,
 ) -> Result<()> {
-    if let Some(b) = bounds {
-        b.take_retained_estimate(bytes, measured)?;
+    if let (Some(scope), Some(bounds)) = (scope.as_mut(), bounds.as_ref()) {
+        bounds.checkpoint()?;
+        scope
+            .grow(bytes, measured)
+            .map_err(machine_memory_refused)?;
+        if Instant::now() >= bounds.deadline {
+            return Err(document_refused(ResourceRefusal::Deadline));
+        }
     }
     Ok(())
 }
 
-/// Hand retained to live when bounded; no-op for the legacy path.
-pub(super) fn hand_retained(bounds: &mut Option<Bounds<'_>>) {
-    if let Some(b) = bounds {
-        b.hand_retained();
+/// Name a temp scope's TOTAL live bytes after its allocation; no-op for the
+/// legacy path. Never waits or refuses.
+pub(super) fn ack_temp(scope: &mut Option<Box<dyn ResourceAllocation>>, live: u64) {
+    if let Some(scope) = scope.as_mut() {
+        scope.materialized(live);
     }
 }
 
-/// Cover scratch peak when bounded; no-op for the legacy path.
-pub(super) fn cover_scratch(bounds: &mut Option<Bounds<'_>>, bytes: u64) -> Result<()> {
+/// Checkpoint, then reserve before a cells-map allocation; no-op for the
+/// legacy path.
+pub(super) fn take_cells(bounds: &mut Option<Bounds<'_>>, bytes: u64, measured: u64) -> Result<()> {
     if let Some(b) = bounds {
-        b.cover(bytes)?;
+        b.take_cells(bytes, measured)?;
     }
     Ok(())
 }
 
-/// Cover a scratch estimate when bounded; no-op for the legacy path.
-pub(super) fn cover_scratch_estimate(
-    bounds: &mut Option<Bounds<'_>>,
-    bytes: u64,
-    measured: u64,
-) -> Result<()> {
+/// Name the cells map's TOTAL live bytes; no-op for the legacy path.
+pub(super) fn mark_cells(bounds: &mut Option<Bounds<'_>>, total: u64) {
     if let Some(b) = bounds {
-        b.cover_estimate(bytes, measured)?;
+        b.mark_cells(total);
+    }
+}
+
+/// The cells map's live bytes named so far; zero for the legacy path.
+pub(super) fn live_cells(bounds: &Option<Bounds<'_>>) -> u64 {
+    bounds.as_ref().map_or(0, Bounds::live_cells)
+}
+
+/// Checkpoint, then reserve before a shared-cache allocation; no-op for the
+/// legacy path.
+pub(super) fn take_cache(bounds: &mut Option<Bounds<'_>>, bytes: u64, measured: u64) -> Result<()> {
+    if let Some(b) = bounds {
+        b.take_cache(bytes, measured)?;
     }
     Ok(())
+}
+
+/// Name the shared cache's TOTAL live bytes; no-op for the legacy path.
+pub(super) fn mark_cache(bounds: &mut Option<Bounds<'_>>, total: u64) {
+    if let Some(b) = bounds {
+        b.mark_cache(total);
+    }
+}
+
+/// The shared cache's live bytes named so far; zero for the legacy path.
+pub(super) fn live_cache(bounds: &Option<Bounds<'_>>) -> u64 {
+    bounds.as_ref().map_or(0, Bounds::live_cache)
+}
+
+/// Release the shared cache's charge; no-op for the legacy path.
+pub(super) fn release_cache(bounds: &mut Option<Bounds<'_>>) {
+    if let Some(b) = bounds {
+        b.release_cache();
+    }
 }
 
 /// A retained-package failure as the engine error: a resource refusal as
-/// itself (typed floor / timed-out wait), anything else invalid under the
-/// existing typed-answer message. Capacity past the caller limits stays
-/// invalid here (no new cap surface for this slice).
+/// itself (typed floor / timed-out wait), a ceiling the package passed as
+/// a refusal naming its dimension, anything else invalid under the
+/// existing typed-answer message.
 pub(super) fn retained_invalid(error: oneiron_docedit::retained_opc::Error) -> Error {
-    error
-        .resource()
-        .map_or_else(invalid, machine_memory_refused)
+    if let Some(refusal) = error.resource() {
+        return machine_memory_refused(refusal);
+    }
+    if let Some(hit) = error.capacity() {
+        return Error::Refused(hit.to_string());
+    }
+    invalid()
+}
+
+/// Move an owned normalized attribute without reserving a clone that is
+/// not made. Borrowed input needs one real clone; both paths name the
+/// destination before releasing the source charge.
+fn own_attribute(
+    decoded: Cow<'_, str>,
+    source: &mut Option<Box<dyn ResourceAllocation>>,
+    target: &mut Option<Box<dyn ResourceAllocation>>,
+    target_live: &mut u64,
+    bounds: &Option<Bounds<'_>>,
+) -> Result<String> {
+    let owned = match decoded {
+        Cow::Borrowed(value) => {
+            let bytes = wide(value.len());
+            grow_temp(target, bounds, bytes, bytes)?;
+            value.to_owned()
+        }
+        Cow::Owned(value) => value,
+    };
+    *target_live = target_live.saturating_add(wide(owned.capacity()));
+    ack_temp(target, *target_live);
+    ack_temp(source, 0);
+    Ok(owned)
+}
+
+/// Grow a String only when its current capacity cannot hold the append.
+/// Reserve the additional capacity, not the already-live prefix. The same
+/// scope can include `other_live` bytes belonging to sibling buffers.
+pub(super) fn append_temp(
+    scope: &mut Option<Box<dyn ResourceAllocation>>,
+    bounds: &Option<Bounds<'_>>,
+    value: &mut String,
+    text: &str,
+    other_live: u64,
+) -> Result<()> {
+    let needed = value.len().saturating_add(text.len());
+    if needed > value.capacity() {
+        let bytes = wide(needed - value.capacity());
+        grow_temp(scope, bounds, bytes, bytes)?;
+        value.reserve_exact(needed - value.len());
+        ack_temp(scope, other_live.saturating_add(wide(value.capacity())));
+    }
+    value.push_str(text);
+    Ok(())
 }
 
 /// Bounded workbook to worksheet-part resolution for the retained path.
 /// Same join as `named_sheet_part` (exact sheet name, exactly one match,
 /// `r:id` to relationship to worksheet target, or `sheetId` fallback when
 /// the workbook has no relationships part), but streamed with per-event
-/// checkpoints and scratch-peak (not volume) cover, never via an unbounded
+/// checkpoints and one scope per decoded temporary, never via an unbounded
 /// element tree. Borrowed quick-xml events allocate nothing per event, so
-/// no per-event charge; only decoded/stored temporaries cover peak.
+/// no per-event charge; only decoded/stored temporaries take scopes.
+/// Package parts stay borrowed and uncounted.
 pub(super) fn named_sheet_part_retained(
     pkg: &RetainedPackage,
     name: &str,
     bounds: &mut Option<Bounds<'_>>,
-) -> Result<String> {
+) -> Result<Scoped<String>> {
     checkpoint(bounds)?;
     let workbook = pkg
         .part("xl/workbook.xml")
@@ -203,11 +340,13 @@ pub(super) fn named_sheet_part_retained(
         .map_err(retained_invalid)?;
     checkpoint(bounds)?;
     let target = workbook_sheet_target(workbook.as_slice(), name, rels.as_deref(), bounds)?;
-    if !target.starts_with("xl/worksheets/") || !target.ends_with(".xml") {
+    if !target.value.starts_with("xl/worksheets/") || !target.value.ends_with(".xml") {
         return Err(invalid());
     }
     checkpoint(bounds)?;
-    let exists = pkg.names().any(|candidate| candidate == target.as_str());
+    let exists = pkg
+        .names()
+        .any(|candidate| candidate == target.value.as_str());
     if !exists {
         return Err(invalid());
     }
@@ -222,11 +361,14 @@ fn workbook_sheet_target(
     name: &str,
     rels: Option<&[u8]>,
     bounds: &mut Option<Bounds<'_>>,
-) -> Result<String> {
+) -> Result<Scoped<String>> {
     checkpoint(bounds)?;
     std::str::from_utf8(workbook).map_err(|_| invalid())?;
-    cover_scratch(bounds, wide(workbook.len().min(1024)))?;
     let mut reader = NsReader::from_reader(workbook);
+    // The matched sheet's `r:id` / `sheetId` with their scope: named once a
+    // sheet called `name` matches; freed before the target is built.
+    let mut matched_scope = temp_scope(bounds);
+    let mut matched_live: u64 = 0;
     let mut matched_id: Option<Option<String>> = None;
     let mut matched_sheet_id: Option<Option<String>> = None;
     loop {
@@ -246,14 +388,21 @@ fn workbook_sheet_target(
                     ResolveResult::Unbound => local.as_ref() == "sheet",
                     ResolveResult::Unknown(_) => return Err(invalid()),
                 };
+                // One element's candidate strings with their scope: freed at
+                // the element's end unless this sheet matches `name`.
+                let mut elem_scope = temp_scope(bounds);
+                let mut elem_live: u64 = 0;
                 let mut sheet_name: Option<String> = None;
                 let mut rel_id: Option<String> = None;
                 let mut sheet_id: Option<String> = None;
-                let mut elem_total: u64 = 0;
                 for attr in tag.attributes() {
                     checkpoint(bounds)?;
                     let attr = attr.map_err(|_| invalid())?;
-                    cover_scratch(bounds, wide(attr.value.len().saturating_add(64)))?;
+                    let mut decode = temp_scope(bounds);
+                    if attr.value.contains(['&', '\t', '\r', '\n']) {
+                        let bytes = wide(attr.value.len());
+                        grow_temp(&mut decode, bounds, bytes, bytes)?;
+                    }
                     let key_bytes = attr.key.as_ref();
                     let is_xmlns = key_bytes == b"xmlns" || key_bytes.starts_with(b"xmlns:");
                     let (ans, alocal) = reader.resolver().resolve_attribute(attr.key);
@@ -266,29 +415,51 @@ fn workbook_sheet_target(
                     let decoded = attr
                         .normalized_value(quick_xml::XmlVersion::default())
                         .map_err(|_| invalid())?;
+                    ack_temp(
+                        &mut decode,
+                        match &decoded {
+                            Cow::Borrowed(_) => 0,
+                            Cow::Owned(owned) => wide(owned.capacity()),
+                        },
+                    );
                     if !is_sheet || is_xmlns {
                         continue;
                     }
                     let key = alocal.as_ref();
                     match ans {
                         ResolveResult::Unbound if key == "name" && sheet_name.is_none() => {
-                            cover_scratch(bounds, elem_total.saturating_add(wide(decoded.len())))?;
-                            elem_total = elem_total.saturating_add(wide(decoded.len()));
-                            sheet_name = Some(decoded.into_owned());
+                            let owned = own_attribute(
+                                decoded,
+                                &mut decode,
+                                &mut elem_scope,
+                                &mut elem_live,
+                                bounds,
+                            )?;
+                            sheet_name = Some(owned);
                         }
                         ResolveResult::Unbound if key == "sheetId" && sheet_id.is_none() => {
-                            cover_scratch(bounds, elem_total.saturating_add(wide(decoded.len())))?;
-                            elem_total = elem_total.saturating_add(wide(decoded.len()));
-                            sheet_id = Some(decoded.into_owned());
+                            let owned = own_attribute(
+                                decoded,
+                                &mut decode,
+                                &mut elem_scope,
+                                &mut elem_live,
+                                bounds,
+                            )?;
+                            sheet_id = Some(owned);
                         }
                         ResolveResult::Bound(uri)
                             if key == "id"
                                 && uri.as_ref().as_bytes() == REL_ATTR_NS
                                 && rel_id.is_none() =>
                         {
-                            cover_scratch(bounds, elem_total.saturating_add(wide(decoded.len())))?;
-                            elem_total = elem_total.saturating_add(wide(decoded.len()));
-                            rel_id = Some(decoded.into_owned());
+                            let owned = own_attribute(
+                                decoded,
+                                &mut decode,
+                                &mut elem_scope,
+                                &mut elem_live,
+                                bounds,
+                            )?;
+                            rel_id = Some(owned);
                         }
                         _ => {}
                     }
@@ -302,6 +473,18 @@ fn workbook_sheet_target(
                 if matched_id.is_some() {
                     return Err(invalid());
                 }
+                // Transfer the matched element's `r:id` / `sheetId` (no new
+                // reserve): the compared name frees here; release the
+                // element scope only after marking the matched scope. A
+                // concurrent admission never sees these live bytes released.
+                drop(sheet_name);
+                let transfer = rel_id
+                    .as_ref()
+                    .map_or(0, |s| wide(s.capacity()))
+                    .saturating_add(sheet_id.as_ref().map_or(0, |s| wide(s.capacity())));
+                matched_live = matched_live.saturating_add(transfer);
+                ack_temp(&mut matched_scope, matched_live);
+                drop(elem_scope);
                 matched_id = Some(rel_id);
                 matched_sheet_id = Some(sheet_id);
             }
@@ -316,12 +499,23 @@ fn workbook_sheet_target(
     };
     if let Some(rels) = rels {
         let id = rel_id.ok_or_else(invalid)?;
-        let (rel_type, target, mode) = workbook_relationship_target(rels, id.as_str(), bounds)?;
-        if !rel_type.ends_with("/worksheet") || mode.as_deref() == Some("External") {
+        let rel = workbook_relationship_target(rels, id.as_str(), bounds)?;
+        drop(id);
+        drop(sheet_id);
+        ack_temp(&mut matched_scope, 0);
+        if !rel.value.0.ends_with("/worksheet") || rel.value.2.as_deref() == Some("External") {
             return Err(invalid());
         }
-        reserve_retained(bounds, wide(target.len().saturating_add(3)))?;
-        resolve_part_path("xl/", target.as_str()).ok_or_else(invalid)
+        let mut scope = temp_scope(bounds);
+        let target_est = wide(rel.value.1.len().saturating_add(3));
+        grow_temp(&mut scope, bounds, target_est, target_est)?;
+        let resolved = resolve_part_path("xl/", rel.value.1.as_str()).ok_or_else(invalid)?;
+        ack_temp(&mut scope, wide(resolved.capacity()));
+        drop(rel);
+        Ok(Scoped {
+            value: resolved,
+            scope,
+        })
     } else {
         let index = sheet_id
             .ok_or_else(invalid)?
@@ -330,8 +524,16 @@ fn workbook_sheet_target(
         if index == 0 {
             return Err(invalid());
         }
-        reserve_retained(bounds, wide(64))?;
-        Ok(format!("xl/worksheets/sheet{index}.xml"))
+        drop(rel_id);
+        ack_temp(&mut matched_scope, 0);
+        let mut scope = temp_scope(bounds);
+        grow_temp(&mut scope, bounds, wide(64), wide(64))?;
+        let resolved = format!("xl/worksheets/sheet{index}.xml");
+        ack_temp(&mut scope, wide(resolved.capacity()));
+        Ok(Scoped {
+            value: resolved,
+            scope,
+        })
     }
 }
 
@@ -341,12 +543,14 @@ fn workbook_relationship_target(
     rels: &[u8],
     id: &str,
     bounds: &mut Option<Bounds<'_>>,
-) -> Result<(String, String, Option<String>)> {
+) -> Result<Scoped<(String, String, Option<String>)>> {
     checkpoint(bounds)?;
     std::str::from_utf8(rels).map_err(|_| invalid())?;
-    cover_scratch(bounds, wide(rels.len().min(1024)))?;
     let mut reader = NsReader::from_reader(rels);
+    // The matched relationship with its scope.
     let mut matched: Option<(String, String, Option<String>)> = None;
+    let mut matched_scope = temp_scope(bounds);
+    let mut matched_live: u64 = 0;
     loop {
         checkpoint(bounds)?;
         let event = reader.read_event().map_err(|_| invalid())?;
@@ -360,15 +564,20 @@ fn workbook_relationship_target(
                     ResolveResult::Unbound => local.as_ref() == "Relationship",
                     ResolveResult::Unknown(_) => return Err(invalid()),
                 };
+                let mut elem_scope = temp_scope(bounds);
+                let mut elem_live: u64 = 0;
                 let mut rel_id: Option<String> = None;
                 let mut rel_type: Option<String> = None;
                 let mut target: Option<String> = None;
                 let mut mode: Option<String> = None;
-                let mut elem_total: u64 = 0;
                 for attr in tag.attributes() {
                     checkpoint(bounds)?;
                     let attr = attr.map_err(|_| invalid())?;
-                    cover_scratch(bounds, wide(attr.value.len().saturating_add(64)))?;
+                    let mut decode = temp_scope(bounds);
+                    if attr.value.contains(['&', '\t', '\r', '\n']) {
+                        let bytes = wide(attr.value.len());
+                        grow_temp(&mut decode, bounds, bytes, bytes)?;
+                    }
                     let key_bytes = attr.key.as_ref();
                     let is_xmlns = key_bytes == b"xmlns" || key_bytes.starts_with(b"xmlns:");
                     let (ans, alocal) = reader.resolver().resolve_attribute(attr.key);
@@ -381,6 +590,13 @@ fn workbook_relationship_target(
                     let decoded = attr
                         .normalized_value(quick_xml::XmlVersion::default())
                         .map_err(|_| invalid())?;
+                    ack_temp(
+                        &mut decode,
+                        match &decoded {
+                            Cow::Borrowed(_) => 0,
+                            Cow::Owned(owned) => wide(owned.capacity()),
+                        },
+                    );
                     if !is_rel || is_xmlns {
                         continue;
                     }
@@ -389,21 +605,41 @@ fn workbook_relationship_target(
                     }
                     let key = alocal.as_ref();
                     if key == "Id" && rel_id.is_none() {
-                        cover_scratch(bounds, elem_total.saturating_add(wide(decoded.len())))?;
-                        elem_total = elem_total.saturating_add(wide(decoded.len()));
-                        rel_id = Some(decoded.into_owned());
+                        let owned = own_attribute(
+                            decoded,
+                            &mut decode,
+                            &mut elem_scope,
+                            &mut elem_live,
+                            bounds,
+                        )?;
+                        rel_id = Some(owned);
                     } else if key == "Type" && rel_type.is_none() {
-                        cover_scratch(bounds, elem_total.saturating_add(wide(decoded.len())))?;
-                        elem_total = elem_total.saturating_add(wide(decoded.len()));
-                        rel_type = Some(decoded.into_owned());
+                        let owned = own_attribute(
+                            decoded,
+                            &mut decode,
+                            &mut elem_scope,
+                            &mut elem_live,
+                            bounds,
+                        )?;
+                        rel_type = Some(owned);
                     } else if key == "Target" && target.is_none() {
-                        cover_scratch(bounds, elem_total.saturating_add(wide(decoded.len())))?;
-                        elem_total = elem_total.saturating_add(wide(decoded.len()));
-                        target = Some(decoded.into_owned());
+                        let owned = own_attribute(
+                            decoded,
+                            &mut decode,
+                            &mut elem_scope,
+                            &mut elem_live,
+                            bounds,
+                        )?;
+                        target = Some(owned);
                     } else if key == "TargetMode" && mode.is_none() {
-                        cover_scratch(bounds, elem_total.saturating_add(wide(decoded.len())))?;
-                        elem_total = elem_total.saturating_add(wide(decoded.len()));
-                        mode = Some(decoded.into_owned());
+                        let owned = own_attribute(
+                            decoded,
+                            &mut decode,
+                            &mut elem_scope,
+                            &mut elem_live,
+                            bounds,
+                        )?;
+                        mode = Some(owned);
                     }
                 }
                 if !is_rel {
@@ -415,6 +651,18 @@ fn workbook_relationship_target(
                 if matched.is_some() {
                     return Err(invalid());
                 }
+                // Transfer the matched relationship (no new reserve): the
+                // compared `Id` frees here; mark the matched scope before
+                // releasing the element scope, also for concurrent callers.
+                drop(rel_id);
+                let transfer = rel_type
+                    .as_ref()
+                    .map_or(0, |s| wide(s.capacity()))
+                    .saturating_add(target.as_ref().map_or(0, |s| wide(s.capacity())))
+                    .saturating_add(mode.as_ref().map_or(0, |s| wide(s.capacity())));
+                matched_live = matched_live.saturating_add(transfer);
+                ack_temp(&mut matched_scope, matched_live);
+                drop(elem_scope);
                 matched = Some((
                     rel_type.ok_or_else(invalid)?,
                     target.ok_or_else(invalid)?,
@@ -426,5 +674,9 @@ fn workbook_relationship_target(
             _ => {}
         }
     }
-    matched.ok_or_else(invalid)
+    let found = matched.ok_or_else(invalid)?;
+    Ok(Scoped {
+        value: found,
+        scope: matched_scope,
+    })
 }
