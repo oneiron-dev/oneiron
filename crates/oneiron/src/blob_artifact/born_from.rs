@@ -154,6 +154,20 @@ impl Vault {
         Ok(out)
     }
 
+    /// `born` as typed record refs (OF-063, FIX 9340), each of the kind its
+    /// row is, read in one snapshot: a source's births are any rows it made,
+    /// not only artifacts. A row whose kind no longer reads is left out.
+    pub fn born_records(&self, born: &[EntityId]) -> Result<Vec<RecordRef>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut records = Vec::with_capacity(born.len());
+        for id in born {
+            if let Some(kind) = self.get_entity_type_in_txn(&rtxn, id)? {
+                records.push(RecordRef::from_id(kind, id, None));
+            }
+        }
+        Ok(records)
+    }
+
     /// The other direction: each version of one artifact with the sources it
     /// was born from, read from the versions' own made_by and provenance.
     pub fn blob_artifact_born_from(
