@@ -41,9 +41,8 @@ pub(crate) use self::reader_jobs::{
 pub use self::reader_jobs::{ReaderJobs, SummaryMember, SummaryRead};
 pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
-    CodeRunResultBodyReader, StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
-    code_run_body_row_key, code_run_inline_body_of_row, code_run_row_inline,
-    lift_code_run_file_hold_in_txn,
+    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
+    code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
 };
 pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
@@ -99,9 +98,7 @@ pub(crate) use self::program_resume::{
 };
 pub(crate) use self::wait_delivery::wait_delivered_in_txn;
 pub(crate) use self::wait_holders::{
-    WaitReply, erase_settled_reply_of_erased_run_in_txn, settled_reply_held_in_txn,
-    settled_wait_key, wait_delivery_owners, wait_reply_erased, wait_reply_in_txn, wait_reply_scan,
-    wait_settled_owners,
+    WaitReply, erase_settled_reply_of_erased_run_in_txn, wait_delivery_owners, wait_reply_in_txn,
 };
 
 // The lift sweep's typed acceptance for this module's authored side
@@ -111,4 +108,3 @@ pub(crate) use self::reader_jobs::code_run_reader_job_accepts_masked;
 pub(crate) use self::reader_jobs::code_run_reader_wait_accepts_masked;
 pub(crate) use self::replay_capsule::code_run_replay_capsule_accepts_masked;
 pub(crate) use self::type_diagnostics::code_run_type_diagnostics_accepts_masked;
-pub(crate) use self::wait_delivery::code_run_wait_delivery_accepts_masked;

@@ -106,6 +106,21 @@ pub(super) fn beam_vault_config() -> VaultConfig {
     cfg.max_readers = 16;
     cfg
 }
+/// The benchmark run's own Oneiron-vault secret-scan mode, read from the
+/// actual vault switch — not a claim about any competitor's own scanner.
+/// Reuses the load vocabulary (`scan-on`/`scan-off`). The mode type is
+/// unnameable here, so this serializes its actual enum string. Any error
+/// (including an unrecognized mode string) propagates; nothing is defaulted.
+pub(super) fn scan_stamp(vault: &oneiron::Vault) -> Result<String, BeamError> {
+    let mode = vault.secret_scan_mode()?;
+    match serde_json::to_value(&mode)?.as_str() {
+        Some("on") => Ok("scan-on".to_owned()),
+        Some("off") => Ok("scan-off".to_owned()),
+        other => Err(BeamError::Comparability {
+            reason: format!("unrecognized secret-scan mode: {other:?}"),
+        }),
+    }
+}
 pub(super) fn invalid_fixture(fixture: &BeamFixture, reason: impl Into<String>) -> BeamError {
     BeamError::InvalidFixture {
         fixture_id: fixture.fixture_id.clone(),

@@ -17,6 +17,20 @@ use super::{
 use crate::store::{DB_MANIFEST, MadeDestination};
 use crate::{EntityId, Result, Vault, VaultConfig};
 
+/// The authenticated restore's image-write continuation. Only this landing
+/// module can construct it, after the image rows and indexes have landed.
+pub(crate) struct RestoreActorScrubWriter<'write, 'env> {
+    vault: &'write Vault,
+    wtxn: &'write mut heed::RwTxn<'env>,
+    erased: &'write BTreeSet<EntityId>,
+}
+
+impl<'env> RestoreActorScrubWriter<'_, 'env> {
+    pub(crate) fn parts(&mut self) -> (&Vault, &mut heed::RwTxn<'env>, &BTreeSet<EntityId>) {
+        (self.vault, &mut *self.wtxn, self.erased)
+    }
+}
+
 impl Vault {
     /// Restores `image` into `destination`. The made directory, the forked
     /// custody and the copy come back in that order, so a caller's bindings,
@@ -240,7 +254,11 @@ impl Vault {
             let since = response_rows::removals::erased_since_in_txn(&vault.store, &*txn, &erased)?;
             // An erased actor's name, carried back by the image's rows, goes
             // again, now the type index is back.
-            crate::deletion::rerun_actor_scrubs_in_txn(&vault, txn, &erased)?;
+            crate::deletion::rerun_actor_scrubs_in_txn(RestoreActorScrubWriter {
+                vault: &vault,
+                wtxn: txn,
+                erased: &erased,
+            })?;
             // And what those erases took that no obligation retired (FIX
             // 10461, 10533, 10631, 10436).
             response_rows::removals::scrub_in_txn(&vault.store, txn, &since)?;

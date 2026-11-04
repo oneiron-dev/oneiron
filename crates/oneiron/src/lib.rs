@@ -12,7 +12,7 @@
 
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
-pub mod config;
+pub use oneiron_store::config;
 pub mod deletion;
 pub(crate) mod engine_store_hooks;
 pub mod edge {
@@ -39,13 +39,14 @@ pub mod entity_id;
 pub use oneiron_base::error;
 pub mod housekeeping;
 pub(crate) mod identity;
+pub mod host_memory;
 pub mod limit_ask;
 pub mod machine_destination;
 pub(crate) use oneiron_base::limits;
 pub mod maintain;
 pub(crate) use oneiron_base::msgpack_shape;
 pub mod off_record;
-pub(crate) mod overlay_db;
+pub(crate) use oneiron_store::overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
 pub(crate) mod room_codec;
@@ -64,7 +65,14 @@ pub use oneiron_base::request_limits;
 pub mod heap_drop;
 pub mod result_body;
 pub mod result_memory;
-pub(crate) mod session_overlay;
+pub(crate) use oneiron_store::session_overlay;
+/// Core's own test binary registers the session overlay's allocation
+/// observer, as it did when the overlay lived in this crate; no other build
+/// installs it.
+#[cfg(test)]
+#[global_allocator]
+static SESSION_OVERLAY_TEST_ALLOCATOR: session_overlay::hygiene_tests::ObservedAllocator =
+    session_overlay::hygiene_tests::ObservedAllocator;
 pub(crate) mod side_table;
 pub mod slim;
 pub mod store;
@@ -75,7 +83,8 @@ mod vault;
 pub mod window_key;
 pub use oneiron_base::work_line;
 mod task_work_line;
-pub mod write_envelope;
+pub use oneiron_store::write_envelope;
+pub(crate) mod carry_forward_admission;
 // ===== Read path ===== indexes, retrieval pipeline, standing queries, context packs, LLM seam
 pub use oneiron_base::analyzer;
 pub(crate) mod bm25;
@@ -93,7 +102,7 @@ pub use oneiron_base::live_rows;
 pub mod claim_check;
 pub mod inference_context;
 pub mod llm;
-pub mod model_binding;
+pub use oneiron_model::model_binding;
 pub mod model_decision;
 pub mod model_step_context;
 pub(crate) mod model_step_effect;
@@ -108,8 +117,8 @@ pub mod reaction;
 pub mod rerank;
 pub mod research_budget;
 pub mod retrieval_depth;
+pub use oneiron_model::teacher_probe_policy;
 pub use oneiron_run_budget::run_budget;
-pub mod teacher_probe_policy;
 mod vault_live_rows;
 pub use oneiron_base::retrieval_quality;
 pub mod saved_query;

@@ -57,7 +57,7 @@ pub(in crate::batch) fn apply_put_beside<'a>(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'a>,
-    authority_beside: Option<crate::authority::RowsBeside<'a>>,
+    authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
     own_device: Option<&'a VerifiedOwnDeviceLane>,
 ) -> Result<AppliedPut> {
     let data = request.row.data;
