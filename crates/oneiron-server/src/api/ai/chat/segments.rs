@@ -543,10 +543,31 @@ pub(super) fn commit_on_answer(
             && ended.saved.as_ref().is_some_and(|saved| {
                 saved.message_id == message && saved.finality == StreamFinality::Final
             });
-        let commit = whole.then(|| ReplyCommit {
-            head: turn,
-            message,
-            text: ended.text.clone(),
+        let commit = whole.then(|| {
+            // The HEAD the reply lands at, read once it has landed (FIX
+            // 10367): HEAD does not always move to this reply's TURN, and
+            // naming the TURN anyway drops the session at the next fork.
+            // No HEAD stands or reads: the TURN names it, as before.
+            let head = segments
+                .manifest
+                .anchor()
+                .map(|anchor| anchor.conversation)
+                .and_then(|conversation| {
+                    crate::server::blocking(|| {
+                        authority
+                            .reader
+                            .vault
+                            .local_head(&conversation)
+                            .ok()
+                            .flatten()
+                    })
+                })
+                .unwrap_or(turn);
+            ReplyCommit {
+                head,
+                message,
+                text: ended.text.clone(),
+            }
         });
         // The outcome goes on as it ended; nothing waits for the session.
         let _ = finished.send(ended);
