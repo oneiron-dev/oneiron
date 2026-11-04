@@ -40,6 +40,27 @@ or typed decision. A failed evidence write is logged and never fails the answer.
 An unbound call records as usual; a call outside every capture scope is not
 assigned a guessed actor.
 
+## Signed parts containing secrets
+
+For an inline capture, the writer keeps the original typed provider part before
+selecting the call record's display representation. If that signed or opaque
+part contains a secret found by the existing write policy, the writer seals the
+whole original part in existing secret custody. It never masks its text or
+edits its signature or data. The encoding is canonical MessagePack of the
+captured `ContentPart`, not a claim to preserve the provider's HTTP wire bytes.
+
+The call record contains only the custody handle for that part. The handle is
+not permission to read it. The existing reveal and grant doors still authorize
+the current consumer. The custody origin names this exact call record and
+reasoning position, so the existing actor erase revokes it before erasing the
+record. A failed evidence write rolls back both the new custody and its
+reference; it does not fail the model answer.
+
+This enables no upstream reasoning replay. A viewer's reveal grant and a
+provider configuration name do not prove the actual issuing login. MESSAGE
+parts, other plaintext copies such as step memos, live response serving and the
+issuing-login producer remain separate work.
+
 ## Limits of this coverage
 
 This is not MESSAGE/chat reasoning delivery, replay admission, or complete
