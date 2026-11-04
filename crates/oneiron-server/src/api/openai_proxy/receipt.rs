@@ -47,6 +47,15 @@ impl ProxyRequest {
         Self { digest, value }
     }
 
+    /// The request as a refusal before any caller resolves states it: the
+    /// raw bytes' digest alone, with no JSON read of an unauthenticated body.
+    pub(super) fn raw(body: &[u8]) -> Self {
+        Self {
+            digest: oneiron::receipt::call_bytes_digest(body),
+            value: None,
+        }
+    }
+
     /// Records a refusal no resolved caller stands behind for the connection
     /// it arrived on (FIX 811), and states it on the reply. Such a call names
     /// no principal, so it binds no session and is never the anonymous
