@@ -2,8 +2,11 @@
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
-use oneiron::dreamer_wake::{ClaimAuthoringSelection, TurnProgramExecutor, TurnProgramRuntime};
+use oneiron::dreamer_wake::{
+    ClaimAuthoringSelection, TurnProgramExecutor, TurnProgramRuntime, WakePassDeadline,
+};
 use oneiron::fanout_auto::FanoutDecisions;
+use oneiron::llm::run_admission::WorkCancel;
 use oneiron::{BudgetGuard, EntityId, Result, Vault, WavePlanner, WriteActor};
 
 use super::attachment::{LinkedShutdown, PassAttachment};
@@ -41,6 +44,14 @@ impl<F: PassExecutorFactory> PassExecutorFactory for ProgramExecutorFactory<F> {
             self.runtime.as_deref_mut(),
             guard,
         ))
+    }
+
+    fn set_pass_deadline(&mut self, deadline: &WakePassDeadline) {
+        self.inner.set_pass_deadline(deadline);
+    }
+
+    fn set_device_cancel(&mut self, cancel: &WorkCancel) {
+        self.inner.set_device_cancel(cancel);
     }
 
     fn macro_executors<'p>(
