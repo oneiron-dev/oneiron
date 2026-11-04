@@ -132,7 +132,7 @@ fn to_value(value: &impl Serialize) -> Result<Value> {
     Ok(value)
 }
 
-use crate::serialize::person_identity::{validate_json, from_value};
+use crate::serialize::person_identity::{from_value, validate_json};
 
 pub(crate) use crate::write_envelope::person_identity::body_fields;
 

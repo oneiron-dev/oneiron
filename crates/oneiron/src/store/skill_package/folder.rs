@@ -1,9 +1,11 @@
 //! Strict portable SKILL.md frontmatter subset used by real hub transports.
 use super::codec::invalid;
 use super::{HubFile, HubPackage, SkillCapabilitySurface, SkillPackageFormat};
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::error::Result;
-use crate::write_envelope::skill_record::{SkillCallContract, SkillLifecycle, SkillRecord, SkillRole};
+use crate::write_envelope::skill_record::{
+    SkillCallContract, SkillLifecycle, SkillRecord, SkillRole,
+};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 use std::collections::BTreeMap;
 
 /// Reads the common scalar frontmatter subset. Complex YAML is refused, not guessed.

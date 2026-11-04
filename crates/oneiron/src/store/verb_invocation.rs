@@ -43,4 +43,3 @@ impl InvocationId {
             .map(|id| Self(id.into_bytes()))
     }
 }
-

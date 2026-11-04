@@ -1,8 +1,8 @@
 //! Durable branch signal and ask vocabulary with persisted-row validation.
 
-use serde::{Deserialize, Serialize};
 use crate::attempt_queue::{AttemptId, CancelStanding};
 use crate::error::{Error, Result};
+use serde::{Deserialize, Serialize};
 
 /// Caller-authenticated control intent; the adapter must resolve the actor and
 /// cancel standing before calling this storage door.

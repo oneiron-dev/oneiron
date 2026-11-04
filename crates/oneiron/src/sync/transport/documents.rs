@@ -3,7 +3,7 @@
 use super::{EncodedFrame, TransportError, checked_encoded_frame_len};
 use crate::EntityId;
 
-pub use crate::store::document_frame_tags::{TAG_DOCUMENT, TAG_BATCH};
+pub use crate::store::document_frame_tags::{TAG_BATCH, TAG_DOCUMENT};
 
 /// The members one batch this node sends carries at most: a sender's
 /// processing quantum, never a receiver's refusal. A receiver takes every
