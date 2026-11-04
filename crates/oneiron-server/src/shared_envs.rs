@@ -250,6 +250,22 @@ impl SharedEnvRegistry {
                         vault_id: env.key.0,
                     })
                 };
+                // A completed purge stays complete across restarts: the
+                // receipt persists it, so reconfirming never re-owes the
+                // orphan-body collection. An unreadable receipt reads as
+                // incomplete: the idempotent confirmation resumes it.
+                let purge_complete =
+                    match oneiron::sync::shared_leave::leave_purge_complete(&env.vault) {
+                        Ok(complete) => complete,
+                        Err(error) => {
+                            tracing::warn!(
+                                vault_id = env.key.0,
+                                kind = ?error.kind(),
+                                "shared env purge state unreadable; its leave reconfirms"
+                            );
+                            false
+                        }
+                    };
                 self.lock().insert(
                     env.key,
                     SharedEnvEntry {
@@ -258,7 +274,7 @@ impl SharedEnvRegistry {
                         vault: env.vault,
                         connection: env.connection,
                         lane,
-                        purge_complete: false,
+                        purge_complete,
                         last_leave_check: 0,
                     },
                 );

@@ -179,12 +179,19 @@ impl SyncConnection {
 
     /// Ends this lane for good before a leave discards its queue, once its
     /// loop has stopped and queued what it buffered.
-    async fn stop_for_leave(&self) {
+    /// Stops the lane for a confirmed leave: no new connect starts once
+    /// `left` is set, and this waits for the running loop to end. Returns
+    /// whether the lane actually stopped: a loop still importing past the
+    /// quiesce timeout must refuse confirmation and retry, never purge
+    /// under a live writer.
+    async fn stop_for_leave(&self) -> bool {
         self.left.send_replace(true);
         let mut running = self.running.subscribe();
         // A loop that does not stop in time may queue its last buffer after
         // the discard.
-        let _ = tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running)).await;
+        tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running))
+            .await
+            .is_ok()
     }
 
     /// Asks the sync server for this member's own leave notices with the
@@ -306,7 +313,11 @@ impl SyncConnection {
         let Some(notice) = confirmed else {
             return Ok(None);
         };
-        self.stop_for_leave().await;
+        if !self.stop_for_leave().await {
+            return Err(TransportError::Storage(
+                "the sync lane did not quiesce for the leave; retry next round".to_owned(),
+            ));
+        }
         crate::sync::shared_leave::confirm_verified_shared_leave(self.manager.vault(), &notice)
             .map(Some)
             .map_err(|e| TransportError::Storage(e.to_string()))
