@@ -102,6 +102,18 @@ pub(super) async fn fits_host(bytes: u64) -> Option<bool> {
     let want = bytes
         .saturating_add(SNAPSHOT_HEADROOM_BYTES)
         .saturating_add(registry::host_committed_bytes());
+    if want <= available {
+        return Some(true);
+    }
+    if super::host_ram::evict_idle(want.saturating_sub(available)) == 0 {
+        return Some(false);
+    }
+    let available = tokio::task::spawn_blocking(available_memory_bytes)
+        .await
+        .ok()??;
+    let want = bytes
+        .saturating_add(SNAPSHOT_HEADROOM_BYTES)
+        .saturating_add(registry::host_committed_bytes());
     Some(want <= available)
 }
 

@@ -607,6 +607,20 @@ pub(super) async fn reserve_host(bytes: u64) -> Option<HostReservation> {
     let available = tokio::task::spawn_blocking(available_memory_bytes)
         .await
         .ok()??;
+    if let Some(reserved) = try_reserve_host(available, bytes) {
+        return Some(reserved);
+    }
+    // The optional resident cache yields before a transfer goes cold.
+    // Its loans cannot be preempted and remain charged until they drop.
+    let want = bytes
+        .saturating_add(SNAPSHOT_HEADROOM_BYTES)
+        .saturating_add(host_committed_bytes());
+    if super::host_ram::evict_idle(want.saturating_sub(available)) == 0 {
+        return None;
+    }
+    let available = tokio::task::spawn_blocking(available_memory_bytes)
+        .await
+        .ok()??;
     try_reserve_host(available, bytes)
 }
 
