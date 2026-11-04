@@ -61,7 +61,8 @@ pub(in crate::api::facade) fn door_admits(
                     crate::api::facade::FacadeApiError::from(error).into_memory_error()
                 })
         }
-        Row::VaultModelsManifestRead
+        Row::VaultSecretsCodeRunLifts
+        | Row::VaultModelsManifestRead
         | Row::VaultModelsManifestReplace
         | Row::VaultModelsOneironerBind
         | Row::VaultModelsRoutesRead

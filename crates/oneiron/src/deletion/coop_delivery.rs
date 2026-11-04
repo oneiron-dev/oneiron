@@ -19,7 +19,6 @@ use super::coop_request::{
     SignedCooperativeDeletionRequest, decode_and_verify_cooperative_deletion_request,
     encode_signed_cooperative_deletion_request, peek_cooperative_deletion_pact,
 };
-use crate::attempt_queue::AttemptQueue;
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::attempt_inputs::ClaimAttempt;
@@ -509,9 +508,9 @@ impl Vault {
         now: u64,
         issuer: Option<&crate::authority::HostSlipIssuer>,
     ) -> Result<Option<CooperativeDeletionDelivery>> {
-        let queue = AttemptQueue::new(self);
         loop {
-            let ClaimOutcome::Claimed(attempt) = queue.claim_kind(
+            let ClaimOutcome::Claimed(attempt) = self.store.attempt_operations.claim_kind(
+                self,
                 COOP_DELETION_DELIVERY_ATTEMPT_KIND,
                 ClaimAttempt {
                     lease_owner: lease_owner.into(),
@@ -548,13 +547,16 @@ impl Vault {
                 // Another holder's try now: it is theirs to settle.
                 (_, refresh::TryStart::NotHeld) => {}
                 _ => {
-                    queue.fail(FailAttempt {
-                        id: attempt.id,
-                        lease_owner: lease_owner.into(),
-                        attempt_count: attempt.attempt_count,
-                        reason: "ledger_settled".into(),
-                        now,
-                    })?;
+                    self.store.attempt_operations.fail(
+                        self,
+                        FailAttempt {
+                            id: attempt.id,
+                            lease_owner: lease_owner.into(),
+                            attempt_count: attempt.attempt_count,
+                            reason: "ledger_settled".into(),
+                            now,
+                        },
+                    )?;
                 }
             }
         }
@@ -577,12 +579,12 @@ impl Vault {
             .ok_or_else(|| invalid("delivery lease owner"))?;
         let payload = &delivery.payload;
         self.with_write_txn_grouped(|txn| {
-            let queue = AttemptQueue::new(self);
             let started = leg_started_at(self, txn, payload)?.unwrap_or(now);
             let age = now.saturating_sub(started);
             let next = match &result {
                 CooperativeDeletionTry::Delivered => {
-                    queue.complete_in_txn(
+                    crate::ports::JobQueue::port_job_complete(
+                        self,
                         txn,
                         CompleteAttempt {
                             id: attempt.id,
@@ -594,7 +596,8 @@ impl Vault {
                     CooperativeDeletionDeliveryStatus::Delivered
                 }
                 CooperativeDeletionTry::Refused(status) => {
-                    queue.fail_in_txn(
+                    crate::ports::JobQueue::port_job_fail(
+                        self,
                         txn,
                         FailAttempt {
                             id: attempt.id,
@@ -607,7 +610,8 @@ impl Vault {
                     CooperativeDeletionDeliveryStatus::Unknown
                 }
                 CooperativeDeletionTry::Failed(error) if age >= COOP_DELETION_GIVE_UP_SECS => {
-                    queue.fail_in_txn(
+                    crate::ports::JobQueue::port_job_fail(
+                        self,
                         txn,
                         FailAttempt {
                             id: attempt.id,
@@ -620,7 +624,8 @@ impl Vault {
                     CooperativeDeletionDeliveryStatus::Unreachable
                 }
                 CooperativeDeletionTry::Failed(error) => {
-                    queue.retry_in_txn(
+                    self.store.attempt_operations.retry_in_txn(
+                        self,
                         txn,
                         RetryAttempt {
                             id: attempt.id,

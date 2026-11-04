@@ -36,6 +36,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
+use super::DeviceSyncStart;
+
 mod key_plan;
 
 /// How many keys one page of a re-assertion's diagnostics lists. A page
@@ -377,6 +379,11 @@ pub struct PublicationDiagnostics {
     /// What this install's relay observed of the home and the newest
     /// generation, or that it is unknown.
     pub relay: RelayObservation,
+    /// The last device-sync start outcome observed on this open vault session,
+    /// shared by its clones. `None` means no outcome was recorded, not that
+    /// sync is unconfigured. This is historical, never current worker health.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_sync_start: Option<DeviceSyncStart>,
     /// The exact attempt this install persisted and has not resolved; `None`
     /// with none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -536,6 +543,11 @@ impl Vault {
         } else {
             RelayObservation::Observed { passes }
         };
+        let device_sync_start = *self
+            .world_keys
+            .device_sync_start
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         #[cfg(feature = "sync")]
         let attempt = self
             .unresolved_bundle_attempt(request)?
@@ -549,6 +561,7 @@ impl Vault {
             home,
             home_warning,
             relay,
+            device_sync_start,
             attempt,
         })
     }
