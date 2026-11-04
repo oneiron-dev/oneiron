@@ -301,10 +301,8 @@ impl CodeRunBridgeCall {
             .iter()
             .filter_map(|(key, _)| key.as_str())
             .collect();
-        let mut rewritten_keys: Vec<&str> = fields
-            .iter()
-            .filter_map(|(key, _)| key.as_str())
-            .collect();
+        let mut rewritten_keys: Vec<&str> =
+            fields.iter().filter_map(|(key, _)| key.as_str()).collect();
         original_keys.sort_unstable();
         rewritten_keys.sort_unstable();
         if original_keys != rewritten_keys {

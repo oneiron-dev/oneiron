@@ -106,7 +106,7 @@ impl Vault {
                 .map(DeleteGuard::Done);
         };
         if crate::batch::delete_door_protected(header.entity_type)
-            || crate::workspace_roster::is_project_revision_type(&self.store, header.entity_type)
+            || crate::store::project_kind::is_project_revision_type(&self.store, header.entity_type)
         {
             return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                 header.entity_type,

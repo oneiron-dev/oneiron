@@ -87,7 +87,7 @@ mod clock;
 
 pub(crate) use classify::stateless_owner_classification;
 mod concurrent;
-mod contract;
+use oneiron_policy_vocabulary::policy_model::contract;
 mod decide;
 pub use decide::PolicyDecisions;
 pub mod doors;
@@ -120,7 +120,7 @@ pub(crate) use owner_rows::{
 };
 mod notes;
 mod notice;
-mod pattern;
+use oneiron_policy_vocabulary::policy_model::pattern;
 mod planes;
 mod prompt;
 mod receipt;
@@ -162,4 +162,4 @@ pub use verdict::{
 #[cfg(test)]
 mod tests;
 
-pub(crate) mod goal_limits;
+pub(crate) use oneiron_policy_vocabulary::policy_model::goal_limits;
