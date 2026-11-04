@@ -30341,6 +30341,8 @@ pub enum LegalHoldEventKind {
     LiftAndEraseConfirmed,
     #[serde(rename = "erase_confirmed")]
     EraseConfirmed,
+    #[serde(rename = "erase_withdrawn")]
+    EraseWithdrawn,
     #[serde(rename = "erase_completed")]
     EraseCompleted,
     #[serde(rename = "lifted")]
@@ -30368,6 +30370,8 @@ pub enum LegalHoldReason {
     PrivacyEraseKept,
     #[serde(rename = "owner_confirmed")]
     OwnerConfirmed,
+    #[serde(rename = "owner_withdrew")]
+    OwnerWithdrew,
     #[serde(rename = "completion_pending")]
     CompletionPending,
     #[serde(rename = "receipt_completed")]
@@ -30580,6 +30584,45 @@ pub struct LegalHoldLiftAndErased {
     pub records: Vec<LegalHoldErasedRecord>,
     #[serde(rename = "changed", default, skip_serializing_if = "Option::is_none")]
     pub changed: Option<LiftAndEraseShownState>,
+}
+
+/// `oneiron::verbs::legal_hold::LegalHoldWithdrawEraseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldWithdrawEraseRequest {
+    #[serde(rename = "records")]
+    pub records: Vec<String>,
+}
+
+/// `oneiron::deletion::legal_hold::types::EraseWithdrawal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EraseWithdrawal {
+    #[serde(rename = "withdrawn")]
+    Withdrawn,
+    #[serde(rename = "not_waiting")]
+    NotWaiting,
+    #[serde(rename = "confirmed_by_another_owner")]
+    ConfirmedByAnotherOwner,
+    #[serde(rename = "under_way")]
+    UnderWay,
+}
+
+/// `oneiron::verbs::legal_hold::LegalHoldWithdrawnErase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldWithdrawnErase {
+    #[serde(rename = "record")]
+    pub record: String,
+    #[serde(rename = "status")]
+    pub status: EraseWithdrawal,
+}
+
+/// `oneiron::verbs::legal_hold::LegalHoldErasesWithdrawn`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldErasesWithdrawn {
+    #[serde(rename = "records")]
+    pub records: Vec<LegalHoldWithdrawnErase>,
 }
 
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteSendRequest`.

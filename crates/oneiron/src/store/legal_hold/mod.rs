@@ -27,8 +27,8 @@ pub(crate) use events::{host_events_in_txn, log_in_txn, owner_events_in_txn};
 pub(crate) use notice::law_notice;
 pub(crate) use pending::{
     PendingErase, PendingEraseKind, drop_pending_erase_in_txn, due_erases_in_txn,
-    pending_erase_in_txn, put_pending_erase_in_txn, set_pending_veto_act_in_txn,
-    use_limit_pending_privacy_in_txn,
+    erases_without_act_in_txn, pending_erase_in_txn, put_pending_erase_in_txn,
+    set_pending_veto_act_in_txn, use_limit_pending_privacy_in_txn, withdraw_pending_erase_in_txn,
 };
 pub(crate) use settlement::RefusalBatch;
 #[cfg(feature = "sync")]
@@ -557,6 +557,28 @@ pub(crate) fn link_erase_in_txn(
         links.put(dbs, txn, record, &link)?;
     }
     Ok(())
+}
+
+/// Drops the links `record`'s coming erase holds to the holds its confirm
+/// met, once the owner withdrew that erase (FIX 10401): no erase of it is
+/// coming, so none of them is owed an "erase completed" event. Returns those
+/// holds, customer then host-order, for their logs.
+pub(crate) fn unlink_erase_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    record: &EntityId,
+) -> Result<Vec<LegalHold>> {
+    let mut holds = Vec::new();
+    for links in [ERASE_LINKS, HOST_ERASE_LINKS] {
+        let Some(link) = links.get(dbs, txn, record)? else {
+            continue;
+        };
+        for id in &link.holds {
+            holds.extend(hold_in_txn(dbs, txn, id)?);
+        }
+        links.delete(dbs, txn, record)?;
+    }
+    Ok(holds)
 }
 
 /// "Erase completed" (C4): the erase over `records` is now complete, its
