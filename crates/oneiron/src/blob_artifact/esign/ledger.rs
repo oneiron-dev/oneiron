@@ -128,7 +128,7 @@ pub(crate) fn esign_document_page_in_txn(
     after: Option<EntityId>,
     limit: usize,
 ) -> Result<(Vec<EntityId>, Option<EntityId>)> {
-    let claims = crate::claim::claim_ids_for_predicate_page_in_txn(
+    let claims = crate::store::claim_projection::claim_ids_for_predicate_page_in_txn(
         &vault.store,
         txn,
         DRAFT_PREDICATE,

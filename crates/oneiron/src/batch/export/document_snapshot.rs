@@ -62,7 +62,7 @@ pub(crate) struct ExportSnapshotEntity<'t> {
     /// The pack source an ASSET body is.
     pub(crate) pack_source: Option<crate::skill_hub::pack_catalog::PackSource>,
     /// The task receipts a CLAIM cites, by id.
-    pub(crate) task_receipts: BTreeMap<String, crate::receipt::ReceiptRecord>,
+    pub(crate) task_receipts: BTreeMap<String, crate::store::receipt_row::ReceiptRecord>,
     /// A CLAIM's archived receipt sources.
     pub(crate) archived_receipts: Option<BTreeMap<String, super::ExportReceiptSource>>,
 }
