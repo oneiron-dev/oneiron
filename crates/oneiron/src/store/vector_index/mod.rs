@@ -6,6 +6,7 @@ use crate::error::Result;
 use crate::store::ManifestDbs;
 use heed::{RoTxn, RwTxn};
 
+pub(crate) mod rebuild;
 pub(crate) use oneiron_store::vector_index::keys;
 pub(crate) use oneiron_store::vector_index::keys::COUNT_KEY;
 pub(crate) use oneiron_store::vector_index::{Admission, has_population};
