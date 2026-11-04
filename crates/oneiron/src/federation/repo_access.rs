@@ -370,7 +370,8 @@ impl Vault {
     ///
     /// `Ok(Ok(grant))` names the admitting Grant; `Ok(Err(reason))` is
     /// [`PACT_STANDING_LAPSED`] when a shared vault's pact lapse alone took
-    /// the Grant, else [`QUEUE_REVIEW_POLICY_NOT_GRANTED`].
+    /// the Grant, the membership-held reason when the root holds an otherwise
+    /// standing Grant, else [`QUEUE_REVIEW_POLICY_NOT_GRANTED`].
     ///
     /// # Errors
     /// A store, fold or clock failure; never a refusal.
@@ -391,15 +392,24 @@ impl Vault {
         let shared = self
             .shared_vault_creation_in_txn(txn)?
             .map(|creation| creation.vault_id);
+        let mut held = false;
         for standing in self.agent_grants_in_txn(txn)? {
-            if standing.grant.repo_bounds.is_none()
-                && standing.stands_in_txn(self, txn, actor, verb, now, &owners)
-                && self.agent_grant_gate_in_txn(txn, &standing, shared)? == GrantGate::Stands
+            if standing.grant.repo_bounds.is_some()
+                || !standing.stands_in_txn(self, txn, actor, verb, now, &owners)
             {
-                return Ok(Ok(standing.id));
+                continue;
+            }
+            match self.agent_grant_gate_in_txn(txn, &standing, shared)? {
+                GrantGate::Stands => return Ok(Ok(standing.id)),
+                GrantGate::Held => held = true,
+                GrantGate::Refused => {}
             }
         }
-        Ok(Err(QUEUE_REVIEW_POLICY_NOT_GRANTED))
+        Ok(Err(if held {
+            RepoAccessRefusal::MembershipHeld.public_code()
+        } else {
+            QUEUE_REVIEW_POLICY_NOT_GRANTED
+        }))
     }
 }
 

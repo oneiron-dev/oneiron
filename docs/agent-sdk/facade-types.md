@@ -863,7 +863,7 @@ export type AgentBudgetView = { attempt: string; lease?: SpendLeaseView | null; 
 export type BudgetLandRequest = { attempt: string; run: string; lease_owner: string; attempt_count: number; marker: string; artifact_ref?: string | null; reason: string }
 /** `oneiron::llm::run_admission::person_billing::BillingAccountFiling` */
 export type BillingAccountFiling = { account: string }
-/** `oneiron::llm::run_admission::person_billing::FiledBillingAccount` */
+/** `oneiron::store::person_billing_account::FiledBillingAccount` */
 export type FiledBillingAccount = { account: string; filed_at: number }
 /** `oneiron::agent_dispatch::budget_doors::OpenSpendLeaseRequest` */
 export type OpenSpendLeaseRequest = { launch: string; cap_units: number; unit: string; shown_at_ms: number }
@@ -1075,7 +1075,7 @@ export type RetrievalTurn = { turn_id: number[]; episode_id: number[]; turn_idx:
 export type RecallTelemetry = { capture_trace?: boolean; turn?: RetrievalTurn | null }
 /** `oneiron::memory::recall::RecallRequest` */
 export type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; token_budget?: number | null; reader_agent_ref?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null }
-/** `oneiron::store::embedding::InputKind` */
+/** `oneiron_store::embedding_vocabulary::InputKind` */
 export type InputKind = "text" | "image" | "audio"
 /** `oneiron::store::embedding::EmbeddingMatchEvidence` */
 export type EmbeddingMatchEvidence = { space: string; embedding_kind: InputKind; query_kind: InputKind; score: number; floor: number; strong: number; matched: boolean }
@@ -2251,15 +2251,15 @@ export type SkillOptimizeTradeoffResolveRequest = { proposal: EntityId; pending:
 export type SkillGovernanceSetRequest = { entity: EntityId; tier?: string | null }
 /** `oneiron::verbs::hub::HubHookBindRequest` */
 export type HubHookBindRequest = { pack: string }
-/** `oneiron::skill_hub::pack_catalog::hooks::HookActorClass` */
+/** `oneiron::store::pack_hook_actor_class::HookActorClass` */
 export type HookActorClass = "human" | "agent" | "system"
-/** `oneiron::skill_hub::pack_catalog::hooks::HookPhase` */
+/** `oneiron::store::pack_hook_proposal::HookPhase` */
 export type HookPhase = "pre" | "post" | "fact"
-/** `oneiron::skill_hub::pack_catalog::hooks::HookOutcomeKind` */
+/** `oneiron::store::pack_hook_proposal::HookOutcomeKind` */
 export type HookOutcomeKind = "continue" | "rewrite" | "skip" | "ask" | "add_block" | "annotate" | "redact" | "propose" | "enqueue" | "effect" | "nothing"
-/** `oneiron::skill_hub::pack_catalog::hooks::HookRenderClass` */
+/** `oneiron::store::pack_hook_proposal::HookRenderClass` */
 export type HookRenderClass = "deterministic_eager" | "generative"
-/** `oneiron::skill_hub::pack_catalog::hooks::HookSelector` */
+/** `oneiron::store::pack_hook_proposal::HookSelector` */
 export type HookSelector = { verbs: string[]; actors: HookActorClass[]; scope?: string | null; phase: HookPhase; priority: number; budget_ms: number; blocking: boolean; outcomes: HookOutcomeKind[]; served?: string[]; render_class?: HookRenderClass }
 /** `oneiron::skill_hub::pack_catalog::hooks::author::HookAuthor` */
 export type HookAuthor = { kind: "owner" } | { kind: "agent"; agent: string } | { kind: "foreign_actor"; actor_kind: string; identity: string; hub: string; grant: string; actor: string }
@@ -2566,7 +2566,7 @@ export type AuthorityAuditEventKind = "grant" | "revoke" | "confirm" | "other"
 /** `oneiron::receipt::authority_audit::AuthorityAuditQuery` */
 export type AuthorityAuditQuery = { after?: EntityId | null; limit?: number | null; kinds?: AuthorityAuditEventKind[] }
 /** `oneiron::receipt::authority_audit::AuthorityAuditRow` */
-export type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] }
+export type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; receipt_ref?: string | null; affected_grants?: string[]; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] }
 /** `oneiron::receipt::authority_audit::AuthorityAuditOrder` */
 export type AuthorityAuditOrder = "entry_ref_ascending"
 /** `oneiron::receipt::authority_audit::ColdAuthorityAuditRow` */
@@ -4285,15 +4285,15 @@ export type LearningBetaValue = { alpha: number; beta: number }
 export type LearningMeanValue = { mean: number; spread: number }
 /** `oneiron::learning::doors::MeasuredLearningValue` */
 export type MeasuredLearningValue = { form: "beta"; value: LearningBetaValue } | { form: "mean"; value: LearningMeanValue } | { form: "counts"; value: Record<string, number> }
-/** `oneiron::claim::learning_estimate::PriorOrigin` */
+/** `oneiron_base::learning_estimate::PriorOrigin` */
 export type PriorOrigin = "shipped" | "provenance" | "carried" | "parent" | "model" | "seed"
 /** `oneiron::learning::doors::LearningPriorValue` */
 export type LearningPriorValue = LearningBetaValue | LearningMeanValue | Record<string, number>
 /** `oneiron::learning::doors::LearningPriorView` */
 export type LearningPriorView = { origin: PriorOrigin; value: LearningPriorValue; weight_runs: number; from?: string | null }
-/** `oneiron::claim::learning_estimate::EstimateLabels` */
+/** `oneiron_base::learning_estimate::EstimateLabels` */
 export type EstimateLabels = { by_judge?: Record<string, number>; converted?: number; on_judge_model?: number; outcome_counts?: Record<string, number> | null }
-/** `oneiron::claim::learning_estimate::Window` */
+/** `oneiron_base::learning_estimate::Window` */
 export type LearningEstimateWindow = { half_life: number }
 /** `oneiron::learning::doors::MeasuredLearningEstimate` */
 export type MeasuredLearningEstimate = MeasuredLearningValue & { runs: number; prior: LearningPriorView; untested: boolean; of: string; labels: EstimateLabels; window: LearningEstimateWindow; ver: string }
@@ -6515,9 +6515,9 @@ export type AttributionProposalsView = { edit_proposals: SkillEditProposalView[]
 export type PositiveRetireRequest = { evidence_sequence: number }
 /** `oneiron::verbs::skill_attribution::PositiveRetireReceipt` */
 export type PositiveRetireReceipt = { retired: boolean }
-/** `oneiron::llm::step::public::ModelStepRetryPolicy` */
+/** `oneiron::store::model_step_submission::ModelStepRetryPolicy` */
 export type ModelStepRetryPolicy = { max_attempts: number }
-/** `oneiron::llm::step::public::ModelStepSubmit` */
+/** `oneiron::store::model_step_submission::ModelStepSubmit` */
 export type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy }
 /** `oneiron_model::llm::catalog::LlmCapability` */
 export type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input" | "reasoning_content_history" | "token_logprobs" | "reasoning_summary"
@@ -6527,7 +6527,7 @@ export type UnsupportedCapability = { capability: LlmCapability; model?: ModelId
 export type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed"
 /** `oneiron_model::llm::error::FatalLlmError` */
 export type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased" | "JobLost"
-/** `oneiron::llm::step::public::ModelStepFailureClass` */
+/** `oneiron::store::model_step_submission::ModelStepFailureClass` */
 export type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine"
 /** `oneiron_model::llm::error::TransportFaultKind` */
 export type TransportFaultKind = "not_sent" | "io_after_send" | "refused" | "unexpected_frame" | "ended_with_error"
@@ -6539,9 +6539,9 @@ export type RetryableLlmError = { RateLimited: { retry_after?: number | null; re
 export type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied" | "HostCheck"
 /** `oneiron_model::llm::error::LlmError` */
 export type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied }
-/** `oneiron::llm::step::public::ModelStepFailure` */
+/** `oneiron::store::model_step_submission::ModelStepFailure` */
 export type ModelStepFailure = { class: ModelStepFailureClass; message: string; llm?: LlmError | null; validation_attempts?: number | null; validation_errors: string[]; spent_usage?: LlmUsage | null }
-/** `oneiron::llm::step::public::ModelStepResult` */
+/** `oneiron::store::model_step_submission::ModelStepResult` */
 export type ModelStepResult = { status: "finished"; response: LlmResponse; json?: unknown | null; memoized: boolean; fallback_source?: FatalLlmError | null; claim_ref: string } | { status: "failed"; failure: ModelStepFailure } | { status: "budget_denied"; trap_ref: string } | { status: "erased" }
 /** `oneiron::llm::step::public::ModelStepReceipt` */
 export type ModelStepReceipt = { step_ref: string; step_hash: string; model: ModelId; retry: ModelStepRetryPolicy; progression?: StepProgression | null; result?: ModelStepResult | null }
@@ -6671,7 +6671,7 @@ export type AnonymousChatSkippedCheckView = { input: boolean; reason: PolicySkip
 export type AnonymousChatBlockReasonView = "policy" | "human_review_unavailable"
 /** `oneiron::verbs::anonymous_chat::AnonymousChatResponse` */
 export type AnonymousChatResponse = { type: "reply"; content: string; notices: GateSystemNoticeRecord[]; skipped_checks: AnonymousChatSkippedCheckView[]; model_notices: GateSystemNoticeRecord[] } | { type: "blocked"; input: boolean; notice: GateSystemNoticeRecord; preceding_notices: GateSystemNoticeRecord[]; reason: AnonymousChatBlockReasonView; model_notices: GateSystemNoticeRecord[] }
-/** `oneiron::llm::registry::ModelWireFormat` */
+/** `oneiron::store::model_description_rows::ModelWireFormat` */
 export type ModelWireFormat = "openai-compat" | "anthropic-messages" | "gemini" | "own-server" | "local"
 /** `oneiron_model::llm::catalog::LlmCatalogCost` */
 export type LlmCatalogCost = { input_per_million: string; output_per_million: string; cache_read_per_million?: string | null; cache_write_per_million?: string | null; currency?: string | null }
@@ -6687,7 +6687,7 @@ export type ScoreObservation = { model: ModelId; benchmark: string; score: numbe
 export type ScoreSnapshot = { source: string; fetched_at: number; observations: ScoreObservation[]; source_rows?: EntityId[] | null }
 /** `oneiron::llm::catalog_doors::types::ModelCatalogRefresh` */
 export type ModelCatalogRefresh = { revision: string; expected_revision?: string | null; catalog: CatalogSeed; scores?: ScoreSnapshot[] }
-/** `oneiron::llm::registry::ModelScoreDiff` */
+/** `oneiron::store::model_score_diff::ModelScoreDiff` */
 export type ModelScoreDiff = { model: ModelId; source: string; benchmark: string; previous?: number | null; score: number; fetched_at: number }
 /** `oneiron::llm::catalog_doors::types::ModelCatalogRevision` */
 export type ModelCatalogRevision = { revision: string; previous_revision?: string | null; catalog: CatalogSeed; rows: ModelRegistryRow[]; score_diffs: ModelScoreDiff[]; refreshed_at: number }
@@ -6951,7 +6951,7 @@ export type DecisionBandEnforceRequest = { question: DecisionQuestion; reversibi
 export type DecisionAskAnswerRequest = { seq: number; answer: DecisionAnswer }
 /** `oneiron::llm::decision::asks::AskPrior` */
 export type AskPrior = { answer: DecisionAnswer; probability?: number | null; provider: ProviderPin; paired?: PairedReading | null; person?: PairedReading | null }
-/** `oneiron::llm::decision::ladder::roles::AskRole` */
+/** `oneiron::store::decision_ask_role::AskRole` */
 export type AskRole = { role: "responsible"; actor: string; project?: string | null } | { role: "board"; project: string } | { role: "owner" }
 /** `oneiron::llm::decision::ladder::roles::AskTo` */
 export type AskTo = { role: AskRole; ceiling: RoleRank; act: AskAct }
@@ -8137,13 +8137,13 @@ export type ChannelIdentityBindRequest = { kind: "existing"; identity_ref: Entit
 export type ChannelIdentityRequest = { identity_ref: EntityId; request_ref?: EntityId | null }
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityReleaseRequest` */
 export type ChannelIdentityReleaseRequest = { identity_ref: EntityId; quarantine_until: number; request_ref?: EntityId | null }
-/** `oneiron::channel_identity_selection::selection_vocabulary::RelationshipContext` */
+/** `oneiron_authority::channel_selection_vocabulary::RelationshipContext` */
 export type RelationshipContext = "work_deal" | "scheduling_logistics" | "campaign_outreach" | "transactional_system" | "personal_friends" | "group_space"
 /** `oneiron::channel_identity_selection::selection_resolution::SelectionRuleScope` */
 export type SelectionRuleScope = { kind: "vault_default" } | { kind: "world"; world_ref: EntityId } | { kind: "relationship"; relationship_ref: EntityId } | { kind: "brief"; brief_ref: string } | { kind: "space"; space_ref: string }
-/** `oneiron::channel_identity_selection::selection_vocabulary::ChannelIdentityFace` */
+/** `oneiron_authority::channel_selection_vocabulary::ChannelIdentityFace` */
 export type ChannelIdentityFace = "delegated_owner_account" | "agent_named_address" | "side_domain_address" | "house_identity" | "companion_identity" | "named_group_participant"
-/** `oneiron::channel_identity_selection::selection_vocabulary::SelectionRuleWriterKind` */
+/** `oneiron_authority::channel_selection_vocabulary::SelectionRuleWriterKind` */
 export type SelectionRuleWriterKind = "system_default" | "owner" | "agent"
 /** `oneiron::channel_identity_selection::selection_rules::ChannelIdentitySelectionRule` */
 export type ChannelIdentitySelectionRule = { rule_id: string; relationship: RelationshipContext; scope: SelectionRuleScope; face: ChannelIdentityFace; pinned_identity_ref?: EntityId | null; priority: number; enabled: boolean; agent_amendable: boolean; updated_at: number; updated_by?: EntityId | null; writer_kind: SelectionRuleWriterKind }
