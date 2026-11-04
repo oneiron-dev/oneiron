@@ -43430,7 +43430,7 @@
      "purpose": "Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves",
      "surface": {
       "crate-vis": 3,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -50821,7 +50821,7 @@
      "path": "src/model_decision/state.rs",
      "purpose": "Caller-prepared decision state fitting",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -50933,7 +50933,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 47,
+      "crate-vis": 48,
       "enum": 3,
       "fn": 4,
       "re-export": 18,
@@ -56500,7 +56500,7 @@
      "path": "src/pipeline/filters.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -56614,7 +56614,7 @@
      "path": "src/pipeline/support.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -56813,7 +56813,7 @@
      "path": "src/pipeline/types.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 36,
       "enum": 3,
       "fn": 5,
       "re-export": 5,
