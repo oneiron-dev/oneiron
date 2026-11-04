@@ -41,7 +41,7 @@ use loro::{LoroDoc, LoroMap};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::dreamer_runner::authority::is_base_agent_actor;
+use crate::store::base_agent::is_base_agent_actor;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
