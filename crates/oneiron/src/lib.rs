@@ -107,7 +107,7 @@ pub mod reaction;
 pub mod rerank;
 pub mod research_budget;
 pub mod retrieval_depth;
-pub mod run_budget;
+pub use oneiron_run_budget::run_budget;
 pub use oneiron_model::teacher_probe_policy;
 mod vault_live_rows;
 pub use oneiron_base::retrieval_quality;
@@ -148,7 +148,7 @@ pub mod world_keys;
 pub mod channel_identity;
 pub mod channel_identity_autonomy;
 pub mod channel_identity_lifecycle;
-pub mod channel_identity_manifest;
+pub use oneiron_authority::channel_identity_manifest;
 pub mod channel_identity_provider;
 pub mod channel_identity_selection;
 pub mod counterparty_contact;
@@ -197,7 +197,7 @@ pub mod outbound_intent_ledger;
 #[cfg(feature = "sync")]
 pub mod sync;
 pub mod web_connector;
-pub mod web_fetch;
+pub use oneiron_web_fetch::web_fetch;
 // ===== Agent runtime ===== agent defs, dispatch, attempt queue, run tree, sessions, code-mode
 pub mod agent_def;
 pub mod agent_dispatch;
