@@ -16775,9 +16775,28 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 43,
-      "mod": 7,
-      "re-export": 30
+      "crate-vis": 44,
+      "mod": 8,
+      "re-export": 31
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ModelCallDigests",
+      "ModelCallInputPart",
+      "ModelCallReasoningPart",
+      "ModelCallRecord",
+      "ReasoningPartKind"
+     ],
+     "path": "src/code_run/model_call.rs",
+     "purpose": "Per-model-call evidence and replay records (FIX 12516)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 8,
+      "struct": 3
      }
     },
     {
@@ -17343,7 +17362,7 @@
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
       "crate-vis": 31,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -17369,11 +17388,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ReadWorldUnknown"
+     ],
      "path": "src/code_run/storage/read_worlds.rs",
      "purpose": "The worlds of the rows one code run is served (FIX 6130): its ledger in `CODE_RUN_READ_WORLD`, on the run's…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9,
+      "enum": 1
      }
     },
     {
@@ -17487,7 +17509,7 @@
      "path": "src/code_run/storage/replay_capsule.rs",
      "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -44281,9 +44303,9 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 19,
       "mod": 11,
-      "re-export": 26
+      "re-export": 27
      }
     },
     {
@@ -44581,7 +44603,7 @@
       "const": 1,
       "crate-vis": 10,
       "enum": 1,
-      "fn": 26,
+      "fn": 28,
       "re-export": 2,
       "struct": 2
      }
@@ -52050,7 +52072,7 @@
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
       "crate-vis": 7,
-      "fn": 10
+      "fn": 12
      }
     },
     {
@@ -89883,7 +89905,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 172,
+     "files": 173,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91236,7 +91258,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6280,
+   "source_files": 6281,
    "test_files": 900
   },
   "oneiron-android": {
@@ -108058,7 +108080,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/step.rs",
@@ -111984,7 +112006,7 @@
      "path": "src/api/llm.rs",
      "purpose": "Owner-authenticated raw inference",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -112680,7 +112702,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 53
+      "crate-vis": 54
      }
     },
     {
@@ -120978,7 +121000,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 13,
       "re-export": 1,
       "struct": 1
@@ -121035,7 +121057,7 @@
      "path": "src/models/ladder/shadow_capture.rs",
      "purpose": "The route a step replay capsule's answering rung went out on (PR-S1): noted beside the rung itself when a…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -123876,7 +123898,7 @@
      "path": "src/server/web_fetch/headless/body.rs",
      "purpose": "A headless answer's decoded body, held inline up to a small bound and in an anonymous temporary file past it",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -125440,7 +125462,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 37,
+   "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1499,
    "test_files": 182
