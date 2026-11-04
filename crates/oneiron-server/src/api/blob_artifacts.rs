@@ -789,8 +789,7 @@ pub(super) async fn propose_deck(
                         &proposal,
                         request.made_by.as_ref(),
                         reader,
-                        actor,
-                        now,
+                        (actor, now),
                         &read_rows,
                     )
                     .map(|pending| Ok(json!(pending)))
