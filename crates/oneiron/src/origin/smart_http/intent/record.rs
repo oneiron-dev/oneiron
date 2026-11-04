@@ -20,7 +20,7 @@ use super::{
 };
 use crate::Vault;
 use crate::error::Result;
-use crate::federation::git_push::GitPushRefChange;
+use crate::origin::git_ref_change::GitPushRefChange;
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::origin::secret_marks::{admitted_marks, record_receive_secret_marks_in_txn};
 use crate::store::code_snapshot::RepoRef;
