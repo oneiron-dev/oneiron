@@ -177,18 +177,19 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                 }
             }
             Some("thinking") => {
-                if let Some(text) = block
+                let text = block
                     .get("thinking")
                     .or_else(|| block.get("text"))
                     .and_then(JsonValue::as_str)
-                    && !text.is_empty()
-                {
+                    .unwrap_or_default();
+                let signature = block
+                    .get("signature")
+                    .and_then(JsonValue::as_str)
+                    .map(str::to_owned);
+                if !text.is_empty() || signature.is_some() {
                     content.push(ContentPart::Reasoning {
                         text: text.to_owned(),
-                        signature: block
-                            .get("signature")
-                            .and_then(JsonValue::as_str)
-                            .map(str::to_owned),
+                        signature,
                         reasoning_kind: oneiron::ReasoningPartKind::Full,
                         data: None,
                     });
