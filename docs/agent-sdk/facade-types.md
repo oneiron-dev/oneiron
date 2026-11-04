@@ -6478,7 +6478,7 @@ export type TransportFaultKind = "not_sent" | "io_after_send" | "refused" | "une
 /** `oneiron_model::llm::error::TransportFault` */
 export type TransportFault = { kind: TransportFaultKind; stage?: string | null; detail: string }
 /** `oneiron_model::llm::error::RetryableLlmError` */
-export type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "WorldRouteNotAdmitted" | "ServerError" | "Timeout" | "StreamCut" | { TransportFault: TransportFault }
+export type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "WorldRouteNotAdmitted" | "ServerError" | "Timeout" | "StreamCut" | { TransportFault: TransportFault } | "DeviceAdmissionStopped"
 /** `oneiron_model::llm::error::BudgetDenied` */
 export type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied" | "HostCheck"
 /** `oneiron_model::llm::error::LlmError` */
@@ -7754,7 +7754,7 @@ export type ProgramAdmissionOutcomeView = { kind: "queued"; root: string; code_r
 /** `oneiron::dreamer_runner::program::read::views::TurnProgramAdmissionItem` */
 export type TurnProgramAdmissionItem = { admission: string; registration: EntityId; actor: EntityId; actor_class: string; conversation?: EntityId | null; landed_at?: number | null; revision: string; definition?: ProgramRecipePin | null; sealed_scope?: string | null; gate_receipt: string; outcome: ProgramAdmissionOutcomeView; decided_at: number; withheld: string[] }
 /** `oneiron::dreamer_runner::program::read::views::OwedWakeHoldView` */
-export type OwedWakeHoldView = { reason: string; held_at: number; expires_at?: number | null }
+export type OwedWakeHoldView = { reason: string; held_at: number; expires_at?: number | null; expired?: boolean | null }
 /** `oneiron::dreamer_runner::program::read::views::TurnProgramOwedWakeItem` */
 export type TurnProgramOwedWakeItem = { registration: EntityId; actor: EntityId; actor_class: string; revision: string; sealed_scope?: string | null; held?: OwedWakeHoldView | null; withheld: string[] }
 /** `oneiron::dreamer_runner::program::read::views::TurnProgramAdmissionView` */
