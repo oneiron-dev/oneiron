@@ -13,4 +13,3 @@ pub struct UnitRefusal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub judged_live: Option<crate::typed_body::live_pin::LivePin>,
 }
-

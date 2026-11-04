@@ -206,4 +206,3 @@ pub enum DeckCreateError {
     #[error(transparent)]
     Font(#[from] FontError),
 }
-

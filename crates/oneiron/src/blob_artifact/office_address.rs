@@ -173,4 +173,3 @@ fn letters_to_column(letters: &str) -> Result<u32> {
     }
     Ok(col)
 }
-

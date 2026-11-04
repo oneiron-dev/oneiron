@@ -26,4 +26,3 @@ impl NativeOutput {
         serde_json::to_value(report).unwrap_or(serde_json::Value::Null)
     }
 }
-

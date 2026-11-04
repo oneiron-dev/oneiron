@@ -9,4 +9,3 @@ pub struct LivePin {
     pub frontier: Vec<u8>,
     pub commits: u64,
 }
-

@@ -67,4 +67,3 @@ pub enum SlideUnitRefusalReason {
     /// asked about it (FIX 9819).
     RunDeadline,
 }
-

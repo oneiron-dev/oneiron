@@ -344,4 +344,3 @@ pub(crate) fn validate_markdown(markdown: &str) -> Result<()> {
     }
     Ok(())
 }
-

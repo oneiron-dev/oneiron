@@ -50,4 +50,3 @@ pub(crate) fn hard_deleted_refusal(id: &EntityId) -> MemoryError {
         ],
     )
 }
-
