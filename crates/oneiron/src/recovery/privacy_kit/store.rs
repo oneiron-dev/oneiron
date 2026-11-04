@@ -66,7 +66,16 @@ impl KitPieceStore {
     /// pair, replacing the piece kept there. A tail that does not write after its
     /// head did empties the pair: half a piece is no piece. A current or pending
     /// pair's piece kept names this install by the vault id alone (FIX 12054, 12055).
+    /// A data-key kit reissue overwrites its current pair in place, so its
+    /// install name is written first: a naming failure keeps the old piece
+    /// instead of aborting issuance after it is gone (REVIEW-4473 P1). Every
+    /// other pair keeps the write-then-name order, so a naming failure after
+    /// the write keeps settle's pending-pair behavior (REVIEW-4370 P1).
     pub(crate) fn put(&self, piece: &KitPiece, pair: KitPiecePair) -> oneiron_keystore::Result<()> {
+        let name_first = matches!(pair, KitPiecePair::Current(KitSecretKind::VaultKey));
+        if name_first {
+            self.name_install(pair)?;
+        }
         let [head, tail] = self.slots(pair);
         let bytes = piece.slot_bytes();
         let mut head_bytes = Zeroizing::new([0u8; SLOT]);
@@ -78,7 +87,9 @@ impl KitPieceStore {
             let _ = self.delete(pair);
             return Err(error);
         }
-        self.name_install(pair)?;
+        if !name_first {
+            self.name_install(pair)?;
+        }
         Ok(())
     }
 
