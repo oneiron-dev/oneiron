@@ -6,8 +6,9 @@ use oneiron_crypto::backup::host_holds_recipient_id;
 use std::num::NonZeroU64;
 
 /// The host recipient a hosted vault seals its checkpoints' host-order
-/// family to: the public bundle its supervisor pinned and delivered (a
-/// hybrid public key's wire form), its id (SHA-256 of the bundle's bytes)
+/// family to: the 1616-byte ONHB frame its supervisor pinned and delivered
+/// (`b"ONHB" || u16_be(1) || u16_be(0x0101) || u64_be(epoch) || 1600 bare
+/// hybrid public key bytes`), its id (SHA-256 of the full bundle's bytes)
 /// and its nonzero epoch. Never read from the owner's settings.
 #[derive(Clone, PartialEq)]
 pub struct HostHoldsRecipient {
@@ -23,17 +24,44 @@ impl std::fmt::Debug for HostHoldsRecipient {
 }
 
 impl HostHoldsRecipient {
-    /// The recipient whose public bundle is `bundle`, at `epoch`.
+    /// The recipient whose public bundle is the 1616-byte ONHB frame `bundle`,
+    /// at `epoch`.
+    ///
+    /// The frame epoch must equal `epoch`; the id is SHA-256 of the full
+    /// bundle's bytes.
     ///
     /// # Errors
     ///
-    /// A bundle that is not a hybrid public key, or a zero epoch.
+    /// A bundle that is not an ONHB public bundle, a zero epoch, or a bundle
+    /// epoch that does not equal `epoch`.
     pub fn new(bundle: &[u8], epoch: u64) -> Result<Self> {
-        let public = HybridPublicKey::from_bytes(bundle).map_err(|_| {
-            Error::InvalidConfig("the host-holds recipient is not a hybrid public key".into())
-        })?;
+        if bundle.len() != 1616
+            || !bundle.starts_with(b"ONHB")
+            || u16::from_be_bytes([bundle[4], bundle[5]]) != 1
+            || u16::from_be_bytes([bundle[6], bundle[7]]) != 0x0101
+            || u64::from_be_bytes([
+                bundle[8], bundle[9], bundle[10], bundle[11], bundle[12], bundle[13], bundle[14],
+                bundle[15],
+            ]) == 0
+        {
+            return Err(Error::InvalidConfig(
+                "the host-holds recipient is not a hybrid public key".into(),
+            ));
+        }
+        let frame_epoch = u64::from_be_bytes([
+            bundle[8], bundle[9], bundle[10], bundle[11], bundle[12], bundle[13], bundle[14],
+            bundle[15],
+        ]);
         let epoch = NonZeroU64::new(epoch).ok_or_else(|| {
             Error::InvalidConfig("the host-holds recipient's epoch is zero".into())
+        })?;
+        if frame_epoch != epoch.get() {
+            return Err(Error::InvalidConfig(
+                "the host-holds recipient's epoch does not match its bundle".into(),
+            ));
+        }
+        let public = HybridPublicKey::from_bytes(&bundle[16..]).map_err(|_| {
+            Error::InvalidConfig("the host-holds recipient is not a hybrid public key".into())
         })?;
         Ok(Self {
             public,
