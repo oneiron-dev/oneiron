@@ -43,6 +43,12 @@ pub(super) const OUTBOX: SideTable<OutboxKey, StoredOutboxRow, LegacyJson> =
 const REMOTE_OBJECT: SideTable<RemoteObjectKey, StoredRemoteObjectRow, LegacyJson> =
     SideTable::new(&side_table::CALENDAR_CONNECTOR_WRITE);
 
+/// The declaration carries both current typed rows, under distinct key tags.
+pub(crate) fn calendar_connector_write_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StoredOutboxRow, LegacyJson>(bytes)
+        || crate::side_table::decodes::<StoredRemoteObjectRow, LegacyJson>(bytes)
+}
+
 pub(super) struct OutboxKey(pub(super) [u8; 32]);
 
 impl SideKey for OutboxKey {
