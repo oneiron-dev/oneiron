@@ -17,9 +17,10 @@
 //! against the source's text and lands as a source text edit, in the one
 //! writer that admits it and keeps the peer's operations, before any
 //! acknowledgement (C2, C5). A ruled hold (`sealed_file_edited`,
-//! `projection_edit_conflict`) lands and applies nothing: its held record is
-//! kept and its acknowledgement covers its operations, so the peer stops
-//! sending it (FIX 10598). An update sent under the source id takes today's
+//! `projection_edit_conflict`) lands in the lineage only and applies nothing
+//! to the source: its held record is kept and its acknowledgement covers its
+//! operations, which the lineage keeps, so the peer stops sending it (FIX
+//! 10598). An update sent under the source id takes today's
 //! path.
 //!
 //! **Residence.** A peer is shown a marked source by its copy id; a copy id
@@ -372,10 +373,11 @@ pub(crate) fn document_copy_in_txn(
 /// landed in one writer: `admit` judges it first, the lineage takes the
 /// peer's operations, and its changed text lands on the source's durable
 /// text through the visible diff and the canonical writer, carrying the
-/// copy's mark (FIX 10732). A ruled hold lands and applies nothing: its held
-/// record is kept, and it answers the vector to acknowledge the edit with,
-/// the stored lineage's and the held operations', so the peer stops sending
-/// it (FIX 10598). `None` for an edit that landed.
+/// copy's mark (FIX 10732). A ruled hold lands in the lineage only and
+/// applies nothing to the source: its held record is kept, and it answers the
+/// vector to acknowledge the edit with, the stored lineage's and the held
+/// operations' (which the lineage keeps), so the peer stops sending it (FIX
+/// 10598). `None` for an edit that landed.
 ///
 /// # Errors
 /// `admit`'s refusal, an update that does not import whole on the lineage,
@@ -435,11 +437,13 @@ where
                 Ok(text) => Some(text),
                 Err(_) => {
                     let cause = RepoProjectionDiffResult::ProjectionEditConflict;
+                    save_lineage(vault, txn, id, &lineage)?;
                     return Ok(Some(held(source, cause, bytes, stored)));
                 }
             },
             cause @ (RepoProjectionDiffResult::SealedFileEdited
             | RepoProjectionDiffResult::ProjectionEditConflict) => {
+                save_lineage(vault, txn, id, &lineage)?;
                 return Ok(Some(held(source, cause, bytes, stored)));
             }
         };
@@ -490,8 +494,8 @@ where
 
 /// The ruled hold of `bytes`, a peer's update of `source`'s copy lineage:
 /// its held edit, and the vector it is acknowledged with, `stored` (the
-/// lineage as stored) with the update's own operations, which nothing here
-/// keeps.
+/// lineage as stored) with the update's own operations, which the lineage
+/// keeps (saved before the hold returns) without applying to the source.
 fn held(
     source: EntityId,
     cause: RepoProjectionDiffResult,

@@ -97,14 +97,19 @@ pub(super) fn poll(
         .asset_bodies
         .get_mut()
         .unwrap_or_else(PoisonError::into_inner);
-    let polled = with_peer(server.vault(), &server.reassert_manager, &followed, |peer| {
-        bodies.poll(
-            peer,
-            Instant::now(),
-            ASSET_BODY_FRAMES_PER_POLL,
-            server.config.max_frame_size,
-        )
-    });
+    let polled = with_peer(
+        server.vault(),
+        &server.reassert_manager,
+        &followed,
+        |peer| {
+            bodies.poll(
+                peer,
+                Instant::now(),
+                ASSET_BODY_FRAMES_PER_POLL,
+                server.config.max_frame_size,
+            )
+        },
+    );
     hold_used(state, followed);
     match polled {
         Ok(frames) => {
@@ -246,16 +251,37 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
             Followed::Live(keys)
         }
         // A federation socket's copies, each while its selector still
-        // authorizes, and only while the socket's credential is live.
+        // authorizes and the peer's world read settings still admit it, and
+        // only while the socket's credential is live.
         WindowSyncMode::Selector if require_bound_app_auth(server, state).is_ok() => {
             let windows = state.admitted_windows.read(|selector| {
                 authorize_sync_selector(server.vault.as_ref(), selector_grant_scope(), selector)
                     .is_ok()
             });
+            // A held copy froze the peer's world read settings at its fetch:
+            // rejudge it under what they say now, as the window-frame door
+            // judges the frames it releases. A window its world keeps home
+            // moves no bodies, and its transfer ends, as if unfollowed; a
+            // dropped copy is rebuilt under today's settings on its next use.
+            let peer = state.peer_machine(server.vault());
+            let windows = windows
+                .into_iter()
+                .filter(|(key, copy)| match copy {
+                    AdmittedCopy::Held(doc) => !oneiron::sync::window::export_withheld_for(
+                        server.vault.as_ref(),
+                        key,
+                        doc,
+                        &loro::VersionVector::default(),
+                        oneiron::sync::window::Withhold::Peer(peer),
+                    )
+                    .unwrap_or(true),
+                    AdmittedCopy::Dropped(_) => true,
+                })
+                .collect::<Vec<_>>();
             let peer = windows
                 .iter()
                 .any(|(_, copy)| matches!(copy, AdmittedCopy::Dropped(_)))
-                .then(|| state.peer_machine(server.vault()));
+                .then_some(peer);
             Followed::Admitted(AdmittedFollow {
                 windows,
                 peer,

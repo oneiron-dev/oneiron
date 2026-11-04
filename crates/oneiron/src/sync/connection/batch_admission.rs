@@ -233,20 +233,24 @@ impl SyncConnection {
         );
     }
 
-    /// Queues what the loop buffered as it exits, under the host's admission
-    /// when it admits. A paused host's exit queues it all the same: no stop
-    /// waits for a thaw, and no buffered update is dropped.
+    /// Queues what the loop buffered as it exits, under the host's admission.
+    /// A paused host's exit waits for the thaw, then queues under its
+    /// admission: no buffered update is dropped, and none lands without one.
     pub(super) async fn queue_on_exit(
         &self,
         gate: &mut BatchGate<'_>,
         buffer: &mut Vec<LocalUpdate>,
     ) {
-        let _queued = if buffer.is_empty() {
-            None
-        } else {
-            gate.admit().await
-        };
-        flush_to_queue(&self.queue, buffer);
+        if buffer.is_empty() {
+            return;
+        }
+        loop {
+            if let Some(_queued) = gate.admit().await {
+                flush_to_queue(&self.queue, buffer);
+                return;
+            }
+            gate.thawed().await;
+        }
     }
 
     /// The queue-overflow check between reconnect attempts, under the host's
