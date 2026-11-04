@@ -88,7 +88,9 @@ impl SyncClient {
             .asset_bodies
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
-        with_manager_peer(&self.manager, lane, |peer| bodies.note_rows(peer, window, doc, rows))
+        with_manager_peer(&self.manager, lane, |peer| {
+            bodies.note_rows(peer, window, doc, rows)
+        })
     }
 
     /// The body frames this client owes its home now. A scan that fails is
