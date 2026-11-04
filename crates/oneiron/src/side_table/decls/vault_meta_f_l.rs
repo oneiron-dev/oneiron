@@ -491,7 +491,7 @@ side_tables! {
     LLM_MANIFEST: VaultMeta b"llm:manifest:v2" LegacyJson;
     /// Revision-pinned description of one registered model, read by seat routing. Key:
     /// string(model id).
-    LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored [accepts: crate::llm::llm_model_description_accepts_masked];
+    LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored [accepts: crate::store::seat_model_description::llm_model_description_accepts_masked];
     /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
     LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
     /// The loaded native Oneironer bundle's receipt at its bind: stack and
