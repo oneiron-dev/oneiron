@@ -4035,7 +4035,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_step_effect.rs` | src | s | 4 crate-vis | — | Durable model-step identity frozen into outbound effects |
 | `src/model_step_error.rs` | src | s | 1 enum · 2 type | DurableStepError | Durable model-step failure and reply-check contracts |
 | `src/model_step_record.rs` | src | s | 4 struct · 3 enum · 3 fn · 8 const · 7 crate-vis | DreamerTrapKind, DreamerTrapState, ModelStepCheckpoint, SettledStepRequest, SettledStepView, StepProgression, TrapRef | Durable model-step claim vocabulary and progression values |
-| `src/note.rs` | src | m | 2 struct · 3 enum · 4 fn · 1 const · 18 re-export · 47 crate-vis | NoteBody, NoteKind, NoteScope, NoteWriteEnvelope, TakeTarget | Attributed NOTE records with built-in, plugin and registered PACK kinds |
+| `src/note.rs` | src | m | 2 struct · 3 enum · 4 fn · 1 const · 18 re-export · 48 crate-vis | NoteBody, NoteKind, NoteScope, NoteWriteEnvelope, TakeTarget | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `src/note/adapter_tests.rs` | test | m | — | — | Canonical program adapter laws; no native snapshot grants authority |
 | `src/note/archive_read.rs` | src | s | 2 crate-vis | — | Whether an archived NOTE was read since its archive (OF-073, FIX 2419; CALLS "FIX 2419 NOTE read since… |
 | `src/note/birth.rs` | src | s | 4 crate-vis | — | Deterministic NOTE birth on the shared document registry's first load |
@@ -4505,7 +4505,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/execution/retrieval_policy.rs` | src | s | 1 crate-vis | — | Policy-guided attempts; every attempt keeps the pipeline's existing gates |
 | `src/pipeline/execution/types.rs` | src | s | 3 crate-vis | — | Attempt plumbing for the retrieval transaction: attempt overrides, the transaction output, and the… |
 | `src/pipeline/execution_binding.rs` | src | s | 1 crate-vis | — | Pipeline construction bound to a host execution capability |
-| `src/pipeline/filters.rs` | src | L | 9 crate-vis | — | — |
+| `src/pipeline/filters.rs` | src | L | 10 crate-vis | — | — |
 | `src/pipeline/l2_evidence.rs` | src | s | 1 crate-vis | — | Unranked, explicitly addressed L2 subject evidence through the retrieval gates |
 | `src/pipeline/media_channel.rs` | src | s | 2 crate-vis | — | Typed media retrieval over declared embedding spaces (OF-370; ARCH-0004 `#embedding-spaces`) |
 | `src/pipeline/mod.rs` | src | s | 2 mod · 5 re-export · 6 crate-vis | — | — |
@@ -4514,7 +4514,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/retrieval_policy.rs` | src | s | 2 struct · 1 enum · 1 trait · 4 fn · 2 re-export | RetrievalIntent, RetrievalPolicyChoices, RetrievalPolicyEnvelopeExt, RetrievalPolicyOptions | OF-092: a bounded retrieval FSM and contextual Thompson selection |
 | `src/pipeline/retrieval_policy/posterior.rs` | src | s | 1 re-export | — | Retrieval policy posterior re-exported from its stored evidence vocabulary |
 | `src/pipeline/scoped_channels.rs` | src | s | 4 crate-vis | — | — |
-| `src/pipeline/support.rs` | src | s | 12 crate-vis | — | — |
+| `src/pipeline/support.rs` | src | s | 14 crate-vis | — | — |
 | `src/pipeline/temporal_bound.rs` | src | m | 18 crate-vis | — | The scoped temporal bound (ARCH-0004 #temporal-bound): how far a scoped call's temporal channel widens, the… |
 | `src/pipeline/temporal_report.rs` | src | s | 1 struct | TemporalSearchReport | Caller-visible accounting for the temporal request, not its scope overfetch |
 | `src/pipeline/tests/facet_status_world.rs` | test | m | — | — | Facet filter, claim-status gate, and world-scope visibility pins |
@@ -4535,7 +4535,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/trace/replay_inputs.rs` | src | s | 1 crate-vis | — | Opt-in replay input capture from the resolved query, never from a fork hash |
 | `src/pipeline/trace/trace_fork_hash.rs` | src | m | 2 crate-vis | — | Deterministic replay fork-hashing: evidence dispatcher, all fork_hash segments, and primitives |
 | `src/pipeline/trace/trace_records.rs` | src | s | 10 crate-vis | — | Pure trace-data shaping: channel, fused, top and stage records, score breakdowns, and candidate-set assembly |
-| `src/pipeline/types.rs` | src | m | 3 struct · 3 enum · 5 fn · 5 re-export · 34 crate-vis | DreamerWorkingSet, DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, Signal, WorldScope | — |
+| `src/pipeline/types.rs` | src | m | 3 struct · 3 enum · 5 fn · 5 re-export · 36 crate-vis | DreamerWorkingSet, DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, Signal, WorldScope | — |
 | `src/pipeline/vector_refinement.rs` | src | s | 1 struct · 1 crate-vis | VectorRefinement | The dimensional space the existing HNSW funnel actually scores in |
 | `src/pipeline/world_authority.rs` | src | m | 1 fn · 9 crate-vis | — | Per-turn world authority, bound to the host's executing principal |
 | `src/pipeline/world_authority_tests.rs` | test | m | — | — | ONE-1420 principal binding, durable default authorship, and authority reuse |
