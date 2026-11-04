@@ -194,6 +194,7 @@ impl Store {
             project_writes: hooks.project_writes,
             record_hooks: hooks.record_hooks,
             actor_scrubs: hooks.actor_scrubs,
+            gate_hooks: hooks.gate_hooks,
             #[cfg(feature = "sync")]
             sync_hooks: hooks.sync_hooks,
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
@@ -401,6 +402,7 @@ impl Store {
         }
         let id = crate::store::policy_record::default_policy_manifest_id()?;
         seed_default_policy_manifest_in_txn(
+            self.gate_hooks,
             &self.entities,
             &self.sync_state,
             &self.type_index,
