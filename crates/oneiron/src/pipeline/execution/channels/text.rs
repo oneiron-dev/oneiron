@@ -253,9 +253,11 @@ impl PipelineBuilder<'_> {
                             filter_all,
                             matches_scope: &mut retry_exact_posting_matches_scope,
                             private_note_ids: inputs.private_note_ids,
-                            recency: inputs
-                                .recency
-                                .map(crate::config::bm25::Bm25RecencyConfig::table_default),
+                            // FIX 9096 PART (blind P1 REVIEW-4502.md): the port
+                            // BM25 must not pre-boost with the fixed
+                            // table_default 0.35; the pipeline blends recency
+                            // post-fusion on the non-port path instead.
+                            recency: None,
                         },
                     )?
                 };
@@ -374,9 +376,11 @@ impl PipelineBuilder<'_> {
                         filter_all,
                         matches_scope: &mut exact_posting_matches_scope,
                         private_note_ids: inputs.private_note_ids,
-                        recency: inputs
-                            .recency
-                            .map(crate::config::bm25::Bm25RecencyConfig::table_default),
+                        // FIX 9096 PART (blind P1 REVIEW-4502.md): the port
+                        // BM25 must not pre-boost with the fixed
+                        // table_default 0.35; the pipeline blends recency
+                        // post-fusion on the non-port path instead.
+                        recency: None,
                     },
                 )?
             };

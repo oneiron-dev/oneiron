@@ -27,6 +27,12 @@ use crate::error::{Error, Result};
 const VOICE_ROSTER_UNRESOLVED_LABEL: &str = "unresolved voice roster";
 const LIVE_ROOM_SPEAKER_LABEL: &str = "live room speaker";
 
+/// Display label for an Active counterparty contact the caller may not read
+/// (FIX 9142). The entry stays in the set as an anonymous Unknown so the
+/// disclosure clamp still counts the party (never owner-alone by removal);
+/// only the member hex is withheld.
+const WITHHELD_COUNTERPARTY_LABEL: &str = "withheld counterparty";
+
 /// Who a conversation participant is, as the disclosure clamp sees them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -673,14 +679,14 @@ impl Vault {
                                 record.first_touch,
                             )?
                         }
-                        // FIX 9142 (L02 YES 12:33): Active-but-unadmitted
-                        // withholds the member hex (skip the push) instead of
-                        // stamping Unknown. No record or Revoked keeps
+                        // FIX 9142 (L02 YES 12:33, reshaped per #4502 blind
+                        // P1 REVIEW-4502.md): Active-but-unadmitted keeps an
+                        // anonymous Unknown in the set so disclosure
+                        // enforcement still counts the party; only the member
+                        // hex is withheld. No record or Revoked keeps
                         // today's Unknown stamp below.
-                        Some((_, record))
-                            if record.status == CounterpartyContactStatus::Active =>
-                        {
-                            continue;
+                        Some((_, record)) if record.status == CounterpartyContactStatus::Active => {
+                            Interlocutor::unknown(WITHHELD_COUNTERPARTY_LABEL, false)
                         }
                         _ => Interlocutor::unknown(counterparty.clone(), false),
                     }
