@@ -6,9 +6,9 @@ use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::scan_count::ScanCount;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::EngineScan;
+use crate::store::scan_count::ScanCount;
 
 use super::Store;
 use super::records::{
@@ -179,7 +179,8 @@ impl Store {
         }
         TRAY.delete(self, wtxn, claim_id.as_bytes())?;
         if removal == TrayRemoval::Unanswered {
-            crate::gate::show_owner_answer_item_in_txn(self, wtxn, claim_id, None)?;
+            self.gate_hooks
+                .show_owner_answer_item_in_txn(self, wtxn, claim_id, None)?;
         }
         Ok(())
     }
