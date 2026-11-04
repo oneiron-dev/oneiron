@@ -31,7 +31,8 @@ use crate::batch::secret_scan::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
-use crate::secret_custody::{CustodyWrite, KnownValues};
+use crate::secret_custody::CustodyWrite;
+use crate::store::known_value_index::KnownValues;
 
 /// The reason landed bytes no rule places a key in are planned under: the
 /// plan's whole-blob residue, for which no fact is written.

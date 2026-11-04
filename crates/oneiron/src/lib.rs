@@ -12,8 +12,9 @@
 
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
-pub mod config;
+pub use oneiron_store::config;
 pub mod deletion;
+pub(crate) mod engine_store_hooks;
 pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
     //! defined in `oneiron-base`. The `regenerates` proofs over stored rows are
@@ -47,6 +48,7 @@ pub mod off_record;
 pub(crate) mod overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
+pub(crate) mod room_codec;
 pub mod registry {
     //! Entity-type registry: defined in `oneiron-contracts` and named through
     //! `oneiron_base::registry`; the vault-backed pack byte map stays here.
@@ -73,7 +75,8 @@ mod vault;
 pub mod window_key;
 pub use oneiron_base::work_line;
 mod task_work_line;
-pub mod write_envelope;
+pub use oneiron_store::write_envelope;
+pub(crate) mod carry_forward_admission;
 // ===== Read path ===== indexes, retrieval pipeline, standing queries, context packs, LLM seam
 pub use oneiron_base::analyzer;
 pub(crate) mod bm25;
@@ -91,7 +94,7 @@ pub use oneiron_base::live_rows;
 pub mod claim_check;
 pub mod inference_context;
 pub mod llm;
-pub mod model_binding;
+pub use oneiron_model::model_binding;
 pub mod model_decision;
 pub mod model_step_context;
 pub(crate) mod model_step_effect;
@@ -106,8 +109,8 @@ pub mod reaction;
 pub mod rerank;
 pub mod research_budget;
 pub mod retrieval_depth;
+pub use oneiron_model::teacher_probe_policy;
 pub use oneiron_run_budget::run_budget;
-pub mod teacher_probe_policy;
 mod vault_live_rows;
 pub use oneiron_base::retrieval_quality;
 pub mod saved_query;

@@ -461,12 +461,25 @@ impl Vault {
             (None, Some((base, _))) => Some(*base),
             (None, None) => head.as_ref().map(|head| (head.version, head.content_hash)),
         };
+        // The producer is bound once, here, at proposal authentication and
+        // retention: Keep preserves this envelope instead of rebinding it to
+        // the keeper, and the provenance matches what Keep settles under
+        // (blind review of #4554).
         let row = PendingRow {
             proposal_ref: output.run_ref.clone(),
             retained_by: actor.entity_ref(),
             retained_by_kind: self.get_entity_type(&actor.entity_ref())?,
             retained_at,
-            made_by: output.made_by.clone(),
+            made_by: output.made_by.as_ref().map(|named| {
+                Vault::bind_retained_producer_envelope(
+                    &actor,
+                    &BlobVersionProvenance::AgentRun {
+                        run_ref: output.run_ref.clone(),
+                    },
+                    named,
+                    retained_at,
+                )
+            }),
             base_version: base.map(|(version, _)| version),
             base_content_hash: base.map(|(_, hash)| hash),
             explicit_fork: base_override.is_some(),
@@ -660,7 +673,7 @@ impl Vault {
                 row.explicit_fork || head.as_ref().is_some_and(|head| head.version != *base)
             });
             let version = match &row.made_by {
-                Some(made_by) => self.append_blob_artifact_version_made_by_in_txn(
+                Some(made_by) => self.append_blob_artifact_version_kept_in_txn(
                     wtxn,
                     artifact_id,
                     fork_parent,

@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use loro::{LoroMap, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
 
-use super::loro_support::{map_contains_binary, map_get_bytes, map_insert_bytes};
+use super::loro_bytes::{map_contains_binary, map_get_bytes, map_insert_bytes};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 
