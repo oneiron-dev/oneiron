@@ -373,12 +373,13 @@ async fn seal(
     if bytes > budget.limit() {
         return Err(Some(Skip::Oversize));
     }
-    // Reading the region makes a second copy: reserve it with the screen,
-    // one atomic admission, held through the seal. The guard keeps the
-    // second copy committed while it lives, so a concurrent restore cannot
-    // pass its own screen on these same bytes.
+    // Reading the region makes a second copy and the seal holds two
+    // beside each other: reserve the two-copy peak with the screen, one
+    // atomic admission, held through the seal. A one-copy admission would
+    // let the peak breach the headroom.
     room(bytes).await?;
-    let _host_reserved = registry::reserve_host(bytes)
+    let peak = bytes.saturating_mul(2);
+    let _host_reserved = registry::reserve_host(peak)
         .await
         .ok_or(Some(Skip::NoRoom))?;
     if lifecycle::admission(&vault_ref) != Some(Admitted::Granted(admission)) {

@@ -180,9 +180,9 @@ impl Restore<'_> {
 
     /// The restore, in order. `Err` with whether the session it registered
     /// holds the snapshot's pin now. Its host copies (the plaintext, then
-    /// the region made of it) run only while they fit beside the headroom,
-    /// as a park's do: the screen admits the bytes atomically and the guard
-    /// holds them committed through the import, so a concurrent restore
+    /// the region made of it) peak at two copies beside the headroom, as a
+    /// park's do: the screen admits the two-copy peak atomically and the
+    /// guard holds it committed through the import, so a concurrent restore
     /// cannot pass its own screen on the same bytes. The device room is
     /// honoured where the ledger knows it, and elsewhere the worker's own
     /// answer decides (`snapshot_busy` is cold).
@@ -193,7 +193,9 @@ impl Restore<'_> {
         if fits_host(bytes).await != Some(true) || !device_room(ledger.as_deref(), bytes) {
             return Err((COLD, false));
         }
-        let _host_reserved = registry::reserve_host(bytes).await.ok_or((COLD, false))?;
+        // The import peaks at two live copies (plaintext plus region).
+        let peak = bytes.saturating_mul(2);
+        let _host_reserved = registry::reserve_host(peak).await.ok_or((COLD, false))?;
         let holder = format!("snapshot-restore-{}", policy::next_op_id());
         if let Some(ledger) = &ledger {
             ledger.hold(&holder, mib(bytes));
