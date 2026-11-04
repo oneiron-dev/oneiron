@@ -57,7 +57,20 @@ pub(crate) fn deletion_window_for_row(
     id: &EntityId,
     raw: &[u8],
 ) -> Result<String> {
-    row_window(dbs, txn, id, raw, false)
+    row_window(dbs, txn, id, raw, false, None)
+}
+
+/// [`deletion_window_for_row`] for a reader that already knows, for the
+/// snapshot `txn` reads, whether a world window of a month holds a pending
+/// deletion: `world_pending` answers it in place of the store seek.
+pub(crate) fn deletion_window_for_row_known(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+    world_pending: &dyn Fn(&str) -> Result<bool>,
+) -> Result<String> {
+    row_window(dbs, txn, id, raw, false, Some(world_pending))
 }
 
 /// [`deletion_window_for_row`] that always decodes a CLAIM or key pad body
@@ -69,7 +82,7 @@ pub(in crate::deletion) fn residence_window_for_row(
     id: &EntityId,
     raw: &[u8],
 ) -> Result<String> {
-    row_window(dbs, txn, id, raw, true)
+    row_window(dbs, txn, id, raw, true, None)
 }
 
 fn row_window(
@@ -78,6 +91,7 @@ fn row_window(
     id: &EntityId,
     raw: &[u8],
     always_decode: bool,
+    world_pending: Option<&dyn Fn(&str) -> Result<bool>>,
 ) -> Result<String> {
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let mut label = window_label_from_timestamp(header.learned_at);
@@ -88,7 +102,12 @@ fn row_window(
     if raw.len() == ENTITY_METADATA_HEADER_LEN {
         return deletion_window_label(dbs, txn, id, header.learned_at);
     }
-    if !always_decode && !world_pending_tombstone_exists(dbs, txn, &label)? {
+    if !always_decode
+        && !match world_pending {
+            Some(known) => known(label.as_str())?,
+            None => world_pending_tombstone_exists(dbs, txn, &label)?,
+        }
+    {
         return Ok(label);
     }
     // A live pad rides its world's windows (`sync::types::entity_world`).
@@ -121,9 +140,16 @@ pub(crate) fn row_deletion_marked(
     id: &EntityId,
     raw: Option<&[u8]>,
 ) -> Result<bool> {
-    if !super::tombstone::HARD_DELETE_MARKER.contains(dbs, txn, &HexId(*id))?
-        && !super::tombstone::ROW_DELETION_FENCE.contains(dbs, txn, &HexId(*id))?
-    {
+    let marked = super::tombstone::HARD_DELETE_MARKER.contains(dbs, txn, &HexId(*id))?
+        || super::tombstone::ROW_DELETION_FENCE.contains(dbs, txn, &HexId(*id))?;
+    marked_row_deleted(marked, id, raw)
+}
+
+/// [`row_deletion_marked`] once the reader knows whether a `dt:` or `df:`
+/// marker stands at `id` in its snapshot (`marked`): the same protection of
+/// delete-protected records and the base agent's actor row.
+pub(crate) fn marked_row_deleted(marked: bool, id: &EntityId, raw: Option<&[u8]>) -> Result<bool> {
+    if !marked {
         return Ok(false);
     }
     let Some(raw) = raw else {
