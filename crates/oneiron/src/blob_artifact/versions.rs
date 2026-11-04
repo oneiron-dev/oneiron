@@ -16,7 +16,8 @@ use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProv
 
 use super::body::{BlobArtifactBody, decode_blob_artifact_body, encode_blob_artifact_body};
 use super::made_by::{
-    births_row, default_version_made_by, made_by_text, validate_version_made_by_in_txn,
+    bind_version_made_by, births_row, default_version_made_by, made_by_text,
+    validate_version_made_by_in_txn,
 };
 use super::provenance::{
     BLOB_VERSION_CLAIM_PREDICATE, BlobVersionProvenance, blob_version_claim_value,
@@ -719,9 +720,7 @@ impl Vault {
         let made_by = match made_by {
             Some(named) => {
                 validate_version_made_by_in_txn(self, wtxn, named)?;
-                let mut named = named.clone();
-                named.at = learned_at;
-                named
+                bind_version_made_by(&actor, provenance, named, learned_at)
             }
             None => default_version_made_by(&actor, provenance, parent_claim, learned_at),
         };
