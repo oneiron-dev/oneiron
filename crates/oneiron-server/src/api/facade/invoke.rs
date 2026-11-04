@@ -99,8 +99,6 @@ pub(super) fn facade_invoke_concern_move(
         Ok((output, wake))
     })
 }
-    })
-}
 
 /// [`facade_invoke`] on the task-work turn the dispatch awaited for the call
 /// (Rule 5), bound on the surface the verb runs on: the engine's task work,
