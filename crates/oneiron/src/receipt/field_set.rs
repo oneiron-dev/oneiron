@@ -342,6 +342,9 @@ pub fn append_task_type_fields(
             "typeRef node_id must not be empty",
         ));
     }
+    let learning_type = crate::learning::TypeRef::from(type_ref);
+    let encoded = serde_json::to_string(&learning_type)
+        .map_err(|_| Error::InvariantViolation("typeRef field encode failed"))?;
     receipt
         .fields
         .insert(FIELD_TYPE_REF_NODE.to_owned(), type_ref.node_id.clone());
@@ -349,6 +352,7 @@ pub fn append_task_type_fields(
         FIELD_TYPE_REF_TREE_VERSION.to_owned(),
         type_ref.tree_version.to_string(),
     );
+    receipt.fields.insert("typeRef".to_owned(), encoded);
     Ok(())
 }
 
