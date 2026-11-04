@@ -22,7 +22,9 @@ pub struct DocsPage {
     pub path: String,
     pub text: String,
 }
-pub use crate::store::document_segments::{DocsSegment, docs_semantic_segments};
+pub use crate::store::document_segments::{
+    DOCS_SEGMENT_MAX_BYTES, DocsSegment, docs_semantic_segments,
+};
 pub fn docs_extraction_id(corpus: &str, page: &str, span: &str) -> String {
     let mut h = blake3::Hasher::new();
     for part in ["docs-extraction:v1", corpus, page, span] {

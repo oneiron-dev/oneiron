@@ -733,11 +733,12 @@ impl Vault {
                 sources.list(facet);
                 Ok(facet.to_hex())
             }
+            (ShapeChange::Retire, ShapeTarget::World { .. }, _) => {
+                self.retire_shape_world(owner, entity.ok_or_else(stale)?)
+            }
             (
                 ShapeChange::Retire,
-                ShapeTarget::World { .. }
-                | ShapeTarget::Facet { .. }
-                | ShapeTarget::WorldFacet { .. },
+                ShapeTarget::Facet { .. } | ShapeTarget::WorldFacet { .. },
                 _,
             ) => self.delete_shape_entity(owner, entity.ok_or_else(stale)?),
             (

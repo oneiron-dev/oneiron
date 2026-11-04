@@ -135,10 +135,25 @@ impl WakePreparationChunks {
                     "sieve receipts follow their TURNs to the split-off sibling"
                 );
             }
-            if matches!(outcome, EnqueueDreamerAttemptOutcome::Enqueued(_)) {
+            if let EnqueueDreamerAttemptOutcome::Enqueued(status) = &outcome {
                 crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
                     vault, txn, source, sibling,
                 )?;
+                // The chunk's turns are assigned work from this commit on: a
+                // Micro retry records the chunk as a projector round and
+                // their current words as taken (FIX 12246), so no later
+                // widening takes them again and an erase/demote of one
+                // member releases the survivors. The chunk itself keeps
+                // them as its own originals and runs them whole.
+                if scope == DreamerConsolidationScope::Micro {
+                    crate::dreamer_wake::take_chunk_words_in_txn(
+                        vault,
+                        txn,
+                        &status.attempt.kind,
+                        key,
+                        &chunk.turn_ids(),
+                    )?;
+                }
                 queued += 1;
             }
         }
@@ -207,7 +222,10 @@ pub(super) fn owe(
 ) {
     let mut queued_any = false;
     for set in owed {
-        match vault.with_write_txn_grouped(|txn| set.enqueue_in_txn(vault, txn, scope)) {
+        match vault.with_write_txn_grouped(|txn| {
+            let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("wake prep");
+            set.enqueue_in_txn(vault, txn, scope)
+        }) {
             Ok(queued) => {
                 queued_any |= queued > 0;
                 tracing::debug!(

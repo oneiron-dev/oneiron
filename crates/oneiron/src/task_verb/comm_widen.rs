@@ -526,6 +526,7 @@ impl Memory<'_> {
                          an approval lasts while this run does.",
                         request.needed.as_str()
                     ),
+                    parts: None,
                     metadata: None,
                     is_visible: true,
                     order: 0,

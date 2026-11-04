@@ -38,6 +38,7 @@ use oneiron::llm::{
     LlmUsage, RetryableLlmError,
 };
 use oneiron::{ModelId, ModelLocality};
+use oneiron_driver::WorkerLease;
 use serde_json::{Value as JsonValue, json};
 
 use super::cache_usage::{label_read, put_inference_calls, take_inference_calls};
@@ -225,6 +226,7 @@ pub(super) fn bind(
     let reader = DecisionReader::new(
         &model,
         &rung.model.model,
+        &rung.model.provider,
         provider,
         settings,
         runtime,
@@ -288,6 +290,9 @@ struct DecisionReader {
     /// The rung's configured wire id: what a launch alias in an answer stands
     /// for. Never compared with an answer.
     wire_model: String,
+    /// The rung's provider name: with `wire_model`, the managed-worker row
+    /// a read holds while it answers (FIX 9189).
+    provider: String,
     /// The provider's revision and the recipe's fingerprint: a new recipe is
     /// a new revision, so an escalation pin names the exact read.
     revision: String,
@@ -308,6 +313,7 @@ impl DecisionReader {
     fn new(
         model: &ModelId,
         wire_model: &str,
+        provider_name: &str,
         provider: &ProviderConfig,
         settings: &DecisionReadSettings,
         runtime: tokio::runtime::Handle,
@@ -320,6 +326,7 @@ impl DecisionReader {
             leaves: provider.locality == ModelLocality::ThirdParty,
             host,
             wire_model: wire_model.to_owned(),
+            provider: provider_name.to_owned(),
             revision: format!(
                 "{}+recipe.{}",
                 provider.revision,
@@ -486,6 +493,27 @@ impl DecisionReader {
             usage: pack_usage(reads),
         })
     }
+
+    /// Waits for the rung's managed worker to be ready and holds it for the
+    /// read; `None` for a rung no managed worker serves, whose endpoint this
+    /// process never stops. A parked worker fails the read as a server that
+    /// is down does.
+    async fn hold_worker(&self) -> LlmResult<Option<WorkerLease>> {
+        let Some(worker) = super::worker_host::managed_worker(&self.provider, &self.wire_model)
+        else {
+            return Ok(None);
+        };
+        match worker.acquire().await {
+            Ok(lease) => Ok(Some(lease)),
+            Err(unavailable) => {
+                tracing::warn!(
+                    %unavailable,
+                    "the decision read's managed worker is parked; the read fails as for a provider that is down"
+                );
+                Err(RetryableLlmError::ServerError.into())
+            }
+        }
+    }
 }
 
 impl LabelReadModel for DecisionReader {
@@ -513,7 +541,9 @@ impl LabelReadModel for DecisionReader {
 
     /// Blocks on the server's runtime until the model answers, so it runs on
     /// a blocking thread, never on one of that runtime's workers. Its caller
-    /// owns the lease and settles it.
+    /// owns the lease and settles it. The read holds its managed worker's
+    /// lease while the worker answers, so an idle stop cannot stop it
+    /// under the read (FIX 9189).
     fn read(
         &self,
         request: &LabelReadRequest<'_>,
@@ -532,7 +562,10 @@ impl LabelReadModel for DecisionReader {
             .map(|question| self.recipe.render(&prompt_of(request.state, question)))
             .collect::<Result<Vec<_>, _>>()
             .map_err(refused)?;
-        let read = self.read_pack(&prompts, request.questions);
+        let read = async {
+            let _worker = self.hold_worker().await?;
+            self.read_pack(&prompts, request.questions).await
+        };
         // One bound for the tokenizer and completion waits: the decision's work cutoff.
         match request.work_until {
             Some(until) => self.runtime.block_on(async {
@@ -694,6 +727,7 @@ fn usage(
             reasoning: 0,
         },
         raw_provider,
+        call_metadata: None,
     })
 }
 
@@ -717,6 +751,7 @@ fn retried(top_k: LlmUsage, full: LlmUsage) -> LlmUsage {
             reasoning: 0,
         },
         raw_provider,
+        call_metadata: None,
     }
 }
 
@@ -749,6 +784,7 @@ fn pack_usage(reads: Vec<LlmUsage>) -> LlmUsage {
             reasoning: 0,
         },
         raw_provider,
+        call_metadata: None,
     }
 }
 

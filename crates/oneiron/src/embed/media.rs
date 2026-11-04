@@ -82,19 +82,16 @@ pub(super) struct MediaEgressGate<'a> {
 }
 
 impl<'a> MediaEgressGate<'a> {
-    /// The gate for a scan in `txn`.
+    /// The gate for a scan in `txn`, of documents read toward `destination`.
     pub(super) fn read(
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         egress: &'a dyn EgressPredicate,
+        destination: &crate::settings::ReadDestination,
     ) -> Result<Self> {
         Ok(Self {
             egress,
-            flagged: crate::settings::device_local_worlds_at(
-                vault,
-                txn,
-                crate::claim::CallerLocality::OffDevice,
-            )?,
+            flagged: crate::settings::device_local_worlds_for(vault, txn, destination)?,
         })
     }
 
@@ -106,11 +103,14 @@ impl<'a> MediaEgressGate<'a> {
         txn: &heed::RoTxn<'_>,
         document: &PendingMedia,
     ) -> Result<bool> {
-        if self.egress.decide_media(&document.input()) != EgressDecision::Allow {
+        let input = document.input();
+        if self.egress.decide_media(&input) != EgressDecision::Allow {
             return Ok(false);
         }
-        Ok(self.flagged.is_empty()
-            || !crate::settings::device_local_keeps_among(store, txn, &self.flagged, &document.id)?)
+        Ok(
+            self.flagged.is_empty()
+                || !any_kept_in(store, txn, &self.flagged, input.source_rows())?,
+        )
     }
 }
 
@@ -144,8 +144,8 @@ impl Vault {
     /// ([`EgressPredicate::decide_media`]) that no device-local world keeps (DEC-0005), each
     /// asked again right before its bytes leave ([`MediaEmbedder::embed_each_released`]); the
     /// rest stay unsent and are counted [`MediaEmbedReport::withheld`]. An embedder on the
-    /// owner's server reads through `egress` when the host gives one (FIX 9830), and one on
-    /// this device reads as it does without a gate.
+    /// owner's server with a gate reads through `egress` (FIX 9830), at scan and again at
+    /// send; with none, and one on this device, reads as it does without a gate.
     ///
     /// # Errors
     ///
@@ -158,6 +158,7 @@ impl Vault {
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<MediaEmbedReport> {
         let egress = media_egress_for(embedder, egress)?;
+        let destination = embedder.endpoint();
         let mut report = MediaEmbedReport::default();
         let space_id = embedder.space_id();
         let (space, kinds, pending) = {
@@ -180,7 +181,7 @@ impl Vault {
                 )));
             }
             let gate = egress
-                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress, &destination))
                 .transpose()?;
             let pending = self.media_backlog_where_in_txn(
                 &rtxn,
@@ -196,7 +197,7 @@ impl Vault {
             return Ok(report);
         }
 
-        let outcomes = self.embed_documents(embedder, &pending, None)?;
+        let outcomes = self.embed_documents(embedder, &pending, None, egress, &destination)?;
         // A model that has embedded nothing here may be refusing them all for a reason of its
         // own; no document is blamed for that.
         if report.already_embedded == 0
@@ -326,21 +327,34 @@ impl Vault {
     }
 
     /// Each pending document's outcome from `embedder`, in order, read outside any
-    /// transaction. A model at a third party is sent each request only once the vault
-    /// releases its documents, as `session`'s room reads them or base with none: none is one
-    /// a device-local world keeps (DEC-0005). A refusal sends nothing more and fails the call.
+    /// transaction. A model at a third party, or on the owner's server with a gate, is sent
+    /// each request only once the vault releases its documents: the gate allows each one
+    /// again and, as `session`'s room reads them or base with none, none is one a
+    /// device-local world keeps (DEC-0005). A refusal sends nothing more and fails the call.
     /// Each vector keeps the mark of the answer that carried it (FIX 7796).
     pub(super) fn embed_documents(
         &self,
         embedder: &dyn MediaEmbedder,
         pending: &[PendingMedia],
         session: Option<&OffRecordSession<'_>>,
+        egress: Option<&dyn EgressPredicate>,
+        destination: &crate::settings::ReadDestination,
     ) -> Result<Vec<MediaOutcome>> {
         let inputs: Vec<MediaEmbeddingInput<'_>> =
             pending.iter().map(PendingMedia::input).collect();
-        let outcomes = if embedder.locality() == EmbedderLocality::ThirdParty {
+        let outcomes = if let Some(egress) = egress {
             embedder.embed_each_released(&inputs, &|rows| {
-                if self.media_rows_may_leave(session, rows)? {
+                for input in &inputs {
+                    if rows.contains(&input.entity_id)
+                        && egress.decide_media(input) != EgressDecision::Allow
+                    {
+                        return Err(Error::UpstreamToolFailure {
+                            tool: "media-embedder-remote",
+                            code: "media_egress".to_owned(),
+                        });
+                    }
+                }
+                if self.media_rows_may_leave(session, rows, destination)? {
                     Ok(())
                 } else {
                     Err(Error::UpstreamToolFailure {
@@ -397,7 +411,7 @@ impl Vault {
         if gate.decide_media(input) != EgressDecision::Allow {
             return Ok(false);
         }
-        self.media_rows_may_leave(None, &[input.entity_id])
+        self.media_rows_may_leave(None, input.source_rows(), &embedder.endpoint())
     }
 
     /// Whether every row of `rows` may leave this device now, as `session`'s room reads them,
@@ -408,15 +422,12 @@ impl Vault {
         &self,
         session: Option<&OffRecordSession<'_>>,
         rows: &[EntityId],
+        destination: &crate::settings::ReadDestination,
     ) -> Result<bool> {
         #[cfg(feature = "sync")]
         let _acceptance = self.device_only_acceptance();
         let rtxn = self.store.env.read_txn()?;
-        let flagged = crate::settings::device_local_worlds_at(
-            self,
-            &rtxn,
-            crate::claim::CallerLocality::OffDevice,
-        )?;
+        let flagged = crate::settings::device_local_worlds_for(self, &rtxn, destination)?;
         if flagged.is_empty() {
             return Ok(true);
         }
