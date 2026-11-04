@@ -918,16 +918,14 @@ async fn self_inbox_concern_move(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "self.inbox.concern.move",
-        value,
-        &producers,
-    )?;
-    server.ai.turn_landed_by(server.vault(), actor, class);
+    let output = {
+        let (output, wake) =
+            facade_invoke_concern_move(server, call, actor, class, value, &producers)?;
+        if wake {
+            server.ai.turn_landed_by(server.vault(), actor, class);
+        }
+        output
+    };
     Ok(FacadeCallOutput::listed(output, &producers))
 }
 async fn vault_diagnostics_list(
