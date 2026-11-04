@@ -281,18 +281,10 @@ impl<'v> ScopedRead<'v> {
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT {
-            for edge in self.out_edges_in(
-                rtxn,
-                id,
-                Some(crate::edge::EdgeKind::DerivedFrom),
-            )? {
+            for edge in self.out_edges_in(rtxn, id, Some(crate::edge::EdgeKind::DerivedFrom))? {
                 let source = edge?.target;
-                if crate::store::legal_hold::use_limit_in_txn(
-                    &self.vault.store,
-                    rtxn,
-                    &source,
-                )?
-                .is_none()
+                if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, rtxn, &source)?
+                    .is_none()
                 {
                     continue;
                 }
@@ -317,12 +309,8 @@ impl<'v> ScopedRead<'v> {
         match crate::scope_summary::word_sources_in(self.vault, rtxn, id, raw)? {
             crate::scope_summary::WordSources::From(sources) => {
                 for source in &sources {
-                    if crate::store::legal_hold::use_limit_in_txn(
-                        &self.vault.store,
-                        rtxn,
-                        source,
-                    )?
-                    .is_none()
+                    if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, rtxn, source)?
+                        .is_none()
                     {
                         continue;
                     }
@@ -353,16 +341,10 @@ impl<'v> ScopedRead<'v> {
         raw: &[u8],
     ) -> Result<bool> {
         let mut recorded = std::collections::BTreeSet::new();
-        for edge in self.out_edges_in(
-            rtxn,
-            id,
-            Some(crate::edge::EdgeKind::DerivedFrom),
-        )? {
+        for edge in self.out_edges_in(rtxn, id, Some(crate::edge::EdgeKind::DerivedFrom))? {
             recorded.insert(edge?.target);
         }
-        for source in
-            crate::ports::dependency_sources_in(&self.vault.store, rtxn, id)?
-        {
+        for source in crate::ports::dependency_sources_in(&self.vault.store, rtxn, id)? {
             recorded.insert(source);
         }
         // A merge claim's words are its named summary's recorded covers.
@@ -370,11 +352,8 @@ impl<'v> ScopedRead<'v> {
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-            if let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(body, true)
-            {
-                if let Ok(Some((_, summary))) =
-                    crate::scope_summary::merge_summary_ref(&claim)
-                {
+            if let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(body, true) {
+                if let Ok(Some((_, summary))) = crate::scope_summary::merge_summary_ref(&claim) {
                     if let Some(row) = self.entity_record_in(rtxn, &summary)? {
                         if let Ok(logical) = crate::entity_doc::resolve_record_body(
                             &self.vault.store,
@@ -389,9 +368,7 @@ impl<'v> ScopedRead<'v> {
                                 // too (review P1 on #4466): an edited pinned
                                 // MESSAGE must not hide a limit on another.
                                 recorded.extend(summary_body.covers);
-                                recorded.extend(
-                                    summary_body.messages.iter().map(|m| m.id),
-                                );
+                                recorded.extend(summary_body.messages.iter().map(|m| m.id));
                             }
                         }
                     }
@@ -399,12 +376,8 @@ impl<'v> ScopedRead<'v> {
             }
         }
         for source in &recorded {
-            if crate::store::legal_hold::use_limit_in_txn(
-                &self.vault.store,
-                rtxn,
-                source,
-            )?
-            .is_some()
+            if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, rtxn, source)?
+                .is_some()
             {
                 return Ok(true);
             }
@@ -426,21 +399,13 @@ impl<'v> ScopedRead<'v> {
         let mut seen = std::collections::BTreeSet::from([*summary]);
         let mut pending = vec![*summary];
         while let Some(next) = pending.pop() {
-            for edge in self.out_edges_in(
-                rtxn,
-                &next,
-                Some(crate::edge::EdgeKind::DerivedFrom),
-            )? {
+            for edge in self.out_edges_in(rtxn, &next, Some(crate::edge::EdgeKind::DerivedFrom))? {
                 let source = edge?.target;
                 if !seen.insert(source) {
                     continue;
                 }
-                if crate::store::legal_hold::use_limit_in_txn(
-                    &self.vault.store,
-                    rtxn,
-                    &source,
-                )?
-                .is_some()
+                if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, rtxn, &source)?
+                    .is_some()
                 {
                     return Ok(true);
                 }
@@ -546,18 +511,10 @@ impl<'v> ScopedRead<'v> {
             // FIX 1496 S8: as above, the owner reads every text except one
             // written from a use-limited source. Only the use-limit conjunct
             // binds; liveness and facet placement stay skipped.
-            for edge in self.out_edges_in(
-                rtxn,
-                id,
-                Some(crate::edge::EdgeKind::DerivedFrom),
-            )? {
+            for edge in self.out_edges_in(rtxn, id, Some(crate::edge::EdgeKind::DerivedFrom))? {
                 let source = edge?.target;
-                if crate::store::legal_hold::use_limit_in_txn(
-                    &self.vault.store,
-                    rtxn,
-                    &source,
-                )?
-                .is_none()
+                if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, rtxn, &source)?
+                    .is_none()
                 {
                     continue;
                 }
