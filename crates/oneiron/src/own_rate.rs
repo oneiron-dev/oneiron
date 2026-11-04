@@ -4,7 +4,9 @@
 use crate::{EntityId, Result, Vault};
 
 use crate::store::own_rate_rows::CHECKS;
-pub(crate) use crate::store::own_rate_rows::{count_in_txn, observe_in_txn, erase_window_actor_in_txn, erase_check_actor_in_txn};
+pub(crate) use crate::store::own_rate_rows::{
+    count_in_txn, erase_check_actor_in_txn, erase_window_actor_in_txn, observe_in_txn,
+};
 
 pub(crate) use crate::store::own_rate_record::OwnRate;
 pub use crate::store::own_rate_record::OwnRateKind;

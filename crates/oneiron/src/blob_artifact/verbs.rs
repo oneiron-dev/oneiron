@@ -13,29 +13,27 @@ use super::{
     VersionReconciliation,
 };
 use super::{DeckProposeRejection, DeckTransaction};
-use crate::edge::EdgeActorClass;
-use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentPatch, PptxCommentTarget};
-use crate::edit_roundtrip::slides_review::{
-     SlideAbstention, SlideJudgment,  SlideReviewError,
-    SlideReviewImage, SlideReviewLabels, SlideReviewRequest, SlideReviewUnit,
-
-};
+use crate::blob_artifact::deck_context::DeckEditContext;
+use crate::blob_artifact::native_output::NativeOutput;
+use crate::blob_artifact::office_address::RangeRef;
 use crate::blob_artifact::slide_review::REVIEW_IMAGE;
 use crate::blob_artifact::slide_review::SlideRenderer;
 use crate::blob_artifact::slide_review::SlideUnitRefusalReason;
 use crate::blob_artifact::slide_review::review_copy_bytes;
-use crate::edit_roundtrip::{
-    ArtifactAsk,  DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk,
-    SheetRowsAsk, UnitAbstention, UnitCall, UnitDecider,
-};
 use crate::blob_artifact::unit_refusal::UnitRefusal;
-use crate::blob_artifact::deck_context::DeckEditContext;
-use crate::blob_artifact::office_address::RangeRef;
-use crate::edit_settle::{
-    KeepUndo, MadeByReader,  OrganWaitView, PendingProposalView, SettleConsent,
-    SettledReview,
+use crate::edge::EdgeActorClass;
+use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentPatch, PptxCommentTarget};
+use crate::edit_roundtrip::slides_review::{
+    SlideAbstention, SlideJudgment, SlideReviewError, SlideReviewImage, SlideReviewLabels,
+    SlideReviewRequest, SlideReviewUnit,
 };
-use crate::blob_artifact::native_output::NativeOutput;
+use crate::edit_roundtrip::{
+    ArtifactAsk, DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk, SheetRowsAsk,
+    UnitAbstention, UnitCall, UnitDecider,
+};
+use crate::edit_settle::{
+    KeepUndo, MadeByReader, OrganWaitView, PendingProposalView, SettleConsent, SettledReview,
+};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::file_secret_marks::SecretSight;
