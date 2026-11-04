@@ -14,7 +14,11 @@ pub(crate) use engine_scan_table::EngineScanThreshold;
 pub(crate) const POLICY: SideTable<[u8; 1], u64, Raw> =
     SideTable::new(&side_table::ORIGIN_SCAN_POLICY);
 
-pub(crate) fn threshold_in_txn(store: &impl ManifestDbs, txn: &RoTxn<'_>, scan: EngineScan) -> Result<u64> {
+pub(crate) fn threshold_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    scan: EngineScan,
+) -> Result<u64> {
     Ok(POLICY
         .get(store, txn, &scan.tag())?
         .unwrap_or(scan.default_threshold()))
