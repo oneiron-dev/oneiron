@@ -47,7 +47,7 @@ enum PartyLookup {
     Absent,
 }
 
-fn validate_party_key(party: &str) -> CommResult<()> {
+pub(super) fn validate_party_key(party: &str) -> CommResult<()> {
     if party.trim() != party || party.is_empty() {
         return Err(CommError::InvalidRecord);
     }
