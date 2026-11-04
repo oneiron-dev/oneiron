@@ -5,8 +5,8 @@ use crate::edge::{
     EdgeProvenanceFlags,
 };
 use crate::error::{ClaimError, Error, Result};
-use crate::write_envelope::provenance::EdgeRef;
 use crate::store::Store;
+use crate::write_envelope::provenance::EdgeRef;
 use heed::RwTxn;
 impl EdgeStoreMaintenance for Store {
     fn port_revision_link(
@@ -140,8 +140,13 @@ impl super::EdgeStoreReadiness for crate::Vault {
             .default_weight()
             .ok_or(Error::InvariantViolation("blocks weight"))?;
         let at = super::recorded_at_in_txn(&self.store, txn)?;
-        let value =
-            crate::edge::encode_edge_value(kind, weight, at, oneiron_contracts::affect::Vad::NEUTRAL, None)?;
+        let value = crate::edge::encode_edge_value(
+            kind,
+            weight,
+            at,
+            oneiron_contracts::affect::Vad::NEUTRAL,
+            None,
+        )?;
         self.store
             .edges_out
             .put(txn, &Store::encode_edge_key(&from, kind, &to), &value)?;

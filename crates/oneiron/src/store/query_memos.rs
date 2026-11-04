@@ -3,12 +3,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value};
 
+use super::query_memo_codec::{canonical_json_bytes, hex_lower, parse_entity_ref};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::{ResponseCarriage, ResponseScan};
-use super::query_memo_codec::{canonical_json_bytes, hex_lower, parse_entity_ref};
 
 /// The `Of360DerivationEnvelope` shape, mirrored for saved-query verdicts.
 ///
@@ -209,7 +209,11 @@ pub(crate) fn required_string(value: &Value, key: &str, context: &'static str) -
         .ok_or(Error::CorruptedIndex(context))
 }
 
-pub(crate) fn required_actor_class(value: &Value, key: &str, context: &'static str) -> Result<EdgeActorClass> {
+pub(crate) fn required_actor_class(
+    value: &Value,
+    key: &str,
+    context: &'static str,
+) -> Result<EdgeActorClass> {
     match required_string(value, key, context)?.as_str() {
         "human" => Ok(EdgeActorClass::Human),
         "agent" => Ok(EdgeActorClass::Agent),
@@ -225,7 +229,11 @@ pub(crate) fn required_u64(value: &Value, key: &str, context: &'static str) -> R
         .ok_or(Error::CorruptedIndex(context))
 }
 
-pub(crate) fn required_entity_ref(value: &Value, key: &str, context: &'static str) -> Result<EntityId> {
+pub(crate) fn required_entity_ref(
+    value: &Value,
+    key: &str,
+    context: &'static str,
+) -> Result<EntityId> {
     let hex = required_string(value, key, context)?;
     EntityId::from_hex(&hex).map_err(|_| Error::CorruptedIndex(context))
 }

@@ -1,7 +1,9 @@
 //! Sandbox boundary contracts are defined in the store layer.
 
 pub use crate::store::sandbox_contract::{
-    SANDBOX_WIT_WORLD_NAME, SANDBOX_JS_COMPONENT_NAME, PLAIN_JS_HOST_VERB_DTS, SandboxGuestTier, SandboxGuestLanguage, SandboxComponentBoundary, SandboxGuestRuntime, SandboxBoundaryContract,
+    PLAIN_JS_HOST_VERB_DTS, SANDBOX_JS_COMPONENT_NAME, SANDBOX_WIT_WORLD_NAME,
+    SandboxBoundaryContract, SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestRuntime,
+    SandboxGuestTier,
 };
 
 use crate::code_run::SelfEffect;
@@ -21,6 +23,5 @@ impl SandboxLinkedImportEffects for SandboxLinkedImport {
         }
     }
 }
-
 
 pub use crate::store::sandbox_import::{SandboxImportClass, SandboxLinkedImport};

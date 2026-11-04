@@ -1,10 +1,10 @@
 //! Deterministic ranking of recorded jurisdiction claims.
 
-use crate::write_envelope::cohort_claims::codec::decode_comm_jurisdiction_value;
-use crate::write_envelope::claim_body::ClaimBody;
-use crate::error::Result;
 use super::evaluate::normalize_jurisdiction;
 use super::rules::CONFIDENCE_MILLIS_SCALE;
+use crate::error::Result;
+use crate::write_envelope::claim_body::ClaimBody;
+use crate::write_envelope::cohort_claims::codec::decode_comm_jurisdiction_value;
 
 /// One ACTIVE `comm.jurisdiction` observation as the gate ranks it: when it
 /// was observed, its normalized token, and its confidence in thousandths.

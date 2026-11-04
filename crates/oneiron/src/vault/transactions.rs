@@ -369,9 +369,11 @@ impl Vault {
                 .hnsw_meta
                 .delete(wtxn, crate::store::embedding::COLD_ATTACH_PENDING_KEY)?;
         } else {
-            self.store
-                .hnsw_meta
-                .put(wtxn, crate::store::embedding::COLD_ATTACH_PENDING_KEY, b"1")?;
+            self.store.hnsw_meta.put(
+                wtxn,
+                crate::store::embedding::COLD_ATTACH_PENDING_KEY,
+                b"1",
+            )?;
         }
         crate::vault::entity_revision::drop_staged_vectors(&self.store, wtxn)?;
         crate::embed::remark_all_embeddable_pending_in_txn(
@@ -571,7 +573,7 @@ impl Vault {
         crate::side_table::host_declared_sync_state_scan(prefix)?;
         let rtxn = self.store.env.read_txn()?;
         let mut count = crate::scan_check::ScanCount::start_at(
-            crate::store::EngineScan::PackQuarantineRows,
+            crate::store::EngineScan::SyncPrefixRows,
             prefix.as_bytes(),
             MAX_SYNC_STATE_KEYS as u64,
         );
@@ -624,7 +626,7 @@ impl Vault {
     pub fn sync_queue_rows_with_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let rtxn = self.store.env.read_txn()?;
         let mut count = crate::scan_check::ScanCount::start_at(
-            crate::store::EngineScan::PackQuarantineRows,
+            crate::store::EngineScan::SyncPrefixRows,
             prefix,
             MAX_SYNC_STATE_KEYS as u64,
         );

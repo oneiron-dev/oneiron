@@ -72,4 +72,3 @@ pub struct ReceiveScanHit {
     /// How the blob was read.
     pub content_kind: ReceiveBlobKind,
 }
-

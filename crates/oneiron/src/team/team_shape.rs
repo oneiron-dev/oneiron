@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::team::TeamPattern;
+use serde::{Deserialize, Serialize};
 
 /// Who decides (ARCH-0079 #patterns). `Solo` is the width-1 degenerate
 /// shape the skill starts from; the rest are OF-540's skill patterns.
