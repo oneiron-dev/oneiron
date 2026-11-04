@@ -234,6 +234,34 @@ impl LaunchPayload {
         }
     }
 
+    /// Typed admission equality (FIX 4973): two wave payloads share one
+    /// intent when their cuts match and their creators' original
+    /// five-field intents match. Recorded caller provenance is witness
+    /// metadata, not identity, so it never gates a reused cut.
+    fn same_intent(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Wave {
+                    cut: self_cut,
+                    creator_origin: self_origin,
+                },
+                Self::Wave {
+                    cut: other_cut,
+                    creator_origin: other_origin,
+                },
+            ) => {
+                let self_id = self_origin
+                    .as_ref()
+                    .and_then(TaskCreateOrigin::intent_identity);
+                let other_id = other_origin
+                    .as_ref()
+                    .and_then(TaskCreateOrigin::intent_identity);
+                self_cut == other_cut && self_id == other_id
+            }
+            _ => self == other,
+        }
+    }
+
     /// The counted plan this payload launches. Its plan_ref binds the hash
     /// of the payload's plan identity (FIX 4973: a wave binds its cut plus
     /// the creator's original five-field intent; the recorded caller
@@ -654,7 +682,7 @@ pub(super) fn admit_wave_launch_in(
     let payload = LaunchPayload::wave(input.cut, input.origin);
     let launch_ref = wave_launch_ref(input.actor, input.cut.plan_ref())?;
     if let Some(launch) = load_launch(vault, txn, launch_ref)? {
-        if launch.payload != payload {
+        if !launch.payload.same_intent(&payload) {
             return Err(reused_cut());
         }
         return Ok(if launch.dispatched_at.is_some() {
