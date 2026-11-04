@@ -78,6 +78,8 @@ impl Vault {
         source: &ServedImportSource<'_>,
     ) -> Result<ImportedCodeRepo> {
         let anchor = self.bind_served_repo_anchor(owner, source.repo, source.project)?;
+        // The anchor's first bind mints the repo's portable id (FIX 6870).
+        self.ensure_repo_manifest(anchor.repo, source.repo);
         let dir = crate::origin::smart_http::origin_repo_dir(self, source.repo)?;
         let git = GitWire::new(self)?;
         let repo = git.open_repo(

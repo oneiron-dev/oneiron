@@ -49,6 +49,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 9752: a fitted section install's receipt, with the skill or the
     // install claim it names.
     crate::context_board::erase_section_fit_receipts_in_txn,
+    // FIX 6870: a CODE anchor's repo manifests, aliases and minted markers.
+    crate::origin::erase_repo_manifests_in_txn,
     // FIX 9949: an uploaded or generated ASSET's reference to its bytes.
     crate::memory::release_asset_blob_in_txn,
     // FIX 10219: a subject's recognition prints, samples and active pointer.
