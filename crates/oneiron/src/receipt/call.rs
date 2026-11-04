@@ -48,6 +48,7 @@
 //! the same action on the same inputs. A call whose inputs were not
 //! captured states none, and is never read as equal to another.
 
+use crate::lens::RecordRefFromView;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 

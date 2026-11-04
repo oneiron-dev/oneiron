@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::lens::RecordRef;
+use crate::store::record_ref::RecordRef;
 use crate::provenance::made_by::MadeByTrigger;
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, Named, SideTable};

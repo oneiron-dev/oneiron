@@ -37,6 +37,7 @@
 //! product module enters this crate; prompt packages, model selection, and
 //! localization remain host configuration.
 
+use crate::lens::RecordRefFromView;
 use super::recall::{execution_render_budget, parse_pack_format, truncate_text};
 use super::*;
 
