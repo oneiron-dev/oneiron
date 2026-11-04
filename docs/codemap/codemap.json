@@ -71138,7 +71138,7 @@
      "path": "src/store/document_frame_tags.rs",
      "purpose": "Document frame tags shared by persisted document consumers and transport",
      "surface": {
-      "const": 10,
+      "const": 11,
       "mod": 1
      }
     },
@@ -75851,7 +75851,7 @@
      "path": "src/sync/client/documents.rs",
      "purpose": "Document import and durable local-journal confirmation on the one socket",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -76626,7 +76626,7 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 15,
       "re-export": 1,
       "struct": 2
@@ -78771,13 +78771,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "DocumentFrame"
+      "DocumentFrame",
+      "DocumentWaitedOut"
      ],
      "path": "src/sync/transport/documents.rs",
      "purpose": "Entity-key frames and bounded, non-nesting document batches",
      "surface": {
       "const": 1,
-      "fn": 6,
+      "enum": 1,
+      "fn": 8,
       "re-export": 2,
       "struct": 1
      }
