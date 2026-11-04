@@ -30,7 +30,7 @@ fn chunk_parameters_are_persisted_by_store_creation_before_vault_open() {
     let store = crate::store::Store::open(
         dir.path(),
         &config,
-        &crate::engine_delete_guards::ENGINE_DELETE_GUARDS,
+        crate::engine_store_hooks::ENGINE_STORE_HOOKS,
     )
     .unwrap();
     let txn = store.env.read_txn().unwrap();
