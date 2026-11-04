@@ -191,8 +191,8 @@ fn json_bytes(values: &[Value]) -> Option<Vec<u8>> {
 pub(super) fn reference_carries_credential(bytes: &[u8], depth: usize) -> bool {
     id_carries_credential(bytes, depth)
         || matches!(
-            crate::claim::ClaimSubject::decode(bytes),
-            Ok(crate::claim::ClaimSubject::Edge { source, target, .. })
+            crate::write_envelope::claim_body::ClaimSubject::decode(bytes),
+            Ok(crate::write_envelope::claim_body::ClaimSubject::Edge { source, target, .. })
                 if id_carries_credential(source.as_bytes(), depth)
                     || id_carries_credential(target.as_bytes(), depth)
         )

@@ -4,10 +4,11 @@
 //! later, and no door reads it to decide a write. An empty part means the
 //! writer had nothing proven to put there.
 
+use crate::claim::ClaimRecordScope;
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
-use crate::federation::Scope;
+use oneiron_authority::federation::Scope;
 
 use super::types::{GateDecisionId, GateDecisionRecord};
 
@@ -62,7 +63,7 @@ pub struct GateClaimReadSelectors {
     pub sensitivity_band: Option<u8>,
     /// The relationship key the claim is scoped to: `None` for all, else
     /// its whole set (`[]` the explicit empty set).
-    pub relationship: crate::claim::RelationshipScope,
+    pub relationship: crate::write_envelope::claim_body::RelationshipScope,
     /// Whether its scope marks it private.
     pub private: bool,
     /// Its opaque scope selector, as MessagePack.
@@ -289,18 +290,21 @@ impl GateDecisionReadContext {
     /// history control, which ordinary recall never reads, or one whose
     /// words come from records past its subject (a conversation summary, a
     /// merge header, a reaction outcome), which only its row walks.
-    pub(crate) fn claim(id: &EntityId, body: &crate::claim::ClaimBody) -> Option<Self> {
+    pub(crate) fn claim(
+        id: &EntityId,
+        body: &crate::write_envelope::claim_body::ClaimBody,
+    ) -> Option<Self> {
         if crate::claim::history_store::machine_history_kind(&body.predicate).is_some()
             || matches!(
                 body.predicate.as_str(),
                 "conversation.summary"
                     | "merge.summary"
-                    | crate::reaction::PREDICATE_REACTION_OUTCOME
+                    | crate::store::reaction_predicate::PREDICATE_REACTION_OUTCOME
             )
         {
             return None;
         }
-        let principal = crate::claim::claim_principal_id(body).ok()?;
+        let principal = crate::write_envelope::claim_body::claim_principal_id(body).ok()?;
         let scope = match &body.scope {
             None => None,
             Some(value) => {
@@ -310,8 +314,10 @@ impl GateDecisionReadContext {
             }
         };
         let about = match &body.subject {
-            crate::claim::ClaimSubject::Entity(subject) => vec![*subject],
-            crate::claim::ClaimSubject::Edge { source, target, .. } => vec![*source, *target],
+            crate::write_envelope::claim_body::ClaimSubject::Entity(subject) => vec![*subject],
+            crate::write_envelope::claim_body::ClaimSubject::Edge { source, target, .. } => {
+                vec![*source, *target]
+            }
         };
         let (relationship, private) = crate::claim::claim_access_axes(body);
         Some(Self {
@@ -322,7 +328,9 @@ impl GateDecisionReadContext {
                 scope: body.record_scope("read"),
                 claim: Some(GateClaimReadSelectors {
                     principal,
-                    sensitivity_band: crate::claim::claim_sensitivity_band(body),
+                    sensitivity_band: crate::write_envelope::claim_body::claim_sensitivity_band(
+                        body,
+                    ),
                     relationship,
                     private,
                     scope,

@@ -88,6 +88,7 @@ mod dispatcher;
 mod error;
 mod exhaust;
 mod host_claim;
+mod json_lines;
 pub mod official_seats;
 mod record;
 mod repo_binding;

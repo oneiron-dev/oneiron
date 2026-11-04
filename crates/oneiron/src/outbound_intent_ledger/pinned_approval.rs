@@ -71,40 +71,7 @@ where
 const PINNED_APPROVAL: SideTable<IntentId, [u8; 34], Raw> =
     SideTable::new(&side_table::OUTBOUND_PINNED_APPROVAL);
 
-/// The family a kept press is filed under, named by the pinned target of the
-/// effect whose admission spent it, never by the row's connector.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PinnedApprovalFamily {
-    /// A Linear issue mutation through the outbound dispatch door.
-    LinearDispatch,
-    /// A campaign enrollment's outbound leg.
-    CampaignLeg,
-    /// A scoped-MCP tool call on a catalogued connector (FIX 6424 part 3).
-    ScopedMcp,
-}
-
-impl PinnedApprovalFamily {
-    const fn tag(self) -> u8 {
-        match self {
-            Self::LinearDispatch => 1,
-            Self::CampaignLeg => 2,
-            Self::ScopedMcp => 3,
-        }
-    }
-}
-
-/// One spent press of a pinned family, as its admission selected it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PinnedApproval {
-    family: PinnedApprovalFamily,
-    proof: AdmittedApproval,
-}
-
-impl PinnedApproval {
-    pub(crate) const fn new(family: PinnedApprovalFamily, proof: AdmittedApproval) -> Self {
-        Self { family, proof }
-    }
-}
+pub(crate) use crate::consent::approval_proof::{PinnedApproval, PinnedApprovalFamily};
 
 /// Keeps `approval` beside its Pending row, in a writer of its own once the
 /// admission that spent it has committed ([`keep_press_after_admission`]).
@@ -120,11 +87,36 @@ pub(crate) fn keep_pinned_approval_in_txn(
     let Some(approval) = approval else {
         return Ok(());
     };
+    // FIX 6835 P1: the admission committed before this writer opened, so an
+    // erase of the request may have committed in between and already dropped
+    // any press beside it; recheck the ledger row here and skip the put when
+    // its request is erased or absent. A missing press only re-asks on retry.
+    let intent_id = approval.proof.intent_id();
+    let erased_or_absent = match super::store::get_ledger_record(vault, &*wtxn, &intent_id)? {
+        Some(record) => super::payload::payload_erased(record.payload())?,
+        None => true,
+    };
+    if erased_or_absent {
+        return Ok(());
+    }
     let mut value = [0_u8; 34];
     value[0] = PINNED_APPROVAL_VERSION;
     value[1] = approval.family.tag();
     value[2..].copy_from_slice(approval.proof.effect_digest().as_bytes());
     PINNED_APPROVAL.put(&vault.store, wtxn, &approval.proof.intent_id(), &value)?;
+    Ok(())
+}
+
+/// FIX 6835: drops the press kept beside ledger row `intent_id`, in the
+/// erase's own writer ([`super::store::put_erased_record`], the funnel both
+/// erase paths share). A kept press authorizes nothing without its ledger
+/// row, and a missing one only re-asks, so the delete is unconditional.
+pub(crate) fn drop_pinned_approval_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    intent_id: &IntentId,
+) -> crate::error::Result<()> {
+    PINNED_APPROVAL.delete(&vault.store, wtxn, intent_id)?;
     Ok(())
 }
 

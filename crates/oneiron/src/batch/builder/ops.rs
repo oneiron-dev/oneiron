@@ -1,11 +1,11 @@
 //! Batch op vocabulary and shared op constructors.
 
-use crate::affect::Vad;
 use crate::edge::{EdgeKind, EdgeProvenanceFlags};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
+use oneiron_contracts::affect::Vad;
 
 #[derive(Clone)]
 pub(crate) enum BatchOp {
@@ -51,7 +51,7 @@ pub(crate) enum BatchOp {
         vector: Vec<f32>,
         pending_embedding_token: Option<Vec<u8>>,
         /// Who computed the vector; `None` when the caller does not say.
-        provenance: Option<crate::embed::EmbeddingProvenance>,
+        provenance: Option<crate::store::embedding::EmbeddingProvenance>,
     },
     Edge {
         src: EntityId,
@@ -111,12 +111,12 @@ pub(crate) enum BatchOp {
     MediaVector {
         space: String,
         id: EntityId,
-        kind: crate::embed::InputKind,
-        text_hash: Option<[u8; crate::embed::TEXT_HASH_LEN]>,
+        kind: crate::store::embedding::InputKind,
+        text_hash: Option<[u8; crate::store::embedding::TEXT_HASH_LEN]>,
         vector: Vec<f32>,
         /// The device and runtime that computed it, stored beside it outside the space
         /// identity (FIX 7796); `None` for a vector a caller supplied.
-        provenance: Option<crate::embed::EmbeddingProvenance>,
+        provenance: Option<crate::store::embedding::EmbeddingProvenance>,
     },
     Phonetic {
         id: EntityId,

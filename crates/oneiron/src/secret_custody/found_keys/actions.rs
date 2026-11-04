@@ -10,10 +10,10 @@ use zeroize::{Zeroize, Zeroizing};
 use super::{FOUND, FoundKey, FoundKeyAction, FoundKeyCard, FoundKeySettled, FoundKeys};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
+use crate::deletion::SafeDeleteReason;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::memory::{MemoryResult, SafeDeleteReason};
 use crate::secret_custody::doors::{
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
 };
@@ -26,6 +26,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, Vault, entity_revision, live_entity_row_in_txn};
+use oneiron_contracts::memory::MemoryResult;
 
 /// Gate reason code: the owner ruled a found key no secret.
 pub const FOUND_KEY_REASON_NOT_A_SECRET: &str = "gate.secret.found_key.not_a_secret";
@@ -38,9 +39,7 @@ const FOUND_KEY_CONTENT_KIND: &str = "secret_found_key";
 /// names no tier; a record that held a key keeps no shell of it.
 const FOUND_KEY_DELETE: SafeDeleteReason = SafeDeleteReason::UserHardDelete;
 
-/// The text form a mask leaves in a span, `[secret sc12]`, before the
-/// handle.
-const HANDLE_TEXT_OPEN: &str = "[secret ";
+pub(crate) use crate::file_secret_marks::HANDLE_TEXT_OPEN;
 
 /// The text each record was indexed with, by field.
 const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
@@ -152,9 +151,11 @@ impl Vault {
     /// install carries and enacts, with its revoked transition (WILL L04 row
     /// 04).
     ///
-    /// Only a key found in a record's body, in one of its text fields (FIX
-    /// 2649) or in a file is ruled here; one in a claim or a row outside the
-    /// entity tables keeps its handle. The revoke's owner act records
+    /// Only a key found in a record's body, in one of its text fields or in
+    /// a claim (FIX 2649, FIX 11882) or in a file is ruled here; one in a row
+    /// outside the entity tables keeps its handle. A MACHINE claim whose
+    /// signed history owns its body keeps its handle too: no door re-signs
+    /// a stored claim. The revoke's owner act records
     /// `surface`, where his request reached this install: audit only (FIX
     /// 4650). The install key loads as the revoke door's does: when it is not
     /// available here the ruling still stands, and its revoke's carry waits
@@ -182,9 +183,10 @@ impl Vault {
             found.refuse_ruled()?;
             let place = found.key().place.clone();
             let field = place.strip_prefix("text:");
-            if place != "body" && place != "file" && field.is_none() {
+            if place != "body" && place != "file" && place != "claim" && field.is_none() {
                 return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "only a key found in a record's body, its text or a file takes its value back",
+                    "only a key found in a record's body, its text, a claim or a file takes \
+                     its value back",
                 )));
             }
             let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
@@ -220,6 +222,8 @@ impl Vault {
             found.settle(&self.store, txn, settled.clone())?;
             if place == "file" {
                 drop_file_key_in_txn(self, txn, &found.record, &found.custody)?;
+            } else if place == "claim" {
+                restore_claim_in_txn(self, txn, &found.record, &found.handle, &value)?;
             } else if let Some(field) = field {
                 restore_text_in_txn(self, txn, &found.record, field, &found.handle, &value)?;
             } else {
@@ -582,12 +586,97 @@ fn restore_text_in_txn(
         return Ok(());
     };
     *text = text.replace(&text_form, as_text(value)?);
-    crate::bm25::deindex_text(&vault.store, txn, record)?;
+    crate::store::text_index::deindex_text(&vault.store, txn, record)?;
     let fields = fields
         .iter()
         .map(|(name, text)| (name.as_str(), text.as_str()))
         .collect::<Vec<_>>();
     vault.batch_in().text(record, &fields).apply(txn)
+}
+
+/// Writes the claim `record` again with `value` back where the mask left
+/// `handle` in its value, evidence or scope, through the sealed
+/// owner-restore transition (FIX 11882): a stored claim body rewrites only
+/// under that proof. The ruling already stands, so the write door reads
+/// the value as no hit. A MACHINE claim whose signed history owns its
+/// body refuses: its proof would fail over the restored body and no door
+/// re-signs a stored claim, so the ruling does not stand for it yet.
+fn restore_claim_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    record: &EntityId,
+    handle: &str,
+    value: &[u8],
+) -> Result<()> {
+    if !live_entity_row_in_txn(&vault.store, txn, record)?.is_live() {
+        return Ok(());
+    }
+    let Some(raw) = vault.get_raw_in(txn, record)? else {
+        return Ok(());
+    };
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("found key record header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        return Ok(());
+    }
+    let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
+        return Ok(());
+    };
+    let prior = crate::claim::decode_claim_body(body, false)?;
+    if crate::authority::machine_claim_needs_history(&vault.store, txn, &prior)? {
+        return Err(Error::Gate(GateError::InvalidConsentBound(
+            "a key found in a MACHINE claim cannot take its value back yet: the claim's \
+             signed history owns its body, and no door re-signs a stored claim",
+        )));
+    }
+    let text_form = format!("{HANDLE_TEXT_OPEN}{handle}]");
+    let mut next = prior;
+    let mut changed = false;
+    for part in [
+        Some(&mut next.value),
+        next.evidence.as_mut(),
+        next.scope.as_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        changed |= unmask_value(part, handle, &text_form, value)?;
+    }
+    if !changed {
+        return Ok(());
+    }
+    let op = crate::batch::BatchOp::Put {
+        id: *record,
+        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+        occurred: TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        },
+        learned_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
+        data: crate::claim::encode_claim_body(&next)?,
+        allow_maintenance: false,
+        allow_reserved_predicate: false,
+        hub_sync_imported: false,
+    };
+    let transition = crate::batch::VerifiedClaimTransition::after_owner_restore(
+        &vault.store,
+        txn,
+        &op,
+        handle,
+        value,
+    )?;
+    crate::batch::apply_ops_with_gate_mode(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        txn,
+        vec![op],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        crate::batch::ApplyOpsGateMode::new(false, true)
+            .with_verified_claim_transitions(vec![transition]),
+    )
 }
 
 /// `body` with `value` back where the mask left `handle`, read as the mask
@@ -624,61 +713,6 @@ fn unmasked_body(body: &[u8], handle: &str, value: &[u8]) -> Result<Option<Vec<u
     }
 }
 
-/// [`unmasked_body`] over one decoded value: whether anything changed.
-fn unmask_value(tree: &mut Value, handle: &str, text_form: &str, value: &[u8]) -> Result<bool> {
-    let restored = match &*tree {
-        Value::String(text) => match text.as_str() {
-            Some(text) => unmasked_text(text, handle, text_form, value)?,
-            None => None,
-        },
-        Value::Binary(bytes) => match std::str::from_utf8(bytes) {
-            Ok(text) => unmasked_text(text, handle, text_form, value)?,
-            Err(_) => None,
-        },
-        _ => None,
-    };
-    if let Some(restored) = restored {
-        *tree = restored;
-        return Ok(true);
-    }
-    let mut changed = false;
-    match tree {
-        Value::Array(items) => {
-            for item in items {
-                changed |= unmask_value(item, handle, text_form, value)?;
-            }
-        }
-        Value::Map(fields) => {
-            for (key, member) in fields.iter_mut() {
-                changed |= unmask_value(key, handle, text_form, value)?;
-                changed |= unmask_value(member, handle, text_form, value)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(changed)
-}
+pub(crate) use crate::file_secret_marks::unmask_value;
 
-/// One string of a body with the value back: the whole of it when it is the
-/// handle a credential field keeps, each span's text form within it
-/// otherwise.
-fn unmasked_text(text: &str, handle: &str, text_form: &str, value: &[u8]) -> Result<Option<Value>> {
-    if text == handle {
-        return Ok(Some(match std::str::from_utf8(value) {
-            Ok(value) => Value::from(value),
-            Err(_) => Value::Binary(value.to_vec()),
-        }));
-    }
-    if text.contains(text_form) {
-        return Ok(Some(Value::from(text.replace(text_form, as_text(value)?))));
-    }
-    Ok(None)
-}
-
-fn as_text(value: &[u8]) -> Result<&str> {
-    std::str::from_utf8(value).map_err(|_| {
-        Error::Gate(GateError::InvalidConsentBound(
-            "the key is not text, so it cannot go back into the record's text",
-        ))
-    })
-}
+use crate::file_secret_marks::as_text;

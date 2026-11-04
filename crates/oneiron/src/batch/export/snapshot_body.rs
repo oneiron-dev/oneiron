@@ -190,9 +190,11 @@ pub(super) fn asset_folded(vault: &Vault, rtxn: &RoTxn<'_>, body: &RowBody<'_>) 
     let Some(body) = body.bytes() else {
         return Ok(false);
     };
-    Ok(crate::receipt::is_receipt_archive_source(body)
-        || crate::skill_hub::decode_source_carrier(body)?.is_some()
-        || !crate::agent_def::birth_source_exportable(&vault.store, rtxn, body)?)
+    Ok(
+        crate::store::receipt_identity::is_receipt_archive_source(body)
+            || crate::store::skill_source_carrier::decode_source_carrier(body)?.is_some()
+            || !crate::agent_def::birth_source_exportable(&vault.store, rtxn, body)?,
+    )
 }
 
 /// Whether row `id`, which this snapshot holds and whose header has parsed,

@@ -12,7 +12,7 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::runtime_hooks::InvocationId;
+use crate::store::verb_invocation::InvocationId;
 use crate::vault::Vault;
 
 /// What a delivered reveal keeps for the step that collected it (FIX

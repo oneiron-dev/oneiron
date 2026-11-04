@@ -216,6 +216,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.legal_holds.list"
         | "vault.legal_holds.log"
         | "vault.legal_holds.lift_and_erase"
+        | "vault.legal_holds.withdraw_erase"
         | "vault.agents.grants.mint"
         | "vault.agents.grants.revoke"
         | "vault.repo.git_push.mint"
@@ -436,6 +437,8 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.federation.connect.disconnect"
         | "vault.federation.connect.export"
         | "vault.federation.connect.rejoin"
+        | "vault.federation.connect.world_privacy.export"
+        | "vault.federation.connect.world_privacy.receive"
         | "vault.guests.share"
         | "vault.guests.reshare"
         | "vault.guests.revoke"
@@ -727,7 +730,9 @@ pub(in crate::api::facade) fn door_admits(
         "self.credential.attenuate" => crate::api::facade::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" | "vault.artifacts.admit" => artifact_asker(server, auth).map(drop),
-        "self.memory.diary.query" => diary_reader(server, auth).map(drop),
+        "self.memory.diary.query" | "self.memory.pads.read" | "self.memory.pads.admin_reads" => {
+            diary_reader(server, auth).map(drop)
+        }
         "vault.decisions.asks.answer"
         | "vault.decisions.asks.climb"
         | "self.decisions.asks"

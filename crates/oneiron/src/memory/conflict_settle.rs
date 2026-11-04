@@ -29,6 +29,7 @@ use std::cell::Cell;
 use super::authorship::*;
 use super::{Memory, MemoryResult};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::consent::bundle_projection::GateConsentBundleAction;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::dreamer_consolidation::{
     ConflictRevertReceipt, ConflictReviewScope, ConflictSettleOutcome, ConflictSettleReceipt,
@@ -38,7 +39,6 @@ use crate::dreamer_consolidation::{
 };
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
-use crate::run_tree::GateConsentBundleAction;
 use crate::{EntityId, Vault, WriteActor, WriteEnvelope, WriteProvenance};
 use rmpv::Value;
 

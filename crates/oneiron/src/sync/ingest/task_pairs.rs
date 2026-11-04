@@ -172,7 +172,10 @@ fn role_changes(vault: &Vault, rtxn: &heed::RoTxn<'_>, id: &EntityId, blob: &[u8
         EntityMetadataHeader::parse(row)
             .filter(|header| header.entity_type == ENTITY_TYPE_TASK)
             .and_then(|_| {
-                crate::habit::task_role_from_body_bytes(&row[ENTITY_METADATA_HEADER_LEN..]).ok()
+                crate::write_envelope::task_body::task_role_from_body_bytes(
+                    &row[ENTITY_METADATA_HEADER_LEN..],
+                )
+                .ok()
             })
     };
     let Some(new) = role(blob) else {

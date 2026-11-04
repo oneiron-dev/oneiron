@@ -7,9 +7,9 @@ use crate::claim::{ClaimBody, ClaimSubject, ScopedReadActorKey, claim_surfaceabl
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{Scope, Sensitivity, SensitivityCeiling};
 use crate::ports::{EntityStoreRead, ShortIdStoreRead};
 use crate::side_table::{self, Named, SideTable};
+use oneiron_authority::federation::{Scope, Sensitivity, SensitivityCeiling};
 
 const CEILINGS: SideTable<String, DisclosureBand, Named> =
     SideTable::new(&side_table::DISCLOSURE_MODEL_CEILING);

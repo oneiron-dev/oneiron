@@ -238,6 +238,8 @@ impl Memory<'_> {
             denied: false,
             choice_receipt_ref: None,
             shipped_policy_rows: governed.shipped_rows.clone(),
+            recipient_scrub: None,
+            decision_receipt: None,
         };
         let scope = run.scope();
         let rate_now = self.vault().now_recorded_at();
@@ -268,13 +270,15 @@ impl Memory<'_> {
             },
             decisions,
         )?;
-        // AUTO rules on every auto fan-out, whatever its width.
-        let disposition = if !has_pathology && policy.mode == super::ConsultFanOutMode::Auto {
-            auto.decide(&run.plan, &run.estimate)
-                .unwrap_or(FanoutAutoDisposition::SurfaceHuman)
-        } else {
-            FanoutAutoDisposition::SurfaceHuman
-        };
+        // AUTO rules on every auto fan-out, whatever its width. The ladder's
+        // receipt, when it decided it, is kept on the run (FIX 333).
+        let (disposition, decision_receipt) =
+            if !has_pathology && policy.mode == super::ConsultFanOutMode::Auto {
+                auto.decide_with_receipt(&run.plan, &run.estimate)
+            } else {
+                (FanoutAutoDisposition::SurfaceHuman, None)
+            };
+        run.decision_receipt = decision_receipt;
         // An accepted standing row answers alone when it exists, so an Allow
         // beside one stood on it.
         let clearance = standing

@@ -44,6 +44,8 @@ fn hold_press(
         locator: held.locator,
         page: held.page,
         audience: held.audience,
+        actor_class: 0,
+        project: None,
         tab: held.tab,
         document: held.document,
         session: held.generation,

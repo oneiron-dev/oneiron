@@ -110,7 +110,7 @@ pub(crate) fn erase_proposal_actor_in_txn(
         let mut left = Vec::new();
         record.members.retain_mut(|member| {
             if member.verdict == MemberVerdict::Waiting && member.opener.is(*actor) {
-                left.push(member.fork);
+                left.push((member.artifact, member.fork));
                 return false;
             }
             named |= member.opener.forget(*actor);
@@ -128,8 +128,8 @@ pub(crate) fn erase_proposal_actor_in_txn(
     }
     let at = vault.now_recorded_at();
     for (key, mut record, left) in proposals {
-        for fork in left {
-            MEMBERSHIP.delete(&vault.store, wtxn, &(key.0, fork))?;
+        for (artifact, fork) in left {
+            MEMBERSHIP.delete(&vault.store, wtxn, &(artifact, fork))?;
         }
         if record.members.is_empty() {
             PROPOSALS.delete(&vault.store, wtxn, &key)?;

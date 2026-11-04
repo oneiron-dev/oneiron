@@ -35,7 +35,7 @@ pub(super) fn apply_commitment_gap_decay_arm(
     // Hand each claim the lapse writes its preflight identity in recorded
     // order. The nested ClaimCandidate applies consume its marker, not this
     // outer arm; consuming here again aborts it.
-    let lapse_claim_ids = crate::commitment::lapse_claim_ids(&ids)?;
+    let lapse_claim_ids = crate::write_envelope::commitment_transition::lapse_claim_ids(&ids)?;
     let lapse_decision_ids =
         take_lapse_decisions(&mut state.preflight_gate_decision_ids, &lapse_claim_ids);
     crate::commitment::lapse_commitments_in_txn(

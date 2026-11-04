@@ -38,7 +38,7 @@ mod retirement;
 mod targets;
 
 use std::path::PathBuf;
-use std::sync::{OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Mutex, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use heed::{RoTxn, RwTxn};
 
@@ -130,6 +130,11 @@ pub(crate) struct KeyCustody {
     /// The body instances this process's mints, reserves and spills hold
     /// before a row names them (FIX 6022).
     leases: std::sync::Arc<InstanceLeases>,
+    /// The epoch of the kept-copy holder records (FIX 9067): bumped once
+    /// each synced change to them lands, so one finisher pass reads the
+    /// records once per epoch instead of once per intent. Process-local,
+    /// like the leases.
+    holders_epoch: Mutex<u64>,
 }
 
 impl KeyCustody {
@@ -150,6 +155,7 @@ impl KeyCustody {
             archived_at_open,
             lock: RwLock::new(()),
             leases: std::sync::Arc::default(),
+            holders_epoch: Mutex::new(0),
         })
     }
 
@@ -166,6 +172,25 @@ impl KeyCustody {
     /// published under it before then.
     pub(crate) fn local(&self) -> Option<LocalCustody<'_>> {
         self.binding.get().map(LocalCustody::at)
+    }
+
+    /// The current holder-records epoch (FIX 9067).
+    pub(crate) fn holders_epoch(&self) -> u64 {
+        *self
+            .holders_epoch
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Marks the holder records changed (FIX 9067): called once a synced
+    /// change to them has landed, never before, so a reader between the
+    /// change and the bump sees the newer records under the older epoch.
+    pub(crate) fn bump_holders_epoch(&self) {
+        let mut epoch = self
+            .holders_epoch
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *epoch = epoch.wrapping_add(1);
     }
 
     /// Readers take this BEFORE opening an LMDB snapshot and hold it until

@@ -17,11 +17,10 @@ use crate::claim::ClaimLifecycleStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{
-    AgentGrantStanding, FederationGrant, FederationGrantKind, FederationGrantScope, ScopeAxis,
-};
+use crate::federation::{AgentGrantStanding, FederationGrant, FederationGrantScope};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use oneiron_authority::federation::{FederationGrantKind, ScopeAxis};
 
 /// A recorded principal that stood in one snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

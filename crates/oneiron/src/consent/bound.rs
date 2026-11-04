@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
+use oneiron_authority::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 
 use super::effect::{ComposedEffect, ConsentDecision, EffectDigest};
 use super::grant::StandingConsentGrant;
@@ -686,7 +686,7 @@ impl GrantBound {
                 hasher.update(&[u8::from(envelope.receipt_required)]);
             }
         }
-        EffectDigest(*hasher.finalize().as_bytes())
+        EffectDigest::from_bytes(*hasher.finalize().as_bytes())
     }
 }
 

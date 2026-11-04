@@ -19,7 +19,7 @@ use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::learning::{DuplicateLabeller, DuplicateWork, label_duplicate_work};
 use crate::limit_ask::EngineLimit;
 use crate::llm::open_trap_waits;
-use crate::self_heal::{
+use crate::store::diagnostic_record::{
     AgentHealthSignal, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass,
     DiagnosticReplayCoordinate, DiagnosticSourceKind, diagnostic_event_id,
     encode_diagnostic_event_body,
@@ -299,9 +299,13 @@ fn detect(
     findings.extend(check_repeat::check_repeat_findings(
         vault, &streams, dispatched, attempts, book, since,
     )?);
+    // A lease older than the lookback reads back to its claim for
+    // `silent` alone (FIX 8374): the shared read above stays windowed, so
+    // every other detector judges the window it always judged.
+    let extended = call_evidence::claim_bound_activities(vault, dispatched, attempts, since)?;
     let (silent, refreshes) = silent_findings(
         vault,
-        &SilenceCalls::Actors(&calls, unread_calls),
+        &SilenceCalls::Actors(&calls, unread_calls, &extended),
         dispatched,
         attempts,
         traps,

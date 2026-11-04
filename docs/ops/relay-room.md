@@ -24,7 +24,8 @@ byte to its last. While the open connections are as many as a vault's public lis
 its descriptor floor (`[limits] max_connections` as it defaults on this machine), the check is
 raised and logged once; it clears below that.
 
-`GET /v1/relay/{vault}/pressure` answers `{"state": "clear"}`, or `{"state": "active", "check":
+`GET /v1/relay/{vault}/pressure` answers `{"state": "clear", ...}` (the live connection counts,
+as a vault's clear pool carries them, FIX 9134), or `{"state": "active", "check":
 {...}}` with the same fields a vault server's own pool check has. For the locker `reserve_bound`
 and `parking_bound` are `0`, and the `remedy` says what to do: if the open uploads are not the
 room's own devices, rotate the room's access token file and restart the room. The check only
