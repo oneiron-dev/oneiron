@@ -15,12 +15,12 @@
 //! Any other length marks nothing.
 
 use crate::Vault;
-use crate::store::attempt_id::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+use crate::store::attempt_id::AttemptId;
 
 /// The mark table. Key: id16, an attempt's id or a kept record's entity id.
 const MARK: SideTable<[u8; 16], Vec<u8>, Raw> =
