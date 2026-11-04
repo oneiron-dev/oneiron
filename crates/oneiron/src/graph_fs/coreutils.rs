@@ -594,7 +594,7 @@ fn parse_byte_cursor(cursor: Option<&str>) -> Result<usize> {
 }
 
 pub(super) fn read_grant_matches_actor(
-    grant: &crate::gate::PolicyScopedGrant,
+    grant: &oneiron_store::policy_scoped_grant::PolicyScopedGrant,
     actor_key: &crate::claim::ScopedReadActorKey,
 ) -> bool {
     if grant.effector.trim() != SCOPED_READ_EFFECTOR_CORE_READ
