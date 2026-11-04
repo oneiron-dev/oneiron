@@ -122,6 +122,10 @@ pub trait StoreProjectWrites: Send + Sync {
     /// The engine's `workspace_roster::root_project_in`.
     fn root_project_in(&self, store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>>;
 
+    /// The engine's `workspace_roster::seed_root_project`, run by a vault's
+    /// open seeding.
+    fn seed_root_project(&self, vault: &crate::Vault) -> Result<()>;
+
     /// The engine's `workspace_roster::project_mint_gate_refs_in_txn`.
     fn project_mint_gate_refs_in_txn(
         &self,
