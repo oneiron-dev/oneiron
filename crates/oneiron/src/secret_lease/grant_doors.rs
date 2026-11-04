@@ -26,13 +26,16 @@ use super::types::{FileIdentity, LocalRegistration, SecretLease, VaultInstant};
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
 use crate::outbound_consent::connector_call_effector;
-use crate::secret_custody::{
-    CustodyTier, SECRET_USE_OPERATIONS, SecretBinding, SecretCustodyAdmission, SecretCustodyFloor,
-    SecretCustodyStatus, handle_record_in_txn, read_secret_custody_admission_in_txn,
-    resolve_secret_ref_in_txn,
-};
+use crate::secret_custody::SECRET_USE_OPERATIONS;
+use crate::secret_custody::handle_record_in_txn;
+use crate::secret_record::CustodyTier;
+use crate::secret_record::SecretBinding;
+use crate::secret_record::SecretCustodyAdmission;
+use crate::secret_record::read_secret_custody_admission_in_txn;
+use crate::secret_record::{SecretCustodyFloor, SecretCustodyStatus};
 use crate::side_table::HexId;
 use crate::store::Store;
+use crate::store::secret_name_index::resolve_secret_ref_in_txn;
 use crate::vault::Vault;
 
 /// A grant stamped in its writer, before the commit.

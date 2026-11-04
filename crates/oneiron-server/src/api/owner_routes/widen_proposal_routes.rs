@@ -17,7 +17,7 @@ use oneiron::agent_dispatch::widen_doors::{
 
 use serde_json::Value;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, hooked_owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -32,6 +32,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/widen-proposals",
                 summary: "The proposals, newest first.",
                 row: None,
+                shape: None,
             },
             get(list),
         ),
@@ -41,6 +42,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/widen-proposals/approve",
                 summary: "Widens the parent's slice and enqueues the child.",
                 row: None,
+                shape: Some(RestShape::json(
+                    widen_answer_body_schema,
+                    widen_proposal_schema,
+                )),
             },
             post(approve),
         ),
@@ -50,6 +55,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/widen-proposals/decline",
                 summary: "Refuses the proposal for good.",
                 row: None,
+                shape: Some(RestShape::json(
+                    widen_answer_body_schema,
+                    widen_proposal_schema,
+                )),
             },
             post(decline),
         ),

@@ -472,7 +472,7 @@ pub(super) fn promote_one_answering(
             crate::own_rate::count_in_txn(
                 &vault.store,
                 wtxn,
-                crate::own_rate::OwnRateKind::AutoWrite,
+                crate::store::own_rate_record::OwnRateKind::AutoWrite,
                 run.agent_actor.entity_ref(),
                 vault.store.clock.now_recorded_at(),
                 auto_write_rate,
@@ -557,10 +557,16 @@ pub(super) fn promote_one_answering(
                 &hints,
             )
             .text(&candidate.claim_id, &[("val", birth_text.as_str())])
-            .commit_with_checker_guard_and_then(checker, read_prior, finish_promotion)
+            .commit_with_checker_guard_and_then(
+                checker,
+                read_prior,
+                finish_promotion,
+                Some("promotion"),
+            )
     } else {
         // Preserve the original single-pass transaction for every None caller.
         vault.with_write_txn_grouped(|wtxn| {
+            let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("promotion");
             read_prior(wtxn)?;
             vault
                 .batch_in()

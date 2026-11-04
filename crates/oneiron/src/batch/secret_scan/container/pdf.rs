@@ -22,10 +22,10 @@ use lopdf::xref::XrefEntry;
 use lopdf::{Document, LoadOptions, Object, ObjectId, ObjectStream, Stream};
 
 use super::{
-    Budget, MAX_EXPANDED_BYTES, Stop, Walked, encode_failed, hidden_member, over_budget, unreadable,
+    Budget, Stop, Walked, encode_failed, expanded_floor, hidden_member, over_budget, unreadable,
 };
 use crate::blob_artifact::esign::render::{PdfPreparationError, decode_stream};
-use crate::secret_custody::MemberStep;
+use crate::file_secret_marks::MemberStep;
 
 /// The type an object stream carries until this reader expands it: lopdf
 /// expands an `ObjStm` as it loads, with no bound over all of them.
@@ -80,6 +80,12 @@ fn step((object, generation): ObjectId) -> MemberStep {
     MemberStep::PdfStream { object, generation }
 }
 
+/// An object stream's decoded bytes (FIX 11550): its header names each
+/// object by byte offset, so its masked copy keeps the filler's width.
+fn objstm_step((object, generation): ObjectId) -> MemberStep {
+    MemberStep::PdfObjectStream { object, generation }
+}
+
 fn strings_step((object, generation): ObjectId) -> MemberStep {
     MemberStep::PdfStrings { object, generation }
 }
@@ -91,7 +97,7 @@ pub(super) fn opens(bytes: &[u8]) -> bool {
         bytes,
         LoadOptions {
             filter: Some(|_, _| None),
-            max_decompressed_size: Some(MAX_EXPANDED_BYTES),
+            max_decompressed_size: Some(expanded_floor()),
             ..LoadOptions::default()
         },
     )
@@ -375,7 +381,7 @@ pub(super) fn members(
     each: &mut dyn FnMut(MemberStep, &[u8], &mut Budget) -> Walked<()>,
 ) -> Walked<()> {
     let mut carrier = |id: ObjectId, decoded: Vec<u8>, budget: &mut Budget| -> Walked<Vec<u8>> {
-        each(step(id), &decoded, budget)?;
+        each(objstm_step(id), &decoded, budget)?;
         Ok(decoded)
     };
     let document = load(bytes, budget, &mut carrier)?;
@@ -451,7 +457,7 @@ fn superseded(
         let mut carrier =
             |id: ObjectId, decoded: Vec<u8>, budget: &mut Budget| -> Walked<Vec<u8>> {
                 if hidden_member(&decoded) {
-                    each(step(id), &decoded, budget).inspect_err(|_| visited_stop = true)?;
+                    each(objstm_step(id), &decoded, budget).inspect_err(|_| visited_stop = true)?;
                 }
                 Ok(decoded)
             };
@@ -488,7 +494,7 @@ pub(super) fn rebuilt(
     each: &mut dyn FnMut(MemberStep, &[u8], &mut Budget) -> Walked<Option<Vec<u8>>>,
 ) -> Walked<Vec<u8>> {
     let mut carrier = |id: ObjectId, decoded: Vec<u8>, budget: &mut Budget| -> Walked<Vec<u8>> {
-        Ok(each(step(id), &decoded, budget)?.unwrap_or(decoded))
+        Ok(each(objstm_step(id), &decoded, budget)?.unwrap_or(decoded))
     };
     let mut document = load(bytes, budget, &mut carrier)?;
     let ids: Vec<ObjectId> = document.objects.keys().copied().collect();
@@ -503,7 +509,14 @@ pub(super) fn rebuilt(
             && let Some(decoded) = decode(stream, budget)?
             && let Some(masked) = each(step(id), &decoded, budget)?
         {
+            // A content stream's masked bytes run longer or shorter than
+            // the key (FIX 11550): the plain write sets its length, and a
+            // decoded length with it.
+            let len = masked.len();
             stream.set_plain_content(masked);
+            if stream.dict.has(b"DL") {
+                stream.dict.set("DL", len as i64);
+            }
         }
         if let Some(strings) = strings_member(object)
             && let Some(masked) = each(strings_step(id), &strings, budget)?

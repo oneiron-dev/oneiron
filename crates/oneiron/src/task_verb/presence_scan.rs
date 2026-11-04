@@ -13,10 +13,10 @@ use crate::context_board::{
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::habit::TaskRole;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::run_tree::RunTreeStatus;
+use crate::write_envelope::task_body::TaskRole;
 
 use super::consult_result::CancelTargetState;
 use super::follow_up::peer_handle_in;
@@ -543,7 +543,9 @@ pub(super) fn task_owned_in(
     if let Some(owner) = task_create_owner_in(vault, txn, task_ref)? {
         return Ok(Some(owner == actor));
     }
-    match crate::habit::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+    match crate::write_envelope::task_body::task_role_from_body_bytes(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+    ) {
         Ok(TaskRole::Task) => {}
         // Goal/Milestone/Habit/HabitCheckin ids are not TASKS (fix-r1 F6)
         // and read as absent.

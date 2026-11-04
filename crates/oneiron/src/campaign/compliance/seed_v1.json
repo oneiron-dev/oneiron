@@ -6,6 +6,7 @@
   "unknown_jurisdiction_default": "strict_pole",
   "strict_pole_jurisdiction": "EU/DE",
   "jurisdiction_confidence_floor_millis": 700,
+  "campaign_complaint_pause_threshold_ppm": 3000,
   "prohibited_list_provenance_classes": ["harvested", "dictionary_attack"],
   "conditional_exemption_evidence": [
     { "jurisdiction": "JP", "evidence": "publication_context" },

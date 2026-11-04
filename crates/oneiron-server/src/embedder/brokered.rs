@@ -12,7 +12,7 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 
 use super::endpoint::{EMBEDDER_TOOL, MAX_RESPONSE_BYTES, bounded_body, transport_error};
 use crate::config::EndpointEmbedderConfig;
-use crate::models::BrokerContext;
+use crate::models::{BrokerContext, is_cloud_node};
 use crate::runtime::GpuPool;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -190,6 +190,7 @@ impl BrokerReach {
             url.path().to_owned(),
             headers,
             model.to_owned(),
+            is_cloud_node(),
             &body,
         );
         let mut answer = broker

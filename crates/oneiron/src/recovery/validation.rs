@@ -91,7 +91,7 @@ fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
         return Err(invalid("window key"));
     }
     if snapshot.schema_manifest.oneiron_schema_version != crate::store::STORAGE_ABI_VERSION
-        || snapshot.schema_manifest.container_schema_version != 2
+        || snapshot.schema_manifest.container_schema_version != 3
         || snapshot.schema_manifest.loro_version.is_empty()
     {
         return Err(invalid("unsupported schema manifest"));
@@ -104,7 +104,12 @@ fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
             .iter()
             .map(|row| (row.id, row.piece)),
     )?;
-    strict(snapshot.room_turns.iter().map(|row| row.id))?;
+    strict(snapshot.room_turns.iter().map(|row| row.key.as_str()))?;
+    for row in &snapshot.room_turns {
+        if !crate::room_codec::carrier_parts::is_part_key(&row.key) {
+            super::canonical::parse_id(&row.key)?;
+        }
+    }
     strict(snapshot.room_facts.iter().map(|row| row.key.as_str()))?;
     strict(snapshot.document_pins.iter().map(|row| row.key.as_str()))?;
     strict(snapshot.peer_origins.iter().map(|row| row.id))?;
@@ -253,11 +258,12 @@ fn validate_window_rows(snapshot: &CanonicalSnapshot) -> Result<()> {
             }
         } else if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
             && let Ok(entry) = crate::authority::decode_authority_log_entry_body(body)
-            && let crate::authority::AuthorityOp::WorldKeyWraps(record) = &entry.op
+            && let Some(side) = crate::authority::side_world(&entry.op)
         {
-            // A world's key wraps ride its window of the month they were
+            // A world's side rows, its key wraps and the joins of their
+            // leaves (FIX 11868), ride its window of the month they were
             // learned (`sync::types::entity_world`); its settings stay base.
-            if Some(record.key.world) != world
+            if Some(side) != world
                 || crate::deletion::window_label_from_timestamp(header.learned_at)
                     != snapshot.window[..7]
             {

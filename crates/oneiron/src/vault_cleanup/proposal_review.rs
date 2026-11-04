@@ -24,7 +24,7 @@ use super::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, MaintenanceError, Result};
-use crate::memory::{
+use oneiron_contracts::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult,
 };
 

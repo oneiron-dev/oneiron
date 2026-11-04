@@ -7,11 +7,14 @@
 use std::sync::OnceLock;
 
 use super::{CONTAINER_KINDS, RecallScope, recall_kinds};
+use crate::claim::world_access::WorldAuthoritySet;
+use crate::context_pack::turn_fold::TurnFold;
 use crate::corpus::CorpusScope;
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryResult};
-use crate::pipeline::{TurnFold, WorldAuthoritySet, WorldScope};
+use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::store::StoreRead;
 
 /// The kinds one recall returns: `None` is the default, every kind but
 /// [`CONTAINER_KINDS`]; a list is sorted and unique. Local recall and the
@@ -76,6 +79,9 @@ pub(crate) struct RecallSelection {
     asked: Option<WorldAuthoritySet>,
     /// The project audiences read.
     pub(crate) projects: CorpusScope,
+    /// The explicit/PERSON-authored conversations read; `None` adds no
+    /// conversation narrowing, and an empty set reads none.
+    pub(crate) conversations: Option<std::collections::BTreeSet<EntityId>>,
     /// The facet a strict facet narrowing keeps.
     pub(crate) facet: Option<EntityId>,
     /// The kinds returned.
@@ -94,7 +100,7 @@ impl RecallSelection {
 
     /// This selection as the device sends it to its home (FIX 2905).
     #[cfg(feature = "sync")]
-    pub(crate) fn resolved(&self) -> crate::sync::residence::ResolvedRecallSelection {
+    pub(crate) fn resolved(&self) -> crate::memory::resolved_recall_scope::ResolvedRecallSelection {
         let mut project_ids = match &self.projects {
             CorpusScope::All => Vec::new(),
             CorpusScope::Unscoped => vec![crate::claim::default_project_id()],
@@ -103,14 +109,18 @@ impl RecallSelection {
         };
         project_ids.sort_unstable();
         project_ids.dedup();
-        crate::sync::residence::ResolvedRecallSelection {
+        crate::memory::resolved_recall_scope::ResolvedRecallSelection {
             worlds: self.worlds.as_ref().map(|worlds| {
-                crate::sync::residence::ResolvedRecallWorlds {
+                crate::memory::resolved_recall_scope::ResolvedRecallWorlds {
                     include_base: worlds.include_base(),
                     world_ids: worlds.worlds().iter().copied().collect(),
                 }
             }),
             project_ids,
+            conversation_ids: self
+                .conversations
+                .as_ref()
+                .map(|conversations| conversations.iter().copied().collect()),
             facet: self.facet,
             kinds: self.kinds.listed().map(<[u8]>::to_vec),
         }
@@ -182,6 +192,7 @@ impl Memory<'_> {
             worlds: self.room_met(asked.clone())?,
             asked,
             projects: self.selected_projects(scope)?,
+            conversations: None,
             facet: None,
             kinds: RecallKinds::new(recall_kinds(scope)?),
         }))
@@ -195,6 +206,7 @@ impl Memory<'_> {
         selection: UnfacetedSelection,
         scope: &RecallScope,
         pin: Option<&RecallPin>,
+        store: &StoreRead<'_>,
     ) -> MemoryResult<RecallSelection> {
         let UnfacetedSelection(mut selection) = selection;
         if pin.and_then(RecallPin::get).is_some() {
@@ -205,6 +217,7 @@ impl Memory<'_> {
             .as_deref()
             .map(|facet| self.resolve_ref(facet))
             .transpose()?;
+        selection.conversations = self.selected_conversations(scope, store)?;
         if let Some(pin) = pin {
             let _ = pin.selection.set(selection.clone());
         }
@@ -263,7 +276,7 @@ impl Memory<'_> {
         scope: &RecallScope,
         limit: usize,
         format: Option<&str>,
-        lease: Option<&crate::llm::BudgetLease>,
+        lease: Option<&oneiron_model::llm::BudgetLease>,
         execution: &crate::retrieval_depth::RecallExecution<'_>,
         pin: &RecallPin,
     ) -> MemoryResult<super::MemoryPack> {

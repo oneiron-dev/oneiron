@@ -580,9 +580,11 @@ unless its entry names the codec its route decodes: `request_compression =
 `request_compression = false` to send plain. If a compressed body is answered
 400 or 415, it is sent once more, plain; when that answer differs, the
 provider sends plain until restart. For a `key_secret` provider the credential
-broker compresses instead, after its checks and just before its one send: gzip
+broker compresses instead, after its checks and just before its send: gzip
 level 1 on `/v1/messages` at `https://api.anthropic.com`, under the same
-16 KiB and smaller rules, with no plain resend. A `key_secret` entry takes no
+16 KiB and smaller rules, except on a cloud node, where it sends plain. A gzip
+body answered 400 or 415 is sent once more, plain; when that answer differs,
+the broker sends plain until restart. A `key_secret` entry takes no
 `request_compression`.
 
 Our own model servers decode compressed bodies once built or started for it
@@ -1836,7 +1838,10 @@ weights, builds the worker's environment from the row's `env_lock`, starts
 it on the provider's `base_url`, counts it ready after one real render,
 restarts it after a crash and, when `idle_stop_secs` asks, stops it when
 idle. A row with `kind = "asr"` on a `local-openai-compat` provider does the
-same for the local Whisper worker, from an operator's weights manifest. A
+same for the local Whisper worker, from the house `whisper-large-v3` pin or
+an operator's weights manifest; its `env_lock` names the shipped
+`deploy/asr/whisper-py312.lock` (CPython 3.12 on x86_64 Linux, CUDA 12.8
+torch; resolved and hash-locked, GPU not qualified). A
 call to a managed worker's rung waits while it starts and holds it through
 its renders or its transcription; the worker runs one inference at a time.
 `deploy/voxcpm2/README.md` and `deploy/asr/README.md` give the rows. A
@@ -2714,6 +2719,8 @@ of them at `/v1/owner/decisions/asks`. A one-off graph ask still holds
 `human` at Big. Each unit has its own
 clock: the definition's `deadline_ms` (1 to 60000), or 10 seconds when it
 names none.
+
+A yes on an open pack setup allow ask at the role door returns the still-open ask, records nothing and wakes no waiter (positive input only: a no and every other ask behave exactly as before); the allow lands only on the owner's proof at `/v1/owner/decisions/asks/answer`.
 
 - **What the ladder reads.** The unit's body and the bodies of its outgoing
   neighbours go into the call's state, as the JSON a reader is served. A

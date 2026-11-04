@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fs::{File, OpenOptions};
+use std::hash::{BuildHasher, Hasher};
 use std::io;
 use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::PathBuf;
@@ -55,6 +56,21 @@ impl Spilled {
     }
 }
 
+/// How many fresh spill names one file tries before staging fails instead
+/// (blind-review P1): each name is unpredictable, so a run of collisions is
+/// squatting or a wedged spill dir, and the call is refused instead of
+/// retrying forever.
+const SPILL_NAME_ATTEMPTS: u32 = 10;
+
+/// Fresh unpredictable bits for one spill name: std's randomly keyed
+/// hasher over the attempt counter. Uniqueness never rests on the hash:
+/// the counter and the `create_new` open that fails when taken hold that.
+fn fresh_bits(counter: u64) -> u64 {
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u64(counter);
+    hasher.finish()
+}
+
 /// Bytes a connection staged, each way.
 pub(crate) struct Staging {
     /// Where spill files are made: the host's measured spool disk when its
@@ -94,12 +110,17 @@ impl Staging {
     /// alone, and unlinked at once, so it goes when its last handle closes.
     fn spill_file(&self) -> Result<Spilled, String> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        loop {
-            let path = self.dir.join(format!(
-                "oneiron-organ-mesh-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
+        let pid = std::process::id();
+        // Each name is fresh and unpredictable, made readable by this
+        // process alone and unlinked at once; a name another file holds is
+        // retried a bounded few times, then staging fails instead of
+        // retrying forever (blind-review P1).
+        for _ in 0..SPILL_NAME_ATTEMPTS {
+            let n = NEXT.fetch_add(1, Ordering::Relaxed);
+            let bits = fresh_bits(n);
+            let path = self
+                .dir
+                .join(format!("oneiron-organ-mesh-{pid}-{n}-{bits:016x}"));
             match OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -119,6 +140,10 @@ impl Staging {
                 Err(err) => return Err(spill_error(err)),
             }
         }
+        Err(spill_error(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{SPILL_NAME_ATTEMPTS} fresh spill names collided in a row"),
+        )))
     }
 
     /// Takes one piece the peer put. Pieces of one hash come in order.
@@ -179,11 +204,16 @@ impl Staging {
         }
         let hash = Hash32::of(bytes);
         let len = bytes.len() as u64;
+        if lock(&self.outgoing).contains_key(&hash) {
+            return Ok(Carried::Staged { hash, len });
+        }
         let mut spilled = self.spill_file()?;
         spilled.write_at(bytes, 0)?;
         spilled.len = len;
-        self.staged.fetch_add(len, Ordering::Relaxed);
-        lock(&self.outgoing).insert(hash, Arc::new(spilled));
+        if let Entry::Vacant(entry) = lock(&self.outgoing).entry(hash) {
+            self.staged.fetch_add(len, Ordering::Relaxed);
+            entry.insert(Arc::new(spilled));
+        }
         Ok(Carried::Staged { hash, len })
     }
 

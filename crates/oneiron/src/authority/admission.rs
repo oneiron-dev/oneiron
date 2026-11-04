@@ -145,7 +145,8 @@ pub(crate) fn measure_authority_work(watch: &LimitWatch, items: usize) -> Option
 /// (`sync::MAX_DECODED_PAYLOAD_BYTES`), unchanged.
 const AUTHORITY_FRAME_FLOOR: usize = 8 * 1024 * 1024;
 #[cfg(feature = "sync")]
-const _: () = assert!(AUTHORITY_FRAME_FLOOR == crate::sync::MAX_DECODED_PAYLOAD_BYTES);
+const _: () =
+    assert!(AUTHORITY_FRAME_FLOOR == crate::store::window_protocol::MAX_DECODED_PAYLOAD_BYTES);
 
 /// What a custody request's permits may fill, encoded, in one row: inline
 /// in the request's own row, and past it in each piece row (FIX 8087,

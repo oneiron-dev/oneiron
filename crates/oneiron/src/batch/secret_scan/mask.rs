@@ -53,16 +53,23 @@ use super::shapes::{self, Door, HANDLE_OPEN};
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::file_secret_marks::KeyPlaces;
+use crate::file_secret_marks::KeySpan;
+use crate::file_secret_marks::MemberStep;
 use crate::ports::ShortIdStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
-use crate::secret_custody::{
-    CustodyClass, CustodyWrite, FoundNote, KeptValues, KeyPlaces, KeySpan, KnownValues,
-    MASKED_FILE_BAND, MaskedFile, MemberStep, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor,
-    SecretCustodyRecord, SecretCustodyStatus, masked_file_in_txn, note_found_keys_in_txn,
-    put_masked_file_in_txn, register_custody_in_txn,
+use crate::secret_custody::KeptValues;
+use crate::secret_custody::{note_found_keys_in_txn, register_custody_in_txn};
+use crate::secret_record::CustodyClass;
+use crate::secret_record::{CustodyWrite, FoundNote};
+use crate::secret_record::{
+    SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::store::file_key_masks::{MASKED_FILE_BAND, MaskedFile};
+use crate::store::file_key_masks::{masked_file_in_txn, put_masked_file_in_txn};
+use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 use text_spans::{file_spans, merged, occurrences, secret_spans};
@@ -103,6 +110,30 @@ pub(crate) fn mask_origin_in_txn(
     id: &EntityId,
 ) -> Result<Option<MaskOrigin>> {
     MASK_ORIGIN.get(store, txn, id)
+}
+
+/// Rebinds one custody record's mask origin from `old` to `new` (FIX 12779):
+/// the same custody-keyed row, only `record` changes, `reason`/`place`/
+/// `masked_at` verbatim. Skips cleanly when the row is missing or names
+/// another record, so a known value the row references keeps its owner.
+pub(crate) fn rebind_mask_origin_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    custody: &EntityId,
+    old: &EntityId,
+    new: &EntityId,
+) -> Result<()> {
+    if old == new {
+        return Ok(());
+    }
+    let Some(mut origin) = MASK_ORIGIN.get(store, wtxn, custody)? else {
+        return Ok(());
+    };
+    if origin.record != *old {
+        return Ok(());
+    }
+    origin.record = *new;
+    MASK_ORIGIN.put(store, wtxn, custody, &origin)
 }
 
 /// Records each file `files` marks: each key's span, in the file's bytes or
@@ -203,12 +234,9 @@ pub(in crate::batch) struct MaskedFiles(Vec<EntityId>);
 impl MaskedFiles {
     pub(in crate::batch) fn restrict(self, store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
         for id in self.0 {
-            crate::federation::record_scope::restrict_stamp_in_txn(
-                store,
-                wtxn,
-                id,
-                MASKED_FILE_BAND,
-            )?;
+            store
+                .scope_stamps
+                .restrict_stamp_in_txn(store, wtxn, id, MASKED_FILE_BAND)?;
         }
         Ok(())
     }
@@ -307,7 +335,7 @@ struct Masker {
     file_ids: Vec<EntityId>,
     /// The record and place the pass reads now.
     at: Option<(EntityId, String)>,
-    /// The values the owner ruled no secret, by record: left as written.
+    /// The values the owner ruled no secret or kept as text, by record: left as written.
     kept: KeptValues,
     /// The values custody already holds (OF-560 C): each keeps its record's
     /// handle, and nothing is minted for it.
@@ -410,7 +438,7 @@ impl Masker {
             return masked_copy(data, &places).map(Some);
         }
         // A sealed file is stored as it is and left unmarked.
-        if !self.mints || is_sealed(data) {
+        if !self.mints || is_sealed(data, None) {
             return Ok(None);
         }
         let mut keys = Vec::new();
@@ -423,7 +451,7 @@ impl Masker {
             }
             Ok(())
         };
-        walk_members(data, &mut visit).map_err(container::refusal)?;
+        walk_members(data, &mut visit, None).map_err(container::refusal)?;
         if keys.is_empty() {
             return Ok(None);
         }
@@ -567,8 +595,8 @@ impl Masker {
         Ok(true)
     }
 
-    /// Whether the owner ruled `value` no secret in the record the pass
-    /// reads now.
+    /// Whether the owner ruled `value` no secret or kept as text in the record
+    /// the pass reads now.
     fn is_kept(&self, value: &[u8]) -> bool {
         self.at
             .as_ref()
@@ -625,7 +653,11 @@ impl Masker {
             let id = write.store.clock.entity_id()?;
             let mut rec = SecretCustodyRecord {
                 schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
-                name: crate::repo_mutation::masked_record_name(found.reason, &found.value, &id),
+                name: crate::store::repo_environment::masked_record_name(
+                    found.reason,
+                    &found.value,
+                    &id,
+                ),
                 class: CustodyClass::CustodyPortable,
                 device_only: false,
                 value_bytes: std::mem::take(&mut *found.value),

@@ -14,7 +14,7 @@ use super::super::publication::OriginPublicationStatus;
 use super::candidate_digest;
 use crate::error::{Error, Result};
 use crate::merge_queue::CodePushSourceLink;
-use crate::repo_mutation::proposal::RepoProposalStatus;
+use crate::store::repo_proposal_record::RepoProposalStatus;
 use crate::{EntityId, Vault};
 
 impl Vault {
@@ -261,7 +261,11 @@ impl Vault {
                     CodePushCandidateState::Landed
                 }
                 RepoProposalStatus::Failed => CodePushCandidateState::RolledBack,
-                RepoProposalStatus::Rejected => CodePushCandidateState::Rejected,
+                // A received candidate's bundle never resolves standalone
+                // (FIX 2938 refuses it in its stack); named for completeness.
+                RepoProposalStatus::Rejected | RepoProposalStatus::Superseded => {
+                    CodePushCandidateState::Rejected
+                }
             },
         };
         // A quarantine that names its proposal, with no live batch carrying

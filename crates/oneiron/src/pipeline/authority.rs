@@ -1,12 +1,12 @@
 //! Enforcement of gate-resolved retrieval authority. No caller requests enter here.
 
-use crate::claim::ClaimBody;
+use crate::claim::{ClaimBody, ClaimReadStatusExt};
 use crate::federation::Sensitivity;
 use crate::gate::ResolvedRetrievalFilter;
 use crate::registry::{ENTITY_TYPE_CLAIM, EntityClassification, entity_type_registry_entry};
 use crate::store::StoreRead;
 
-use super::filters::claim_status_gate_allows;
+use super::filters::claim_status_gate_allows_with_row;
 use super::types::{ClaimStatusGateCache, EntityMetadataCache, ScoredEntity};
 
 /// Retrieval admission for one claim: the surfaceable status half and the
@@ -19,14 +19,12 @@ pub(super) fn claim_allowed(filter: &ResolvedRetrievalFilter, body: &ClaimBody) 
 /// The ceiling half of claim admission: the actor's resolved scalar floor
 /// (sensitivity band, confidence and salience minima), never a status rule.
 pub(crate) fn claim_ceiling_allowed(filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
-    !filter.deny_all
-        && crate::claim::claim_sensitivity_band(body)
-            .and_then(band_sensitivity)
-            .is_some_and(|band| filter.read_scope().sensitivity.permits(band))
-        && body.confidence.is_finite()
-        && (filter.min_confidence..=1.0).contains(&body.confidence)
-        && body.salience.unwrap_or(0.0).is_finite()
-        && (filter.min_salience..=1.0).contains(&body.salience.unwrap_or(0.0))
+    claim_scalars_ceiling_allowed(
+        filter,
+        crate::claim::claim_sensitivity_band(body),
+        body.confidence,
+        body.salience,
+    )
 }
 
 /// Entity-type authority and the default kind scope. When the filter names
@@ -48,9 +46,10 @@ pub(crate) fn type_allowed(
         }
 }
 
-/// [`claim_ceiling_allowed`] for a claim known only by the band, confidence
-/// and salience a Gate decision kept of it (FIX 7499): the same scalar floor,
-/// so a decision is read only where its claim's ceiling would be.
+/// [`claim_ceiling_allowed`] for a claim known only by its band, confidence
+/// and salience: what a Gate decision kept of it (FIX 7499), or a claim's
+/// access class (FIX 11915). The one scalar floor, so a decision or a class
+/// is read only where its claim's ceiling would be.
 pub(crate) fn claim_scalars_ceiling_allowed(
     filter: &ResolvedRetrievalFilter,
     band: Option<u8>,
@@ -116,7 +115,8 @@ pub(super) fn candidate_allowed(
     metadata: &mut EntityMetadataCache,
     gate: &mut ClaimStatusGateCache,
 ) -> crate::Result<bool> {
-    let Some(meta) = metadata.get(store, txn, id)? else {
+    let (meta, gate_row) = metadata.get_row(store, txn, id)?;
+    let Some(meta) = meta else {
         return Ok(false);
     };
     if !type_allowed(filter, named, store, meta.entity_type) {
@@ -126,7 +126,7 @@ pub(super) fn candidate_allowed(
     if meta.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(true);
     }
-    if !claim_status_gate_allows(store, txn, id, metadata, gate)? {
+    if !claim_status_gate_allows_with_row(store, txn, id, metadata, gate, gate_row.as_ref())? {
         return Ok(false);
     }
     let allowed = gate

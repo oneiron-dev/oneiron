@@ -90,6 +90,8 @@ vaultPersonasPreview(input: unknown): unknown
 vaultPersonasExport(input: unknown): unknown
 vaultPersonasEdit(input: unknown): unknown
 selfMemoryDiaryQuery(input: unknown): unknown
+selfMemoryPadsRead(input: unknown): unknown
+selfMemoryPadsAdminReads(input: unknown): unknown
 cancel(input: unknown): unknown
 steer(input: unknown): unknown
 describe(input: unknown): unknown
@@ -248,6 +250,9 @@ vaultInboxGroupsResolve(input: unknown): unknown
 vaultWeaveDigestRender(input: unknown): unknown
 vaultWeaveLinkCorrections(input: unknown): unknown
 selfInboxLens(input: unknown): unknown
+selfInboxGet(input: unknown): unknown
+selfInboxDone(input: unknown): unknown
+selfInboxLater(input: unknown): unknown
 vaultSkillsBootstrap(input: unknown): unknown
 vaultSkillHubsDefaultGet(input: unknown): unknown
 vaultSkillsRestoredefaults(input: unknown): unknown
@@ -404,6 +409,8 @@ vaultFederationConnectRescopeAccept(input: unknown): unknown
 vaultFederationConnectDisconnect(input: unknown): unknown
 vaultFederationConnectExport(input: unknown): unknown
 vaultFederationConnectRejoin(input: unknown): unknown
+vaultFederationConnectWorldPrivacyExport(input: unknown): unknown
+vaultFederationConnectWorldPrivacyReceive(input: unknown): unknown
 vaultTrustedContactsName(input: unknown): unknown
 vaultTrustedContactsList(input: unknown): unknown
 vaultTrustedContactsConsent(input: unknown): unknown
@@ -528,6 +535,7 @@ vaultLegalHoldsWiden(input: unknown): unknown
 vaultLegalHoldsList(input: unknown): unknown
 vaultLegalHoldsLog(input: unknown): unknown
 vaultLegalHoldsLiftAndErase(input: unknown): unknown
+vaultLegalHoldsWithdrawErase(input: unknown): unknown
 vaultCourtesyDeleteSend(input: unknown): unknown
 vaultCourtesyDeleteSent(input: unknown): unknown
 vaultCourtesyDeleteIncoming(input: unknown): unknown
@@ -554,6 +562,7 @@ vaultConsentApproveOnce(input: unknown): unknown
 vaultConnectorsCallsApproveOnce(input: unknown): unknown
 vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
+vaultConsentCreateAutoWeaveGrant(input: unknown): unknown
 vaultConsentRegistry(input: unknown): unknown
 vaultConsentFailureSignalsHeld(input: unknown): unknown
 vaultConsentRevoke(input: unknown): unknown
@@ -887,6 +896,7 @@ vaultWorkspaceWorkCompanionSet(input: unknown): unknown
 selfSkillsSave(input: unknown): unknown
 selfSkillsFork(input: unknown): unknown
 selfSkillsCallables(input: unknown): unknown
+vaultSkillsCallableAmend(input: unknown): unknown
 vaultSkillsPackReceipt(input: unknown): unknown
 vaultSkillsOutcomesProject(input: unknown): unknown
 vaultSkillsOutcomesGet(input: unknown): unknown

@@ -58,6 +58,41 @@ pub enum SigningCaller {
     Agent,
 }
 
+impl SigningCaller {
+    pub(super) fn authentication_method(self) -> EsignAuthenticationMethod {
+        match self {
+            Self::Bearer => EsignAuthenticationMethod::Bearer,
+            Self::Person => EsignAuthenticationMethod::Person,
+            Self::Agent => EsignAuthenticationMethod::Agent,
+        }
+    }
+}
+
+impl SigningAction {
+    fn verb(&self) -> &'static str {
+        match self {
+            Self::Load => "load",
+            Self::SaveField { .. } => "save_field",
+            Self::Complete { .. } => "complete",
+            Self::Reject { .. } => "reject",
+        }
+    }
+}
+
+pub(super) fn signed_event(
+    document: &EsignDocument,
+    recipient: &str,
+    next: &Option<String>,
+    evidence: EsignSigningEvidence,
+) -> EsignEvent {
+    EsignEvent::Signed {
+        recipient: recipient.to_owned(),
+        next: next.clone(),
+        evidence,
+        items: document.items.clone(),
+    }
+}
+
 pub const ESIGN_SEAL_ATTEMPT_KIND: &str = "esign.seal";
 pub(super) fn enqueue_seal(
     vault: &Vault,
@@ -88,7 +123,7 @@ pub(super) fn enqueue_seal(
     crate::ports::JobQueue::port_job_enqueue(
         vault,
         txn,
-        crate::attempt_queue::EnqueueAttempt {
+        crate::store::attempt_inputs::EnqueueAttempt {
             kind: ESIGN_SEAL_ATTEMPT_KIND.into(),
             payload: document.as_bytes().to_vec(),
             dedupe_key: Some(format!("{}:{generation}", document.to_hex())),
@@ -108,6 +143,7 @@ pub(super) fn sign(
     state: &EsignState,
     recipient: &str,
     next: &Option<String>,
+    evidence: EsignSigningEvidence,
     actor: EsignAuditActor,
     now: u64,
 ) -> Result<()> {
@@ -115,10 +151,7 @@ pub(super) fn sign(
         vault,
         txn,
         document,
-        EsignEvent::Signed {
-            recipient: recipient.to_owned(),
-            next: next.clone(),
-        },
+        signed_event(&state.document, recipient, next, evidence),
         actor,
         now,
     )?;
@@ -156,7 +189,7 @@ impl Vault {
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<SigningOutcome> {
-        self.execute_signing_action_as(token, action, SigningCaller::Bearer, ip, user_agent)
+        self.execute_signing_action_as(token, action, SigningCaller::Bearer, None, ip, user_agent)
     }
 
     /// [`Self::execute_signing_action`] by a caller that showed who it is. An
@@ -168,10 +201,19 @@ impl Vault {
         token: &EsignCapability,
         action: &SigningAction,
         caller: SigningCaller,
+        verified_actor: Option<EntityId>,
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<SigningOutcome> {
-        self.execute_signing_action_within(token, action, caller, ip, user_agent, &|_, _| Ok(true))
+        self.execute_signing_action_within(
+            token,
+            action,
+            caller,
+            verified_actor,
+            ip,
+            user_agent,
+            &|_, _| Ok(true),
+        )
     }
 
     /// [`Self::execute_signing_action_as`] under a narrowed caller's
@@ -186,6 +228,7 @@ impl Vault {
         token: &EsignCapability,
         action: &SigningAction,
         caller: SigningCaller,
+        verified_actor: Option<EntityId>,
         ip: Option<String>,
         user_agent: Option<String>,
         ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
@@ -196,7 +239,16 @@ impl Vault {
         let _ = self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
             super::lane_scope::ceiling_admits_in(ceiling, txn, &cap.document)?;
-            super::rate::observe(self, txn, &cap.document, &cap.recipient, now)
+            super::rate::observe(
+                self,
+                txn,
+                &cap.document,
+                &cap.recipient,
+                now,
+                action.verb(),
+                caller.authentication_method(),
+                verified_actor,
+            )
         });
         self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
@@ -218,9 +270,11 @@ impl Vault {
                 .find(|r| r.id == cap.recipient)
                 .cloned()
                 .ok_or_else(|| invalid("recipient removed"))?;
+            // An owned snapshot: `state` is reassigned by the appends below.
             let progress = state
                 .recipients
                 .get(&cap.recipient)
+                .cloned()
                 .ok_or_else(|| invalid("recipient missing"))?;
             // Gate 1: a later sequential recipient is not even marked viewed.
             if progress.signing == SigningStatus::Waiting && state.status == DocumentStatus::Pending
@@ -241,13 +295,38 @@ impl Vault {
                 ip,
                 user_agent,
             };
-            // Gate 3: first-open is an event, idempotent on refresh.
-            if progress.delivery != DeliveryStatus::Viewed && !held {
+            // Gate 3: first-open is an event, idempotent on refresh. Viewed
+            // is human-action-only evidence (FIX 7855): a known agent call
+            // never marks viewed, while Bearer/Person acts still do. An
+            // agent with a Gate-2-valid capability records AccessVerified
+            // instead, so its field saves and sign acts land on verified
+            // access without inventing Viewed.
+            if !matches!(action, SigningAction::Load)
+                && progress.delivery != DeliveryStatus::Viewed
+                && !held
+                && caller != SigningCaller::Agent
+            {
                 state = append(
                     self,
                     txn,
                     document,
                     EsignEvent::Viewed {
+                        recipient: recipient.id.clone(),
+                    },
+                    actor.clone(),
+                    now,
+                )?;
+            }
+            if caller == SigningCaller::Agent
+                && !matches!(action, SigningAction::Load)
+                && progress.access != AccessStatus::Verified
+                && !held
+            {
+                state = append(
+                    self,
+                    txn,
+                    document,
+                    EsignEvent::AccessVerified {
                         recipient: recipient.id.clone(),
                     },
                     actor.clone(),
@@ -322,6 +401,12 @@ impl Vault {
                     if !consent {
                         return Ok(SigningOutcome::ConsentRequired);
                     }
+                    let evidence = EsignSigningEvidence {
+                        authentication_method: caller.authentication_method(),
+                        disclosure_version: None,
+                        consent: *consent,
+                        intent: EsignSigningIntent::Direct,
+                    };
                     let automated = recipient.automated || caller == SigningCaller::Agent;
                     if automated && recipient.natural_person.is_some() {
                         return Err(invalid(
@@ -338,10 +423,7 @@ impl Vault {
                         // D6 redirects the sign act up its role chain.
                         // Only a call that would land now is held.
                         state.clone().apply(
-                            &EsignEvent::Signed {
-                                recipient: recipient.id.clone(),
-                                next: next.clone(),
-                            },
+                            &signed_event(&state.document, &recipient.id, next, evidence.clone()),
                             now,
                         )?;
                         let held = super::escalation::hold(
@@ -351,6 +433,7 @@ impl Vault {
                             &state.document.title,
                             &recipient,
                             next,
+                            evidence.clone(),
                             &actor,
                             now,
                         )?;
@@ -358,7 +441,17 @@ impl Vault {
                             held_at: held.held_at,
                         });
                     }
-                    sign(self, txn, document, &state, &recipient.id, next, actor, now)?;
+                    sign(
+                        self,
+                        txn,
+                        document,
+                        &state,
+                        &recipient.id,
+                        next,
+                        evidence,
+                        actor,
+                        now,
+                    )?;
                     return Ok(SigningOutcome::AwaitingSeal);
                 }
                 SigningAction::Reject { reason } => {

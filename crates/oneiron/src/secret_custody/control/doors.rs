@@ -18,7 +18,9 @@ use zeroize::Zeroize;
 use super::super::doors::{register_generation_in_txn, resolve_secret_ref_in_txn};
 use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::{custody_portable, transition_named_in_txn};
-use super::super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
+use super::super::types::{
+    CustodyClass, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+};
 use super::input::{SealedFrame, SealedInput, attach_manifest};
 use super::manifest::unstated_input;
 use super::permits::candidate_for;
@@ -75,6 +77,10 @@ pub struct SecretCustodyView {
     pub candidates: Vec<CustodyCandidate>,
     /// Never known here (CALLS CUSTODY_REPLICATION_WITHOUT_ACK).
     pub delivery: CustodyDelivery,
+    /// The live custody floor, whole: a sealing surface asks against this
+    /// instead of guessing a band, so its change is not refused as
+    /// WiderThanFloor.
+    pub floor: SecretCustodyFloor,
 }
 
 /// A register or rotate whose protected input the owner's surface sealed to
@@ -83,9 +89,10 @@ pub struct SecretCustodyView {
 /// The deposit carries no carrier key, and no surface holds one (FIX 7402):
 /// while the carrier wire is on, its recorder mints the input's key and
 /// seals the deposited input, with what it attaches, under that key before
-/// the request's digest exists, when it fits one row (one past it is kept
-/// as it lies, FIX 11140). The relayed input's head names the key's
-/// reference, which is what the holder asks the recorder for, live.
+/// the request's digest exists: whole when it fits one row, in numbered
+/// parts as it is read past it (FIX 11140, 12148). The relayed input's head
+/// names the key's reference, which is what the holder asks the recorder
+/// for, live.
 pub struct SealedCustodyChange<'a> {
     /// For a register, the `manifest_ref` the sealed record names, as the
     /// surface states it: this install attaches the manifest it resolves
@@ -233,10 +240,12 @@ impl Vault {
                 })
             })
             .collect();
+        let floor = SecretCustodyFloor::resolve(&self.store, &txn)?;
         Ok(SecretCustodyView {
             vault_id,
             secret_id,
             name: name.to_owned(),
+            floor,
             known: known.is_some(),
             held_here: known.as_ref().is_some_and(|known| known.held_here),
             portable: known

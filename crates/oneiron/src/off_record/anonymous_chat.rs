@@ -10,9 +10,9 @@ use std::pin::Pin;
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::llm::{BudgetGuard, LlmBackend};
 use crate::policy_model::{PolicyClassifyDecision, PolicyModelConfig, PolicySkipReason};
 use crate::store::GateSystemNoticeRecord;
+use oneiron_model::llm::{BudgetGuard, LlmBackend};
 
 use super::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode, OffRecordSession};
 

@@ -1,11 +1,12 @@
 //! The same credential-gated file projection for point reads and indexed
 //! hydration. A non-owner never receives a lifted value through raw bytes.
 use super::model::GraphFsResolver;
-use crate::claim::{PointRead, ReadRow, ScopedReadResult};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::gate::RetrievalFilter;
 use crate::memory::repo_secret_reads::repo_asset_body_in_txn;
+use crate::ports::ScopedReadResult;
+use crate::ports::{PointRead, ReadRow};
+use oneiron_contracts::gate::RetrievalFilter;
 
 impl GraphFsResolver<'_, '_> {
     pub(super) fn file_rows(
@@ -41,12 +42,12 @@ impl GraphFsResolver<'_, '_> {
                             return Ok(Some(row));
                         };
                         if row.entity_type == crate::registry::ENTITY_TYPE_ASSET {
-                            *body = crate::secret_custody::sighted_bytes_in_txn(
+                            *body = crate::store::file_key_masks::sighted_bytes_in_txn(
                                 &self.scoped_read.vault().store,
                                 txn,
                                 body.clone(),
                                 None,
-                                crate::secret_custody::SecretSight::Masked,
+                                crate::file_secret_marks::SecretSight::Masked,
                             )?;
                         } else {
                             let mut cursor = std::io::Cursor::new(body.as_slice());

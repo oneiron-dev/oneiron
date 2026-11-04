@@ -32,7 +32,7 @@ impl Memory<'_> {
         let selection = if lane.read_receipt(None, 0)?.applied.deny_all {
             selection.denied()
         } else {
-            self.recall_faceted(selection, scope, None)?
+            self.recall_faceted(selection, scope, None, &self.vault.store.read())?
         };
         let mut key = self.read_key()?;
         if let Some(worlds) = &selection.worlds {
@@ -44,6 +44,7 @@ impl Memory<'_> {
                 .worlds
                 .map_or(WorldScope::All, WorldScope::WorldSet),
             corpus: selection.projects,
+            conversations: selection.conversations.clone(),
             facet: selection.facet,
             kinds: selection.kinds.listed().map(<[u8]>::to_vec),
         };

@@ -21,15 +21,18 @@ use super::check_inputs::{
 use super::plan::FrozenCheckPlan;
 use super::storage::{BATCHES, check_row_size};
 use super::{CheckPhase, MergeBatch, MergeQueue, MergeQueuePointers, Quarantine};
-use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
-    EnqueueAttempt, EnqueueOutcome, FailAttempt,
-};
+use crate::attempt_queue::{AttemptQueue, ClaimOutcome, EnqueueOutcome};
 use crate::consent::QueuedCheckApproval;
-use crate::contract_oracle::invalid;
 use crate::error::{Error, Result};
 use crate::ports::JobQueue;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::attempt_id::AttemptId;
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::CompleteAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::store::attempt_inputs::FailAttempt;
+use crate::store::attempt_state::AttemptState;
+use crate::store::contract_oracle::invalid;
 use crate::{EntityId, Vault};
 
 /// The AttemptQueue kind a queue check's attempt carries.
@@ -42,10 +45,20 @@ pub const DEFAULT_QUEUE_CHECK_CONCURRENCY: u32 = 1;
 /// The checked configuration of one object store. Key: hex(repo identity).
 pub(super) const CHECK_CONFIGS: SideTable<String, QueueCheckConfiguration, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_CHECK_CONFIG);
+/// Whether a masked copy of a `MERGE_QUEUE_CHECK_CONFIG` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn merge_queue_check_config_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<QueueCheckConfiguration, Named>(bytes)
+}
 
 /// Checker work rows. Key: hex(repo identity) ":" hex64(request digest).
 pub(super) const CHECK_WORK: SideTable<String, QueueCheckWork, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_CHECK_WORK);
+/// Whether a masked copy of a `MERGE_QUEUE_CHECK_WORK` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn merge_queue_check_work_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<QueueCheckWork, Named>(bytes)
+}
 
 /// Where a checked initialization stands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

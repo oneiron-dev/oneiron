@@ -20,14 +20,7 @@ use crate::session_overlay::SessionOverlay;
 /// slots, the node header and its edges.
 const MAP_ENTRY_OVERHEAD: usize = 32;
 
-/// The host's charge for one room stretch's memory, reserved on its
-/// retained-memory line before the stretch was entered. Dropping it hands
-/// its bytes back.
-pub trait RetainedCharge: Send + Sync {
-    /// Moves the charge to `bytes`, now. It never waits and never refuses:
-    /// the memory it stands for is already held.
-    fn charge(&self, bytes: usize);
-}
+pub use crate::store::retained_memory::RetainedCharge;
 
 /// The bytes a room stretch named `session_ref` holds once entered, before
 /// its overlay holds a row: its registry entry and the record published

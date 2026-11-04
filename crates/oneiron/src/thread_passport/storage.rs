@@ -90,13 +90,6 @@ pub(super) fn put_alias_claim(
     )
 }
 
-pub(crate) fn is_thread_claim_predicate(predicate: &str) -> bool {
-    matches!(
-        predicate,
-        PREDICATE_THREAD_PASSPORT | PREDICATE_THREAD_ALIAS
-    )
-}
-
 /// Missing replicated owners are pending, not authoritative. Indexed readers
 /// cannot discover them until the ChannelIdentity arrives. A known wrong type
 /// is rejected on every road, before any byte or derived edge is staged.

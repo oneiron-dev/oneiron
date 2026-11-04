@@ -17,8 +17,6 @@
 use super::request_sources::{CallBackend, SourcedBackend};
 use super::step_charge::StepChargeTally;
 use crate::actor_claims::ResidentCraftCandidate;
-use crate::agent_def::DreamingMode;
-use crate::agent_inbox_lens::{AgentInboxDiaryReview, ResolvedInboxText};
 use crate::dreamer_runner::{
     DREAMER_RESIDENT_DREAM_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
 };
@@ -27,13 +25,16 @@ use crate::dreamer_wake::{
 };
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::llm::manifest::ModelRole;
-use crate::llm::{
-    BudgetGuard, DurableStepContext, DurableStepError, HostInferenceContext, LlmBackend, ModelId,
-    StepOutcome, call_as_step_checked,
-};
+use crate::inference_context::HostInferenceContext;
+use crate::llm::call_as_step_checked;
+use crate::model_binding::ModelRole;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::side_table::{self, Named, Raw, SideTable};
+use crate::store::agent_record::DreamingMode;
 use crate::{EntityId, Vault, WriteActor};
+use crate::{agent_inbox_lens::ResolvedInboxText, inbox::view_values::AgentInboxDiaryReview};
+use oneiron_model::llm::{BudgetGuard, LlmBackend, ModelId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -669,7 +670,9 @@ pub async fn run_resident_dream(
         // it with the tally (FIX 11554). A tally park, not a handover, as at
         // the commit below: free-time runs meter their line.
         Err(other) => {
-            if let DurableStepError::SpentLlm { usage, .. } = &other {
+            if let DurableStepError::SpentLlm { usage, .. }
+            | DurableStepError::SpentFallback { usage, .. } = &other
+            {
                 charges.record_usage(usage);
             }
             return Ok(charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other)));

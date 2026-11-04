@@ -7,11 +7,11 @@ use crate::batch::{
 use crate::deletion::{HydratedShortIdDeletion, HydratedShortIdDeletionSource, TombstoneValueV2};
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::error::{Error, Result};
-use crate::pipeline::ScoredEntity;
 use crate::store::ShortIdAliasTarget;
 use crate::vault::require_key_len;
 use crate::{EntityId, HydratedShortId, Vault};
 use heed::{RoTxn, RwTxn};
+use oneiron_retrieval::pipeline::ScoredEntity;
 impl Vault {
     /// Actor-bound diary ids are evaluated by the scoped query in this read
     /// transaction. The ownerless RetrievalIndex trait always passes None.
@@ -37,7 +37,7 @@ impl Vault {
         skip_rescore: bool,
         (private_note_ids, admission): (
             Option<&crate::claim::ScopedDiaryCandidates>,
-            Option<&crate::hnsw::Admission<'_>>,
+            Option<&crate::store::vector_index::Admission<'_>>,
         ),
     ) -> Result<Vec<ScoredEntity>> {
         let admits = |txn: &RoTxn<'_>, id: &EntityId| -> Result<bool> {
@@ -113,7 +113,7 @@ impl Vault {
         skip_rescore: bool,
         (staged, admits): (
             crate::session_overlay::StagedRows,
-            &crate::hnsw::Admission<'_>,
+            &crate::store::vector_index::Admission<'_>,
         ),
     ) -> Result<StagedVectors> {
         let mut ids = std::collections::HashSet::with_capacity(staged.rows.len());
@@ -215,7 +215,9 @@ impl RetrievalIndex for Vault {
         batch.apply(txn)
     }
     fn port_retrieval_mark_stale(&self, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, txn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, txn, id)?;
         super::integrity::mark_stale_in_txn(&self.store, txn, id)
     }
     fn port_retrieval_vector_search(
@@ -353,7 +355,7 @@ impl ShortIdStore for Vault {
         let entity_type = header.entity_type;
         let learned_at = header.learned_at;
         if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
         if self.archive_tombstone_in_txn(rtxn, &id)?.is_some() {
@@ -399,7 +401,9 @@ impl TombstoneStore for Vault {
     ) -> Result<()> {
         // Standalone tombstone carries deletion intent even after active row removal.
         // Publishing to peers and historical erasure remain the deletion facade's job.
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, txn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, txn, id)?;
         self.store
             .vault_meta
             .put(txn, &super::integrity::tombstone_key(id), &value.encode())?;
@@ -432,7 +436,7 @@ impl super::RetrievalIndexMaintenance for Vault {
         txn: &mut RwTxn<'_>,
         id: &EntityId,
     ) -> Result<()> {
-        crate::bm25::deindex_text(&self.store, txn, id)
+        crate::store::text_index::deindex_text(&self.store, txn, id)
     }
 
     fn port_retrieval_clear_phonetic_for_soft_erase(

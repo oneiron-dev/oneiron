@@ -60,6 +60,8 @@ pub enum AgentVerb {
     VaultPersonasExport,
     VaultPersonasEdit,
     SelfMemoryDiaryQuery,
+    SelfMemoryPadsRead,
+    SelfMemoryPadsAdminReads,
     Cancel,
     Steer,
     Describe,
@@ -218,6 +220,9 @@ pub enum AgentVerb {
     VaultWeaveDigestRender,
     VaultWeaveLinkCorrections,
     SelfInboxLens,
+    SelfInboxGet,
+    SelfInboxDone,
+    SelfInboxLater,
     VaultSkillsBootstrap,
     VaultSkillHubsDefaultGet,
     VaultSkillsRestoredefaults,
@@ -374,6 +379,8 @@ pub enum AgentVerb {
     VaultFederationConnectDisconnect,
     VaultFederationConnectExport,
     VaultFederationConnectRejoin,
+    VaultFederationConnectWorldPrivacyExport,
+    VaultFederationConnectWorldPrivacyReceive,
     VaultTrustedContactsName,
     VaultTrustedContactsList,
     VaultTrustedContactsConsent,
@@ -498,6 +505,7 @@ pub enum AgentVerb {
     VaultLegalHoldsList,
     VaultLegalHoldsLog,
     VaultLegalHoldsLiftAndErase,
+    VaultLegalHoldsWithdrawErase,
     VaultCourtesyDeleteSend,
     VaultCourtesyDeleteSent,
     VaultCourtesyDeleteIncoming,
@@ -524,6 +532,7 @@ pub enum AgentVerb {
     VaultConnectorsCallsApproveOnce,
     VaultConsentDeny,
     VaultConsentCreateStandingGrant,
+    VaultConsentCreateAutoWeaveGrant,
     VaultConsentRegistry,
     VaultConsentFailureSignalsHeld,
     VaultConsentRevoke,
@@ -857,6 +866,7 @@ pub enum AgentVerb {
     SelfSkillsSave,
     SelfSkillsFork,
     SelfSkillsCallables,
+    VaultSkillsCallableAmend,
     VaultSkillsPackReceipt,
     VaultSkillsOutcomesProject,
     VaultSkillsOutcomesGet,
@@ -1299,6 +1309,8 @@ impl AgentVerb {
         Self::VaultPersonasExport,
         Self::VaultPersonasEdit,
         Self::SelfMemoryDiaryQuery,
+        Self::SelfMemoryPadsRead,
+        Self::SelfMemoryPadsAdminReads,
         Self::Cancel,
         Self::Steer,
         Self::Describe,
@@ -1457,6 +1469,9 @@ impl AgentVerb {
         Self::VaultWeaveDigestRender,
         Self::VaultWeaveLinkCorrections,
         Self::SelfInboxLens,
+        Self::SelfInboxGet,
+        Self::SelfInboxDone,
+        Self::SelfInboxLater,
         Self::VaultSkillsBootstrap,
         Self::VaultSkillHubsDefaultGet,
         Self::VaultSkillsRestoredefaults,
@@ -1613,6 +1628,8 @@ impl AgentVerb {
         Self::VaultFederationConnectDisconnect,
         Self::VaultFederationConnectExport,
         Self::VaultFederationConnectRejoin,
+        Self::VaultFederationConnectWorldPrivacyExport,
+        Self::VaultFederationConnectWorldPrivacyReceive,
         Self::VaultTrustedContactsName,
         Self::VaultTrustedContactsList,
         Self::VaultTrustedContactsConsent,
@@ -1737,6 +1754,7 @@ impl AgentVerb {
         Self::VaultLegalHoldsList,
         Self::VaultLegalHoldsLog,
         Self::VaultLegalHoldsLiftAndErase,
+        Self::VaultLegalHoldsWithdrawErase,
         Self::VaultCourtesyDeleteSend,
         Self::VaultCourtesyDeleteSent,
         Self::VaultCourtesyDeleteIncoming,
@@ -1763,6 +1781,7 @@ impl AgentVerb {
         Self::VaultConnectorsCallsApproveOnce,
         Self::VaultConsentDeny,
         Self::VaultConsentCreateStandingGrant,
+        Self::VaultConsentCreateAutoWeaveGrant,
         Self::VaultConsentRegistry,
         Self::VaultConsentFailureSignalsHeld,
         Self::VaultConsentRevoke,
@@ -2096,6 +2115,7 @@ impl AgentVerb {
         Self::SelfSkillsSave,
         Self::SelfSkillsFork,
         Self::SelfSkillsCallables,
+        Self::VaultSkillsCallableAmend,
         Self::VaultSkillsPackReceipt,
         Self::VaultSkillsOutcomesProject,
         Self::VaultSkillsOutcomesGet,
@@ -2541,6 +2561,8 @@ impl AgentVerb {
             Self::VaultPersonasExport => "vault.personas.export",
             Self::VaultPersonasEdit => "vault.personas.edit",
             Self::SelfMemoryDiaryQuery => "self.memory.diary.query",
+            Self::SelfMemoryPadsRead => "self.memory.pads.read",
+            Self::SelfMemoryPadsAdminReads => "self.memory.pads.admin_reads",
             Self::Cancel => "cancel",
             Self::Steer => "steer",
             Self::Describe => "describe",
@@ -2699,6 +2721,9 @@ impl AgentVerb {
             Self::VaultWeaveDigestRender => "vault.weave.digest.render",
             Self::VaultWeaveLinkCorrections => "vault.weave.link.corrections",
             Self::SelfInboxLens => "self.inbox.lens",
+            Self::SelfInboxGet => "self.inbox.get",
+            Self::SelfInboxDone => "self.inbox.done",
+            Self::SelfInboxLater => "self.inbox.later",
             Self::VaultSkillsBootstrap => "vault.skills.bootstrap",
             Self::VaultSkillHubsDefaultGet => "vault.skill_hubs.default.get",
             Self::VaultSkillsRestoredefaults => "vault.skills.restoreDefaults",
@@ -2859,6 +2884,12 @@ impl AgentVerb {
             Self::VaultFederationConnectDisconnect => "vault.federation.connect.disconnect",
             Self::VaultFederationConnectExport => "vault.federation.connect.export",
             Self::VaultFederationConnectRejoin => "vault.federation.connect.rejoin",
+            Self::VaultFederationConnectWorldPrivacyExport => {
+                "vault.federation.connect.world_privacy.export"
+            }
+            Self::VaultFederationConnectWorldPrivacyReceive => {
+                "vault.federation.connect.world_privacy.receive"
+            }
             Self::VaultTrustedContactsName => "vault.trusted_contacts.name",
             Self::VaultTrustedContactsList => "vault.trusted_contacts.list",
             Self::VaultTrustedContactsConsent => "vault.trusted_contacts.consent",
@@ -2993,6 +3024,7 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => "vault.legal_holds.list",
             Self::VaultLegalHoldsLog => "vault.legal_holds.log",
             Self::VaultLegalHoldsLiftAndErase => "vault.legal_holds.lift_and_erase",
+            Self::VaultLegalHoldsWithdrawErase => "vault.legal_holds.withdraw_erase",
             Self::VaultCourtesyDeleteSend => "vault.courtesy_delete.send",
             Self::VaultCourtesyDeleteSent => "vault.courtesy_delete.sent",
             Self::VaultCourtesyDeleteIncoming => "vault.courtesy_delete.incoming",
@@ -3019,6 +3051,7 @@ impl AgentVerb {
             Self::VaultConnectorsCallsApproveOnce => "vault.connectors.calls.approve_once",
             Self::VaultConsentDeny => "vault.consent.deny",
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
+            Self::VaultConsentCreateAutoWeaveGrant => "vault.consent.create_auto_weave_grant",
             Self::VaultConsentRegistry => "vault.consent.registry",
             Self::VaultConsentFailureSignalsHeld => "vault.consent.failure_signals_held",
             Self::VaultConsentRevoke => "vault.consent.revoke",
@@ -3360,6 +3393,7 @@ impl AgentVerb {
             Self::SelfSkillsSave => "self.skills.save",
             Self::SelfSkillsFork => "self.skills.fork",
             Self::SelfSkillsCallables => "self.skills.callables",
+            Self::VaultSkillsCallableAmend => "vault.skills.callable.amend",
             Self::VaultSkillsPackReceipt => "vault.skills.pack_receipt",
             Self::VaultSkillsOutcomesProject => "vault.skills.outcomes.project",
             Self::VaultSkillsOutcomesGet => "vault.skills.outcomes.get",
@@ -3812,6 +3846,8 @@ impl AgentVerb {
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
                 | Self::SelfMemoryDiaryQuery
+                | Self::SelfMemoryPadsRead
+                | Self::SelfMemoryPadsAdminReads
                 | Self::Cancel
                 | Self::Steer
                 | Self::Describe
@@ -3970,6 +4006,9 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
+                | Self::SelfInboxGet
+                | Self::SelfInboxDone
+                | Self::SelfInboxLater
                 | Self::VaultSkillsBootstrap
                 | Self::VaultSkillHubsDefaultGet
                 | Self::VaultSkillsRestoredefaults
@@ -4126,6 +4165,8 @@ impl AgentVerb {
                 | Self::VaultFederationConnectDisconnect
                 | Self::VaultFederationConnectExport
                 | Self::VaultFederationConnectRejoin
+                | Self::VaultFederationConnectWorldPrivacyExport
+                | Self::VaultFederationConnectWorldPrivacyReceive
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConsent
@@ -4250,6 +4291,7 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultLegalHoldsWithdrawErase
                 | Self::VaultCourtesyDeleteSend
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
@@ -4276,6 +4318,7 @@ impl AgentVerb {
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentCreateAutoWeaveGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
@@ -4609,6 +4652,7 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::VaultSkillsCallableAmend
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
@@ -5080,6 +5124,8 @@ impl AgentVerb {
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
                 | Self::SelfMemoryDiaryQuery
+                | Self::SelfMemoryPadsRead
+                | Self::SelfMemoryPadsAdminReads
                 | Self::Cancel
                 | Self::Steer
                 | Self::Describe
@@ -5238,6 +5284,9 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
+                | Self::SelfInboxGet
+                | Self::SelfInboxDone
+                | Self::SelfInboxLater
                 | Self::VaultSkillsBootstrap
                 | Self::VaultSkillHubsDefaultGet
                 | Self::VaultSkillsRestoredefaults
@@ -5394,6 +5443,8 @@ impl AgentVerb {
                 | Self::VaultFederationConnectDisconnect
                 | Self::VaultFederationConnectExport
                 | Self::VaultFederationConnectRejoin
+                | Self::VaultFederationConnectWorldPrivacyExport
+                | Self::VaultFederationConnectWorldPrivacyReceive
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConsent
@@ -5518,6 +5569,7 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultLegalHoldsWithdrawErase
                 | Self::VaultCourtesyDeleteSend
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
@@ -5544,6 +5596,7 @@ impl AgentVerb {
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentCreateAutoWeaveGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
@@ -5877,6 +5930,7 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::VaultSkillsCallableAmend
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
@@ -6510,6 +6564,8 @@ impl AgentVerb {
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
                 | Self::SelfMemoryDiaryQuery
+                | Self::SelfMemoryPadsRead
+                | Self::SelfMemoryPadsAdminReads
                 | Self::Steer
                 | Self::TasksWave
                 | Self::VaultFanoutSpawn
@@ -6651,6 +6707,9 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
+                | Self::SelfInboxGet
+                | Self::SelfInboxDone
+                | Self::SelfInboxLater
                 | Self::VaultSkillsBootstrap
                 | Self::VaultSkillHubsDefaultGet
                 | Self::VaultSkillsRestoredefaults
@@ -6806,6 +6865,8 @@ impl AgentVerb {
                 | Self::VaultFederationConnectDisconnect
                 | Self::VaultFederationConnectExport
                 | Self::VaultFederationConnectRejoin
+                | Self::VaultFederationConnectWorldPrivacyExport
+                | Self::VaultFederationConnectWorldPrivacyReceive
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConsent
@@ -6929,6 +6990,7 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultLegalHoldsWithdrawErase
                 | Self::VaultCourtesyDeleteSend
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
@@ -6955,6 +7017,7 @@ impl AgentVerb {
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentCreateAutoWeaveGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
@@ -7257,6 +7320,7 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::VaultSkillsCallableAmend
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
@@ -7713,6 +7777,9 @@ impl AgentVerb {
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxGroupsResolve
                 | Self::VaultWeaveDigestRender
+                | Self::SelfInboxGet
+                | Self::SelfInboxDone
+                | Self::SelfInboxLater
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsPublishersAdmit
@@ -7817,6 +7884,7 @@ impl AgentVerb {
                 | Self::VaultFederationConnectRescopeAccept
                 | Self::VaultFederationConnectDisconnect
                 | Self::VaultFederationConnectRejoin
+                | Self::VaultFederationConnectWorldPrivacyReceive
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsConsent
                 | Self::VaultTrustedContactsRevoke
@@ -7895,6 +7963,7 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultLegalHoldsWithdrawErase
                 | Self::VaultCourtesyDeleteSend
                 | Self::VaultCourtesyDeleteAnswer
                 | Self::VaultEmbeddingSpacesDeclare
@@ -7916,6 +7985,7 @@ impl AgentVerb {
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentCreateAutoWeaveGrant
                 | Self::VaultConsentRevoke
                 | Self::VaultConsentCreateBypassGrant
                 | Self::VaultConsentGraduationPolicySet
@@ -8110,6 +8180,7 @@ impl AgentVerb {
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
+                | Self::VaultSkillsCallableAmend
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnectorReplace
@@ -8413,6 +8484,8 @@ impl AgentVerb {
             Self::VaultPersonasExport => &["spec"],
             Self::VaultPersonasEdit => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
+            Self::SelfMemoryPadsRead => &["spec"],
+            Self::SelfMemoryPadsAdminReads => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
             Self::Describe => &[
@@ -8588,6 +8661,9 @@ impl AgentVerb {
             Self::VaultWeaveDigestRender => &["spec"],
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
+            Self::SelfInboxGet => &["spec"],
+            Self::SelfInboxDone => &["spec"],
+            Self::SelfInboxLater => &["spec"],
             Self::VaultSkillsBootstrap => &["spec"],
             Self::VaultSkillHubsDefaultGet => &["spec"],
             Self::VaultSkillsRestoredefaults => &["spec"],
@@ -8744,6 +8820,8 @@ impl AgentVerb {
             Self::VaultFederationConnectDisconnect => &["spec"],
             Self::VaultFederationConnectExport => &["spec"],
             Self::VaultFederationConnectRejoin => &["spec"],
+            Self::VaultFederationConnectWorldPrivacyExport => &["spec"],
+            Self::VaultFederationConnectWorldPrivacyReceive => &["spec"],
             Self::VaultTrustedContactsName => &["spec"],
             Self::VaultTrustedContactsList => &["spec"],
             Self::VaultTrustedContactsConsent => &["spec"],
@@ -8868,6 +8946,7 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => &[],
             Self::VaultLegalHoldsLog => &[],
             Self::VaultLegalHoldsLiftAndErase => &["spec"],
+            Self::VaultLegalHoldsWithdrawErase => &["spec"],
             Self::VaultCourtesyDeleteSend => &["spec"],
             Self::VaultCourtesyDeleteSent => &[],
             Self::VaultCourtesyDeleteIncoming => &[],
@@ -8894,6 +8973,7 @@ impl AgentVerb {
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
+            Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentFailureSignalsHeld => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
@@ -9227,6 +9307,7 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::VaultSkillsCallableAmend => &["spec"],
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
@@ -9670,6 +9751,8 @@ impl AgentVerb {
             Self::VaultPersonasExport => &["spec"],
             Self::VaultPersonasEdit => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
+            Self::SelfMemoryPadsRead => &["spec"],
+            Self::SelfMemoryPadsAdminReads => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
             Self::Describe => &[],
@@ -9828,6 +9911,9 @@ impl AgentVerb {
             Self::VaultWeaveDigestRender => &["spec"],
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
+            Self::SelfInboxGet => &["spec"],
+            Self::SelfInboxDone => &["spec"],
+            Self::SelfInboxLater => &["spec"],
             Self::VaultSkillsBootstrap => &["spec"],
             Self::VaultSkillHubsDefaultGet => &["spec"],
             Self::VaultSkillsRestoredefaults => &["spec"],
@@ -9984,6 +10070,8 @@ impl AgentVerb {
             Self::VaultFederationConnectDisconnect => &["spec"],
             Self::VaultFederationConnectExport => &["spec"],
             Self::VaultFederationConnectRejoin => &["spec"],
+            Self::VaultFederationConnectWorldPrivacyExport => &["spec"],
+            Self::VaultFederationConnectWorldPrivacyReceive => &["spec"],
             Self::VaultTrustedContactsName => &["spec"],
             Self::VaultTrustedContactsList => &["spec"],
             Self::VaultTrustedContactsConsent => &["spec"],
@@ -10108,6 +10196,7 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => &[],
             Self::VaultLegalHoldsLog => &[],
             Self::VaultLegalHoldsLiftAndErase => &["spec"],
+            Self::VaultLegalHoldsWithdrawErase => &["spec"],
             Self::VaultCourtesyDeleteSend => &["spec"],
             Self::VaultCourtesyDeleteSent => &[],
             Self::VaultCourtesyDeleteIncoming => &[],
@@ -10134,6 +10223,7 @@ impl AgentVerb {
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
+            Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentFailureSignalsHeld => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
@@ -10467,6 +10557,7 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::VaultSkillsCallableAmend => &["spec"],
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
@@ -11017,6 +11108,12 @@ impl AgentVerb {
             Self::SelfMemoryDiaryQuery => {
                 "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."
             }
+            Self::SelfMemoryPadsRead => {
+                "Reads an agent's sealed scratchpads as a ruled reader (a vault owner, a work vault's Admin or the Coach), stating a reason the agent sees in its read log."
+            }
+            Self::SelfMemoryPadsAdminReads => {
+                "The companion's owner reads the reads a work vault's Admin made of an agent's sealed scratchpads, newest first, on their own authentication."
+            }
             Self::Cancel => {
                 "Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work."
             }
@@ -11402,7 +11499,7 @@ impl AgentVerb {
                 "Disarms one of the caller's own armed turn programs; true when it was armed."
             }
             Self::VaultTurnProgramsRebind => {
-                "Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."
+                "Rebinds an unsettled turn program try, or an owed wake no admission judged yet (then admitted), that the caller's own turn woke on a lapsed credential, to this request's live one; it never widens, and a held try resumes."
             }
             Self::SelfSavedQueryCreate => {
                 "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."
@@ -11490,6 +11587,15 @@ impl AgentVerb {
             }
             Self::SelfInboxLens => {
                 "Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."
+            }
+            Self::SelfInboxGet => {
+                "Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done."
+            }
+            Self::SelfInboxDone => {
+                "Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it."
+            }
+            Self::SelfInboxLater => {
+                "Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it."
             }
             Self::VaultSkillsBootstrap => {
                 "Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills."
@@ -11951,6 +12057,12 @@ impl AgentVerb {
             Self::VaultFederationConnectRejoin => {
                 "The owner admits a peer host signed update through guest admission into the retained foreign-world vault."
             }
+            Self::VaultFederationConnectWorldPrivacyExport => {
+                "The owner exports the world-settings leg a request owes a connected vault, host signed for the live pact: an agent's ask on a world that vault owns, or this vault's holders' answer to that vault's ask."
+            }
+            Self::VaultFederationConnectWorldPrivacyReceive => {
+                "The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers."
+            }
             Self::VaultTrustedContactsName => {
                 "A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."
             }
@@ -12313,6 +12425,9 @@ impl AgentVerb {
             Self::VaultLegalHoldsLiftAndErase => {
                 "The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."
             }
+            Self::VaultLegalHoldsWithdrawErase => {
+                "The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting."
+            }
             Self::VaultCourtesyDeleteSend => {
                 "The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."
             }
@@ -12388,6 +12503,9 @@ impl AgentVerb {
             }
             Self::VaultConsentCreateStandingGrant => {
                 "The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."
+            }
+            Self::VaultConsentCreateAutoWeaveGrant => {
+                "The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed."
             }
             Self::VaultConsentRegistry => {
                 "The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."
@@ -13366,6 +13484,9 @@ impl AgentVerb {
             Self::SelfSkillsCallables => {
                 "Every loadable callable helper skill and its call contract: what it takes and returns."
             }
+            Self::VaultSkillsCallableAmend => {
+                "The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing."
+            }
             Self::VaultSkillsPackReceipt => {
                 "Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."
             }
@@ -14018,7 +14139,7 @@ impl AgentVerb {
                 "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."
             }
             Self::VaultTurnProgramsAdmission => {
-                "Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."
+                "Reads one page of a landed turn's admissions for the caller's turn programs, or all when the owner asks, and the wakes it still owes them with each hold, withholding each field whose record the caller's credential does not read."
             }
             Self::VaultRunsProgram => {
                 "Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it."

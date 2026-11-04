@@ -18,6 +18,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::model_stream_row::StreamRow;
 
 const STREAMS: SideTable<AttemptId, StreamRow, Named> = SideTable::new(&side_table::MODEL_STREAM);
 
@@ -124,15 +125,6 @@ pub struct ModelStreamTerminal {
     pub response: Option<LlmResponse>,
     /// Why the producer ended without a terminal, when it did.
     pub failure: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StreamRow {
-    actor: EntityId,
-    stream_key: String,
-    request: LlmRequest,
-    response: Option<LlmResponse>,
-    failure: Option<String>,
 }
 
 fn status(row: &StreamRow) -> ModelStreamStatus {

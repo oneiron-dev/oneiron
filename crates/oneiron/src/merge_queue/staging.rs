@@ -2,10 +2,12 @@
 use super::types::QueueRecord;
 use super::{BatchState, MergeBatch, MergeProposal, MergeQueue, RepoQueueOrder, SpeculativePath};
 use crate::{
-    contract_oracle::{invalid, safe_path},
     error::{CodeError, Error, Result},
     git_wire::{GitOid, GitWire, lock_repository, redact_bridged_failure, run_bridged_git_argv},
-    repo_mutation::{RepoMutationOperation, RepoMutationRequest, RepoMutationStatus},
+    repo_mutation::RepoMutationRequest,
+    store::contract_oracle::{invalid, safe_path},
+    store::repo_mutation_record::RepoMutationOperation,
+    store::repo_mutation_record::RepoMutationStatus,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

@@ -19,7 +19,7 @@ pub(crate) struct DeletionGateContext {
     actor_class: EdgeActorClass,
     policy_manifest_version: String,
     read_frontier_hash: [u8; 32],
-    room_role: Option<crate::conversation::RoomRole>,
+    room_role: Option<crate::store::conversation_body::RoomRole>,
     room: Option<EntityId>,
     /// The role and Grant an archive delete was admitted under (OF-449 L4),
     /// in place of the owner binding; `None` on every other delete.
@@ -90,7 +90,9 @@ impl<'a> GatedDeletion<'a> {
         self.owner_act
     }
 
-    pub(super) fn room_authority(&self) -> Option<(EntityId, crate::conversation::RoomRole)> {
+    pub(super) fn room_authority(
+        &self,
+    ) -> Option<(EntityId, crate::store::conversation_body::RoomRole)> {
         Some((self.context.room?, self.context.room_role?))
     }
 
@@ -99,7 +101,7 @@ impl<'a> GatedDeletion<'a> {
     /// with no room passed the owner binding this gate carries.
     pub(super) fn hold_actor(&self) -> crate::store::legal_hold::HoldActor {
         use crate::deletion::LegalHoldActorKind as Kind;
-        use crate::federation::ArchiveDeleteRole as Role;
+        use crate::deletion::archive_role::ArchiveDeleteRole as Role;
         let kind = match (self.context.actor_class, self.context.room_role) {
             (EdgeActorClass::Agent, _) => Kind::Agent,
             (EdgeActorClass::System, _) => Kind::Unattributed,
@@ -351,7 +353,7 @@ impl DeletionGateContext {
         policy_manifest_version: String,
         read_frontier_hash: [u8; 32],
         room: EntityId,
-        role: crate::conversation::RoomRole,
+        role: crate::store::conversation_body::RoomRole,
     ) -> Self {
         Self {
             actor,

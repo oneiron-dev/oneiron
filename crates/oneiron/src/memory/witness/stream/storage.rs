@@ -57,7 +57,7 @@ pub(super) struct Seed {
     /// pinned by the terminal witness that births the MESSAGE, so a quote
     /// whose source stopped being readable mid-stream is refused there.
     /// `None` on a continuation, which keeps its MESSAGE's birth quote.
-    pub quote: Option<crate::conversation_dag::QuoteSpan>,
+    pub quote: Option<crate::store::conversation_record::QuoteSpan>,
     /// The verified read proof the stream's opener held, when a host bound
     /// one (FIX 1667): the terminal reads its links under that same proof,
     /// after a restart too. `None` is an opener with no bound proof. Every
@@ -78,11 +78,22 @@ impl Seed {
             .ok_or(Error::CorruptedIndex("stream actor class"))
     }
     pub(super) fn message(&self, content: String) -> WitnessMessage {
+        self.message_with_parts(content, None)
+    }
+    /// The MESSAGE a new-message terminal witnesses, carrying the terminal's
+    /// ordered output parts: birth facts like `quote`, kept verbatim. Text
+    /// readers keep reading `content`; parts never enter the seed row.
+    pub(super) fn message_with_parts(
+        &self,
+        content: String,
+        parts: Option<Vec<crate::ContentPart>>,
+    ) -> WitnessMessage {
         WitnessMessage {
             id: Some(self.message_id.to_hex()),
             author: self.author,
             message_type: self.message_type.clone(),
             content,
+            parts,
             metadata: self.metadata.clone(),
             is_visible: self.is_visible,
             order: self.order,
@@ -90,11 +101,19 @@ impl Seed {
         }
     }
     pub(super) fn turn(&self, content: String) -> WitnessTurn {
+        self.turn_with_parts(content, None)
+    }
+    /// [`Self::turn`], carrying the terminal's ordered output parts.
+    pub(super) fn turn_with_parts(
+        &self,
+        content: String,
+        parts: Option<Vec<crate::ContentPart>>,
+    ) -> WitnessTurn {
         WitnessTurn {
             conversation_ref: self.conversation.to_hex(),
             turn_ref: Some(self.turn.to_hex()),
             thread_audience: self.thread_audience.clone(),
-            messages: vec![self.message(content)],
+            messages: vec![self.message_with_parts(content, parts)],
             occurred_at: self.occurred_at,
             assertions: self.assertions.clone(),
         }
@@ -168,7 +187,7 @@ pub(crate) fn redact_receipt_assertions_in_txn(
     if let Some(mut latest) = RECEIPT.get(store, txn, message)?
         && !latest.reply_assertions.is_empty()
     {
-        latest.reply_assertions = crate::llm::ReplyAssertions::default();
+        latest.reply_assertions = oneiron_model::llm::ReplyAssertions::default();
         RECEIPT.put(store, txn, message, &latest)?;
     }
     let generations: Vec<(String, MessageStreamReceipt)> = RECEIPT_BY_REF
@@ -177,7 +196,7 @@ pub(crate) fn redact_receipt_assertions_in_txn(
         .filter(|(_, done)| done.message_id == *message && !done.reply_assertions.is_empty())
         .collect();
     for (reference, mut done) in generations {
-        done.reply_assertions = crate::llm::ReplyAssertions::default();
+        done.reply_assertions = oneiron_model::llm::ReplyAssertions::default();
         RECEIPT_BY_REF.put(store, txn, &reference, &done)?;
     }
     Ok(())

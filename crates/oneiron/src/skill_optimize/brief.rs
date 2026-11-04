@@ -5,17 +5,17 @@ use std::collections::HashSet;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::dreamer_runner::maintenance::agent_health::REVIEWER_POLICY_FILE;
 use crate::edit_distance::miner::{MinedSkillEditProposal, pending_substitution_skill_edits};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
-use crate::llm::CallPurpose;
+use crate::skill::health_review::REVIEWER_POLICY_FILE;
 use crate::skill_attribution::{
     AttributionVerdict, SkillEditProposal, attribution_judgment_row_ids, attribution_judgments,
     edit_proposal_row_ids, pending_edit_proposals,
 };
 use crate::skill_reliability::{SkillReliabilityPosterior, skill_reliability_prior_rows};
+use oneiron_model::llm::CallPurpose;
 
 use super::gate::{
     SkillEditDisposition, dev_receipts, receipt_is_held_out, skill_body_binding_digest,
@@ -529,9 +529,8 @@ fn rule_outcome_citations(vault: &Vault, skill: &EntityId, dev: &HashSet<String>
         Ok(receipts
             .into_iter()
             .filter(|receipt| {
-                receipt.starts_with(
-                    crate::dreamer_runner::maintenance::agent_health::HEALTH_REVIEW_RECEIPT_PREFIX,
-                ) && dev.contains(receipt)
+                receipt.starts_with(crate::skill::health_review::HEALTH_REVIEW_RECEIPT_PREFIX)
+                    && dev.contains(receipt)
             })
             .collect())
     })();

@@ -2,13 +2,13 @@ use super::*;
 
 use heed::RwTxn;
 
-use crate::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ppr;
 use crate::store::Store;
 use crate::write_envelope::ClaimCandidate;
+use oneiron_contracts::affect::Vad;
 
 pub(super) struct AppliedClaimCandidate {
     pub(super) had_graph_mutation: bool,
@@ -36,8 +36,9 @@ pub(super) fn apply_claim_candidate(
         indexing,
         write_policy,
         owner_authored,
+        pending_prompt,
     } = request;
-    crate::gate::validate_write_envelope(envelope)?;
+    crate::write_envelope::validate_write_envelope(envelope)?;
     let (analyzer, text_index_trusted) = birth_context;
 
     let actor = envelope.actor();
@@ -46,17 +47,21 @@ pub(super) fn apply_claim_candidate(
             .ok_or(Error::EntityNotFound)?;
     let actor_header =
         EntityMetadataHeader::parse(&actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())?;
+    crate::write_envelope::provenance::actor_substrate::validate_actor_class(
+        actor_header.entity_type,
+        actor.actor_class(),
+    )?;
 
     let subject = candidate.subject();
-    if candidate.predicate() == crate::pipeline::PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
-        && subject != crate::claim::ClaimSubject::Entity(actor.entity_ref())
+    if candidate.predicate()
+        == crate::write_envelope::world_access_predicates::PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
+        && subject != crate::write_envelope::claim_body::ClaimSubject::Entity(actor.entity_ref())
     {
         return Err(Error::InvalidClaimBody(
             "world default subset must be authored by its subject agent",
         ));
     }
-    if let crate::claim::ClaimSubject::Entity(subject_id) = subject
+    if let crate::write_envelope::claim_body::ClaimSubject::Entity(subject_id) = subject
         && !crate::ports::EntityStoreRead::port_entity_present(store, wtxn, &subject_id)?
     {
         return Err(Error::EntityNotFound);
@@ -97,8 +102,8 @@ pub(super) fn apply_claim_candidate(
     // The ClaimOf weight the claim is born with: a signed initial-weight
     // entry, else the default. Both machine-history fold entry points seed
     // from this same value.
-    let birth_weight = crate::claim::claim_initial_claim_of_weight(&body)?;
-    let data = crate::claim::encode_claim_body(&body)?;
+    let birth_weight = crate::store::claim_lineage::claim_initial_claim_of_weight(&body)?;
+    let data = crate::write_envelope::claim_body::encode_claim_body(&body)?;
     if had_prior {
         crate::claim::history_store::close_machine_history_for_successor(
             store,
@@ -143,6 +148,7 @@ pub(super) fn apply_claim_candidate(
                 transition: None,
                 posture: config.privacy.posture,
                 owner_authored,
+                pending_prompt: pending_prompt.as_deref(),
             },
         },
     )?;
@@ -162,8 +168,8 @@ pub(super) fn apply_claim_candidate(
     )?;
 
     let subject_id = match subject {
-        crate::claim::ClaimSubject::Entity(subject_id) => Some(subject_id),
-        crate::claim::ClaimSubject::Edge { .. } => None,
+        crate::write_envelope::claim_body::ClaimSubject::Entity(subject_id) => Some(subject_id),
+        crate::write_envelope::claim_body::ClaimSubject::Edge { .. } => None,
     };
     let removed_claim_of = reconcile_claim_of_edges(store, wtxn, &id, subject_id)?;
     let mut had_graph_mutation = !removed_claim_of.is_empty();
@@ -214,7 +220,11 @@ pub(crate) fn claim_candidate_birth_facet(
                 .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
         })
         .and_then(|raw| {
-            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok()
+            crate::write_envelope::claim_body::decode_claim_body(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )
+            .ok()
         })
         .map(|stored| stored.scope_facet);
     match stored_facet {

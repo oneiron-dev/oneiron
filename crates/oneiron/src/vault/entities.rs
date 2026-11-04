@@ -6,11 +6,13 @@ use crate::deletion::HydratedShortIdDeletion;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
 use crate::ports::EntityStoreRead;
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::EngineScan;
+use crate::store::retrieval_values::RetrievalWithTelemetry;
+use crate::store::scan_count::ScanCount;
 use crate::store::{RetrievalSignal, ShortIdAliasTarget};
 use crate::temporal::TimeRange;
+use oneiron_retrieval::pipeline::ScoredEntity;
 use std::time::Instant;
 
 /// Most ids one [`Vault::entities_by_type_page`] hands back.
@@ -311,7 +313,7 @@ impl Vault {
             return Ok(Some(bytes));
         };
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
             &self.store,
@@ -409,7 +411,7 @@ impl Vault {
     pub fn alias_short_id_to_vault(
         &self,
         legacy_id: &str,
-        vault_id: crate::authority::AuthorityVaultId,
+        vault_id: oneiron_authority::authority::AuthorityVaultId,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         self.store.insert_short_id_alias(
@@ -485,7 +487,7 @@ impl Vault {
     /// Returns all entity IDs of a given type via prefix scan on type_index.
     ///
     /// Every row is read: past the type's threshold row the scan raises one
-    /// [`crate::scan_check::ScanCheck`] and reads on (rule 5).
+    /// [`crate::store::ScanCheck`] and reads on (rule 5).
     pub fn entities_by_type(&self, entity_type: u8) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
         let mut count = ScanCount::start(
@@ -587,7 +589,7 @@ impl Vault {
         scan_limit: usize,
     ) -> Result<Vec<(EntityId, u64, Vec<u8>)>> {
         if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         if limit == 0 || scan_limit == 0 {
             return Ok(Vec::new());
@@ -625,7 +627,7 @@ impl Vault {
         scan: usize,
     ) -> Result<LatestBodiesPage> {
         if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_custody::reject_secret_custody_byte());
+            return Err(crate::secret_record::reject_secret_custody_byte());
         }
         let scan = scan.max(1);
         let txn = self.store.env.read_txn()?;
@@ -694,7 +696,7 @@ impl Vault {
     /// This is the exact count primitive for deterministic paginated list
     /// metadata. It does not materialize entity IDs or read entity bodies.
     pub fn count_entities_by_type(&self, entity_type: u8) -> Result<u64> {
-        self.count_entities_by_type_at(entity_type, crate::claim::CallerLocality::OnDevice)
+        self.count_entities_by_type_at(entity_type, crate::settings::CallerLocality::OnDevice)
     }
 
     /// [`Self::count_entities_by_type`] for a caller whose rows go to

@@ -41,9 +41,9 @@ mod types;
 
 use crate::{
     Vault,
-    codebase::RepoRef,
     error::Result,
     git_wire::{GitWire, GitWireRepo},
+    store::code_snapshot::RepoRef,
 };
 // The pinned-plan checker (FIX 6868).
 pub use check_inputs::{
@@ -76,7 +76,9 @@ pub use review_policy::{
 };
 pub use reviewed::ReviewedProposalLanding;
 pub use run::{RepoQueueOrder, RepoQueuePredecessor};
-// The served import's queue source (FIX 6869).
+// The served import's queue source (FIX 6869); its root, for GitWire's
+// crash settlement (FIX 7706).
+pub(crate) use source::queue_source_root;
 pub use source_types::ServedQueueSource;
 // The tested-revision seal at green (FIX 6868, G2 PR3).
 pub(crate) use tested_types::QueueRevisionSeal;
@@ -102,7 +104,7 @@ impl<'a> MergeQueue<'a> {
     /// green baseline; reopening never overwrites existing pointers.
     pub fn open(vault: &'a Vault, repo_ref: RepoRef) -> Result<Self> {
         let RepoRef::LocalFolder { path, .. } = &repo_ref else {
-            return Err(crate::contract_oracle::invalid(
+            return Err(crate::store::contract_oracle::invalid(
                 "merge queue needs a local repository",
             ));
         };
@@ -111,3 +113,10 @@ impl<'a> MergeQueue<'a> {
         Ok(Self { vault, repo })
     }
 }
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::check_store::merge_queue_check_config_accepts_masked;
+pub(crate) use self::check_store::merge_queue_check_work_accepts_masked;
+pub(crate) use self::review_policy::merge_queue_review_policy_accepts_masked;
+pub(crate) use self::storage::merge_queue_batch_accepts_masked;

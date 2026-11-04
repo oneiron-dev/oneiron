@@ -101,6 +101,10 @@ pub enum NativeEdit<'a> {
 pub struct NativeReport {
     pub changed_parts: Vec<String>,
     pub workbook: Option<WorkbookReport>,
+    /// The `a:fld` types a table-cell write cut whole (FIX 12227): each
+    /// named dynamic field became static text. Empty for every other
+    /// operation.
+    pub cut_fields: Vec<String>,
 }
 
 /// The nested report of the embedded workbook write.
@@ -190,6 +194,7 @@ pub fn native_patch(
 ) -> Result<NativeReport, NativeRefusal> {
     let mut next = package.copy()?;
     let mut workbook = None;
+    let mut cut_fields = Vec::new();
     let allowed: Vec<String> = match *edit {
         NativeEdit::CreateTable {
             frame,
@@ -242,7 +247,7 @@ pub fn native_patch(
             expected,
             value,
         } => {
-            table::set_cell(&mut next, slide, table, (row, col), expected, value)?;
+            cut_fields = table::set_cell(&mut next, slide, table, (row, col), expected, value)?;
             vec![slide.to_owned()]
         }
         NativeEdit::SetSeries {
@@ -274,6 +279,7 @@ pub fn native_patch(
     Ok(NativeReport {
         changed_parts: changed,
         workbook,
+        cut_fields,
     })
 }
 

@@ -23,7 +23,7 @@ use crate::blob_artifact::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::secret_custody::SecretSight;
+use crate::file_secret_marks::SecretSight;
 use crate::side_table::{self, Named, SideTable};
 
 /// A replica's descriptor of one published blob version. Key: id16
@@ -252,7 +252,7 @@ impl Vault {
         if blake3::hash(&bytes).as_bytes() != &serving.content_hash {
             return Err(Error::CorruptedIndex("blob export content hash"));
         }
-        crate::secret_custody::sighted_bytes_in_txn(
+        crate::store::file_key_masks::sighted_bytes_in_txn(
             &self.store,
             rtxn,
             bytes,

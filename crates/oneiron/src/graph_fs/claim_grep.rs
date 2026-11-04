@@ -1,7 +1,9 @@
 //! Indexed claim grep with search and final-hydration narrowing receipts.
-use crate::claim::{PointRead, ReadRow, ScopedReadReceipt, decode_claim_body};
 use crate::error::Result;
+use crate::ports::{PointRead, ReadRow};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::write_envelope::claim_body::decode_claim_body;
+use oneiron_contracts::claim::ScopedReadReceipt;
 use rmpv::Value;
 
 use super::coreutils_text::LinePosition;

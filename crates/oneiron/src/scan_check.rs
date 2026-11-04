@@ -6,156 +6,46 @@
 //! reads on: the check is evidence for the host's "is everything okay"
 //! question, never a refusal. Only machine floors (disk, memory) stop a scan.
 //!
-//! A scan counts in a `ScanCount`. A crossing waits with the vault, in
+//! For a scan counted by `ScanCount`, a crossing waits with the vault, in
 //! memory, until the vault's next write: that write's door first keeps it in
 //! a write of its own, alone in its group. The host's read of the checks sees
 //! it either way. No scan ever opens a writer, so none can wait on a writer
-//! its caller holds, on any thread, and no check rides in a host's write.
+//! its caller holds, on any thread, and no counted check rides in a host's write.
+//! Dependent-walk checks already commit with the withdrawal they describe;
+//! this door also lists those kept rows, without opening another writer.
 
 use std::collections::BTreeMap;
+#[cfg(test)]
 use std::sync::Mutex;
 
 use heed::RoTxn;
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use serde::Serialize;
 
 use crate::Vault;
-use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
-use crate::side_table::{self, Named, Raw, SideTable};
-use crate::store::{Callback, ManifestDbs, Rows, active_write_txn_depth};
+use crate::side_table::{self, Named, SideTable};
+use crate::store::{Callback, Rows, active_write_txn_depth};
 
 mod engine_scan;
 mod engine_scan_table;
 pub use engine_scan::EngineScan;
+use engine_scan_table::EngineScanThreshold;
 
-/// Rows one engine scan reads past which it asks whether everything is
-/// okay: ten times the count each of the origin scans once refused at. A
-/// scan with a default of its own asks at the count it once cut short at.
-pub const DEFAULT_SCAN_CHECK_THRESHOLD: u64 = 1_000_000;
+pub use crate::store::DEFAULT_SCAN_CHECK_THRESHOLD;
 
 /// Device-local threshold row of one scan. Key: the scan's tag.
-const POLICY: SideTable<[u8; 1], u64, Raw> = SideTable::new(&side_table::ORIGIN_SCAN_POLICY);
+use crate::store::scan_count::POLICY;
 /// The check one scan raised for one scope. Key: the scan's tag, then its
 /// scope's bytes, or nothing for a vault-wide scan.
 const CHECK: SideTable<([u8; 1], Vec<u8>), ScanCheck, Named> =
     SideTable::new(&side_table::ORIGIN_SCAN_CHECK);
 
-type CheckKey = ([u8; 1], Vec<u8>);
+use crate::store::CheckKey;
+pub(crate) use crate::store::PendingScanChecks;
+pub use crate::store::ScanCheck;
 
-/// OF-520 question one engine scan raised for one scope, the first time it
-/// read more rows than its threshold. Evidence for the host, never a
-/// refusal: the scan read on and served.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ScanCheck {
-    /// The scan ([`EngineScan::code`]).
-    pub scan: String,
-    /// The scope the scan read, in hex: a repository's or a record's id, a
-    /// type byte, a window. `None` for a vault-wide scan.
-    #[serde(alias = "repo_id")]
-    pub scope: Option<String>,
-    /// The threshold in force at the crossing.
-    pub threshold: u64,
-    /// Rows the scan read when it crossed it.
-    pub rows: u64,
-    /// Unix seconds of the crossing.
-    pub raised_at: u64,
-}
-
-impl ScanCheck {
-    /// Machine-readable check discriminator; presentation text belongs to hosts.
-    pub const KIND: &'static str = "scan_size";
-}
-
-fn threshold_in_txn(store: &impl ManifestDbs, txn: &RoTxn<'_>, scan: EngineScan) -> Result<u64> {
-    Ok(POLICY
-        .get(store, txn, &scan.tag())?
-        .unwrap_or(scan.default_threshold()))
-}
-
-/// One scan's rows, counted against its threshold row.
-#[must_use = "a count raises its check only when it is finished"]
-pub(crate) struct ScanCount {
-    scan: EngineScan,
-    scope: Vec<u8>,
-    threshold: u64,
-    rows: u64,
-}
-
-impl ScanCount {
-    /// Starts counting `scan` of `scope` (empty for a vault-wide scan), under
-    /// the row `txn` reads.
-    pub(crate) fn start(
-        store: &impl ManifestDbs,
-        txn: &RoTxn<'_>,
-        scan: EngineScan,
-        scope: &[u8],
-    ) -> Result<Self> {
-        Ok(Self {
-            scan,
-            scope: scope.to_vec(),
-            threshold: threshold_in_txn(store, txn, scan)?,
-            rows: 0,
-        })
-    }
-
-    /// Starts counting `scan` of `scope` against `threshold`, for a scan
-    /// whose caller's own policy row names when it asks.
-    pub(crate) fn start_at(scan: EngineScan, scope: &[u8], threshold: u64) -> Self {
-        Self {
-            scan,
-            scope: scope.to_vec(),
-            threshold,
-            rows: 0,
-        }
-    }
-
-    /// Counts one row read.
-    pub(crate) fn row(&mut self) {
-        self.rows = self.rows.saturating_add(1);
-    }
-
-    /// Counts `rows` rows read at once, for a scan that holds its rows.
-    pub(crate) fn rows(&mut self, rows: usize) {
-        self.rows = self
-            .rows
-            .saturating_add(u64::try_from(rows).unwrap_or(u64::MAX));
-    }
-
-    /// Raises the scan's check when it read past its row, once per scope:
-    /// the vault's next write keeps it. The scan has served either way.
-    pub(crate) fn finish(self, vault: &Vault) {
-        self.defer(&vault.store);
-    }
-
-    /// [`Self::finish`] through a read target, for a scan that holds a
-    /// store or a room's view rather than the vault.
-    pub(crate) fn defer(self, store: &impl ManifestDbs) {
-        self.defer_to(store.pending_scan_checks());
-    }
-
-    /// [`Self::defer`] into `pending`, crossings held apart from the vault's
-    /// own: a live room's (FIX 4280), which the host's read of the checks
-    /// lists while the room lives and which close drops; none is ever kept
-    /// in the vault, so no check names a room's row there.
-    pub(crate) fn defer_to(self, pending: &PendingScanChecks) {
-        if self.rows <= self.threshold {
-            return;
-        }
-        let check = self.check();
-        pending.park((self.scan.tag(), self.scope), check);
-    }
-
-    fn check(&self) -> ScanCheck {
-        ScanCheck {
-            scan: self.scan.code().to_owned(),
-            scope: (!self.scope.is_empty()).then(|| bytes_to_hex_lower(&self.scope)),
-            threshold: self.threshold,
-            rows: self.rows,
-            raised_at: crate::unix_seconds_now(),
-        }
-    }
-}
+pub(crate) use crate::store::scan_count::{ScanCount, threshold_in_txn};
 
 /// `check.scan` is always an [`EngineScan::code`]: a closed code.
 fn warn(check: &ScanCheck) {
@@ -166,47 +56,6 @@ fn warn(check: &ScanCheck) {
         rows = check.rows,
         "a scan read past its threshold row and served; is everything okay?"
     );
-}
-
-/// Crossings a store holds until a point no write is held keeps them: one
-/// per scan and scope, the first.
-#[derive(Default)]
-pub(crate) struct PendingScanChecks(Mutex<BTreeMap<CheckKey, ScanCheck>>);
-
-impl PendingScanChecks {
-    fn park(&self, key: CheckKey, check: ScanCheck) {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .entry(key)
-            .or_insert(check);
-    }
-
-    /// Whether a crossing waits to be kept (FIX 11664).
-    pub(crate) fn any_waiting(&self) -> bool {
-        !self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_empty()
-    }
-
-    fn waiting(&self) -> BTreeMap<CheckKey, ScanCheck> {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-
-    fn clear(&self, keys: &[CheckKey]) {
-        let mut waiting = self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for key in keys {
-            waiting.remove(key);
-        }
-    }
 }
 
 impl Vault {
@@ -274,6 +123,9 @@ impl Vault {
     /// The threshold row of one engine scan.
     pub fn scan_threshold(&self, scan: EngineScan) -> Result<u64> {
         let txn = self.store.env.read_txn()?;
+        if scan == EngineScan::DependentWalkRows {
+            return Ok(self.dependent_walk_policy_in(&txn)?.check_threshold);
+        }
         threshold_in_txn(&self.store, &txn, scan)
     }
 
@@ -281,6 +133,9 @@ impl Vault {
     /// a check; no value makes the scan refuse.
     pub fn set_scan_threshold(&self, scan: EngineScan, threshold: u64) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {
+            if scan == EngineScan::DependentWalkRows {
+                return self.set_dependent_walk_check_threshold_in(wtxn, threshold);
+            }
             POLICY.put(&self.store, wtxn, &scan.tag(), &threshold)?;
             Ok(())
         })
@@ -301,6 +156,23 @@ impl Vault {
         for row in CHECK.iter_from(&self.store, &txn, &[])? {
             let (key, check) = row?;
             checks.insert(key, check);
+        }
+        for check in self.dependent_walk_checks_in(&txn)? {
+            let document = crate::EntityId::from_hex(&check.document)?;
+            let key = (
+                EngineScan::DependentWalkRows.tag(),
+                document.as_bytes().to_vec(),
+            );
+            checks.insert(
+                key,
+                ScanCheck {
+                    scan: EngineScan::DependentWalkRows.code().to_owned(),
+                    scope: Some(check.document),
+                    threshold: check.threshold,
+                    rows: check.walked,
+                    raised_at: check.raised_at,
+                },
+            );
         }
         Ok(checks.into_values().collect())
     }

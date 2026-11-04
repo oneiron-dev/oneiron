@@ -16,9 +16,10 @@ pub(super) struct FixedPut<'a> {
     pub(super) transition: Option<&'a crate::batch::VerifiedClaimTransition>,
     pub(super) posture: crate::HostingPrivacyPosture,
     pub(super) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
+    pub(super) pending_prompt: Option<&'a [EntityId]>,
     /// The authority rows the put's batch carries beside it, which a
     /// replicated AUTHORITY_LOG row is judged with (FIX 11764).
-    pub(super) authority_beside: Option<crate::authority::RowsBeside<'a>>,
+    pub(super) authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
     /// The own-device lane the sync ingest door gave a replicated MESSAGE
     /// row, which the witness check reads for this row and these bytes only
     /// (FIX 9600).
@@ -45,12 +46,12 @@ pub(super) struct Owners {
 /// phases. Body buffers the arms produce travel in `DispatchCarry` instead.
 pub(super) struct Dispatch {
     pub(super) is_lexical_query_hint_claim: bool,
-    pub(super) new_skill_record: Option<crate::skill::SkillRecord>,
+    pub(super) new_skill_record: Option<crate::write_envelope::skill_record::SkillRecord>,
     pub(super) new_agent_definition: Option<crate::agent_def::AgentDefinition>,
-    pub(super) new_workflow: Option<crate::agent_def::workflow::WorkflowDefinition>,
+    pub(super) new_workflow: Option<crate::store::workflow_definition::WorkflowDefinition>,
     pub(super) decoded_claim_body: Option<ClaimBody>,
-    pub(super) authority_entry_hash_pin: Option<crate::authority::AuthorityEntryHash>,
-    pub(super) authority_entry_observation: Option<crate::authority::AuthorityLogEntry>,
+    pub(super) authority_entry_hash_pin: Option<oneiron_contracts::authority::AuthorityEntryHash>,
+    pub(super) authority_entry_observation: Option<oneiron_authority::authority::AuthorityLogEntry>,
     pub(super) authority_dominates_key_squatter: bool,
 }
 
@@ -78,7 +79,7 @@ pub(super) fn admit_put<'a>(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'a>,
-    authority_beside: Option<crate::authority::RowsBeside<'a>>,
+    authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
     own_device: Option<&'a VerifiedOwnDeviceLane>,
 ) -> Result<Admission<'a>> {
     let PutRequest {
@@ -101,6 +102,7 @@ pub(super) fn admit_put<'a>(
                 transition,
                 posture,
                 owner_authored,
+                pending_prompt,
             },
     } = request;
     let Replication {
@@ -135,7 +137,9 @@ pub(super) fn admit_put<'a>(
     );
     validate_put_carriers(store, wtxn, id, data, carriers)?;
     let project_revisions =
-        crate::workspace_roster::capture_project_put(store, wtxn, id, entity_type, data)?;
+        store
+            .project_writes
+            .capture_project_put(store, wtxn, id, entity_type, data)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     super::super::put_staging::validate_source_carriers(
         store,
@@ -205,7 +209,7 @@ pub(super) fn admit_put<'a>(
     let new_agent_definition = None;
     let new_workflow = None;
     let decoded_claim_body = None;
-    let authority_entry_hash_pin: Option<crate::authority::AuthorityEntryHash> = None;
+    let authority_entry_hash_pin: Option<oneiron_contracts::authority::AuthorityEntryHash> = None;
     let authority_entry_observation = None;
     // ONE-1604-D1 dominance VERDICT, recorded by the AUTHORITY_LOG arm below
     // and acted on only at the pre-write site: see the eviction comment there
@@ -229,6 +233,7 @@ pub(super) fn admit_put<'a>(
             transition,
             posture,
             owner_authored,
+            pending_prompt,
             authority_beside,
             own_device,
             replicated,

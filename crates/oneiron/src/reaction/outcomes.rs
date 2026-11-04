@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 
 /// String-valued facts consumed by the existing OF-516 event outcome projector.
 /// Subjects are the reacted message and any explicitly selected commitments.
-pub const PREDICATE_REACTION_OUTCOME: &str = "conversation.reaction.outcome";
+pub use crate::store::reaction_predicate::PREDICATE_REACTION_OUTCOME;
 pub const REACTION_MEANINGS: [&str; 5] = ["ack", "agree", "disagree", "affect", "none"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -378,8 +378,12 @@ impl ScopedRead<'_> {
                     candidate = candidate.with_world(world);
                 }
                 candidate = candidate.with_relationships(source_scope.rel.clone());
-                if let Some(scope) = &source_scope.scope {
-                    candidate = candidate.with_scope(scope.clone());
+                // The reaction's own initial ClaimOf weight is its birth fact,
+                // not the outcome's: the outcome is born at the default.
+                if let Some(scope) =
+                    crate::claim::without_initial_weight(source_scope.scope.clone())
+                {
+                    candidate = candidate.with_scope(scope);
                 }
                 let candidate = candidate
                     .with_private_reader(prepared.principal)?

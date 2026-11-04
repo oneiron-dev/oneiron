@@ -7,7 +7,7 @@
 //! checked Baseline, whose typed import-approval receipt names it. Both, if
 //! present, must agree. A chain with neither is unbound, an allowed state:
 //! nothing is resealed or backfilled, and no live snapshot is looked up.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use heed::RoTxn;
 
@@ -18,10 +18,11 @@ use super::queue_root::queue_chain_root_in_txn;
 use super::storage::read_code_revision_record_in_txn;
 use super::tree_inventory::{CodeTreeInventory, MODE_GITLINK};
 use crate::entity_id::bytes_to_hex_lower;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::merge_queue::QueueTestedTarget;
 use crate::origin::tree::OriginTreeFile;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::{EntityId, Vault};
 
 /// The import manifest `manifest_ref` names, read in `txn`; `None` when no
@@ -310,3 +311,5 @@ fn verify_complete_tree(vault: &Vault, repo: &GitWireRepo, revision: &CodeRevisi
     }
     Ok(())
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

@@ -87,17 +87,17 @@ pub(crate) fn audit_entity_put_in_txn(
         let prior = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
         if put.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
             if let (Ok(before), Ok(after)) = (
-                crate::claim::decode_claim_body(prior, true),
-                crate::claim::decode_claim_body(put.data, true),
+                crate::write_envelope::claim_body::decode_claim_body(prior, true),
+                crate::write_envelope::claim_body::decode_claim_body(put.data, true),
             ) && before.lifecycle != after.lifecycle
-                && after.lifecycle == crate::claim::ClaimLifecycleStatus::Superseded
+                && after.lifecycle == oneiron_contracts::claim::ClaimLifecycleStatus::Superseded
             {
                 op = ChangeOp::Supersede;
             }
         } else if put.entity_type == crate::registry::ENTITY_TYPE_SKILL
             && let (Ok(before), Ok(after)) = (
-                crate::skill::decode_skill_record(prior),
-                crate::skill::decode_skill_record(put.data),
+                crate::write_envelope::skill_record::decode_skill_record(prior),
+                crate::write_envelope::skill_record::decode_skill_record(put.data),
             )
             && before.governance_tier != after.governance_tier
         {

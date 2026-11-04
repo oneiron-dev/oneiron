@@ -9,12 +9,12 @@ use crate::scan_check::ScanCount;
 use crate::{
     EntityId, Vault,
     error::Result,
-    federation::{Scope, ScopeAxis},
     ports::{EntityStore, EntityStoreRead},
     registry::ENTITY_TYPE_MACHINE,
     side_table::{self, HexId, Named, SideTable},
 };
 use ed25519_dalek::Signature;
+use oneiron_authority::federation::{Scope, ScopeAxis};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},

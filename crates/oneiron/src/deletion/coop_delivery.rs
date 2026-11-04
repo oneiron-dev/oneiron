@@ -19,14 +19,18 @@ use super::coop_request::{
     SignedCooperativeDeletionRequest, decode_and_verify_cooperative_deletion_request,
     encode_signed_cooperative_deletion_request, peek_cooperative_deletion_pact,
 };
-use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
-    FailAttempt, RetryAttempt,
-};
-use crate::authority::FederationPactStatus;
+use crate::attempt_queue::AttemptQueue;
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::CompleteAttempt;
+use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::store::attempt_inputs::FailAttempt;
+use crate::store::attempt_inputs::RetryAttempt;
+use crate::store::attempt_outcomes::ClaimOutcome;
+use crate::store::attempt_record::AttemptRecord;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_authority::authority::FederationPactStatus;
 
 mod answer;
 mod refresh;

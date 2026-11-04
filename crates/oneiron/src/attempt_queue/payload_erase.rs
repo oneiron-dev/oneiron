@@ -27,8 +27,17 @@
 //! The ask and its briefing are the asker's too (FIX 9181): an erased
 //! asker's receipts and briefing leave the rows that carry them, its target's
 //! instructions staying (`asker`).
+//!
+//! A project drafter's briefing names its source's principal, neither the
+//! target nor the asker: the principal's own erase redacts just that name
+//! (`project_brief`, FIX 4979). A public model step's failure text rests
+//! in its queue row's reason, outside its submission's custody: its
+//! owner's erase leaves the fixed marker there (`model_step`, FIX 10460).
 
 mod asker;
+mod connector_reply;
+mod model_step;
+mod project_brief;
 mod requester;
 mod response;
 
@@ -36,34 +45,42 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use crate::agent_def::AGENT_DEF_BODY_KEYS;
 use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, agent_dispatch_actor,
-    decode_agent_dispatch_input, record_dispatch_input,
+    agent_dispatch_actor, decode_agent_dispatch_input, record_dispatch_input,
 };
-use crate::browser_library::{PROGRAM_ADMISSION_KIND, admission_payload_actor};
-use crate::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt};
-use crate::dispatch_byoa::{
-    BYOA_ATTEMPT_KIND, ByoaAttemptPayload, ByoaConnectorSpec, ERASED_TASK_FAILURE_REASON,
-    RunnerTaskSource, StagedInputPin, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
-};
-use crate::dreamer_runner::{
-    DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
-};
+use crate::attempt_queue::browser_admission::PROGRAM_ADMISSION_KIND;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_INPUT_KEYS;
+use crate::attempt_queue::turn_action_kind::TURN_ACTION_ATTEMPT_KIND;
+use crate::browser_library::admission_payload_actor;
+use crate::conversation::TurnActionAttempt;
+use crate::dreamer_runner::{decode_dreamer_attempt_payload, encode_dreamer_attempt_payload};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::federation::RepoAccessRefusal;
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::store::Store;
+use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
+use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::write_envelope::WriteActor;
+use crate::{
+    dispatch_byoa::{
+        ByoaAttemptPayload, ByoaConnectorSpec, ERASED_TASK_FAILURE_REASON, RunnerTaskSource,
+        StagedInputPin, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
+    },
+    store::dispatch_attempt_kind::BYOA_ATTEMPT_KIND,
+};
+use oneiron_authority::federation::RepoAccessRefusal;
 
 use super::encoding::{decode_record, encode_record};
 use super::types::{AttemptId, AttemptRecord};
 
+// FIX 10460: both delete doors take a model step's queue reason with its
+// submission's copies, in the erase's own transaction.
+pub(crate) use self::model_step::erase_model_step_failure_reasons_in_txn;
+
 // FIX 7115: the payload text in checkpoint images, a row-held response.
 pub(crate) use self::response::{
-    attempt_payload_family, attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
-    retire_attempt_payload_in_txn,
+    attempt_payload_owners, attempt_payload_scan, attempt_row_opaque, retire_attempt_payload_in_txn,
 };
 
 /// The input member that holds the AGENT_DEF snapshot.
@@ -258,6 +275,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     let mut rewrites = Vec::new();
     let mut byoa = ByoaRows::default();
     let mut reply_jobs = Vec::new();
+    let mut reply_body_events = BTreeSet::new();
     for row in store.attempt_records.iter(txn)? {
         let (key, raw) = row?;
         let Ok(id) = AttemptId::from_bytes(&key) else {
@@ -266,6 +284,11 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
         let Ok(mut record) = decode_record(&raw, id) else {
             continue;
         };
+        if let Some(event_id) =
+            connector_reply::frozen_connector_event_id_for_erase(&record, actors)
+        {
+            reply_body_events.insert(event_id);
+        }
         if record.kind == TURN_ACTION_ATTEMPT_KIND {
             // A turn action keeps the slip its requester's request was
             // admitted on; the requester's erase takes it out, in every
@@ -297,17 +320,28 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
             } else if asker::asker_owned(&record, actors, &asker_intents) {
                 changed |= erase_dispatch_payload_text(&mut record, TextOwner::Asker)?;
             }
+            // A project briefing's principal is neither: its own erase
+            // redacts the name the target's and asker's leave (FIX 4979).
+            if project_brief::principal_owned(&record, actors) {
+                changed |= project_brief::erase_project_principal(&mut record)?;
+            }
             if changed {
                 rewrites.push((raw.into_owned(), record));
             }
         }
     }
     erase_program_admission_payloads_in_txn(store, txn, actors, &mut rewrites)?;
+    model_step::erase_failure_reasons_in_txn(store, txn, actors, &mut rewrites)?;
     let jobs = byoa.erase_copies(store, txn, &mut rewrites)?;
     // No row this pass writes pins them now; their jobs' artifacts go by the
     // artifact's own rules (FIX 7502).
     crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs, actors)?;
     crate::outbound::erase_connector_reply_results_in_txn(store, txn, &reply_jobs)?;
+    crate::outbound::erase_connector_reply_bodies_for_events_in_txn(
+        store,
+        txn,
+        &reply_body_events,
+    )?;
     // A bound TASK's tries pin its arguments and goal (CUA E4): they go with
     // the TASK, archived tries' too.
     crate::task_verb::erase_task_workflows_in_txn(store, txn, actors)?;
@@ -696,8 +730,51 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
         }
         return;
     }
+    if record.kind == crate::outbound::CONNECTOR_REPLY_JOB_KIND {
+        // A reply job whose agent, actor, receiving identity or known
+        // counterparty bears the marker writes back no event payload
+        // (FIX 10901), as the pass leaves it.
+        let Ok(job) = serde_json::from_slice::<crate::outbound::ConnectorReplyJob>(&record.payload)
+        else {
+            return;
+        };
+        if job.event.payload.is_null() {
+            return;
+        }
+        let mut erased = BTreeSet::new();
+        for id in job.named_ids() {
+            match store.port_deletion_marked(txn, DeletionMarker::HardDelete, &id) {
+                Ok(true) => {
+                    erased.insert(id);
+                }
+                Ok(false) => {}
+                Err(_) => {
+                    tracing::warn!(
+                        attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                        "attempt payload fence: a reply job's hard-delete marker could not be read"
+                    );
+                    return;
+                }
+            }
+        }
+        if !erased.is_empty()
+            && crate::outbound::erase_connector_reply_job_payload(record, &erased).is_err()
+        {
+            tracing::warn!(
+                attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                "attempt payload fence: an erased reply job's event payload could not be removed"
+            );
+        }
+        return;
+    }
     if record.kind == BYOA_ATTEMPT_KIND {
         scrub_hard_erased_task_copy_in_txn(store, txn, record);
+        return;
+    }
+    if record.kind == crate::model_step_record::MODEL_STEP_ATTEMPT_KIND {
+        // Its reason copies the step's failure text; an erased owner's
+        // copy becomes the marker, as the pass leaves it (FIX 10460).
+        model_step::scrub_erased_failure_reason_in_txn(store, txn, record);
         return;
     }
     // An erased requester writes back no standing (FIX 11689).
@@ -713,6 +790,13 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
                 tracing::warn!(
                     attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
                     "attempt payload fence: an erased asker's dispatch text could not be removed"
+                );
+            } else if project_brief::principal_erased_in(store, txn, record)
+                && project_brief::erase_project_principal(record).is_err()
+            {
+                tracing::warn!(
+                    attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                    "attempt payload fence: an erased project principal's name could not be removed"
                 );
             }
         }

@@ -6,8 +6,10 @@
 //! fixed second, so every page of one search ranks the same list.
 
 use super::*;
-use crate::pipeline::{FacetMode, WorldAuthoritySet, WorldScope};
-use crate::sync::residence::ResolvedRecallSelection;
+use crate::claim::retrieval_scope::FacetMode;
+use crate::claim::world_access::WorldAuthoritySet;
+use crate::memory::resolved_recall_scope::ResolvedRecallSelection;
+use crate::pipeline::WorldScope;
 
 impl ScopedRead<'_> {
     /// Ranks `window` rows for `query` at `as_of` (unix seconds), narrowed by
@@ -81,22 +83,33 @@ impl ScopedRead<'_> {
         let excluded = self.request_exclusions(&policy, None)?;
         let plan = self.plan_admits(&filter, &policy, &excluded);
         let kinds = crate::memory::RecallKinds::new(scope.and_then(|scope| scope.kinds.clone()));
-        // Recall's own kinds rule, before the plan's authority.
-        let admitted =
-            |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
-                if scope.is_some() {
-                    let Some(kind) = store
-                        .port_entity_record(txn, id)?
-                        .map(|row| row.entity_type)
-                    else {
-                        return Ok(false);
-                    };
-                    if !kinds.admits(kind) {
-                        return Ok(false);
-                    }
+        let conversations = scope.and_then(|scope| {
+            scope.conversation_ids.as_ref().map(|ids| {
+                ids.iter()
+                    .copied()
+                    .collect::<std::collections::BTreeSet<_>>()
+            })
+        });
+        // Recall's own kinds rule, then authority, then conversation provenance.
+        let admitted = |store: &crate::store::StoreRead<'_>,
+                        txn: &heed::RoTxn<'_>,
+                        id: &EntityId| {
+            if scope.is_some() {
+                let Some(kind) = store
+                    .port_entity_record(txn, id)?
+                    .map(|row| row.entity_type)
+                else {
+                    return Ok(false);
+                };
+                if !kinds.admits(kind) {
+                    return Ok(false);
                 }
-                plan(store, txn, id)
-            };
+            }
+            if !plan(store, txn, id)? {
+                return Ok(false);
+            }
+            crate::memory::conversation_candidate_admits(self.vault, store, txn, id, &conversations)
+        };
         let mut pipeline = self
             .vault
             .query()
@@ -110,9 +123,9 @@ impl ScopedRead<'_> {
             .residence_page();
         if let Some((scope, world_scope)) = selected {
             let corpus = if scope.project_ids.is_empty() {
-                crate::corpus::CorpusScope::All
+                crate::claim::corpus_scope::CorpusScope::All
             } else {
-                crate::corpus::CorpusScope::AnyOf(scope.project_ids.clone())
+                crate::claim::corpus_scope::CorpusScope::AnyOf(scope.project_ids.clone())
             };
             pipeline = pipeline
                 .fold_messages_into_turns(kinds.turn_fold())

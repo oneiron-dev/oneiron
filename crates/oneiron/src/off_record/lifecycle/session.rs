@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use crate::ScoredEntity;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -12,6 +11,7 @@ use crate::session_overlay::{
 };
 use crate::side_table::{SideCodec, SideKey, SideTable};
 use crate::vault::VaultId;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::on_record::OnRecordSaver;
 use super::participant::RunParticipant;
@@ -968,7 +968,10 @@ impl OffRecordSession<'_> {
     }
 
     /// Pins the result body `digest` in this session's vault (OF-597).
-    pub(crate) fn pin_result_body(&self, digest: [u8; 32]) -> crate::result_body::ResultBodyPin {
+    pub(crate) fn pin_result_body(
+        &self,
+        digest: [u8; 32],
+    ) -> crate::store::result_body_pins::ResultBodyPin {
         self.vault.pin_result_body(digest)
     }
 
@@ -1007,7 +1010,7 @@ impl OffRecordSession<'_> {
     }
 
     /// A share of the result-memory pool for one run in this session.
-    pub(crate) fn result_share(&self) -> crate::result_memory::ResultShare {
+    pub(crate) fn result_share(&self) -> crate::store::result_memory::ResultShare {
         self.vault.result_share()
     }
 
@@ -1040,8 +1043,13 @@ impl OffRecordSession<'_> {
     /// K10 flip-back: returns the session to `OffRecord`, rearming the overlay
     /// so new writes stage there again. Pre-flip turns stay base-invisible.
     pub fn flip_off_record(&self) -> Result<()> {
-        self.vault
-            .set_off_record_session_mode(&self.session_ref, OffRecordMode::OffRecord)?;
+        let mut state = session_entry_state(&self.entry)?;
+        super::vault_api::set_entry_mode(
+            &self.entry,
+            &mut state,
+            &self.session_ref,
+            OffRecordMode::OffRecord,
+        )?;
         Ok(())
     }
 

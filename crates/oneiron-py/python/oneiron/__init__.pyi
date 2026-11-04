@@ -337,6 +337,8 @@ class CheckpointPinBinding(TypedDict):
     # The SLH-DSA-SHA2-256s public key.
     slhdsa: str
     epoch: int
+    # What keeps the install's checkpoint signing seed at rest, as the owner is told it.
+    assurance: Literal["hardware", "platform", "software", "process"]
     signature: CheckpointPinSignature
 
 class CheckpointPin(TypedDict):
@@ -1237,9 +1239,9 @@ class Oneiron:
         def disarm(self, spec: Facade.DisarmTurnProgram) -> bool:
             """Disarms one of the caller's own armed turn programs; true when it was armed."""
         def rebind(self, spec: Facade.TurnProgramRebindRequest) -> Facade.TurnProgramRebindReceipt:
-            """Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."""
+            """Rebinds an unsettled turn program try, or an owed wake no admission judged yet (then admitted), that the caller's own turn woke on a lapsed credential, to this request's live one; it never widens, and a held try resumes."""
         def admission(self, spec: Facade.TurnProgramAdmissionRequest) -> Facade.TurnProgramAdmissionView | None:
-            """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
+            """Reads one page of a landed turn's admissions for the caller's turn programs, or all when the owner asks, and the wakes it still owes them with each hold, withholding each field whose record the caller's credential does not read."""
     class _VaultWeaveVerbs:
         def report(self, spec: Facade.WeaveReportRequest) -> Facade.WeaveReportView:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
@@ -1355,6 +1357,8 @@ class Oneiron:
         def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
         @property
         def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs": ...
+        @property
+        def callable(self) -> "Oneiron._VaultSkillsCallableVerbs": ...
         def pack_receipt(self, spec: Facade.SkillPackReceiptRequest) -> Facade.SkillPackReceipt:
             """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
         @property
@@ -1411,6 +1415,9 @@ class Oneiron:
             """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
         def set(self, spec: Facade.SkillGovernanceSetRequest) -> Facade.SkillGovernanceView:
             """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
+    class _VaultSkillsCallableVerbs:
+        def amend(self, spec: Facade.CallableAmendRequest) -> Facade.CallableAmendReceipt:
+            """The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing."""
     class _VaultSkillsOutcomesVerbs:
         def project(self, spec: Facade.SkillPackOutcomeRequest) -> Facade.SkillPackOutcomeProjection:
             """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
@@ -1821,6 +1828,8 @@ class Oneiron:
             """The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch."""
         def rejoin(self, spec: Facade.ConnectDelivery) -> Facade.ConnectRejoined:
             """The owner admits a peer host signed update through guest admission into the retained foreign-world vault."""
+        @property
+        def world_privacy(self) -> "Oneiron._VaultFederationConnectWorldPrivacyVerbs": ...
     class _VaultFederationConnectGrantsVerbs:
         def mint(self, spec: Facade.MintConnectGrant) -> Facade.ConnectGrant:
             """The owner mints an inert Connect guest grant inside the named local-world ceiling."""
@@ -1829,6 +1838,11 @@ class Oneiron:
             """The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal."""
         def accept(self, spec: Facade.AcceptRescopeConnect) -> Facade.ConnectRescoped:
             """The owner accepts the peer host signed re-scope and receives the matching signed counter-half."""
+    class _VaultFederationConnectWorldPrivacyVerbs:
+        def export(self, spec: Facade.ForeignWorldPrivacyExportRequest) -> Facade.ForeignWorldPrivacyDelivery:
+            """The owner exports the world-settings leg a request owes a connected vault, host signed for the live pact: an agent's ask on a world that vault owns, or this vault's holders' answer to that vault's ask."""
+        def receive(self, spec: Facade.ForeignWorldPrivacyDelivery) -> Facade.WorldPrivacyRequest:
+            """The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers."""
     class _VaultTrustedContactsVerbs:
         def name(self, spec: Facade.TrustedContactNameRequest) -> Facade.TrustedContact:
             """A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
@@ -2102,6 +2116,8 @@ class Oneiron:
             """The owner-visible legal hold log, oldest first."""
         def lift_and_erase(self, spec: Facade.LegalHoldLiftAndEraseRequest) -> Facade.LegalHoldLiftAndErased:
             """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
+        def withdraw_erase(self, spec: Facade.LegalHoldWithdrawEraseRequest) -> Facade.LegalHoldErasesWithdrawn:
+            """The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting."""
     class _VaultCourtesyDeleteVerbs:
         def send(self, spec: Facade.CourtesyDeleteSendRequest) -> Facade.CourtesyDeleteSent:
             """The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."""
@@ -2171,6 +2187,8 @@ class Oneiron:
             """The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."""
         def create_standing_grant(self, spec: Facade.CreateStandingGrantRequest) -> Facade.ConsentActReceipt:
             """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
+        def create_auto_weave_grant(self, spec: Facade.AutoWeaveGrantRequest) -> Facade.ConsentActReceipt:
+            """The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed."""
         def registry(self, spec: Facade.ConsentRegistryQuery) -> Facade.ConsentRegistry:
             """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
         def failure_signals_held(self, spec: Facade.EmptyRequest | None = None) -> Facade.HeldFailureSignalBatchView | None:
@@ -3593,6 +3611,8 @@ class Oneiron:
     class _SelfMemoryVerbs:
         @property
         def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs": ...
+        @property
+        def pads(self) -> "Oneiron._SelfMemoryPadsVerbs": ...
     class _SelfMemoryDiaryVerbs:
         def __call__(self, spec: Facade.DiaryEntryRequest) -> Facade.DiaryEntryReceipt:
             """Writes one private entry in the bound actor's own diary, as an actor-private NOTE."""
@@ -3602,6 +3622,11 @@ class Oneiron:
             """This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers."""
         def query(self, spec: Facade.DiaryQueryRequest) -> Facade.DiaryQueryOutcome:
             """Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."""
+    class _SelfMemoryPadsVerbs:
+        def read(self, spec: Facade.DiaryQueryRequest) -> Facade.DiaryQueryOutcome:
+            """Reads an agent's sealed scratchpads as a ruled reader (a vault owner, a work vault's Admin or the Coach), stating a reason the agent sees in its read log."""
+        def admin_reads(self, spec: Facade.AdminPadReadsRequest) -> Facade.AdminPadReadsView:
+            """The companion's owner reads the reads a work vault's Admin made of an agent's sealed scratchpads, newest first, on their own authentication."""
     class _SelfStandingVerbs:
         def get(self, spec: Facade.OwnStandingBlockRequest) -> Facade.StandingBlockView:
             """This agent's configured standing block in one world: its handle, name and token floor."""
@@ -3623,6 +3648,12 @@ class Oneiron:
         def concern(self) -> "Oneiron._SelfInboxConcernVerbs": ...
         def lens(self, spec: Facade.InboxLensRequest) -> Facade.InboxLensPage:
             """Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."""
+        def get(self, spec: Facade.InboxItemRequest) -> Facade.InboxItemView:
+            """Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done."""
+        def done(self, spec: Facade.InboxItemRequest) -> Facade.InboxItemMarked:
+            """Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it."""
+        def later(self, spec: Facade.InboxItemLaterRequest) -> Facade.InboxItemMarked:
+            """Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it."""
     class _SelfInboxConcernVerbs:
         def __call__(self, spec: Facade.ConcernCardRequest) -> Facade.AgentHealthCardView: ...
         def outcome(self, spec: Facade.ConcernOutcomeRequest) -> Facade.ConcernCardSummary: ...

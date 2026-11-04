@@ -44,7 +44,7 @@ use crate::ports::TombstoneStoreRead;
 use crate::sync::WindowManager;
 use crate::sync::loro_support::{import_doc, map_delete, map_for_each_value_bytes};
 use crate::sync::schema::create_window_doc;
-use crate::sync::types::{WindowKey, authority_wrap_world};
+use crate::sync::types::{WindowKey, authority_side_entry_world};
 use crate::sync::window::{
     ReplacementByteBound, apply_pending_window_updates, export_history_free_window_snapshot,
     export_window_replacement, load_window_from_state, reverse_rematerialize,
@@ -245,14 +245,16 @@ impl WindowManager {
     /// Takes `bundle` and its pad object in, read from `holder`: opens every
     /// section this machine may read and merges each window into its mirror.
     /// A full machine materializes the rows; an `opened`-item machine keeps
-    /// them in the mirror until a promotion materializes it.
+    /// them in the mirror until a promotion materializes it. Beside the take,
+    /// the worlds a kit restore of `bundle` still awaits a reader for
+    /// ([`sealed_bundle_awaiting_reader`], FIX 4496).
     pub fn take_sealed_bundle(
         &self,
         bundle: &SealedVaultBundle,
         pads: &SealedKeyPads,
         holder: Destination,
         opened: bool,
-    ) -> Result<SealedBundleTake> {
+    ) -> Result<(SealedBundleTake, Vec<EntityId>)> {
         let vault = self.vault();
         let outer = vault.open_vault_bundle(bundle, holder)?;
         let pads = vault.open_key_pads(pads)?;
@@ -269,7 +271,7 @@ impl WindowManager {
             self.take_section(&section, !opened, &mut take);
         }
         take.authority = vault.import_opened_world_capsules(&outer)?;
-        Ok(take)
+        Ok((take, sealed_bundle_awaiting_reader(vault, &outer)?))
     }
 
     /// Kit restore from the sealed cloud bundle, on an install that is no
@@ -352,6 +354,7 @@ impl WindowManager {
                 &HashMap::new(),
                 || true,
                 SEALED_KIT_REPLACEMENT_BYTE_BOUND,
+                None,
             )?;
             drop(window);
             // A restore leaves no window open.
@@ -574,6 +577,21 @@ fn with_world_authority(mut base: Vec<Vec<u8>>, capsules: Vec<Vec<u8>>) -> Vec<V
     base
 }
 
+/// The worlds whose authority capsule `opened` files sealed to no recovery
+/// root pinned here now (FIX 4496): a kit restore of that generation restores
+/// each world's keys only once a machine that reads it publishes again. None
+/// when no root is pinned.
+pub(crate) fn sealed_bundle_awaiting_reader(
+    vault: &Vault,
+    opened: &OpenedVaultBundle,
+) -> Result<Vec<EntityId>> {
+    let pinned = {
+        let txn = vault.store.env.read_txn()?;
+        vault.authority_view_readonly_in_txn(&txn)?.pinned_root
+    };
+    Ok(opened.worlds_awaiting_reader(pinned.map(|pin| pin.id)))
+}
+
 /// Whether `world` was deleted here or its keys destroyed here: an ordinary take
 /// never brings it back, and a publisher that opens its section stops carrying
 /// it. Old bundles keep it until they age out.
@@ -604,8 +622,9 @@ fn refuse_machine_of_the_vault(vault: &Vault, vault_id: &[u8; 32]) -> Result<()>
     Ok(())
 }
 
-/// `snapshot` with no world key pad row and no key wrap entry: pads ride only
-/// the pad object, wraps only their world's authority capsule, and a world's
+/// `snapshot` with no world key pad row and no world side entry (a key wrap
+/// or a join over the world's side leaves): pads ride only the pad object,
+/// side entries only their world's authority capsule, and a world's
 /// settings entries stay. A snapshot that held one is cut again, history-free
 /// at its newest operation, so its bytes are not in it.
 fn without_key_rows(snapshot: Vec<u8>) -> Result<Vec<u8>> {
@@ -614,9 +633,9 @@ fn without_key_rows(snapshot: Vec<u8>) -> Result<Vec<u8>> {
     let entities = doc.get_map("entities");
     let mut keys = Vec::new();
     map_for_each_value_bytes(&entities, |key, raw| {
-        if raw
-            .is_some_and(|raw| pad_body_world(raw).is_some() || authority_wrap_world(raw).is_some())
-        {
+        if raw.is_some_and(|raw| {
+            pad_body_world(raw).is_some() || authority_side_entry_world(raw).is_some()
+        }) {
             keys.push(key.to_owned());
         }
     });

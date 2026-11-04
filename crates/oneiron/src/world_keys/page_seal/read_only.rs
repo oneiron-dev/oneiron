@@ -9,13 +9,8 @@ use std::sync::{Arc, PoisonError};
 use zeroize::Zeroizing;
 
 use super::{OPENED, VaultPageSeal, vault_is_sealed};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::world_keys::refused;
-
-/// LMDB refuses a sealed file opened without a key, or a plain one with one.
-const MDB_ENV_ENCRYPTION: i32 = -30776;
-/// LMDB refuses a page that does not open under the key.
-const MDB_CRYPTO_FAIL: i32 = -30777;
 
 thread_local! {
     /// The page key the read-only door opens one sealed vault with on this
@@ -77,29 +72,11 @@ pub(crate) fn read_sealed<T>(
         return read();
     };
     let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let _restore = Restore(
-        READING.with(|reading| reading.replace(Some((canonical, Arc::clone(&seal.page_key))))),
-    );
+    let _restore =
+        Restore(READING.with(|reading| {
+            reading.replace(Some((canonical, Arc::clone(seal.shared_page_key()))))
+        }));
     read()
 }
 
-/// The error of an environment opened with (`keyed`) or without a page key,
-/// in the owner's words where LMDB refused the seal.
-pub(crate) fn page_seal_open_error(error: heed::Error, keyed: bool) -> Error {
-    let code = match &error {
-        heed::Error::Mdb(heed::MdbError::Other(code)) => Some(*code),
-        // heed hands an LMDB code it has no name for over as a raw OS error.
-        heed::Error::Io(error) => error.raw_os_error(),
-        _ => None,
-    };
-    match code {
-        Some(MDB_ENV_ENCRYPTION) if keyed => {
-            refused("this vault is plain: the maximum tier is chosen when the vault is created")
-        }
-        Some(MDB_ENV_ENCRYPTION) => {
-            refused("this vault is sealed (maximum tier): unlock it with its vault key")
-        }
-        Some(MDB_CRYPTO_FAIL) => refused("this vault's pages do not open with this page key"),
-        _ => error.into(),
-    }
-}
+pub(crate) use crate::key_material::page_seal_open_error;

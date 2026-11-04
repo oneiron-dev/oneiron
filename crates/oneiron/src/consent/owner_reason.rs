@@ -57,7 +57,7 @@ pub enum ReasonMatchConfidence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OwnerReasonVerdict {
     Auto {
-        rung: crate::llm::decision::DecisionRung,
+        rung: crate::model_decision::DecisionRung,
         reason: String,
         receipt: ConsentReceipt,
     },
@@ -377,7 +377,7 @@ impl Vault {
                 effect.digest(),
             )?;
             Ok(OwnerReasonVerdict::Auto {
-                rung: crate::llm::decision::DecisionRung::Rule,
+                rung: crate::model_decision::DecisionRung::Rule,
                 reason: rule.reason.clone(),
                 receipt,
             })

@@ -8,7 +8,7 @@ pub(super) struct OldRecord {
     pub(super) consolidation_dirty: bool,
     /// Whether the row was stored before this put (FIX 11925).
     pub(super) stored_before: bool,
-    pub(super) previous_skill_record: Option<crate::skill::SkillRecord>,
+    pub(super) previous_skill_record: Option<crate::write_envelope::skill_record::SkillRecord>,
     pub(super) optimizer_birth_marker: Option<crate::side_table::StagedRow>,
 }
 
@@ -137,7 +137,9 @@ pub(super) fn apply_old_record(
         }
         if old_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT
             && body_changed
-            && crate::code_revision::has_finalized_code_revision_in_txn(store, wtxn, &fixed.id)?
+            && crate::store::code_revision_record::tables::has_finalized_code_revision_in_txn(
+                store, wtxn, &fixed.id,
+            )?
         {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "finalized code revision artifacts are immutable",
@@ -153,7 +155,7 @@ pub(super) fn apply_old_record(
             )?;
         }
         if should_deindex_stale_text {
-            crate::bm25::deindex_text(store, wtxn, &fixed.id)?;
+            crate::store::text_index::deindex_text(store, wtxn, &fixed.id)?;
         }
 
         super::super::put_staging::remove_prior_temporal_index_rows(

@@ -5,7 +5,7 @@ use crate::surface_event::{
     SURFACE_EVENT_ATTEMPT_KIND, SurfaceCounterpartyStamp, SurfaceEventAction,
     decode_surface_event_attempt_payload,
 };
-use crate::thread_passport::canonical_message_id;
+use crate::write_envelope::thread_claim::canonical_message_id;
 
 impl Vault {
     pub(super) fn inbound_inbox_items(
@@ -90,17 +90,16 @@ impl Vault {
         }
         let mut out: Vec<_> = items.into_values().map(|(_, item)| item).collect();
         // Membership is independent of an inbound event. A standing thread can
-        // appear before this node has received its first SurfaceEvent.
-        let identities = self.entities_by_type_page(
+        // appear before this node has received its first SurfaceEvent. Every
+        // channel identity is read, in this one read, however many there are.
+        let txn = self.store.env.read_txn()?;
+        for identity_ref in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            &txn,
             crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
             None,
-            crate::receipt::MAX_RECEIPT_QUERY_SCAN + 1,
-        )?;
-        if identities.len() > crate::receipt::MAX_RECEIPT_QUERY_SCAN {
-            return Err(Error::IndexOverflow("inbox identities"));
-        }
-        let txn = self.store.env.read_txn()?;
-        for identity_ref in identities {
+        )? {
+            let identity_ref = identity_ref?;
             if identity.is_some_and(|wanted| wanted != identity_ref) {
                 continue;
             }
@@ -159,9 +158,9 @@ impl Vault {
     }
 }
 
-fn comm_error(error: crate::comm::CommError) -> Error {
+fn comm_error(error: crate::write_envelope::communication::CommError) -> Error {
     match error {
-        crate::comm::CommError::Engine(error) => error,
+        crate::write_envelope::communication::CommError::Engine(error) => error,
         _ => Error::InvalidClaimBody("inbox thread membership is malformed"),
     }
 }
