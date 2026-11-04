@@ -1722,14 +1722,14 @@ export class Oneiron {
         /** The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands. */
         cancel: (input: Facade.RootRequestCancelRequest): Facade.OwnerWorkReceipt => this.#call(() => this.#client.vaultRootsRequestsCancel(input) as Facade.OwnerWorkReceipt),
         /** The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was. */
-        create: (input: Facade.RootRequestCreateRequest): Facade.OwnerWorkReceipt => this.#call(() => this.#client.vaultRootsRequestsCreate(input) as Facade.OwnerWorkReceipt),
+        create: (input: Facade.RootRequestCreateRequest): Facade.OwnerWorkView => this.#call(() => this.#client.vaultRootsRequestsCreate(input) as Facade.OwnerWorkView),
         /** The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only. */
         list: (input: Facade.EmptyRequest): Facade.PendingRootRequestView[] => this.#call(() => this.#client.vaultRootsRequestsList(input) as Facade.PendingRootRequestView[]),
       },
     },
     owner_work: {
       /** The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it. */
-      get: (input: Facade.OwnerWorkGetRequest): Facade.OwnerWorkReceipt => this.#call(() => this.#client.vaultOwnerWorkGet(input) as Facade.OwnerWorkReceipt),
+      get: (input: Facade.OwnerWorkGetRequest): Facade.OwnerWorkView => this.#call(() => this.#client.vaultOwnerWorkGet(input) as Facade.OwnerWorkView),
     },
     cleanup: {
       /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
