@@ -14,9 +14,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6233 | 898 | 142 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6228 | 898 | 142 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
-| [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 57 | 1 | 0 |
+| [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 58 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 26 | 2 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 153 | 18 | 0 |
 | [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 17 | 5 | 0 |
@@ -27,7 +27,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 63 | 1 | 1 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 22 | 8 | 0 |
 | [oneiron-delivery-vocabulary](codemap/oneiron-delivery-vocabulary.md) | Delivery-window vocabulary of the oneiron engine: the quiet-hours and channel claim keys, decisions and… | 4 | 0 | 0 |
-| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 164 | 14 | 7 |
+| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 166 | 14 | 7 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 34 | 10 | 2 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 12 | 1 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 9 | 2 | 0 |
@@ -37,6 +37,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-keystore](codemap/oneiron-keystore.md) | This-device-only key slots for one install | 6 | 0 | 0 |
 | [oneiron-lens-wire](codemap/oneiron-lens-wire.md) | The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI… | 24 | 0 | 0 |
 | [oneiron-linear](codemap/oneiron-linear.md) | Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror | 8 | 1 | 0 |
+| [oneiron-linkedin-policy](codemap/oneiron-linkedin-policy.md) | LinkedIn seat policy values consumed by outbound admission | 2 | 0 | 0 |
 | [oneiron-llm-anthropic](codemap/oneiron-llm-anthropic.md) | Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 7 | 1 | 0 |
 | [oneiron-llm-gemini](codemap/oneiron-llm-gemini.md) | Gemini wire adapter | 7 | 1 | 0 |
 | [oneiron-llm-local](codemap/oneiron-llm-local.md) | Local in-process adapter for Oneiron's `LlmBackend` seam | 7 | 0 | 0 |
@@ -95,7 +96,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `channel_identity_autonomy` | dir | 9 | m | yes | Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation |
 | `channel_identity_lifecycle` | file+dir | 4 | m | yes | ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2) |
 | `channel_identity_provider` | dir | 36 | L | yes | Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3) |
-| `channel_identity_selection` | dir | 8 | m | yes | Relationship-context channel-identity selection law (ONE-1826) |
+| `channel_identity_selection` | dir | 7 | m | yes | Relationship-context channel-identity selection law (ONE-1826) |
 | `checkout` | file+dir | 13 | m | — | Checkout leases and optional repository environment plans |
 | `claim` | dir | 132 | L | yes | CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18) |
 | `claim_check` | file | 1 | s | — | Claim auto-check candidates and normalized verdict values |
@@ -146,7 +147,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `dreamer_wake` | dir | 69 | L | yes | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `edge_regeneration` | file | 1 | s | — | The `regenerates` link proofs over stored rows (FIX 5972) |
 | `edit_distance` | file+dir | 86 | m | — | ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the… |
-| `edit_roundtrip` | dir | 39 | m | yes | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
+| `edit_roundtrip` | dir | 37 | m | yes | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
 | `edit_settle` | dir | 16 | XL | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
 | `embed` | file+dir | 34 | L | yes | — |
 | `engine_executor` | dir | 49 | L | — | Engine-native JS code-mode executor |
@@ -201,7 +202,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `off_record` | dir | 32 | L | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `office_body` | dir | 44 | L | yes | Live office body records and Vault doors |
 | `origin` | dir | 159 | L | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
-| `outbound` | dir | 64 | m | yes | Outbound action capability manifests and dispatch spine for OF-327 |
+| `outbound` | dir | 62 | m | yes | Outbound action capability manifests and dispatch spine for OF-327 |
 | `outbound_chokepoint` | dir | 11 | L | — | Replay-first outbound effect execution |
 | `outbound_consent` | dir | 33 | m | yes | Payload-aware consent and transport boundary for scoped outbound tools |
 | `outbound_grant` | dir | 10 | m | yes | Standing outbound-grant records for OF-367 RS6.2/RS6.5 |
@@ -309,6 +310,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `channel_address` | file | 1 | m | Identity-bearing address VALUES, and the canonical assignment key |
 | `channel_identity_manifest` | file | 1 | s | Channel identity capability manifests (OF-347 CID-4) |
 | `channel_identity_shape` | file | 1 | s | ChannelIdentity addressability shapes with wire serde |
+| `channel_selection_vocabulary` | file | 1 | s | Stable token vocabulary for channel-identity selection law |
 | `claim_history_handoff` | file | 1 | m | Bounded, canonical, signed transfer of one scoped machine-claim history, one delta at a time |
 | `credential_door` | file | 1 | s | Credential-door bounds the authority log's slip checks share with the door itself |
 | `federation` | dir | 8 | m | Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction… |
@@ -512,6 +514,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `live` | dir | 61 | XL | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
 | `native_patch` | dir | 9 | m | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
 | `ooxml` | file | 1 | m | Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks |
+| `opc_package` | file | 1 | m | Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline |
+| `opc_xml` | file | 1 | s | Namespace-aware OPC and worksheet XML reads for the edit gate |
 | `pptx_comments` | dir | 9 | m | Narrow, byte-preserving modern PowerPoint comment edits and the slide and shape identities they anchor to |
 | `resource` | file | 1 | m | The memory one document operation reserves before it allocates, and the deadline it runs within (Rule 5; FIX… |
 | `retained_opc` | dir | 9 | m | Bounded, retained OPC archives |
@@ -600,6 +604,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `source` | file | 1 | s | Linear issue snapshots from the team-scoped cursor-paged GraphQL connection |
 | `tests` | file | 1 | — | — |
 | `webhook` | file | 1 | s | Normalizes one verified Linear webhook delivery for the engine (OF-427) |
+
+## oneiron-linkedin-policy
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `seat` | file | 1 | m | Seat risk limits, sandbox policy evaluation, kill switch, and consent copy |
 
 ## oneiron-llm-anthropic
 
