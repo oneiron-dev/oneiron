@@ -331,6 +331,7 @@ impl Vault {
                 activated,
                 replaced,
                 escrow,
+                mirror_pending: false,
             })
         })?;
         // A kit the answer made current: its piece leaves its pending key

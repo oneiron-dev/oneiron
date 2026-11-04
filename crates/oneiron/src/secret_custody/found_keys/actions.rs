@@ -359,7 +359,8 @@ pub(super) fn card_in_txn(
         {
             actions.push(FoundKeyAction::Delete);
         }
-        if (matches!(key.place.as_str(), "body" | "file") || key.place.starts_with("text:"))
+        if (matches!(key.place.as_str(), "body" | "file" | "claim")
+            || key.place.starts_with("text:"))
             && status.is_some_and(|status| status != SecretCustodyStatus::Revoked)
         {
             actions.push(FoundKeyAction::NotASecret);

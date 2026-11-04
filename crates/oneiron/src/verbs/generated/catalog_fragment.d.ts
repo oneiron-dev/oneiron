@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1270 code-mode rows (1230 host rows, 40 run rows), 4477 declarations.
-// Replies: 1083 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1270 code-mode rows (1230 host rows, 40 run rows), 4478 declarations.
+// Replies: 1075 fully typed, 183 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 117; unread shapes: none.
+// Opaque serde_json::Value leaves: 118; unread shapes: EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1965,8 +1965,7 @@ declare namespace Sdk {
   type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review?: string | null; deleted: string[]; recorded: string; holds: CourtesyDeleteHold[]; excluded: string[]; progress: CourtesyDeleteRecordProgress[] };
   type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; candidates: string[]; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null; holds: CourtesyDeleteHold[] };
   type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; reply_to?: string | null };
-  type VectorEvidenceFloors = { floor: number; strong: number };
-  type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: VectorEvidenceFloors | null };
+  type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: unknown | null };
   type SpaceRef = "text_index" | { declared: string };
   type SpaceMoveState = "open" | { swapped_in: { at: number; by_owner: boolean } } | { kept: { at: number; timed_out: boolean } } | { undone: { at: number } };
   type PairedInterval = { mean: number; low: number; high: number };
@@ -2135,8 +2134,8 @@ declare namespace Sdk {
   type GateCheckerSet = { binding: VerdictBinding };
   type GateCheckerReceipt = { binding: VerdictBinding; receipt_ref: string };
   type MeasuredLearningPredicate = "learning.reliability" | "learning.edit_cost" | "learning.retest_noise" | "learning.setting";
-  type CellTypeRef = { node_id: string; tree_version: number };
-  type LearningCellKey = { subject: string; predicate: MeasuredLearningPredicate; executor?: string | null; typeRef?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null; project?: string | null };
+  type TaskTypeRefTypeRef = { node_id: string; tree_version: number };
+  type LearningCellKey = { subject: string; predicate: MeasuredLearningPredicate; executor?: string | null; typeRef?: TaskTypeRefTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null; project?: string | null };
   type LearningReadRequest = { cell: LearningCellKey; project_ref?: string | null };
   type LearningBetaValue = { alpha: number; beta: number };
   type LearningMeanValue = { mean: number; spread: number };
@@ -2145,8 +2144,8 @@ declare namespace Sdk {
   type LearningPriorValue = LearningBetaValue | LearningMeanValue | Record<string, number>;
   type LearningPriorView = { origin: PriorOrigin; value: LearningPriorValue; weight_runs: number; from?: string | null };
   type EstimateLabels = { by_judge?: Record<string, number>; converted?: number; on_judge_model?: number; outcome_counts?: Record<string, number> | null };
-  type EstimateWindow = { half_life: number };
-  type MeasuredLearningEstimate = MeasuredLearningValue & { runs: number; prior: LearningPriorView; untested: boolean; of: string; labels: EstimateLabels; window: EstimateWindow; ver: string };
+  type LearningEstimateWindow = { half_life: number };
+  type MeasuredLearningEstimate = MeasuredLearningValue & { runs: number; prior: LearningPriorView; untested: boolean; of: string; labels: EstimateLabels; window: LearningEstimateWindow; ver: string };
   type LearningHeadView = { claim_ref: string; at: number; evidence_receipts: string[]; supersedes: string[] };
   type Anchor = { kind: "held_out" } | { kind: "owner_verdict" } | { kind: "world_outcome" } | { kind: "audit"; rate: number } | { kind: "retest" } | { kind: "fitting_check" };
   type Observation = { kind: "success"; v: boolean } | { kind: "magnitude"; v: number } | { kind: "category"; v: string } | { kind: "count_only"; v: string };
@@ -2154,7 +2153,7 @@ declare namespace Sdk {
   type SkillContribution = { skill: EntityId; check: ContributionCheck };
   type UsedProvenanceEdge = { derived: EntityId; source: EntityId; check?: ContributionCheck | null };
   type CreditOptions = { enabled: boolean; depth_cap?: number | null; check_every_hop: boolean };
-  type PackAttributionFields = { typeRef: CellTypeRef; executor: string; agent_definition?: string | null; judge?: string | null; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions };
+  type PackAttributionFields = { typeRef: TaskTypeRefTypeRef; executor: string; agent_definition?: string | null; judge?: string | null; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions };
   type PackLearningContext = { attempt_receipt: string; outcome_receipt: string; attribution: PackAttributionFields };
   type EvidenceRow = { at: number; anchor: Anchor; observation: Observation; weight: number; judge?: string | null; on_judge_model?: boolean; outcome_label?: string | null; pack_attribution?: PackLearningContext | null; goal_revision?: string | null; measurement_version?: string | null };
   type LearningEvidenceView = { receipt: string; evidence: EvidenceRow };
@@ -2166,7 +2165,7 @@ declare namespace Sdk {
   type LateCreditReceipt = { receipt_id: string; attempt_receipt: string; outcome_receipt: string; anchor: Anchor; succeeded: boolean; axis: string; at: number; goal_revision?: string | null; attribution?: PackAttributionFields | null; direct_subjects: (EntityId | null)[]; shares: LateCreditShare[] };
   type LearningProjectionView = { receipt?: LateCreditReceipt | null };
   type ObjectiveConfession = { objective: string; met?: boolean | null; flaw?: string | null; uncertainty?: string | null };
-  type AttemptConfession = { attempt: AttemptId; subject: EntityId; type_ref: CellTypeRef; objectives: ObjectiveConfession[] };
+  type AttemptConfession = { attempt: AttemptId; subject: EntityId; type_ref: TaskTypeRefTypeRef; objectives: ObjectiveConfession[] };
   type AuditDraw = { rate: number; sample: number; at: number };
   type SealCheckKind = "confession_recheck" | "random_audit";
   type SealCheckRequest = { reference: string; attempt: AttemptId; kind: SealCheckKind; result_ref: string; objectives: ObjectiveConfession[]; rate: number; created_at: number };
@@ -2221,7 +2220,10 @@ declare namespace Sdk {
   type SecretCustodyGetRequest = { name: string };
   type SecretCustodyLiveRequest = OwnerWorkReceipt & { manifest_text?: string | null };
   type SecretCustodyCandidateReply = { machine: string; profile: string; encryption_key_digest: string; suite: number; encryption_key_base64: string; this_install: boolean };
-  type SecretCustodyViewReply = { vault_id: string; secret_id: string; name: string; known: boolean; held_here: boolean; portable: boolean; status?: string | null; generation: number; seen: string; live: SecretCustodyLiveRequest[]; candidates: SecretCustodyCandidateReply[]; delivery: string };
+  type CustodyTier = "T0Doored" | "T1Leased" | "T2LocalRegistered";
+  type TierBand = { min: CustodyTier; max: CustodyTier };
+  type SecretCustodyFloor = { portable: TierBand; device_bound: TierBand; cross_vault: TierBand; rotation_max_age_secs?: number | null; env_bindings: Record<string, string> };
+  type SecretCustodyViewReply = { vault_id: string; secret_id: string; name: string; known: boolean; held_here: boolean; portable: boolean; status?: string | null; generation: number; seen: string; live: SecretCustodyLiveRequest[]; candidates: SecretCustodyCandidateReply[]; delivery: string; floor: SecretCustodyFloor };
   type SecretCustodyPermit = { machine: string; profile: string; encryption_key_digest: string };
   type SecretCustodySubmitRequest = { change: string; secret_id: string; generation: number; seen: string; holder: string; recipients: SecretCustodyPermit[]; manifest_ref?: string | null; input_base64: string };
   type WidenProposalState = "pending" | "approved" | "declined";
@@ -2443,7 +2445,7 @@ declare namespace Sdk {
   type CodeConflictHistory = { conflicts: CodeConflictView[]; resolved: CodeConflictResolutionView[] };
   type CodeProposalResolveRequest = { change: CodeProposalSubmitRequest; branch_subject: EntityId; conflict: EntityId; branch: string };
   type LearningPredicate = "reliability" | "edit_cost" | "retest_noise" | "setting";
-  type LearningCell = { predicate: LearningPredicate; subject: EntityId; executor?: string | null; type_ref?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null; project?: EntityId | null };
+  type LearningCell = { predicate: LearningPredicate; subject: EntityId; executor?: string | null; type_ref?: TaskTypeRefTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null; project?: EntityId | null };
   type CritiqueVerdict = "accept" | "revise" | "discard";
   type CritiqueSeverity = "info" | "low" | "medium" | "high" | "blocking";
   type CodeProposalReviewRequest = { proposal: EntityId; artifact_id: string; run_id: string; attempt: EntityId; lens_id: string; domain: string; model_id: string; model_revision?: string | null; calibration: LearningCell; verdict: CritiqueVerdict; severity: CritiqueSeverity; hard_check_passed?: boolean | null; evidence: EntityId[]; suggested_edit?: string | null };
@@ -3223,7 +3225,7 @@ declare namespace Sdk {
   type AmendmentDeltaView = { proposed_ref: string; final_ref: string; source: string; d_norm: number; ops_summary: OpsSummaryView; engine_ver: string };
   type SettledHunkView = { before: string; after: string; edit_mass: number; actor?: EntityId | null; trust?: string | null };
   type AmendmentShareView = { class: AttributionLabel; share: number; subject?: EntityId | null };
-  type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; engine_ver: string; at: number; rejected: boolean; executor?: string | null; type_ref?: CellTypeRef | null; judge?: string | null; judge_model?: string | null; on_judge_model: boolean };
+  type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; engine_ver: string; at: number; rejected: boolean; executor?: string | null; type_ref?: TaskTypeRefTypeRef | null; judge?: string | null; judge_model?: string | null; on_judge_model: boolean };
   type ProposalDeltaSettlement = { receipt_id: string; artifact_ref?: EntityId | null; proposed_text: string; final_text: string; delta?: AmendmentDeltaView | null; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] };
   type ProposalDeltaReadRequest = { receipt_id: string; artifact_ref?: EntityId | null };
   type ProposalOpSpanView = { actor?: EntityId | null; trust: string; before_text?: string | null; after_text?: string | null; lamport: number; timestamp: number };
@@ -3414,8 +3416,7 @@ declare namespace Sdk {
   type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
   type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; presence?: TypedDecision | null; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null; evidence_cut_at_bytes?: number | null };
   type GraphAskSelection = { entity_type: number; limit: number };
-  type HostingPrivacyPosture = "managed" | "relay" | "self-host";
-  type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null; posture?: HostingPrivacyPosture | null; criteria?: QuestionCriteria<string> | null };
+  type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null; posture?: string | null; criteria?: QuestionCriteria<string> | null };
   type SourceConflict = "facet" | "project" | "world" | "relationship" | "scope_term" | "principal" | "unrepresentable";
   type OmittedNeighbor = { id: string; reason: SourceConflict };
   type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number; omitted?: OmittedNeighbor[] };
@@ -3428,10 +3429,10 @@ declare namespace Sdk {
   type QuestionAudience = "asker";
   type QuestionMedia = { images?: boolean; audio?: boolean };
   type ArtifactUnits = { artifact: string; selection: ArtifactAskUnits };
-  type QuestionDefinition<Q> = { question: Q; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria<string>; audience?: QuestionAudience; posture?: HostingPrivacyPosture | null; media?: QuestionMedia; deadline_ms?: number | null; artifacts?: ArtifactUnits[] };
+  type QuestionDefinition<Q> = { question: Q; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria<string>; audience?: QuestionAudience; posture?: unknown | null; media?: QuestionMedia; deadline_ms?: number | null; artifacts?: ArtifactUnits[] };
   type DecisionQuestionInput = { text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type QuestionDefinitionInput = QuestionDefinition<DecisionQuestionInput>;
-  type QuestionCreateRequest = { definition: QuestionDefinitionInput };
+  type QuestionCreateRequest = { definition: unknown };
   type QuestionAskerClass = "human" | "agent" | "system";
   type FrozenReadLane = { credential?: number[] | null; authority?: Scope | null; records?: string[]; worlds?: ScopeAxis<ScopeId> | null; room_facets?: EntityId | null; withheld?: string[] };
   type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number; asker_class?: QuestionAskerClass | null; read_lane: FrozenReadLane };
