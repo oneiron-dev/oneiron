@@ -150,6 +150,8 @@ impl Vault {
             crate::embed::erase_probe_sources_in_txn(self, wtxn, id)?;
         }
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
+        // Canonical blob reference must release while current body descriptor is still present.
+        crate::memory::release_asset_blob_in_txn(&self.store, wtxn, id)?;
         crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
         // Saved tags read the turn's messages through their PartOf edges, so
         // they go before the graph is torn down.
@@ -310,6 +312,8 @@ impl Vault {
             crate::embed::erase_probe_sources_in_txn(self, wtxn, id)?;
         }
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
+        // Canonical blob reference must release while current body descriptor is still present.
+        crate::memory::release_asset_blob_in_txn(&self.store, wtxn, id)?;
         crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
