@@ -123898,7 +123898,7 @@
      "path": "src/server/web_fetch/headless/body.rs",
      "purpose": "A headless answer's decoded body, held inline up to a small bound and in an anonymous temporary file past it",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
