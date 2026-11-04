@@ -4,7 +4,7 @@ use super::*;
 use crate::edge::EdgeInfo;
 use crate::error::{Error, Result};
 use crate::registry::*;
-use crate::scan_check::ScanCount;
+use crate::store::scan_count::ScanCount;
 use crate::store::EngineScan;
 use crate::store::{ManifestDbs, Store};
 use crate::{EdgeKind, EntityId, Vault};
