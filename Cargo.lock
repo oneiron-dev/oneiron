@@ -7938,9 +7938,11 @@ dependencies = [
  "oneiron-base",
  "oneiron-browser",
  "oneiron-code-check",
+ "oneiron-code-source",
  "oneiron-container",
  "oneiron-contracts",
  "oneiron-crypto",
+ "oneiron-delivery-vocabulary",
  "oneiron-docedit",
  "oneiron-guest",
  "oneiron-keystore",
@@ -8142,6 +8144,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-code-source"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "oneiron-base",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_codegen",
+ "oxc_parser",
+ "oxc_semantic",
+ "oxc_span",
+ "oxc_transformer",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-container"
 version = "0.1.0"
 dependencies = [
@@ -8201,6 +8220,15 @@ dependencies = [
  "thiserror 2.0.20",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-delivery-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "schemars 0.8.22",
+ "serde",
 ]
 
 [[package]]

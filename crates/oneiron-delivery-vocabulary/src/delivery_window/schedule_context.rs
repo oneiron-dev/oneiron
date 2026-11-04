@@ -20,7 +20,7 @@ pub struct OutboundScheduleContext {
 }
 
 impl OutboundScheduleContext {
-    pub(crate) fn validate(&self) -> MemoryResult<()> {
+    pub fn validate(&self) -> MemoryResult<()> {
         if self.iana_timezone.is_some() && self.utc_offset_minutes.is_none() {
             return Err(MemoryError::bad_request_with(
                 "iana_timezone requires utc_offset_minutes",
