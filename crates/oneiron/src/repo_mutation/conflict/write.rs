@@ -13,7 +13,6 @@
 use std::sync::atomic::Ordering;
 
 use crate::Vault;
-use oneiron_contracts::affect::Vad;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN, encode_claim_body};
 use crate::codebase::RepoRef;
@@ -27,6 +26,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::repo_mutation::RepoConflictClaim;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::temporal::TimeRange;
+use oneiron_contracts::affect::Vad;
 
 use super::super::conflict_value::{
     RepoConflictOpenValue, decode_repo_conflict_open_value, normalize_repo_conflict_paths,
@@ -325,6 +325,7 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
     attach(&mut wtxn, &link)?;
     wtxn.commit()?;
     vault.store.notify_attempt_observers();
+    vault.wake_merge_queue();
     Ok(link)
 }
 
@@ -391,6 +392,7 @@ impl Vault {
         attach(&mut wtxn, &retried)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
+        self.wake_merge_queue();
         Ok(retried)
     }
 }

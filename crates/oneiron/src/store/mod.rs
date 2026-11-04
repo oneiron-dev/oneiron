@@ -119,52 +119,77 @@ pub mod ports {
     };
 }
 
-pub mod canonical_document;
-pub mod checkout_task;
-pub mod checkpoint_host_recipient;
-pub mod custody_retirement_status;
-pub mod proposal_spool;
-pub mod recovery_write_budget;
-pub mod restore_admission;
-pub mod result_body_pins;
-pub mod result_memory;
-pub mod verb_invocation;
-pub mod code_tree_blob;
-pub mod repo_fork;
-pub mod sandbox_import;
-pub(crate) mod repo_environment;
+pub(crate) mod agent_birth_custody;
+pub(crate) mod agent_birth_identity;
 pub mod agent_record;
 pub mod attempt_cleanup;
 pub mod attempt_inputs;
 pub mod attempt_lease;
 pub mod attempt_manifest;
 pub mod attempt_result;
-pub mod outbound_outcome;
-pub mod outbound_trigger;
+pub mod canonical_document;
+pub mod checkout_task;
+pub use oneiron_store::checkpoint_host_recipient;
+pub mod code_tree_blob;
 pub mod conversation_body;
-pub mod conversation_record;
-pub mod housekeeping_schedule;
-pub mod housekeeping_report;
+pub use oneiron_store::conversation_record;
+pub mod custody_retirement_status;
+mod delete_guards;
+pub use delete_guards::StoreDeleteGuards;
+mod hooks;
+pub use hooks::StoreHooks;
+mod scope_stamps;
+pub(crate) use scope_stamps::StoreScopeStamps;
+mod project_writes;
+pub use project_writes::StoreProjectWrites;
+mod record_hooks;
+pub use record_hooks::StoreRecordHooks;
+pub(crate) mod actor_scrubs;
+pub use actor_scrubs::StoreActorScrubs;
+#[cfg(feature = "sync")]
+mod sync_hooks;
+#[cfg(feature = "sync")]
+pub(crate) use sync_hooks::StoreSyncHooks;
 #[cfg(feature = "sync")]
 pub mod document_frame_tags;
+pub mod housekeeping_report;
+pub mod housekeeping_schedule;
+#[cfg(feature = "sync")]
+pub(crate) mod loro_document;
+#[cfg(feature = "sync")]
+pub(crate) mod loro_tombstones;
+#[cfg(feature = "sync")]
+pub mod materialization_event;
+pub mod model_description_rows;
+pub mod model_score_diff;
+pub(crate) mod model_stream_row;
+pub mod outbound_outcome;
+pub mod outbound_trigger;
+pub mod pack_hook_actor_class;
+#[cfg(feature = "sync")]
+pub(crate) mod pad_object_membership;
+pub(crate) mod project_kind;
+pub mod proposal_spool;
+pub mod recovery_write_budget;
+pub(crate) mod repo_environment;
+pub mod repo_fork;
+pub mod restore_admission;
+pub mod result_body_pins;
+pub mod result_memory;
+pub use oneiron_store::retained_memory;
+pub mod sandbox_import;
+pub mod verb_invocation;
 #[cfg(feature = "sync")]
 pub mod window_protocol;
 #[cfg(feature = "sync")]
-pub(crate) mod pad_object_membership;
-#[cfg(feature = "sync")]
-pub mod materialization_event;
-#[cfg(feature = "sync")]
-pub(crate) mod loro_document;
-pub mod retained_memory;
-#[cfg(feature = "sync")]
 pub(crate) mod window_rows;
 
+pub mod consolidation_scope;
 pub(crate) mod conversation_span;
 pub mod dreamer_attempt_kind;
-pub mod consolidation_scope;
 pub mod setting_seed;
-pub mod snapshot_lock_result;
 pub mod snapshot_key;
+pub mod snapshot_lock_result;
 
 mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
@@ -175,56 +200,70 @@ mod backup_change;
 pub mod blob_fingerprint;
 #[cfg(unix)]
 mod body_envelope;
-pub mod claim_descriptors;
-pub(crate) mod query_memo_codec;
-pub mod query_memos;
 #[cfg(unix)]
 mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
+pub mod claim_descriptors;
+mod claim_vad_owed;
 pub mod code_artifact_body;
 pub mod code_document_values;
 pub mod code_memory_values;
 pub mod code_snapshot;
-mod claim_vad_owed;
+pub(crate) mod query_memo_codec;
+pub mod query_memos;
 pub(crate) use claim_vad_owed::{
-    owe_claim_vad_in_txn, owed_claim_vad_count_in_txn, settle_claim_vad_in_txn,
+    claim_vad_owed_in_txn, owe_claim_vad_in_txn, owed_claim_vad_count_in_txn,
+    settle_claim_vad_in_txn,
 };
-mod commitment_due;
-pub mod receipt_identity;
 pub mod body_descriptor;
-pub mod row_birth;
+mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
-pub mod diagnostic_record;
+pub mod decision_ask_role;
+pub(crate) mod decision_question_watches;
 pub mod derivation;
+pub mod diagnostic_record;
 mod diagnostics;
 pub mod document_segments;
 pub mod embedding;
-pub(crate) mod graph_version;
-pub(crate) mod l2_evidence;
-pub mod retrieval_deadline;
-pub(crate) mod text_index;
-pub(crate) mod vector_index;
 mod gate_decision;
+pub(crate) mod file_key_masks;
+pub(crate) mod found_key_notice_queue;
+pub(crate) mod graph_version;
+pub(crate) mod known_value_index;
+pub(crate) mod l2_evidence;
+pub mod receipt_identity;
+pub(crate) mod result_body_erasure;
+pub(crate) mod result_body_rows;
+pub mod retrieval_deadline;
+pub mod retrieval_signal;
+pub mod row_birth;
+pub(crate) mod pending_custody_revoke;
+pub(crate) mod secret_handle_labels;
+pub(crate) mod secret_name_index;
+mod scan_checks;
 mod scan_kind;
 mod scan_kind_table;
-mod scan_checks;
+pub(crate) mod text_index;
+pub(crate) mod vector_index;
+pub mod workflow_definition;
 
-pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 pub use scan_checks::ScanCheck;
 pub(crate) use scan_checks::{CheckKey, PendingScanChecks};
+pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
 pub mod world_registration_keys;
+pub(crate) mod world_pad_rows;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
 // FIX 8875: the home handoff's custody contract, for L03's carrier.
 pub(crate) mod home_handoff_custody;
-pub mod identity_hints;
 mod idempotency_intent;
+pub mod identity_hints;
 mod inference_snapshot_custody;
 pub(crate) mod install_identity;
 mod invocation_claims;
@@ -232,6 +271,7 @@ mod key_custody;
 mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
+pub(crate) mod linear_pull_cursor;
 mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
@@ -244,23 +284,28 @@ mod pending_embedding;
 mod pending_gate_consent;
 mod ppr_community;
 mod ppr_community_indexed;
+pub(crate) mod reader_fold_receipt;
+pub(crate) mod refinement_carrier;
+#[cfg(feature = "sync")]
+pub(crate) mod replica_edge_key;
+pub mod result_manifest;
+pub mod retrieval_policy;
 mod retrieval_telemetry;
 pub mod retrieval_values;
-pub mod result_manifest;
-pub(crate) mod reader_fold_receipt;
-pub(crate) mod task_body_checks;
-pub mod retrieval_policy;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
 mod short_id_alias;
 pub(crate) mod skill_content_index;
+pub mod skill_hub_predicates;
 pub mod skill_package;
+pub(crate) mod skill_refinement_custody;
 pub(crate) mod skill_source_carrier;
-pub(crate) mod refinement_carrier;
+pub(crate) mod skill_source_custody;
 mod structural_kind_registry;
 mod sync_responses;
+pub(crate) mod task_body_checks;
 mod training_link;
 pub(crate) mod turn_missing;
 mod usage_sources;
@@ -284,7 +329,7 @@ pub(crate) use asset_body::{
     unused_imports,
     reason = "FIX 5489 PR2 and PR3 receive bodies through these"
 )]
-pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody};
+pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody, StagedHold};
 pub(crate) use served_vaults::served_vault_at;
 // FIX 6730: what a commit changes for the backup watermark.
 #[cfg(feature = "sync")]
@@ -334,7 +379,10 @@ pub use deadline_jobs::{DEADLINE_JOBS_CHECK_KIND, DeadlineJob};
 pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;
-pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
+pub(crate) use group_commit::{
+    AfterCommit, Callback, DetachedWrite, GroupCommit, GroupCommitCounters, Rows,
+    release_vault_handle,
+};
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;

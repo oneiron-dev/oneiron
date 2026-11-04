@@ -3,18 +3,18 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
-pub(crate) mod training_ask_kind;
-pub(crate) mod consult_fanout_values;
-pub(crate) mod task_assignee;
-pub(crate) mod curator_proposal;
-pub(crate) mod failure_signal_delivery;
-pub(crate) mod fanout_mode;
 mod ask_policy;
 mod auto_signals;
 mod bundle;
 mod ceiling;
 pub(crate) mod class_policy;
+pub(crate) mod consult_fanout_values;
+pub(crate) mod curator_proposal;
+pub(crate) mod failure_signal_delivery;
+pub(crate) mod fanout_mode;
 pub(crate) mod manifest_authenticity;
+pub(crate) mod task_assignee;
+pub(crate) mod training_ask_kind;
 #[cfg(test)]
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
 pub(crate) use manifest_authenticity::{seeded_manifest_key, trusted_manifest_key};
@@ -27,9 +27,9 @@ mod constants;
 pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
 mod decode;
+mod default_manifest;
 pub(crate) mod experiment_selection_policy;
 pub(crate) mod failure_signal_policy;
-mod default_manifest;
 pub(crate) mod team_review;
 /// A policy manifest's bytes as the owner's install door stores them, its
 /// optional notification table made explicit. A vault-shape manifest row
@@ -41,14 +41,15 @@ mod definition_ceiling;
 mod delegation_chain;
 mod docedit_resource;
 pub(crate) use docedit_resource::shipped_docedit_package_limits;
-mod docx_budget;
 pub(crate) mod dispatch_compliance;
+mod docx_budget;
 mod doors;
 mod dreamer_grant;
 mod dreamer_precommit;
 mod dreamer_retry_policy;
 pub(crate) mod edit_distance_thresholds;
 mod effect;
+pub(crate) mod esign_rate_policy;
 pub(crate) mod fanout_policy;
 mod foreign_agent;
 mod grants;
@@ -104,6 +105,7 @@ pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 mod tests;
 
 pub(crate) use self::ask_policy::{AskOperationalPolicy, AskPolicySurface};
+pub(crate) use self::bundle::append_reviewed_run_decision_in_txn;
 pub use self::bundle::{
     GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
     GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
@@ -198,6 +200,7 @@ pub(crate) use self::effect::{
     native_mail_cold_approval_digest, record_external_effect_policy,
     record_held_external_effect_policy,
 };
+pub(crate) use self::effect::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::grants::{
     ClaimReadPolicy, ClaimReadView, PolicyScopedGrant, claim_read_policy_allows,
     companion_profile_access_grant, scoped_read_claim_allowed,

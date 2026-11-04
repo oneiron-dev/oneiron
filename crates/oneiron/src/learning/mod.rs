@@ -33,7 +33,7 @@ pub mod judge;
 mod pack_erase;
 pub mod prior;
 pub mod project;
-pub(crate) mod ranking;
+pub(crate) use oneiron_base::learning_ranking as ranking;
 pub mod read;
 pub mod retest;
 mod scope_carriers;
@@ -71,5 +71,7 @@ pub(crate) use scope_carriers::{
 pub(crate) use scope_erase::erase_learning_scope_in_txn;
 
 pub use crate::write_envelope::learning_predicate::{
-    PREDICATE_LEARNING_RELIABILITY, PREDICATE_LEARNING_EDIT_COST, PREDICATE_LEARNING_RETEST_NOISE, PREDICATE_LEARNING_SETTING, LEARNING_PREDICATES, is_learning_predicate, LEARNING_NAMESPACE,
+    LEARNING_NAMESPACE, LEARNING_PREDICATES, PREDICATE_LEARNING_EDIT_COST,
+    PREDICATE_LEARNING_RELIABILITY, PREDICATE_LEARNING_RETEST_NOISE, PREDICATE_LEARNING_SETTING,
+    is_learning_predicate,
 };

@@ -21,10 +21,21 @@ impl Vault {
     /// answer across a later send.
     #[cfg(feature = "sync")]
     pub fn rows_may_leave_device(&self, rows: &[EntityId]) -> Result<bool> {
+        self.rows_may_leave_for(rows, &crate::settings::CallerLocality::OffDevice.into())
+    }
+
+    /// [`Self::rows_may_leave_device`] toward `destination`: every row goes
+    /// only while no world withheld from one of its machines keeps it
+    /// (FIX 5588). Nothing is kept from a caller on this device.
+    #[cfg(feature = "sync")]
+    pub fn rows_may_leave_for(
+        &self,
+        rows: &[EntityId],
+        destination: &ReadDestination,
+    ) -> Result<bool> {
         let _acceptance = self.device_only_acceptance();
         let rtxn = self.store.env.read_txn()?;
-        let flagged =
-            device_local_worlds_at(self, &rtxn, crate::settings::CallerLocality::OffDevice)?;
+        let flagged = device_local_worlds_for(self, &rtxn, destination)?;
         for row in rows {
             match device_only_withholds(&self.store, &rtxn, &flagged, row) {
                 Ok(false) => {}
@@ -185,6 +196,19 @@ pub(crate) fn device_local_worlds_for(
     destination: &ReadDestination,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
     device_only_worlds_in(vault, txn, destination)
+}
+
+/// The worlds whose rows the receiving placement withholds: every world the
+/// world settings withhold from `receiving`, folded once in `txn` (FIX 5588).
+/// `Unknown` is exactly today's [`device_local_worlds_at`]`(OffDevice)`
+/// expansion (same `load_in` arm, same withheld set); a named machine only
+/// withholds fewer worlds, never more.
+pub(crate) fn device_local_worlds_for_machine(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    receiving: crate::machine_destination::Destination,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    crate::authority::WorldPrivacyView::load_in(vault, txn)?.withheld_for(receiving)
 }
 
 /// [`device_local_keeps_in`] against `flagged`, the flag set read once in

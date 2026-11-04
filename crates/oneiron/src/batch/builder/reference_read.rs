@@ -15,7 +15,7 @@ use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::gate::{GateReasonCode, RecordedClaimGateDecision};
-use crate::store::{GateRetentionContext};
+use crate::store::GateRetentionContext;
 use crate::store::Store;
 use crate::write_envelope::claim_body::ClaimBody;
 
@@ -188,6 +188,7 @@ pub(super) fn staged_reference_denial(
             defer_metrics_until_commit: true,
             transition: None,
             owner_authored: None,
+            pending_prompt: None,
         },
         &policy,
         crate::store::GateWriteMode {

@@ -23,19 +23,7 @@
 //! module re-exports the whole surface, so `crate::memory::X` paths are
 //! unchanged from the flat-file era.
 
-pub mod retrieval_defaults;
-pub mod result_facet;
-pub(crate) mod checkout_access;
-pub mod speculative_limits;
-pub mod wake_observation;
 pub mod affect;
-#[cfg(feature = "sync")]
-pub mod message_presence;
-pub(crate) mod conversation_preview;
-pub mod conversation_membership;
-#[cfg(feature = "sync")]
-pub mod residence_item;
-pub(crate) mod vault_standing;
 mod answer_boundary;
 mod archive_delete_wire;
 mod archive_purge;
@@ -43,7 +31,19 @@ mod artifact_hosting_doors;
 mod asset_doors;
 mod asset_resolve;
 mod authorship;
+pub(crate) mod checkout_access;
+pub mod conversation_membership;
+pub(crate) mod conversation_preview;
 mod critical_confirm;
+#[cfg(feature = "sync")]
+pub mod message_presence;
+#[cfg(feature = "sync")]
+pub mod residence_item;
+pub mod result_facet;
+pub mod retrieval_defaults;
+pub mod speculative_limits;
+pub(crate) mod vault_standing;
+pub mod wake_observation;
 pub use critical_confirm::{
     CriticalWriteConfirmAnswer, CriticalWriteConfirmPending, CriticalWriteConfirmPendingRequest,
     CriticalWriteConfirmReceipt, CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
@@ -76,9 +76,8 @@ pub(crate) use outbound::facade_error_from_outbound_dispatch;
 pub(crate) use outbound::parse_job_ref;
 pub(crate) mod booking_publication;
 mod campaign;
-pub mod campaign_records;
-pub mod query_records;
 mod campaign_actions;
+pub mod campaign_records;
 pub mod caps;
 pub mod channel_doors;
 mod chat;
@@ -100,6 +99,7 @@ pub mod erase_sweep;
 mod export;
 mod export_audit;
 mod export_kept;
+pub mod query_records;
 // FIX 11176: a kept export read and let go through verbs.
 mod export_transfer_read;
 mod expression_preference;
@@ -150,7 +150,7 @@ mod subscriptions;
 mod support;
 mod transcript;
 pub mod usage_repair;
-pub mod web_acquisition;
+pub use oneiron_web_fetch::web_acquisition;
 mod web_fetch;
 mod witness;
 
@@ -412,8 +412,8 @@ pub use crate::vault::{
     ResolvedCitation, RevisionRef,
 };
 
-pub mod voice_actor;
 pub mod state_index;
+pub mod voice_actor;
 
 #[cfg(feature = "sync")]
 pub(crate) mod resolved_recall_scope;

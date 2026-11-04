@@ -11,7 +11,6 @@
 //! assembly); this module owns mode/tier/Scope classification, storage, and
 //! the agent-visible assembly block.
 
-pub mod task_ask_default;
 mod attendee_ask;
 mod clearance_use;
 mod disclosable_set;
@@ -19,6 +18,7 @@ mod import_audience;
 mod model_channel;
 mod room_party;
 mod scope_codec;
+pub mod task_ask_default;
 mod tier_classification;
 mod vault_agent;
 mod vault_context;
@@ -38,8 +38,8 @@ pub(crate) use self::model_channel::{
     claim_data_class, claim_handle_in, model_names_admitted_in, person_name_claim_in,
     project_model_pack_in,
 };
-pub use self::room_party::RoomParty;
-pub(crate) use self::room_party::{bound_room_party_in, is_vault_owner, room_party_in};
+pub use self::room_party::{RoomParty, RoomPartyEntry};
+pub(crate) use self::room_party::{is_vault_owner, room_party_entry_in, room_party_in};
 
 pub use self::scope_codec::{
     DISCLOSURE_SCOPE_BODY_KEYS, DISCLOSURE_SCOPE_SCHEMA_VERSION, DisclosureScope,

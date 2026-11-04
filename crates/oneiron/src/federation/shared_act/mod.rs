@@ -21,6 +21,7 @@ pub use erase_ask::{
 pub use membership::{
     OwnerRecoveryAuthorization, SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState,
 };
+pub use removal_import::{ReceivedRemovalArchive, ReceivedRemovalArchiveState};
 
 use super::FederationGrantRole as Role;
 use super::pending_act::{LiveActHolder, check_vault, decode, encode, invalid, key};

@@ -1,8 +1,8 @@
 //! Query execution options for retrieval ports, independent of storage handles.
 use super::Transactions;
-use heed::RoTxn;
 use crate::EntityId;
 use crate::error::Result;
+use heed::RoTxn;
 use oneiron_retrieval::pipeline::ScoredEntity;
 /// Scope probes are evaluated inside the caller's existing snapshot.
 pub(crate) struct TextQuery<'a> {

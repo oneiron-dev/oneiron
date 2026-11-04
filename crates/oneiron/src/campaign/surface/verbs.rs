@@ -12,29 +12,32 @@ use super::parse::{
 use super::{campaign_record_to_json, saved_query_record_to_json};
 use crate::memory::{MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 
+pub use crate::memory::campaign_records::verb_names::CAMPAIGN_PROGRAM_VERBS;
+pub use crate::memory::campaign_records::verb_names::CAMPAIGN_SELF_VERBS;
+pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_ARCHIVE;
 pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_CREATE;
+pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_LAUNCH;
+pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_MEMBERS;
 pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_READ;
 pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_UPDATE;
-pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_ARCHIVE;
-pub use crate::memory::campaign_records::verb_names::SELF_CAMPAIGN_MEMBERS;
+pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_ARCHIVE;
 pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_CREATE;
+pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_EVALUATE;
+pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_MEMBERS;
 pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_READ;
 pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_UPDATE;
-pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_ARCHIVE;
-pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_MEMBERS;
-pub use crate::memory::campaign_records::verb_names::SELF_SAVED_QUERY_EVALUATE;
+pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_ARCHIVE;
 pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_CREATE;
 pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_READ;
 pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_UPDATE;
-pub use crate::memory::campaign_records::verb_names::VAULT_CAMPAIGN_PROGRAM_ARCHIVE;
-pub use crate::memory::campaign_records::verb_names::CAMPAIGN_PROGRAM_VERBS;
-pub use crate::memory::campaign_records::verb_names::CAMPAIGN_SELF_VERBS;
 
 /// A parsed surface verb.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CampaignSurfaceVerb {
     /// [`SELF_CAMPAIGN_CREATE`].
     CampaignCreate,
+    /// [`SELF_CAMPAIGN_LAUNCH`].
+    CampaignLaunch,
     /// [`SELF_CAMPAIGN_READ`].
     CampaignRead,
     /// [`SELF_CAMPAIGN_UPDATE`].
@@ -65,8 +68,9 @@ pub enum CampaignSurfaceVerb {
 
 impl CampaignSurfaceVerb {
     /// Every verb, in the order [`CAMPAIGN_SELF_VERBS`] advertises them.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::CampaignCreate,
+        Self::CampaignLaunch,
         Self::CampaignRead,
         Self::CampaignUpdate,
         Self::CampaignArchive,
@@ -104,6 +108,7 @@ impl CampaignSurfaceVerb {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::CampaignCreate => SELF_CAMPAIGN_CREATE,
+            Self::CampaignLaunch => SELF_CAMPAIGN_LAUNCH,
             Self::CampaignRead => SELF_CAMPAIGN_READ,
             Self::CampaignUpdate => SELF_CAMPAIGN_UPDATE,
             Self::CampaignArchive => SELF_CAMPAIGN_ARCHIVE,
@@ -129,6 +134,7 @@ impl CampaignSurfaceVerb {
         matches!(
             self,
             Self::CampaignCreate
+                | Self::CampaignLaunch
                 | Self::CampaignUpdate
                 | Self::CampaignArchive
                 | Self::SavedQueryCreate
@@ -189,6 +195,11 @@ pub fn invoke_campaign_surface(
         CampaignSurfaceVerb::CampaignCreate => {
             let request = parse_create_campaign_request(&body)?;
             campaign_record_to_json(&facade.campaign_create(&request, now)?)
+        }
+        CampaignSurfaceVerb::CampaignLaunch => {
+            let campaign_ref = required_entity_ref(&body, "campaign_ref")?;
+            let expected = required_u64(&body, "expected_definition_version")?;
+            campaign_record_to_json(&facade.campaign_launch(campaign_ref, expected, now)?)
         }
         CampaignSurfaceVerb::CampaignRead => {
             let campaign_ref = required_entity_ref(&body, "campaign_ref")?;

@@ -117,7 +117,9 @@ pub struct DirtySolvedGroup {
     pub processed: u64,
 }
 
-pub use crate::dreamer_runner::maintenance::browser_candidate::{ProgramFailureRef, FailureLineage, ProgramSeen};
+pub use crate::dreamer_runner::maintenance::browser_candidate::{
+    FailureLineage, ProgramFailureRef, ProgramSeen,
+};
 
 fn cursor_bytes<const N: usize>(cursor: &PageCursor) -> Result<[u8; N]> {
     <[u8; N]>::try_from(cursor.0.as_slice()).map_err(|_| Error::InvalidClaimBody("page cursor"))
@@ -461,6 +463,10 @@ pub(crate) fn erase_dirty_actor_in_txn(
         }
     }
     for digest in taken {
+        // FIX 12085: the deleted row's lifted custody goes with it.
+        let place = format!("side:{}", DIRTY.decl().name);
+        let origin = crate::batch::secret_scan::side_row_origin(&place, &DIRTY.key_bytes(&digest))?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
         DIRTY.delete(&vault.store, wtxn, &digest)?;
     }
     Ok(())

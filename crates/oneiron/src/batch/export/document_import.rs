@@ -494,7 +494,9 @@ fn insert_ready_row<R: Read + Seek>(
             }
             if crate::write_envelope::subject_record::is_subject_model_predicate(&claim.predicate) {
                 vault.restore_subject_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-            } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&claim.predicate) {
+            } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(
+                &claim.predicate,
+            ) {
                 vault.restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else if claim.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
                 vault.restore_reliability_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
@@ -623,7 +625,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
     let (mut imported, mut withheld) = (0, 0);
     // The values custody knows, read in this writer and kept no longer
     // (KS-3): each body's sweep replaces them with their handles.
-    let swept = crate::secret_custody::KnownValues::load_in_writer(&vault.store, wtxn)?
+    let swept = crate::store::known_value_index::KnownValues::load_in_writer(&vault.store, wtxn)?
         .map(std::sync::Arc::new);
     let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
     while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {
@@ -914,9 +916,9 @@ fn withhold_unborn_projects<R: Read + Seek>(
         let (_, row) = archive
             .entity(&id)?
             .ok_or(Error::InvariantViolation("archive index lost a room"))?;
-        if let Ok(room) =
-            rmp_serde::from_slice::<crate::store::conversation_body::ProjectRoom>(&row.body.to_bytes()?)
-            && withheld.contains(&room.project_id)
+        if let Ok(room) = rmp_serde::from_slice::<crate::store::conversation_body::ProjectRoom>(
+            &row.body.to_bytes()?,
+        ) && withheld.contains(&room.project_id)
         {
             archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
         }
@@ -939,7 +941,11 @@ fn map_project_root<R: Read + Seek>(
     let Ok(kind) = vault.project_type_byte() else {
         return Ok(None);
     };
-    let Some(target) = crate::workspace_roster::root_project_in(&vault.store, txn)? else {
+    let Some(target) = vault
+        .store
+        .project_writes
+        .root_project_in(&vault.store, txn)?
+    else {
         return Ok(None);
     };
     let mut source = None;
@@ -1047,7 +1053,7 @@ fn omit_project_revisions<R: Read + Seek>(
     vault: &Vault,
     archive: &mut IndexedArchive<'_, R>,
 ) -> Result<()> {
-    let Some(kind) = crate::workspace_roster::project_revision_type(&vault.store) else {
+    let Some(kind) = crate::store::project_kind::project_revision_type(&vault.store) else {
         return Ok(());
     };
     let mut after = None;
@@ -1224,8 +1230,14 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
                 refs.extend(crate::actor_claims::imported_actor_dependencies(&body)?);
             }
-            if body.predicate == crate::write_envelope::subject_record::PREDICATE_ACTOR_SUBJECT_REF {
-                refs.push(crate::write_envelope::subject_record::validate_actor_subject_claim_structure(&body)?.1);
+            if body.predicate == crate::write_envelope::subject_record::PREDICATE_ACTOR_SUBJECT_REF
+            {
+                refs.push(
+                    crate::write_envelope::subject_record::validate_actor_subject_claim_structure(
+                        &body,
+                    )?
+                    .1,
+                );
             }
             refs
         }
@@ -1237,11 +1249,9 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             .forked_from
             .into_iter()
             .collect(),
-        ENTITY_TYPE_CONVERSATION => crate::workspace_roster::project_room_dependency(bytes)
-            .into_iter()
-            .collect(),
+        ENTITY_TYPE_CONVERSATION => super::project_room_dependency(bytes).into_iter().collect(),
         ENTITY_TYPE_WORKFLOW => {
-            let definition = crate::agent_def::workflow::decode_workflow(bytes)?;
+            let definition = crate::store::workflow_definition::decode_workflow(bytes)?;
             definition
                 .steps
                 .into_iter()
@@ -1312,10 +1322,12 @@ pub(super) fn import_edge(
     }
     let vad = edge
         .vad
-        .map_or(oneiron_contracts::affect::Vad::NEUTRAL, |v| oneiron_contracts::affect::Vad {
-            valence: v[0],
-            arousal: v[1],
-            dominance: v[2],
+        .map_or(oneiron_contracts::affect::Vad::NEUTRAL, |v| {
+            oneiron_contracts::affect::Vad {
+                valence: v[0],
+                arousal: v[1],
+                dominance: v[2],
+            }
         });
     // The stream alone creates this kind (FIX 5972): an archived link comes
     // back through the internal write, with its own value fields, only once

@@ -12,7 +12,6 @@ use super::{OPENED, VaultPageSeal, vault_is_sealed};
 use crate::error::Result;
 use crate::world_keys::refused;
 
-
 thread_local! {
     /// The page key the read-only door opens one sealed vault with on this
     /// thread, by canonical root, for the length of one read ([`read_sealed`]).
@@ -73,11 +72,11 @@ pub(crate) fn read_sealed<T>(
         return read();
     };
     let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let _restore = Restore(
-        READING.with(|reading| reading.replace(Some((canonical, Arc::clone(&seal.page_key))))),
-    );
+    let _restore =
+        Restore(READING.with(|reading| {
+            reading.replace(Some((canonical, Arc::clone(seal.shared_page_key()))))
+        }));
     read()
 }
-
 
 pub(crate) use crate::key_material::page_seal_open_error;

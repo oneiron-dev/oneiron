@@ -10,7 +10,8 @@ use super::consent::ConsentRequirement;
 pub const CAMPAIGN_COMPLIANCE_PACK_ID: &str = "crm.compliance.v1";
 
 /// The bootstrap seed. It is the active pack only while the vault holds none.
-pub const CAMPAIGN_COMPLIANCE_SEED_JSON: &str = include_str!("../../campaign/compliance/seed_v1.json");
+pub const CAMPAIGN_COMPLIANCE_SEED_JSON: &str =
+    include_str!("../../campaign/compliance/seed_v1.json");
 
 /// Predicate of the CA-owned dispatch-evidence claim, written on the PERSON.
 ///
@@ -209,6 +210,9 @@ pub struct CompliancePack {
     /// Minimum jurisdiction-claim confidence, in thousandths, below which the
     /// observation is not trusted and the unknown disposition applies.
     pub jurisdiction_confidence_floor_millis: u16,
+    /// Complaint rate in parts per million at which a named campaign pauses;
+    /// owner-amendable pack data. Zero pauses at the first aggregate reading.
+    pub campaign_complaint_pause_threshold_ppm: u32,
     /// List-provenance classes that are themselves a violation.
     pub prohibited_list_provenance_classes: Vec<String>,
     /// Which evidence each jurisdiction's conditional rows demand.

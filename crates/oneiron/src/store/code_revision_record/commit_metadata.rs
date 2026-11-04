@@ -1,8 +1,8 @@
 //! Authorship, message and file modes are canonical revision data, not export input.
+use crate::store::code_commit_metadata::CodeCommitMetadata;
 use crate::{EntityId, Error, Result};
 use rmpv::Value;
 use std::collections::BTreeMap;
-use crate::store::code_commit_metadata::CodeCommitMetadata;
 fn invalid() -> Error {
     Error::InvalidClaimBody("invalid canonical code commit metadata")
 }
@@ -12,7 +12,8 @@ pub(crate) fn validate(revision: &super::CodeRevision) -> Result<()> {
     };
     if meta.message.len() > 64 * 1024
         || meta.message.contains('\0')
-        || crate::store::repo_provenance_trailer::parse_repo_provenance_trailer(&meta.message)?.is_some()
+        || crate::store::repo_provenance_trailer::parse_repo_provenance_trailer(&meta.message)?
+            .is_some()
         || meta.file_modes.iter().any(|(id, mode)| {
             !revision.file_frontiers.contains_key(id)
                 || !matches!(*mode, 0o100644 | 0o100755 | 0o120000)
@@ -26,7 +27,9 @@ pub(crate) fn validate(revision: &super::CodeRevision) -> Result<()> {
 pub(crate) fn to_value(meta: Option<&CodeCommitMetadata>) -> Value {
     meta.map_or(Value::Nil, |m| {
         Value::Array(vec![
-            Value::Binary(m.author.as_bytes().to_vec()),
+            m.author.map_or(Value::Nil, |author| {
+                Value::Binary(author.as_bytes().to_vec())
+            }),
             Value::from(m.message.clone()),
             Value::Array(
                 m.file_modes
@@ -47,7 +50,11 @@ pub(crate) fn from_value(value: &Value) -> Result<Option<CodeCommitMetadata>> {
         .as_array()
         .filter(|f| f.len() == 3)
         .ok_or_else(invalid)?;
-    let author = super::codec::entity_value(&fields[0], "author")?;
+    let author = if fields[0].is_nil() {
+        None
+    } else {
+        Some(super::codec::entity_value(&fields[0], "author")?)
+    };
     let message = fields[1].as_str().ok_or_else(invalid)?.to_owned();
     let mut file_modes = BTreeMap::new();
     for pair in fields[2].as_array().ok_or_else(invalid)? {

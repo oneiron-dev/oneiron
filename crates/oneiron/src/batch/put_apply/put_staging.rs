@@ -47,7 +47,12 @@ pub(in crate::batch) fn stage_entity_body_row(
     if entity_type == crate::registry::ENTITY_TYPE_NOTE && !data.is_empty() {
         crate::note::validate_registered_kind(store, wtxn, data)?;
     }
-    crate::store::identity_hints::reindex_identity_hints(store, wtxn, id, Some((entity_type, data)))?;
+    crate::store::identity_hints::reindex_identity_hints(
+        store,
+        wtxn,
+        id,
+        Some((entity_type, data)),
+    )?;
     crate::ports::reindex_named_entities(store, wtxn, id, Some((entity_type, data)))?;
     let mut payload = RowEnvelope(Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len()));
     payload.0.push(entity_type);
@@ -267,10 +272,12 @@ pub(super) fn stage_project_put(
     replicated: bool,
     posture: crate::HostingPrivacyPosture,
 ) -> Result<Option<Vec<u8>>> {
-    let project = if crate::workspace_roster::is_project_type(store, entity_type) {
-        Some(crate::workspace_roster::normalize_project_body(
-            store, txn, id, data, posture,
-        )?)
+    let project = if crate::store::project_kind::is_project_type(store, entity_type) {
+        Some(
+            store
+                .project_writes
+                .normalize_project_body(store, txn, id, data, posture)?,
+        )
     } else {
         None
     };
@@ -484,15 +491,15 @@ pub(super) fn validate_scope_carriers(
     if entity_type == crate::registry::ENTITY_TYPE_FACET {
         super::super::facet_identity::validate_facet_overwrite(store, wtxn, id, data)?;
     }
-    if crate::workspace_roster::is_project_type(store, entity_type) {
-        for referenced in crate::workspace_roster::validate_project_body(id, data)? {
+    if crate::store::project_kind::is_project_type(store, entity_type) {
+        for referenced in store.project_writes.validate_project_body(id, data)? {
             super::reject_overlay_member_base_write(store, &referenced, context.origin)?;
         }
         // Live writes prove the signed leader or board authority at the door.
         // Replay stops at structure (ARCH-0040 ONE-AUTHLOG-F2): its authority
         // is judged by the project read fold, which quarantines, never refuses.
         if !context.replicated {
-            crate::workspace_roster::validate_project_transition(
+            store.project_writes.validate_project_transition(
                 store,
                 wtxn,
                 id,
@@ -501,10 +508,14 @@ pub(super) fn validate_scope_carriers(
                 context.posture,
             )?;
         }
-        crate::workspace_roster::note_project_proof(store, wtxn, id, entity_type, data)?;
+        store
+            .project_writes
+            .note_project_proof(store, wtxn, id, entity_type, data)?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
-        crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;
+        store
+            .project_writes
+            .validate_room_body(store, wtxn, id, data)?;
     }
     Ok(())
 }

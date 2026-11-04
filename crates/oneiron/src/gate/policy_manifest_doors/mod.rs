@@ -28,11 +28,11 @@ pub use types::*;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
-use crate::memory::{Memory};
-use oneiron_contracts::memory::{MemoryError, MemoryResult};
+use crate::memory::Memory;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 use super::decision::GateOutcome;
 use super::input::{GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles};
@@ -51,6 +51,7 @@ const FIELDS: &[&str] = &[
     "signature",
     "signatures",
     "auto_checker",
+    "slide_review_policy",
 ];
 
 fn invalid(message: &str) -> Error {

@@ -2,13 +2,13 @@ use super::*;
 
 use heed::RwTxn;
 
-use oneiron_contracts::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ppr;
 use crate::store::Store;
 use crate::write_envelope::ClaimCandidate;
+use oneiron_contracts::affect::Vad;
 
 pub(super) struct AppliedClaimCandidate {
     pub(super) had_graph_mutation: bool,
@@ -36,6 +36,7 @@ pub(super) fn apply_claim_candidate(
         indexing,
         write_policy,
         owner_authored,
+        pending_prompt,
     } = request;
     crate::write_envelope::validate_write_envelope(envelope)?;
     let (analyzer, text_index_trusted) = birth_context;
@@ -46,10 +47,14 @@ pub(super) fn apply_claim_candidate(
             .ok_or(Error::EntityNotFound)?;
     let actor_header =
         EntityMetadataHeader::parse(&actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    crate::write_envelope::provenance::actor_substrate::validate_actor_class(actor_header.entity_type, actor.actor_class())?;
+    crate::write_envelope::provenance::actor_substrate::validate_actor_class(
+        actor_header.entity_type,
+        actor.actor_class(),
+    )?;
 
     let subject = candidate.subject();
-    if candidate.predicate() == crate::write_envelope::world_access_predicates::PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
+    if candidate.predicate()
+        == crate::write_envelope::world_access_predicates::PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
         && subject != crate::write_envelope::claim_body::ClaimSubject::Entity(actor.entity_ref())
     {
         return Err(Error::InvalidClaimBody(
@@ -143,6 +148,7 @@ pub(super) fn apply_claim_candidate(
                 transition: None,
                 posture: config.privacy.posture,
                 owner_authored,
+                pending_prompt: pending_prompt.as_deref(),
             },
         },
     )?;

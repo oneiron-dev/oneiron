@@ -7,10 +7,10 @@ use crate::consent::AuthenticatedOwner;
 use crate::edit_roundtrip::deck_create::{
     DeckCreateError, DeckCreateOutcome, DeckCreateRequest, DirectionOutcome,
 };
-use crate::memory::{Memory, resolve_entity_ref};
-use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use crate::file_secret_marks::SecretSight;
+use crate::memory::{Memory, resolve_entity_ref};
 use crate::typed_body::LiftedSources;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use oneiron_docedit::design_plan::Brief;
 use oneiron_docedit::emit::Names;
 use serde::de::DeserializeOwned;
@@ -509,7 +509,7 @@ impl Memory<'_> {
             } else {
                 crate::file_secret_marks::SecretSight::Masked
             };
-            let sighted = crate::secret_custody::sighted_bytes_in_txn(
+            let sighted = crate::store::file_key_masks::sighted_bytes_in_txn(
                 &self.vault().store,
                 txn,
                 bytes,

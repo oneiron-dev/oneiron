@@ -28,13 +28,13 @@ use heed::types::Bytes;
 use heed::{Env, RoTxn, RwTxn};
 
 use crate::error::{Error, Result, StoreError};
-use crate::store::restore_admission::Rejected;
-use crate::store::restore_admission::RestoreAdmissionReason as R;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::key_custody::{
     self, CustodyBinding, CustodyPlan, ForkedCustodyDir, LocalCustody, Requirement,
     decode_native_path, encode_native_path,
 };
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
 #[cfg(unix)]
 use crate::store::root_directory::{
     FileIdentity, file_identity, named_directory_identity, refuse_shared_vault_root,
@@ -287,7 +287,7 @@ pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
 /// parts are taken for the generations `copy` does not keep (FIX 11824).
 pub(crate) fn read_live_custody(
     vault_dir: &Path,
-    page_seal: Option<&crate::world_keys::VaultPageSeal>,
+    page_seal: Option<&oneiron_store::vault_page_seal::VaultPageSeal>,
     copy: &CopyGenerations,
 ) -> Result<LiveCustody> {
     // A shared directory on the source's path is no reason to refuse: the

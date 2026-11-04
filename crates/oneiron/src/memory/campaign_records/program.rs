@@ -15,14 +15,14 @@
 use serde::{Deserialize, Serialize};
 
 use super::CampaignLifecycle;
-use crate::error::Error;
-use crate::write_envelope::cohort_claims::normalize_campaign_pack_token;
 use super::program_definition::{
     AuthoredCampaignProgram, CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, CampaignProgramAudience,
     CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStep, CampaignProgramStepDraft,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::error::Error;
 use crate::error::Result;
+use crate::write_envelope::cohort_claims::normalize_campaign_pack_token;
 
 /// The step slots a program write cites records in. Each must resolve under
 /// the writer's own scoped read (OF-063's admission). The facade checks them,
@@ -106,7 +106,7 @@ pub struct CampaignProgramAudienceSpec {
 /// `vault.campaign.program.create`'s input.
 ///
 /// There is no owner field: the program's owner is its campaign's, and the
-/// campaign must be the caller's own and active.
+/// campaign must be the caller's own and Draft, Active or Paused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateCampaignProgramRequest {
@@ -186,12 +186,17 @@ pub struct ArchiveCampaignProgramRequest {
     pub expected_definition_version: u64,
 }
 
-/// A program's lifecycle on the wire.
+/// A program's lifecycle on the wire. Draft and Paused are the FIX 12542
+/// lifecycle states; neither is ever presented as Active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CampaignProgramLifecycle {
+    /// Authored but not launched: editable, automatic_intake=false.
+    Draft,
     /// Enrolls from its audience.
     Active,
+    /// Held by a campaign pause: editable, automatic_intake=false.
+    Paused,
     /// Retired: readable, enrolls no one, never re-opened.
     Archived,
 }
@@ -365,7 +370,9 @@ pub(crate) fn campaign_program_record(program: &AuthoredCampaignProgram) -> Camp
             name: program.definition.name.clone(),
             definition_version: program.definition.definition_version,
             lifecycle: match program.definition.lifecycle {
+                CampaignLifecycle::Draft => CampaignProgramLifecycle::Draft,
                 CampaignLifecycle::Active => CampaignProgramLifecycle::Active,
+                CampaignLifecycle::Paused => CampaignProgramLifecycle::Paused,
                 CampaignLifecycle::Archived => CampaignProgramLifecycle::Archived,
             },
             steps: program

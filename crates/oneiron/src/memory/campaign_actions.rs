@@ -3,19 +3,23 @@
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::batch::{ApplyOpsGateMode, BatchOp};
-use crate::write_envelope::cohort_claims::{CampaignMemberChannel, CampaignMemberState, CampaignMemberValue, EvidenceBasis, normalize_campaign_pack_token};
-use crate::write_envelope::cohort_claims::ladder::ExternalStageEvidenceHook;
-use crate::write_envelope::cohort_claims::ladder::StageEvidence;
-use crate::memory::campaign_records::stage_results::StageProjectResult;
-use crate::memory::campaign_records::{
-    CampaignActionProvenance, CampaignEnrollRequest, CampaignEnrollmentReceipt, CampaignEnrollmentState,
-    CampaignLifecycle, CampaignMemberChannelSpec, CampaignStageEvidenceOutcome, CampaignStageEvidenceReceipt,
-    CampaignStageEvidenceRequest, CampaignUnsubscribeReceipt, CampaignUnsubscribeRequest,
-};
 use crate::campaign::surface::{campaign_type_byte, owned_campaign_in_txn};
 use crate::claim::{ClaimApprovalStatus, ClaimReadStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
+use crate::memory::campaign_records::stage_results::StageProjectResult;
+use crate::memory::campaign_records::{
+    CampaignActionProvenance, CampaignEnrollRequest, CampaignEnrollmentReceipt,
+    CampaignEnrollmentState, CampaignLifecycle, CampaignMemberChannelSpec,
+    CampaignStageEvidenceOutcome, CampaignStageEvidenceReceipt, CampaignStageEvidenceRequest,
+    CampaignUnsubscribeReceipt, CampaignUnsubscribeRequest,
+};
 use crate::temporal::TimeRange;
+use crate::write_envelope::cohort_claims::ladder::ExternalStageEvidenceHook;
+use crate::write_envelope::cohort_claims::ladder::StageEvidence;
+use crate::write_envelope::cohort_claims::{
+    CampaignMemberChannel, CampaignMemberState, CampaignMemberValue, EvidenceBasis,
+    normalize_campaign_pack_token,
+};
 use crate::{EntityId, Error};
 use std::sync::atomic::Ordering;
 
@@ -387,7 +391,7 @@ fn require_campaign_person(
     )?;
     if active && record.definition.lifecycle != CampaignLifecycle::Active {
         return Err(MemoryError::bad_request(
-            "an archived campaign cannot advance stages",
+            "a campaign that is not active (draft, paused or archived) cannot advance stages",
         ));
     }
     if memory.vault.get_entity_type_in_txn(txn, &person)?

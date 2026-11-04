@@ -12,32 +12,33 @@
 //! derivation and row encode/decode; `telemetry` holds the per-vault cleanup
 //! counters and span emission.
 
-pub mod maintenance_predicate;
 mod annotation_hold;
-pub mod turn_action_kind;
 mod borrowed_lease;
+pub mod browser_admission;
 mod budget_hold;
 mod cancel;
 mod completion;
-pub mod run_signal;
+pub mod dispatch_payload;
 mod encoding;
 mod engine;
 mod executor;
 mod fanout_hold;
 mod index;
+mod kind_payload_erase;
+pub mod maintenance_predicate;
 mod observe;
-pub mod browser_admission;
 mod payload_erase;
 mod payload_rebind;
 mod ports;
 mod read_set;
-pub mod source_rows;
-pub mod skill_edit_cycle;
 mod result;
+pub mod run_signal;
 mod settlement;
+pub mod skill_edit_cycle;
+pub mod source_rows;
 mod telemetry;
+pub mod turn_action_kind;
 mod types;
-pub mod dispatch_payload;
 mod validate;
 #[cfg(test)]
 pub(crate) use validate::validate_lease_owner;
@@ -77,6 +78,7 @@ pub use types::{
 };
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
+pub(crate) use kind_payload_erase::erase_kind_payloads_in_txn;
 pub(crate) use payload_erase::{
     attempt_payload_family, attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
     erase_attempt_payload_actor_in_txn, erase_attempt_payload_actors_in_txn,

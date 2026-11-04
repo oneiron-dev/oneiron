@@ -20,9 +20,9 @@ use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound::OutboundIntent;
-use crate::store::{EngineScan};
-use crate::scan_check::{ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::EngineScan;
 use crate::store::{SEND_RECEIPT_RECORD_VERSION, Store};
 
 /// `vault_meta` keyspace of the attempt PACK RECEIPT ledger. The suffix is the
@@ -381,6 +381,25 @@ pub(crate) fn durable_send_receipts(vault: &Vault) -> Result<(Vec<ReceiptRecord>
         }
     }
     Ok((records, undecodable))
+}
+
+/// Every durable send receipt that decodes, each with its TASK id, and the
+/// TASK id of each row that does not, so one bad row never hides the
+/// receipts beside it. Only a store failure fails the scan.
+pub(crate) fn durable_send_receipts_lenient(
+    vault: &Vault,
+) -> Result<(Vec<(EntityId, ReceiptRecord)>, Vec<EntityId>)> {
+    let mut receipts = Vec::new();
+    let mut undecodable = Vec::new();
+    for (task_id, raw) in vault.store.send_receipt_rows()? {
+        // The row's key is the TASK id the ledger stored it under.
+        let task_ref = EntityId::from_bytes_unchecked(task_id);
+        match decode_durable_send_receipt(&task_id, &raw) {
+            Ok(durable) => receipts.push((task_ref, durable.receipt)),
+            Err(_) => undecodable.push(task_ref),
+        }
+    }
+    Ok((receipts, undecodable))
 }
 
 /// Builds an outbound receipt row from the OF-327 intent spine.

@@ -21,12 +21,13 @@ use super::paths::{
 use super::retained_reasons::{RetainedReasons, bounded_verdict_line};
 use super::secret_marks::{ReceiveSecretMarks, ReceiveSecretMarksBuilder, ReceiveSeen};
 use crate::Vault;
-use crate::store::code_snapshot::RepoRef;
-use crate::credential_door::{CredentialDoorService, DoorScanVerdict};
-use crate::receive_scan::PushedBlob;
+use crate::credential_door::CredentialDoorService;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName};
 use crate::origin::lfs::LfsPushedPointer;
+use crate::origin::receive_scan_verdict::DoorScanVerdict;
+use crate::receive_scan::PushedBlob;
+use crate::store::code_snapshot::RepoRef;
 
 /// What the door answered while the objects were quarantined.
 #[derive(Debug, Clone, PartialEq, Eq)]

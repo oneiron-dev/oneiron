@@ -90,7 +90,9 @@ impl<'a> GatedDeletion<'a> {
         self.owner_act
     }
 
-    pub(super) fn room_authority(&self) -> Option<(EntityId, crate::store::conversation_body::RoomRole)> {
+    pub(super) fn room_authority(
+        &self,
+    ) -> Option<(EntityId, crate::store::conversation_body::RoomRole)> {
         Some((self.context.room?, self.context.room_role?))
     }
 
@@ -99,7 +101,7 @@ impl<'a> GatedDeletion<'a> {
     /// with no room passed the owner binding this gate carries.
     pub(super) fn hold_actor(&self) -> crate::store::legal_hold::HoldActor {
         use crate::deletion::LegalHoldActorKind as Kind;
-        use crate::federation::ArchiveDeleteRole as Role;
+        use crate::deletion::archive_role::ArchiveDeleteRole as Role;
         let kind = match (self.context.actor_class, self.context.room_role) {
             (EdgeActorClass::Agent, _) => Kind::Agent,
             (EdgeActorClass::System, _) => Kind::Unattributed,

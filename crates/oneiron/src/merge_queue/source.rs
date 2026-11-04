@@ -16,20 +16,19 @@ use super::check_store::{CHECK_CONFIGS, CHECK_WORK, QueueCheckConfiguration, Que
 use super::source_types::{QUEUE_SOURCE_DIR, QUEUE_SOURCE_LEAF, ServedQueueSource};
 use super::storage::{BATCHES, QUEUE_STATE};
 use super::{MergeQueue, QueueCheckRequest, QueueDriverTarget};
-use crate::{
-    store::{
-        code_import_manifest::CodeImportManifest,
-        code_revision_record::CodeTreeInventory,
-        code_import_manifest::IMPORT_MANIFEST_PREDICATE,
-    },
-    code_revision::import_snapshot_custody_in_txn,
-    store::code_import_manifest::{manifest_digest, manifest_id},
-};
-use crate::store::code_snapshot::RepoRef;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitRefName, GitWire, GitWireRepo};
+use crate::store::code_snapshot::RepoRef;
 use crate::{EntityId, Vault};
+use crate::{
+    code_revision::import_snapshot_custody_in_txn,
+    store::code_import_manifest::{manifest_digest, manifest_id},
+    store::{
+        code_import_manifest::CodeImportManifest, code_import_manifest::IMPORT_MANIFEST_PREDICATE,
+        code_revision_record::CodeTreeInventory,
+    },
+};
 
 /// The refusal of a served repository's queue door before any init bound
 /// its source.
@@ -89,6 +88,23 @@ pub(crate) fn queue_source_root(vault: &Vault, store: &str) -> Result<PathBuf> {
 }
 
 impl Vault {
+    /// The host-local directory the queue checker records each guest it
+    /// starts in until that guest ends (FIX 7233): `<vault env>/merge-queue/
+    /// guests`. A record left there names a guest a stopped host never
+    /// ended; the next pass resolves it by name before work is queued again.
+    ///
+    /// # Errors
+    /// A vault environment path that does not resolve.
+    pub fn queue_check_guest_dir(&self) -> Result<PathBuf> {
+        Ok(self
+            .store
+            .env
+            .path()
+            .canonicalize()?
+            .join(QUEUE_SOURCE_DIR)
+            .join("guests"))
+    }
+
     /// Object store `store`'s checked configuration, read by its key: no
     /// root opens, so an init's need stays readable before its source.
     ///

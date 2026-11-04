@@ -1,7 +1,7 @@
 //! Validate source identities, facet/body agreement and explicit archive-only omissions.
 use super::archive_index::{self, IndexedArchive, Loc, Section, Tag, edge_key};
 use super::*;
-use crate::agent_def::KnowledgeFormat;
+use crate::batch::export::agent_knowledge_format::KnowledgeFormat;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{
@@ -30,7 +30,9 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             if let Some(tree) = &bundle.source_tree {
                 tree.validate_in(&self.files)?;
                 if let Some(hash) = &tree.content_hash {
-                    let body = crate::write_envelope::skill_record::decode_skill_record(&bundle.entity.body.to_bytes()?)?;
+                    let body = crate::write_envelope::skill_record::decode_skill_record(
+                        &bundle.entity.body.to_bytes()?,
+                    )?;
                     if body.content_hash.map(|h| h.to_hex()).as_ref() != Some(hash) {
                         return Err(invalid("skill source hash disagrees with its native row"));
                     }
@@ -156,7 +158,8 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             let (_, row) = self
                 .entity(&id)?
                 .ok_or(Error::InvariantViolation("archive index lost a skill"))?;
-            if let Ok(record) = crate::write_envelope::skill_record::decode_skill_record(&row.body.to_bytes()?)
+            if let Ok(record) =
+                crate::write_envelope::skill_record::decode_skill_record(&row.body.to_bytes()?)
                 && record.skill_id == skill_id
             {
                 skills.push((id, record));
@@ -429,7 +432,7 @@ fn agent_omissions(
         let available = document_import::parse_id(entity_id)
             .ok()
             .is_some_and(|child| {
-                crate::agent_def::birth_source_id(&child)
+                crate::store::agent_birth_identity::birth_source_id(&child)
                     .ok()
                     .and_then(|carrier| birth(&carrier))
                     .is_some_and(|bytes| {
@@ -639,8 +642,8 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
             if matches!(
                 predicate,
                 Some(
-                    crate::skill_hub::PREDICATE_SKILL_HUB_PROVENANCE
-                        | crate::skill_hub::PREDICATE_SKILL_SCAN_VERDICT
+                    crate::store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE
+                        | crate::store::skill_hub_predicates::PREDICATE_SKILL_SCAN_VERDICT
                 )
             ) {
                 Some(ImportOmissionReason::ForeignSkillSignalNotRestored)
@@ -651,7 +654,9 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
                 Some("actor.peer_binding" | "actor.confidence_prior" | "actor.stamp_token")
             ) {
                 Some(ImportOmissionReason::LocalActorConfigurationNotRestored)
-            } else if predicate.is_some_and(crate::write_envelope::learning_predicate::is_learning_predicate) {
+            } else if predicate
+                .is_some_and(crate::write_envelope::learning_predicate::is_learning_predicate)
+            {
                 Some(ImportOmissionReason::LearningCellsRebuiltFromReceipts)
             } else {
                 None

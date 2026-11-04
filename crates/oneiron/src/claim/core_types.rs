@@ -10,14 +10,14 @@
 use rmpv::Value;
 
 use super::*;
+use crate::error::{Error, Result};
+use crate::serialize::pack_format::FieldProfile;
+#[cfg(test)]
+use crate::temporal::TimeRange;
 use crate::write_envelope::{
     affect_trigger::{AFFECT_TRIGGER_PREDICATE, validate_affect_trigger_claim_structure},
     coping_outcome::{COPING_OUTCOME_PREDICATE, validate_coping_outcome_claim_structure},
 };
-use crate::serialize::pack_format::FieldProfile;
-use crate::error::{Error, Result};
-#[cfg(test)]
-use crate::temporal::TimeRange;
 
 pub use crate::write_envelope::claim_body::{
     CLAIM_BODY_KEYS, ClaimBody, ClaimSubject, CursorSpan, EvidenceKind, EvidenceRef,
@@ -93,18 +93,25 @@ pub(crate) fn validate_claim_body_and_decode(
         validate_coreference_status_claim_structure(&body)?;
     } else if body.predicate == PREDICATE_COREFERENCE_SHARE_CONSENT {
         validate_coreference_share_consent_claim_structure(&body)?;
-    } else if body.predicate == crate::write_envelope::identity_pair::PREDICATE_ENTITY_DISTINCT_FROM {
+    } else if body.predicate == crate::write_envelope::identity_pair::PREDICATE_ENTITY_DISTINCT_FROM
+    {
         crate::write_envelope::identity_pair::validate_distinct_from_claim_structure(&body)?;
     } else if crate::write_envelope::thread_claim::is_thread_claim_predicate(&body.predicate) {
         crate::write_envelope::thread_claim::validate_thread_claim_structure(&body)?;
-    } else if crate::write_envelope::channel_identity::is_channel_identity_claim_predicate(&body.predicate) {
+    } else if crate::write_envelope::channel_identity::is_channel_identity_claim_predicate(
+        &body.predicate,
+    ) {
         crate::channel_identity::validate_channel_identity_claim_structure(&body)?;
     } else if crate::channel_identity_provider::is_line_chat_observation_claim_predicate(
         &body.predicate,
     ) {
         crate::channel_identity_provider::validate_line_chat_observation_claim_structure(&body)?;
-    } else if crate::write_envelope::identity_reputation::is_identity_reputation_claim_predicate(&body.predicate) {
-        crate::write_envelope::identity_reputation::validate_identity_reputation_claim_structure(&body)?;
+    } else if crate::write_envelope::identity_reputation::is_identity_reputation_claim_predicate(
+        &body.predicate,
+    ) {
+        crate::write_envelope::identity_reputation::validate_identity_reputation_claim_structure(
+            &body,
+        )?;
     } else if crate::provider_confidence::is_actor_confidence_prior_claim_predicate(&body.predicate)
     {
         crate::provider_confidence::validate_actor_confidence_prior_claim_structure(&body)?;
@@ -127,7 +134,14 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::commitment::validate_commitment_claim_structure(&body)?;
     } else if crate::calendar::claims::is_calendar_claim_predicate(&body.predicate) {
         crate::calendar::claims::validate_calendar_claim_structure(&body)?;
-    } else if crate::write_envelope::cohort_claims::is_campaign_pack_claim_predicate(&body.predicate) {
+    } else if crate::comm::is_compiled_generic_claim_predicate(&body.predicate) {
+        // A class the build compiles as `generic` is checked against its own
+        // descriptor (ARCH-0057's one registry arm), ahead of the family
+        // arms below.
+        crate::comm::check_claim_against_compiled_descriptor(&body)?;
+    } else if crate::write_envelope::cohort_claims::is_campaign_pack_claim_predicate(
+        &body.predicate,
+    ) {
         // EXACT-predicate match, deliberately ahead of the `comm.` family: the
         // CRM pack owns `comm.do_not_contact` / `comm.bounce` /
         // `comm.jurisdiction` while `comm.rs` keeps `comm.opt_out` and friends.
@@ -143,7 +157,9 @@ pub(crate) fn validate_claim_body_and_decode(
         // would silently adopt every future booking predicate. The lifecycle
         // heads are validated here too, so none breaks a read (FIX 5994).
         crate::booking::validate_booking_family_claim(&body)?;
-    } else if crate::write_envelope::voice_segment::is_voice_segment_claim_predicate(&body.predicate) {
+    } else if crate::write_envelope::voice_segment::is_voice_segment_claim_predicate(
+        &body.predicate,
+    ) {
         crate::write_envelope::voice_segment::validate_voice_segment_claim_structure(&body)?;
     } else if crate::claim::reaction_record::is_reaction_claim_predicate(&body.predicate) {
         crate::claim::reaction_record::validate_reaction_claim_structure(&body)?;

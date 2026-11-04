@@ -33,7 +33,7 @@ pub(crate) mod asset_body;
 pub mod bridge;
 pub mod carrier;
 pub(crate) mod carrier_holds;
-pub(crate) mod carrier_parts;
+pub(crate) use crate::room_codec::carrier_parts;
 pub(crate) mod checkpoint_payload;
 pub mod chunks;
 pub mod client;
@@ -62,10 +62,11 @@ pub mod queue;
 pub mod quota;
 pub(crate) mod receipt_ingest;
 pub mod replay;
+pub(crate) mod repo_manifests;
 pub mod residence;
 pub mod residence_operation_budgets;
 pub(crate) mod room_facts;
-mod room_parts;
+pub(crate) use crate::room_codec::room_parts;
 pub(crate) mod room_turns;
 pub(crate) mod row_birth;
 pub mod schema;
@@ -81,10 +82,13 @@ pub mod window;
 pub(crate) mod window_rows;
 pub(crate) mod withdrawn_cutoffs;
 
-pub use asset_body::session::{ASSET_BODY_FRAMES_PER_POLL, AssetBodyPeer, AssetBodySession};
+pub use asset_body::session::{
+    ASSET_BODY_FRAMES_PER_POLL, AssetBodyLane, AssetBodyPeer, AssetBodySession,
+};
 pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncStream};
 pub use client::{
-    ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined, EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
+    ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
+    EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
     ResidenceSearch, SealedBundleRelay, SearchSource, SyncClient, SyncClientConfig, SyncEvent,
     SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
 };
@@ -94,6 +98,7 @@ pub use connection::{
 };
 pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;
+pub use ingest::with_own_device_push;
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,
@@ -121,9 +126,9 @@ pub use residence::{
     DeviceSyncPreference, discover_local_window_keys, effective_residence_mode,
     load_device_sync_preference, prune_thin_items, record_item_touch, set_device_sync_preference,
 };
+pub use selector::GuestDocumentShareRequest;
 #[cfg(feature = "test-hooks")]
 pub use selector::put_selector_test_federation_grant;
-pub use selector::GuestDocumentShareRequest;
 pub use selector::{
     DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole, PeerConfidence, RequestedAxis,
     SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,

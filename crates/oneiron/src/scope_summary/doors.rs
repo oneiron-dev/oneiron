@@ -4,36 +4,35 @@ use super::codec::{
     ScopeSummaryBody, SummarySourceMessage, SummarySourceNote, decode_scope_summary_body,
     encode_scope_summary_body, invalid, scope_value,
 };
-use oneiron_contracts::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
 use crate::conversation_dag::{
-    actor_in_txn,
-    admit_append_prose, append_in_txn, append_references, conversation_of, edge_ids,
+    actor_in_txn, admit_append_prose, append_in_txn, append_references, conversation_of, edge_ids,
     is_sub_session_record, prove_branch_anchor, prove_branch_span, receipt_append_refusal,
     require_append_references_in_txn, require_type, resolve_in_txn,
 };
-use crate::store::conversation_record::APPEND_ROW;
-use crate::store::conversation_record::AppendFailure;
-use crate::store::conversation_record::{AppendRecord, ScopePath, ScopeSelector};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::memory::Memory;
-use oneiron_contracts::memory::MemoryError;
-use crate::store::row_birth::RowBirth;
-use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
     ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
+use crate::store::conversation_record::APPEND_ROW;
+use crate::store::conversation_record::AppendFailure;
+use crate::store::conversation_record::{AppendRecord, ScopePath, ScopeSelector};
+use crate::store::row_birth::RowBirth;
 use crate::write_envelope::claim_body::ClaimSubject;
+use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::{
     ClaimCandidate, EntityId, TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::affect::Vad;
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
+use oneiron_contracts::memory::MemoryError;
 use rmpv::Value;
 
 mod note_versions;
@@ -273,6 +272,16 @@ pub(crate) fn merge_summary_ref(
     )
     .map_err(|_| invalid("invalid header summary id"))?;
     Ok(Some((turn, summary)))
+}
+
+/// Whether TURN `bytes` need a summary-cover read (FIX 11000): true when a
+/// reply summary is present OR the association is malformed. Self-contained
+/// strict wrapper over `codec::reply_summary` so anchor capture needs no
+/// visibility widening: `false` proves no Vault cover is needed, `true`
+/// (present or malformed) means incomplete anchors. Infallible by mapping
+/// malformed to `true`.
+pub(crate) fn turn_needs_summary_cover(bytes: &[u8]) -> bool {
+    !matches!(super::codec::reply_summary(bytes), Ok(None))
 }
 
 /// A scope's resolved membership, and the records a summary of it reads.

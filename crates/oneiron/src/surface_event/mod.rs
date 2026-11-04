@@ -9,6 +9,7 @@
 use crate::error::{Error, Result};
 
 mod cc_intake;
+mod comm_intake;
 mod connector_bridge;
 mod handoff;
 pub use cc_intake::CcAgentIntakeOutcome;
@@ -18,7 +19,9 @@ pub use connector_bridge::{
 };
 mod inbound;
 mod provider_payload;
+mod stop_reply;
 pub use self::provider_payload::PROVIDER_EVENT_REF_PREFIX;
+pub use self::stop_reply::{STOP_REPLY_KEYWORDS, is_stop_reply};
 
 pub(crate) use self::handoff::lift_intake_payload_in_txn;
 pub use self::handoff::{

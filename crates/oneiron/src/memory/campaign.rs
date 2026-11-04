@@ -9,7 +9,7 @@ use crate::entity_id::EntityId;
 impl Memory<'_> {
     // ── campaign + saved query `self.*` surface (CA-07) ──────────────────
     //
-    // Ten verbs, one rule: the BOUND actor is the authenticated principal, and
+    // Eleven verbs, one rule: the BOUND actor is the authenticated principal, and
     // it is the only owner any of these writes can name. None of the domain
     // request types carries an owner field, so there is no payload key to
     // spoof — the owner is an argument this facade supplies, not data a caller
@@ -31,6 +31,25 @@ impl Memory<'_> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::campaign::surface::create_campaign(
             self.vault, self.actor, request, now,
+        )?)
+    }
+
+    /// `self.campaign.launch` — launches a Draft or resumes a Paused campaign.
+    /// A person who owns it always can; an agent needs the campaign-launch Grant.
+    pub fn campaign_launch(
+        &self,
+        campaign_ref: EntityId,
+        expected_definition_version: u64,
+        now: u64,
+    ) -> MemoryResult<crate::campaign::surface::CampaignRecord> {
+        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        Ok(crate::campaign::surface::launch_campaign(
+            self.vault,
+            self.actor,
+            self.actor_class,
+            campaign_ref,
+            expected_definition_version,
+            now,
         )?)
     }
 
@@ -218,12 +237,14 @@ impl Memory<'_> {
         request: &crate::memory::query_records::surface::SavedQueryReadRequest,
     ) -> MemoryResult<crate::memory::query_records::surface::SavedQueryReadResult> {
         let record = self.saved_query_read(request.query_ref)?;
-        Ok(crate::memory::query_records::surface::SavedQueryReadResult {
-            found: record.is_some(),
-            record: record
-                .as_ref()
-                .map(crate::memory::query_records::surface::saved_query_record_view),
-        })
+        Ok(
+            crate::memory::query_records::surface::SavedQueryReadResult {
+                found: record.is_some(),
+                record: record
+                    .as_ref()
+                    .map(crate::memory::query_records::surface::saved_query_record_view),
+            },
+        )
     }
 
     /// `self.saved_query.update` — replaces a query's definition whole
@@ -260,9 +281,7 @@ impl Memory<'_> {
         request: &crate::memory::query_records::surface::SavedQueryMembersRequest,
     ) -> MemoryResult<crate::memory::query_records::surface::SavedQueryMembershipPageView> {
         let page = self.saved_query_members(&request.read_request())?;
-        Ok(crate::memory::query_records::surface::saved_query_membership_page_view(
-            &page,
-        ))
+        Ok(crate::memory::query_records::surface::saved_query_membership_page_view(&page))
     }
 
     // ── campaign program `vault.campaign.program.*` verbs (decide-host 1193) ─
@@ -333,12 +352,14 @@ impl Memory<'_> {
             request.campaign_ref,
             request.program_ref,
         )?;
-        Ok(crate::memory::campaign_records::program::CampaignProgramReadResult {
-            found: program.is_some(),
-            record: program
-                .as_ref()
-                .map(crate::memory::campaign_records::program::campaign_program_record),
-        })
+        Ok(
+            crate::memory::campaign_records::program::CampaignProgramReadResult {
+                found: program.is_some(),
+                record: program
+                    .as_ref()
+                    .map(crate::memory::campaign_records::program::campaign_program_record),
+            },
+        )
     }
 
     /// `vault.campaign.program.update` — replaces a program's definition,

@@ -300,7 +300,8 @@ impl Vault {
                     let hash = *blake3::hash(&bytes).as_bytes();
                     (bytes, None, hash)
                 } else {
-                    let asset = crate::store::code_snapshot::snapshot_asset_entity_id(&entry.content_hash)?;
+                    let asset =
+                        crate::store::code_snapshot::snapshot_asset_entity_id(&entry.content_hash)?;
                     let bytes = match self.sighted_body_file_in_txn(
                         txn,
                         &asset,
@@ -374,7 +375,7 @@ impl Vault {
         if blake3::hash(&bytes).as_bytes() != hash {
             return Err(Error::CorruptedIndex("artifact served content hash"));
         }
-        crate::secret_custody::sighted_bytes_in_txn(
+        crate::store::file_key_masks::sighted_bytes_in_txn(
             &self.store,
             txn,
             bytes,

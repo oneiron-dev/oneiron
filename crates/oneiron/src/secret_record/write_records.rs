@@ -21,6 +21,8 @@ pub enum FoundKeyAction {
     /// The owner ruled it no secret: the value went back, and its custody
     /// record was revoked.
     NotASecret,
+    /// The owner accepted the risk and kept the marked span as text by choice.
+    KeptAsText,
 }
 
 impl FoundKeyAction {
@@ -32,6 +34,7 @@ impl FoundKeyAction {
             Self::Delete => "delete",
             Self::Grant => "grant",
             Self::NotASecret => "not_a_secret",
+            Self::KeptAsText => "kept_as_text",
         }
     }
 }
@@ -52,7 +55,6 @@ pub struct FoundKeySettled {
     pub grant_ref: Option<String>,
 }
 
-
 /// One key a mask lifted, as the mask hands it over.
 #[derive(Debug, Clone)]
 pub(crate) struct FoundNote {
@@ -62,7 +64,6 @@ pub(crate) struct FoundNote {
     pub(crate) reason: &'static str,
     pub(crate) place: String,
 }
-
 
 /// Who the owner names for an active custody change.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -78,7 +79,6 @@ pub struct CustodyPlan {
     /// machine only by his.
     pub recipients: Vec<EntityId>,
 }
-
 
 /// Why a change to a portable secret stays on this install, recorded for no
 /// other machine.
@@ -158,7 +158,6 @@ pub(crate) enum ArchiveSameId {
     /// The comparison faulted: the record here stays as it is, pending.
     Pending,
 }
-
 
 /// What a custody write applies through: the vault's store, config and
 /// analyzer, and whether its text index is trusted. The batch door's mask on

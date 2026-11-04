@@ -160,7 +160,7 @@ pub(super) fn remove_unnamed(
 /// rules are [`remove_unnamed`]'s: an index whose body exists stays for
 /// the body's own entry, a missing or non-regular file stays, and a body
 /// a reader in `pins` holds stays for a later pass.
-pub(super) fn remove_unnamed_now(
+pub(super) fn remove_unnamed_entry_now(
     dir: &BodyDir,
     entry: &BodyEntry,
     pins: &ResultBodyPins,
@@ -168,7 +168,7 @@ pub(super) fn remove_unnamed_now(
     remove_unnamed_with_floor(dir, entry, SystemTime::now(), None, pins)
 }
 
-/// Shared removal for [`remove_unnamed`] and [`remove_unnamed_now`]: past
+/// Shared removal for [`remove_unnamed`] and [`remove_unnamed_entry_now`]: past
 /// `floor`, when one is set, and while no reader in `pins` holds the
 /// entry.
 fn remove_unnamed_with_floor(
@@ -206,6 +206,21 @@ fn remove_unnamed_with_floor(
             None => RemoveOutcome::Pinned,
         },
     )
+}
+
+/// Removes the body of `entry` with its line index at once, while no reader
+/// in `pins` holds it: a body its own writer found nothing names, so no
+/// grace is owed (FIX 3633). `true` when it went.
+pub(super) fn remove_unnamed_now(
+    dir: &BodyDir,
+    entry: &BodyEntry,
+    pins: &ResultBodyPins,
+) -> Result<bool> {
+    let body = entry.body_name();
+    Ok(pins
+        .unless_pinned(&entry.digest, || unlink_named(dir, &body))
+        .transpose()?
+        .is_some())
 }
 
 /// Syncs `dir`, so the unlinks in it last.

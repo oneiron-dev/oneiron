@@ -10,14 +10,13 @@
 //! the queue's own read-only gap, and it names each gap rather than
 //! refusing. Nothing here writes a promotion or any other row.
 use crate::Vault;
-use crate::store::{
-    code_commit_metadata::CodeCommitMetadata,
-    code_revision_record::CodeRevision,
-    code_promotion_gap::QueuePromotionGap,
-};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::repo_provenance_trailer::REPO_PROVENANCE_TRAILER_KEY;
+use crate::store::{
+    code_commit_metadata::CodeCommitMetadata, code_promotion_gap::QueuePromotionGap,
+    code_revision_record::CodeRevision,
+};
 use oneiron_contracts::claim::ClaimLifecycleStatus;
 
 /// How a load judges the revision's promotion.
@@ -41,8 +40,9 @@ pub(super) enum ExportGap {
     Unreviewed(String),
     /// The provenance claim is gone or no longer active.
     Provenance(EntityId),
-    /// The author's record is gone.
-    Author(EntityId),
+    /// The author's record is gone; `None` when the author was erased
+    /// before the seal (FIX 7348).
+    Author(Option<EntityId>),
 }
 
 /// One loaded export revision: the persisted record, its canonical
@@ -113,7 +113,11 @@ impl Vault {
                 ExportPromotion::Readiness => gaps.push(ExportGap::Provenance(provenance)),
             }
         }
-        if self.get_entity_type(&metadata.author)?.is_none() {
+        let readable = match &metadata.author {
+            Some(author) => self.get_entity_type(author)?.is_some(),
+            None => false,
+        };
+        if !readable {
             match promotion {
                 ExportPromotion::Stored => return Err(Error::EntityNotFound),
                 ExportPromotion::Readiness => gaps.push(ExportGap::Author(metadata.author)),
@@ -158,7 +162,9 @@ pub(super) fn export_message(
     metadata: &CodeCommitMetadata,
     provenance: EntityId,
 ) -> Result<String> {
-    if crate::store::repo_provenance_trailer::parse_repo_provenance_trailer(&metadata.message)?.is_some() {
+    if crate::store::repo_provenance_trailer::parse_repo_provenance_trailer(&metadata.message)?
+        .is_some()
+    {
         return Err(Error::InvariantViolation(
             "export message must not supply its own provenance trailer",
         ));

@@ -52,17 +52,16 @@ use crate::ports::{
 use crate::registry;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-use crate::window_key::WindowKey;
-use crate::sync::bridge::format_edge_key;
-use crate::sync::loro_support::{
-    TombstoneIndex, };
 use crate::store::loro_document::{doc_from_snapshot, import_doc, map_contains_binary};
-use crate::sync::residence::residence_window_for_blob;
+use crate::store::loro_tombstones::TombstoneIndex;
+use crate::store::replica_edge_key::format_edge_key;
 use crate::store::window_rows::{
     OFF_RECORD_PROMOTE_PICKUP, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
     WINDOW_UPDATE, WindowEntityKey,
 };
+use crate::sync::residence::residence_window_for_blob;
 use crate::temporal::TimeRange;
+use crate::window_key::WindowKey;
 
 /// Unacknowledged local text-document frames (`qd:e:{id}:{seq}`), read for
 /// presence only.
@@ -207,7 +206,9 @@ pub(crate) fn remove_local_replica_window_in_txn(
     keep: KeepControls,
 ) -> Result<RemovedReplica> {
     let queued_writes =
-        crate::sync::queue::queued_window_update_count_in_txn(store, txn, window.as_str())?;
+        store
+            .sync_hooks
+            .queued_window_update_count_in_txn(store, txn, window.as_str())?;
     let mut report = RemovedReplica {
         queued_writes,
         ..RemovedReplica::default()
@@ -355,14 +356,21 @@ impl<'a> Census<'a> {
             KeepReason::BoundActor
         } else if self.tombstones.contains(id) {
             KeepReason::Tombstoned
-        } else if crate::sync::asset_body::file_row_in_txn(self.store, txn, id, raw)? {
-            // No carrier holds a file-plane ASSET's bytes yet (FIX 5393).
+        } else if crate::store::ASSET_FILE_PLANE
+            && crate::store::asset_file_of_raw_in_txn(self.store, txn, id, raw)?.is_some()
+        {
+            // A file-plane ASSET's body moves outside Loro; the home's
+            // window ack does not durably hold the body (FIX 5393).
             KeepReason::NotCarried
         } else if !map_contains_binary(&self.entities, &id.to_hex()) {
             KeepReason::NotCarried
         } else if self.pending(txn, id)? {
             KeepReason::Pending
-        } else if crate::workspace_roster::reject_audience_edit_delete(self.store, txn, id).is_err()
+        } else if self
+            .store
+            .delete_guards
+            .reject_audience_edit_delete(self.store, txn, id)
+            .is_err()
         {
             // A kept audience edit stays whatever the caller keeps (FIX 5639).
             KeepReason::Guarded
@@ -496,12 +504,7 @@ pub(crate) fn owe_promoted_turn_in_txn(
     txn: &mut RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
-    crate::tagging::mark_turn_in_txn(
-        vault,
-        txn,
-        *turn,
-        crate::store::ExtractionWork::Bulk,
-    )?;
+    crate::tagging::mark_turn_in_txn(vault, txn, *turn, crate::store::ExtractionWork::Bulk)?;
     crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)
 }
 
@@ -512,12 +515,24 @@ pub(crate) fn owe_promoted_turn_in_txn(
 /// always safe.
 fn guarded(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> bool {
     crate::task_authority::reject_fact_delete(store, txn, id).is_err()
-        || crate::workspace_roster::refuse_revision_delete(store, txn, id).is_err()
-        || crate::workspace_roster::guard_goal_delete(store, txn, *id).is_err()
-        || crate::federation::reject_ruling_delete(store, txn, id).is_err()
+        || store
+            .delete_guards
+            .refuse_revision_delete(store, txn, id)
+            .is_err()
+        || store
+            .delete_guards
+            .guard_goal_delete(store, txn, *id)
+            .is_err()
+        || store
+            .delete_guards
+            .reject_ruling_delete(store, txn, id)
+            .is_err()
         || crate::claim::history_store::reject_machine_history_delete(store, txn, id).is_err()
         || store.guard_pack_map_carrier_delete_in_txn(txn, id).is_err()
-        || crate::identity_topology::guard_batch_identity_delete_in_txn(store, txn, id).is_err()
+        || store
+            .delete_guards
+            .guard_batch_identity_delete_in_txn(store, txn, id)
+            .is_err()
 }
 
 /// Tears one member's local rows. Every step is a local index or projection
@@ -551,7 +566,9 @@ fn remove_member(
         store.short_ids_reverse.delete(txn, id.as_bytes())?;
     }
     if header.entity_type == registry::ENTITY_TYPE_SKILL
-        && let Ok(record) = crate::write_envelope::skill_record::decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])
+        && let Ok(record) = crate::write_envelope::skill_record::decode_skill_record(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )
         && let Some(content_hash) = record.content_hash
     {
         crate::store::skill_content_index::maintain_skill_content_hash_index_for_delete(
@@ -602,7 +619,7 @@ fn remove_vectors(
 ) -> Result<()> {
     store.clear_pending_embedding(txn, id)?;
     // The member's queued embed job goes with its marker, in the same txn.
-    crate::sync::queue::delete_embed_job_in_txn(store, txn, id)?;
+    store.sync_hooks.delete_embed_job_in_txn(store, txn, id)?;
     if store.vectors.delete(txn, id.as_bytes())? {
         report.vectors += 1;
     }

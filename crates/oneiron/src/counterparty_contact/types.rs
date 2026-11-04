@@ -14,8 +14,8 @@ pub const COUNTERPARTY_CONTACT_SCHEMA_VERSION: u64 = 1;
 
 pub use crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_BODY_KEYS;
 pub(crate) use crate::write_envelope::counterparty_fields::{
-    COUNTERPARTY_CONTACT_FIELDS_MINIMAL, COUNTERPARTY_CONTACT_FIELDS_STANDARD,
-    COUNTERPARTY_CONTACT_FIELDS_FULL,
+    COUNTERPARTY_CONTACT_FIELDS_FULL, COUNTERPARTY_CONTACT_FIELDS_MINIMAL,
+    COUNTERPARTY_CONTACT_FIELDS_STANDARD,
 };
 
 pub(super) const KEY_SCHEMA_VERSION: &str = COUNTERPARTY_CONTACT_BODY_KEYS[0];
@@ -49,8 +49,6 @@ pub(super) const KEY_OPT_OUT_RECORDED_AT: &str = OPT_OUT_KEYS[1];
 pub(super) const KEY_OPT_OUT_RECEIPT_REASON: &str = OPT_OUT_KEYS[2];
 
 pub(super) const MAX_COUNTERPARTY_BYTES: usize = 512;
-
-pub(super) const MAX_NOTES: usize = 32;
 
 pub(super) const MAX_NOTE_BYTES: usize = 2_048;
 

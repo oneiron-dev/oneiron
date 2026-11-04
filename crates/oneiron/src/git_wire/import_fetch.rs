@@ -24,8 +24,8 @@ use super::execution_context::GitCommandSpec;
 use super::failure::{classify_failure, invalid};
 use super::process::{GitWireProcessOutput, spawn_git};
 use super::{GitOid, GitRefName, GitWire, GitWireOperation, GitWireRepo};
-use crate::store::code_snapshot::RepoRef;
 use crate::error::Result;
+use crate::store::code_snapshot::RepoRef;
 
 mod profile;
 pub(super) use profile::ImportProcessProfile;
@@ -57,6 +57,12 @@ impl FetchedExternalGit {
     #[must_use]
     pub fn base(&self) -> &GitOid {
         &self.base
+    }
+
+    /// The private scratch store the fetch wrote, for a read of what it
+    /// holds (FIX 7596).
+    pub(crate) fn repo(&self) -> &GitWireRepo {
+        &self.repo
     }
 }
 
