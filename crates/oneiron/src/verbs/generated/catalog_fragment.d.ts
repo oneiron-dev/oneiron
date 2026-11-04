@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1272 code-mode rows (1232 host rows, 40 run rows), 4488 declarations.
-// Replies: 1085 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1275 code-mode rows (1235 host rows, 40 run rows), 4498 declarations.
+// Replies: 1087 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 118; unread shapes: none.
 declare namespace Sdk {
@@ -993,7 +993,8 @@ declare namespace Sdk {
   type InboxLensParticipant = { identity?: string | null; actor: string };
   type InboxLensConcern = { agent: string; signal: string; tone: string };
   type InboxLensDiaryReview = { request: string; reader: string; reader_class: string; reason: string };
-  type InboxLensRow = { item_id: string; kind: InboxLensKind; pile: InboxLensPile; thread_ref?: string | null; identity?: string | null; actor: string; facet?: string | null; participants: InboxLensParticipant[]; impact: number; occurred_at: number; receipt_ref?: string | null; payload_ref?: string | null; concern?: InboxLensConcern | null; diary_review?: InboxLensDiaryReview | null; sender?: string | null; widening?: ConsultWidening | null };
+  type AgentInboxReadState = "new" | "open" | "later" | "done";
+  type InboxLensRow = { item_id: string; kind: InboxLensKind; pile: InboxLensPile; thread_ref?: string | null; identity?: string | null; actor: string; facet?: string | null; participants: InboxLensParticipant[]; impact: number; occurred_at: number; receipt_ref?: string | null; payload_ref?: string | null; concern?: InboxLensConcern | null; diary_review?: InboxLensDiaryReview | null; sender?: string | null; widening?: ConsultWidening | null; read_state?: AgentInboxReadState | null };
   type InboxConcernGroup = { agent: string; items: string[] };
   type InboxLensPage = { items: InboxLensRow[]; concern_groups: InboxConcernGroup[] };
   type InboxRunGroupsRequest = { limit?: number | null; after?: string | null };
@@ -1012,6 +1013,11 @@ declare namespace Sdk {
   type InboxGroupResolveRequest = { kind: InboxGroupKind; group_key: string; verb: InboxBulkVerb; verb_class?: string | null; target?: InboxGroupResolveTarget | null };
   type InboxBundleResolution = { group_key: string; verb: InboxBulkVerb; bundle_ref: string; bundle_receipt: ReceiptRecord; item_receipts?: ReceiptRecord[]; review_items?: string[] };
   type InboxGroupResolution = { kind: "dreamer"; resolution: InboxBundleResolution } | { kind: "shape"; receipt: ShapeApplyReceipt };
+  type InboxItemRequest = { item_id: string };
+  type InboxItemMessage = { identity: string; channel: string; payload_ref: string; occurred_at: number; text: string; claims_not_instructions: boolean };
+  type InboxItemView = { item: InboxLensRow; messages: InboxItemMessage[]; notification?: NotificationRow | null; lens?: GeneratedLens | null };
+  type InboxItemMarked = { item_id: string; read_state: AgentInboxReadState; until?: number | null };
+  type InboxItemLaterRequest = { item_id: string; until?: number | null };
   type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };
   type HubRef = { hub_id: EntityId; ref_string: string; pin: HubPin };
   type SkillLibraryLifecycle = "candidate" | "active" | "stale" | "archived" | "superseded";
@@ -1172,7 +1178,7 @@ declare namespace Sdk {
   type SlateHolderNarrow = { disposition: SlateDisposition; actor: string; at: number };
   type SlateRow = { draft: SlateDraftRow; owner_override?: SlateOwnerOverride | null; holder_narrow?: SlateHolderNarrow | null };
   type ConnectorPackAdvisory = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
-  type ConnectorPackView = { basis: ConnectorPackBasis; status: string; consent_required: boolean; stamped: boolean; manifest: SlateManifest; rows: SlateRow[]; qualification?: ConnectorQualificationReceipt | null; pack?: PackInstallReceipt | null; advisories: ConnectorPackAdvisory[] };
+  type ConnectorPackView = { basis: ConnectorPackBasis; status: string; consent_required: boolean; stamped: boolean; staged: boolean; manifest: SlateManifest; rows: SlateRow[]; qualification?: ConnectorQualificationReceipt | null; pack?: PackInstallReceipt | null; advisories: ConnectorPackAdvisory[] };
   type ConnectorPackGetRequest = { connector: string };
   type ProbeRequest = { id: string; name: string; arguments: unknown };
   type QualificationCase = { call: ProbeRequest; in_scope: boolean; allowed_predicates: string[] };
@@ -2363,7 +2369,7 @@ declare namespace Sdk {
   type ArtifactServeTier = "Private" | "Public" | { LinkToken: ArtifactLinkCapability } | { WorldMembers: number };
   type ArtifactPublishRequest = { artifact: string; channel: ArtifactPointerChannel; export: ArtifactExportRef; serve_tier: ArtifactServeTier; publish_id: EntityId; occurred_at: number };
   type ArtifactPublishApproval = { effect_digest: string };
-  type ArtifactPublishVerbStatus = "proposed" | "published";
+  type ArtifactPublishVerbStatus = "proposed" | "published" | { paced: { retry_at: number } };
   type ArtifactPointer = { artifact: string; channel: ArtifactPointerChannel; export: ArtifactExportRef; stale_taint_override: boolean; serve_tier: ArtifactServeTier };
   type ArtifactPublishView = { status: ArtifactPublishVerbStatus; pointer?: ArtifactPointer | null; receipt_ref?: string | null; gate_decision_ref: string };
   type ArtifactPointerRequest = { artifact: string; channel: ArtifactPointerChannel };
@@ -3206,8 +3212,9 @@ declare namespace Sdk {
   type ResponseFormat = { format: "text" } | { format: "json"; schema: unknown };
   type CallEnvelope = { scope?: ScopeScope; purpose: CallPurpose; class: CallClass; tier: TierPrecedence; response_format: ResponseFormat; locality: ModelLocality; seat_effort?: ReasoningEffort | null };
   type LlmMessageRole = "system" | "user" | "assistant" | "tool";
+  type ReasoningPartKind = "full" | "summary" | "encrypted" | "count";
   type ImageContent = { source: "base64"; data: string } | { source: "url"; url: string };
-  type ContentPart = { kind: "text"; text: string } | { kind: "reasoning"; text: string; signature?: string | null } | { kind: "tool_call"; call_id: string; name: string; input: unknown } | { kind: "tool_result"; call_id: string; output: unknown; is_error?: boolean } | { kind: "image"; media_type: string; image: ImageContent } | { kind: "audio"; media_type: string; data: string };
+  type ContentPart = { kind: "text"; text: string } | { kind: "reasoning"; text: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { kind: "tool_call"; call_id: string; name: string; input: unknown } | { kind: "tool_result"; call_id: string; output: unknown; is_error?: boolean } | { kind: "image"; media_type: string; image: ImageContent } | { kind: "audio"; media_type: string; data: string };
   type LlmMessage = { role: LlmMessageRole; content: ContentPart[] };
   type LlmToolSpec = { name: string; description: string; input_schema: unknown };
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
@@ -3279,7 +3286,7 @@ declare namespace Sdk {
   type ModelStreamSubscribe = { stream_key: string };
   type ModelStreamSubscribed = { stream_ref: string; stream_key: string; handle: string; status: ModelStreamStatus };
   type ModelStreamEventsRequest = { stream_key: string; handle: string; limit?: number | null };
-  type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string } | { event: "reasoning_start"; part_id: string; signature?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
+  type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string } | { event: "reasoning_start"; part_id: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
   type ModelStreamEvents = { stream_ref: string; stream_key: string; handle: string; events: LlmStreamEvent[]; closed: boolean; status: ModelStreamStatus };
   type ModelStreamDetach = { stream_key: string; handle: string };
   type ModelStreamDetached = { stream_ref: string; stream_key: string; handle: string; detached: boolean };
@@ -3756,7 +3763,7 @@ declare namespace Sdk {
   type EsignField = { id: string; item: number; recipient: string; required: boolean; geometry: FieldGeometry; meta: FieldMeta };
   type EsignNoticeSwitches = { invite: boolean; pending: boolean; completed: boolean; rejection: boolean; void: boolean; expiry: boolean };
   type EsignLifecycleRules = { expiry_after_seconds: number; first_reminder_after_seconds: number; repeat_reminder_every_seconds: number; reminder_cap_seconds: number; notices: EsignNoticeSwitches };
-  type EsignDocument = { schema_version: number; kind: DocumentKind; title: string; sequential: boolean; expires_at: number; items: EsignItem[]; recipients: EsignRecipient[]; fields: EsignField[]; full_trail_appendix: boolean; lifecycle?: EsignLifecycleRules | null; project?: EntityId | null };
+  type EsignDocument = { schema_version: number; kind: DocumentKind; title: string; sequential: boolean; expires_at: number; token_expires_at?: number | null; items: EsignItem[]; recipients: EsignRecipient[]; fields: EsignField[]; full_trail_appendix: boolean; lifecycle?: EsignLifecycleRules | null; project?: EntityId | null };
   type EsignCreateRequest = { document_ref: string; draft: EsignDocument };
   type DocumentStatus = "draft" | "pending" | "completed" | "rejected" | "voided" | "expired";
   type EsignDraftView = { document_ref: string; status: DocumentStatus; title: string; expires_at: number; project_ref?: string | null; recipients: string[]; fields: number };
@@ -3771,7 +3778,10 @@ declare namespace Sdk {
   type RecipientState = { delivery: DeliveryStatus; signing: SigningStatus; access: AccessStatus; expires_at: number };
   type FieldValue = { kind: "text"; value: string } | { kind: "checked"; value: boolean } | { kind: "signature"; value: { image_ref: string } };
   type SignatureRow = { field: string; recipient: string; value: FieldValue; at: number };
-  type EsignEvent = { event: "drafted"; document: EsignDocument } | { event: "sent" } | { event: "viewed"; recipient: string } | { event: "field_saved"; signature: SignatureRow } | { event: "signed"; recipient: string; next?: string | null } | { event: "declined"; recipient: string; reason: string } | { event: "voided"; reason: string } | { event: "expired"; recipient?: string | null } | { event: "reminded"; recipient: string; rung: number } | { event: "sealed"; rejected: boolean; item_sha256: number[][] } | { event: "reseal_requested"; owner: string; authority: string };
+  type EsignAuthenticationMethod = "bearer" | "person" | "agent";
+  type EsignSigningIntent = "direct" | "held_allow";
+  type EsignSigningEvidence = { authentication_method: EsignAuthenticationMethod; disclosure_version?: string | null; consent: boolean; intent: EsignSigningIntent };
+  type EsignEvent = { event: "drafted"; document: EsignDocument } | { event: "sent" } | { event: "viewed"; recipient: string } | { event: "access_verified"; recipient: string } | { event: "field_saved"; signature: SignatureRow } | { event: "signed"; recipient: string; next?: string | null; evidence: EsignSigningEvidence; items: EsignItem[] } | { event: "declined"; recipient: string; reason: string } | { event: "voided"; reason: string } | { event: "expired"; recipient?: string | null } | { event: "reminded"; recipient: string; rung: number } | { event: "sealed"; rejected: boolean; item_sha256: number[][] } | { event: "reseal_requested"; owner: string; authority: string };
   type EsignAuditActor = { actor: string; ip?: string | null; user_agent?: string | null };
   type EsignEventRow = { sequence: number; previous_sha256: number[]; event: EsignEvent; actor: EsignAuditActor; at: number };
   type MemoryGateDenial = { outcome: string; reason_codes: string[]; ask_ref?: string | null; approval_digest?: string | null };
@@ -4187,7 +4197,7 @@ declare namespace Sdk {
   type DeliveryWindowLadderRung = "HumanExplicitInstant" | "Ambient" | "InterruptDegraded" | "InterruptHeld" | "MissingLocalMinute";
   type DeliveryWindowResolution = { observed: DeliveryWindowDecision; effective: DeliveryWindowDecision; matched: DeliveryWindowMatch[]; rung: DeliveryWindowLadderRung };
   type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution };
-  type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null };
+  type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null; selection?: ChannelSelectionRequest | null; counterparty_class?: string | null };
   type SummaryPath = "canonical" | { branch: string } | { branch_span: { after: string; through: string } } | { sub_session: string };
   type SummaryScope = { conversation_ref: string; path: SummaryPath; session?: string | null; include_forks?: boolean };
   type SummaryCreateRequest = { scope?: SummaryScope | null; note_refs?: string[]; purpose?: string | null; land_on?: string | null; as_record?: boolean };
@@ -4910,6 +4920,12 @@ declare namespace self {
       move(input: Sdk.ConcernMoveRequest): Promise<Sdk.ConcernMoveOutcome | StoredResult>;
       outcome(input: Sdk.ConcernOutcomeRequest): Promise<Sdk.ConcernCardSummary | StoredResult>;
     };
+    /** Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it. */
+    done(input: Sdk.InboxItemRequest): Promise<Sdk.InboxItemMarked | StoredResult>;
+    /** Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done. */
+    get(input: Sdk.InboxItemRequest): Promise<Sdk.InboxItemView | StoredResult>;
+    /** Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it. */
+    later(input: Sdk.InboxItemLaterRequest): Promise<Sdk.InboxItemMarked | StoredResult>;
     /** Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page. */
     lens(input: Sdk.InboxLensRequest): Promise<Sdk.InboxLensPage | StoredResult>;
     /** Lists one page of notifications delivered to the bound actor, without marking them. */

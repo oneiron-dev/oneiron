@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1221 facade rows, 4433 declarations.
-Inputs: 1148 of 1221 fully typed, 73 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1055 of 1221 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1224 facade rows, 4443 declarations.
+Inputs: 1151 of 1224 fully typed, 73 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1057 of 1224 fully typed, 167 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 122; unread shapes: 0.
 """
 
@@ -5032,6 +5032,7 @@ class InboxLensDiaryReview(TypedDict):
     reader: str
     reader_class: str
     reason: str
+AgentInboxReadState = Literal["new", "open", "later", "done"]
 class InboxLensRow(TypedDict):
     item_id: str
     kind: InboxLensKind
@@ -5049,6 +5050,7 @@ class InboxLensRow(TypedDict):
     diary_review: NotRequired[InboxLensDiaryReview | None]
     sender: NotRequired[str | None]
     widening: NotRequired[ConsultWidening | None]
+    read_state: NotRequired[AgentInboxReadState | None]
 class InboxConcernGroup(TypedDict):
     agent: str
     items: list[str]
@@ -5148,6 +5150,27 @@ class InboxGroupResolutionShape(TypedDict):
     kind: Literal["shape"]
     receipt: ShapeApplyReceipt
 InboxGroupResolution = InboxGroupResolutionDreamer | InboxGroupResolutionShape
+class InboxItemRequest(TypedDict):
+    item_id: str
+class InboxItemMessage(TypedDict):
+    identity: str
+    channel: str
+    payload_ref: str
+    occurred_at: int
+    text: str
+    claims_not_instructions: bool
+class InboxItemView(TypedDict):
+    item: InboxLensRow
+    messages: list[InboxItemMessage]
+    notification: NotRequired[NotificationRow | None]
+    lens: NotRequired[GeneratedLens | None]
+class InboxItemMarked(TypedDict):
+    item_id: str
+    read_state: AgentInboxReadState
+    until: NotRequired[int | None]
+class InboxItemLaterRequest(TypedDict):
+    item_id: str
+    until: NotRequired[int | None]
 class HubPinSemver(TypedDict):
     type: Literal["semver"]
     value: str
@@ -5927,6 +5950,7 @@ class ConnectorPackView(TypedDict):
     status: str
     consent_required: bool
     stamped: bool
+    staged: bool
     manifest: SlateManifest
     rows: list[SlateRow]
     qualification: NotRequired[ConnectorQualificationReceipt | None]
@@ -11625,7 +11649,11 @@ class ArtifactPublishRequest(TypedDict):
     occurred_at: int
 class ArtifactPublishApproval(TypedDict):
     effect_digest: str
-ArtifactPublishVerbStatus = Literal["proposed", "published"]
+class ArtifactPublishVerbStatusPacedBody(TypedDict):
+    retry_at: int
+class ArtifactPublishVerbStatusPaced(TypedDict):
+    paced: ArtifactPublishVerbStatusPacedBody
+ArtifactPublishVerbStatus = Literal["proposed", "published"] | ArtifactPublishVerbStatusPaced
 class ArtifactPointer(TypedDict):
     artifact: str
     channel: ArtifactPointerChannel
@@ -16098,6 +16126,7 @@ class ResponseFormatJson(TypedDict):
 ResponseFormat = ResponseFormatText | ResponseFormatJson
 CallEnvelope = TypedDict("CallEnvelope", {"scope": NotRequired[ScopeScope], "purpose": CallPurpose, "class": CallClass, "tier": TierPrecedence, "response_format": ResponseFormat, "locality": ModelLocality, "seat_effort": NotRequired[ReasoningEffort | None]})
 LlmMessageRole = Literal["system", "user", "assistant", "tool"]
+ReasoningPartKind = Literal["full", "summary", "encrypted", "count"]
 class ImageContentBase64(TypedDict):
     source: Literal["base64"]
     data: str
@@ -16112,6 +16141,8 @@ class ContentPartReasoning(TypedDict):
     kind: Literal["reasoning"]
     text: str
     signature: NotRequired[str | None]
+    reasoning_kind: NotRequired[ReasoningPartKind]
+    data: NotRequired[str | None]
 class ContentPartToolCall(TypedDict):
     kind: Literal["tool_call"]
     call_id: str
@@ -16513,6 +16544,8 @@ class LlmStreamEventReasoningStart(TypedDict):
     event: Literal["reasoning_start"]
     part_id: str
     signature: NotRequired[str | None]
+    reasoning_kind: NotRequired[ReasoningPartKind]
+    data: NotRequired[str | None]
 class LlmStreamEventReasoningDelta(TypedDict):
     event: Literal["reasoning_delta"]
     part_id: str
@@ -18545,6 +18578,7 @@ class EsignDocument(TypedDict):
     title: str
     sequential: bool
     expires_at: int
+    token_expires_at: NotRequired[int | None]
     items: list[EsignItem]
     recipients: list[EsignRecipient]
     fields: list[EsignField]
@@ -18600,6 +18634,13 @@ class SignatureRow(TypedDict):
     recipient: str
     value: FieldValue
     at: int
+EsignAuthenticationMethod = Literal["bearer", "person", "agent"]
+EsignSigningIntent = Literal["direct", "held_allow"]
+class EsignSigningEvidence(TypedDict):
+    authentication_method: EsignAuthenticationMethod
+    disclosure_version: NotRequired[str | None]
+    consent: bool
+    intent: EsignSigningIntent
 class EsignEventDrafted(TypedDict):
     event: Literal["drafted"]
     document: EsignDocument
@@ -18608,6 +18649,9 @@ class EsignEventSent(TypedDict):
 class EsignEventViewed(TypedDict):
     event: Literal["viewed"]
     recipient: str
+class EsignEventAccessVerified(TypedDict):
+    event: Literal["access_verified"]
+    recipient: str
 class EsignEventFieldSaved(TypedDict):
     event: Literal["field_saved"]
     signature: SignatureRow
@@ -18615,6 +18659,8 @@ class EsignEventSigned(TypedDict):
     event: Literal["signed"]
     recipient: str
     next: NotRequired[str | None]
+    evidence: EsignSigningEvidence
+    items: list[EsignItem]
 class EsignEventDeclined(TypedDict):
     event: Literal["declined"]
     recipient: str
@@ -18637,7 +18683,7 @@ class EsignEventResealRequested(TypedDict):
     event: Literal["reseal_requested"]
     owner: str
     authority: str
-EsignEvent = EsignEventDrafted | EsignEventSent | EsignEventViewed | EsignEventFieldSaved | EsignEventSigned | EsignEventDeclined | EsignEventVoided | EsignEventExpired | EsignEventReminded | EsignEventSealed | EsignEventResealRequested
+EsignEvent = EsignEventDrafted | EsignEventSent | EsignEventViewed | EsignEventAccessVerified | EsignEventFieldSaved | EsignEventSigned | EsignEventDeclined | EsignEventVoided | EsignEventExpired | EsignEventReminded | EsignEventSealed | EsignEventResealRequested
 class EsignAuditActor(TypedDict):
     actor: str
     ip: NotRequired[str | None]
@@ -21263,6 +21309,8 @@ class OutboundScheduleRequest(TypedDict):
     job_ref: NotRequired[str | None]
     occurred_at: NotRequired[int | None]
     mention: NotRequired[MentionProvenance | None]
+    selection: NotRequired[ChannelSelectionRequest | None]
+    counterparty_class: NotRequired[str | None]
 class SummaryPathBranch(TypedDict):
     branch: str
 class SummaryPathBranchSpanBody(TypedDict):

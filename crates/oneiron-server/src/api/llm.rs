@@ -1,5 +1,5 @@
 //! Owner-authenticated raw inference. Host injection is explicit and absent by default.
-use crate::models::{CallDeadline, OfferLadder, RawInference};
+use crate::models::{CallDeadline, ModelCallBinding, OfferLadder, RawInference};
 
 pub(super) mod decision_read;
 mod defaults_submit;
@@ -264,7 +264,7 @@ pub(crate) fn record_raw_response(
     run: &RunAdmission,
     request: &LlmRequest,
     response: &LlmResponse,
-    served: Option<&oneiron::ModelId>,
+    binding: Option<&ModelCallBinding>,
     no_record: bool,
 ) {
     if no_record {
@@ -278,7 +278,13 @@ pub(crate) fn record_raw_response(
             return;
         }
     };
-    let (rung, route) = ladder.model_call_binding(served);
+    // A generate call's exact answering binding travels with its answer
+    // (FIX 12743) and bypasses the requested-ladder lookup; a stream names
+    // none, so the route stays explicitly unknown, never a false pin.
+    let (rung, route) = match binding {
+        Some(binding) => (binding.rung.clone(), binding.route.clone()),
+        None => ladder.model_call_binding(None),
+    };
     let mut source_rows = run.source_rows().unwrap_or_default();
     source_rows.extend(
         response
@@ -369,13 +375,13 @@ async fn generate(
     // actor its erase can find. Owner-grade callers bind none, as before.
     let run = run.initiated_by(principal);
     // The caller's own connection is the raw call's deadline (FIX 8213).
-    // generate_served_by takes the request by value; the record keeps its own copy.
+    // generate_recorded_by takes the request by value; the record keeps its own copy.
     let record_request = request.clone();
     match ladder
-        .generate_served_by(&run, request, None, &|| true, CallDeadline::Open)
+        .generate_recorded_by(&run, request, None, &|| true, CallDeadline::Open)
         .await
     {
-        Ok((response, served)) => {
+        Ok((response, binding)) => {
             let no_record = no_record_at_arrival
                 || server
                     .vault()
@@ -386,7 +392,7 @@ async fn generate(
                 &run,
                 &record_request,
                 &response,
-                Some(&served),
+                Some(&binding),
                 no_record,
             );
             Json(response).into_response()
