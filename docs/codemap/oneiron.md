@@ -5359,7 +5359,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_attribution/audit.rs` | src | s | 3 struct · 6 fn | AttributionAuditRecord, AttributionAuditReport, AuditFixture | Held-out defect-injection audit: fixtures, the generic harness, and the pass-rate report |
 | `src/skill_attribution/calibration.rs` | src | s | 3 struct · 2 enum · 1 const · 3 crate-vis | AuditAnswerSource, AuditBatch, AuditCase, FloorFit, RawAnswer | OF-542: `attribution_unclear_floor` learned from the held-out judge audits (ARCH-0056 §5: refit from judge… |
 | `src/skill_attribution/causes.rs` | src | s | 1 struct · 2 crate-vis | AttributionCauseRecord | The labels the attribution judge settled on each attempt's terminal outcome, kept whatever their subject… |
-| `src/skill_attribution/codec.rs` | src | m | 14 crate-vis | — | Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode |
+| `src/skill_attribution/codec.rs` | src | m | 13 crate-vis | — | Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode |
 | `src/skill_attribution/contribution.rs` | src | m | 4 struct · 3 fn · 3 crate-vis | ContributionCandidate, ContributionCheckRecord, ContributionFork, ContributionPair | Contribution checks (ARCH-0037 #lineage-credit, ARCH-0053): whether one loaded skill, or the source of one… |
 | `src/skill_attribution/contribution_admission.rs` | src | m | 2 enum · 4 crate-vis | ContributionRecord, UnmatchedReason | Contribution-check admission (FIX 3610, OF-542): every well-formed pair a caller submits is recorded |
 | `src/skill_attribution/contribution_targets.rs` | src | s | 1 struct · 1 enum · 3 fn · 8 crate-vis | CheckedEdge, ContributionTarget | What a contribution check measures (FIX 2870, OF-542; ARCH-0037 #lineage-credit): a loaded skill, checked… |
@@ -5373,13 +5373,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_attribution/judge_binding.rs` | src | s | 1 crate-vis | — | The judge a run's pack attribution names (FIX 1877, OF-540): the model whose answer to the run's "Done means… |
 | `src/skill_attribution/judge_supersession.rs` | src | s | 1 struct · 2 fn · 7 crate-vis | DisplacedJudgeReceipt | Judge-revision provenance for routed receipts, and non-destructive displacement |
 | `src/skill_attribution/late_credit.rs` | src | m | 2 struct · 2 fn · 7 crate-vis | LateCreditReceipt, LateCreditShare | Late credit over the run's recorded, actually-used derived-from edges |
-| `src/skill_attribution/mod.rs` | src | s | 21 re-export · 25 crate-vis | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
+| `src/skill_attribution/mod.rs` | src | s | 21 re-export · 23 crate-vis | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
 | `src/skill_attribution/pack_learning.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | AnchoredPackOutcome | The manifest-to-learning bridge |
-| `src/skill_attribution/positive.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 crate-vis | PositiveFinding, PositiveSkillProposal | The positive lane (OF-379): a win that taught the skill something |
+| `src/skill_attribution/positive.rs` | src | s | 4 fn · 1 re-export | — | The positive lane (OF-379): a win that taught the skill something |
 | `src/skill_attribution/projector.rs` | src | m | 6 fn · 5 crate-vis | — | Evidence door and ordered idempotent projection from evidence to judgments and edit proposals |
 | `src/skill_attribution/run_writes.rs` | src | s | 1 struct · 2 fn · 16 crate-vis | RunWriteToken | OF-540/OF-397: the write envelope of a leased agent run |
-| `src/skill_attribution/site_exposure.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | SiteSkillExposure | Site-skill exposures (FIX 11436): the site knowledge a run's browser was shown |
-| `src/skill_attribution/skill_erase.rs` | src | s | 3 crate-vis | — | An erase in the attribution ledgers (FIX 8265, OF-568 L10; FIX 8988): the rows that name an erased skill or… |
+| `src/skill_attribution/site_exposure.rs` | src | s | 1 re-export | — | Site-skill exposures (FIX 11436): the rows live in `store::site_skill_exposure`; this module keeps the skill… |
+| `src/skill_attribution/skill_erase.rs` | src | s | 2 crate-vis | — | An erase in the attribution ledgers (FIX 8265, OF-568 L10; FIX 8988): the rows that name an erased skill or… |
 | `src/skill_attribution/split.rs` | src | m | 7 crate-vis | — | The one split path both lanes judge through (ARCH-0056 §5): per-hunk answers in, a label + share vector out… |
 | `src/skill_attribution/sweep.rs` | src | s | 2 struct · 1 trait · 2 fn | AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource | TASK-lane receipt pump: capture once, route, then resume both idempotent projections |
 | `src/skill_attribution/tests.rs` | test | s | — | — | — |
@@ -5809,7 +5809,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/loro_document.rs` | src | s | 1 fn · 16 crate-vis | — | Loro byte-map operations and document codecs used by storage readers |
 | `src/store/loro_tombstones.rs` | src | s | 9 crate-vis | — | The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity… |
 | `src/store/materialization_event.rs` | src | s | 2 struct · 1 enum · 1 trait | LiveQueryTee, MaterializedDiffSummary, OriginMark, RevisionEvent | Commit-bound materialization revisions and read invalidation data |
-| `src/store/mod.rs` | src | m | 82 mod · 31 re-export · 89 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 84 mod · 31 re-export · 90 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/model_description_rows.rs` | src | s | 1 struct · 1 crate-vis | MeasuredDescription | The vault-measured description rows model routing keeps (`LLM_DESCRIPTION_MEASUREMENTS`) |
 | `src/store/model_score_diff.rs` | src | s | 1 struct · 1 crate-vis | ModelScoreDiff | One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows) |
 | `src/store/model_step_response_carriage.rs` | src | s | 2 crate-vis | — | How a checkpoint carries a terminal `dreamer.step` claim whose response rests inline in its `entities` row… |
@@ -5848,6 +5848,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/pending_gate_consent/sequence_sweep.rs` | src | s | 9 crate-vis | — | Monotonic sequence allocator, high-water read, and sweep-state cursors for expiry/list sweeps |
 | `src/store/pending_gate_consent/tray.rs` | src | m | 2 fn · 15 crate-vis | — | Pending gate-consent tray lifecycle: put/get/delete, resolution into the decision ledger, and ordered reads |
 | `src/store/person_billing_account.rs` | src | s | 1 struct · 2 crate-vis | FiledBillingAccount | The billing account a PERSON filed (`PERSON_BILLING_ACCOUNT` rows) and the erase that takes it with the PERSON |
+| `src/store/positive_skill_proposals.rs` | src | s | 1 struct · 1 enum · 2 crate-vis | PositiveFinding, PositiveSkillProposal | The pending positive skill proposals (`SKILL_ATTRIBUTION_POSITIVE_PROPOSAL` rows): what a succeeded attempt… |
 | `src/store/ppr_community.rs` | src | s | 9 crate-vis | — | Bounded, local community snapshots in the existing `vault_meta` database |
 | `src/store/ppr_community_indexed.rs` | src | s | 2 crate-vis | — | Indexed query validation is deliberately not whole-family validation |
 | `src/store/project_kind.rs` | src | s | 6 crate-vis | — | The run-time kind lookups for PROJECT and its revision companion: the pack and short-id prefixes they are… |
@@ -5909,7 +5910,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/setting_seed.rs` | src | s | 1 struct · 15 const | SettingSpec | Learned numeric setting specifications and shipped seeds |
 | `src/store/short_id_alias.rs` | src | m | 1 enum · 14 crate-vis | ShortIdAliasTarget | Legacy short-id alias rows: resolve/insert/retarget, the short-id counter key, and the short-id prefix… |
 | `src/store/side_table_erase_scan.rs` | src | s | 1 crate-vis | — | The scan an erase's scrub makes of one side table: every row whose key and value decode, with any row whose… |
+| `src/store/site_skill_exposure.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | SiteSkillExposure | Site-skill exposures (FIX 11436): the site knowledge a run's browser was shown |
 | `src/store/skill_attribution_causes.rs` | src | s | 3 crate-vis | — | The ledger of the labels the attribution judge settled on each attempt's terminal outcome… |
+| `src/store/skill_attribution_judgments.rs` | src | s | 3 crate-vis | — | The attribution judge's durable verdicts and the edit proposals they mint (`SKILL_ATTRIBUTION_JUDGMENT`… |
 | `src/store/skill_content_index.rs` | src | s | 6 crate-vis | — | Content-hash lookup rows for stored skills and their maintenance |
 | `src/store/skill_hub_predicates.rs` | src | s | 2 const | — | The claim predicates the skill hub attaches |
 | `src/store/skill_package/capability.rs` | src | s | 1 crate-vis | — | Stored capability surface encoding |
