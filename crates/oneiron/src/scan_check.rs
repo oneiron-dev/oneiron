@@ -6,11 +6,13 @@
 //! reads on: the check is evidence for the host's "is everything okay"
 //! question, never a refusal. Only machine floors (disk, memory) stop a scan.
 //!
-//! A scan counts in a `ScanCount`. A crossing waits with the vault, in
+//! For a scan counted by `ScanCount`, a crossing waits with the vault, in
 //! memory, until the vault's next write: that write's door first keeps it in
 //! a write of its own, alone in its group. The host's read of the checks sees
 //! it either way. No scan ever opens a writer, so none can wait on a writer
-//! its caller holds, on any thread, and no check rides in a host's write.
+//! its caller holds, on any thread, and no counted check rides in a host's write.
+//! Dependent-walk checks already commit with the withdrawal they describe;
+//! this door also lists those kept rows, without opening another writer.
 
 use std::collections::BTreeMap;
 #[cfg(test)]
@@ -121,6 +123,9 @@ impl Vault {
     /// The threshold row of one engine scan.
     pub fn scan_threshold(&self, scan: EngineScan) -> Result<u64> {
         let txn = self.store.env.read_txn()?;
+        if scan == EngineScan::DependentWalkRows {
+            return Ok(self.dependent_walk_policy_in(&txn)?.check_threshold);
+        }
         threshold_in_txn(&self.store, &txn, scan)
     }
 
@@ -128,6 +133,9 @@ impl Vault {
     /// a check; no value makes the scan refuse.
     pub fn set_scan_threshold(&self, scan: EngineScan, threshold: u64) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {
+            if scan == EngineScan::DependentWalkRows {
+                return self.set_dependent_walk_check_threshold_in(wtxn, threshold);
+            }
             POLICY.put(&self.store, wtxn, &scan.tag(), &threshold)?;
             Ok(())
         })
@@ -148,6 +156,23 @@ impl Vault {
         for row in CHECK.iter_from(&self.store, &txn, &[])? {
             let (key, check) = row?;
             checks.insert(key, check);
+        }
+        for check in self.dependent_walk_checks_in(&txn)? {
+            let document = crate::EntityId::from_hex(&check.document)?;
+            let key = (
+                EngineScan::DependentWalkRows.tag(),
+                document.as_bytes().to_vec(),
+            );
+            checks.insert(
+                key,
+                ScanCheck {
+                    scan: EngineScan::DependentWalkRows.code().to_owned(),
+                    scope: Some(check.document),
+                    threshold: check.threshold,
+                    rows: check.walked,
+                    raised_at: check.raised_at,
+                },
+            );
         }
         Ok(checks.into_values().collect())
     }

@@ -204,7 +204,7 @@ impl EngineNativeExecutor<'_> {
         // A flaky commit converts to success on one identical retry (FIX
         // 1443); a first commit that actually landed fails the retry closed
         // on its generation mismatch instead.
-        match self
+        let _ = match self
             .storage
             .put_code_run_replay_record_with_receipts_if_generation(
                 record,
