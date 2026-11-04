@@ -14,8 +14,8 @@ use crate::edge::EdgeKind;
 #[cfg(feature = "sync")]
 use crate::store::StoreSyncHooks;
 use crate::store::{
-    GateDecisionId, Store, StoreDeleteGuards, StoreHooks, StoreProjectWrites, StoreRecordHooks,
-    StoreScopeStamps,
+    GateDecisionId, Store, StoreActorScrubs, StoreDeleteGuards, StoreHooks, StoreProjectWrites,
+    StoreRecordHooks, StoreScopeStamps,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -29,6 +29,7 @@ pub(crate) const ENGINE_STORE_HOOKS: StoreHooks = StoreHooks {
     scope_stamps: &EngineScopeStamps,
     project_writes: &EngineProjectWrites,
     record_hooks: &EngineRecordHooks,
+    actor_scrubs: &EngineActorScrubs,
     #[cfg(feature = "sync")]
     sync_hooks: &EngineSyncHooks,
 };
@@ -44,6 +45,9 @@ pub(crate) struct EngineProjectWrites;
 
 /// The engine's record hooks.
 pub(crate) struct EngineRecordHooks;
+
+/// The engine's actor scrubs for store-declared side tables.
+pub(crate) struct EngineActorScrubs;
 
 /// The engine's sync hooks.
 #[cfg(feature = "sync")]
@@ -506,5 +510,88 @@ impl StoreSyncHooks for EngineSyncHooks {
 
     fn compact_document(&self, vault: &crate::Vault, id: EntityId, erased: bool) -> Result<()> {
         crate::sync::documents::compact(vault, id, erased)
+    }
+}
+
+impl StoreActorScrubs for EngineActorScrubs {
+    fn erase_card_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_card_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_pending_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_pending_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_host_pin_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_host_pin_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_join_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_join_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_offer_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_offer_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_turn_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_turn_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_companion_principal_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_companion_principal_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_member_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_member_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_member_intent_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_member_intent_actor_in_txn(vault, wtxn, actor)
     }
 }
