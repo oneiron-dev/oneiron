@@ -180,15 +180,19 @@ impl Memory<'_> {
         &self,
         input: &NoteAccessRequest,
     ) -> MemoryResult<ScopedReadResult<Option<NoteHistoryView>>> {
-        self.project_note_read(input, |_, doc| {
+        self.project_note_read(input, |txn, doc| {
             let complete = !doc.doc.is_shallow();
+            // Each entry's stamp token reads as its actor (FIX 11964).
+            let operations = if complete {
+                let records = super::operations::authorship(&doc.doc)?;
+                let vault = self.vault();
+                super::operations::resolved_authorship_in_txn(vault, txn, doc.note, records)?
+            } else {
+                Vec::new()
+            };
             Ok(NoteHistoryView {
                 version: doc.version(),
-                operations: if complete {
-                    super::operations::authorship(&doc.doc)?
-                } else {
-                    Vec::new()
-                },
+                operations,
                 shallow_since: doc.doc.shallow_since_vv().to_vv().encode(),
                 complete,
             })
