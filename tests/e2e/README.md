@@ -8,8 +8,11 @@ coordinator Mac.** Build/package preparation belongs to the fleet lane.
 
 The public binding snapshot is main `c716fa9921692224fe46114b283993d5d81f6c8c`.
 The pinned plan has 29 files, 242 IDs, 443 public registry rows, and three explicit
-excluded rows. The generated HTTP SDK's inputs/results are snake_case wire DTOs;
-the `oneiron` TypeScript SDK uses its own camelCase DTOs. Do not interchange them.
+excluded rows. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
+The `oneiron` TypeScript SDK's witness and recall use camelCase DTOs, while
+`vault.claims.upsert` and paged `vault.receipts` use the generated snake_case
+DTOs. Bind each method's declared type rather than applying a casing rule to
+all SDK methods.
 Runtime OpenAPI is a binding diagnostic, never an expected-behavior oracle.
 
 ## Files and ownership

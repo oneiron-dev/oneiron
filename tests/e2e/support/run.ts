@@ -384,7 +384,7 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
           E2E_TEMP_ROOT:fileRoot,E2E_BUILD_MANIFEST:process.env.E2E_BUILD_MANIFEST!,E2E_BUILD_MANIFEST_SHA256:process.env.E2E_BUILD_MANIFEST_SHA256!});
         await mkdir(env.TMPDIR!,{recursive:true,mode:0o700});
         const child = await ManagedProcess.start([...build.launcher,requireAsset(build,"bun"),"test",resolve(E2E_ROOT,file.file),"--timeout",String(LIMITS.suiteMs),"--max-concurrency","1","--reporter=junit","--reporter-outfile","/dev/stdout"],
-          {cwd:E2E_ROOT,env,label:file.file,artifacts});
+          {cwd:E2E_ROOT,env,label:`process-${file.file}`,artifacts});
         running.set(file.file,{file,process:child,ownerDir,resultFile,fileRoot,done:child.done.then(() => file.file,() => file.file)});
       }
       if (!running.size) throw new Error("No schedulable file");
