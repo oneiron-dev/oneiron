@@ -14,7 +14,8 @@ use std::collections::BTreeSet;
 use super::types::{CooperativeDeleteOperation, CooperativeDeleteRecordState};
 use super::{
     CooperativeDeletionAnswer, CooperativeDeletionDisposition, CooperativeDeletionDispositionKind,
-    INCOMING, IncomingCooperativeDeletion, MAX_REASON_CODE_LEN, hex, invalid,
+    CooperativeDeletionRetention, INCOMING, IncomingCooperativeDeletion, MAX_REASON_CODE_LEN, hex,
+    invalid,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::SafeDeleteReason;
@@ -41,9 +42,12 @@ impl Vault {
     /// choice in that writer, before anything is deleted, naming the held
     /// records; otherwise the choice and its operation are saved before the
     /// first delete runs (FIX 2926). The same delete choice again resumes the
-    /// records still pending. Every choice but delete is recorded with its
-    /// reason code and review date, and no choice but these two touches the
-    /// data.
+    /// records still pending. Retain-under-basis records only this ask's
+    /// copies still present here, with the owner's basis and retention-class
+    /// codes; non-copies and missing records are left out. Its existing B2
+    /// clamp keeps retained copies out of shared retrieval. Other non-delete
+    /// choices keep their reason code and review date; review dates do not
+    /// schedule reminders or change retention.
     pub fn answer_cooperative_deletion_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -84,6 +88,15 @@ impl Vault {
                 }
                 None => None,
             };
+            let retention = answer
+                .retention
+                .as_ref()
+                .map(|selection| retention_for_ask(self, txn, pact_id, &filed, selection))
+                .transpose()?;
+            let retention = retention.map(|(kept, left_out)| {
+                excluded.extend(left_out.iter().map(EntityId::to_hex));
+                kept
+            });
             let deleted = delete_operation
                 .as_ref()
                 .map_or_else(Vec::new, CooperativeDeleteOperation::removed_hex);
@@ -104,6 +117,7 @@ impl Vault {
                 hold_ids,
                 excluded,
                 delete_operation,
+                retention,
             });
             INCOMING.put(&self.store, txn, &key, &filed)?;
             Ok(filed)
@@ -260,12 +274,7 @@ fn check_answer(answer: &CooperativeDeletionAnswer, now: u64) -> Result<()> {
             .reason_code
             .as_deref()
             .ok_or_else(|| invalid("this choice needs a reason code"))?;
-        if code.is_empty()
-            || code.len() > MAX_REASON_CODE_LEN
-            || !code
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-        {
+        if !is_code(code) {
             return Err(invalid("a reason code is a short snake_case token"));
         }
         if answer.review_at.is_none_or(|at| at <= now) {
@@ -275,7 +284,90 @@ fn check_answer(answer: &CooperativeDeletionAnswer, now: u64) -> Result<()> {
             return Err(invalid("only a delete choice deletes records"));
         }
     }
-    check_hold_records(answer)
+    check_hold_records(answer)?;
+    match (&answer.kind, &answer.retention) {
+        (CooperativeDeletionDispositionKind::RetainUnderBasis, Some(selection)) => {
+            if selection.records.is_empty() {
+                return Err(invalid("a retain choice names the records to retain"));
+            }
+            if !is_code(&selection.basis_code) || !is_code(&selection.retention_class) {
+                return Err(invalid(
+                    "basis and retention class are short snake_case codes",
+                ));
+            }
+        }
+        (CooperativeDeletionDispositionKind::RetainUnderBasis, None) => {
+            return Err(invalid(
+                "a retain choice needs a recorded basis and retention class",
+            ));
+        }
+        (_, Some(_)) => return Err(invalid("only a retain choice carries retention")),
+        (_, None) => {}
+    }
+    Ok(())
+}
+
+fn is_code(code: &str) -> bool {
+    !code.is_empty()
+        && code.len() <= MAX_REASON_CODE_LEN
+        && code
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// Records only the selected copies this ask covers that still exist in
+/// the answer's writer. Retention records no content and changes no hold.
+fn retention_for_ask(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pact_id: &[u8; 32],
+    filed: &IncomingCooperativeDeletion,
+    selection: &CooperativeDeletionRetention,
+) -> Result<(CooperativeDeletionRetention, Vec<EntityId>)> {
+    let records = first_occurrences(&selection.records);
+    let worlds: Option<Vec<EntityId>> = filed
+        .worlds
+        .iter()
+        .map(|world| EntityId::from_hex(world).ok())
+        .collect();
+    let covered: BTreeSet<_> = match worlds {
+        Some(worlds) => {
+            vault
+                .store
+                .record_hooks
+                .split_recipient_copies_in_txn(
+                    vault,
+                    txn,
+                    pact_id,
+                    &worlds,
+                    filed.epoch_cutoff,
+                    &records,
+                )?
+                .0
+        }
+        None => Vec::new(),
+    }
+    .into_iter()
+    .collect();
+    let mut kept = Vec::new();
+    let mut excluded = Vec::new();
+    for record in records {
+        if covered.contains(&record)
+            && crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &record)?
+        {
+            kept.push(record);
+        } else {
+            excluded.push(record);
+        }
+    }
+    Ok((
+        CooperativeDeletionRetention {
+            records: kept,
+            basis_code: selection.basis_code.clone(),
+            retention_class: selection.retention_class.clone(),
+        },
+        excluded,
+    ))
 }
 
 /// A legal hold choice names the records it holds, each once; every other

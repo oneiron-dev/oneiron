@@ -45,8 +45,8 @@ pub use coop_delivery::{
     CooperativeDeleteRecordState, CooperativeDeletionAnswer, CooperativeDeletionDelivery,
     CooperativeDeletionDeliveryStatus, CooperativeDeletionDisposition,
     CooperativeDeletionDispositionKind, CooperativeDeletionIngress, CooperativeDeletionNotice,
-    CooperativeDeletionTry, IncomingCooperativeDeletion, cooperative_deletion_recipient_id,
-    parse_hex,
+    CooperativeDeletionRetention, CooperativeDeletionTry, IncomingCooperativeDeletion,
+    cooperative_deletion_recipient_id, parse_hex,
 };
 pub(crate) use coop_delivery::{MAX_REASON_CODE_LEN, courtesy_retained_pacts_in};
 pub use coop_reply::{

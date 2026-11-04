@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1224 facade rows, 4457 declarations.
+Census: 1224 facade rows, 4458 declarations.
 Inputs: 1155 of 1224 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1060 of 1224 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -9930,6 +9930,10 @@ class CourtesyDeleteHold(TypedDict):
 class CourtesyDeleteRecordProgress(TypedDict):
     record: str
     state: str
+class CourtesyDeleteRetention(TypedDict):
+    records: list[str]
+    basis_code: str
+    retention_class: str
 class CourtesyDeleteChoice(TypedDict):
     choice: CooperativeDeletionDispositionKind
     reason_code: NotRequired[str | None]
@@ -9939,6 +9943,7 @@ class CourtesyDeleteChoice(TypedDict):
     holds: list[CourtesyDeleteHold]
     excluded: list[str]
     progress: list[CourtesyDeleteRecordProgress]
+    retention: NotRequired[CourtesyDeleteRetention | None]
 class CourtesyDeleteIncoming(TypedDict):
     request: str
     pact: str
@@ -9960,6 +9965,7 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     review_at: NotRequired[int | None]
     delete: NotRequired[list[str]]
     hold: NotRequired[list[str]]
+    retention: NotRequired[CourtesyDeleteRetention | None]
     reply_to: NotRequired[str | None]
 class VectorEvidenceFloors(TypedDict):
     floor: float

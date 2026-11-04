@@ -9,7 +9,7 @@ use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{
     COOP_DELETION_PEER_PATH, COOP_DELETION_REPLY_PEER_PATH, CooperativeDeletionAnswer,
-    decode_self_signed_cooperative_deletion_request, parse_hex,
+    CooperativeDeletionRetention, decode_self_signed_cooperative_deletion_request, parse_hex,
 };
 use oneiron::task_verb::sdk::{
     CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
@@ -225,6 +225,21 @@ pub(crate) fn answer(
         review_at: request.review_at,
         delete,
         hold,
+        retention: request
+            .retention
+            .as_ref()
+            .map(|selection| {
+                Ok::<_, OwnerError>(CooperativeDeletionRetention {
+                    records: selection
+                        .records
+                        .iter()
+                        .map(|id| entity_id("retention.records", id))
+                        .collect::<OwnerResult<Vec<_>>>()?,
+                    basis_code: selection.basis_code.clone(),
+                    retention_class: selection.retention_class.clone(),
+                })
+            })
+            .transpose()?,
     };
     let mut filed = vault
         .answer_cooperative_deletion_as(owner, &pact, &nonce, &answer, now())

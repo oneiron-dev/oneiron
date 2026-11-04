@@ -86,10 +86,25 @@ pub struct CourtesyDeleteAnswerRequest {
     /// Under a legal hold choice, the records to hold, as 32 hex.
     #[serde(default)]
     pub hold: Vec<String>,
+    /// Required only for `retain_under_basis`: records, basis and retention-class codes.
+    #[serde(default)]
+    pub retention: Option<CourtesyDeleteRetention>,
     /// The requester's host origin, to send the answer back; without it the
     /// answer stays on this side.
     #[serde(default)]
     pub reply_to: Option<String>,
+}
+
+/// A retain-under-basis choice's selection and recorded policy codes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CourtesyDeleteRetention {
+    /// Selected records as 32 hex; the answer lists only covered copies still here.
+    pub records: Vec<String>,
+    /// The owner's concise recorded basis, not a free-text allegation.
+    pub basis_code: String,
+    /// A caller-defined class code, not an engine-chosen number of days.
+    pub retention_class: String,
 }
 
 /// One world an incoming ask names, with its stale stamp when the pact's
@@ -139,12 +154,14 @@ pub struct CourtesyDeleteChoice {
     pub recorded: String,
     /// The customer hold a legal hold choice placed or kept (FIX 2924).
     pub holds: Vec<CourtesyDeleteHold>,
-    /// The records a legal hold choice named that are no copy this ask
-    /// covers: left out of its hold (FIX 2927).
+    /// Selected records left out of the hold or retention: not covered
+    /// copies, or (for retention) no longer stored here.
     pub excluded: Vec<String>,
     /// Each record of a delete choice, in order, and what became of it: one
     /// still pending was not removed (FIX 2926).
     pub progress: Vec<CourtesyDeleteRecordProgress>,
+    /// Copies actually retained here, and the owner's recorded basis and class.
+    pub retention: Option<CourtesyDeleteRetention>,
 }
 
 /// One ask a former peer sent, filed for the owner's review.
@@ -330,6 +347,11 @@ pub fn courtesy_delete_incoming_ask(
             recorded: rfc3339_secs(choice.recorded_at),
             holds: courtesy_holds(vault, &choice.hold_ids)?,
             excluded: choice.excluded,
+            retention: choice.retention.map(|retention| CourtesyDeleteRetention {
+                records: retention.records.iter().map(EntityId::to_hex).collect(),
+                basis_code: retention.basis_code,
+                retention_class: retention.retention_class,
+            }),
             progress: choice
                 .delete_operation
                 .map(|operation| operation.records)
