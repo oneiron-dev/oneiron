@@ -1214,6 +1214,12 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
                 ClaimSubject::Entity(id) => vec![id],
                 ClaimSubject::Edge { source, target, .. } => vec![source, target],
             };
+            // Blind-review P1 (REVIEW-4389 round 4): a CLAIM birth stamps
+            // its body's scope_facet, which must name a stored FACET. Queue
+            // it like any other reference so the facet row lands first; a
+            // facet the archive does not carry blocks nothing, and the put
+            // then fails fail-closed.
+            refs.push(body.scope_facet);
             if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
                 refs.extend(crate::actor_claims::imported_actor_dependencies(&body)?);
             }
@@ -1296,6 +1302,13 @@ pub(super) fn import_edge(
                         && crate::workspace_roster::is_project_entity(&vault.store, wtxn, source)?
                         && crate::workspace_roster::is_project_entity(&vault.store, wtxn, target)?
                 }
+                // Blind-review P1 (REVIEW-4389 round 4): a newly inserted
+                // EVENT/TURN's initial put mints its FacetOf with the row's
+                // learned_at; the archived edge carries the original birth
+                // metadata for the same target (the key matched). Restoring
+                // the archived metadata is safe; anything else stays a
+                // collision.
+                EdgeKind::FacetOf => true,
                 _ => false,
             };
         if !door_minted {

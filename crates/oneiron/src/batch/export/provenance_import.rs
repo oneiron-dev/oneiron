@@ -285,7 +285,43 @@ pub(super) fn restore<R: Read + Seek>(
             }
         })
         .collect::<std::result::Result<BTreeSet<_>, _>>()?;
+    // Blind-review P1 (REVIEW-4389 round 4): a cut subject edge the
+    // entity pass re-minted (a claim's own ClaimOf, staged by its typed
+    // put before this branch) must not survive the restore. Only an edge
+    // this import created is removed; a pre-existing edge is vault truth,
+    // left alone.
+    let cut_subject = if cut {
+        if subject.len() != EDGE_KEY_LEN {
+            return Err(invalid("archive cohort subject is not an edge"));
+        }
+        let kind = crate::edge::EdgeKind::try_from_u8(subject[ENTITY_ID_LEN])
+            .ok_or_else(|| invalid("archive cohort subject is not an edge"))?;
+        Some((
+            id_at(&subject, 0)?,
+            kind,
+            id_at(&subject, ENTITY_ID_LEN + 1)?,
+        ))
+    } else {
+        None
+    };
+    let had_edge = match cut_subject {
+        Some((source, kind, target)) => {
+            crate::ports::EdgeStoreRead::port_edge_get(&vault.store, txn, &source, kind, &target)?
+                .is_some()
+        }
+        None => false,
+    };
     let (inserted, unchanged) = restore_cohort(vault, txn, &rows, cut)?;
+    if let Some((source, kind, target)) = cut_subject
+        && !had_edge
+        && crate::ports::EdgeStoreRead::port_edge_get(&vault.store, txn, &source, kind, &target)?
+            .is_some()
+    {
+        vault
+            .batch_in()
+            .delete_edge(&source, kind, &target)
+            .apply(txn)?;
+    }
     if inserted != new_ids.len() {
         return Err(Error::InvariantViolation("provenance import count drift"));
     }
