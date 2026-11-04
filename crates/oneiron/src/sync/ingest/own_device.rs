@@ -4,13 +4,15 @@
 //! A MESSAGE body names no signer, so its door cannot tell an own machine's
 //! row from a federation peer's by the bytes alone. The import that brings
 //! them can: an own-device import ([`OwnDeviceImport`]) comes from a client
-//! with no federation peer bound, over a connection whose machine proved
-//! itself and still stands here on the key it proved. While such an import
-//! runs, the doors on its thread mint a [`VerifiedOwnDeviceLane`] for a
-//! MESSAGE row of the window it lands in only when the import's own bytes
-//! insert that row with those exact bytes: the proof covers the connection,
-//! the digest binds the row to it. A row of the window the import did not
-//! bring, such as one a forward pass replays from the document, takes none.
+//! with no federation peer bound, or into the home from an own-device
+//! socket's push ([`with_own_device_push`], FIX 12112), over a connection
+//! whose machine proved itself and still stands here on the key it proved.
+//! While such an import runs, the doors on its thread mint a
+//! [`VerifiedOwnDeviceLane`] for a MESSAGE row of the window it lands in
+//! only when the import's own bytes insert that row with those exact bytes:
+//! the proof covers the connection, the digest binds the row to it. A row of
+//! the window the import did not bring, such as one a forward pass replays
+//! from the document, takes none.
 //!
 //! A federation peer's row stays the peer's on whichever own machine relays
 //! it: federation admission files its digest in the window's peer origin map
@@ -24,9 +26,10 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use loro::json::{JsonOpContent, MapOp};
-use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
+use loro::{ContainerID, ContainerType, ImportBlobMetadata, LoroDoc, LoroValue};
 
 use super::entity::{IngestCtx, Residence};
+use crate::authority::PeerMachine;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_MESSAGE;
@@ -106,19 +109,43 @@ pub(in crate::sync) fn with_own_device_import<T>(
         vault: vault.store.env.path().to_path_buf(),
         window: key.as_str().to_owned(),
         machine: import.machine(),
-        rows: inserted_messages(doc, update),
+        rows: inserted_messages(key, doc, update),
     });
     let _restore =
         Restore(OWN_DEVICE_SPAN.with(|slot| std::mem::replace(&mut *slot.borrow_mut(), span)));
     land()
 }
 
-/// Each MESSAGE row `update` itself inserts into the window whose live
+/// The home's landing of `update`, a window push the machine `from` sent
+/// over a socket whose upgrade proved it, into the window `key` whose live
+/// document is `doc` (FIX 12112): `land` runs under that socket's own-device
+/// import, rechecked now, as a client's import of its home's bytes does. A
+/// machine that does not stand here on the key it proved lands it with no
+/// lane. Call it only on an own-device lane: a federation socket's pushes
+/// take federated admission, never this.
+pub fn with_own_device_push<T>(
+    vault: &Vault,
+    from: PeerMachine,
+    (key, doc): (&WindowKey, &LoroDoc),
+    update: &[u8],
+    land: impl FnOnce() -> T,
+) -> T {
+    let import = OwnDeviceImport::proven(vault, from);
+    with_own_device_import(vault, import.as_ref(), (key, doc), update, land)
+}
+
+/// Each MESSAGE row `update` itself inserts into the window `key` whose live
 /// document is `doc`, with the digest of the bytes it inserts: a snapshot's
 /// rows as it holds them, an update's as its own operations write them, not
 /// those of another import its operations complete. An update that does not
 /// decode, or whose history `doc` lacks, inserts none here; its import fails.
-fn inserted_messages(doc: &LoroDoc, update: &[u8]) -> BTreeSet<(EntityId, [u8; 32])> {
+/// An update forks `doc` to read its operations only when it may insert a
+/// MESSAGE row at all ([`may_insert_message`]).
+fn inserted_messages(
+    key: &WindowKey,
+    doc: &LoroDoc,
+    update: &[u8],
+) -> BTreeSet<(EntityId, [u8; 32])> {
     let Ok(meta) = LoroDoc::decode_import_blob_meta(update, true) else {
         return BTreeSet::new();
     };
@@ -138,7 +165,7 @@ fn inserted_messages(doc: &LoroDoc, update: &[u8]) -> BTreeSet<(EntityId, [u8; 3
                 }
             });
         }
-    } else {
+    } else if may_insert_message(key, doc, &meta) {
         let candidate = doc.fork();
         if candidate
             .import(update)
@@ -159,6 +186,16 @@ fn inserted_messages(doc: &LoroDoc, update: &[u8]) -> BTreeSet<(EntityId, [u8; 3
         }
     }
     rows
+}
+
+/// Whether `update`, not a snapshot, may insert a MESSAGE row into the window
+/// `key` whose live document is `doc`, read without forking `doc`. It cannot
+/// when:
+/// - `key` is a world's window: a MESSAGE row resides only in a base window,
+///   and a world window's door refuses one (`entity_belongs_to_window`);
+/// - `doc` already holds every change `update` carries, so it lands no row.
+fn may_insert_message(key: &WindowKey, doc: &LoroDoc, meta: &ImportBlobMetadata) -> bool {
+    key.world().is_none() && !doc.oplog_vv().includes_vv(&meta.partial_end_vv)
 }
 
 /// The lane of the MESSAGE row `blob` at `id`, whose put lands `data`: an
