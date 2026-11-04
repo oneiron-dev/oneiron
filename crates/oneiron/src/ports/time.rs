@@ -5,6 +5,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod lease_journal;
+use lease_journal::LeaseJournal;
+
 /// The engine reads the clock inside the vault's write transaction, which may
 /// be one group commit shared with other writes. An implementation must only
 /// read time: it must not call into the vault or wait on anything a vault
@@ -355,20 +358,39 @@ impl crate::store::Store {
     /// lease is held from its commit, not from its queueing, so it keeps its
     /// 5 s; one renewal is queued at a time, and one that does not commit is
     /// said in a warn and queued again by the next lapsed decision.
+    ///
+    /// A time past the committed lease is returned only once the lease
+    /// journal holds a bound that covers it, synced off the writer (review
+    /// #4484 P1-B; L02 11-04 13:53 = A): a crash before the renewal commits
+    /// replays that bound into the floor at the next owned open. When the
+    /// journal cannot take it, the decision judges at the bound the vault
+    /// already holds, never the advanced time. A store whose open did not
+    /// take the writer lease keeps no journal and renews in its writer, as
+    /// before FIX 12023.
     pub(crate) fn authorization_now(&self) -> Result<u64> {
         let clock = crate::store::ManifestDbs::clock(self);
         if let Some(now) = clock.leased_now() {
             return Ok(now);
         }
+        let Some(journal) = LeaseJournal::of(self) else {
+            return self.renew_authorization_lease_in_writer();
+        };
         // One short snapshot reads the committed floor, and ends before the
         // decision opens its own: it holds no reader slot while a writer is
         // waited for.
-        let now = {
+        let (now, committed) = {
             let txn = self.env.read_txn()?;
             let (persisted, lease) = clock_floor_and_lease_in_txn(self, &txn)?;
-            clock.observe_leased_floor(persisted, lease)?
+            (
+                clock.observe_leased_floor(persisted, lease)?,
+                persisted.max(lease),
+            )
         };
-        let judged = clock.judge(now);
+        let judged = if journal.cover(now) {
+            clock.judge(now)
+        } else {
+            clock.judge(now.min(committed.max(journal.covered())))
+        };
         if let Some(renewal) = clock.claim_lease_renewal() {
             let staged = Arc::new(AtomicU64::new(0));
             let lease = Arc::clone(&staged);
@@ -379,10 +401,80 @@ impl crate::store::Store {
                     Ok(())
                 })
                 .replay_only()
-                .after_commit(renewal.hold_on_commit(staged)),
+                .after_commit(renewal.hold_on_commit(staged, journal)),
             );
         }
         Ok(judged)
+    }
+
+    /// A lapsed lease renewed in this store's own writer before the decision
+    /// judges, for a store that keeps no lease journal (its open took no
+    /// writer lease): the committed floor and lease, raised past every bound
+    /// a lease holder's journal holds, so a crash it left never judges here
+    /// below a time it took.
+    fn renew_authorization_lease_in_writer(&self) -> Result<u64> {
+        let clock = crate::store::ManifestDbs::clock(self);
+        // A preliminary read would consume one reader slot per concurrent
+        // caller before writers serialize, exhausting small reader budgets.
+        // Persist ONLY clock authority here: a read must not also commit the
+        // floor of IDs allocated in RAM but not yet used by a mutation.
+        let mut txn = self.env.write_txn()?;
+        let (persisted, lease) = clock_floor_and_lease_in_txn(self, &txn)?;
+        let journaled = lease_journal::journaled_bound(self.canonical_root(), persisted.max(lease))?;
+        let now = clock.observe_leased_floor(persisted.max(journaled), lease)?;
+        // A lease another handle committed may already cover it.
+        let leased = if lease >= now {
+            lease
+        } else {
+            now.saturating_add(AUTHORIZATION_LEASE_SECS)
+        };
+        let changed = (now, leased) != (persisted, lease);
+        if changed {
+            put_clock_floor_in_txn(self, &mut txn, now, leased)?;
+        }
+        let id = self.env.info().last_txn_id + 1;
+        txn.commit()?;
+        clock.hold_lease(leased)?;
+        // A floor-only commit changes no Dreamer input (FIX 11568); an empty
+        // one moves no txn id and is never noted.
+        if changed {
+            crate::store::ManifestDbs::diagnostics(self)
+                .replay_only_commits
+                .note(id);
+        }
+        Ok(now)
+    }
+
+    /// The owned open's replay of the lease journal (review #4484 P1-B,
+    /// condition 3), before any admission: the highest bound a crashed open
+    /// journaled commits into the clock floor and this store's clock, then
+    /// the journal is emptied for this open's own decisions.
+    pub(crate) fn replay_authorization_lease_journal(&self) -> Result<()> {
+        let clock = crate::store::ManifestDbs::clock(self);
+        let committed = {
+            let txn = self.env.read_txn()?;
+            let (persisted, lease) = clock_floor_and_lease_in_txn(self, &txn)?;
+            persisted.max(lease)
+        };
+        let (journal, bound) = lease_journal::replay_at_open(self.canonical_root(), committed)?;
+        if bound == 0 {
+            return Ok(());
+        }
+        let mut txn = self.env.write_txn()?;
+        let (persisted, lease) = clock_floor_and_lease_in_txn(self, &txn)?;
+        if bound > persisted {
+            put_clock_floor_in_txn(self, &mut txn, bound, lease)?;
+            let id = self.env.info().last_txn_id + 1;
+            txn.commit()?;
+            crate::store::ManifestDbs::diagnostics(self)
+                .replay_only_commits
+                .note(id);
+        } else {
+            txn.abort();
+        }
+        clock.observe_floor(bound)?;
+        lease_journal::truncate_after_replay(&journal);
+        Ok(())
     }
 }
 
@@ -396,18 +488,25 @@ struct LeaseRenewal {
 impl LeaseRenewal {
     /// The renewal's after-commit callback: once its group commit is
     /// decided, the lease its stage put in `staged` is held when its rows
-    /// landed, and a renewal that did not land is said in a warn. The flag
-    /// clears either way, after the hold, so the next lapsed decision queues
-    /// a failed renewal again.
-    fn hold_on_commit(self, staged: Arc<AtomicU64>) -> AfterCommit {
+    /// landed, the lease journal is truncated once that lease covers every
+    /// bound it holds, and a renewal that did not land is said in a warn.
+    /// The flag clears either way, after the hold, so the next lapsed
+    /// decision queues a failed renewal again.
+    fn hold_on_commit(self, staged: Arc<AtomicU64>, journal: Arc<LeaseJournal>) -> AfterCommit {
         Box::new(move |landed| {
             let renewal = self;
             if !landed {
                 tracing::warn!(
                     "an authorization lease renewal did not commit; the next lapsed decision queues it again"
                 );
-            } else if let Err(error) = renewal.clock.hold_lease(staged.load(Ordering::Acquire)) {
-                tracing::warn!(%error, "a renewed authorization lease was not held");
+            } else {
+                let leased = staged.load(Ordering::Acquire);
+                match renewal.clock.hold_lease(leased) {
+                    Ok(()) => journal.settle(leased),
+                    Err(error) => {
+                        tracing::warn!(%error, "a renewed authorization lease was not held");
+                    }
+                }
             }
             drop(renewal);
         })
