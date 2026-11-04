@@ -536,6 +536,9 @@ pub(super) fn commit_on_answer(
         subscription,
         outcome,
     } = answering;
+    // The vault the reply lands in, for the FIX 10367 HEAD read below.
+    // `reader` itself does not enter the spawned task.
+    let vault = reader.vault.clone();
     let message = handle.message_id();
     let (finished, forwarded) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
@@ -558,14 +561,7 @@ pub(super) fn commit_on_answer(
                 .anchor()
                 .map(|anchor| anchor.conversation)
                 .and_then(|conversation| {
-                    crate::server::blocking(|| {
-                        authority
-                            .reader
-                            .vault
-                            .local_head(&conversation)
-                            .ok()
-                            .flatten()
-                    })
+                    crate::server::blocking(|| vault.local_head(&conversation).ok().flatten())
                 })
                 .unwrap_or(turn);
             ReplyCommit {
