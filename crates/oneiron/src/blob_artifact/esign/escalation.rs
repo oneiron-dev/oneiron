@@ -19,11 +19,12 @@
 use super::ceremony::{sign, signed_event};
 use super::ledger::state_in;
 use super::model::*;
-use crate::llm::decision::{AskRole, DecisionAsk};
+use crate::llm::decision::DecisionAsk;
 use crate::model_decision::AnswerActor;
 use crate::model_decision::catalogue;
 use crate::model_decision::{AnswerContract, DecisionQuestion, RoleRank};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::decision_ask_role::AskRole;
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
