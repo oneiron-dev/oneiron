@@ -52,7 +52,9 @@ pub use self::projector::{
     project_skill_reliability_for, project_skill_reliability_for_executor,
 };
 pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior};
-pub(crate) use self::provenance::{skill_reliability_prior_rows, skill_reliability_sources};
+pub(crate) use self::provenance::{
+    skill_reliability_prior_rows, skill_reliability_sources, skill_reliability_with_sources,
+};
 pub use self::read::{
     ExecutorReliability, SkillReliabilityQuery, read_skill_reliability,
     rebuild_skill_confidence_cache, skill_executor_reliability, skill_reliability_posterior,

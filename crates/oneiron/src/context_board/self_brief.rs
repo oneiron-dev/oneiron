@@ -2,7 +2,7 @@
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::skill_reliability::{skill_reliability_posterior, skill_reliability_prior};
+use crate::skill_reliability::skill_reliability_with_sources;
 use crate::{Vault, write_envelope::skill_record::SkillContentHash};
 use oneiron_authority::federation::Scope;
 use oneiron_model::llm::BudgetRead;
@@ -79,6 +79,8 @@ pub struct SelfBrief {
     pub budget: BudgetRead,
     pub clock_ms: u64,
     pub skills: Vec<BriefSkillRow>,
+    #[serde(skip)]
+    skill_sources: Vec<EntityId>,
     pub working_set: Vec<EntityId>,
     /// PEOPLE (ARCH-0067): the vault's `people` roster, chosen at this
     /// epoch boundary. Rendered as its own block, never inside identity.
@@ -91,14 +93,13 @@ impl SelfBrief {
     /// and malformed claims fail closed instead of inventing a reliability.
     pub fn describe(vault: &Vault, input: SelfBriefInput<'_>) -> Result<Self> {
         let mut skills = Vec::with_capacity(input.skill_index.len());
+        let mut skill_sources = Vec::new();
         for id in input.skill_index {
             let record = vault
                 .get_skill_record(id)?
                 .ok_or(crate::Error::EntityNotFound)?;
-            let posterior = match skill_reliability_posterior(vault, id)? {
-                Some(posterior) => posterior,
-                None => skill_reliability_prior(vault, id)?,
-            };
+            let (posterior, sources) = skill_reliability_with_sources(vault, id)?;
+            skill_sources.extend(sources);
             let hash = record.content_hash.map(|h: SkillContentHash| h.to_hex());
             let loaded_hash = input
                 .read_set
@@ -132,6 +133,7 @@ impl SelfBrief {
             budget: input.budget.clone(),
             clock_ms: input.clock_ms,
             skills,
+            skill_sources,
             working_set: input.working_set.to_vec(),
             people,
         })
@@ -194,12 +196,8 @@ impl SelfBrief {
         rows.extend(self.cast.iter().copied());
         rows.extend(self.communication.recipients.iter().copied());
         rows.extend(self.working_set.iter().copied());
-        for skill in &self.skills {
-            rows.push(skill.id);
-            rows.extend(crate::skill_reliability::skill_reliability_sources(
-                vault, &skill.id,
-            )?);
-        }
+        rows.extend(self.skills.iter().map(|skill| skill.id));
+        rows.extend(self.skill_sources.iter().copied());
         for person in people.map(People::rows).unwrap_or_default() {
             rows.push(person.person);
             rows.extend(person.actors.iter().copied());
