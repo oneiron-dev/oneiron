@@ -140,17 +140,31 @@ impl Vault {
 
         if !decoded.is_hard() {
             let had_refinement =
-                crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, wtxn, id)?;
+                crate::store::claim_refinement_control::claim_refinement_scope_exists_in_txn(
+                    &self.store,
+                    wtxn,
+                    id,
+                )?;
             let had_merge_receipt =
-                crate::skill_hub::refinement_custody_exists_in_txn(&self.store, wtxn, id)?;
-            let had_sources =
-                crate::skill_hub::source_custody_exists_in_txn(&self.store, wtxn, id)?;
+                crate::store::skill_refinement_custody::refinement_custody_exists_in_txn(
+                    &self.store,
+                    wtxn,
+                    id,
+                )?;
+            let had_sources = crate::store::skill_source_custody::source_custody_exists_in_txn(
+                &self.store,
+                wtxn,
+                id,
+            )?;
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
             crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
             let had_receipt_sources =
                 crate::receipt::receipt_archive_custody_exists(&self.store, wtxn, id)?;
-            let had_birth_sources =
-                crate::agent_def::birth_custody_exists_in_txn(&self.store, wtxn, id)?;
+            let had_birth_sources = crate::store::agent_birth_custody::birth_custody_exists_in_txn(
+                &self.store,
+                wtxn,
+                id,
+            )?;
             crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
             crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
             let had_body = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
@@ -267,7 +281,10 @@ impl Vault {
             crate::vault_cleanup::erase_in_txn(&self.store, wtxn, id)?;
             // A replayed erase holds no owner act here: the machine that made
             // it carries its custody revokes (FIX 11883).
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id, None)?;
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
+                None,
+            )?;
             return Ok((
                 ReplayedTombstoneOutcome::HardPurged {
                     erased: false,

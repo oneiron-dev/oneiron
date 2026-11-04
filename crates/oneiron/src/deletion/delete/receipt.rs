@@ -126,7 +126,8 @@ impl Vault {
                 crate::store::erase_response_owner_in_txn(&self.store, &mut wtxn, id)?;
             }
             crate::deletion::actor_fields::erase_actor_fields_in_txn(
-                self, &mut wtxn, id, owner_act,
+                crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id),
+                owner_act,
             )?;
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
