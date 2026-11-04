@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::replay_capsule::{CapsuleRungBinding, ReplayRoutePin};
 use super::storage::ReadWorldUnknown;
 use crate::compaction::output::OutputRef;
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Erased, ErasedForm, Named, SideKey, SideTable};
 use crate::{EntityId, Error, ModelLocality, Result, Vault};
 
 const SCHEMA: u8 = 1;
@@ -277,6 +277,56 @@ impl ModelCallRecord {
     }
 }
 
+impl ErasedForm for ModelCallRecord {
+    fn into_erased(mut self) -> Result<Self> {
+        self.erased = true;
+        self.route = None;
+        self.issuing_login = None;
+        self.organization = None;
+        self.project = None;
+        self.credential_id = None;
+        self.response_id = None;
+        self.thread_id = None;
+        self.previous_response_id = None;
+        self.store = None;
+        self.receipt_ref = None;
+        self.actor = None;
+        self.produced_pending = false;
+        self.replay_of = None;
+        self.source_rows.clear();
+        self.produced_rows.clear();
+        self.input_parts.clear();
+        self.reasoning.clear();
+        self.read_world_epoch = None;
+        self.read_worlds = None;
+        self.read_world_unknown = vec![ReadWorldUnknown::Uncaptured];
+        Ok(self)
+    }
+}
+
+/// Erases every model-call record stamped to `actor`. Message occurrences
+/// belong to their MESSAGE and are not released here; inline reasoning and
+/// replay-binding bytes are scrubbed. Undecodable rows stay unchanged.
+pub(crate) fn erase_model_call_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    for row in MODEL_CALLS.iter_raw_from(&vault.store, wtxn, &[])? {
+        let (key, bytes) = row?;
+        let Some(key) = <(EntityId, u64, u64) as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        if let Ok(record) = MODEL_CALLS.decode_value(&bytes)
+            && record.actor == Some(*actor)
+            && !record.erased
+        {
+            MODEL_CALLS.put_erased(&vault.store, wtxn, &key, Erased::of(record)?)?;
+        }
+    }
+    Ok(())
+}
+
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
 }
@@ -288,6 +338,12 @@ pub fn record_model_call_in_txn(
     txn: &mut heed::RwTxn<'_>,
     record: &ModelCallRecord,
 ) -> Result<()> {
+    if record
+        .actor
+        .is_some_and(|actor| super::storage::actor_gone_in_txn(vault, &*txn, &actor))
+    {
+        return Ok(());
+    }
     record.validate()?;
     let key = record.key();
     if MODEL_CALLS.get(&vault.store, txn, &key)?.is_some() {
