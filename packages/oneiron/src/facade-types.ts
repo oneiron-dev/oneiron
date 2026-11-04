@@ -6479,7 +6479,7 @@ export type UnsupportedCapability = { capability: LlmCapability; model?: ModelId
 /** `oneiron_model::llm::error::LabelReadFailure` */
 export type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed"
 /** `oneiron_model::llm::error::FatalLlmError` */
-export type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased"
+export type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased" | "JobLost"
 /** `oneiron::llm::step::public::ModelStepFailureClass` */
 export type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine"
 /** `oneiron_model::llm::error::TransportFaultKind` */

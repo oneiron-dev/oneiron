@@ -54,8 +54,8 @@ pub(crate) const fn waits_on_owner_act(kind: ErrorKind) -> bool {
 /// (world privacy, FIX 11768), a failed login, a capability the routed model
 /// lacks (the owner routes a capable one), or an answer an erase took
 /// (terminal by its own contract). A rate limit, a spent usage window, a
-/// provider outage and a refused or unreadable reply do not. Exhaustive, so
-/// a new variant is classified here.
+/// provider outage, a lost media job (FIX 11464) and a refused or unreadable
+/// reply do not. Exhaustive, so a new variant is classified here.
 pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
     match error {
         LlmError::BudgetDenied(_) => true,
@@ -85,6 +85,7 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
             | FatalLlmError::InvalidRequestDetail { .. }
             | FatalLlmError::ContentFiltered
             | FatalLlmError::EmptyResponse
+            | FatalLlmError::JobLost
             | FatalLlmError::LabelRead(_) => false,
         },
     }
