@@ -241,6 +241,7 @@ impl EsignEvent {
             Self::Drafted { .. } => DRAFT_PREDICATE,
             Self::Sent => "esign.sent",
             Self::Viewed { .. } => "esign.viewed",
+            Self::AccessVerified { .. } => "esign.access_verified",
             Self::FieldSaved { .. } => "esign.field",
             Self::Signed { .. } => "esign.signed",
             Self::Declined { .. } => "esign.declined",

@@ -138,6 +138,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             audio: call.audio,
             state: call.state,
             deadline: call.deadline,
+            run: call.run,
         })?;
         answers
             .pop()

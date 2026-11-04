@@ -218,7 +218,10 @@ impl SyncSecretProjection {
         };
         let raw: &[u8] = &value;
         let carrier = crate::world_keys::image_pad_row(store, raw);
-        let body = carrier.as_deref().unwrap_or(raw).get(ENTITY_METADATA_HEADER_LEN..)?;
+        let body = carrier
+            .as_deref()
+            .unwrap_or(raw)
+            .get(ENTITY_METADATA_HEADER_LEN..)?;
         let hash = blake3::hash(body);
         if !self.blobs.contains_key(hash.as_bytes()) && !self.unread.contains_key(hash.as_bytes()) {
             return None;

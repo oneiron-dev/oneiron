@@ -23,8 +23,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/image_release/verify.rs` | src | m | 5 struct · 4 enum · 4 fn | ArtifactCheck, ArtifactRole, CheckOutcome, HostCapabilities, HostCheck, HostOutcome, HostRequirement, ObservedArtifacts +1 | `verify_release`: parse, bind to the observed bytes, check the host, read the signature |
 | `src/launcher.rs` | src | m | 1 fn | — | Unprivileged in-container launcher and syscall-argument broker |
 | `src/launcher/loopback.rs` | src | s | 2 crate-vis | — | The launcher's half of the guest's virtual loopback (FIX 6680) |
-| `src/lib.rs` | src | m | 8 struct · 2 enum · 12 fn · 1 type · 1 mod · 7 re-export | ContainerRuntime, Error, FenceConfig, FenceProof, GuestLimits, GuestSeccomp, GuestSession, GuestSpec +2 | Container sessions with an engine-owned Linux Landlock/seccomp fence |
-| `src/linux.rs` | src | m | 12 crate-vis | — | Linux UAPI used on both sides of the seccomp listener |
+| `src/lib.rs` | src | m | 8 struct · 2 enum · 12 fn · 1 type · 1 mod · 8 re-export | ContainerRuntime, Error, FenceConfig, FenceProof, GuestLimits, GuestSeccomp, GuestSession, GuestSpec +2 | Container sessions with an engine-owned Linux Landlock/seccomp fence |
+| `src/linux.rs` | src | m | 3 fn · 12 crate-vis | — | Linux UAPI used on both sides of the seccomp listener |
 | `src/relay_protocol.rs` | src | s | 1 struct · 1 enum · 2 fn | RelayReply, RelayRequest | Bounded host/guest network transport over the no-NIC VM's private vsock |
 | `src/socket_lifetime.rs` | src | s | 3 crate-vis | — | The launcher's inventory of the socket inodes its guest still holds (FIX 5978) |
 | `src/supervisor.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | NativeFenceGuard | Host custody of the seccomp listener and all network transports |

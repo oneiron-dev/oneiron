@@ -45,7 +45,7 @@ use crate::ai_host::{AiHandle, CHAT_ROLE};
 use crate::api::RoomAudience;
 use crate::api::ai::chat::{chat_request, text_message};
 use crate::auth::CoreAuth;
-use crate::models::{OfferLadder, Seat};
+use crate::models::{ModelCallBinding, OfferLadder, Seat};
 
 // Vault memory/diary material is exempt from the external/tool sentence
 // safeguard. Live connector results enter separately and always add taint.
@@ -160,6 +160,7 @@ struct ModelCallCapture {
     request: oneiron::LlmRequest,
     room: Option<EntityId>,
     no_record_at_arrival: bool,
+    binding: tokio::sync::oneshot::Receiver<ModelCallBinding>,
 }
 
 /// What opening a turn gives: its stream, whether it heard outside context,
@@ -307,9 +308,9 @@ impl ChatBrain {
         // read from (FIX 6935).
         let read = oneiron::skill_optimize::union_source_rows([Some(said_from.as_slice())]);
         let run = run.sourced(read);
-        let stream = admitted
+        let (stream, binding) = admitted
             .ladder
-            .stream(&run, admitted.request.clone(), None)
+            .stream_recorded(&run, admitted.request.clone(), None)
             .map_err(|error| refused(format!("{error:?}")))?;
         let room = self.bindings.room;
         let no_record_at_arrival = room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
@@ -320,6 +321,7 @@ impl ChatBrain {
             request: admitted.request,
             room,
             no_record_at_arrival,
+            binding,
         };
         let Some(memories) = memories else {
             return Ok((stream, !self.foreign.is_empty(), heard, said_from, capture));
@@ -708,15 +710,17 @@ impl Turn {
                         || self.capture.room.is_some_and(|room| {
                             self.capture.vault.room_has_unrecorded_stretch(room)
                         });
-                    // Streams cannot name the served model without a protocol
-                    // change, so the route pin is withheld here (FIX 12743).
+                    // A recorded turn's exact answering binding travels beside
+                    // its answer (FIX 12743); it resolved before this Done on
+                    // the answering task, so it is found, never guessed.
+                    let binding = self.capture.binding.try_recv().ok();
                     crate::api::record_raw_response(
                         self.capture.vault.as_ref(),
                         &self.capture.ladder,
                         &self.capture.run,
                         &self.capture.request,
                         &response,
-                        None,
+                        binding.as_ref(),
                         no_record,
                     );
                     break BrainEvent::Done;
