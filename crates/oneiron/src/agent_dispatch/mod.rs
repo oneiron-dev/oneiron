@@ -116,8 +116,8 @@ pub use self::spend_calibration::{
 };
 pub(crate) use self::spend_lease::payer_binds_in_txn;
 pub use self::spend_record::{
-    ChildSpend, SpendPayer, SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement,
-    SpendSignal, SpendState,
+    ChildSpend, SpendCalibrationSample, SpendPayer, SpendRead, SpendRefused, SpendScope,
+    SpendScopeId, SpendSettlement, SpendSignal, SpendState,
 };
 
 pub use self::budget_hold::{

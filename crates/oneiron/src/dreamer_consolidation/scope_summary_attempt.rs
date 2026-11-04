@@ -150,7 +150,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             });
         }
         // A queued summary for a conversation excluded after it was requested
-        // parks for retry before any source read (FIX 12551(b)): it runs if
+        // parks for retry before source text is read (FIX 12551(b)): it runs if
         // the conversation is later un-excluded. The weave planner already
         // requests no fresh ones (#4382); this gates the queued remainder.
         // Malformed input falls through to the planner's own error below.
@@ -164,7 +164,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     .as_ref()
                     .is_some_and(|scope| excluded.contains(&scope.conversation)),
                 ScopeSummaryTarget::Thread { trunk } => ctx.vault.dreamer_turn_excluded(trunk)?,
-                ScopeSummaryTarget::Session { .. } => false,
+                ScopeSummaryTarget::Session { session } => {
+                    crate::scope_summary::session_summary_excluded(ctx.vault, session)?
+                }
             };
             if gated {
                 return Ok(DreamerAttemptExecution::Park {
