@@ -1,8 +1,8 @@
 //! Host compaction request and result records.
 
-use serde::{Deserialize, Serialize};
-use crate::entity_id::EntityId;
 use super::CompactionWindowMessage;
+use crate::entity_id::EntityId;
+use serde::{Deserialize, Serialize};
 
 /// A conversation's host-rendered message window, with the lines that must
 /// survive word for word. The session owns the resulting keyframe.
@@ -24,4 +24,3 @@ pub struct HostCompactResult {
     pub first_turn: u64,
     pub last_turn: u64,
 }
-

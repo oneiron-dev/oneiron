@@ -27,7 +27,7 @@ use crate::temporal::TemporalAnchorMode;
 // ordinary builds, where it would be an unused import.
 #[cfg(doc)]
 use super::builder::PipelineBuilder;
-use super::support::read_entity_metadata;
+use super::support::{read_entity_metadata, read_entity_metadata_row};
 
 pub(crate) const DEFAULT_RESULT_LIMIT: usize = 20;
 pub(super) const DEFAULT_SIGMA_SECS: u64 = 86_400;
@@ -218,6 +218,10 @@ pub(super) struct PipelineFilterConfig<'a> {
 pub(super) struct EntityMetadataCache {
     pub(super) temporal_report: Option<super::TemporalSearchReport>,
     entries: HashMap<EntityId, Option<EntityMetadata>>,
+    /// Archive bits measured by this run's deletion-state reads, keyed as
+    /// `entries`: the claim-status gate judges its archive refusal from
+    /// the read that produced the metadata instead of reading again.
+    archived: HashMap<EntityId, bool>,
     /// Unique evaluated candidates rejected by read authority or D19. Not telemetry.
     pub(super) read_suppressed: std::collections::HashSet<EntityId>,
     // Counts D19 body lookups across all gates sharing this run cache, including
@@ -383,6 +387,45 @@ impl EntityMetadataCache {
         self.entries.insert(*id, metadata);
         Ok(metadata)
     }
+
+    /// [`Self::get`] also carrying the decoded record on a cache miss, for
+    /// a caller that gates on the row it just read. A hit carries no
+    /// record: row bytes are never memoized here.
+    pub(super) fn get_row(
+        &mut self,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(Option<EntityMetadata>, Option<crate::ports::EntityRecord>)> {
+        if let Some(cached) = self.entries.get(id) {
+            return Ok((*cached, None));
+        }
+
+        let read = read_entity_metadata_row(store, rtxn, id)?;
+        self.entries.insert(*id, read.meta);
+        if let Some(archived) = read.archived {
+            self.archived.insert(*id, archived);
+        }
+        Ok((read.meta, read.row))
+    }
+
+    /// The archive bit for `id`: the one this run's deletion-state read
+    /// measured, or, if none did (a plain [`Self::get`] filled the entry,
+    /// or a legal hold returned first), the read `is_archived_in_txn`
+    /// makes, kept for the rest of the run.
+    pub(super) fn archived_bit(
+        &mut self,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        if let Some(archived) = self.archived.get(id) {
+            return Ok(*archived);
+        }
+        let archived = crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)?;
+        self.archived.insert(*id, archived);
+        Ok(archived)
+    }
 }
 
 pub use crate::claim::retrieval_scope::{FacetMode, RelMode};
@@ -431,7 +474,9 @@ pub enum WorldScope {
 }
 
 pub use crate::claim::world_access::{
-    WORLD_ACCESS_SCHEMA_VERSION, WorldAuthoritySet, ActiveWorldSelection, ResolvedWorldAuthority, world_access_claim_body, decode_world_access_claim_value, PREDICATE_WORLD_ACCESS_ALLOWED_SET, PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+    ActiveWorldSelection, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+    PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, ResolvedWorldAuthority, WORLD_ACCESS_SCHEMA_VERSION,
+    WorldAuthoritySet, decode_world_access_claim_value, world_access_claim_body,
 };
 
 /// Opaque Dreamer working-set cursor.

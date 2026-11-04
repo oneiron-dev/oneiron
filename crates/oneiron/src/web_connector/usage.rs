@@ -12,7 +12,8 @@ const USAGE: SideTable<(u64, EntityId), WebConnectorUsage, Named> =
     SideTable::new(&side_table::WEB_CONNECTOR_USAGE);
 
 pub use crate::settings::web_connector::{
-    USAGE_READ_DEFAULT_LIMIT, USAGE_READ_MAX_LIMIT, WebKeySource, WebCostBasis, WebCallOutcome, WebConnectorUsage, WebConnectorUsageRead, WebConnectorUsagePage,
+    USAGE_READ_DEFAULT_LIMIT, USAGE_READ_MAX_LIMIT, WebCallOutcome, WebConnectorUsage,
+    WebConnectorUsagePage, WebConnectorUsageRead, WebCostBasis, WebKeySource,
 };
 
 impl Vault {

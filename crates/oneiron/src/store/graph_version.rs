@@ -1,9 +1,9 @@
 //! Transactional graph-version metadata.
 
-use heed::{RoTxn, RwTxn};
 use crate::error::{Error, Result};
 use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::store::{GRAPH_VERSION_KEY, ManifestDbs, Store};
+use heed::{RoTxn, RwTxn};
 
 pub(crate) fn increment_graph_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
     let current = read_graph_version(store, &*wtxn)?;

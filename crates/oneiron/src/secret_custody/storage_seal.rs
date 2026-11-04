@@ -69,7 +69,6 @@ const NONCE_BYTES: usize = 12;
 
 pub(crate) use crate::secret_record::StoredValue;
 
-
 /// One stored record: its fields, value-free, and its value as stored.
 pub(crate) struct StoredCustody {
     pub(crate) record: SecretCustodyRecord,

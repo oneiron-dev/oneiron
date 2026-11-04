@@ -1,8 +1,8 @@
 //! Scan-crossing evidence and the store's waiting crossings.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
-use serde::{Deserialize, Serialize};
 
 pub(crate) type CheckKey = ([u8; 1], Vec<u8>);
 
@@ -71,4 +71,3 @@ impl PendingScanChecks {
         }
     }
 }
-
