@@ -37,6 +37,18 @@ pub(crate) fn project_version_erased_in_txn(
     Ok(projected)
 }
 
+/// Whether a version claim stands under a customer hold alone. The check is
+/// fail-safe: a storage error reads as held, so the pair is preserved, never
+/// half-scrubbed.
+fn version_claim_held_in_txn(vault: &Vault, wtxn: &RwTxn<'_>, claim: &EntityId) -> Result<bool> {
+    Ok(!crate::store::legal_hold::holds_on_in_txn(
+        &vault.store,
+        wtxn,
+        &crate::deletion::LegalHoldTarget::Record(*claim),
+    )?
+    .is_empty())
+}
+
 /// Erases `actor` from every retained version and head made_by receipt and
 /// from the claim each receipt is bound to. Other attribution, content,
 /// versions, triggers and timestamps stay unchanged (FIX 9619).
@@ -63,6 +75,16 @@ pub(crate) fn erase_blob_artifact_version_actor_in_txn(
             heads.push((artifact, record));
         }
     }
+    // A customer hold on a version claim alone preserves its claim, record
+    // and revision history: the pair's scrub defers while the hold stands
+    // (holds mandate preservation), and only hold-free pairs are rewritten
+    // below. The deferred pair settles when the hold lifts (follow-up).
+    versions.retain(|(_, record)| {
+        !version_claim_held_in_txn(vault, wtxn, &record.claim_id).unwrap_or(true)
+    });
+    heads.retain(|(_, record)| {
+        !version_claim_held_in_txn(vault, wtxn, &record.claim_id).unwrap_or(true)
+    });
     for (key, record) in versions {
         rewrite_version_claim_in_txn(vault, wtxn, &record)?;
         VERSIONS.put(&vault.store, wtxn, &key, &record)?;
@@ -81,15 +103,15 @@ fn rewrite_version_claim_in_txn(
     record: &BlobArtifactVersion,
 ) -> Result<()> {
     // A MACHINE-signed version claim carries an authenticated history pin
-    // that rejects an ordinary reserved rewrite (InvalidMachineClaimProof).
-    // Retire the pin and its controls first — the authorized erasure path —
-    // then the redacted body lands as an ordinary claim rewrite. The retired
-    // controls embed the born content, so they leave the indexes with it.
-    let controls = crate::claim::history_store::retire_machine_history_for_delete(
-        &vault.store,
-        wtxn,
-        &record.claim_id,
-    )?;
+    // that rejects an ordinary reserved rewrite (InvalidMachineClaimProof),
+    // and its resident signature keeps every later read on the retired
+    // history (MachineClaimHistoryIncomplete). The claim is read while its
+    // projection still resolves, the pin and its controls are retired
+    // through the authorized erasure path, and the redacted body replaces
+    // the signed provenance: without the machine signature and proof actor
+    // it stands under vault erasure authority, so the ordinary reserved put
+    // admits it. The retired controls embed the born content, so they leave
+    // the indexes with it.
     let raw = vault
         .get_raw_in(wtxn, &record.claim_id)?
         .ok_or(Error::CorruptedIndex("blob artifact version claim header"))?;
@@ -98,6 +120,11 @@ fn rewrite_version_claim_in_txn(
     let mut claim = vault
         .get_claim_in_txn(wtxn, &record.claim_id)?
         .ok_or(Error::CorruptedIndex("blob artifact version claim"))?;
+    let controls = crate::claim::history_store::retire_machine_history_for_delete(
+        &vault.store,
+        wtxn,
+        record.claim_id,
+    )?;
     claim.value = blob_version_claim_value(
         record.version,
         &record.content_hash,
@@ -107,6 +134,13 @@ fn rewrite_version_claim_in_txn(
         record.calc_engine.as_ref(),
         &made_by_text(&record.made_by)?,
     );
+    if let Some(rmpv::Value::Map(entries)) = claim.evidence.as_mut() {
+        entries.retain(|(key, _)| {
+            key.as_str() != Some("machine_signature")
+                && key.as_str()
+                    != Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)
+        });
+    }
     vault.put_reserved_claim_in_txn(
         wtxn,
         &record.claim_id,

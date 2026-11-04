@@ -336,13 +336,11 @@ impl Vault {
             media_type: body.media_type,
             bytes: bytes.to_vec(),
             report: serde_json::json!({}),
-            made_by: made_by
-                .map(|named| bind_version_made_by(&actor, provenance, named, learned_at))
-                .or_else(|| {
-                    Some(default_version_made_by(
-                        &actor, provenance, None, learned_at,
-                    ))
-                }),
+            made_by: made_by.cloned().or_else(|| {
+                Some(default_version_made_by(
+                    &actor, provenance, None, learned_at,
+                ))
+            }),
         };
         self.propose_native_output_with_write_grant(
             artifact_id,
@@ -473,6 +471,19 @@ impl Vault {
             None,
             Some(made_by),
         )
+    }
+
+    /// Binds a caller-supplied envelope to the authenticated producer once,
+    /// at proposal retention, so the trusted Keep path can preserve it
+    /// instead of rebinding it to the keeper (blind review of #4554). The
+    /// provenance matches what Keep settles under.
+    pub(crate) fn bind_retained_producer_envelope(
+        actor: &WriteActor,
+        provenance: &BlobVersionProvenance,
+        made_by: &MadeBy,
+        at: u64,
+    ) -> MadeBy {
+        bind_version_made_by(actor, provenance, made_by, at)
     }
 
     /// The trusted Keep path: the retained envelope was bound to its
