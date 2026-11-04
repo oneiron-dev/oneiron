@@ -14797,7 +14797,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/visibility.rs",
@@ -23574,7 +23574,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation/visibility/private_sources.rs",
@@ -28817,7 +28817,7 @@
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
       "const": 31,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 11,
       "re-export": 6,
       "trait": 1
@@ -31658,7 +31658,7 @@
      "path": "src/edit_distance/escalation/mod.rs",
      "purpose": "ED-06 (ONE-1762, ARCH-0056 §7): the schema behind an escalated ask — what the engine asked, what the human…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 4
      }
     },
@@ -31683,6 +31683,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/escalation/scope_erase.rs",
+     "purpose": "An actor's erase takes the actor out of the escalation rows that name it (FIX 4700)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -36793,7 +36803,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 131
+      "crate-vis": 127
      }
     },
     {
@@ -38014,7 +38024,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 47
+      "crate-vis": 45
      }
     },
     {
@@ -48182,7 +48192,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "RecallRerank",
@@ -57901,7 +57911,7 @@
      "path": "src/ports/lmdb_visibility.rs",
      "purpose": "Transaction-local visibility ledger for canonical and composed session views",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -57968,7 +57978,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "re-export": 8
      }
     },
@@ -61875,7 +61885,7 @@
      "path": "src/run_budget/declaration.rs",
      "purpose": "The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 15,
       "struct": 4
@@ -66093,7 +66103,11 @@
       "AgentPackRefusalLevel",
       "AgentPackScope",
       "AgentPackSkill",
+      "AgentPackSkillCall",
+      "AgentPackSkillDependency",
+      "AgentPackSkillFormat",
       "AgentPackSkillRef",
+      "AgentPackSkillRole",
       "AgentPackTravelProjection",
       "AgentPackView",
       "AgentPackWakeCadence"
@@ -66102,9 +66116,9 @@
      "purpose": "The AgentPack a sharer sends to another party (OF-491, FIX 2040): a reference-free projection of an agent…",
      "surface": {
       "const": 1,
-      "enum": 8,
-      "fn": 8,
-      "struct": 11
+      "enum": 10,
+      "fn": 9,
+      "struct": 13
      }
     },
     {
@@ -67480,7 +67494,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 2,
       "re-export": 20
      }
@@ -68553,7 +68567,7 @@
      "path": "src/skill_optimize/eval_set/cohort.rs",
      "purpose": "Date-cut sealed cohorts and the exposure ledger (ARCH-0053: \"The ledger counts what each sealed cohort has…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 8,
       "struct": 5
@@ -80822,7 +80836,7 @@
      "path": "src/training_pack/authorize.rs",
      "purpose": "The owner's authorization of one prepared run, and the host's record of why a run that waits on it cannot…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5
      }
     },
@@ -80841,7 +80855,7 @@
       "fn": 3,
       "struct": 2,
       "trait": 1,
-      "type": 1
+      "type": 2
      }
     },
     {
@@ -80852,7 +80866,7 @@
      "purpose": "Training artifacts use the existing versioned blob store, not another file store",
      "surface": {
       "crate-vis": 8,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -80916,9 +80930,9 @@
      "path": "src/training_pack/promotion.rs",
      "purpose": "Held-out scoring releases a counted cohort",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -83587,7 +83601,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EraseHeldBytes",
@@ -83602,6 +83616,7 @@
      "path": "src/verbs/record_erase.rs",
      "purpose": "The served erase of one record (OF-150 / OF-163): `vault.records.erase_preview` shows what an erase would…",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 8
      }
@@ -90162,7 +90177,7 @@
      "purpose": "The `regenerates` link proofs over stored rows (FIX 5972)"
     },
     "edit_distance": {
-     "files": 85,
+     "files": 86,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -91219,9 +91234,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 123,
+   "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6279,
+   "source_files": 6280,
    "test_files": 900
   },
   "oneiron-android": {
@@ -108231,7 +108246,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/training_pack.rs",
@@ -108251,7 +108266,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/training_pack/trainer.rs",
@@ -118383,7 +118398,7 @@
      "path": "src/handler/mod.rs",
      "purpose": "WebSocket upgrade handler and connection lifecycle",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -118411,6 +118426,16 @@
      "path": "src/handler/residence_socket_tests.rs",
      "purpose": "A real enrol: root + thin index, one opened item, remote search and offline honesty",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/selector_scope.rs",
+     "purpose": "Single-vault selector grant scope shared by handler and livequery (FIX 9251)",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -125142,7 +125167,7 @@
      "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -125417,7 +125442,7 @@
    },
    "over_bar": 37,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1498,
+   "source_files": 1499,
    "test_files": 182
   },
   "oneiron-spawn": {

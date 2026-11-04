@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6279 | 900 | 123 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6280 | 900 | 125 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 53 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 24 | 2 | 0 |
@@ -50,7 +50,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 19 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 48 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1498 | 182 | 37 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1499 | 182 | 37 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 5 | 0 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 12 | 0 | 4 |
@@ -140,7 +140,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `dreamer_tournament` | dir | 6 | m | — | OF-366 tournament claim-authoring runner primitives |
 | `dreamer_wake` | dir | 68 | L | yes | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `edge_regeneration` | file | 1 | s | — | The `regenerates` link proofs over stored rows (FIX 5972) |
-| `edit_distance` | file+dir | 85 | m | — | ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the… |
+| `edit_distance` | file+dir | 86 | m | — | ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the… |
 | `edit_roundtrip` | dir | 39 | m | yes | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
 | `edit_settle` | dir | 15 | XL | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
 | `embed` | file+dir | 34 | L | yes | — |
@@ -772,7 +772,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `feedback_delivery` | file+dir | 2 | m | Deployment-selected feedback transport |
 | `feedback_redaction` | file | 1 | s | The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every… |
 | `files_intake` | dir | 8 | m | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… |
-| `handler` | dir | 33 | m | WebSocket upgrade handler and connection lifecycle |
+| `handler` | dir | 34 | m | WebSocket upgrade handler and connection lifecycle |
 | `home_candidacy` | file | 1 | s | This host's MACRO home candidacy (FIX 4898; ARCH-0026: "Election order is cloud node when attached, then an… |
 | `hook_verdict` | file | 1 | s | `ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through… |
 | `http_listener` | file+dir | 3 | m | The TCP accept loop the server and the embedder endpoint serve through |
