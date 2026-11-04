@@ -20,8 +20,8 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use crate::code_run::{
     CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, DelegatedSource, ReaderJob,
-    ReaderJobs, ScopedChildPorts, TaskWaitPolicy, TaskWaitSet, TaskWaitSetResult, reader_task_id,
-    reader_wait_id, reduce_task_wait_set,
+    ReaderJobs, ScopedChildPorts, TaskWaitPolicy, TaskWaitSet, TaskWaitSetResult, reader_wait_id,
+    reduce_task_wait_set,
 };
 use crate::engine_executor::EngineExecutorConfig;
 use crate::llm::{BudgetGuard, LlmBackend, ModelId, ModelLocality};
@@ -153,13 +153,17 @@ pub fn host_run_recorded(vault: &Vault, run: EntityId) -> Result<bool> {
 }
 
 /// The task the scoped child `parent_run` queues under `intent_key` is: a
-/// host registers its profile by it before the child is queued.
+/// host registers its profile by it before the child is queued. Scoped
+/// children and ordinary readers use separate task namespaces.
 ///
 /// # Errors
 ///
 /// An id that derives to a reserved one.
 pub fn scoped_child_task(parent_run: EntityId, intent_key: &str) -> Result<EntityId> {
-    reader_task_id(parent_run, intent_key)
+    EntityId::derive(
+        b"oneiron:code-scoped-child-task:v1",
+        &[parent_run.as_bytes().as_slice(), intent_key.as_bytes()],
+    )
 }
 
 /// The one-child wait (`n_of` = 1) over scoped child `task` of `parent_run`,
