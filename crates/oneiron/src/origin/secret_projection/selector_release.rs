@@ -537,6 +537,10 @@ impl SyncSecretProjection {
         self.copy_bodies.get(hash)
     }
 
+    pub(crate) fn unread_stamp() -> [u8; 32] {
+        UNREAD_STAMP
+    }
+
     pub(crate) fn stamp_is_unread(stamp: &[u8; 32]) -> bool {
         *stamp == UNREAD_STAMP
     }

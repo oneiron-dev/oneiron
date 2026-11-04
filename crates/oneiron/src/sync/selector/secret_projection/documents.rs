@@ -104,7 +104,7 @@ impl TextCopy {
             copy: String::from_utf8_lossy(REPO_OPAQUE_FILE_BYTES).into_owned(),
             places: None,
             blob,
-            stamp: super::UNREAD_STAMP,
+            stamp: SyncSecretProjection::unread_stamp(),
         }
     }
 

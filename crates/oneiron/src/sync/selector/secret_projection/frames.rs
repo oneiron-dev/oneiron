@@ -491,7 +491,7 @@ impl SyncSecretProjection {
 
     /// The copy generation `doc`'s state carries: one fingerprint over the
     /// stamp of every marked row it holds, a known copy id's row included
-    /// (FIX 10795), and an unread copy as [`super::UNREAD_STAMP`]; `None`
+    /// (FIX 10795), and an unread copy as [`SyncSecretProjection::unread_stamp`]; `None`
     /// when it holds none.
     pub(crate) fn window_generation(&self, doc: &LoroDoc) -> Option<[u8; 32]> {
         if self.is_empty() {
