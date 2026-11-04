@@ -33,7 +33,8 @@ use crate::learning::LearningCell;
 use crate::learning::evidence::cells_for_subject_in_txn;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_attribution::{
-    LateCreditReceipt, late_credit_receipt_in_txn, standing_credit_observation_in_txn,
+    LateCreditReceipt, StandingCreditObservation, late_credit_receipt_in_txn,
+    standing_credit_observation_in_txn,
 };
 
 /// One anchored pack-outcome observation held in a reliability cell,
@@ -132,10 +133,10 @@ pub(super) enum AnchoredEffect {
 /// a withdrawn amendment restores exactly what the credit side last wrote.
 /// The sealed credit gone, or erased to no attribution, leaves the row as
 /// it stands rather than guessed at — except a context-free row recovered
-/// through its sealed credit still reads the standing masses, which need no
-/// attribution; with no surviving mass it stands frozen and never newly
-/// withdraws (FIX 11675). Either restatement keeps the stored
-/// row's receipt key, time, anchor, judge, goal revision and pack context;
+/// through its sealed credit still reads the latest retained masses, which
+/// need no attribution. Unknown latest mass or no surviving subject mass
+/// leaves it frozen and never newly withdraws (FIX 11675). Either restatement
+/// keeps the stored row's receipt key, time, anchor, judge, goal revision and pack context;
 /// only the observation and its weight ever move.
 ///
 /// # Errors
@@ -163,7 +164,7 @@ pub(super) fn effective_evidence_in_txn(
         return Ok(AnchoredEffect::Stand);
     }
     match standing_credit_observation_in_txn(vault, txn, &credit, &held.subject)? {
-        Some((success, weight)) => {
+        StandingCreditObservation::Credited(success, weight) => {
             let evidence = restated(held, success, weight);
             Ok(if matches_row(row, &evidence) {
                 AnchoredEffect::Stand
@@ -174,8 +175,14 @@ pub(super) fn effective_evidence_in_txn(
         // Only a credited win's masses can move to nothing; a failed
         // credit that never named this subject is not this leaf's row to
         // judge.
-        None if credit.succeeded && row.pack_attribution.is_some() => Ok(AnchoredEffect::Withdraw),
-        None => Ok(AnchoredEffect::Stand),
+        StandingCreditObservation::Uncredited
+            if credit.succeeded && row.pack_attribution.is_some() =>
+        {
+            Ok(AnchoredEffect::Withdraw)
+        }
+        StandingCreditObservation::Unknown | StandingCreditObservation::Uncredited => {
+            Ok(AnchoredEffect::Stand)
+        }
     }
 }
 
