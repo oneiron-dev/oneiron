@@ -140,7 +140,7 @@ pub(crate) use self::ledgers::durable_send_receipts_lenient;
 pub(crate) use self::ledgers::persist_send_receipt;
 pub(crate) use self::ledgers::{
     SendReceiptOutcome, attempt_calling_principal_in_txn, delivered_send_receipt_for_task,
-    durable_send_receipts, stamp_attempt_pack_receipt_in_txn,
+    durable_send_receipts, erase_attempt_receipt_actor_in_txn, stamp_attempt_pack_receipt_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::ledgers::{
