@@ -1,9 +1,9 @@
 //! Deterministic identity used by commitment projection writes.
 
+use crate::write_envelope::WriteActor;
 use oneiron_base::edge::EdgeActorClass;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::entity_id::derived_domains::COMMITMENT_PROJECTION_ACTOR;
-use crate::write_envelope::WriteActor;
 
 /// The pinned System actor for engine projection writes.
 ///
