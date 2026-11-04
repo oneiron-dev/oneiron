@@ -260,7 +260,17 @@ fn admit_window_update(
             &admitted.get_map("edges"),
         )?;
         if part == 0 {
-            crate::sync::note::copy_judged(vault, &remote, &admitted)?;
+            // FIX 5588: the import lands on this install's machine, whose id
+            // alone names the receiving placement; never the sender's peer
+            // proof, though it is in scope on this path.
+            let receiving = {
+                let txn = vault.store.env.read_txn()?;
+                match crate::identity::read_machine_id_in_txn(vault, &txn)? {
+                    Some(machine) => crate::machine_destination::Destination::Machine(machine),
+                    None => crate::machine_destination::Destination::Unknown,
+                }
+            };
+            crate::sync::note::copy_judged(vault, &remote, &admitted, receiving)?;
         }
         copied.push((admitted, early));
     }
