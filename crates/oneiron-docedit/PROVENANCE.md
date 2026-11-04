@@ -63,3 +63,7 @@ and `MAX_DOCX_XML_NODES`, `MAX_DOCX_XML_EXPANDED_BYTES`, `ParseBound` and `Parse
 operation's limits. A byte ceiling hit is `DocxError::Capacity` (`ErrorCode::CapacityExceeded`), a memory or
 deadline refusal is `DocxError::Resource` (`ErrorCode::ResourceRefused`), and both carry typed details. The
 writer refuses a package past classic ZIP's widths (65,534 entries, 0xFFFFFFFE bytes) as that format's limit.
+The non-body story read change (FIX 594, 2026-11-05) adds one public projection in
+`src/view.rs`. It reuses the existing block/segment/table/guard projection for a story's
+local blocks with no body-role lookup: story ids can collide with body ids, and the
+body vocabulary does not assign roles to story paragraphs. No writer or parser changes.
