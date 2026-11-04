@@ -21,9 +21,11 @@ pub enum LlmError {
 
 impl LlmError {
     /// Whether this failure says its provider is down, not that the request
-    /// or its credentials are wrong: a server error, a timeout, a cut stream
-    /// or an empty answer. The offer rests for its health, and a Dreamer
-    /// attempt it parks resumes when an offer recovers (OF-305).
+    /// or its credentials are wrong: a server error, a timeout, a cut stream,
+    /// an empty answer, or a lost media job (FIX 11464: EmptyResponse parity
+    /// until a named owner rules otherwise, L06-B 08:21). The offer rests for
+    /// its health, and a Dreamer attempt it parks resumes when an offer
+    /// recovers (OF-305).
     #[must_use]
     pub fn is_provider_unavailable(&self) -> bool {
         matches!(
@@ -33,7 +35,7 @@ impl LlmError {
                     | RetryableLlmError::Timeout
                     | RetryableLlmError::StreamCut
                     | RetryableLlmError::TransportFault(_)
-            ) | Self::Fatal(FatalLlmError::EmptyResponse)
+            ) | Self::Fatal(FatalLlmError::EmptyResponse | FatalLlmError::JobLost)
         )
     }
 }
