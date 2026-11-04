@@ -569,7 +569,10 @@ fn newest_claims(
     #[cfg(feature = "sync")]
     let device_only = crate::settings::device_local_worlds_for(vault, txn, destination)?;
     #[cfg(not(feature = "sync"))]
-    let device_only = BTreeSet::new();
+    let device_only = {
+        let _ = destination;
+        BTreeSet::new()
+    };
     let rows = read.get_entities_parts_in_txn(txn, &ids)?;
     let mut claims = Vec::new();
     for (id, row) in ids.into_iter().zip(rows) {
