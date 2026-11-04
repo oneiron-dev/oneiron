@@ -321,6 +321,10 @@ impl TickSource for PushTick {
         self.recv().await
     }
 
+    async fn wait_for_buffered_session_hint(&mut self) {
+        self.shared.notify.notified().await;
+    }
+
     fn take_buffered_session_hint(
         &mut self,
     ) -> Option<(SessionKey, SessionHint, Option<u64>, u64)> {

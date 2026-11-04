@@ -165,6 +165,10 @@ impl<D: DeadlineSource> TickSource for HybridTick<D> {
         }
     }
 
+    async fn wait_for_buffered_session_hint(&mut self) {
+        self.push.wait_for_buffered_session_hint().await;
+    }
+
     fn take_buffered_session_hint(
         &mut self,
     ) -> Option<(

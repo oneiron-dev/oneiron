@@ -475,6 +475,41 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
         )
     }
 
+    /// Applies queued facts before reading expiry, preserving the same
+    /// retry head and backoff under both ordinary ticking and pass pause.
+    async fn prepare_lifecycle(&mut self) -> Option<u64> {
+        // Buffered lifecycle facts first: the close predicate below must
+        // see the activity clock they bump, not a stale snapshot.
+        while !self.drain_buffered_hints() {
+            let backoff = self.retry_backoff_duration();
+            self.retry_backoff_failures = self.retry_backoff_failures.saturating_add(1);
+            tokio::time::sleep(backoff).await;
+        }
+        self.retry_backoff_failures = 0;
+
+        // Close anything already due (also catches a session left
+        // open across a restart). A lifecycle read/write error leaves
+        // the session lane QUIET for this cycle — no expiry is armed, so
+        // a past-due expiry over a broken store cannot spin the loop
+        // (the TimerTick fail-stop stance); the close retries on the
+        // next real wakeup.
+        let expiry = match self.lifecycle.close_due_session() {
+            Ok(_) => match self.lifecycle.next_expiry_ms() {
+                Ok(expiry) => expiry,
+                Err(error) => {
+                    tracing::error!(?error, "session expiry read failed; lane quiet this cycle");
+                    None
+                }
+            },
+            Err(error) => {
+                tracing::error!(?error, "session close failed; lane quiet this cycle");
+                None
+            }
+        };
+        self.inner.note_armed(ArmedLane::Session, expiry);
+        expiry
+    }
+
     /// Polls the inner source once without waiting. Its mailbox and deadline
     /// lanes are re-readable, so abandoning a pending future loses nothing.
     fn probe_inner(&mut self) -> Poll<Option<Tick>> {
@@ -515,39 +550,7 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
 impl<T: TickSource> TickSource for SessionTicks<'_, T> {
     async fn next_tick(&mut self) -> Option<Tick> {
         loop {
-            // Buffered lifecycle facts first: the close predicate below must
-            // see the activity clock they bump, not a stale snapshot.
-            if !self.drain_buffered_hints() {
-                let backoff = self.retry_backoff_duration();
-                self.retry_backoff_failures = self.retry_backoff_failures.saturating_add(1);
-                tokio::time::sleep(backoff).await;
-                continue;
-            }
-            self.retry_backoff_failures = 0;
-
-            // Close anything already due (also catches a session left
-            // open across a restart). A lifecycle read/write error leaves
-            // the session lane QUIET for this cycle — no expiry is armed, so
-            // a past-due expiry over a broken store cannot spin the loop
-            // (the TimerTick fail-stop stance); the close retries on the
-            // next real wakeup.
-            let expiry = match self.lifecycle.close_due_session() {
-                Ok(_) => match self.lifecycle.next_expiry_ms() {
-                    Ok(expiry) => expiry,
-                    Err(error) => {
-                        tracing::error!(
-                            ?error,
-                            "session expiry read failed; lane quiet this cycle"
-                        );
-                        None
-                    }
-                },
-                Err(error) => {
-                    tracing::error!(?error, "session close failed; lane quiet this cycle");
-                    None
-                }
-            };
-            self.inner.note_armed(ArmedLane::Session, expiry);
+            let expiry = self.prepare_lifecycle().await;
 
             // Preserve the inner source's ready deadline/wake priority over
             // applied hint surfacing. Pending polls are safe to abandon: the
@@ -645,6 +648,30 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                             return None;
                         }
                     }
+                }
+            }
+        }
+    }
+
+    async fn service_session_lifecycle(&mut self) {
+        let expiry = self.prepare_lifecycle().await;
+        // Keep every applied hint's follow-up in pending_hints until resume.
+        // The push-only wait leaves wake/plain slots and deadlines untouched.
+        match expiry {
+            Some(due_at_ms) => {
+                let clock = self.lifecycle.clock();
+                tokio::select! {
+                    biased;
+                    () = sleep_until_due(&clock, due_at_ms) => {},
+                    () = wait_for_change(&mut self.policy_changes) => {},
+                    () = self.inner.wait_for_buffered_session_hint() => {},
+                }
+            }
+            None => {
+                tokio::select! {
+                    biased;
+                    () = wait_for_change(&mut self.policy_changes) => {},
+                    () = self.inner.wait_for_buffered_session_hint() => {},
                 }
             }
         }

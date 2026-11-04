@@ -82,6 +82,12 @@ impl<T: TickSource> TickSource for WakePolicyTicks<'_, T> {
             }
         }
     }
+    async fn wait_for_buffered_session_hint(&mut self) {
+        self.inner.wait_for_buffered_session_hint().await;
+    }
+    async fn service_session_lifecycle(&mut self) {
+        self.inner.service_session_lifecycle().await;
+    }
     fn take_buffered_session_hint(
         &mut self,
     ) -> Option<(

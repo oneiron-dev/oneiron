@@ -186,6 +186,20 @@ pub trait TickSource {
         None
     }
 
+    /// Waits for a possible buffered session hint without consuming any
+    /// ticks. The lifecycle driver drains before waiting; notifications may
+    /// also come from other push lanes. Sources without a buffer stay quiet.
+    async fn wait_for_buffered_session_hint(&mut self) {
+        std::future::pending::<()>().await;
+    }
+
+    /// Services lifecycle facts and expiry while passes are paused, then
+    /// waits for the next lifecycle event. Never consumes or surfaces an
+    /// ordinary tick. Sources without a lifecycle driver stay quiet.
+    async fn service_session_lifecycle(&mut self) {
+        std::future::pending::<()>().await;
+    }
+
     /// Records the wall-clock instant (unix milliseconds) `lane` is armed
     /// for now, `None` when it arms nothing. A decorator passes it to its
     /// inner source; the push lane keeps the earliest across lanes for
