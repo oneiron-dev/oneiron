@@ -31,7 +31,7 @@ use super::{FIELD_EXPORT_EXCLUDED, FIELD_EXPORT_EXCLUDED_REASONS, TrainingPair};
 use crate::authority::AuthorityView;
 use crate::claim::ScopedRead;
 use crate::consent::AuthenticatedOwner;
-use crate::disclosure::{DisclosureTier, RoomParty, bound_room_party_in, disclosure_tier};
+use crate::disclosure::{DisclosureTier, disclosure_tier, room_party_entry_in};
 use crate::edit_distance::text_ref::retained_proposal_in_txn;
 use crate::edit_distance::{PROPOSAL_ARTIFACT, ProposalArtifactRef, RetainedProposal};
 use crate::entity_id::EntityId;
@@ -298,8 +298,8 @@ fn row_check_in(
 /// Who `source` holds. A TURN's source is its conversation, and its people
 /// are everyone that ledger ever joined. Any other row is its own source,
 /// and its people are the authors its `AuthoredBy` edges name. The acting
-/// owner and the vault's own agents (`bound_room_party_in`) are the owner's
-/// side. A room or ledger that cannot be read, or no one to class, is
+/// owner and the vault's own agents (the entry's `vault_agent`) are the
+/// owner's side. A room or ledger that cannot be read, or no one to class, is
 /// unknown. A never-joined imported conversation's recorded speakers decide
 /// (FIX 11353).
 fn source_people_in(
@@ -361,8 +361,9 @@ fn source_people_in(
         return Ok(SourcePeople::Unknown(key));
     }
     for person in people {
-        if person != run.actor
-            && bound_room_party_in(vault, rtxn, &run.fold, person)? != RoomParty::VaultAgent
+        // The entry's agent standing is the agent set this test has always
+        // read (bound owners excluded), so no consent cell moves (FIX 6558).
+        if person != run.actor && !room_party_entry_in(vault, rtxn, &run.fold, person)?.vault_agent
         {
             return Ok(SourcePeople::Others(key));
         }
