@@ -137,6 +137,7 @@ mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
 mod origin_publish_doors;
+mod outbound_call_erase_doors;
 pub(crate) mod outbox_diverged_doors;
 mod output;
 pub(super) mod owner_binding;
