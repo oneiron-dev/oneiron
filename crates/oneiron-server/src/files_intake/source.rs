@@ -465,8 +465,9 @@ fn read_for_rescan(
                 )
             }
             None => {
-                let (notes, name_only, facts, skipped) = read_folder_rescan(folder, counts, prior)?;
-                (notes, name_only, facts, skipped, Vec::new(), false)
+                let (notes, name_only, facts, skipped, unopened_dirs) =
+                    read_folder_rescan(folder, counts, prior)?;
+                (notes, name_only, facts, skipped, unopened_dirs, false)
             }
         };
     // A part goes with its file.
