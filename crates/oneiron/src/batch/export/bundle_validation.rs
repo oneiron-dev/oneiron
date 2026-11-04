@@ -642,8 +642,8 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
             if matches!(
                 predicate,
                 Some(
-                    crate::skill_hub::PREDICATE_SKILL_HUB_PROVENANCE
-                        | crate::skill_hub::PREDICATE_SKILL_SCAN_VERDICT
+                    crate::store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE
+                        | crate::store::skill_hub_predicates::PREDICATE_SKILL_SCAN_VERDICT
                 )
             ) {
                 Some(ImportOmissionReason::ForeignSkillSignalNotRestored)
