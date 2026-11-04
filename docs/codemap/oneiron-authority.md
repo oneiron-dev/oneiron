@@ -53,6 +53,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/wire_encode.rs` | src | m | 7 fn · 1 crate-vis | — | `rmpv::Value` encoding for every authority type |
 | `src/authority/world_key_wraps.rs` | src | m | 3 struct · 1 enum · 5 fn · 7 const · 3 crate-vis | PolicyRevision, WorldKeyId, WorldKeyWrapsRecord, WrapRecipient | A private world's key records and their wire codec (world privacy P6b) |
 | `src/authority/world_privacy.rs` | src | m | 2 struct · 4 enum · 3 fn · 2 const · 2 crate-vis | ModelOrder, PrivacyDirection, ReadLocation, SealedCopies, WorldPrivacy, WorldPrivacyEdit | A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may… |
+| `src/channel_identity_manifest.rs` | src | s | 4 struct · 4 enum · 9 fn · 1 const | ChannelIdentityCapabilityMatrix, ChannelIdentityDisclosureClass, ChannelIdentityManifest, ChannelIdentityManifestError, ChannelIdentityMintability, ChannelIdentityPolicyRisk, ChannelIdentityReceiveCapabilities, ChannelIdentityReputationSignal | Channel identity capability manifests (OF-347 CID-4) |
+| `src/channel_identity_shape.rs` | src | s | 2 enum · 5 fn | ChannelIdentityShape, SelfHeldShape | ChannelIdentity addressability shapes with wire serde |
 | `src/credential_door.rs` | src | s | 1 fn · 1 const | — | Credential-door bounds the authority log's slip checks share with the door itself |
 | `src/federation/codec.rs` | src | s | 6 fn | — | Shared MessagePack and entity-ref decoding helpers for the federation module |
 | `src/federation/git_push.rs` | src | s | 2 struct · 1 enum · 5 fn · 2 const | FederationGrantKind, GitPushBounds, GitPushRepo | The `git_push` Grant capability (FIX 6867, owner ruling G1-PUSH = D, as the owner refined it 10-21): raw git… |
@@ -62,6 +64,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/scope.rs` | src | m | 2 struct · 3 enum · 1 trait · 13 fn · 1 const | Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling | One Scope: six-axis audience lattice with explicit bottom on every wire axis |
 | `src/federation/scope_codec.rs` | src | s | 5 fn | — | Canonical MessagePack bridge for six-axis Scope positions and grant presets |
 | `src/federation/selector_kind.rs` | src | s | 1 enum · 6 fn | SelectorRange | Replication vocabulary keyed on declared classification and family, never byte ranges |
-| `src/lib.rs` | src | s | 4 mod | — | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… |
+| `src/lib.rs` | src | s | 6 mod | — | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… |
 | `src/share_travel.rs` | src | s | 1 struct · 2 enum · 6 fn · 1 type | BornWithField, TravelChoice, TravelKind | The values of what travels with a body when it leaves the vault (OF-491): the text fields born with a body… |
 | `tests/widened_seams.rs` | test | m | — | — | Direct calls into the authority-log checks `oneiron-authority` made `pub` so `oneiron`'s fold and checkpoint… |
