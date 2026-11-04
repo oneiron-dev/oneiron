@@ -214,7 +214,9 @@ pub(super) fn dispatch_put_type(
         revision.squatter = put.squatter;
         revision.put = Some(put);
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
-        crate::federation::validate_federation_grant_body_bytes(data)?;
+        store
+            .record_hooks
+            .validate_federation_grant_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
         crate::access_grant::validate_access_grant_body_bytes(data)?;
     } else if fixed.entity_type == ENTITY_TYPE_COUNTERPARTY_CONTACT {
@@ -235,7 +237,9 @@ pub(super) fn dispatch_put_type(
     } else if fixed.entity_type == ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT {
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
-        crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
+        store
+            .record_hooks
+            .validate_identity_topology_event_body_bytes(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
         crate::write_envelope::skill_source::decode_skill_hub_record(data)?;
     } else if fixed.entity_type == crate::registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
