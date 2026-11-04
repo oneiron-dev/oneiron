@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1224 facade rows, 4454 generated types.
+// UniFFI census: 1224 facade rows, 4456 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1176.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -5920,6 +5920,8 @@ pub enum TaskWorkflowHandoff {
     },
     #[serde(rename = "interrupted")]
     Interrupted,
+    #[serde(rename = "not_model_free")]
+    NotModelFree,
 }
 
 /// `oneiron::task_verb::highway_types::TaskWorkflowOutcome`.
@@ -6819,6 +6821,30 @@ pub enum SpendState {
     Closed,
 }
 
+/// `oneiron::agent_dispatch::spend_calibration::AgentSpendCalibration`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSpendCalibration {
+    #[serde(rename = "samples")]
+    pub samples: u64,
+    #[serde(rename = "total_units")]
+    pub total_units: u64,
+    #[serde(rename = "ewma_units")]
+    pub ewma_units: u64,
+    #[serde(rename = "last_units")]
+    pub last_units: u64,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+}
+
+/// `oneiron::agent_dispatch::spend_record::SpendCalibrationSample`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SpendCalibrationSample {
+    #[serde(rename = "before", default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<AgentSpendCalibration>,
+}
+
 /// `oneiron::agent_dispatch::spend_record::SpendPayer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -6867,6 +6893,18 @@ pub struct SpendScope {
     pub closed_at: Option<u64>,
     #[serde(rename = "agent", default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+    #[serde(
+        rename = "calibration_sample",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub calibration_sample: Option<SpendCalibrationSample>,
+    #[serde(
+        rename = "exploration_attempt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub exploration_attempt: Option<AttemptId>,
     #[serde(rename = "payer", default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<SpendPayer>,
 }
