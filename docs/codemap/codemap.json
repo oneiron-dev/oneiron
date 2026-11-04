@@ -107411,7 +107411,6 @@
      "kind": "src",
      "notable": [
       "AdmittedBytes",
-      "AdmittedStr",
       "SealMemory",
       "SealMemoryProvider",
       "SealMemoryRefusal"
@@ -107419,12 +107418,12 @@
      "path": "src/memory.rs",
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 15,
       "enum": 1,
-      "fn": 8,
-      "struct": 3,
+      "fn": 4,
+      "struct": 2,
       "trait": 1,
-      "type": 2
+      "type": 1
      }
     },
     {
@@ -107538,16 +107537,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/native/pdf/admitted.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/native/pdf/decode.rs",
      "purpose": "Strict loads with every stream decoded whole (Rule 5), each decode's memory reserved before it is allocated…",
      "surface": {
@@ -107555,7 +107544,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/incremental.rs",
@@ -107581,7 +107570,7 @@
      "path": "src/native/pdf/mod.rs",
      "purpose": "Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -107663,7 +107652,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/native/profile/material.rs",
@@ -107987,7 +107976,7 @@
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)"
     },
     "native": {
-     "files": 45,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -108003,7 +107992,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 49,
+   "source_files": 48,
    "test_files": 12
   },
   "oneiron-server": {

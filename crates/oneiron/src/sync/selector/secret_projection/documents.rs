@@ -275,8 +275,8 @@ fn project_text_in_txn(
 /// # Errors
 /// A store failure reading the document head (L01 05:53).
 fn author(vault: &Vault, txn: &RoTxn<'_>, source: &EntityId) -> Result<u64> {
-    let incarnation =
-        crate::entity_doc::source_incarnation_in_txn(&vault.store, txn, source)?.unwrap_or_default();
+    let incarnation = crate::entity_doc::source_incarnation_in_txn(&vault.store, txn, source)?
+        .unwrap_or_default();
     let mut material = Vec::with_capacity(2 + 16 + incarnation.len());
     material.extend_from_slice(&SyncSecretProjection::SCHEMA.to_be_bytes());
     material.extend_from_slice(source.as_bytes());
