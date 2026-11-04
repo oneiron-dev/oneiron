@@ -17661,7 +17661,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 31,
       "fn": 3
      }
     },
@@ -71882,7 +71882,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 75,
+      "crate-vis": 76,
       "mod": 76,
       "re-export": 29
      }
@@ -72566,6 +72566,16 @@
      "purpose": "Reader pins: a result body a reader holds is never deleted",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/result_body_rows.rs",
+     "purpose": "The tag byte of a raw result body row: where its body is (in the row or in a body file) and whether the row…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -89735,7 +89745,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 343,
+     "files": 344,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89975,7 +89985,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6232,
+   "source_files": 6233,
    "test_files": 898
   },
   "oneiron-android": {
