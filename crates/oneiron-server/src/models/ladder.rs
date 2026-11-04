@@ -35,6 +35,7 @@ use oneiron::llm::run_admission::{
     CallOutcome, KeyCustody, OfferBinding, Payer, RunAdmission, RunCall, RunDenied,
     RunOverageSource, RunPermit, WorkPhysical, offer_id, offer_place,
 };
+use oneiron::llm::{Segment, SegmentClock, SegmentKind, SegmentManifest};
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage, ModelId,
@@ -111,6 +112,22 @@ impl LadderRung {
                 },
             );
             oneiron::code_run::shift_cache_boundaries(&mut request);
+            // The instruction is part of the call this rung sends, so the
+            // manifest stamps it as its own first segment; unstamped, the
+            // manifest describes a call one message shorter and this
+            // rung's turns get no session (FIX 10366). The restamp keeps
+            // the admitted turn's digest (REVIEW-4386 P1): pending, commit
+            // and restore-authority lookups still name it.
+            if let Some(manifest) = &request.host_segments {
+                let mut shifted = Vec::with_capacity(manifest.segments().len() + 1);
+                shifted.push(Segment::whole(SegmentKind::System, SegmentClock::Epoch, 0));
+                shifted.extend(manifest.segments().iter().map(|segment| Segment {
+                    message: segment.message + 1,
+                    ..segment.clone()
+                }));
+                request.host_segments =
+                    Some(Arc::new(manifest.restamped(shifted, &request.messages)));
+            }
         }
         request
     }
@@ -581,6 +598,9 @@ impl OfferLadder {
             Ok(Some(digest)) => run.admit_request(run_call, &digest)?,
             Ok(None) | Err(_) => run.admit(run_call)?,
         };
+        if let Some(manifest) = call.host_segments.as_deref() {
+            super::worker_host::rung_admitted(manifest);
+        }
         Ok((call, permit))
     }
 
