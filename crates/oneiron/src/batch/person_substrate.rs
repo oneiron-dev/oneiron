@@ -142,7 +142,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
         {
             // A locally authored manifest keeps its origin across the upgrade;
             // replayed bytes gain no trust stamp from it.
-            if crate::gate::manifest_authenticity::manifest_is_trusted(
+            if store.gate_hooks.manifest_is_trusted(
                 store,
                 &txn,
                 &id,

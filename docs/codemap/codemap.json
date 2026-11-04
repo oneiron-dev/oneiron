@@ -773,17 +773,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "AgentDefinition",
-      "MemoryProfile"
-     ],
+     "notable": [],
      "path": "src/agent_def/types.rs",
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "crate-vis": 59,
       "fn": 17,
-      "re-export": 15,
-      "struct": 2
+      "re-export": 17
      }
     },
     {
@@ -69088,6 +69084,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AgentDefinition"
+     ],
+     "path": "src/store/agent_definition.rs",
+     "purpose": "The stored agent definition record (AGENT_DEF): a saved, host-agnostic agent composition and the shared…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemoryProfile"
+     ],
+     "path": "src/store/agent_memory_profile.rs",
+     "purpose": "The per-agent context-window memory profile (RT-05, ONE-1687) an agent definition stores: its window budget…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AgentModel"
      ],
      "path": "src/store/agent_model.rs",
@@ -72254,7 +72274,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 122,
+      "crate-vis": 124,
       "mod": 108,
       "re-export": 31
      }
@@ -90601,7 +90621,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 433,
+     "files": 435,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90841,7 +90861,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6315,
+   "source_files": 6317,
    "test_files": 895
   },
   "oneiron-android": {

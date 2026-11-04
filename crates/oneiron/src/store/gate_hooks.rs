@@ -5,6 +5,7 @@
 
 use heed::{RoTxn, RwTxn};
 use oneiron_store::consolidation_reader::ConsolidationReader;
+use oneiron_store::esign_rate_thresholds::EsignRateThresholds;
 use oneiron_store::policy_scoped_grant::PolicyScopedGrant;
 use oneiron_store::project_depth_record::ProjectDepthBirth;
 use oneiron_store::proposal_observation_record::ProposalPolicySource;
@@ -72,6 +73,30 @@ pub(crate) trait StoreGateHooks: Send + Sync {
         claim_id: &EntityId,
         body: &ClaimBody,
     ) -> Result<()>;
+
+    /// The engine's `gate::manifest_authenticity::manifest_is_trusted`, read
+    /// through the store itself.
+    fn manifest_is_trusted(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        body: &[u8],
+    ) -> Result<bool>;
+
+    /// The engine's `gate::manifest_authenticity::manifest_is_quarantined`,
+    /// read through the store itself.
+    fn manifest_is_quarantined(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        body: &[u8],
+    ) -> Result<bool>;
+
+    /// The engine's `gate::esign_rate_policy::esign_rate_thresholds_in_txn`,
+    /// read through the store itself.
+    fn esign_rate_thresholds_in_txn(&self, store: &Store, txn: &RoTxn<'_>) -> EsignRateThresholds;
 
     /// The engine's `gate::manifest_authenticity::stamp_manifest_origin`.
     fn stamp_manifest_origin(

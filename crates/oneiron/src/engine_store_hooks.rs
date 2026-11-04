@@ -744,6 +744,34 @@ impl StoreGateHooks for EngineGateHooks {
         crate::gate::attach_replicated_critical_confirm_in_txn(store, wtxn, claim_id, body)
     }
 
+    fn manifest_is_trusted(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        body: &[u8],
+    ) -> Result<bool> {
+        crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, id, body)
+    }
+
+    fn manifest_is_quarantined(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        body: &[u8],
+    ) -> Result<bool> {
+        crate::gate::manifest_authenticity::manifest_is_quarantined(store, txn, id, body)
+    }
+
+    fn esign_rate_thresholds_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+    ) -> oneiron_store::esign_rate_thresholds::EsignRateThresholds {
+        crate::gate::esign_rate_policy::esign_rate_thresholds_in_txn(store, txn)
+    }
+
     fn stamp_manifest_origin(
         &self,
         store: &Store,
