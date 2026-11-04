@@ -7,8 +7,8 @@ use stemma::edit::EditTransaction;
 use stemma::view::{BlockView, DocumentView, TrackStatus};
 
 use super::{
-    DocxAnchor, DocxChange, DocxParagraph, DocxRevision, inherited, marked_paragraph,
-    new_paragraph, paragraph, remark,
+    DocxAnchor, DocxChange, DocxParagraph, DocxRevision, inherited, kept_marks, marked_paragraph,
+    new_paragraph, paragraph, remark, runs_text,
 };
 
 /// The formatting patches and ops one group's changes build against `view`.
