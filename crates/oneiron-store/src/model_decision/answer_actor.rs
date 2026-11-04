@@ -1,12 +1,12 @@
 //! An answer actor identity, including its erased state.
 
 use super::invalid;
-use crate::{EntityId, Result};
+use oneiron_contracts::{EntityId, Result};
 
 /// The actor an answer names (an ask's answerer, a rule row's writer, an
 /// ask's principal or responsible actor), or no one once that actor was
 /// erased (FIX 3520, 4588). It reads and writes as the actor's hex id, or as
-/// [`crate::receipt::ERASED_CALL_IDENTITY`].
+/// `oneiron::receipt::ERASED_CALL_IDENTITY`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnswerActor {
     Actor(EntityId),
@@ -41,13 +41,13 @@ impl AnswerActor {
 
     /// The actor, refused once it was erased: no live request is rebuilt
     /// for no one.
-    pub(crate) fn live(self) -> Result<EntityId> {
+    pub fn live(self) -> Result<EntityId> {
         self.id()
             .ok_or_else(|| invalid("the decision ask names an erased actor"))
     }
 
     /// Makes this no one when it is `actor`; whether it was.
-    pub(crate) fn forget(&mut self, actor: EntityId) -> bool {
+    pub fn forget(&mut self, actor: EntityId) -> bool {
         let named = self.is(actor);
         if named {
             *self = Self::Erased;
