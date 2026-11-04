@@ -1720,7 +1720,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_key/meter/row.rs` | src | s | 3 struct · 1 enum · 4 fn · 7 crate-vis | EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRowId, EffectorBudgetRowSource | Effector budget row identity: the source (key budget row or compiled charter cap) and the ordinal a usage… |
 | `src/connector_key/meter/spend_reserve.rs` | src | s | 4 crate-vis | — | Spend reserved before a call (FIX 8689) |
 | `src/connector_key/mod.rs` | src | s | 3 mod · 17 re-export · 14 crate-vis | — | Connector-key registry records with effector budgets for OF-277 GOV-01 |
-| `src/connector_key/qualification.rs` | src | s | 12 struct · 4 enum · 3 trait · 1 fn · 2 re-export · 2 crate-vis | ConnectorQualificationKit, GroundingOracle, ProbeCitation, ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool, ProbeTraceEvent +11 | Connector qualification probes |
+| `src/connector_key/qualification.rs` | src | s | 14 struct · 4 enum · 3 trait · 1 fn · 2 re-export · 2 crate-vis | ConnectorQualificationKit, GroundingOracle, ProbeCapturedRequest, ProbeCitation, ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool +13 | Connector qualification probes |
 | `src/connector_key/qualification/receipt.rs` | src | s | 1 struct · 5 const · 14 crate-vis | ConnectorQualificationReceipt | Durable evidence for the suite that actually ran, retained on activation |
 | `src/connector_key/qualification/runner.rs` | src | m | 2 fn · 1 crate-vis | — | The qualification runner: the probe sequence a connector must pass, its header, grounding and trace checks… |
 | `src/connector_key/qualification/tests.rs` | test | L | 1 crate-vis | — | — |
@@ -2202,7 +2202,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/root_evidence.rs` | src | m | 5 crate-vis | — | Root-owned reference pins |
 | `src/dreamer_consolidation/root_evidence/work.rs` | src | s | 2 crate-vis | — | A root's pins and frontiers as fair work (FIX 8698): every bucket, reference and child is taken, however… |
 | `src/dreamer_consolidation/routing.rs` | src | s | 2 struct · 5 fn · 1 type · 1 crate-vis | CandidateKeys, PredicateKeyRule | Three consolidation lanes: free keyed equality, scoped conflicts, cosine nominations |
-| `src/dreamer_consolidation/running_buckets.rs` | src | s | 2 crate-vis | — | The buckets a MACRO run holds once its preparation narrowed it (FIX 7729) |
+| `src/dreamer_consolidation/running_buckets.rs` | src | s | 3 crate-vis | — | The buckets a MACRO run holds once its preparation narrowed it (FIX 7729) |
 | `src/dreamer_consolidation/scope_summary_attempt.rs` | src | m | 1 struct · 2 fn · 6 crate-vis | ScopeSummaryExecutor | The Dreamer writes a declared scope summary's body (ARCH-0006a) |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_children.rs` | src | m | 3 crate-vis | — | An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): its input does not fit one call on its model… |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_chunks.rs` | src | m | 14 crate-vis | — | An Arc's sources as members and parts (FIX 7509 PR3, Rule 5): each member's words as its calls show them… |
@@ -2642,7 +2642,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_distance/text_ref.rs` | src | m | 1 struct · 2 enum · 10 fn · 9 crate-vis | RetainedProposal, TextRead, TextUnavailable | ED-00 text by reference (FIX 7818): a finalized proposal keeps refs into its retained document, and every… |
 | `src/edit_roundtrip/address.rs` | src | s | 1 re-export · 2 crate-vis | — | Cell addressing, ranges and op validation |
 | `src/edit_roundtrip/artifact_question.rs` | src | m | 4 struct · 1 trait · 1 re-export · 6 crate-vis | ArtifactAsk, ArtifactAskRun, UnitAbstention, UnitCall, UnitDecider | Typed questions over artifact units (ARCH-0076 §2, OF-506) |
-| `src/edit_roundtrip/deck.rs` | src | m | 2 struct · 1 enum · 3 fn · 2 re-export · 9 crate-vis | DeckEditOutcome, DeckEditRejection, DeckSettleEvidence | Native deck edits (ARCH-0077, "Edit in place with passthrough"): one docedit deck transaction over the exact… |
+| `src/edit_roundtrip/deck.rs` | src | m | 2 struct · 1 enum · 4 fn · 2 re-export · 9 crate-vis | DeckEditOutcome, DeckEditRejection, DeckSettleEvidence | Native deck edits (ARCH-0077, "Edit in place with passthrough"): one docedit deck transaction over the exact… |
 | `src/edit_roundtrip/deck_create.rs` | src | m | 7 fn · 1 re-export · 11 crate-vis | — | Deck creation from an approved outline (ARCH-0077, "Create: an approved argument, then a design") |
 | `src/edit_roundtrip/deck_create/evidence_pins.rs` | src | s | 8 crate-vis | — | The evidence pins of an outline's JSON, as the keep and its freshness read them: each in document order, the… |
 | `src/edit_roundtrip/deck_create/store.rs` | src | s | 9 crate-vis | — | Transaction-bound outline and version inputs shared by the engine and public doors |
@@ -2680,7 +2680,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_settle/carry.rs` | src | XL | 2 struct · 3 enum · 4 fn · 7 crate-vis | ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit | ARCH-0075 §4: a held answer proposal whose units change under it |
 | `src/edit_settle/carry/live.rs` | src | m | 14 crate-vis | — | The live-body half of a held answer proposal's split (FIX 2115) |
 | `src/edit_settle/codec.rs` | src | m | 7 crate-vis | — | Row and anchor codec |
-| `src/edit_settle/keys.rs` | src | s | 4 const · 48 crate-vis | — | Pinned ledger keys and receipt fields |
+| `src/edit_settle/keys.rs` | src | s | 4 const · 50 crate-vis | — | Pinned ledger keys and receipt fields |
 | `src/edit_settle/mod.rs` | src | s | 7 re-export · 3 crate-vis | — | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
 | `src/edit_settle/organ_wait.rs` | src | s | 2 struct · 7 fn · 1 const | OrganWait, OrganWaitView | An organ call that waits for a node (OF-575, owner ruling MESH): a host that cannot start an organ, with… |
 | `src/edit_settle/pending.rs` | src | L | 8 fn · 1 const · 3 re-export · 11 crate-vis | — | The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person… |
@@ -2692,7 +2692,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_settle/settle.rs` | src | L | 7 fn · 4 crate-vis | — | Settle Vault transactions |
 | `src/edit_settle/stranded.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | StrandedEditProposal | Stale retained outputs stay durable proposals against the observed new head |
 | `src/edit_settle/tests.rs` | test | L | — | — | ARTL-4 settle tests |
-| `src/edit_settle/undo.rs` | src | s | 2 struct · 3 fn | KeepUndo, KeepUndoOutcome | Undo after Keep (ARCH-0077 "Post-settle undo"): a new operation, never a reversal |
+| `src/edit_settle/undo.rs` | src | m | 2 struct · 3 fn | KeepUndo, KeepUndoOutcome | Undo after Keep (ARCH-0077 "Post-settle undo"): a new operation, never a reversal |
 | `src/embed.rs` | src | L | 2 struct · 8 fn · 12 re-export · 13 crate-vis | PendingEmbeddingReconcileReport, PendingEmbeddingReconciler | — |
 | `src/embed/binding_move.rs` | src | m | 2 struct · 3 enum · 4 fn · 7 crate-vis | BindingMoveLink, BindingMoveState, BindingNotApplied, BindingSource, PendingEmbedderBinding | An owner-approved embedder binding, staged through a space move (OF-577, FIX 857 O3b PR B; ARCH-0053 R13: a… |
 | `src/embed/cold_attach.rs` | src | s | 1 fn · 2 crate-vis | — | First-provider backfill, distinct from embedding-space migration |
@@ -4149,16 +4149,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/tests.rs` | test | XL | — | — | — |
 | `src/office_body/actor_erase.rs` | src | s | 6 crate-vis | — | An erased actor out of the office rows that name it (FIX 3520): the export records, the deck forks' records… |
 | `src/office_body/annotation_units.rs` | src | s | 8 crate-vis | — | What an anchored comment reads of a live office body (FIX 2460; decks, FIX 12264): the frontier a version… |
-| `src/office_body/author_token.rs` | src | s | 5 crate-vis | — | A DOCX export's default author (FIX 4513, Engine ruling B 10-19): the bytes carry an opaque token, not the… |
+| `src/office_body/author_token.rs` | src | s | 6 crate-vis | — | A DOCX export's default author (FIX 4513, Engine ruling B 10-19): the bytes carry an opaque token, not the… |
 | `src/office_body/author_token/carrier.rs` | src | m | 6 crate-vis | — | Byte-bound DOCX revision-author carriers over the existing export rows |
+| `src/office_body/author_token/index.rs` | src | s | 6 crate-vis | — | The DOCX author-token lookup (FIX 12403): each token to the canonical export rows that name it |
 | `src/office_body/checkpoint.rs` | src | m | 3 crate-vis | — | The checkpoint getter of office bodies (KS7-2): each artifact's office head, deck fork records, export… |
-| `src/office_body/consent.rs` | src | L | 9 struct · 4 enum · 2 fn · 1 const · 19 crate-vis | AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OfficeBodyProposal, ProposalAsk, ProposalAskRefusal, ProposalHeader +5 | Office proposals (DEC-0006, "A content proposal is a set of forks that share its id"; ARCH-0035's embedded… |
-| `src/office_body/consent/live_edit.rs` | src | s | 11 crate-vis | — | Live DOCX/XLSX edit admission and grant lifecycle (FIX 596) |
+| `src/office_body/consent.rs` | src | L | 9 struct · 4 enum · 2 fn · 1 const · 20 crate-vis | AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OfficeBodyProposal, ProposalAsk, ProposalAskRefusal, ProposalHeader +5 | Office proposals (DEC-0006, "A content proposal is a set of forks that share its id"; ARCH-0035's embedded… |
+| `src/office_body/consent/live_edit.rs` | src | s | 12 crate-vis | — | Live DOCX/XLSX edit admission and grant lifecycle (FIX 596) |
 | `src/office_body/docx.rs` | src | m | 2 struct · 2 enum · 6 crate-vis | BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp | The DOCX body inside its Loro document, schema 1 |
 | `src/office_body/doors.rs` | src | m | 17 fn · 11 crate-vis | — | Vault doors for office body import, edits, forks and export |
 | `src/office_body/fork.rs` | src | s | 3 struct · 2 enum · 1 fn · 1 crate-vis | BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff | Three-way reads of a fork against the live body (ARCH-0077, "Machine work as fork and diff"): base is the… |
 | `src/office_body/holder_ask.rs` | src | m | 4 crate-vis | — | Holder asks for office proposals (DEC-0006: "The rest wait together as one review bundle, offered to every… |
-| `src/office_body/holder_ask/live_edit.rs` | src | m | 9 crate-vis | — | Live DOCX/XLSX edit holder asks and ACCEPT grant minting (FIX 596) |
+| `src/office_body/holder_ask/live_edit.rs` | src | m | 10 crate-vis | — | Live DOCX/XLSX edit holder asks and ACCEPT grant minting (FIX 596) |
 | `src/office_body/live_recalc.rs` | src | s | 3 crate-vis | — | A live workbook's formula cells as an export would compute them (FIX 11982, FIX 12052) |
 | `src/office_body/live_units.rs` | src | m | 1 re-export · 19 crate-vis | — | A live body's position when an ask read its artifact, and the units an edit never exported changed since… |
 | `src/office_body/masked_view.rs` | src | s | 3 crate-vis | — | A typed body's view as a reader masked from lifted keys reads it (OF-067): the body read, a fork's diff and… |
@@ -6160,7 +6161,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/chunks/read.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 type | ChunkMark, ChunkRead, LfsReadAuthority | Who reads a lift-marked LFS object's real bytes over a chunk exchange (FIX 2897; ARCH-0069: "the owner gets… |
 | `src/sync/chunks/tests.rs` | test | m | — | — | Real binary have/want exchanges between independent vaults |
 | `src/sync/client/artifacts.rs` | src | s | 4 crate-vis | — | Pinned artifact publications on the owner lane: each owed one goes out in bounded parts once the NOTE… |
-| `src/sync/client/base.rs` | src | m | 1 struct · 16 fn · 15 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
+| `src/sync/client/base.rs` | src | m | 1 struct · 16 fn · 18 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
 | `src/sync/client/connect.rs` | src | s | 3 fn · 1 re-export | — | Public Connect delivery/rejoin over the production guest admission path |
 | `src/sync/client/documents.rs` | src | s | 3 crate-vis | — | Document import and durable local-journal confirmation on the one socket |
 | `src/sync/client/endpoint.rs` | src | s | 4 crate-vis | — | FIX 8862: where this machine's sync credentials may go |
@@ -6408,7 +6409,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/selector/secret_projection/frames.rs` | src | m | 5 crate-vis | — | A window blob as a sync peer gets it, and a peer's blob as this window takes it (FIX 7608 slice 4, part 2) |
 | `src/sync/selector/secret_projection/frames/snapshot.rs` | src | s | 1 crate-vis | — | Same-span neutral history for held full snapshots |
 | `src/sync/selector/secret_projection/held.rs` | src | s | 1 crate-vis | — | The record a copy edit held on its ruled cause leaves (FIX 10598, FIX 10735): one typed row per held edit in… |
-| `src/sync/selector/secret_projection/history.rs` | src | m | 5 crate-vis | — | A window's history as a peer gets it, and a peer's history as the canonical window takes it (CHANGED… |
+| `src/sync/selector/secret_projection/history.rs` | src | m | 6 crate-vis | — | A window's history as a peer gets it, and a peer's history as the canonical window takes it (CHANGED… |
 | `src/sync/selector/secret_projection/reauthor.rs` | src | s | 3 crate-vis | — | A marked snapshot ASSET's current copy, written again for a home that may hold an older one (FIX 10729… |
 | `src/sync/selector/secret_projection/release.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 crate-vis | RepoSyncAdmission, RepoSyncLandings | The host adapters every window release and admission goes through (FIX 7608 slice 4, part 3) |
 | `src/sync/selector/secret_projection/rows.rs` | src | s | 8 crate-vis | — | One entity row as a peer gets it, and one incoming copy row as the canonical store takes it |
@@ -6421,7 +6422,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/shared_leave/collect.rs` | src | s | 4 crate-vis | — | A left shared vault's orphan body files (FIX 2413) |
 | `src/sync/sweep_fence.rs` | src | s | 6 crate-vis | — | Windows a sweep holds closed while it rewrites their persisted state |
 | `src/sync/tests.rs` | test | m | — | — | Observer B and forward rematerialization admit through one entity-ingest entry and one tombstone… |
-| `src/sync/transport.rs` | src | m | 2 struct · 1 enum · 27 fn · 41 const · 1 mod · 7 re-export · 1 crate-vis | EncodedFrame, EphemeralWireState, TransportError | Wire protocol encoding/decoding for WebSocket transport |
+| `src/sync/transport.rs` | src | m | 2 struct · 1 enum · 27 fn · 42 const · 1 mod · 7 re-export · 1 crate-vis | EncodedFrame, EphemeralWireState, TransportError | Wire protocol encoding/decoding for WebSocket transport |
 | `src/sync/transport/admission_fault.rs` | src | s | 2 crate-vis | — | How a window admission's error crosses the transport boundary (FIX 5926): a fault reading this device's own… |
 | `src/sync/transport/asset_bodies.rs` | src | s | 5 struct · 9 fn · 6 const | AssetBodyAddress, AssetBodyData, AssetBodyEnd, AssetBodyReceipt, AssetBodyWant | By-reference ASSET body frames (FIX 5489) |
 | `src/sync/transport/codec.rs` | src | m | 4 struct · 16 fn · 9 const · 1 mod · 1 crate-vis | LinkBytes, TagBytesRow, WireCodecs, WireSocket | The own-link codec frame (ARCH-0081 §7, OF-604): zstd-3 on our own sockets |
@@ -6494,7 +6495,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_type/split.rs` | src | s | 1 fn | — | A type's split (ARCH-0079 #task-type): one child per winner its tasks disagree on |
 | `src/task_verb/ask_band.rs` | src | s | 3 fn · 1 crate-vis | — | Owner-scoped, consume-once ask labels and the policy-owned question-class band |
 | `src/task_verb/ask_effect.rs` | src | s | 4 crate-vis | — | The typed effects the composed ask doors write beside their ask (OF-393): a project ask joining its… |
-| `src/task_verb/ask_facade.rs` | src | m | 1 fn · 13 crate-vis | — | Async scope-authority asks over existing consult TASKs |
+| `src/task_verb/ask_facade.rs` | src | m | 1 fn · 14 crate-vis | — | Async scope-authority asks over existing consult TASKs |
 | `src/task_verb/ask_facade/admission.rs` | src | s | 3 crate-vis | — | Ask ceiling, census and minting |
 | `src/task_verb/ask_facade/read.rs` | src | m | 6 fn · 3 crate-vis | — | Ask status, waiting and evidence views |
 | `src/task_verb/ask_facade/wait.rs` | src | s | 6 crate-vis | — | Durable ask waits and waiter signals |
