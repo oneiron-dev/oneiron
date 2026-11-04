@@ -19,8 +19,9 @@ use super::bridge::BRIDGE_ORIGIN;
 use super::loro_support::{map_for_each_bytes, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
 use crate::Vault;
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
-use crate::claim::encode_claim_body;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::{ClaimBody, encode_claim_body};
+use crate::context_board::PREDICATE_SKILL_SECTION_FIT;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::actor_erase::{
@@ -67,6 +68,132 @@ pub(in crate::sync) fn carried_claim_in_txn<'a>(
         Some(stands) if stands == now => CarriedClaim::Held,
         _ => CarriedClaim::Put(Cow::Owned(encode_claim_body(now)?)),
     })
+}
+
+/// What ingest does with a carried `skill.section_fit` receipt (FIX 12713):
+/// its actor leaf reads `""` where this vault erased whom it names, so a
+/// replay never brings an erased actor back. The held copy takes that form
+/// in place when the carried one erases more of it, as an origin claim does
+/// ([`carried_claim_in_txn`]); a receipt that names a live actor here, names
+/// no one, or no receipt at all admits unchanged. Never an authority or
+/// replay check.
+pub(in crate::sync) fn carried_section_fit_in_txn<'a>(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    blob: &[u8],
+    data: Cow<'a, [u8]>,
+) -> Result<CarriedClaim<'a>> {
+    let Some(body) = section_fit_body(blob, &data) else {
+        return Ok(CarriedClaim::Put(data));
+    };
+    let Some(actor) = receipt_actor(&body).and_then(|leaf| EntityId::from_hex(leaf).ok()) else {
+        return Ok(CarriedClaim::Put(data));
+    };
+    if !vault.carrier_actor_erased_in_txn(wtxn, &actor)? {
+        return Ok(CarriedClaim::Put(data));
+    }
+    let mut normalized = body.clone();
+    if !set_receipt_actor(&mut normalized) {
+        return Ok(CarriedClaim::Put(data));
+    }
+    let encoded = encode_claim_body(&normalized)?;
+    let Some(raw) = vault.get_raw_in(wtxn, id)? else {
+        return Ok(CarriedClaim::Put(Cow::Owned(encoded)));
+    };
+    let Some(held) = raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|held| section_fit_body(&raw, held))
+    else {
+        return Ok(CarriedClaim::Put(Cow::Owned(encoded)));
+    };
+    if held == normalized {
+        return Ok(CarriedClaim::Held);
+    }
+    let mut scrubbed = held.clone();
+    if !set_receipt_actor(&mut scrubbed) || scrubbed != normalized {
+        // Beyond the actor leaf the carried copy is simply newer: it lands
+        // scrubbed, but the held one is not its erased form.
+        return Ok(CarriedClaim::Put(Cow::Owned(encoded)));
+    }
+    scrub_held_section_fit_in_txn(vault, wtxn, id, &raw, &encoded)?;
+    Ok(CarriedClaim::Redacted)
+}
+
+/// The `skill.section_fit` receipt the `row` carries with the `data` body,
+/// if any.
+fn section_fit_body(row: &[u8], data: &[u8]) -> Option<ClaimBody> {
+    let header = EntityMetadataHeader::parse(row)?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        return None;
+    }
+    let body = crate::claim::decode_claim_body(data, true).ok()?;
+    (body.predicate == PREDICATE_SKILL_SECTION_FIT).then_some(body)
+}
+
+/// The receipt's actor leaf, if it names one.
+fn receipt_actor(body: &ClaimBody) -> Option<&str> {
+    let rmpv::Value::Map(entries) = &body.value else {
+        return None;
+    };
+    entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("actor"))
+        .and_then(|(_, value)| value.as_str())
+}
+
+/// Scrubs the receipt's actor leaf to `""`, as the erase's own scrub does
+/// (FIX 11060). Whether anything changed.
+fn set_receipt_actor(body: &mut ClaimBody) -> bool {
+    let rmpv::Value::Map(entries) = &mut body.value else {
+        return false;
+    };
+    let mut scrubbed = false;
+    for (key, value) in entries.iter_mut() {
+        if key.as_str() == Some("actor") {
+            *value = rmpv::Value::from("");
+            scrubbed = true;
+        }
+    }
+    scrubbed
+}
+
+/// Rewrites the stored section-fit receipt `id` with the scrubbed `encoded`
+/// body in place, its header times unchanged: the erase's own scrub (FIX
+/// 11060) for a copy a replay carries, so no retained revision keeps the old
+/// actor leaf.
+///
+/// # Errors
+///
+/// Storage errors, or a body the claim door refuses.
+fn scrub_held_section_fit_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+    encoded: &[u8],
+) -> Result<()> {
+    let header = EntityMetadataHeader::parse(raw).ok_or(crate::error::Error::CorruptedIndex(
+        "section-fit receipt header",
+    ))?;
+    crate::claim::validate_claim_body_and_decode_in_txn(&vault.store, wtxn, encoded, true)?;
+    let next = crate::ports::EntityRecord {
+        entity_type: header.entity_type,
+        occurred: crate::temporal::TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        },
+        learned_at: header.learned_at,
+        body: encoded.to_vec(),
+    };
+    let staged = next.encode();
+    crate::ports::EntityStoreStaging::port_stage_entity_row(&vault.store, wtxn, id, &staged)?;
+    crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, id)?;
+    let raw = vault
+        .get_raw_in(wtxn, id)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
+    crate::vault::entity_revision::capture_entity_revision(&vault.store, wtxn, id, &raw)?;
+    Ok(())
 }
 
 /// Pins `key` history-free before the reverse mirror replaces the carrier

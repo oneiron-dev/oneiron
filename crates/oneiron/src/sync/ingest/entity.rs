@@ -13,7 +13,7 @@ use crate::registry::{
 use crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn;
 use crate::sync::ingest::promotion::{owe_landed_turn_in_txn, promoted_landing_in_txn};
 use crate::sync::loro_support::TombstoneIndex;
-use crate::sync::origin_claims::{CarriedClaim, carried_claim_in_txn};
+use crate::sync::origin_claims::{CarriedClaim, carried_claim_in_txn, carried_section_fit_in_txn};
 use crate::sync::pack_sync;
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
@@ -629,6 +629,12 @@ fn admit(
     // FIX 3877: an origin claim lands in this vault's erased form, and a copy its held erased
     // form stands for is skipped.
     let data = match carried_claim_in_txn(vault, wtxn, &id, blob, data)? {
+        CarriedClaim::Put(data) => data,
+        CarriedClaim::Held => return Ok(EntityStep::Skip),
+        CarriedClaim::Redacted => return Ok(EntityStep::Materialized(id)),
+    };
+    // FIX 12713: a carried section-fit receipt names no erased actor here.
+    let data = match carried_section_fit_in_txn(vault, wtxn, &id, blob, data)? {
         CarriedClaim::Put(data) => data,
         CarriedClaim::Held => return Ok(EntityStep::Skip),
         CarriedClaim::Redacted => return Ok(EntityStep::Materialized(id)),
