@@ -25,7 +25,9 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::machine_destination::PeerMachine;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+use crate::settings::ReadDestination;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 
 mod dependencies;
@@ -175,6 +177,18 @@ pub trait SpaceProbeAuthor: Send + Sync {
     /// through the host's media egress gate ([`Vault::author_space_probes_admitted`]); a text
     /// document goes where the host's admitted call (the vault's inference policy) lets it.
     fn locality(&self) -> EmbedderLocality;
+    /// Where this author reads toward (FIX 5588): this device for an
+    /// [`EmbedderLocality::OnDevice`] author, else a destination nobody proved.
+    /// A host whose model sits behind a host-attested Mesh proof overrides this with that
+    /// peer; locality alone never names one.
+    fn endpoint(&self) -> ReadDestination {
+        match self.locality() {
+            EmbedderLocality::OnDevice => ReadDestination::on_device(),
+            EmbedderLocality::OwnerServer | EmbedderLocality::ThirdParty => {
+                ReadDestination::toward(PeerMachine::Unknown)
+            }
+        }
+    }
     /// One search query a person might type to find `document`, in other words than its own;
     /// `None` when the model writes none.
     fn write_probe(&self, document: &MediaEmbeddingInput<'_>) -> Result<Option<String>>;
@@ -315,6 +329,7 @@ impl Vault {
                 ));
             }
         };
+        let destination = author.endpoint();
         let mut report = SpaceProbeReport::default();
         // Pending evaluation copies have their own scan (FIX 10408).
         if let Err(error) = self.rebuild_probe_query_copies(kind, author, max_items, egress) {
@@ -323,7 +338,7 @@ impl Vault {
         let documents = {
             let rtxn = self.store.env.read_txn()?;
             let gate = egress
-                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress, &destination))
                 .transpose()?;
             let probes: Vec<SpaceProbe> = space_probes_in_txn(&self.store, &rtxn)?
                 .into_iter()
@@ -408,7 +423,7 @@ impl Vault {
             let input = document.input();
             if let Some(egress) = egress
                 && (egress.decide_media(&input) != EgressDecision::Allow
-                    || !self.media_rows_may_leave(None, input.source_rows())?)
+                    || !self.media_rows_may_leave(None, input.source_rows(), &destination)?)
             {
                 report.withheld += 1;
                 continue;
