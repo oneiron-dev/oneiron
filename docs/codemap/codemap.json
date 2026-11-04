@@ -41340,21 +41340,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "WorldKeyDestroyCause",
-      "WorldKeyDestruction"
-     ],
-     "path": "src/key_material.rs",
-     "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor",
-     "surface": {
-      "crate-vis": 4,
-      "enum": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
       "LearningCell"
      ],
      "path": "src/learning/cell.rs",
@@ -90353,13 +90338,6 @@
      "layout": "file+dir",
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
-    "key_material": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor"
-    },
     "learning": {
      "files": 17,
      "impl_vault": false,
@@ -91203,7 +91181,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6275,
+   "source_files": 6274,
    "test_files": 900
   },
   "oneiron-android": {
@@ -108473,7 +108451,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/mod.rs",
@@ -120748,7 +120726,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DecisionReadDoor"
@@ -121150,7 +121128,7 @@
      "path": "src/models/media/jobs.rs",
      "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -121181,7 +121159,7 @@
      "path": "src/models/media/replay.rs",
      "purpose": "A job's submit kept before it goes out, and keyed replays (FIX 2248, FIX 2962, FIX 465)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -121564,7 +121542,8 @@
       "SeatStatus",
       "SnapshotReceipt",
       "SnapshotSkips",
-      "SnapshotStatus"
+      "SnapshotStatus",
+      "TaggerStatus"
      ],
      "path": "src/models/status.rs",
      "purpose": "What the model runtime built, for the owner-facing status route",
@@ -121572,7 +121551,7 @@
       "crate-vis": 8,
       "enum": 2,
       "fn": 1,
-      "struct": 15
+      "struct": 16
      }
     },
     {
@@ -125386,7 +125365,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 36,
+   "over_bar": 37,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1497,
    "test_files": 182
@@ -125452,11 +125431,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "WorldKeyDestroyCause",
+      "WorldKeyDestruction"
+     ],
+     "path": "src/key_material.rs",
+     "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 2
+      "mod": 3
      }
     },
     {
@@ -125485,6 +125479,13 @@
      "layout": "file",
      "purpose": "Connector-key lifecycle status and its pinned wire strings"
     },
+    "key_material": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Guarded key derivation, OS entropy, and the world-key refusal constructor"
+    },
     "receive_scan": {
      "files": 1,
      "impl_vault": false,
@@ -125495,7 +125496,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 3,
+   "source_files": 4,
    "test_files": 0
   },
   "oneiron-uniffi": {
