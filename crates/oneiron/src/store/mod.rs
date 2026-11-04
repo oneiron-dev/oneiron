@@ -121,8 +121,14 @@ pub mod ports {
 
 pub(crate) mod agent_birth_custody;
 pub(crate) mod agent_birth_identity;
+pub(crate) mod agent_definition;
+pub(crate) mod agent_definition_codec;
+pub(crate) mod agent_manifest;
+pub(crate) mod agent_memory_profile;
 pub(crate) mod agent_model;
+pub(crate) mod agent_optional_memory;
 pub mod agent_record;
+pub(crate) mod agent_refusal;
 pub(crate) mod agent_scope;
 pub(crate) mod attempt_archive_mark;
 pub mod attempt_cancel;
@@ -140,13 +146,20 @@ pub mod attempt_record;
 pub(crate) mod attempt_record_codec;
 pub(crate) mod attempt_record_read;
 pub mod attempt_result;
-pub(crate) mod attempt_run_root;
 pub(crate) mod attempt_retention;
+pub(crate) mod attempt_run_root;
 pub mod attempt_run_signal;
 pub mod attempt_state;
+pub(crate) mod base_agent;
 pub mod canonical_document;
+pub(crate) mod centroid_evidence;
 pub mod checkout_task;
 pub mod claim_refinement_control;
+pub(crate) mod claim_vad_payment;
+pub mod consolidation_evidence;
+pub(crate) mod conversation_residency;
+pub(crate) mod housekeeping_wake;
+pub(crate) mod writer_hold;
 pub use oneiron_store::checkpoint_host_recipient;
 pub mod code_tree_blob;
 pub mod conversation_body;
@@ -162,8 +175,11 @@ mod project_writes;
 pub use project_writes::StoreProjectWrites;
 mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
+pub(crate) mod attempt_operations;
+pub(crate) use attempt_operations::StoreAttemptOperations;
 pub(crate) mod actor_scrubs;
 pub use actor_scrubs::StoreActorScrubs;
+pub(crate) mod critical_confirm_record;
 pub(crate) mod gate_hooks;
 pub(crate) use gate_hooks::StoreGateHooks;
 #[cfg(feature = "sync")]
@@ -561,13 +577,33 @@ pub mod repo_proposal_record;
 
 pub mod repo_import_predicate;
 
+pub(crate) mod task_authority_guard;
+pub(crate) mod vad_annotation;
+
+pub(crate) mod container_output;
+pub(crate) mod live_speaker_calls;
+pub mod record_ref;
+
+pub(crate) mod identity_redirect_rows;
+
 pub(crate) mod authority_rows;
+pub mod channel_class;
+pub mod claim_source_ranking;
+pub mod code_document_receipt;
 pub(crate) mod consent_bound;
+pub(crate) mod conversation_summary;
+pub(crate) mod gate_metrics;
 pub(crate) mod gate_reason;
+pub mod healer_oversight;
+pub(crate) mod pending_comm_stop;
+pub mod plugin_section_predicate;
 pub(crate) mod policy_record;
+pub(crate) mod ppr_cache_invalidation;
 pub(crate) mod record_links;
 pub(crate) mod record_references;
 pub(crate) mod scan_count;
+pub(crate) mod skill_resident;
+pub(crate) mod vector_insert_plan;
 
 pub(crate) mod host_issuer_seed;
 pub(crate) mod principal_record;
