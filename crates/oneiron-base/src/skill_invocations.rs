@@ -13,9 +13,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use crate::engine_executor::StepCancellation;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::step_cancellation::StepCancellation;
 
 /// One live invocation: the skill asked for, the run whose bridge call ran
 /// it and that call's position, and the registration it belongs to, so a
@@ -36,7 +36,7 @@ struct Live {
 
 /// This vault's live callable skill invocations.
 #[derive(Debug, Default)]
-pub(crate) struct SkillInvocations {
+pub struct SkillInvocations {
     live: Mutex<Live>,
 }
 
@@ -49,7 +49,7 @@ impl SkillInvocations {
 
     /// Registers one invocation of `skill`, called by `run_id` at bridge
     /// position `seq`, under a child of `parent`, the caller's step token.
-    pub(crate) fn register(
+    pub fn register(
         &self,
         skill: EntityId,
         run_id: EntityId,
@@ -77,7 +77,7 @@ impl SkillInvocations {
     /// Cancels every live invocation of `skill` in this vault, across runs,
     /// attempts and versions, and answers how many it signalled. It returns
     /// once they are signalled, not once their guests have stopped.
-    pub(crate) fn cancel_skill(&self, skill: &EntityId) -> usize {
+    pub fn cancel_skill(&self, skill: &EntityId) -> usize {
         let live = self.lock();
         let mut signalled = 0;
         for (key, cancel) in &live.running {
@@ -92,7 +92,7 @@ impl SkillInvocations {
 
 /// One registered invocation. Dropping it removes its entry, whatever the
 /// invocation ended with.
-pub(crate) struct InvocationGuard<'v> {
+pub struct InvocationGuard<'v> {
     invocations: &'v SkillInvocations,
     key: InvocationKey,
     cancel: StepCancellation,
@@ -100,7 +100,7 @@ pub(crate) struct InvocationGuard<'v> {
 
 impl InvocationGuard<'_> {
     /// The invocation's own token: a child of its caller's.
-    pub(crate) fn token(&self) -> &StepCancellation {
+    pub fn token(&self) -> &StepCancellation {
         &self.cancel
     }
 
@@ -111,7 +111,7 @@ impl InvocationGuard<'_> {
     ///
     /// [`crate::error::CodeError::CodeStepCancelled`] when a cancel landed
     /// first; the entry is removed all the same.
-    pub(crate) fn finish(self) -> Result<()> {
+    pub fn finish(self) -> Result<()> {
         let mut live = self.invocations.lock();
         live.running.remove(&self.key);
         self.cancel.check()

@@ -11,8 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crate::error::CodeError;
-use crate::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 
 /// The longest a runtime waits before it reads its step's cancellation
 /// again. It bounds the time from a cancel to the next check while the

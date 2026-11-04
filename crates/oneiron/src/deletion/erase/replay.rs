@@ -149,8 +149,11 @@ impl Vault {
             crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
             let had_receipt_sources =
                 crate::receipt::receipt_archive_custody_exists(&self.store, wtxn, id)?;
-            let had_birth_sources =
-                crate::agent_def::birth_custody_exists_in_txn(&self.store, wtxn, id)?;
+            let had_birth_sources = crate::store::agent_birth_custody::birth_custody_exists_in_txn(
+                &self.store,
+                wtxn,
+                id,
+            )?;
             crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
             crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
             let had_body = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?

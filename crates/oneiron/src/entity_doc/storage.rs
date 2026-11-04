@@ -237,7 +237,7 @@ pub(super) fn persist_scanned(
         txn,
         &std::collections::BTreeSet::from([*entity]),
     )?;
-    if crate::llm::decision::questions::unit_watched_in_txn(store, txn, entity)? {
+    if crate::store::decision_question_watches::unit_watched_in_txn(store, txn, entity)? {
         crate::batch::queue_proactivity_change(vault, txn);
     }
     Ok(())

@@ -72,16 +72,7 @@ impl HookPhase {
     }
 }
 
-/// The closed actor classes a selector may name (ARCH-0067 §4).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum HookActorClass {
-    Human,
-    Agent,
-    System,
-}
+pub use crate::store::pack_hook_actor_class::HookActorClass;
 
 /// How a hook's body may spend model time (ARCH-0035 render classes;
 /// ARCH-0080 §4 Its shape).

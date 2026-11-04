@@ -53,7 +53,7 @@ side_tables! {
     MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::llm::model_step_submission_accepts_masked];
     /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
     /// Key: id16(stream).
-    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::llm::model_stream_accepts_masked];
+    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::store::model_stream_row::model_stream_accepts_masked];
     /// Named entity secondary index. Key: byte + (u64be|id16) + id16.
     PORTS_NAMED_ENTITY_INDEX: VaultMeta b"named_entity:v1:" Raw;
     /// Native mail messages an inbox poll set aside after their own failure stopped it poll after
