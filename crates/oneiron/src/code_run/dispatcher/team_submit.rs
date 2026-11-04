@@ -204,7 +204,9 @@ impl HostSelfDispatcher<'_> {
                     *id,
                     &stored,
                     now,
-                    crate::team::owner_outcome::ProducerMembership::Unknown,
+                    crate::team::owner_outcome::ProducerMembership::of_attempt_in_txn(
+                        vault, txn, None, leader, &team,
+                    )?,
                 )?;
                 bind_team_deliverable_in_txn(vault, txn, &binding)
             },
