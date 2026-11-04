@@ -6479,7 +6479,7 @@ export type AmendmentShareView = { class: AttributionLabel; share: number; subje
 /** `oneiron::verbs::skill_attribution::AmendmentJudgmentView` */
 export type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; engine_ver: string; at: number; rejected: boolean; executor?: string | null; type_ref?: TaskTypeRefTypeRef | null; judge?: string | null; judge_model?: string | null; on_judge_model: boolean }
 /** `oneiron::verbs::skill_attribution::ProposalDeltaSettlement` */
-export type ProposalDeltaSettlement = { receipt_id: string; artifact_ref?: EntityId | null; proposed_text: string; final_text: string; delta?: AmendmentDeltaView | null; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] }
+export type ProposalDeltaSettlement = { receipt_id: string; artifact_ref?: EntityId | null; proposed_text: string; final_text: string; delta?: AmendmentDeltaView | null; recorded_delta?: AmendmentDeltaView | null; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] }
 /** `oneiron::verbs::skill_attribution::ProposalDeltaReadRequest` */
 export type ProposalDeltaReadRequest = { receipt_id: string; artifact_ref?: EntityId | null }
 /** `oneiron::verbs::skill_attribution::ProposalOpSpanView` */
