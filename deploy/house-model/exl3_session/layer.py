@@ -81,9 +81,11 @@ POSITION_FIELDS = ("rope_theta", "rope_freq_base", "rotary_dim",
 def _named(value):
     """`value` when JSON names it deterministically, else None. Plain
     scalars and JSON containers pass through; anything else is tried as
-    int, float, then str (all deterministic for one configuration), and
-    refused when none of them reads. A repr would carry the process's
-    addresses and refuse every cross-worker import, so it is never used."""
+    int, then float (deterministic numeric normalizations, e.g. enums and
+    numpy scalars), and refused when neither reads. str is never a
+    fallback: an opaque object's default str carries the process's
+    addresses, so it would split digests across identically configured
+    workers instead of refusing capability. A repr is never used either."""
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, (dict, list, tuple)):
@@ -92,7 +94,7 @@ def _named(value):
         except (TypeError, ValueError):
             return None
         return value
-    for coerce in (int, float, str):
+    for coerce in (int, float):
         try:
             coerced = coerce(value)
         except (TypeError, ValueError):

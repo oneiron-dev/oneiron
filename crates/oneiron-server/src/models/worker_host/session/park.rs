@@ -360,11 +360,23 @@ async fn seal(
         checkpoint: candidate.checkpoint.clone(),
     };
     let place = &candidate.place;
+    // Reserve the export's allocation before it exists: the pre-export room
+    // screen reserves nothing, so a concurrent restore could reserve the
+    // same headroom while the export allocates. The worker's measured
+    // residency is the estimate; the guard is reconciled once the export's
+    // real size is held live below.
+    let pre_export = registry::reserve_host(candidate.residency.unique_bytes.unwrap_or(0))
+        .await
+        .ok_or(Some(Skip::NoRoom))?;
     let (answer, region) = session_export(&place.socket, &place.epoch, &body, &place.worker)
         .await
         .map_err(|_| None)?;
     let region_len = region.len();
     let region = HostCopy::hold(vault_ref, region, region_len);
+    // The export's measured bytes are counted live now: the estimate guard
+    // has done its job, so releasing it reconciles the reservation to the
+    // measured size before the plaintext read makes the second copy.
+    drop(pre_export);
     lifecycle::count(Counted::Park);
     let bytes = region.get().len();
     if answer.checkpoint != candidate.checkpoint || answer.snapshot_bytes != bytes {
