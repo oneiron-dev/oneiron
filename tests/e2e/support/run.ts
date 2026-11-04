@@ -248,8 +248,8 @@ export async function preflight(profile: Profile, names: readonly string[] = [])
   const plan = await catalog.readJson<SuitePlan>("suite-plan");
   const build = await loadBuildManifest(profile);
   const files = selectFiles(plan,profile,names);
-  if (build.launcher.length === 0 || !build.launcher[0]?.startsWith("/")) throw new BlockedDoor("waits on absolute Linux containment launcher");
-  if (!Object.values(build.assets).some(asset => asset.path === build.launcher[0])) throw new BlockedDoor("Unpinned containment launcher");
+  if (build.launcher.length === 0 || !build.launcher[0]?.startsWith("/")) throw new BlockedDoor("waits on absolute Linux process launcher");
+  if (!Object.values(build.assets).some(asset => asset.path === build.launcher[0])) throw new BlockedDoor("Unpinned process launcher");
   for (const manifest of catalog.manifests) for (const binary of manifest.value.binaries ?? []) {
     if (binary.requiredFor.includes(profile)) {
       // The JS SDK loads the native addon even for pairing; Python is checked only by its consumer.
@@ -263,7 +263,7 @@ export async function preflight(profile: Profile, names: readonly string[] = [])
     }
   }
   for (const file of files) await access(resolve(E2E_ROOT,file.file));
-  for (const capability of ["linux","network-isolated","four-slot-accounting"])
+  for (const capability of ["linux","fleet-job","slot-accounting"])
     if (!build.capabilities.includes(capability)) throw new BlockedDoor(`waits on ${capability}`);
   if (profile === "real-small-model") {
     const model = build.realModel;

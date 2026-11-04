@@ -33,7 +33,7 @@ pub mod judge;
 mod pack_erase;
 pub mod prior;
 pub mod project;
-pub(crate) mod ranking;
+pub(crate) use oneiron_base::learning_ranking as ranking;
 pub mod read;
 pub mod retest;
 mod scope_carriers;
