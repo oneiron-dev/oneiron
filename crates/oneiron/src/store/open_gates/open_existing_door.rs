@@ -97,6 +97,9 @@ impl Store {
         crate::vault::verify_text_index_manifest(&store, analyzer)?;
 
         store.reconcile_existing_open()?;
+        // A crashed lease holder's journaled decision times rise into this
+        // store's clock floor before its first decision (review #4484).
+        store.observe_authorization_lease_journal()?;
         Ok(store)
     }
 
