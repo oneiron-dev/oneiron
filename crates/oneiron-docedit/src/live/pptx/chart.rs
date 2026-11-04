@@ -472,11 +472,12 @@ fn plot_moved(
             .map(|was| plot_key(base_family, was))
     };
     let (_, at) = plot_key(side_family, side);
-    // Staying in its base plot is never a move, however many other base
-    // series join it there.
-    if at == ordinal {
-        return None;
-    }
+    // No raw-ordinal early return here (review-4320 P1): settlement
+    // renumbers ordinals when a plot goes, so `at == ordinal` does not
+    // prove the series stayed in its base plot. The mate-aware compare
+    // below decides instead: co-occupants from another base plot mark a
+    // different logical destination, while pure settlement renumbering
+    // (mates beside it, mates gone, family changed) stays silent.
     // Its side plot's base series, drawn in its family there as in the
     // base: a new series never moves it, and a series that changed family
     // is judged by that field instead.

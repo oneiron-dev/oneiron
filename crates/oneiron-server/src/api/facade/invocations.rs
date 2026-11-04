@@ -80,6 +80,22 @@ pub(super) async fn facade_invocation_claim(
                 return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
                     .into_response();
             }
+            // An account key carries no slip, token id or attested owner
+            // for the check above to judge, so it always reads live there.
+            // Judge its cached verdict again after the wait (lease, key
+            // expiry, punch), locally only: a miss never falls back to the
+            // always-live answer (review-4320 P1).
+            if let Some(instrument) = auth.instrument()
+                && auth.verified_slip().is_none()
+                && auth.jti().is_none()
+                && auth.managed_owner().is_none()
+                && !server.account_keys.as_ref().is_some_and(|keys| {
+                    keys.instrument_is_live(&instrument, oneiron_vault_contract::now_ts())
+                })
+            {
+                return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
+                    .into_response();
+            }
             let verb = parts.uri.path().trim_start_matches('/');
             facade_replay(server.vault(), &auth, verb, outcome)
         }
