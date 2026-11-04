@@ -163,14 +163,10 @@ pub(super) struct LlamaIdentityManifest {
     cache_mode: Option<CacheDigest>,
 }
 
-/// The manifest's fields this reader checks, beside its digests. Its other
-/// sections are the record the digests were taken of.
+/// The serving manifest's payload: its identity and the sections those
+/// digests describe.
 #[derive(Deserialize)]
 struct ManifestWire {
-    schema_version: u64,
-    backend: String,
-    backend_epoch: CacheEpoch,
-    configured_wire_id: String,
     #[serde(default)]
     draft: Option<ManifestDraft>,
     identity: LlamaIdentityManifest,
@@ -361,17 +357,8 @@ async fn fetch(
 /// The manifest's digests, when its exact bytes hash to the alias's digest
 /// and it names the alias's epoch and the route's configured wire id.
 fn verify(bytes: &[u8], alias: &LlamaAlias, target: &str) -> Option<LlamaIdentityManifest> {
-    if format!("{:x}", Sha256::digest(bytes)) != alias.manifest.as_str() {
-        return None;
-    }
+    verify_llama_header(bytes, alias.manifest.as_str(), &alias.epoch, target)?;
     let manifest: ManifestWire = serde_json::from_slice(bytes).ok()?;
-    if manifest.schema_version != SCHEMA_VERSION
-        || manifest.backend != BACKEND
-        || manifest.backend_epoch != alias.epoch
-        || manifest.configured_wire_id != target
-    {
-        return None;
-    }
     let mut identity = manifest.identity;
     identity.draft_weights_digest = manifest
         .draft
