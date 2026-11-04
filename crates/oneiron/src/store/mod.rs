@@ -119,6 +119,7 @@ pub mod ports {
     };
 }
 
+pub(crate) mod agent_birth_identity;
 pub mod agent_record;
 pub mod attempt_cleanup;
 pub mod attempt_inputs;
@@ -217,6 +218,7 @@ pub(crate) mod known_value_index;
 pub(crate) mod l2_evidence;
 pub mod receipt_identity;
 pub mod retrieval_deadline;
+pub mod retrieval_signal;
 pub mod row_birth;
 pub(crate) mod pending_custody_revoke;
 pub(crate) mod secret_handle_labels;

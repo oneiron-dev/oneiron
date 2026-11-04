@@ -148,8 +148,18 @@
      "path": "src/access_grant/mod.rs",
      "purpose": "AccessGrant control-plane record substrate",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/access_grant/owner_act.rs",
+     "purpose": "The owner's typed grant/revoke acts on connector witness-read access grants (FIX 10980)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -719,7 +729,7 @@
      "path": "src/agent_def/portable_knowledge.rs",
      "purpose": "The selected-knowledge facet's bytes (`knowledge/selected.json`)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -6827,6 +6837,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/export/agent_knowledge_format.rs",
+     "purpose": "The form of an agent pack's selected-knowledge facet (`knowledge/selected.json`): which of its two encodings…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/export/agent_person_import.rs",
      "purpose": "Model PERSON mint for imported agent definitions (FIX 1162): one pass over the import's inserted rows, after…",
      "surface": {
@@ -7222,7 +7242,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 13
      }
     },
@@ -11655,8 +11675,8 @@
      "surface": {
       "crate-vis": 9,
       "enum": 1,
-      "mod": 20,
-      "re-export": 16
+      "mod": 19,
+      "re-export": 17
      }
     },
     {
@@ -11908,26 +11928,6 @@
       "crate-vis": 1,
       "fn": 2,
       "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CalendarAdmissionRequest",
-      "CalendarBodyScreener",
-      "CalendarInboundBody",
-      "CalendarScreenVerdict",
-      "Screened"
-     ],
-     "path": "src/calendar/safeguard.rs",
-     "purpose": "Optional inbound-body screen for imported calendar content (CAL-09)",
-     "surface": {
-      "const": 2,
-      "enum": 1,
-      "fn": 2,
-      "struct": 3,
-      "trait": 1
      }
     },
     {
@@ -33622,20 +33622,6 @@
      "purpose": "The board frames a step's verb answers carried (FIX 2135): kept beside the step as it ends, and read to the…",
      "surface": {
       "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "StepCancellation"
-     ],
-     "path": "src/engine_executor/cancel.rs",
-     "purpose": "The cancellation of one code step (FIX 600): a flag its owner sets and its runtime reads, linked one way to…",
-     "surface": {
-      "const": 1,
-      "fn": 6,
-      "struct": 1
      }
     },
     {
@@ -55451,28 +55437,12 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ListUnsubscribeTarget"
-     ],
-     "path": "src/outbound_intent_ledger/email_headers.rs",
-     "purpose": "Deterministic unsubscribe headers and their frozen outbound payload representation",
-     "surface": {
-      "const": 5,
-      "crate-vis": 3,
-      "fn": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
       "crate-vis": 13,
-      "mod": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -56501,16 +56471,15 @@
       "DreamerWorkingSetBudget",
       "DreamerWorkingSetCursor",
       "DreamerWorkingSetStopReason",
-      "Signal",
       "WorldScope"
      ],
      "path": "src/pipeline/types.rs",
      "purpose": "—",
      "surface": {
       "crate-vis": 36,
-      "enum": 3,
+      "enum": 2,
       "fn": 5,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 3
      }
     },
@@ -58980,7 +58949,7 @@
      "path": "src/receipt/grant.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 4
      }
@@ -66087,16 +66056,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/skill/invocation.rs",
-     "purpose": "The callable skill invocations running in this vault (FIX 600), each with the token that stops it, so an…",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "DivergenceCase",
       "TakeoverVerdict"
@@ -71883,7 +71842,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 71,
-      "mod": 72,
+      "mod": 73,
       "re-export": 29
      }
     },
@@ -72626,6 +72585,18 @@
       "crate-vis": 4,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Signal"
+     ],
+     "path": "src/store/retrieval_signal.rs",
+     "purpose": "The retrieval signals a run scores entities by: which channel ranked a result",
+     "surface": {
+      "enum": 1
      }
     },
     {
@@ -88354,7 +88325,7 @@
    ],
    "modules": {
     "access_grant": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88438,7 +88409,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 182,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88494,7 +88465,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 74,
+     "files": 73,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88921,7 +88892,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 49,
+     "files": 48,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89313,7 +89284,7 @@
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5"
     },
     "outbound_intent_ledger": {
-     "files": 19,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -89628,7 +89599,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 30,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -89691,7 +89662,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 335,
+     "files": 336,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -89931,7 +89902,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6226,
+   "source_files": 6225,
    "test_files": 898
   },
   "oneiron-android": {
@@ -90996,6 +90967,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarAdmissionRequest",
+      "CalendarBodyScreener",
+      "CalendarInboundBody",
+      "CalendarScreenVerdict",
+      "Screened"
+     ],
+     "path": "src/calendar_body_screen.rs",
+     "purpose": "Optional inbound-body screen for imported calendar content (CAL-09)",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -91216,7 +91207,7 @@
      "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
      "surface": {
       "fn": 2,
-      "mod": 22
+      "mod": 26
      }
     },
     {
@@ -91355,6 +91346,34 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "InvocationGuard",
+      "SkillInvocations"
+     ],
+     "path": "src/skill_invocations.rs",
+     "purpose": "The callable skill invocations running in this vault (FIX 600), each with the token that stops it, so an…",
+     "surface": {
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StepCancellation"
+     ],
+     "path": "src/step_cancellation.rs",
+     "purpose": "The cancellation of one code step (FIX 600): a flag its owner sets and its runtime reads, linked one way to…",
+     "surface": {
+      "const": 1,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ContextPackTokenizer",
       "PackTokenizer"
      ],
@@ -91365,6 +91384,20 @@
       "enum": 1,
       "fn": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ListUnsubscribeTarget"
+     ],
+     "path": "src/unsubscribe_headers.rs",
+     "purpose": "Deterministic unsubscribe headers and their frozen outbound payload representation",
+     "surface": {
+      "const": 5,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -91395,6 +91428,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Multilingual analyzer subsystem"
+    },
+    "calendar_body_screen": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Optional inbound-body screen for imported calendar content (CAL-09)"
     },
     "config": {
      "files": 3,
@@ -91529,12 +91569,33 @@
      "layout": "file",
      "purpose": "Retrieval quality report vocabulary"
     },
+    "skill_invocations": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The callable skill invocations running in this vault (FIX 600), each with the token that stops it, so an…"
+    },
+    "step_cancellation": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The cancellation of one code step (FIX 600): a flag its owner sets and its runtime reads, linked one way to…"
+    },
     "tokenizer": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "—"
+    },
+    "unsubscribe_headers": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Deterministic unsubscribe headers and their frozen outbound payload representation"
     },
     "work_line": {
      "files": 1,
@@ -91546,7 +91607,7 @@
    },
    "over_bar": 0,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
-   "source_files": 28,
+   "source_files": 32,
    "test_files": 2
   },
   "oneiron-bench": {
@@ -117673,7 +117734,7 @@
      "path": "src/decision_verdict.rs",
      "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -117691,9 +117752,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/decision_verdict/model_calls.rs",
-     "purpose": "The verdict caller a model-call capture attributes (FIX 12742)",
+     "purpose": "The capture caller a model-call capture attributes (FIX 12516/12742)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -122229,7 +122290,7 @@
      "path": "src/oneironer/dispatcher/mod.rs",
      "purpose": "The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -122269,7 +122330,7 @@
      "path": "src/oneironer/engines/admission.rs",
      "purpose": "The background admission of a slot's platform runtimes (FIX 6755 slices 3 and 2c, Engine calls 3-5): on a…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -122439,7 +122500,7 @@
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 34
      }
     },
     {
