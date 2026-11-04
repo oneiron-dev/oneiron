@@ -587,7 +587,7 @@ pub(super) fn stage_task_and_turn(
     if entity_type == crate::registry::ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
         if body_changed {
-            crate::task_verb::note_task_write(store, wtxn, id, data)?;
+            crate::store::linear_task_revision::note_task_write(store, wtxn, id, data)?;
         }
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {

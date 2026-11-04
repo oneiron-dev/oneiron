@@ -863,7 +863,7 @@ export type AgentBudgetView = { attempt: string; lease?: SpendLeaseView | null; 
 export type BudgetLandRequest = { attempt: string; run: string; lease_owner: string; attempt_count: number; marker: string; artifact_ref?: string | null; reason: string }
 /** `oneiron::llm::run_admission::person_billing::BillingAccountFiling` */
 export type BillingAccountFiling = { account: string }
-/** `oneiron::llm::run_admission::person_billing::FiledBillingAccount` */
+/** `oneiron::store::person_billing_account::FiledBillingAccount` */
 export type FiledBillingAccount = { account: string; filed_at: number }
 /** `oneiron::agent_dispatch::budget_doors::OpenSpendLeaseRequest` */
 export type OpenSpendLeaseRequest = { launch: string; cap_units: number; unit: string; shown_at_ms: number }
@@ -6528,7 +6528,7 @@ export type ModelStepRetryPolicy = { max_attempts: number }
 /** `oneiron::llm::step::public::ModelStepSubmit` */
 export type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy }
 /** `oneiron_model::llm::catalog::LlmCapability` */
-export type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input" | "reasoning_content_history" | "token_logprobs"
+export type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input" | "reasoning_content_history" | "token_logprobs" | "reasoning_summary"
 /** `oneiron_model::llm::error::UnsupportedCapability` */
 export type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null }
 /** `oneiron_model::llm::error::LabelReadFailure` */
