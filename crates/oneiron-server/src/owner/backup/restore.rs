@@ -404,6 +404,65 @@ fn interrupted_restore_staging(vault_path: &Path, name: &str) -> Vec<(u64, Strin
     found
 }
 
+/// Cross-process claim lock for one leftover staging directory (round-1 P1
+/// on #4518): two restores reaching the same staging take it in turn, and
+/// the contender leaves the staging and archive mirrors untouched instead
+/// of deleting the winner's archive mirror on its failed rename. The lock
+/// file is unlinked when the guard drops, on every path; the held-open file
+/// (and its flock on unix) lasts until then.
+struct StagingClaimGuard {
+    _held: std::fs::File,
+    path: PathBuf,
+}
+
+impl Drop for StagingClaimGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Opens (creating) the claim-lock file for one leftover staging directory
+/// and takes it nonblocking-exclusive. `None` means the claim is already
+/// held: the caller leaves the staging and archive mirrors untouched. On
+/// unix the flock releases if the holder dies, so no stale lock survives a
+/// crash; elsewhere the create is exclusive and the guard unlinks the file
+/// when the claim ends.
+fn take_staging_claim_lock(
+    parent: &Path,
+    name: &str,
+    stamp_text: &str,
+) -> Option<StagingClaimGuard> {
+    let path = parent.join(format!(".{name}.restore-{stamp_text}.claim-lock"));
+    #[cfg(unix)]
+    {
+        use rustix::fs::{FlockOperation, Mode, OFlags};
+        let held = std::fs::File::from(
+            rustix::fs::open(
+                &path,
+                OFlags::RDWR | OFlags::CREATE | OFlags::CLOEXEC,
+                Mode::RUSR | Mode::WUSR,
+            )
+            .ok()?,
+        );
+        match rustix::fs::flock(&held, FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => Some(StagingClaimGuard { _held: held, path }),
+            // A contender holds it: leave the mirrors untouched.
+            Err(_) => None,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(held) => Some(StagingClaimGuard { _held: held, path }),
+            Err(_) => None,
+        }
+    }
+}
+
 /// Claims the staging directory `staging` (stamp `stamp_text`) an earlier
 /// interrupted restore of the vault at `vault_path` left, as the archive name
 /// that restore never reached, or leaves it whole where it is (FIX 2706).
@@ -415,7 +474,10 @@ fn interrupted_restore_staging(vault_path: &Path, name: &str) -> Vec<(u64, Strin
 /// anything that fails along the way stays whole and is reported as left: the
 /// scan and the claim never fail the restore, add no refusal, hold or wait,
 /// and remove nothing but the staging mirror and directory of a claim that
-/// landed. Returns the `staging_notes` line for the staging directory.
+/// landed (and its own claim-lock file). Two restores reaching the same
+/// leftover staging take the cross-process claim lock in turn; the contender
+/// leaves the staging and archive mirrors untouched. Returns the
+/// `staging_notes` line for the staging directory.
 fn claim_staged_archive(
     vault_path: &Path,
     name: &str,
@@ -476,6 +538,21 @@ fn claim_staged_archive(
     }
     let Some(parent) = vault_path.parent() else {
         return left_whole();
+    };
+    // The cross-process claim lock (round-1 P1 on #4518): two restores that
+    // reach the same leftover staging take it in turn, and the contender
+    // leaves the staging and archive mirrors untouched instead of deleting
+    // the winner's archive mirror on its failed rename.
+    let _claim_guard = match take_staging_claim_lock(parent, name, stamp_text) {
+        Some(guard) => guard,
+        None => {
+            let note = format!(
+                "an earlier interrupted restore left its staging directory {}                  whole: its claim is already held, so the staging and archive                  mirrors are left untouched",
+                staging.display()
+            );
+            tracing::warn!(staging = %staging.display(), "{note}");
+            return note;
+        }
     };
     let archive = parent.join(format!("{name}.pre-restore-{stamp_text}"));
     // Never overwrite: any name in the way leaves the staging whole.
