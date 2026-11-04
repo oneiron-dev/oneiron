@@ -285,11 +285,9 @@ pub(super) fn restore<R: Read + Seek>(
             }
         })
         .collect::<std::result::Result<BTreeSet<_>, _>>()?;
-    // Blind-review P1 (REVIEW-4389 round 4): a cut subject edge the
-    // entity pass re-minted (a claim's own ClaimOf, staged by its typed
-    // put before this branch) must not survive the restore. Only an edge
-    // this import created is removed; a pre-existing edge is vault truth,
-    // left alone.
+    // Typed puts can regenerate a cut link before or during this cohort.
+    // Preserve an existing link on a pre-existing source, not one minted
+    // by this import's earlier entity pass.
     let cut_subject = if cut {
         if subject.len() != EDGE_KEY_LEN {
             return Err(invalid("archive cohort subject is not an edge"));
@@ -304,16 +302,23 @@ pub(super) fn restore<R: Read + Seek>(
     } else {
         None
     };
-    let had_edge = match cut_subject {
+    let preserve_subject_edge = match cut_subject {
         Some((source, kind, target)) => {
-            crate::ports::EdgeStoreRead::port_edge_get(&vault.store, txn, &source, kind, &target)?
+            !archive.index.contains(Tag::Inserted, source.as_bytes())?
+                && crate::ports::EdgeStoreRead::port_edge_get(
+                    &vault.store,
+                    txn,
+                    &source,
+                    kind,
+                    &target,
+                )?
                 .is_some()
         }
         None => false,
     };
     let (inserted, unchanged) = restore_cohort(vault, txn, &rows, cut)?;
     if let Some((source, kind, target)) = cut_subject
-        && !had_edge
+        && !preserve_subject_edge
         && crate::ports::EdgeStoreRead::port_edge_get(&vault.store, txn, &source, kind, &target)?
             .is_some()
     {
