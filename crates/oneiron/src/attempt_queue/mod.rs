@@ -101,7 +101,6 @@ pub(crate) fn encode_admitted_signal_record(
 }
 
 pub(crate) use crate::store::attempt_record_codec::signal_validators::validate_signal_cancel;
-pub(crate) use engine::dreamer_run_root_id_in_txn;
 /// Storage-ABI pin re-exported for `crate::store`; its only consumer outside
 /// this module is `store`'s row-header test.
 #[cfg_attr(not(test), allow(unused_imports))]
