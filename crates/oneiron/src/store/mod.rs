@@ -467,3 +467,9 @@ pub mod reaction_predicate;
 pub mod repo_proposal_record;
 
 pub mod repo_import_predicate;
+
+pub mod claim_source_ranking;
+pub mod code_document_receipt;
+pub mod plugin_section_predicate;
+pub(crate) mod ppr_cache_invalidation;
+pub(crate) mod vector_insert_plan;

@@ -13,7 +13,7 @@ use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::ports::{EntityStoreMaintenance, RetrievalIndexMaintenance, ShortIdStoreMaintenance};
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::GateDecisionId;
 use crate::write_envelope::claim_body::ClaimSubject;

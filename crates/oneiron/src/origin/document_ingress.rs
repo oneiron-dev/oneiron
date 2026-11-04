@@ -1,7 +1,8 @@
 //! Crash-idempotent push-to-document lowering under the origin single-writer lock.
 use super::document_candidate_types::{ReceivedRefIngress, ReceivedRefSource};
 use super::smart_http::{ReceivePackAttribution, RefUpdate};
-use crate::code_document::{CodeEditReceipt, CodeFileIngress};
+use crate::code_document::CodeFileIngress;
+use crate::store::code_document_receipt::CodeEditReceipt;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo};

@@ -299,7 +299,9 @@ pub struct StoreCore {
     /// per-process: see [`Diagnostics`] for why the three families moved here.
     pub(crate) diagnostics: Diagnostics,
     /// Bounded, content-addressed L2 render cache. Never persisted.
-    pub(crate) l2_base_cache: Mutex<crate::context_pack::L2BaseCache>,
+    pub(crate) l2_base_cache: Mutex<crate::store::l2_evidence::L2BaseCache>,
+    pub(in crate::store) ppr_cache_invalidation:
+        &'static dyn crate::store::ppr_cache_invalidation::PprCacheInvalidation,
     /// Legal-hold refusals waiting for their hold log: the refusing
     /// transaction rolls back (OF-470). Never persisted.
     pub(crate) legal_hold_refusals: super::legal_hold::LegalHoldRefusals,
