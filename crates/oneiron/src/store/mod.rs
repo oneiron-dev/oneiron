@@ -178,6 +178,7 @@ pub mod proposal_spool;
 pub mod recovery_write_budget;
 pub(crate) mod repo_environment;
 pub mod repo_fork;
+pub mod resident_budget_rows;
 pub mod restore_admission;
 pub mod result_body_pins;
 pub mod result_memory;
