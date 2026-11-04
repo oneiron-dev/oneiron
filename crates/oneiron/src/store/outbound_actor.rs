@@ -19,7 +19,6 @@ impl OutboundDispatchActor {
             actor_entity_ref: Some(agent_ref),
         }
     }
-
 }
 
 /// ExternalEffect policy-risk dial for outbound dispatch.

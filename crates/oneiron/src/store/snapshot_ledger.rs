@@ -1,8 +1,8 @@
 //! In-flight sealed-snapshot reservations and lease pins.
 
+use crate::store::snapshot_catalog::SnapshotId;
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
-use crate::store::snapshot_catalog::SnapshotId;
 
 /// The in-flight half of each vault's disk line, in memory beside its
 /// catalog: reservations and staged bodies, and the eviction counters.
@@ -38,4 +38,3 @@ impl Ledger {
         self.lock().held.clear();
     }
 }
-

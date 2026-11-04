@@ -7,7 +7,6 @@
 //! stored counters are a function of the persisted children and of nothing
 //! else — no clock, no insertion order, no peer-supplied value.
 
-
 use rmpv::Value;
 
 use crate::Vault;

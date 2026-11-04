@@ -460,4 +460,3 @@ pub(crate) fn retire_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &SnapshotId
     store.stage_inference_snapshot_retirement_in_txn(wtxn, &id.0)?;
     Ok(gone)
 }
-

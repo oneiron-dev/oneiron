@@ -1,8 +1,8 @@
 //! Pending gate-outcome name and gate-vs-manifest policy-risk resolution.
 use crate::gate::ExternalEffectPolicyRisk;
 use crate::outbound::capability::OutboundVerbContract;
-use crate::outbound::dispatch_types::{OutboundDispatchGate, OutboundDispatchPolicyRisk};
 use crate::outbound::dispatch_types::OutboundDispatchRiskGate;
+use crate::outbound::dispatch_types::{OutboundDispatchGate, OutboundDispatchPolicyRisk};
 /// The `gate_outcome` value naming a send parked on a human decision.
 pub(in crate::outbound) const GATE_OUTCOME_PENDING: &str = "pending";
 pub(super) fn outbound_dispatch_policy_risk(

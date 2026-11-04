@@ -1,7 +1,7 @@
 //! Bounded compilation proposals from principal-bound corrected deltas.
 
-use rmpv::Value;
 pub use crate::inbox::compilation_target::CompilationTarget;
+use rmpv::Value;
 
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSubject};
 use crate::error::{Error, Result};
