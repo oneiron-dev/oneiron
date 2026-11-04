@@ -21,7 +21,8 @@ use crate::{
 use crate::store::refinement_carrier::MAGIC;
 pub(crate) use crate::store::refinement_carrier::refinement_carrier_payload;
 use crate::store::skill_refinement_custody::{
-    BINDING, LATEST, LatestRuling, OWNED, RETIRED_SOURCE,
+    BINDING, LATEST, LatestRuling, OWNED, RETIRED_SOURCE, refinement_custody_exists_in_txn,
+    remove_refinement_carrier_in_txn,
 };
 const DOMAIN: &[u8] = b"oneiron.refinement-receipt.asset.v1\0";
 /// Empty marker that a holder's custody is permanently closed.
