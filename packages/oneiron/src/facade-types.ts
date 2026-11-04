@@ -758,7 +758,7 @@ export type SpendBasis = "calibrated" | "prior"
 export type DollarBasis = "unknown_price" | "upper_bound_rate" | "sum" | "incomplete_or_overflow"
 /** `oneiron::agent_dispatch::spend_calibration::ExpectedSpend` */
 export type ExpectedSpend = { units: number; samples: number; basis: SpendBasis; expected_usd_micros?: number | null; dollar_basis: DollarBasis }
-/** `oneiron::run_budget::declaration::LeaseUnit` */
+/** `oneiron_run_budget::run_budget::declaration::LeaseUnit` */
 export type LeaseUnit = string
 /** `oneiron::workspace_roster::spend_scope::SpendScopeId` */
 export type SpendScopeId = string
@@ -6238,7 +6238,7 @@ export type JoinRequest = { room: EntityId; branch?: EntityId | null; subject: J
 export type ConsentAnswer = { join_ref: string; part: ConsentPart; grant: boolean; spend_scope?: SpendScopeId | null }
 /** `oneiron::workspace_roster::rooms::offers::OfferDraft` */
 export type OfferDraft = { room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; spend_scope?: SpendScopeId | null; until?: number | null; intent_key: string }
-/** `oneiron::run_budget::job_maximum::DeclaredMaximum` */
+/** `oneiron_run_budget::run_budget::job_maximum::DeclaredMaximum` */
 export type DeclaredMaximum = { units: number; unit: LeaseUnit }
 /** `oneiron::workspace_roster::rooms::offers::OfferState` */
 export type OfferState = { kind: "open"; needs: ConsentNeed[] } | { kind: "joined"; turn: EntityId; receipt_ref: string } | { kind: "not_now"; diary_ref?: EntityId | null } | { kind: "superseded"; by: string } | { kind: "aged_out" }

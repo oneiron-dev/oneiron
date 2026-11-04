@@ -7948,6 +7948,7 @@ dependencies = [
  "oneiron-model",
  "oneiron-policy-vocabulary",
  "oneiron-retrieval",
+ "oneiron-run-budget",
  "oneiron-sandbox-contract",
  "oneiron-spawn",
  "oneiron-store",
@@ -8599,6 +8600,16 @@ dependencies = [
  "unicode-script",
  "unicode-segmentation",
  "whichlang",
+]
+
+[[package]]
+name = "oneiron-run-budget"
+version = "0.1.0"
+dependencies = [
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
