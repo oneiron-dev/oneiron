@@ -10,8 +10,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use similar::{Algorithm, DiffOp, capture_diff_slices};
+
+mod projection;
+pub use projection::{DocxGroupEvents, DocxProjection};
+use projection::{apply_built, group_ops, native};
+use std::collections::HashMap;
 use stemma::edit::EditTransaction;
-use stemma::view::{BlockRole, BlockView, SegmentView, TextMark, TrackStatus};
+use stemma::view::{BlockRole, BlockView, DocumentView, SegmentView, TextMark, TrackStatus};
 
 /// One top-level block of the imported document, in document order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -364,107 +369,12 @@ fn project_within(
     preflight_with_limits(source, limits)?;
     let document = Document::parse(source)?;
     let view = document.read();
-    let find = |id: &str| {
-        view.blocks
-            .iter()
-            .find(|block| block.id.to_string() == id)
-            .ok_or_else(|| DoceditError::InvalidTransaction(format!("unknown block {id}")))
-    };
-    let anchor = |anchor: &DocxAnchor| {
-        let (id, position) = match anchor {
-            DocxAnchor::After(id) => (id, "after"),
-            DocxAnchor::Before(id) => (id, "before"),
-        };
-        find(id).map(|block| json!({"anchor": block.id.to_string(), "position": position}))
-    };
-    let mut patches = Vec::new();
-    let mut ops: Vec<Value> = Vec::with_capacity(changes.len());
-    for change in changes {
-        match change {
-            DocxChange::SetText { block, text } => {
-                let block = find(block)?;
-                ops.push(json!({
-                    "op": "replace",
-                    "target": block.id.to_string(),
-                    "guard": block.guard,
-                    "content": paragraph(block.role_token.as_deref(), text),
-                }));
-            }
-            DocxChange::SetRuns { block, runs } => {
-                let block = find(block)?;
-                // Formatting goes first, as a pass of its own: the guard pins
-                // text, not marks, so the replace after it still reads the
-                // block it was read against.
-                if let Some(patch) = kept_marks(block, runs)? {
-                    patches.push((block, patch));
-                }
-                if runs_text(runs) != block.text {
-                    ops.push(json!({
-                        "op": "replace",
-                        "target": block.id.to_string(),
-                        "guard": block.guard,
-                        "content": marked_paragraph(block.role_token.as_deref(), runs),
-                    }));
-                }
-            }
-            DocxChange::SetCell {
-                block,
-                row,
-                col,
-                text,
-            } => ops.push(json!({
-                "op": "table_op",
-                "target": find(block)?.id.to_string(),
-                "table_op": {"kind": "set_cell_text", "row_index": row, "col_index": col, "text": text},
-            })),
-            DocxChange::Move { block, anchor: to } => ops.push(json!({
-                "op": "move",
-                "target": find(block)?.id.to_string(),
-                "destination": anchor(to)?,
-            })),
-            DocxChange::Insert {
-                anchor: at,
-                paragraphs,
-            } => {
-                let content = paragraphs
-                    .iter()
-                    .map(new_paragraph)
-                    .collect::<Result<Vec<_>, _>>()?;
-                ops.push(json!({"op": "insert", "target": anchor(at)?, "content": content}));
-            }
-            DocxChange::Delete { block } => {
-                let block = find(block)?;
-                ops.push(json!({"op": "delete", "target": block.id.to_string(), "guard": block.guard}));
-            }
-        }
-    }
+    let (patches, ops) = group_ops(&view, changes)?;
     if patches.is_empty() && ops.is_empty() {
         return Ok(source.to_vec());
     }
-    let mut edited = document;
-    if !patches.is_empty() {
-        edited = remark(&edited, &patches, revision).ok_or_else(|| {
-            DoceditError::InvalidTransaction(
-                "a mark change on text its paragraph cannot address".to_owned(),
-            )
-        })?;
-    }
-    if !ops.is_empty() {
-        edited = edited.apply(&native(ops, revision)?)?;
-    }
-    if let Some(remarked) = inherited(&edited, changes, revision) {
-        edited = remarked;
-    }
+    let edited = apply_built(&document, patches, ops, changes, revision)?;
     crate::export_redline(&edited, limits)
-}
-
-/// `ops` as one tracked transaction under the projection's revision.
-fn native(ops: Vec<Value>, revision: &DocxRevision) -> Result<EditTransaction, DoceditError> {
-    let transaction = json!({
-        "ops": ops,
-        "revision": {"author": revision.author, "date": revision.date, "apply_op_id": revision.group},
-    });
-    crate::parse_native_revision(&transaction.to_string())
 }
 
 fn paragraph(role: Option<&str>, text: &str) -> Value {

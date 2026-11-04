@@ -222,6 +222,9 @@ both bindings and their export-census tests in one change.
 - `vault.weave.digest.render`
 - `vault.weave.link.corrections`
 - `self.inbox.lens`
+- `self.inbox.get`
+- `self.inbox.done`
+- `self.inbox.later`
 - `vault.skills.bootstrap`
 - `vault.skill_hubs.default.get`
 - `vault.skills.restoreDefaults`
@@ -865,6 +868,7 @@ both bindings and their export-census tests in one change.
 - `self.skills.save`
 - `self.skills.fork`
 - `self.skills.callables`
+- `vault.skills.callable.amend`
 - `vault.skills.pack_receipt`
 - `vault.skills.outcomes.project`
 - `vault.skills.outcomes.get`

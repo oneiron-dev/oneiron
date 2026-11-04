@@ -27,11 +27,14 @@ use crate::{
 mod author;
 mod bindings;
 mod install;
+mod proposal;
 
 pub use self::author::{FOREIGN_SKILL_PUBLISHER, HookAuthor};
 pub use self::bindings::PackHookBinding;
 pub(crate) use self::bindings::is_hook_binding;
 pub(super) use self::install::HookBinder;
+pub use self::proposal::{HookWidening, PackHookProposal, PackHookProposalStatus};
+pub(crate) use self::proposal::{erase_hook_proposal_in_txn, scrub_hook_proposal_actor_in_txn};
 
 /// The binding's predicate: the same row kind a pack's `wakes` write.
 const PREDICATE: &str = "agent.connector_subscription";
@@ -69,16 +72,7 @@ impl HookPhase {
     }
 }
 
-/// The closed actor classes a selector may name (ARCH-0067 §4).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum HookActorClass {
-    Human,
-    Agent,
-    System,
-}
+pub use crate::store::pack_hook_actor_class::HookActorClass;
 
 /// How a hook's body may spend model time (ARCH-0035 render classes;
 /// ARCH-0080 §4 Its shape).

@@ -217,12 +217,13 @@ fn held_occurrence(id: &EntityId, body: &BodyRef) -> Result<EntityId> {
     )
 }
 
-/// FIX 3677: the file plane stays off until the raw ASSET readers other lanes
-/// own (sync egress, scoped reads, blob holders, taint, federation export,
-/// codebase ingest) read a manifest's file; the PR's FIX lines name each one.
-/// Off, every ASSET body stays in its row exactly as before; on is this line.
-/// A sealed vault's files are envelopes (FIX 5348).
-pub(crate) const ASSET_FILE_PLANE: bool = false;
+/// FIX 3677: the file plane is on. A long opaque ASSET body lives in its
+/// body file; sync carries its row by reference and moves the body outside
+/// Loro (FIX 5489), an offline bundle carries it as a file part and a point
+/// read serves it whole (FIX 5532). Off, every ASSET body stays in its row
+/// exactly as before; off is this line. A sealed vault's files are
+/// envelopes (FIX 5348).
+pub(crate) const ASSET_FILE_PLANE: bool = true;
 
 /// What the file plane may hold `body` as, judged whole; `None` keeps it in
 /// its row. Neither kind is UTF-8 text, a body an owning adapter reads (the
@@ -395,7 +396,7 @@ pub(crate) fn file_put_body_in_txn(
     // A marked file keeps its row: a serving door reads its keys' spans over
     // the bytes it holds. Any other stays there too, with no instance minted
     // inside this writer.
-    crate::secret_custody::masked_file_in_txn(store, txn, &AssetBodyFacts::of(data).blake3)?;
+    crate::store::file_key_masks::masked_file_in_txn(store, txn, &AssetBodyFacts::of(data).blake3)?;
     Ok(None)
 }
 
