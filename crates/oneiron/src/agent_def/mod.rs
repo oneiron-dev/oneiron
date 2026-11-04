@@ -58,6 +58,7 @@ pub(crate) use self::id_pin::{
     refuse_loosened_agent_id_pins, refuse_unreadable_agent_id_pins,
 };
 pub(crate) use self::manifest::{
+    SEEDED_AGENT_DEFINITION_TIMESTAMP, ensure_seeded_agent_persons_in_txn,
     seed_system_agent_definitions, system_export_identity, validate_reserved_logical_id,
 };
 pub(crate) use self::models::{list_admits, listed_entry, no_listed_model};
@@ -113,12 +114,8 @@ pub(crate) use portable_source::{
 
 mod birth_custody;
 mod birth_dependencies;
-pub(crate) use birth_custody::{
-    birth_custody_exists_in_txn, remove_birth_custody_in_txn, stage_birth_custody_put,
-};
-pub(crate) use birth_dependencies::{
-    birth_carriers_for_erased_entity_in_txn, retire_birth_sources_for_entity_in_txn,
-};
+pub(crate) use birth_custody::{remove_birth_custody_in_txn, stage_birth_custody_put};
+pub(crate) use birth_dependencies::retire_birth_sources_for_entity_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use portable_source::{birth_source_holder, birth_source_matches_id};
 

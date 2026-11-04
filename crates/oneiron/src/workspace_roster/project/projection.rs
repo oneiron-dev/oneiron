@@ -36,12 +36,7 @@ pub(super) fn dependency(
     record(store, txn, id, kind)?.ok_or(Error::CorruptedIndex("project dependency body"))
 }
 
-/// The project a home-room body names. A derived room id carries no order
-/// against its project's id, so an importer resolves the project first.
-pub(crate) fn project_room_dependency(bytes: &[u8]) -> Option<EntityId> {
-    let room = decode::<ProjectRoom>(bytes).ok()?;
-    EntityId::from_hex(&room.project_id).ok()
-}
+pub(crate) use crate::batch::export::project_room_dependency;
 
 pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<EntityId>> {
     let body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
@@ -185,14 +180,15 @@ fn authority_refs(authority: &ProjectAuthority, ids: &mut Vec<EntityId>) -> Resu
     Ok(())
 }
 
-fn slice_refs(slice: &crate::llm::Scope, ids: &mut Vec<EntityId>) {
+fn slice_refs(slice: &oneiron_model::llm::Scope, ids: &mut Vec<EntityId>) {
     ids.extend(
-        [slice.world, slice.facet, slice.relationship, slice.project]
+        [slice.world, slice.facet, slice.project]
             .into_iter()
-            .flatten(),
+            .flatten()
+            .chain(slice.relationship.iter().flatten().copied()),
     );
     for resource in slice.readable.iter().chain(&slice.writable) {
-        if let crate::llm::ScopeResource::DocumentVersion { document, .. } = resource {
+        if let oneiron_model::llm::ScopeResource::DocumentVersion { document, .. } = resource {
             ids.push(*document);
         }
     }
@@ -383,7 +379,7 @@ pub(crate) fn reconcile_project_rooms(
                     kind: crate::edge::EdgeKind::BelongsTo,
                     tgt: EntityId::from_hex(parent).map_err(|_| invalid())?,
                     weight: HUB_MEMBERSHIP_WEIGHT,
-                    vad: crate::affect::Vad::NEUTRAL,
+                    vad: oneiron_contracts::affect::Vad::NEUTRAL,
                 });
             }
         }

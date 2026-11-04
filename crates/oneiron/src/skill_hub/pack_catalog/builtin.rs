@@ -3,8 +3,8 @@
 
 use super::qualify::{validate_installed_qualification, validate_qualification};
 use super::{
-    PackAdapter, PackCandidateReason, PackInstallReceipt, PackInstallStatus, PackKind,
-    PackQualifier, PackSource, SetupCheckQualifier, admission,
+    BuiltinProbeQualifier, PackAdapter, PackCandidateReason, PackInstallReceipt, PackInstallStatus,
+    PackKind, PackQualifier, PackSource, SetupCheckQualifier, admission,
 };
 use crate::side_table::{self, Raw, SideTable};
 use crate::skill_hub::{HubFile, HubPin, HubRef};
@@ -12,7 +12,7 @@ use crate::{EntityId, TimeRange, Vault, error::Result};
 
 /// Marker (engine version string) that the built-in connector packs have been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_PACK_BUILTIN_SEED);
-const PACKS: [(&str, &str); 6] = [
+const PACKS: [(&str, &str); 7] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/PACK.md"),
@@ -37,11 +37,15 @@ const PACKS: [(&str, &str); 6] = [
         "native_mail",
         include_str!("../../../../../packs/builtin/native_mail/PACK.md"),
     ),
+    (
+        "telegram",
+        include_str!("../../../../../packs/builtin/telegram/PACK.md"),
+    ),
 ];
 /// Each built-in pack's guided setup skill (OF-378), at the folder its
 /// PACK.md `setup` names. It ships in the same exact source, so the owner
 /// reads it while the connector is still a Candidate.
-const SETUP_SKILLS: [(&str, &str); 6] = [
+const SETUP_SKILLS: [(&str, &str); 7] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/skills/setup/SKILL.md"),
@@ -65,6 +69,10 @@ const SETUP_SKILLS: [(&str, &str); 6] = [
     (
         "native_mail",
         include_str!("../../../../../packs/builtin/native_mail/skills/setup/SKILL.md"),
+    ),
+    (
+        "telegram",
+        include_str!("../../../../../packs/builtin/telegram/skills/setup/SKILL.md"),
     ),
 ];
 const SETUP_SKILL_PATH: &str = "skills/setup/SKILL.md";
@@ -220,6 +228,9 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
         };
         admission::PACK_CANDIDATE.put(&vault.store, &mut txn, &receipt.content_hash, &receipt)?;
     }
+    // The first-party weave lens pack has no connector to qualify: it
+    // installs Active with this seed (FIX 1524).
+    super::lenses::seed_weave_lens_pack_in_txn(vault, &mut txn)?;
     SEEDED.put(&vault.store, &mut txn, &(), &version)?;
     txn.commit()?;
     Ok(())
@@ -229,7 +240,8 @@ impl Vault {
     /// Bootstrap never trusts an engine-built connector merely because it is
     /// first-party. The exact embedded source must pass a qualifier before
     /// the receipt enters the Active installation catalog: its checked setup
-    /// connection ([`SetupCheckQualifier`]) or a probe suite.
+    /// connection ([`SetupCheckQualifier`]), the host's isolated probes of
+    /// it ([`BuiltinProbeQualifier`]) or a probe suite.
     pub fn qualify_builtin_connector_pack(
         &self,
         channel: &str,
@@ -317,12 +329,15 @@ impl Vault {
     /// same flow (Engine ruling 10-17). Only the engine-seeded receipt of the
     /// exact embedded source moves, and only while the runtime gate would
     /// refuse it: a Candidate, or a receipt an older engine qualified. A pack
-    /// with several connections waits until every one is checked. Returns
-    /// whether the pack is now Active.
+    /// with several connections waits until every one is checked. With the
+    /// host's `verifier`, its isolated probes qualify the pack
+    /// ([`BuiltinProbeQualifier`]), and the checked setup still does when
+    /// they cannot. Returns whether the pack is now Active.
     pub(crate) fn qualify_builtin_on_checked_setup(
         &self,
         pack: &str,
         content_hash: &str,
+        verifier: Option<&dyn crate::connector_key::PackConnectionVerifier>,
     ) -> Result<bool> {
         let Some(channel) = pack.strip_prefix("oneiron.") else {
             return Ok(false);
@@ -365,7 +380,18 @@ impl Vault {
                 return Ok(false);
             }
         }
-        self.qualify_builtin_connector_pack(channel, &SetupCheckQualifier { vault: self })?;
+        match verifier {
+            Some(verifier) => self.qualify_builtin_connector_pack(
+                channel,
+                &BuiltinProbeQualifier {
+                    vault: self,
+                    verifier,
+                },
+            )?,
+            None => {
+                self.qualify_builtin_connector_pack(channel, &SetupCheckQualifier { vault: self })?
+            }
+        };
         Ok(true)
     }
 

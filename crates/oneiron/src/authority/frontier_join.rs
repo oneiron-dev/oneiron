@@ -24,10 +24,18 @@
 //! recorded for a stored root, never a key the join names for itself. A join
 //! signed by any other key folds as every unvouched row does: invalid, with
 //! no sequence slot, so it never forks or blocks the act's sequence. Every
-//! group names the frontier's admission tip, the lowest-hash head whose own
-//! state admits the signer, so each join's parents carry the signer's
-//! standing. It reads no role, clearance or owner act beyond that, and
-//! grants nothing.
+//! group names the frontier's admission tip. The writer prefers the
+//! lowest-hash admitting head whose planned groups also admit the signer
+//! after merging their states (FIX 8499); if none is proven, it keeps the
+//! old lowest-hash tip and fold/readback decision. It reads no role,
+//! clearance or owner act beyond that, and grants nothing.
+//!
+//! A writer whose own side heads alone fill one entry joins them the same
+//! way first, by the same key, in the scope of the branch they ride (FIX
+//! 11868): an anchor its own heads ([`FrontierJoinScope::AnchorSide`]), a
+//! carrier a world's side leaves ([`FrontierJoinScope::World`]). Its fold is
+//! the main join's; an anchor's side join also records itself among the
+//! anchor's own rows, so it retires their heads and no main door names it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -99,12 +107,14 @@ impl FrontierSigner<'_> {
     fn sign(
         self,
         fold: &AuthorityFold,
+        scope: FrontierJoinScope,
         seq: u64,
         parents: BTreeSet<AuthorityEntryHash>,
         now: u64,
     ) -> Result<AuthorityLogEntry> {
         let op = AuthorityOp::FrontierJoin(FrontierJoin {
             family: self.family(),
+            scope,
         });
         match self {
             Self::Install(_, signing) | Self::Anchor(signing) => {
@@ -180,7 +190,8 @@ pub(super) fn plan_frontier_joins(
 /// check: its signer must be one [`admits_join_signer`] admits in the join's
 /// parent state, else it is not in its ancestry. Its state is its parents'
 /// merge, and only its signer's sequence moves, past its last one there; it
-/// applies nothing.
+/// applies nothing. An anchor's side join is one of the anchor's own rows,
+/// as its root and marks are (FIX 11868).
 pub(super) fn apply_frontier_join(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -200,6 +211,9 @@ pub(super) fn apply_frontier_join(
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     state.seqs.insert(signer.clone(), entry.seq);
+    if join.scope == FrontierJoinScope::AnchorSide {
+        state.anchor_entries.insert(hash);
+    }
     Ok(())
 }
 
@@ -246,6 +260,24 @@ impl Vault {
         signer: FrontierSigner<'_>,
         room: usize,
     ) -> Result<Option<AuthorityView>> {
+        self.join_scoped_heads_in_txn(txn, fold, (heads, FrontierJoinScope::Main), signer, room)
+    }
+
+    /// [`Self::join_authority_heads_in_txn`] over `heads` of `scope`: the
+    /// main log's, or the signer's own side heads that alone fill one entry
+    /// (FIX 11868), each join signed in that scope, so it rides the branch
+    /// it joins.
+    ///
+    /// # Errors
+    /// As [`Self::prepare_authority_frontier_in_txn`].
+    pub(crate) fn join_scoped_heads_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        (heads, scope): (&BTreeSet<AuthorityEntryHash>, FrontierJoinScope),
+        signer: FrontierSigner<'_>,
+        room: usize,
+    ) -> Result<Option<AuthorityView>> {
         let room = room.max(1);
         if heads.len() <= room {
             return Ok(None);
@@ -266,7 +298,7 @@ impl Vault {
         let mut joins = Vec::new();
         while tips.len() > room {
             for group in plan_frontier_joins(&tips, level_tip) {
-                let join = signer.sign(fold, seq, group.clone(), now)?;
+                let join = signer.sign(fold, scope, seq, group.clone(), now)?;
                 seq = seq.checked_add(1).ok_or_else(invalid_authority)?;
                 let hash = authority_entry_hash(&join)?;
                 tips.retain(|tip| !group.contains(tip));
@@ -284,10 +316,14 @@ impl Vault {
         Ok(Some(joined))
     }
 
-    /// The admission tip of `heads` for `signer`: the lowest-hash head whose
-    /// own state admits it ([`admits_join_signer`]), read from the capture
-    /// the causal points read. `None` when no head does, or when the states
-    /// cannot be read here ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
+    /// The lowest-hash admitting head whose planned first-level groups also
+    /// admit `signer` on their merged states (FIX 8499), read from the same
+    /// capture as the causal points. A divergent head can conflict with an
+    /// older tip's carrier revision while a newer tip heals that conflict.
+    /// If no candidate proves its groups, keep today's lowest admitting tip
+    /// and fold/readback decision. `None` when no head admits or the capture
+    /// is unavailable ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]); split
+    /// admission evidence needing more than one carrying head stays open.
     fn admission_tip_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -300,13 +336,39 @@ impl Vault {
                 Err(_) if AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT => None,
                 Err(error) => return Err(error),
             };
+        let Some(states) = states else {
+            return Ok(None);
+        };
         let key = signer.key();
-        Ok(states.into_iter().flatten().find_map(|(head, state)| {
-            state
-                .filter(|state| {
-                    admits_join_signer(state, signer.family(), &key, (None, &every_chain))
-                })
-                .map(|_| head)
-        }))
+        let admits = |state: &FoldState| {
+            admits_join_signer(state, signer.family(), &key, (None, &every_chain))
+        };
+        let candidates: Vec<_> = states
+            .iter()
+            .filter_map(|(head, state)| state.as_ref().filter(|state| admits(state)).map(|_| *head))
+            .collect();
+        for tip in &candidates {
+            let groups_admit = plan_frontier_joins(heads, Some(*tip))
+                .into_iter()
+                .all(|group| {
+                    let mut merged: Option<FoldState> = None;
+                    for head in group {
+                        let Some(state) = states.get(&head).and_then(Option::as_ref) else {
+                            return false;
+                        };
+                        merged = Some(match merged {
+                            Some(merged) => merge_states(&merged, state),
+                            None => state.clone(),
+                        });
+                    }
+                    merged.as_ref().is_some_and(&admits)
+                });
+            if groups_admit {
+                return Ok(Some(*tip));
+            }
+        }
+        // Incomplete evidence or no better partition keeps today's tip and
+        // the existing fold/readback decision, never a new refusal here.
+        Ok(candidates.first().copied())
     }
 }

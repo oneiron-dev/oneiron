@@ -30,9 +30,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
-use crate::browser_library::{
-    WorkflowResolution, resolve_workflow_in_txn, secret_param_names_in_txn,
-};
+use crate::browser_library::{resolve_workflow_in_txn, secret_param_names_in_txn};
+use crate::dreamer_runner::maintenance::browser_candidate::WorkflowResolution;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -399,7 +398,9 @@ pub struct TaskWorkflowCheck {
 /// its lease: a receipt NOTE holding the whole report, authored by the try's
 /// agent, then the outcome on its pin, which is returned. The outcome is
 /// read from the report here: a program that met its postcondition with
-/// every pinned check met is Done; a missed check hands off as
+/// every pinned check met and no model answering is Done; a met run that
+/// was not model-free hands off as [`TaskWorkflowHandoff::NotModelFree`]
+/// (FIX 8072); a missed check hands off as
 /// [`TaskWorkflowHandoff::GoalUnmet`]; a program that stopped short hands
 /// off as [`TaskWorkflowHandoff::Program`]; a pin with no program hands off
 /// for its cause; a started program whose end was never recorded hands off
@@ -576,7 +577,14 @@ fn settled_outcome(
                 return refused("read other checks than its pinned done-means'");
             }
             if checks.iter().all(|check| check.observed.met) {
-                Ok(TaskWorkflowOutcome::Done { receipt_ref: note })
+                // FIX 8072: a strict Done whose run was not model-free is no
+                // zero-model settlement: a verb hook dispatched a model, or a
+                // decision's record proves none, so the planner takes the run.
+                if output.model_free {
+                    Ok(TaskWorkflowOutcome::Done { receipt_ref: note })
+                } else {
+                    Ok(handoff(TaskWorkflowHandoff::NotModelFree))
+                }
             } else {
                 Ok(handoff(TaskWorkflowHandoff::GoalUnmet))
             }

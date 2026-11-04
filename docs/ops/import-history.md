@@ -252,7 +252,15 @@ row asks whether everything is okay, and stdout names it in `warnings`
 (`"warning": "limit_crossed"`).
 
 Nothing is ever written to the folder: it feeds the vault, it is not the vault.
-A folder that is missing retracts nothing. A folder whose last file you
+A folder that is missing retracts nothing. If a subfolder cannot be opened
+or listed during a rescan, its earlier notes stay and the rescan reports that
+folder as failed. Other folders are still read; a later rescan tries it again.
+A folder whose last file you
 deleted retracts that file's note too; if a mount point reads empty, the notes
-come back at the rescan after it is mounted again. The CLI opens the
-vault itself, so run `attach`, `rescan` and `detach` with `serve` stopped.
+come back at the rescan after it is mounted again. With `serve` stopped, the CLI opens the vault
+itself. When `serve` holds the writer lease, `attach`, `rescan`, `detach` and `list` instead call
+that same vault's `/v1/owner/imports/folders` routes through its live local runtime entry.
+`ONEIRON_SECRET` carries the owner credential; for a `v2.slip.` bearer, `ONEIRON_BINDING_KEY` signs
+the holder proof. Live calls ignore environment HTTP proxies and have a 10-minute whole-call
+deadline. An authentication, HTTP or transport failure is reported, never hidden by a
+direct-open retry.

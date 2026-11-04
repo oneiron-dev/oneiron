@@ -1,6 +1,6 @@
 //! Build portable facets after every native body has passed credential nulling.
 use super::{ExportBody, export_source_tree};
-use crate::agent_def::KnowledgeFormat;
+use crate::batch::export::agent_knowledge_format::KnowledgeFormat;
 use crate::batch::export::{AgentBundleOmission, ExportAgentBundle, ExportEntity};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -30,12 +30,12 @@ pub(crate) fn populate_agent_bundles(
 /// Each skill row's decoded record, for resolving the skills an agent names.
 pub(crate) fn skill_records<R: std::borrow::Borrow<ExportEntity>>(
     rows: impl Iterator<Item = R>,
-) -> Vec<(EntityId, crate::skill::SkillRecord)> {
+) -> Vec<(EntityId, crate::write_envelope::skill_record::SkillRecord)> {
     rows.filter_map(|row| {
         let row = row.borrow();
         let id = EntityId::from_hex(&row.id).ok()?;
         let body = row.body.to_bytes().ok()?;
-        let record = crate::skill::decode_skill_record(&body).ok()?;
+        let record = crate::write_envelope::skill_record::decode_skill_record(&body).ok()?;
         Some((id, record))
     })
     .collect()
@@ -46,7 +46,7 @@ pub(crate) fn skill_records<R: std::borrow::Borrow<ExportEntity>>(
 /// streamed export (FIX 2766) passes only the claims about these agents.
 pub(crate) fn agent_bundles(
     agents: &[&ExportEntity],
-    skills: &[(EntityId, crate::skill::SkillRecord)],
+    skills: &[(EntityId, crate::write_envelope::skill_record::SkillRecord)],
     claims: &[ExportEntity],
     bindings: &BTreeMap<EntityId, String>,
     knowledge: KnowledgeFormat,
@@ -65,7 +65,7 @@ pub(crate) fn agent_bundles(
 /// and `fork_hash` is its binding. An import (FIX 3678) passes only those.
 pub(crate) fn agent_bundle(
     row: &ExportEntity,
-    skills: &[(EntityId, crate::skill::SkillRecord)],
+    skills: &[(EntityId, crate::write_envelope::skill_record::SkillRecord)],
     claims: &[ExportEntity],
     fork_hash: Option<String>,
     knowledge: KnowledgeFormat,
@@ -84,7 +84,9 @@ pub(crate) fn agent_bundle(
         .and_then(|b| crate::agent_def::decode_agent_definition(&b).ok());
     if let Some(definition) = definition {
         if let Some(refs) = crate::agent_def::resolve_agent_skill_refs(&definition, skills) {
-            let selected = crate::agent_def::select_agent_knowledge(&id, claims);
+            let selected = crate::batch::export::agent_knowledge_selection::select_agent_knowledge(
+                &id, claims,
+            );
             let files = crate::agent_def::agent_pack_files_in(
                 knowledge,
                 &id,

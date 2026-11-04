@@ -62,6 +62,8 @@ both bindings and their export-census tests in one change.
 - `vault.personas.export`
 - `vault.personas.edit`
 - `self.memory.diary.query`
+- `self.memory.pads.read`
+- `self.memory.pads.admin_reads`
 - `cancel`
 - `steer`
 - `describe`
@@ -104,6 +106,7 @@ both bindings and their export-census tests in one change.
 - `vault.finalize_stream`
 - `vault.cancel_stream`
 - `vault.message_stream_partial`
+- `vault.message_streams.refused`
 - `vault.messages.durability`
 - `vault.witness`
 - `vault.claims.upsert`
@@ -219,6 +222,9 @@ both bindings and their export-census tests in one change.
 - `vault.weave.digest.render`
 - `vault.weave.link.corrections`
 - `self.inbox.lens`
+- `self.inbox.get`
+- `self.inbox.done`
+- `self.inbox.later`
 - `vault.skills.bootstrap`
 - `vault.skill_hubs.default.get`
 - `vault.skills.restoreDefaults`
@@ -257,6 +263,7 @@ both bindings and their export-census tests in one change.
 - `vault.skills.optimize.preferences.set`
 - `vault.skills.optimize.tradeoff_asks`
 - `vault.skills.optimize.tradeoff_asks.pick`
+- `vault.skills.optimize.tradeoff_asks.resolve`
 - `vault.skills.governance.get`
 - `vault.skills.governance.set`
 - `vault.packs.hooks.bind`
@@ -374,6 +381,8 @@ both bindings and their export-census tests in one change.
 - `vault.federation.connect.disconnect`
 - `vault.federation.connect.export`
 - `vault.federation.connect.rejoin`
+- `vault.federation.connect.world_privacy.export`
+- `vault.federation.connect.world_privacy.receive`
 - `vault.trusted_contacts.name`
 - `vault.trusted_contacts.list`
 - `vault.trusted_contacts.consent`
@@ -498,6 +507,7 @@ both bindings and their export-census tests in one change.
 - `vault.legal_holds.list`
 - `vault.legal_holds.log`
 - `vault.legal_holds.lift_and_erase`
+- `vault.legal_holds.withdraw_erase`
 - `vault.courtesy_delete.send`
 - `vault.courtesy_delete.sent`
 - `vault.courtesy_delete.incoming`
@@ -524,6 +534,7 @@ both bindings and their export-census tests in one change.
 - `vault.connectors.calls.approve_once`
 - `vault.consent.deny`
 - `vault.consent.create_standing_grant`
+- `vault.consent.create_auto_weave_grant`
 - `vault.consent.registry`
 - `vault.consent.failure_signals_held`
 - `vault.consent.revoke`
@@ -857,6 +868,7 @@ both bindings and their export-census tests in one change.
 - `self.skills.save`
 - `self.skills.fork`
 - `self.skills.callables`
+- `vault.skills.callable.amend`
 - `vault.skills.pack_receipt`
 - `vault.skills.outcomes.project`
 - `vault.skills.outcomes.get`
@@ -1072,6 +1084,7 @@ both bindings and their export-census tests in one change.
 - `vault.consolidation.home.get`
 - `vault.consolidation.home.pick`
 - `vault.consolidation.lineage`
+- `vault.consolidation.candidate_decisions`
 - `vault.consolidation.promote`
 - `vault.consolidation.pin`
 - `vault.consolidation.frontier`

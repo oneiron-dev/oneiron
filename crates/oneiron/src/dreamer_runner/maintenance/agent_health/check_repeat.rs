@@ -28,7 +28,7 @@ use super::{Attempts, DialBook, Dispatches, Finding, entity, run_loop, settled, 
 use crate::attempt_queue::AttemptState;
 use crate::code_run::{DiagnosticCollection, StepKey, StoredStepFeedback, TypeDiagnostics};
 use crate::receipt::CallOutcome;
-use crate::self_heal::AgentHealthSignal;
+use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::{EntityId, Result, Vault};
 
 /// One logical check's current streak of equal failures on equal inputs.
@@ -163,6 +163,7 @@ pub(super) fn check_repeat_findings(
                 dispatch.actor,
                 task_of(record),
                 Some(record.id),
+                Some(record.attempt_count),
                 vec![attempt],
                 (streak.from, streak.to),
                 streak.count,
@@ -228,6 +229,7 @@ pub(super) fn check_repeat_findings(
                 dispatch.actor,
                 task_of(record),
                 Some(record.id),
+                Some(record.attempt_count),
                 vec![attempt],
                 (streak.from, streak.to),
                 streak.count,
@@ -298,6 +300,7 @@ pub(super) fn call_check_findings(
                 stream.actor,
                 task,
                 attempt,
+                stream.witness.map(|witness| witness.generation),
                 streak.evidence,
                 (streak.from, streak.to),
                 streak.count,
@@ -312,6 +315,7 @@ fn finding(
     subject: EntityId,
     task: Option<EntityId>,
     attempt: Option<crate::attempt_queue::AttemptId>,
+    generation: Option<u32>,
     evidence: Vec<EntityId>,
     window: (u64, u64),
     count: u64,
@@ -322,6 +326,7 @@ fn finding(
         signal: AgentHealthSignal::FailedCheckRepeat,
         task,
         attempt,
+        generation,
         evidence,
         window,
         actual: count as i64,

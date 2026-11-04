@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use super::brief_share::brief_share_receipts;
 use super::dispatch_observation::dispatch_observations;
 use super::grant::{
-    StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, access_grant_receipts,
-    federation_share_receipts, outbound_grant_receipts, persona_snapshot_export_receipts,
-    scan_entities_by_type, standing_outbound_grants_lens,
+    StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, access_grant_owner_act_receipts,
+    access_grant_receipts, federation_share_receipts, outbound_grant_receipts,
+    persona_snapshot_export_receipts, scan_entities_by_type, standing_outbound_grants_lens,
 };
 use super::identity_kind::{channel_identity_lifecycle_receipts, identity_topology_receipts};
 use super::kernel::{
@@ -34,8 +34,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::{GateDecisionRecord, GateSystemNoticeRecord, PendingGateConsentRecord};
 
-pub(super) const SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY: &str = "third_party";
-pub(super) const SYSTEM_NOTICE_AUDIENCE_ALL: &str = "all";
+pub(super) use crate::store::gate_receipt::{
+    SYSTEM_NOTICE_AUDIENCE_ALL, SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY,
+};
 
 /// Query for the EF-055 pending tray lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,13 +104,50 @@ impl Vault {
         let durable = scan_durable_send_receipts(self)?;
         // The durable projector is exhaustive. The attempt source metadata
         // survives filtering, including when none of its scanned rows match.
+        let durable_undecodable = durable.undecodable;
         scan.records.extend(durable.records);
+        scan.undecodable = scan.undecodable.saturating_add(durable_undecodable);
         scan.records.extend(super::direct_dispatch::receipts(self)?);
         scan.records.extend(dispatch_observations(self)?);
         scan.records
             .extend(scan_suppression_receipts(self)?.records);
         scan.records.retain(|receipt| query.matches(receipt));
         Ok(finalize_receipt_scan(scan, &query, None))
+    }
+
+    /// How many send receipt rows do not decode, for a `vault.receipts` page
+    /// of `kinds` (FIX 12044): none on the gate ledger or without `outbound`,
+    /// else the rows `durable_send_receipts` returns apart. A read error of
+    /// the table itself still fails.
+    pub(crate) fn undecodable_send_receipts_for_kinds(&self, kinds: &[String]) -> Result<u32> {
+        if !kinds
+            .iter()
+            .any(|kind| kind.trim() == ReceiptKind::Outbound.as_str())
+        {
+            return Ok(0);
+        }
+        durable_send_receipts(self)
+            .map(|(_, undecodable)| u32::try_from(undecodable.len()).unwrap_or(u32::MAX))
+    }
+
+    /// Every outbound receipt whose id is `receipt_id`, read from the whole
+    /// of each source [`Self::scan_receipts`] reads, with no result limit: a
+    /// caller proving that one id names one receipt sees every receipt that
+    /// carries it, however many outbound receipts the vault holds.
+    pub(crate) fn outbound_receipts_with_id(&self, receipt_id: &str) -> Result<Vec<ReceiptRecord>> {
+        let mut matches = Vec::new();
+        // Each source is filtered as it is read, so no two sources are held whole at once.
+        let mut keep = |records: Vec<ReceiptRecord>| {
+            matches.extend(records.into_iter().filter(|receipt| {
+                receipt.receipt_kind == ReceiptKind::Outbound && receipt.receipt_id == receipt_id
+            }));
+        };
+        keep(scan_attempt_pack_receipts(self)?.records);
+        keep(scan_durable_send_receipts(self)?.records);
+        keep(super::direct_dispatch::receipts(self)?);
+        keep(dispatch_observations(self)?);
+        keep(scan_suppression_receipts(self)?.records);
+        Ok(matches)
     }
 
     /// Alias for callers that prefer verb-first query naming.
@@ -245,6 +283,7 @@ pub(super) fn collect_receipt_records(
         );
         records.extend(
             durable_send_receipts(vault)?
+                .0
                 .into_iter()
                 .filter(|receipt| query.matches(receipt)),
         );
@@ -337,6 +376,7 @@ pub(super) fn collect_receipt_records(
     }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);
+        records.extend(access_grant_owner_act_receipts(vault, &rtxn, query)?);
         records.extend(outbound_grant_receipts(vault, &rtxn, query)?);
         // ED-09 (ONE-1765): the reservoir export. Same kind, own store, own
         // field class — an export IS a scoped read that left the vault, so it
@@ -423,6 +463,25 @@ fn commitment_lifecycle_receipts(
             if body.predicate != crate::commitment::PREDICATE_COMMITMENT_RECORD {
                 return Ok(());
             }
+            // A commitment's receipt is projected once, under its first id,
+            // from the body at the head of its status chain; a later link of
+            // that chain is not a commitment of its own.
+            if vault.commitment_predecessor_in_txn(txn, &id)?.is_some() {
+                return Ok(());
+            }
+            let head = vault.commitment_head_in_txn(txn, &id)?;
+            let (body, header) = if head == id {
+                (body, header)
+            } else {
+                (
+                    vault
+                        .get_claim_in_txn(txn, &head)?
+                        .ok_or(Error::CorruptedIndex("commitment status chain head"))?,
+                    vault
+                        .entity_header_in_txn(txn, &head)?
+                        .ok_or(Error::CorruptedIndex("commitment status chain head"))?,
+                )
+            };
             // Past the exact predicate match the codec is authoritative, so a
             // malformed commitment body is corruption rather than a row to skip.
             let record = crate::commitment::decode_commitment_claim(&body)?.ok_or(
@@ -480,7 +539,7 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
         crate::scan_check::ScanCount::start(
             &vault.store,
             &txn,
-            crate::scan_check::EngineScan::GateDecisionRows,
+            crate::store::EngineScan::GateDecisionRows,
             &[],
         )?
     };
@@ -535,103 +594,8 @@ pub(crate) fn gate_decision_receipt_from_base(record: &GateDecisionRecord) -> Re
     receipt
 }
 
-pub(crate) fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {
-    let mut fields = BTreeMap::new();
-    fields.insert("actor_class".to_owned(), record.actor_class.clone());
-    fields.insert("content_kind".to_owned(), record.content_kind.clone());
-    fields.insert(
-        "policy_manifest_version".to_owned(),
-        record.policy_manifest_version.clone(),
-    );
-    fields.insert("diff_handle".to_owned(), hex_lower(&record.diff_handle));
-    fields.insert(
-        "read_frontier_hash".to_owned(),
-        hex_lower(&record.read_frontier_hash),
-    );
-    if let Some(receipt_reason) = record.receipt_reasons.first() {
-        fields.insert("receipt_reason".to_owned(), receipt_reason.clone());
-    }
-    if record.receipt_reasons.len() > 1 {
-        fields.insert(
-            "receipt_reasons".to_owned(),
-            record.receipt_reasons.join(","),
-        );
-    }
-    if let Some(grant_ref) = record.grant_ref.as_ref() {
-        fields.insert(FIELD_GRANT_REF.to_owned(), grant_ref.clone());
-        // OF-234 bundle-consent rows reference their bundle through the grant
-        // ref; surfacing it as `bundle_ref` joins them into the RS4 bundle lane.
-        if grant_ref.starts_with("bundle:") {
-            fields.insert(FIELD_BUNDLE_REF.to_owned(), grant_ref.clone());
-        }
-    }
-    if let Some(notice) = select_gate_system_notice_for_receipt(&record.system_notices) {
-        fields.insert("system_notice_type".to_owned(), notice.notice_type.clone());
-        fields.insert("system_notice_channel".to_owned(), notice.channel.clone());
-        fields.insert("system_notice_voice".to_owned(), notice.voice.clone());
-        fields.insert("system_notice_audience".to_owned(), notice.audience.clone());
-        fields.insert("system_notice".to_owned(), notice.body.clone());
-        if let Some(plane) = notice.policy_plane.as_ref() {
-            fields.insert("system_notice_policy_plane".to_owned(), plane.clone());
-        }
-        if let Some(version) = notice.policy_version.as_ref() {
-            fields.insert("system_notice_policy_version".to_owned(), version.clone());
-        }
-        if let Some(docs_url) = notice.docs_url.as_ref() {
-            fields.insert("system_notice_docs_url".to_owned(), docs_url.clone());
-        }
-    }
-
-    let mut policy_trace = record.reason_codes.clone();
-    policy_trace.extend(record.receipt_reasons.clone());
-    policy_trace.extend(
-        record
-            .system_notices
-            .iter()
-            .map(|notice| format!("gate.system_notice.{}", notice.notice_type)),
-    );
-
-    ReceiptRecord {
-        receipt_id: format!("gate:{}", record.decision_id.to_hex()),
-        receipt_kind: ReceiptKind::Gate,
-        occurred_at: record.created_at,
-        actor: record
-            .actor_ref
-            .clone()
-            .or_else(|| Some(record.actor_class.clone())),
-        on_behalf_of: None,
-        outcome: record.outcome.clone(),
-        job_ref: None,
-        trigger_ref: record
-            .claim_id
-            .map(|id| format!("claim:{}", hex_lower(&id)))
-            .or_else(|| {
-                // A bundle-level row (no claim id) opens its dreamer run: the
-                // RS3 door on the bundle receipt reopens the inbox group.
-                record
-                    .grant_ref
-                    .as_deref()
-                    .and_then(|grant_ref| grant_ref.strip_prefix("bundle:"))
-                    .map(str::to_owned)
-            }),
-        policy_trace,
-        fields,
-    }
-}
-
-pub(super) fn select_gate_system_notice_for_receipt(
-    notices: &[GateSystemNoticeRecord],
-) -> Option<&GateSystemNoticeRecord> {
-    notices
-        .iter()
-        .find(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY)
-        .or_else(|| {
-            notices
-                .iter()
-                .find(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_ALL)
-        })
-        .or_else(|| notices.first())
-}
+pub(crate) use crate::store::gate_receipt::gate_decision_receipt;
+pub(super) use crate::store::gate_receipt::select_gate_system_notice_for_receipt;
 
 fn pending_tray_query(vault: &Vault, query: PendingTrayQuery) -> Result<Vec<PendingTrayAsk>> {
     if query.limit == 0 {

@@ -14,11 +14,12 @@ use heed::RoTxn;
 use super::CodeRevision;
 use super::import_types::{CodeImportApproval, CodeImportManifest, approval_id, manifest_id};
 use super::promotion::promotion_receipt_in_txn;
+use super::queue_root::queue_chain_root_in_txn;
 use super::storage::read_code_revision_record_in_txn;
-use super::tree_inventory::CodeTreeInventory;
+use super::tree_inventory::{CodeTreeInventory, MODE_GITLINK};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{ArtifactError, Error, Result};
-use crate::git_wire::{GitWire, GitWireRepo};
+use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::merge_queue::QueueTestedTarget;
 use crate::origin::tree::OriginTreeFile;
 use crate::scan_check::{EngineScan, ScanCount};
@@ -109,6 +110,56 @@ pub(crate) fn import_snapshot_custody_in_txn(
 }
 
 impl Vault {
+    /// The records `revision_id`'s bytes descend through, for a reader that
+    /// lists them (FIX 8270): each ancestor revision and its session, up
+    /// to the chain's root, and that root's import-approval claim when it
+    /// holds one. Listed only, never judged here; every ancestor is read,
+    /// however many (rule 5).
+    ///
+    /// # Errors
+    /// A missing record, a parent chain with a cycle, a receipt that names
+    /// another approval, or a store failure.
+    pub(crate) fn code_revision_ancestry_sources(
+        &self,
+        revision_id: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let mut count = ScanCount::start(
+            &self.store,
+            &txn,
+            EngineScan::DagWalkRecords,
+            revision_id.as_bytes(),
+        )?;
+        let mut visited = HashSet::from([revision_id]);
+        let mut sources = Vec::new();
+        let mut root = read_code_revision_record_in_txn(&self.store, &txn, &revision_id)?
+            .ok_or(Error::EntityNotFound)?;
+        while let Some(parent) = root.parent_revision_id {
+            count.row();
+            if !visited.insert(parent) {
+                count.defer(&self.store);
+                return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                    "code revision parent chain contains a cycle",
+                )));
+            }
+            root = read_code_revision_record_in_txn(&self.store, &txn, &parent)?
+                .ok_or(Error::EntityNotFound)?;
+            sources.extend([root.revision_id, root.session_id]);
+        }
+        count.defer(&self.store);
+        let baseline = root
+            .tested_queue
+            .as_ref()
+            .is_some_and(|tested| tested.target == QueueTestedTarget::Baseline);
+        if baseline
+            && let Some((approval, _)) =
+                baseline_import_approval_in_txn(self, &txn, root.revision_id)?
+        {
+            sources.push(approval);
+        }
+        Ok(sources)
+    }
+
     /// The manifest of the reviewed import `revision_id`'s tested chain is
     /// bound to, or `None` for an ordinary or unbound revision.
     ///
@@ -139,29 +190,8 @@ pub(crate) fn resolve_import_anchor_in_txn(
         return Ok(None);
     };
     let bound = revision.snapshot_anchor;
-    let mut root = revision;
-    let mut count = ScanCount::start(
-        &vault.store,
-        txn,
-        EngineScan::DagWalkRecords,
-        revision_id.as_bytes(),
-    )?;
-    let mut visited = HashSet::new();
-    loop {
-        if !visited.insert(root.revision_id) {
-            count.defer(&vault.store);
-            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-                "code revision parent chain contains a cycle",
-            )));
-        }
-        count.row();
-        let Some(parent) = root.parent_revision_id else {
-            break;
-        };
-        root = read_code_revision_record_in_txn(&vault.store, txn, &parent)?
-            .ok_or(Error::EntityNotFound)?;
-    }
-    count.defer(&vault.store);
+    // The chain's root by its kept key, not by walking the links (FIX 7390).
+    let root = queue_chain_root_in_txn(&vault.store, txn, revision)?;
     let Some(root_tested) = root.tested_queue.as_ref().filter(|root_tested| {
         root.parent_revision_id.is_none()
             && root_tested.target == QueueTestedTarget::Baseline
@@ -211,6 +241,48 @@ pub fn materialize_code_revision_tree(
     repo: &GitWireRepo,
     revision: &CodeRevision,
 ) -> Result<BTreeMap<String, OriginTreeFile>> {
+    verify_complete_tree(vault, repo, revision)?;
+    CodeTreeInventory::render(vault, git, repo, revision)
+}
+
+/// The untouched blobs a finalized tested revision's complete tree holds,
+/// by path, after the checks [`materialize_code_revision_tree`] makes: each
+/// read at its recorded object and checked against its size and hash, for a
+/// working view (FIX 9940). A submodule link holds no file bytes and is
+/// left out.
+///
+/// # Errors
+/// An ordinary or changed revision, another object store or inventory, a
+/// withheld import, or a missing or changed object.
+pub fn read_code_revision_blobs(
+    vault: &Vault,
+    git: &GitWire<'_>,
+    repo: &GitWireRepo,
+    revision: &CodeRevision,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    verify_complete_tree(vault, repo, revision)?;
+    let mut blobs = BTreeMap::new();
+    for (path, blob) in &revision.blob_frontiers {
+        if blob.mode == MODE_GITLINK {
+            continue;
+        }
+        let content = git.read_object(repo, &GitOid::parse_hex(blob.git_oid.clone())?)?;
+        if content.len() as u64 != blob.size_bytes
+            || blake3::hash(&content).as_bytes() != &blob.content_hash
+        {
+            return Err(Error::InvariantViolation(
+                "a tested tree blob differs from its recorded bytes",
+            ));
+        }
+        blobs.insert(path.clone(), content);
+    }
+    Ok(blobs)
+}
+
+/// The persisted record authenticated, its object store and inventory
+/// digest checked, and an import-bound chain's imported snapshot custody
+/// checked again: untouched bytes are never read past custody.
+fn verify_complete_tree(vault: &Vault, repo: &GitWireRepo, revision: &CodeRevision) -> Result<()> {
     let tested = revision
         .tested_queue
         .as_ref()
@@ -237,5 +309,7 @@ pub fn materialize_code_revision_tree(
             return Err(Error::Refused(detail));
         }
     }
-    CodeTreeInventory::render(vault, git, repo, revision)
+    Ok(())
 }
+
+use crate::code_revision::CodeTreeInventoryRuntime;

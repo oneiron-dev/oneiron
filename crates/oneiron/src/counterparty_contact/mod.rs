@@ -10,6 +10,7 @@
 
 mod codec;
 mod doors;
+mod identity_index;
 mod lifecycle;
 mod storage;
 mod trusted_contact;
@@ -39,12 +40,12 @@ pub(crate) use self::storage::{
     counterparty_contacts_for_send_in_claims_in_txn, counterparty_contacts_in_claims_in_txn,
     party_has_contact_on_class_in_claims_in_txn,
 };
-pub(crate) use self::trusted_contact::TrustedContactFire;
 pub use self::trusted_contact::{
     TrustedContact, TrustedContactAcceptance, TrustedContactAnswer, TrustedContactAsk,
     TrustedContactAskOutcome, TrustedContactDial, TrustedContactParty, TrustedContactReach,
     TrustedContactRevocation, TrustedContactTier,
 };
+pub(crate) use self::trusted_contact::{TrustedContactFire, erase_trusted_contact_rows_in_txn};
 pub use self::trusted_contact_notice::{
     TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND, TRUSTED_CONTACT_NOTICE_CONTENT_REF, TrustedContactNotice,
     TrustedContactNoticeAuthorization,
@@ -82,4 +83,7 @@ use crate::error::Result;
 #[cfg(test)]
 use rmpv::Value;
 
+pub(crate) use self::identity_index::{
+    backfill_counterparty_identity_index, maintain_counterparty_identity_index_for_put,
+};
 pub(crate) use self::storage::rebuild_checkpoint_contact_index;

@@ -5,4 +5,5 @@
 pub mod analyzer;
 pub mod distance;
 pub mod fusion;
+pub mod hnsw_entry_point;
 pub mod pipeline;

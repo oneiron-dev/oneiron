@@ -21,7 +21,10 @@ use oneiron::dreamer_runner::{
     ConsolidationHomePickReceipt, ConsolidationHomePickRequest, ConsolidationHomeView,
     ConsolidationLineageRequest, ConsolidationLineageView,
 };
-use oneiron::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
+use oneiron::memory::{
+    DreamerCandidateDecisionsRequest, DreamerDecidedCandidateView, MEMORY_CODE_INTERNAL,
+    MemoryError, MemoryResult,
+};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_type::PlacementDecisions;
 use oneiron::task_verb::run_doors::{
@@ -410,6 +413,32 @@ pub(crate) async fn vault_consolidation_lineage(
                     .flat_map(|lineage| lineage.steps.iter().map(|step| step.claim_ref))
                     .collect(),
             )
+        },
+    )
+    .await
+}
+
+/// A candidate-decisions read names each candidate's subject and the listed
+/// claim its decisions bound it to.
+pub(crate) async fn vault_consolidation_candidate_decisions(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: DreamerCandidateDecisionsRequest,
+) -> MaybeListed<Vec<DreamerDecidedCandidateView>> {
+    const VERB: &str = "vault.consolidation.candidate_decisions";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            oneiron::memory::read_dreamer_candidate_decisions_as(server.vault(), &owner, input)
+        },
+        |read| {
+            let mut rows: Vec<_> = read.iter().map(|candidate| candidate.subject).collect();
+            rows.extend(read.iter().filter_map(|candidate| candidate.corrects));
+            rows.sort_unstable();
+            rows.dedup();
+            Some(rows)
         },
     )
     .await

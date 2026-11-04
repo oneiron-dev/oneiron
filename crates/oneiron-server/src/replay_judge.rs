@@ -32,7 +32,7 @@ use oneiron::llm::decision::{
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_optimize::{
     GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes,
-    HonestyReplay, SkillOptimizeDecisions, SkillReplayResponses, judge_incumbent,
+    HonestyReplay, JudgeRubric, SkillOptimizeDecisions, SkillReplayResponses, judge_incumbent,
     register_held_out_replay_scorer, skill_edit_goal,
 };
 use oneiron::{EntityId, Error, ModelId, Result, Vault};
@@ -82,11 +82,31 @@ fn judge_name(pin: &ProviderPin) -> String {
     format!("{}@{}", pin.model, pin.version)
 }
 
+/// The digest of the judge rubric `state` read: the first
+/// `judge_rubric_pin` in it, the outermost first; `None` when it holds none.
+fn rubric_digest_read(state: &Value) -> Option<String> {
+    match state {
+        Value::Object(fields) => fields
+            .get("judge_rubric_pin")
+            .and_then(|pin| pin.get("digest"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| fields.values().find_map(rubric_digest_read)),
+        Value::Array(items) => items.iter().find_map(rubric_digest_read),
+        _ => None,
+    }
+}
+
 /// One typed question the judge asked, as its journal keeps it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalRow {
     pub at: u64,
     pub revision: String,
+    /// The pin of the judge rubric the question's state read, beside
+    /// `revision` (the algorithm and wording): the rubric text's BLAKE3,
+    /// lower hex, from the state's `judge_rubric_pin`; `None` when the
+    /// question read no rubric (FIX 3585).
+    pub judge_rubric_digest: Option<String>,
     pub question: DecisionQuestion,
     pub decision: TypedDecision,
     /// The rows the decision's inputs were read from, as its caller
@@ -337,6 +357,7 @@ impl ServeReplayJudge {
         let row = JournalRow {
             at: now(),
             revision: self.revision.clone(),
+            judge_rubric_digest: rubric_digest_read(state),
             question: question.clone(),
             decision: decision.clone(),
             decision_sources,
@@ -374,6 +395,12 @@ impl HeldOutReplayNotes for ServeReplayJudge {
 
     fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
         self.response_basis(receipts)
+    }
+
+    /// The rubric every replay state and response score reads, for the
+    /// tradeoff question (FIX 3584).
+    fn rubric(&self) -> Result<Option<JudgeRubric>> {
+        ServeReplayJudge::rubric(self)
     }
 
     /// A decision whose caller handed no input rows: its sources are

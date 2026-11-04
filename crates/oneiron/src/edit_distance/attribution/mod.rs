@@ -105,14 +105,14 @@ pub use self::projector::{
 };
 pub use self::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
-    HunkLabel, PreferenceProposal, classify_amendment, validate_share_vector,
+    HunkLabel, HunkRange, PreferenceProposal, classify_amendment, validate_share_vector,
 };
 pub use self::triage::{
     AgentDefinitionRef, ArtifactPublisher, RecentChange, RecentChanges, SkillAtVersion,
     TriagePacket, TriageReceipt, TriageSubject, WorseningSignal, triage_packet,
 };
 
-pub(crate) use self::causes::amendment_causes_in_txn;
+pub(crate) use self::causes::amendment_causes_for_attempt_in_txn;
 pub(in crate::edit_distance) use self::cells::record_untouched_in_txn;
 pub(in crate::edit_distance) use self::evidence_judge::{
     amendment_evidence_in_txn, amendment_judgment_in_txn,
@@ -179,6 +179,3 @@ use crate::skill_attribution::{
 };
 #[cfg(test)]
 use crate::temporal::TimeRange;
-
-mod archive;
-pub(crate) use archive::{imported_skill_cost_body, validate_imported_skill_cost};

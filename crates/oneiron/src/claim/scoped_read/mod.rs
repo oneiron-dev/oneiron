@@ -10,14 +10,15 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::context_pack::ContextEntity;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFilter};
-use crate::pipeline::ScoredEntity;
+use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead, PortRows};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::serialize::context_entity::ContextEntity;
+use oneiron_contracts::gate::RetrievalFilter;
+use oneiron_retrieval::pipeline::ScoredEntity;
 
 mod claim_admission;
 mod context_pack_filter;
@@ -49,8 +50,8 @@ mod weave_correction;
 mod weave_lens;
 pub use weave_lens::{
     WEAVE_LENS_CORRECTIONS_AXIS, WEAVE_LENS_PLAN_REPAIRS, WEAVE_LENS_READ_RATE_AXIS,
-    WEAVE_LIVE_LENS_REREADS, WEAVE_REPORT_SKILL_NAME, WeaveLensPlan, WeaveLensPlanLine,
-    WeaveLensPlanSection, WeaveLensRefusal, WeaveLensRender, WeaveLiveLens, weave_report_skill_id,
+    WEAVE_LIVE_LENS_REREADS, WeaveLensPlan, WeaveLensPlanLine, WeaveLensPlanSection,
+    WeaveLensRefusal, WeaveLensRender, WeaveLiveLens, weave_report_lens,
 };
 pub(crate) use weave_lens::{
     weave_lens_answer_plan, weave_lens_attempt_input, weave_lens_attempt_period,
@@ -59,7 +60,7 @@ pub(crate) use weave_lens::{
 mod weave_report;
 mod weave_serve;
 mod weave_trigger;
-pub(crate) use claim_admission::ClaimReadStatus;
+pub(crate) use claim_admission::{ClaimReadStatus, ClaimReadStatusExt};
 pub use frozen::FrozenReadLane;
 pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
@@ -78,6 +79,7 @@ pub use weave_serve::{
 };
 pub use weave_trigger::WeaveDigestRendered;
 
+mod access_class;
 mod access_gate;
 pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
 mod actor_key;
@@ -137,6 +139,10 @@ pub struct ScopedRead<'a> {
     /// `ScopedRead::with_artifact_records_cover`). Empty unless a typed
     /// artifact door opts in.
     records_cover: records_cover::ArtifactRecordsCover,
+    /// When this read judges a claim's time-bound standing: a recall's
+    /// `as_of`, or `None` for now (FIX 12226). See
+    /// `ScopedRead::with_judged_at`.
+    judged_at: Option<u64>,
 }
 
 mod admission;

@@ -28,20 +28,7 @@ pub struct ConnectorPackGetRequest {
     pub connector: String,
 }
 
-/// What the owner reviewed, not a mutable pack name or source alias.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectorPackBasis {
-    pub connector: String,
-    pub source: SlatePackSource,
-    pub key_ref: String,
-    pub slate_ref: String,
-    pub slate_revision: u64,
-    pub manifest_hash: String,
-    pub grant_hash: String,
-    pub advisory_hash: String,
-    pub protocol_revision: String,
-}
+pub use crate::task_verb::revoke_lands::ConnectorPackBasis;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -79,6 +66,9 @@ pub struct ConnectorPackView {
     pub status: String,
     pub consent_required: bool,
     pub stamped: bool,
+    /// The shown slate waits beside the one the key routes on; the key keeps
+    /// routing until the owner stamps this one and a fresh suite passes.
+    pub staged: bool,
     pub manifest: SlateManifest,
     pub rows: Vec<SlateRow>,
     pub qualification: Option<ConnectorQualificationReceipt>,

@@ -24,6 +24,7 @@ mod consent_wait;
 mod contribution;
 mod coordination_codec;
 mod dispatcher;
+pub mod model_call;
 mod payload;
 mod read_set;
 mod reader;
@@ -100,6 +101,7 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
+pub(crate) use self::model_call::erase_model_call_actor_in_txn;
 pub(crate) use self::payload::agent_verb_observations_of;
 pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
@@ -119,10 +121,12 @@ pub use self::replay_capsule::{
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
+pub(crate) use self::result_read::unmarked_secret;
 pub(crate) use self::result_read::{
     Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card, read_result_in,
     refusal as result_refusal, resolve as resolve_result, result_cards_in, unknown_handle,
 };
+pub use self::storage::ReadWorldUnknown;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
@@ -140,8 +144,8 @@ pub use self::storage::{
     bind_wait_trap, park_and_bind_wait_trap,
 };
 pub(crate) use self::storage::{
-    CodeRunResultBodyReader, OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding,
-    ReceiptPartial, ReceiptSource, ReceiptTree,
+    OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
+    ReceiptSource, ReceiptTree,
 };
 pub(crate) use self::storage::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
@@ -149,12 +153,12 @@ pub(crate) use self::storage::{
     program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
 };
 pub(crate) use self::storage::{
-    ReadWorldSeal, ReadWorldSnapshot, ReadWorldUnknown, read_world_snapshot_in_txn,
+    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
 pub(crate) use self::storage::{
     StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
-    code_run_inline_body_of_row, code_run_row_inline, deliver_wait_in_txn,
-    deliver_wait_listing_in_txn, lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
+    code_run_inline_body_of_row, deliver_wait_in_txn, deliver_wait_listing_in_txn,
+    lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StepKey, StoredStepFeedback, erase_spawn_targets_in_txn, erase_type_diagnostics_actor_in_txn,
@@ -182,10 +186,7 @@ pub(crate) use self::storage::{
     settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
 // FIX 6588: a wait's replies in checkpoint images, as row-held responses.
-pub(crate) use self::storage::{
-    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_erased,
-    wait_reply_scan, wait_settled_owners,
-};
+pub(crate) use self::storage::wait_delivery_owners;
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
 pub use self::type_diagnostics::{
@@ -281,3 +282,26 @@ use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, EdgeKind, EntityId,
     Error, Result, TimeRange, Vault,
 };
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::storage::code_run_continuation_accepts_masked;
+pub(crate) use self::storage::code_run_reader_job_accepts_masked;
+pub(crate) use self::storage::code_run_reader_wait_accepts_masked;
+pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
+pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
+
+pub use self::dispatcher::{
+    ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorQuestionAnswer,
+};
+
+pub(crate) use self::consent_wait::source as connector_result_source;
+pub use self::consent_wait::{
+    CONNECTOR_QUESTIONS_NOT_RETAINED, CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED,
+    CONNECTOR_RESULT_NOT_RETAINED, ConnectorCallReply, ConnectorToolResult,
+};
+
+pub(crate) use self::dispatcher::kept_reveal_lease;
+pub use self::dispatcher::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
+
+pub use self::dispatcher::workflow_operations;

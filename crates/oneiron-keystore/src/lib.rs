@@ -26,6 +26,8 @@
 //! hardware one, refused where this platform has none: never a silent downgrade
 //! to software (identity, signature suites).
 
+use std::borrow::Cow;
+
 use zeroize::Zeroizing;
 
 #[cfg(target_vendor = "apple")]
@@ -76,20 +78,102 @@ pub enum SlotKind {
     /// is the vault's live root, and a filled slot is never replaced by it
     /// (FIX-LIST 10770). The slot itself stays this device's.
     HostIssuerSeed,
+    /// The seed of this install's own Ed25519 owner signing key for one vault
+    /// (FIX 4921): made on first use, put on the roster only by the owner's
+    /// enrollment act, and used only to sign checkpoint statements as that
+    /// owner root.
+    OwnerSigning,
+    /// One of the slots that keep this machine's own piece of a vault's
+    /// recovery kit (FIX 2063). A piece is longer than one slot, so it spans
+    /// a head and a tail slot, and each kit kind has its own pair: issuing
+    /// one kind of kit replaces only that kind's piece. Each recovery-root kit
+    /// drawn and not yet confirmed also has a pending pair of its own, named
+    /// by its kit id (FIX 11977, 12046). Install-name slots filed by the vault
+    /// id alone name each current piece's install (FIX 12054, FIX 12055) and
+    /// each pending recovery-root kit's install.
+    KitPiece(KitPieceSlot),
 }
 
 impl SlotKind {
     /// Stable name in the backend: part of the keychain account or the file name.
     #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
+    pub fn label(self) -> Cow<'static, str> {
+        let label = match self {
             Self::MachineEncryption => "machine-encryption",
             Self::DeviceSigning => "device-signing",
             Self::VaultUnlock => "vault-unlock",
             Self::CheckpointSigning => "checkpoint-signing",
             Self::HostRoot => "host-root",
             Self::HostIssuerSeed => "host-issuer-seed",
+            Self::OwnerSigning => "owner-signing",
+            Self::KitPiece(slot) => return slot.label(),
+        };
+        Cow::Borrowed(label)
+    }
+}
+
+/// Which slot of this machine's kit pieces: the kit kind, the current pair or
+/// one drawn kit's pending pair, the piece's first 32 bytes (head) or rest
+/// (tail), or an install-name slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum KitPieceSlot {
+    /// The data-key kit's piece, its first 32 bytes.
+    VaultKeyHead,
+    /// The data-key kit's piece, its remaining bytes.
+    VaultKeyTail,
+    /// The recovery-root kit's piece, its first 32 bytes.
+    RecoveryRootHead,
+    /// The recovery-root kit's piece, its remaining bytes.
+    RecoveryRootTail,
+    /// The piece of the recovery-root kit whose 4-byte id this holds, drawn
+    /// and not yet confirmed, its first 32 bytes (FIX 11977, 12046): each
+    /// drawn kit keeps its own. A data-key kit has no confirm, so its issue
+    /// fills the current pair and it has no pending one.
+    RecoveryRootPendingHead([u8; 4]),
+    /// The piece of the recovery-root kit whose id this holds, drawn and not
+    /// yet confirmed, its remaining bytes.
+    RecoveryRootPendingTail([u8; 4]),
+    /// The 16-byte machine id of the install whose slots keep this pending
+    /// recovery-root kit's piece, then zeros. Filed under the all-zero install
+    /// so a sealed vault can find that exact pending kit before its pages open.
+    RecoveryRootPendingInstall([u8; 4]),
+    /// The 16-byte machine id of the install whose slots keep the data-key
+    /// kit's piece, then zeros (FIX 12054). Filed under the all-zero install,
+    /// so the vault id alone names it: a sealed vault's pages open before its
+    /// machine id can be read.
+    VaultKeyInstall,
+    /// The 16-byte machine id of the install whose slots keep the
+    /// recovery-root kit's piece, then zeros (FIX 12055): the twin of
+    /// [`Self::VaultKeyInstall`] for the world kit, filed the same way, so a
+    /// sealed vault's kept recovery-root piece is found before its pages
+    /// open too.
+    RecoveryRootInstall,
+}
+
+impl KitPieceSlot {
+    /// Stable name in the backend, as [`SlotKind::label`]. A pending slot's
+    /// name carries its kit's id: `kit-piece-recovery-root-pending-<kit id
+    /// hex>-head|tail|install`.
+    #[must_use]
+    pub fn label(self) -> Cow<'static, str> {
+        let (kit, half) = match self {
+            Self::VaultKeyHead => return Cow::Borrowed("kit-piece-vault-key-head"),
+            Self::VaultKeyTail => return Cow::Borrowed("kit-piece-vault-key-tail"),
+            Self::RecoveryRootHead => return Cow::Borrowed("kit-piece-recovery-root-head"),
+            Self::RecoveryRootTail => return Cow::Borrowed("kit-piece-recovery-root-tail"),
+            Self::VaultKeyInstall => return Cow::Borrowed("kit-piece-vault-key-install"),
+            Self::RecoveryRootInstall => return Cow::Borrowed("kit-piece-recovery-root-install"),
+            Self::RecoveryRootPendingHead(kit) => (kit, "head"),
+            Self::RecoveryRootPendingTail(kit) => (kit, "tail"),
+            Self::RecoveryRootPendingInstall(kit) => (kit, "install"),
+        };
+        let mut label = String::from("kit-piece-recovery-root-pending-");
+        for byte in kit {
+            push_hex(&mut label, byte);
         }
+        label.push('-');
+        label.push_str(half);
+        Cow::Owned(label)
     }
 }
 
@@ -97,7 +181,9 @@ impl SlotKind {
 ///
 /// `install` is the install's incarnation, the engine's machine id. A restore that
 /// makes a new machine gets a new id, so it never opens the slot of the install it
-/// was copied from, even on the same host with the same keystore.
+/// was copied from, even on the same host with the same keystore. Install-name
+/// slots are filed under the all-zero install, no machine's id, so the vault id
+/// alone names them (FIX 12054, FIX 12055).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct KeystoreSlot {
     pub vault_id: [u8; 32],
@@ -110,7 +196,8 @@ impl KeystoreSlot {
     /// carries no secret.
     #[must_use]
     pub fn name(&self) -> String {
-        let mut name = String::with_capacity(64 + 1 + 32 + 1 + self.kind.label().len());
+        let label = self.kind.label();
+        let mut name = String::with_capacity(64 + 1 + 32 + 1 + label.len());
         for byte in self.vault_id {
             push_hex(&mut name, byte);
         }
@@ -119,7 +206,7 @@ impl KeystoreSlot {
             push_hex(&mut name, byte);
         }
         name.push('.');
-        name.push_str(self.kind.label());
+        name.push_str(&label);
         name
     }
 }

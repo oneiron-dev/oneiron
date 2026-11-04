@@ -9,6 +9,7 @@ use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 use crate::authority::{MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
+use crate::identity::InstallSignerDerive;
 use crate::vault::Vault;
 
 impl Vault {
@@ -34,11 +35,17 @@ impl Vault {
     /// keystore settings of its own. A platform with none, or a keystore that
     /// refuses, is logged and leaves every signing door refusing
     /// `KeystoreUnavailable`; reads and sync go on. True when the keys loaded.
+    /// Once they load, this install's enrolled owner signing key is held for
+    /// the device sync's checkpoint pass (FIX 4921).
     pub fn install_default_keystore(&self, vault_dir: &Path) -> bool {
         match oneiron_keystore::default_platform_keystore(&[vault_dir]) {
             Ok(keystore) => {
                 self.install_device_keystore(keystore);
-                self.prepare_install_signing_logged()
+                let loaded = self.prepare_install_signing_logged();
+                if loaded {
+                    self.hold_device_owner_signer_logged();
+                }
+                loaded
             }
             Err(error) => {
                 tracing::warn!(

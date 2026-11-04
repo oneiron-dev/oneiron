@@ -119,7 +119,8 @@ impl HostSelfDispatcher<'_> {
         let kind = effect.speech_utterance().ok_or(Error::InvariantViolation(
             "speech dispatch on a non-speech effect",
         ))?;
-        let _receipt = self.storage.witness_executor_utterance(
+        let assertions = self.take_run_assertions();
+        let result = self.storage.witness_executor_utterance_sourced(
             &self.run_ref,
             run_id,
             kind,
@@ -127,7 +128,12 @@ impl HostSelfDispatcher<'_> {
             call.occurred_at,
             call.order,
             self.actor,
-        )?;
+            assertions.clone(),
+        );
+        if result.is_err() {
+            self.restore_run_assertions(assertions);
+        }
+        let _receipt = result?;
         Ok(SelfDispatchOutcome::Speech(SelfSpeechResult {
             effect,
             order: call.order,

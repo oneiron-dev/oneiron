@@ -143,11 +143,10 @@ impl<'v, S: LinkedInSeatHostServices> LinkedInContainerSandboxHost<'v, S> {
     }
 
     fn command(&self, args: &[&str]) -> Result<()> {
-        let status = oneiron_spawn::command(&self.docker_binary)
-            .args(args)
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .status()?;
+        let mut spawn = oneiron_spawn::command(&self.docker_binary);
+        spawn.args(args).env_clear().env("PATH", "/usr/bin:/bin");
+        oneiron_container::apply_cli_env_to_command(&mut spawn);
+        let status = spawn.status()?;
         if !status.success() {
             return Err(Error::InvalidConfig(format!(
                 "LinkedIn sandbox runtime failed: {status}"

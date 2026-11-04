@@ -25,6 +25,7 @@
 mod admission;
 mod credentials;
 mod pads;
+mod source;
 mod takeover;
 mod unopened;
 
@@ -32,8 +33,10 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
-use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because};
 use crate::store::Store;
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
+use crate::store::restore_admission::because;
 
 use self::admission::{AdmittedCustody, admit_recovery};
 pub(crate) use self::takeover::{PreparedTakeover, TakeoverRefusal};
@@ -41,7 +44,6 @@ use super::anchor::{anchor_record, anchored_position};
 use super::body_history::merge_history_into_rows;
 use super::erase_evidence::CredentialFenceFact;
 use super::files::{EntryState, LocalCustody, container, make_new_dir};
-use super::folder::FolderTarget;
 use super::fork::ForkedCustodyDir;
 use super::head::{CustodyOpener, serde_bytes_vec};
 use super::identity::{CustodyBinding, CustodyId, CustodyKind, CustodySubject, decode_native_path};
@@ -177,12 +179,13 @@ impl Store {
 /// retirement fact first, then every live entry but an erased credential's,
 /// which lands retired, then each world pad compartment the head left
 /// unopened, carried on (PAD-3, FIX 11133), then the journal at the next
-/// writer epoch and every erased credential's fact, all synced. The admitted
-/// retirements stay owed as one takeover obligation at the admitted
-/// position: the new writer's targets and anchor must reach it at its epoch
-/// before they count complete (KS-4A2). The directory it made is removed
-/// when the restore fails. A host issuer seed that does not land is warned
-/// and left out, never the restore's failure (FIX-LIST 10770).
+/// writer epoch, every erased credential's fact and every holder debt (FIX
+/// 11206), all synced. The admitted retirements stay owed as one takeover
+/// obligation at the admitted position: the new writer's targets and anchor
+/// must reach it at its epoch before they count complete (KS-4A2). The
+/// directory it made is removed when the restore fails. A host issuer seed
+/// that does not land is warned and left out, never the restore's failure
+/// (FIX-LIST 10770).
 pub(crate) fn land_recovery(
     admitted: &AdmittedCustody,
     binding: &CustodyBinding,
@@ -237,6 +240,12 @@ pub(crate) fn land_recovery(
         // restore's fences read it, and the next head carries it.
         for (&credential, &fact) in &admitted.evidence {
             custody.put_erase_evidence(&CredentialFenceFact { credential, fact })?;
+        }
+        // So does every holder debt (FIX 11206): a retired key's copy kept
+        // elsewhere still reads `custody_remote_retirement_pending(<holder>)`
+        // here, and the next head carries it.
+        for debt in &admitted.holders {
+            custody.put_holder_debt(debt)?;
         }
         if !admitted.retired.is_empty()
             || !admitted.retired_through.is_empty()
@@ -308,6 +317,9 @@ pub(crate) enum CustodyRoute {
 /// the kit, and an admitted machine's key when one is given (FIX 9178).
 pub(crate) struct CustodySourceAt<'a> {
     pub(crate) folder: &'a std::path::Path,
+    /// The head and frames fetched from the residence home (FIX 5846), read
+    /// in place of the folder when given, never with it.
+    pub(crate) fetched: Option<&'a super::protocol::FetchedCustodySource>,
     pub(crate) anchor: Option<&'a dyn AnchorStore>,
     pub(crate) root: Option<&'a oneiron_crypto::HybridSecretKey>,
     pub(crate) machine: Option<(crate::EntityId, &'a oneiron_crypto::HybridSecretKey)>,
@@ -472,7 +484,7 @@ pub(crate) fn route_custody(
     let wanted = required
         .position()
         .map_err(because(R::CustodyRequirementInvalid))?;
-    let target = FolderTarget::at(source.folder.to_path_buf());
+    let target = source.reader();
     // No head beside the backup: an image that needs no live key has
     // nothing for one to recover, and with no anchor configured nothing
     // says one is owed. With an anchor, admission refuses (fail-closed).

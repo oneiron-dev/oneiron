@@ -115,7 +115,7 @@ impl Vault {
             caller,
             &member,
             PublishTarget::of(&view),
-            || self.publish_review_paths_in_txn(&txn, &view),
+            || self.publish_grant_paths_in_txn(&txn, &view),
         )? {
             Ok(authority) => authority,
             Err(denial) => return Ok(Err(denial)),
@@ -167,7 +167,7 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         if let Err(denial) =
             self.admit_publish_act_in_txn(&txn, caller, &member, PublishTarget::of(&view), || {
-                self.publish_review_paths_in_txn(&txn, &view)
+                self.publish_grant_paths_in_txn(&txn, &view)
             })?
         {
             return Ok(Err(denial));
@@ -207,7 +207,7 @@ impl Vault {
             ));
         }
         let admitted = self.admit_publish_act_in_txn(txn, caller, member, target, || {
-            self.publish_review_paths_in_txn(txn, &existing)
+            self.publish_grant_paths_in_txn(txn, &existing)
         })?;
         Ok(admitted.map(|_| existing))
     }
@@ -236,7 +236,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let admitted =
             self.admit_publish_act_in_txn(&txn, caller, &member, PublishTarget::of(&view), || {
-                self.publish_review_paths_in_txn(&txn, &view)
+                self.publish_grant_paths_in_txn(&txn, &view)
             })?;
         drop(txn);
         Ok(admitted.map(|_| (scope, member, view)))

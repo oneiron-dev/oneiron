@@ -110,13 +110,19 @@ pub struct AuthorityFold {
     pub slips: SlipAuthorityState,
     /// Derived vault id.
     pub vault_id: Option<AuthorityVaultId>,
-    /// Valid entry hashes.
-    pub valid_entries: BTreeSet<AuthorityEntryHash>,
+    /// Valid entry hashes: a persistent set, shared by a resumed fold's
+    /// view and its base (FIX 12330).
+    pub valid_entries: ValidEntries,
     /// Fold-derived active/revoked roster.
     pub roster: BTreeMap<AuthorityKey, FoldedDevice>,
     /// Keys a handoff (`ReRoot`) retired. They stay revoked on every branch:
     /// no entry they sign stands outside the handoff's own ancestry.
     pub retired_keys: BTreeSet<AuthorityKey>,
+    /// Every key in the host's custody, as the fold's custody walk judged it
+    /// on the merged history: read through [`AuthorityFold::in_host_custody`]
+    /// (FIX 12196).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) host_custody: BTreeSet<AuthorityKey>,
     /// The handoffs whose fences stand: settled, or in conflict.
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// Owner dismissed saving the recovery secret and no second device has enrolled.

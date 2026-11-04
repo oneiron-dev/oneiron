@@ -14,16 +14,18 @@
 //! is carried here instead; one of another birth than the document held here
 //! stands apart, as a carried MESSAGE document of another incarnation does.
 //!
-//! A record of any other kind with no document has no birth here: its text
-//! stays in the sequence rows of its own slot (a snapshot and updates keyed
-//! by sequence), where the sync plane has always kept it, and is read there.
+//! A TURN whose body its field rule takes is born the same way (FIX 11794,
+//! `birth_fields`). A record of any other kind, or a body no rule takes, with
+//! no document has no birth here: its text stays in the sequence rows of its
+//! own slot (a snapshot and updates keyed by sequence), where the sync plane
+//! has always kept it, and is read there.
 //!
 //! A sync write is admitted whatever its text holds (FIX 8872, KEEP TODAY):
 //! the owner's scan runs as configured, a key the lift places goes to custody
 //! and is marked, and a hit no rule places stays, recorded. No hit refuses.
 
 use heed::{RoTxn, RwTxn};
-use loro::{CommitOptions, ExportMode, LoroDoc};
+use loro::{CommitOptions, ExportMode, LoroDoc, VersionVector};
 
 use super::doc_actor::DocActor;
 use super::document::{BIRTH, BODY, Birth, META, map_insert_bytes, stamp_with};
@@ -41,6 +43,8 @@ use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::sync::documents::storage as sequence_rows;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+
+mod birth_fields;
 
 /// The domain a lazy birth's peer is derived in.
 const BIRTH_PEER_CONTEXT: &str = "oneiron.sync-text.birth-peer.v1";
@@ -145,8 +149,10 @@ pub(crate) fn edit_sync_text_in_txn(
         .set_peer_id(LoroDoc::new().peer_id())
         .map_err(|_| invalid("document peer rotation"))?;
     super::forks::bind_actor(vault, txn, &doc, actor, edit.at)?;
+    // The edit's commit names the actor's stamp token (FIX 10930).
+    let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, actor)?;
     let (start, delete) = (edit.start, edit.delete);
-    doc.edit_with(actor, edit.at, &[], |body| {
+    doc.edit_with(stamp, edit.at, &[], |body| {
         body.delete(start, delete)
             .map_err(|_| invalid("sync text delete"))?;
         body.insert(start, &text.stored)
@@ -286,19 +292,39 @@ enum Plane {
 }
 
 /// The one routing rule of every sync reader and writer: a head means the
-/// document; no head means the MESSAGE birth for a MESSAGE, and the
-/// sequence rows for every other kind.
+/// document; no head means the MESSAGE birth for a MESSAGE, the kind's birth
+/// for another kind whose body its field rule takes while its slot holds no
+/// sequence rows (FIX 11794), the carried head for a row already naming its
+/// document, and the sequence rows for every other.
 fn plane_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Plane> {
     if let Some(head) = head_in(vault, txn, entity)? {
         return Ok(Plane::Document(head));
     }
-    Ok(
-        if vault.get_entity_type_in_txn(txn, entity)? == Some(ENTITY_TYPE_MESSAGE) {
-            Plane::Unborn
-        } else {
-            Plane::SequenceRows
-        },
-    )
+    let unborn = match vault.get_entity_type_in_txn(txn, entity)? {
+        Some(ENTITY_TYPE_MESSAGE) => true,
+        // Text an earlier sync write kept in the slot's sequence rows stays
+        // there; a row still holding its text births here, and a row already
+        // naming its document adopts that carried head here.
+        Some(kind) if birth_fields::field(kind).is_some() => {
+            !vault
+                .store
+                .port_document_present(txn, DocumentSlot::of(*entity))?
+                && vault
+                    .store
+                    .port_entity_raw(txn, entity)?
+                    .is_some_and(|raw| {
+                        raw.get(ENTITY_METADATA_HEADER_LEN..).is_some_and(|body| {
+                            split_fields(kind, body, entity).is_some() || pointer_of(body).is_some()
+                        })
+                    })
+        }
+        _ => false,
+    };
+    Ok(if unborn {
+        Plane::Unborn
+    } else {
+        Plane::SequenceRows
+    })
 }
 
 /// [`edit_sync_text_in_txn`] on `entity`'s sequence rows: the prose is
@@ -322,16 +348,19 @@ fn edit_sequence_rows_in_txn(
     doc.set_peer_id(LoroDoc::new().peer_id())
         .map_err(|_| invalid("document peer rotation"))?;
     crate::typed_body::bind_peer(vault, txn, doc.peer_id(), edit.actor, edit.at)?;
+    // The update's commit names the actor's stamp token (FIX 10930).
+    let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, edit.actor)?;
     let body = doc.get_text(BODY);
     body.delete(edit.start, edit.delete)
         .map_err(|_| invalid("sync text delete"))?;
     body.insert(edit.start, &text.stored)
         .map_err(|_| invalid("sync text insert"))?;
-    stamp_with(&doc, edit.actor, edit.at, "edit", &[])?;
+    stamp_with(&doc, stamp, edit.at, "edit", &[])?;
     let update = doc
         .export(ExportMode::updates(&before))
         .map_err(|_| invalid("sync text update export"))?;
-    let sequence = append_sequence_update_in_txn(vault, txn, entity, &doc, &update, None)?;
+    let sequence =
+        append_sequence_update_in_txn(vault, txn, entity, (&doc, &before), &update, None)?;
     // No document stands to read the insert in its place: its own links are
     // read on their own.
     let landed = (!edit.insert.is_empty())
@@ -358,7 +387,7 @@ fn join_sequence_rows_in_txn(
     if doc.oplog_vv() == before {
         return Ok(false);
     }
-    append_sequence_update_in_txn(vault, txn, entity, &doc, update, masked)?;
+    append_sequence_update_in_txn(vault, txn, entity, (&doc, &before), update, masked)?;
     Ok(true)
 }
 
@@ -374,19 +403,21 @@ fn replace_sequence_rows_in_txn(
     sequence_rows::snapshot(vault, txn, *entity, staged, true)
 }
 
-/// Appends `update`, whose operations `doc` now holds, as the next update of
-/// `entity`'s sequence rows, once the sync scan has read `masked`, else
-/// `doc`'s text. The sequence the update took.
+/// Appends `update`, whose operations `doc` now holds past `before`, as the
+/// next update of `entity`'s sequence rows, once the sync scan has read
+/// `masked`, else `doc`'s text. The sequence the update took.
 fn append_sequence_update_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     entity: &EntityId,
-    doc: &LoroDoc,
+    (doc, before): (&LoroDoc, &VersionVector),
     update: &[u8],
     masked: Option<&str>,
 ) -> Result<u32> {
     let text = doc.get_text(BODY).to_string();
     scan_sequence_text_in_txn(vault, txn, entity, masked.unwrap_or(&text))?;
+    // The stamp tokens its new changes name, for the hold check (FIX 11965).
+    super::token_uses::record_sequence_uses_in_txn(&vault.store, txn, entity, doc, before)?;
     sequence_rows::append(vault, txn, *entity, update)
 }
 
@@ -399,11 +430,14 @@ struct Born {
     doc: EntityDoc,
     /// The row's body with its text replaced by the document pointer.
     pointer: Vec<u8>,
+    /// The field its text stood in.
+    field: TextField,
 }
 
 /// The birth `entity`'s text takes when no document stands for it: an atomic
-/// MESSAGE's canonical content at its own time, born as a stream or quote
-/// births it but naming no one. `None` for any other record.
+/// MESSAGE's canonical content, or another kind's text its field rule takes
+/// (FIX 11794), at its own time, born as a stream or quote births it but
+/// naming no one. `None` for any other record.
 fn born_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Option<Born>> {
     let Some(raw) = vault.store.port_entity_raw(txn, entity)? else {
         return Ok(None);
@@ -411,20 +445,48 @@ fn born_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Option<B
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(None);
     };
-    if header.entity_type != ENTITY_TYPE_MESSAGE {
-        return Ok(None);
-    }
-    let Some((text, pointer)) = split_content(&raw[ENTITY_METADATA_HEADER_LEN..], entity) else {
+    let Some((text, pointer, field)) = split_fields(
+        header.entity_type,
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        entity,
+    ) else {
         return Ok(None);
     };
     let doc = unattributed(seeded(entity)?, entity, &text, header.occurred_start)?;
-    Ok(Some(Born { doc, pointer }))
+    Ok(Some(Born {
+        doc,
+        pointer,
+        field,
+    }))
+}
+
+/// The one dispatch of the lazy birth's field rules (FIX 11794): `kind`'s
+/// text in `body`, the body with it replaced by the document pointer, and
+/// the field it stood in. MESSAGE's rule is [`split_content`]; every other
+/// kind's is in `birth_fields`.
+fn split_fields(kind: u8, body: &[u8], entity: &EntityId) -> Option<(String, Vec<u8>, TextField)> {
+    let (text, pointer) = if kind == ENTITY_TYPE_MESSAGE {
+        split_content(body, entity)?
+    } else {
+        birth_fields::split(kind, body, entity)?
+    };
+    Some((text, pointer, birth_field(kind)?))
+}
+
+/// The field `kind`'s lazy birth keeps its text in: a MESSAGE's content, or
+/// its rule's in `birth_fields`.
+fn birth_field(kind: u8) -> Option<TextField> {
+    if kind == ENTITY_TYPE_MESSAGE {
+        Some(content())
+    } else {
+        birth_fields::field(kind)
+    }
 }
 
 /// A canonical MESSAGE body's content, and the body with it replaced by the
 /// document pointer, as the MESSAGE birth writes it.
 fn split_content(body: &[u8], entity: &EntityId) -> Option<(String, Vec<u8>)> {
-    crate::gate::validate_canonical_witness_message_body(body).ok()?;
+    crate::store::witness_message_body::validate_canonical_witness_message_body(body).ok()?;
     let rmpv::Value::Map(mut fields) =
         rmpv::decode::read_value(&mut std::io::Cursor::new(body)).ok()?
     else {
@@ -455,7 +517,10 @@ fn seeded(entity: &EntityId) -> Result<LoroDoc> {
     Ok(doc)
 }
 
-/// A birth that names no one: no stamp and no receipt, at the record's time.
+/// A birth that names no one: no stamp, at the record's time. Its commit
+/// restates the row's birth, the same message on every machine, so the
+/// births still join and the row's surviving birth is its receipt (FIX
+/// 10929).
 fn unattributed(doc: LoroDoc, entity: &EntityId, text: &str, at: u64) -> Result<EntityDoc> {
     doc.set_record_timestamp(true);
     let birth = Birth {
@@ -468,7 +533,11 @@ fn unattributed(doc: LoroDoc, entity: &EntityId, text: &str, at: u64) -> Result<
         .insert(0, text)
         .map_err(|_| invalid("document birth text"))?;
     let timestamp = i64::try_from(at).map_err(|_| invalid("document timestamp overflow"))?;
-    doc.commit_with(CommitOptions::new().timestamp(timestamp));
+    doc.commit_with(
+        CommitOptions::new()
+            .commit_msg(super::commit_receipts::ROW_BIRTH_RESTATED)
+            .timestamp(timestamp),
+    );
     EntityDoc::from_loro(doc)
 }
 
@@ -486,7 +555,7 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
         document: entity.to_hex(),
-        field: content(),
+        field: born.field,
         generation: 0,
         pending: 0,
         birth_frontier: Some(born.doc.frontier()),
@@ -495,23 +564,22 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
     Ok(head)
 }
 
-/// The head a peer's document takes here for a MESSAGE that holds none:
-/// the document its row names, or, for a row still holding its text, its
-/// own id, its row then naming it.
+/// The head a peer's document takes here for a MESSAGE, or another kind with
+/// a field rule (FIX 11794), that holds none: the document its row names, or,
+/// for a row still holding its text, its own id, its row then naming it.
 fn carried_head_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<Head> {
     let raw = vault
         .store
         .port_entity_raw(txn, entity)?
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_MESSAGE {
-        return Err(invalid(NO_TEXT));
-    }
+    let field = birth_field(header.entity_type).ok_or(invalid(NO_TEXT))?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     let document = match pointer_of(body) {
         Some(document) => document,
         None => {
-            let (_, pointer) = split_content(body, entity).ok_or(invalid(NO_TEXT))?;
+            let (_, pointer, _) =
+                split_fields(header.entity_type, body, entity).ok_or(invalid(NO_TEXT))?;
             vault
                 .store
                 .port_entity_document_pointer_put(txn, entity, &pointer)?;
@@ -522,7 +590,7 @@ fn carried_head_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) ->
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
         document,
-        field: content(),
+        field,
         generation: 0,
         pending: 0,
         birth_frontier: None,

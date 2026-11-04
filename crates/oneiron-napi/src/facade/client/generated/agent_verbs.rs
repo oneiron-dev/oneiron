@@ -430,6 +430,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_memory_pads_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.pads.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_memory_pads_admin_reads(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.pads.admin_reads", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("cancel", js_json(input))
@@ -742,6 +760,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.message_stream_partial", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_message_streams_refused(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.message_streams.refused", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -1857,6 +1884,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_inbox_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_done(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.done", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_later(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.later", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skills_bootstrap(
         &self,
         input: serde_json::Value,
@@ -2172,6 +2217,18 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.skills.optimize.tradeoff_asks.pick", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_optimize_tradeoff_asks_resolve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb(
+                "vault.skills.optimize.tradeoff_asks.resolve",
+                js_json(input),
+            )
             .map_err(facade_error)
     }
     #[napi]
@@ -3189,6 +3246,30 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.federation.connect.rejoin", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_world_privacy_export(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb(
+                "vault.federation.connect.world_privacy.export",
+                js_json(input),
+            )
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_world_privacy_receive(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb(
+                "vault.federation.connect.world_privacy.receive",
+                js_json(input),
+            )
             .map_err(facade_error)
     }
     #[napi]
@@ -4293,6 +4374,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_legal_holds_withdraw_erase(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.legal_holds.withdraw_erase", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_courtesy_delete_send(
         &self,
         input: serde_json::Value,
@@ -4521,6 +4611,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consent.create_standing_grant", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_create_auto_weave_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.create_auto_weave_grant", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -7606,6 +7705,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_callable_amend(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.callable.amend", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skills_pack_receipt(
         &self,
         input: serde_json::Value,
@@ -9663,6 +9771,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consolidation.lineage", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_candidate_decisions(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.candidate_decisions", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

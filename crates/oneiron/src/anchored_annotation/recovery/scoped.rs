@@ -12,16 +12,15 @@
 //! the thread's newest brief and its TASK are both admitted; otherwise the
 //! thread shows without it. An offer is still only an offer.
 
-use super::super::anchor_text::{anchor_text, find_text};
+use super::super::anchor_text::{UnitFormat, anchor_text, find_text};
 use super::super::model::AnnotationThread;
 use super::super::threads::{newest_thread_brief, threads_from_active_claims};
 use super::{ReattachOffer, UNATTACHED, UnattachedThread};
 use crate::Vault;
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
 use crate::claim::ScopedRead;
-use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::secret_custody::SecretSight;
 
 /// Whether the reader's lane admits one row, in the listing's snapshot.
@@ -86,24 +85,30 @@ impl Vault {
         let body = self
             .get_blob_artifact_in_txn(&rtxn, artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        let format = OfficeFormat::from_media_type(&body.media_type)?;
+        let format = UnitFormat::from_media_type(&body.media_type).ok_or_else(|| {
+            Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                "unsupported annotation media type",
+            ))
+        })?;
         let bytes = self
             .read_blob_artifact_version_sighted_in_txn(&rtxn, artifact_id, head.version, sight)?
             .ok_or(Error::EntityNotFound)?;
         let limits = self.text_limits_in_txn(&rtxn)?;
-        Ok(unattached
+        // A resource refusal is the engine's error (FIX 10587), never empty offers.
+        let mut offers = Vec::new();
+        for (thread_id, words) in unattached
             .iter()
             .filter_map(|thread| Some((thread.thread.thread_id, thread.snapshot.as_deref()?)))
-            .flat_map(|(thread_id, words)| {
-                find_text(&bytes, format, words, &limits)
-                    .into_iter()
-                    .map(move |locator| ReattachOffer {
-                        thread_id,
-                        version: head.version,
-                        locator,
-                    })
-            })
-            .collect())
+        {
+            for locator in find_text(&bytes, format, words, &limits)? {
+                offers.push(ReattachOffer {
+                    thread_id,
+                    version: head.version,
+                    locator,
+                });
+            }
+        }
+        Ok(offers)
     }
 
     /// The Unattached list as `admits` serves it, read in `rtxn`.
@@ -138,11 +143,18 @@ impl Vault {
             }
             let row = UNATTACHED.get(&self.store, rtxn, &(*artifact_id, thread.thread_id))?;
             // Read again as this reader sees the pinned version: the stored
-            // snapshot holds the raw words.
+            // snapshot holds the raw words. A resource refusal is the
+            // engine's error (FIX 10587), never a missing snapshot.
             let snapshot = match row.as_ref().and_then(|row| row.snapshot.as_ref()) {
-                Some(_) => self
-                    .read_blob_artifact_version_sighted_in_txn(rtxn, artifact_id, pinned, sight)?
-                    .and_then(|bytes| anchor_text(&bytes, &thread.anchor.locator, &limits)),
+                Some(_) => match self.read_blob_artifact_version_sighted_in_txn(
+                    rtxn,
+                    artifact_id,
+                    pinned,
+                    sight,
+                )? {
+                    Some(bytes) => anchor_text(&bytes, &thread.anchor.locator, &limits)?,
+                    None => None,
+                },
                 None => None,
             };
             let held_task = match newest_thread_brief(*artifact_id, &claims, &thread.thread_id) {

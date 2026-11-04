@@ -241,16 +241,37 @@ fn relationship_readable_in(
     claim: &crate::ClaimBody,
     audience: &[EntityId],
 ) -> Result<bool> {
-    let Some(relationship) = claim.rel else {
+    let Some(relationships) = &claim.rel else {
         return Ok(true);
     };
     if audience.is_empty() {
         return Ok(false);
     }
+    // Each audience member reads through any one live relationship of the
+    // claim's set; the explicit empty set reaches no one.
+    let mut reached = vec![false; audience.len()];
+    for &relationship in relationships {
+        let Some(participants) = relationship_participants_in(vault, txn, relationship)? else {
+            continue;
+        };
+        for (seen, person) in reached.iter_mut().zip(audience) {
+            *seen |= participants.contains(person);
+        }
+    }
+    Ok(reached.into_iter().all(|seen| seen))
+}
+
+/// The participants of a live RELATIONSHIP; `None` when it is gone or not
+/// one.
+fn relationship_participants_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    relationship: EntityId,
+) -> Result<Option<Vec<EntityId>>> {
     let rel = match require_kind(vault, txn, relationship, ENTITY_TYPE_RELATIONSHIP) {
         Ok(rel) => rel,
         Err(Error::EntityNotFound | Error::Record(RecordError::InvalidConversationBody(_))) => {
-            return Ok(false);
+            return Ok(None);
         }
         Err(error) => return Err(error),
     };
@@ -270,5 +291,5 @@ fn relationship_readable_in(
             .map_err(|_| invalid("relationship participants"))?;
         participants.extend(body_ids);
     }
-    Ok(!audience.iter().any(|person| !participants.contains(person)))
+    Ok(Some(participants))
 }

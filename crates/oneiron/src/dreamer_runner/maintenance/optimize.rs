@@ -1,6 +1,7 @@
 //! The Coach's skill-maintenance body on the shared wake runner. Drafting and
 //! admission remain separate: this job asks the independent held-out gate and
-//! never activates or supersedes a skill itself. The author drafts on the
+//! never activates or supersedes a skill itself; an edit the owner approved
+//! on an agent-health card settles through that approval. The author drafts on the
 //! optimization attempt (`SkillOptimizeAuthor::draft_on`): the Coach's author
 //! loads the shipped `skill-optimize` workflow there and runs it, and a scored
 //! edit is an outcome of that loaded revision (`coach_learning`). A workflow
@@ -14,7 +15,8 @@ use crate::dreamer_runner::{
     DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
-use crate::llm::decision::{DecisionQuestion, TypedDecision};
+use crate::llm::decision::TypedDecision;
+use crate::model_decision::DecisionQuestion;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{
@@ -73,6 +75,10 @@ impl HeldOutReplayNotes for PassBoundScorer<'_> {
 
     fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
         self.inner.replay_responses(receipts)
+    }
+
+    fn rubric(&self) -> Result<Option<crate::skill_optimize::JudgeRubric>> {
+        self.inner.rubric()
     }
 
     fn record_decision(
@@ -272,7 +278,19 @@ fn optimize(
         }
         // This gate owns its held-out read and revalidates it at commit. The
         // drafting author never receives the scores or reserved receipts.
-        let verdict = score_gate_skill_edit_in_cycle(vault, &proposal, &scorer, id, at)?;
+        let scored = score_gate_skill_edit_in_cycle(vault, &proposal, &scorer, id, at);
+        // An edit the owner approved on an agent-health card settles on that
+        // card on the gate's ruling, a refusal's included, as the owner's
+        // re-apply would (FIX 3725).
+        // One that does not settle (its bytes moved since the approval) stays
+        // pending on its card, said here; the pass goes on.
+        if let Err(error) = vault.settle_approved_skill_edit_by_candidate(&proposal) {
+            tracing::warn!(
+                %error,
+                "an approved skill edit did not settle on the gate's ruling; its card stays pending"
+            );
+        }
+        let verdict = scored?;
         // A scored edit is a held-out outcome for the improver revision that
         // drafted it, a resumed proposal's included: did the edited
         // instructions beat the current ones. A refusal before scoring is
@@ -319,7 +337,7 @@ fn pending_proposal(
             // would retry it on every pass and never draft again.
             if record.lifecycle_status != SkillLifecycle::Candidate
                 || record.approval_status != ClaimApprovalStatus::Proposed
-                || record.skill_id == crate::agent_dispatch::TEAM_SHAPE_SKILL_NAME
+                || record.skill_id == crate::skill::team_shape_catalog::TEAM_SHAPE_SKILL_NAME
                 || crate::skill::resident_of(&record)? != resident
             {
                 continue;

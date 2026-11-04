@@ -26,7 +26,8 @@ use crate::dreamer_runner::maintenance::code_fix::{
 use crate::failure_ladder::{BlockedReportRef, HealerCase};
 use crate::limit_ask::EngineLimit;
 use crate::self_heal::blocked_reports::{RunWorlds, blocked_source_in};
-use crate::{ContentPart, EntityId, LlmRequest, Result, Vault};
+use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::{ContentPart, LlmRequest};
 
 /// One code-fix invocation's read of the real failure behind its source
 /// (OF-380 L1): a first run's or a top-up's, read once and shared by its

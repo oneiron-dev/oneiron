@@ -62,7 +62,7 @@ pub(crate) struct RedactionAuditReceipt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) room_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) room_role: Option<crate::conversation::RoomRole>,
+    pub(crate) room_role: Option<crate::store::conversation_body::RoomRole>,
     /// When the erase completed overall, on its final row alone: its sweep,
     /// if it queued one, and every custody retirement it binds had finished
     /// (FIX 5844, C-ERASE-FINAL).
@@ -90,7 +90,7 @@ impl RedactionAuditReceipt {
 #[derive(Debug, Clone)]
 pub(crate) struct RedactionReceiptInput {
     pub actor_principal: Option<EntityId>,
-    pub room_authority: Option<(EntityId, crate::conversation::RoomRole)>,
+    pub room_authority: Option<(EntityId, crate::store::conversation_body::RoomRole)>,
     pub request_id: String,
     pub scope: RedactionScope,
     pub reason: DeleteReason,
@@ -138,7 +138,6 @@ pub(super) const ATT_KEY_V: &str = "att_v";
 pub(super) const ATT_VERSION: &str = "1";
 /// MessagePack fixmap(0) — the empty `verification` the transcript tail
 /// carries in place of the four att_ entries.
-#[cfg(feature = "sync")]
 pub(crate) const ATT_EMPTY_MAP_BYTE: u8 = 0x80;
 
 /// The pinned 25 B REDACTION_AUDIT envelope header: receipts are point
@@ -177,7 +176,7 @@ pub(crate) fn encode_redaction_audit_receipt(
     custody_retirements: Vec<String>,
     capture_failures: Vec<CaptureFailure>,
     receipt_id: &EntityId,
-    identity: &crate::identity::DeviceIdentity,
+    identity: &crate::store::install_identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
     let envelope_learned_at = input.hard_purge_complete_at;
     let receipt = RedactionAuditReceipt {
@@ -215,7 +214,7 @@ pub(super) fn sign_redaction_audit_receipt(
     mut receipt: RedactionAuditReceipt,
     receipt_id: &EntityId,
     envelope_learned_at: u64,
-    identity: &crate::identity::DeviceIdentity,
+    identity: &crate::store::install_identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
     receipt.verification.clear();
     // Transcript tail: the body bytes with verification EMPTY.
@@ -235,7 +234,7 @@ fn receipt_attestation(
     body_unsigned: &[u8],
     receipt_id: &EntityId,
     envelope_learned_at: u64,
-    identity: &crate::identity::DeviceIdentity,
+    identity: &crate::store::install_identity::DeviceIdentity,
 ) -> BTreeMap<String, String> {
     use ed25519_dalek::Signer;
 
@@ -263,7 +262,6 @@ pub(crate) fn decode_redaction_audit_receipt(body: &[u8]) -> Result<RedactionAud
     rmp_serde::from_slice(body).map_err(|_| Error::CorruptedIndex("redaction audit receipt body"))
 }
 
-#[cfg(feature = "sync")]
 fn hex_decode_lower(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) || !super::receipt_grammar::is_lower_hex(s) {
         return None;
@@ -277,7 +275,6 @@ fn hex_decode_lower(s: &str) -> Option<Vec<u8>> {
 /// The attestation fields of a validated receipt body plus the byte offset
 /// of the `verification` VALUE — the splice point for transcript
 /// reconstruction (OD-6).
-#[cfg(feature = "sync")]
 pub(crate) struct ReceiptAttestationParts {
     pub(crate) client_id: u64,
     pub(crate) pubkey: [u8; 32],
@@ -289,38 +286,55 @@ pub(crate) struct ReceiptAttestationParts {
 /// The only low-level decode this module hand-rolls: rmpv reads whole
 /// values, and the verifier needs the byte OFFSET of the final entry's
 /// value, so the top-level header + per-entry walk track positions.
-#[cfg(feature = "sync")]
-fn read_msgpack_map_len(cursor: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
+fn read_msgpack_map_len(
+    cursor: &mut std::io::Cursor<&[u8]>,
+) -> std::result::Result<u64, AttestationSpliceFailure> {
     use std::io::Read;
     let mut first = [0u8; 1];
-    cursor.read_exact(&mut first).map_err(|_| {
-        Error::Sync(SyncError::InvalidRedactionReceiptBody(
-            "body is not valid MessagePack",
-        ))
-    })?;
+    cursor
+        .read_exact(&mut first)
+        .map_err(|_| AttestationSpliceFailure::NotMessagePack)?;
     match first[0] {
         b @ 0x80..=0x8f => Ok(u64::from(b & 0x0f)),
         0xde => {
             let mut len = [0u8; 2];
-            cursor.read_exact(&mut len).map_err(|_| {
-                Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                    "body is not valid MessagePack",
-                ))
-            })?;
+            cursor
+                .read_exact(&mut len)
+                .map_err(|_| AttestationSpliceFailure::NotMessagePack)?;
             Ok(u64::from(u16::from_be_bytes(len)))
         }
         0xdf => {
             let mut len = [0u8; 4];
-            cursor.read_exact(&mut len).map_err(|_| {
-                Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                    "body is not valid MessagePack",
-                ))
-            })?;
+            cursor
+                .read_exact(&mut len)
+                .map_err(|_| AttestationSpliceFailure::NotMessagePack)?;
             Ok(u64::from(u32::from_be_bytes(len)))
         }
-        _ => Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-            "body must be a string-keyed MessagePack map",
-        ))),
+        _ => Err(AttestationSpliceFailure::NotStringKeyedMap),
+    }
+}
+
+/// Why the shared attestation splice failed. The sync wrapper maps each to
+/// the `InvalidRedactionReceiptBody` message `receipt_attestation_parts`
+/// returns today, so the sync path behaves exactly as before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttestationSpliceFailure {
+    /// The body is not valid MessagePack.
+    NotMessagePack,
+    /// The body is not a string-keyed MessagePack map.
+    NotStringKeyedMap,
+    /// The attestation fields failed re-parse.
+    AttestationReparse,
+}
+
+#[cfg(feature = "sync")]
+impl AttestationSpliceFailure {
+    fn error(self) -> Error {
+        Error::Sync(SyncError::InvalidRedactionReceiptBody(match self {
+            Self::NotMessagePack => "body is not valid MessagePack",
+            Self::NotStringKeyedMap => "body must be a string-keyed MessagePack map",
+            Self::AttestationReparse => "attestation fields failed re-parse",
+        }))
     }
 }
 
@@ -331,11 +345,10 @@ fn read_msgpack_map_len(cursor: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
 /// because the validator pinned `verification` as the FINAL entry in bytes
 /// with no trailing bytes; a non-canonical re-encoding simply fails the
 /// signature (fail closed), never a false accept.
-#[cfg(feature = "sync")]
-pub(crate) fn receipt_attestation_parts(body: &[u8]) -> Result<ReceiptAttestationParts> {
-    const MALFORMED: Error = Error::Sync(SyncError::InvalidRedactionReceiptBody(
-        "attestation fields failed re-parse",
-    ));
+fn receipt_attestation_splice_inner(
+    body: &[u8],
+) -> std::result::Result<ReceiptAttestationParts, AttestationSpliceFailure> {
+    const MALFORMED: AttestationSpliceFailure = AttestationSpliceFailure::AttestationReparse;
 
     let mut cursor = std::io::Cursor::new(body);
     let entry_count = read_msgpack_map_len(&mut cursor)?;
@@ -392,6 +405,20 @@ pub(crate) fn receipt_attestation_parts(body: &[u8]) -> Result<ReceiptAttestatio
     parts.ok_or(MALFORMED)
 }
 
+/// The shared attestation splice for verifiers without the sync feature:
+/// `None` on any parse failure, which the caller reads as not attested. The
+/// same tail splice the sync lease path verifies over the stored bytes.
+pub(crate) fn receipt_attestation_splice(body: &[u8]) -> Option<ReceiptAttestationParts> {
+    receipt_attestation_splice_inner(body).ok()
+}
+
+/// The shared attestation splice for the sync lease path, with the
+/// `SyncError`s it returns today.
+#[cfg(feature = "sync")]
+pub(crate) fn receipt_attestation_parts(body: &[u8]) -> Result<ReceiptAttestationParts> {
+    receipt_attestation_splice_inner(body).map_err(AttestationSpliceFailure::error)
+}
+
 impl Vault {
     /// Writes a REDACTION_AUDIT receipt as a normal entity-envelope record
     /// (contracts.ts `redactionAuditReceipt.storage`), maintaining the same
@@ -425,16 +452,20 @@ impl Vault {
                 take_staged_sweep_refs_in_txn(self, wtxn, &holder, &mut sweep_extras)?;
             }
             ids.insert(holder);
-            ids.extend(crate::skill_hub::source_carriers_for_holder_in_txn(
-                &self.store,
-                wtxn,
-                &holder,
-            )?);
-            ids.extend(crate::agent_def::birth_carriers_for_erased_entity_in_txn(
-                &self.store,
-                wtxn,
-                &holder,
-            )?);
+            ids.extend(
+                crate::store::skill_source_custody::source_carriers_for_holder_in_txn(
+                    &self.store,
+                    wtxn,
+                    &holder,
+                )?,
+            );
+            ids.extend(
+                crate::store::agent_birth_custody::birth_carriers_for_erased_entity_in_txn(
+                    &self.store,
+                    wtxn,
+                    &holder,
+                )?,
+            );
             ids.extend(crate::receipt::receipt_archives_for_holder(
                 &self.store,
                 wtxn,

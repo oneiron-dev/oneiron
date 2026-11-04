@@ -35,11 +35,12 @@ use super::proposals;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::browser_library::{
     DirtySolvedGroup, RetiredWorkflow, SolvedRunEvidence, SolvedRunScope, WorkflowRecord,
-    WorkflowResolution, all_solved_groups, resolve_workflow_in_txn, retired_workflows,
-    site_workflows, solved_group_coverage, solved_runs_in_group,
+    all_solved_groups, resolve_workflow_in_txn, retired_workflows, site_workflows,
+    solved_group_coverage, solved_runs_in_group,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ScopedRead, ScopedReadActorKey};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
+use crate::dreamer_runner::maintenance::browser_candidate::WorkflowResolution;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::ErrorKind;
 use crate::ports::EntityStoreRead;
@@ -217,8 +218,6 @@ enum CommitOutcome {
     Dup,
     /// A foreign holder already has the skill id; the hub wins.
     Collision,
-    /// More than one own holder exists and the cursor names none.
-    Pending,
     /// A skill, its package and the finding landed.
     Created,
     /// A next-revision skill, its package and the finding landed.
@@ -458,11 +457,7 @@ impl Pass<'_> {
             let predecessor =
                 match cursor.and_then(|cursor| own.iter().find(|(id, _)| *id == cursor)) {
                     Some((id, record)) => Some((*id, record.clone())),
-                    None => match own.len() {
-                        0 => None,
-                        1 => Some(own[0].clone()),
-                        _ => return Ok(CommitOutcome::Pending),
-                    },
+                    None => own.iter().max_by_key(|(id, _)| *id).cloned(),
                 };
             let id = vault.store.clock.entity_id()?;
             let (version, outcome) = if predecessor.is_some() {
@@ -540,7 +535,6 @@ impl Pass<'_> {
                 report.diagnostics += 1;
                 report.findings += 1;
             }
-            CommitOutcome::Pending => report.diagnostics += 1,
             CommitOutcome::Created | CommitOutcome::Revised => {
                 report.skills_created += 1;
                 report.findings += 1;

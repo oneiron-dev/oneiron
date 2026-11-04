@@ -46,18 +46,41 @@
 //!   supersession/retraction/demotion doors.
 //! * `expression_preference` — the typed expression-preference write surface.
 
+pub(crate) mod dispatch_input;
+pub mod dispatch_target;
+pub(crate) use dispatch_input as widen_record;
 mod aging_profiles;
+mod authorship;
+pub mod code_instruction;
+pub mod consult_payload_ref;
+pub mod retrieval_scope;
+pub(crate) use authorship::claim_author;
 mod core_types;
+pub mod corpus_scope;
 mod decay;
 mod deferred;
 mod demotion;
 mod evidence_support;
 mod expression_archive;
 mod expression_preference;
-mod history_handoff;
+use oneiron_authority::claim_history_handoff as history_handoff;
 mod history_pin_exchange;
+pub use oneiron_base::learning_estimate;
+pub mod learning_evidence;
+pub mod learning_predicate;
+pub mod maintenance_kind;
+pub mod served_lifecycle;
+pub(crate) use history_pin_exchange::MachineHistoryRuntime;
 #[cfg(feature = "sync")]
 pub(crate) use history_pin_exchange::PinExchangeOutcome;
+pub(crate) mod history_advance;
+mod history_pin_freshness;
+pub(crate) mod history_seal;
+pub use history_pin_freshness::{
+    MACHINE_HISTORY_FRESHNESS_CHALLENGE_LIFETIME, MACHINE_HISTORY_FRESHNESS_DOMAIN,
+    MACHINE_HISTORY_FRESHNESS_VERSION, MachineHistoryFreshnessChallenge,
+    MachineHistoryFreshnessResponse, MachineHistoryPinFreshness,
+};
 pub(crate) mod history_projection;
 pub use history_projection::ResolvedMachineClaim;
 pub(crate) mod history_store;
@@ -69,12 +92,13 @@ mod predicate_validators;
 mod projection_index;
 pub(crate) use projection_index::{
     PENDING_PRODUCER, claim_ids_for_predicate_bounded_in_txn, claim_ids_for_predicate_in_txn,
-    claim_ids_for_predicate_page_in_txn, for_each_claim_id_for_predicate_in_txn,
-    maintain_claim_projection_index, remove_claim_projection_index,
-    remove_claim_projection_index_in_rows,
+    claim_ids_for_predicate_page_in_txn, claim_ids_for_world_page_in_txn,
+    for_each_claim_id_for_predicate_in_txn, maintain_claim_projection_index,
+    next_claim_world_in_txn, remove_claim_projection_index, remove_claim_projection_index_in_rows,
 };
 mod put;
 mod read;
+pub mod relationship_predicates;
 mod scope;
 mod scope_stamp;
 mod scoped_read;
@@ -82,6 +106,7 @@ mod source_trust;
 pub(crate) mod supersession_diff;
 mod supersession_provenance;
 pub(crate) mod transition;
+pub mod world_access;
 mod write_target;
 
 pub use aging_profiles::ClaimAgingProfiles;
@@ -103,14 +128,21 @@ pub use predicate_validators::*;
 pub(crate) use read::*;
 pub(crate) use scope::*;
 pub use scope_stamp::{
-    PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id, substrate_facet_id,
+    ClaimRecordScope, PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id,
+    substrate_facet_id,
 };
-pub(crate) use scope_stamp::{default_facet_in, upgrade_pre_scope_body};
+pub(crate) use scope_stamp::{default_facet_in, record_scope_at, upgrade_pre_scope_body};
 pub use scoped_read::*;
-pub(crate) use scoped_read::{Admitted, claim_access_axes, invalidate_weave_digest_source_in_txn};
+pub(crate) use scoped_read::{
+    Admitted, ClaimReadStatusExt, claim_access_axes, invalidate_weave_digest_source_in_txn,
+};
 pub use source_trust::*;
 pub(crate) use supersession_provenance::{ConflictMarker, conflict_marker};
 pub(crate) use write_target::validate_claim_write_target_in_txn;
 
 #[cfg(test)]
 mod tests;
+
+pub mod reaction_record;
+#[cfg(feature = "sync")]
+pub mod selector_world;

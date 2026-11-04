@@ -27,6 +27,8 @@ use crate::error::{Error, Result};
 
 mod space_probe;
 
+pub(crate) use space_probe::is_space_probe_seat;
+
 pub(in crate::skill_optimize) const COHORT_PREFIX: &[u8] = b"skill_optimize:eval_cohort:v1:";
 pub(in crate::skill_optimize) const EXPOSURE_PREFIX: &[u8] = b"skill_optimize:eval_exposure:v1:";
 const MEMBERSHIP_DOMAIN: &[u8] = b"skill_optimize:eval_cohort_membership:v1\0";
@@ -379,6 +381,23 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             self.open_eval_cohort_in_txn(txn, cohort, kind, consumer, candidate_pin, at)
         })
+    }
+
+    /// Whether [`Self::open_eval_cohort_in_txn`] would serve `cohort` now:
+    /// present and unretired. A swap preflights this before any write, so a
+    /// retired cohort refuses before the manifest moves.
+    /// # Errors
+    /// A missing or retired cohort, or storage errors.
+    pub(crate) fn eval_cohort_serves_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        cohort: &EntityId,
+    ) -> Result<()> {
+        let row = cohort_in_txn(self, txn, cohort)?;
+        if row.retired_at.is_some() {
+            return Err(invalid("a retired eval cohort serves nothing"));
+        }
+        Ok(())
     }
 
     /// [`Self::open_eval_cohort`] under the caller's writer: the serving

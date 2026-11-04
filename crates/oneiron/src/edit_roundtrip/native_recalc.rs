@@ -47,8 +47,13 @@ impl<'a, S: EditSession> NativeFirst<'a, S> {
             return Err(failed("workbook needs a recalc-capable precision fallback"));
         }
         let output = self.host.recalc(doc)?;
-        oneiron_xlsx_formula::preserve_external_links(&doc.bytes, &output, self.limits)
-            .map_err(failed)?;
+        oneiron_xlsx_formula::preserve_external_links(
+            &doc.bytes,
+            &output,
+            self.limits,
+            &crate::office_body::document_resources(),
+        )
+        .map_err(failed)?;
         *self.stamp.borrow_mut() = self.host.recalc_engine();
         Ok(output)
     }
@@ -58,8 +63,13 @@ impl<S: EditSession> EditSession for NativeFirst<'_, S> {
     fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
         *self.stamp.borrow_mut() = None;
         let applied = self.host.apply_edits(doc, plan)?;
-        oneiron_xlsx_formula::preserve_external_links(&doc.bytes, &applied.bytes, self.limits)
-            .map_err(failed)?;
+        oneiron_xlsx_formula::preserve_external_links(
+            &doc.bytes,
+            &applied.bytes,
+            self.limits,
+            &crate::office_body::document_resources(),
+        )
+        .map_err(failed)?;
         Ok(applied)
     }
 
@@ -70,10 +80,13 @@ impl<S: EditSession> EditSession for NativeFirst<'_, S> {
         }
         let clock = self.host.recalc_clock().unwrap_or_else(RecalcClock::system);
         let location = self.host.recalc_location();
-        match self
-            .engine
-            .recalculate_xlsx(&doc.bytes, self.limits, &clock, location.as_ref())
-        {
+        match self.engine.recalculate_xlsx(
+            &doc.bytes,
+            self.limits,
+            &clock,
+            location.as_ref(),
+            &crate::office_body::document_resources(),
+        ) {
             Ok(report) => {
                 let stamp = CalcEngineStamp::new(report.engine.engine, report.engine.version)?;
                 *self.stamp.borrow_mut() = Some(stamp);

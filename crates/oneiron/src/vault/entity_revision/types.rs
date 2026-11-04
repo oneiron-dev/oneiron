@@ -3,11 +3,7 @@
 use crate::{EntityId, error::Result};
 use serde::{Deserialize, Serialize};
 
-/// Opaque singular reference to one retained document frontier.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-pub struct RevisionRef(pub [u8; 16]);
+pub use crate::store::revision_ref::RevisionRef;
 
 /// A published view of an entity's revision state after a change.
 ///
@@ -88,7 +84,7 @@ impl IndexedRevisionInput {
     /// Idle publication asks the embedder only when this is `Some`. `None` —
     /// a text of whitespace and control characters alone — publishes the
     /// revision with no vector and drops the one it had.
-    pub fn payload(&self) -> Option<crate::embed::PendingEmbeddingPayload> {
+    pub fn payload(&self) -> Option<crate::store::embedding::PendingEmbeddingPayload> {
         crate::embed::indexed_payload(self.entity_type, &self.body, &self.fields)
     }
 }
@@ -101,8 +97,8 @@ pub trait IndexedRevisionEmbedder {
     fn embed_revision(&self, input: &IndexedRevisionInput) -> Result<Vec<f32>>;
     /// The device and runtime that compute what [`Self::embed_revision`]
     /// returns, stored beside each vector. Unknown unless overridden.
-    fn provenance(&self) -> crate::embed::EmbeddingProvenance {
-        crate::embed::EmbeddingProvenance::unknown()
+    fn provenance(&self) -> crate::store::embedding::EmbeddingProvenance {
+        crate::store::embedding::EmbeddingProvenance::unknown()
     }
     /// [`Self::embed_revision`] with the device and runtime that computed
     /// the vector. A provider whose answers name their own overrides this;
@@ -110,7 +106,7 @@ pub trait IndexedRevisionEmbedder {
     fn embed_revision_marked(
         &self,
         input: &IndexedRevisionInput,
-    ) -> Result<(Vec<f32>, crate::embed::EmbeddingProvenance)> {
+    ) -> Result<(Vec<f32>, crate::store::embedding::EmbeddingProvenance)> {
         Ok((self.embed_revision(input)?, self.provenance()))
     }
 }

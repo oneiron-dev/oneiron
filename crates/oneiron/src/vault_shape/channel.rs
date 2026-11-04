@@ -430,11 +430,23 @@ impl Vault {
         sources: &mut ShapeSources,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        let name = &request.grant.custody_record_ref;
-        if let Some(record) = resolve_secret_ref_in_txn(&self.store, &wtxn, name)? {
-            sources.list(record);
+        let name = request.grant.custody_record_ref.clone();
+        match self.provision_delegated_identity_with_custody_record_in_txn(
+            &mut wtxn,
+            id,
+            request,
+            requested_at,
+        ) {
+            // The record the provision's custody proof resolved (FIX 5456).
+            Ok((_, record)) => sources.list(record),
+            // A refusal still names the record its check read (FIX 3687).
+            Err(error) => {
+                if let Some(record) = resolve_secret_ref_in_txn(&self.store, &wtxn, &name)? {
+                    sources.list(record);
+                }
+                return Err(error);
+            }
         }
-        self.provision_delegated_identity_in_txn(&mut wtxn, id, request, requested_at)?;
         wtxn.commit()?;
         sources.list(*id);
         Ok(())

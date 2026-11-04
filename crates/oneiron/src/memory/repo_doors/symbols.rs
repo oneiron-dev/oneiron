@@ -4,7 +4,8 @@
 //! renewal keeps the id; a declaration that is missing, released, replaced
 //! or expired answers `repo_stale_lease`. An overlap with another TASK's
 //! live declaration leaves the run's declaration waiting, never refused.
-//! Each door is judged again in the writer that changes the declaration.
+//! Each door is judged again in the writer that changes the declaration,
+//! at the vault clock read inside that writer (FIX 8801).
 //! The owner's `vault.code.symbols.*` doors are unchanged.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,10 +17,10 @@ use super::{
     RepoSymbolsReleaseOutput, RepoSymbolsRenewInput, RepoSymbolsRenewOutput, repo_target,
 };
 use crate::code_symbol::code_symbol_entity_id;
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::task_verb::{SymbolLease, SymbolLeaseFence, SymbolLeaseRun};
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 
 /// The largest lifetime a run declares: the largest integer a JavaScript
 /// number holds exactly, so the guest's number is the engine's.
@@ -95,8 +96,8 @@ impl Memory<'_> {
         let paths = self.repo_symbol_paths(own.stamp.repo, &input.symbols)?;
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, &paths);
         let keys: BTreeSet<String> = input.symbols.iter().map(EntityId::to_hex).collect();
-        let now = self.vault.now_recorded_at();
         let declared = self.vault.with_write_txn_grouped(|txn| {
+            let now = self.vault.now_recorded_at();
             if let Err(refused) = self.vault.readmit_repo_work_in_txn(
                 txn,
                 binding,
@@ -139,8 +140,8 @@ impl Memory<'_> {
         let own = self.repo_own_work(binding, input.work, NO_PATHS, RepoAccessIntent::Read)?;
         let fence = symbol_fence(binding, &own.stamp, input.declaration);
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, NO_PATHS);
-        let now = self.vault.now_recorded_at();
         let renewed = self.vault.with_write_txn_grouped(|txn| {
+            let now = self.vault.now_recorded_at();
             if let Err(refused) = self.vault.readmit_repo_work_in_txn(
                 txn,
                 binding,
@@ -159,10 +160,11 @@ impl Memory<'_> {
         self.repo_declaration_answer(binding, &own, &lease, Vec::new())
     }
 
-    /// `self.code.symbols.release` for a run: removes its own declaration.
-    /// Giving a hold up needs the run's membership and lease, not an edit
-    /// glob. A declaration that is not the TASK's current one of this run,
-    /// or has expired, is a stale lease, and nothing is removed.
+    /// `self.code.symbols.release` for a run: removes its own declaration,
+    /// an expired one included (FIX 7068). Giving a hold up needs the run's
+    /// membership and lease, not an edit glob. A declaration that is not
+    /// the TASK's current one of this run is a stale lease, and nothing is
+    /// removed.
     pub fn repo_symbols_release_for_run(
         &self,
         binding: &RepoRunBinding,
@@ -171,7 +173,6 @@ impl Memory<'_> {
         let own = self.repo_own_work(binding, input.work, NO_PATHS, RepoAccessIntent::Read)?;
         let fence = symbol_fence(binding, &own.stamp, input.declaration);
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, NO_PATHS);
-        let now = self.vault.now_recorded_at();
         let released = self.vault.with_write_txn_grouped(|txn| {
             if let Err(refused) = self.vault.readmit_repo_work_in_txn(
                 txn,
@@ -183,7 +184,7 @@ impl Memory<'_> {
                 return Ok(Err(refused));
             }
             Ok(
-                if crate::task_verb::release_symbols_for_run_in_txn(self.vault, txn, &fence, now)? {
+                if crate::task_verb::release_symbols_for_run_in_txn(self.vault, txn, &fence)? {
                     Ok(())
                 } else {
                     Err(RepoAccessRefusal::StaleLease)

@@ -21,7 +21,8 @@ use super::super::snapshot::{CodebaseFileEntry, CodebaseSnapshot};
 use super::SNAPSHOTS;
 use crate::Vault;
 use crate::code_symbol::{
-    CodeSymbolSource, masked_repo_symbol_texts_in_txn, prepare_code_symbol_graph,
+    CodeSymbolSource, code_symbol_document_in_txn, masked_repo_symbol_texts_in_txn,
+    prepare_code_symbol_graph,
 };
 use crate::error::{Error, Result};
 use crate::origin::secret_projection::index::RepoIndexMarks;
@@ -119,13 +120,23 @@ impl Vault {
                     .iter()
                     .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
             )?;
-            let graph = prepare_code_symbol_graph(
+            // Each source names the file document its symbols are spans on,
+            // as this writer reads it (FIX 7809).
+            let read: &RoTxn<'_> = wtxn;
+            let sources = texts
+                .iter()
+                .map(|(path, text)| {
+                    Ok(CodeSymbolSource::new(path, text).with_document(
+                        code_symbol_document_in_txn(&self.store, read, &snapshot.repo_ref, path)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let mut graph = prepare_code_symbol_graph(
                 snapshot.repo_ref.clone(),
                 snapshot.commit_hash.clone(),
-                texts
-                    .iter()
-                    .map(|(path, text)| CodeSymbolSource::new(path, text)),
+                sources,
             )?;
+            graph.fill_producing_operations_in_txn(&self.store, read)?;
             self.put_prepared_code_symbol_graph_in_txn(
                 wtxn,
                 &artifact,

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{CheckPhase, QueueExportHold, QueueRevisionLink, QueueSealTarget};
 use crate::EntityId;
-use crate::repo_mutation::RepoForkHash;
+use crate::store::repo_fork::RepoForkHash;
 
 /// One pass of the checker drain, as the driver reads it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -63,6 +63,11 @@ pub enum QueueWork {
     HandoffOverlap { batch: String, order: u64 },
     /// Seal a green tree's tested revision, earlier green first (G2 PR3).
     SealTested { target: QueueSealTarget, order: u64 },
+    /// Write a moved HEAD's hold on a live batch's drive record, or clear it
+    /// once HEAD is back (FIX 7310).
+    RecordDiverged { batch: String, order: u64 },
+    /// Release a settled batch's staged-path keep-refs (FIX 7305).
+    ReleasePins { batch: String, order: u64 },
 }
 
 impl QueueWork {
@@ -93,7 +98,9 @@ impl QueueWork {
             | Self::Diagnose { order, .. }
             | Self::RequeueSurvivors { order, .. }
             | Self::LandReviewed { order, .. }
-            | Self::HandoffOverlap { order, .. } => (3, *order),
+            | Self::HandoffOverlap { order, .. }
+            | Self::RecordDiverged { order, .. } => (3, *order),
+            Self::ReleasePins { order, .. } => (4, *order),
         }
     }
 }
@@ -217,7 +224,8 @@ pub struct QueueConflictLink {
 /// What the driver decided for one batch.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QueueBatchDrive {
-    /// Its staged commits carry keep-refs.
+    /// Its staged commits carry keep-refs; false again once a settled
+    /// batch's pins are released (FIX 7305).
     pub pinned: bool,
     pub overlap: Option<QueueConflictLink>,
     pub survivor: Option<QueueSurvivorLink>,

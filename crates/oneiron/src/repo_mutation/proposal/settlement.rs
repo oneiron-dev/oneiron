@@ -39,6 +39,13 @@ impl Vault {
             .get(&self.store, &txn, &id)?
             .ok_or(crate::Error::EntityNotFound)?;
         require_independent(self, &txn, &row, actor)?;
+        // The opener's verified lineage, frozen at admission, and every fork
+        // of it never settle the proposal (FIX 8838).
+        if owner.answers_from_slip_lineage_in_txn(self, &txn, &row.opener_lineage)? {
+            return Err(invalid(
+                "a proposal's opener lineage or its forks cannot settle it",
+            ));
+        }
         if let Some(settled) = &row.settlement {
             return if settled.actor == actor && settled.decision == decision {
                 Ok(row)

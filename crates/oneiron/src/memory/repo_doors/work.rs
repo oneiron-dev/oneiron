@@ -2,6 +2,7 @@
 //! contract the run doors share (CALLS "FIX 6867 run-only ref contract"),
 //! and the resolution of a run's own work.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -14,7 +15,6 @@ use crate::code_view::{CodeViewSet, ViewReceipt, view_receipt_in_txn};
 use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal};
 use crate::git_wire::{
     GitOid, GitRefName, GitWire, GitWireRepo, lock_repository, run_bridged_git_argv,
 };
@@ -24,6 +24,7 @@ use crate::merge_queue::MergeQueue;
 use crate::origin::secret_projection::{RepoSecretAudience, materialize_masked_repo};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal};
 
 /// The queue a run's ref is attached to, read under the repo's coordinator.
 pub(crate) struct RepoQueueTarget {
@@ -39,10 +40,13 @@ pub(crate) struct RepoQueueTarget {
 /// read under the repo's coordinator with the queue's pointers. A detached
 /// HEAD, another ref, a remote pointer, or a store with no queue is
 /// [`RepoAccessRefusal::WrongRef`]: no `main`, no `HEAD` and no per-ref queue
-/// is guessed.
+/// is guessed. A queue whose merge effect needs recovery, or whose HEAD
+/// moved off the queue's head, holds the ref for now: that is the retryable
+/// error it raised, never a wrong ref (FIX 6950).
 ///
 /// # Errors
-/// The coordinator cannot be taken.
+/// The coordinator cannot be taken, or the queue is held for recovery or a
+/// moved HEAD ([`Error::ConcurrentWrite`], retryable).
 pub(crate) fn resolve_repo_queue_target(
     vault: &Vault,
     repo_ref: &RepoRef,
@@ -55,10 +59,12 @@ pub(crate) fn resolve_repo_queue_target(
     if attached_head(&repo).as_deref() != Some(git_ref) {
         return Ok(Err(RepoAccessRefusal::WrongRef));
     }
-    let Ok(pointers) = MergeQueue::open(vault, repo_ref.clone()).and_then(|queue| queue.pointers())
-    else {
-        return Ok(Err(RepoAccessRefusal::WrongRef));
-    };
+    let pointers =
+        match MergeQueue::open(vault, repo_ref.clone()).and_then(|queue| queue.pointers()) {
+            Ok(pointers) => pointers,
+            Err(held @ Error::ConcurrentWrite(_)) => return Err(held),
+            Err(_) => return Ok(Err(RepoAccessRefusal::WrongRef)),
+        };
     Ok(Ok(RepoQueueTarget {
         repo,
         head: pointers.head,
@@ -124,6 +130,7 @@ pub(super) fn work_view(receipt: &ViewReceipt, stamp: &RepoRunStamp) -> RepoWork
             .map(|(path, hash)| super::RepoWorkFile {
                 path: path.clone(),
                 content_hash_blake3: bytes_to_hex_lower(hash),
+                projection: receipt.projections.get(path).cloned(),
             })
             .collect(),
     }
@@ -187,8 +194,8 @@ impl Memory<'_> {
     /// admitted repo's full ref names now, from the folder the stored anchor
     /// names, through the importer's own writer. Only the paths the Grant
     /// reads reach the snapshot, its blobs and its symbols, and the run is
-    /// admitted again in that writer. The snapshot keeps the anchor's own
-    /// project key.
+    /// admitted again in that writer, on every kept path. The snapshot keeps
+    /// the anchor's own project key.
     pub fn repo_snapshots_ingest_for_run(
         &self,
         binding: &RepoRunBinding,
@@ -207,8 +214,17 @@ impl Memory<'_> {
         let Some(anchor) = self.vault.get_codebase_snapshot(&input.repo)? else {
             return Err(refusal_error(RepoAccessRefusal::NoMembership));
         };
-        let bounds = membership.bounds.clone();
-        let select = move |path: &str| bounds.admits_path(RepoAccessIntent::Read, path);
+        // The paths kept are the selection; the final writer admits each of
+        // them again, so a Grant narrowed since keeps none it no longer
+        // reads (FIX 8799).
+        let kept = RefCell::new(Vec::<String>::new());
+        let select = |path: &str| {
+            let admits = membership.bounds.admits_path(RepoAccessIntent::Read, path);
+            if admits {
+                kept.borrow_mut().push(path.to_owned());
+            }
+            admits
+        };
         let at = self.vault.store.clock.now_recorded_at();
         let imported = self.vault.ingest_local_repo_for_run(
             anchor.project_id,
@@ -217,11 +233,12 @@ impl Memory<'_> {
             (TimeRange { start: at, end: at }, at),
             &select,
             |txn| {
+                let selected = repo_target(input.repo, &input.git_ref, kept.borrow().iter());
                 Ok(
                     match self.vault.admit_repo_run_in_txn(
                         txn,
                         binding,
-                        &target,
+                        &selected,
                         RepoAccessIntent::Read,
                     )? {
                         Ok(again) if again.same_lease(&admitted) => Ok(()),
@@ -248,8 +265,8 @@ impl Memory<'_> {
     /// `self.code.work.open` for a run: a fresh private view of the files
     /// the Grant reads, from the immutable tree of the green commit of the
     /// queue the run's ref is attached to. The receipt's own writer admits
-    /// the run again and binds its stamp, under the view's fresh id: two
-    /// opens, even by the same agent, are two works.
+    /// the run again, on every selected path, and binds its stamp, under the
+    /// view's fresh id: two opens, even by the same agent, are two works.
     pub fn repo_work_open_for_run(
         &self,
         binding: &RepoRunBinding,
@@ -272,8 +289,12 @@ impl Memory<'_> {
             .collect();
         // A run's work holds the masked copy of each admitted file a repo
         // mark covers (FIX 7608); its stamp keeps the canonical green.
-        let selected = materialize_masked_repo(self.vault, selected, &RepoSecretAudience::Masked)?
-            .into_contents();
+        let copy = materialize_masked_repo(self.vault, selected, &RepoSecretAudience::Masked)?;
+        // Each masked file's descriptor rides the work's receipt (FIX 8965).
+        let projections = copy.projections();
+        let selected = copy.into_contents();
+        // The final writer admits every selected path again (FIX 8799).
+        let selected_target = repo_target(input.repo, &input.git_ref, selected.keys());
         let entries = selected
             .iter()
             .map(|(path, bytes)| {
@@ -295,12 +316,13 @@ impl Memory<'_> {
             binding.actor.entity_ref(),
             snapshot.fork_hash,
             &selected,
+            projections,
             |txn, view| {
                 Ok(
                     match self.vault.admit_repo_run_in_txn(
                         txn,
                         binding,
-                        &target,
+                        &selected_target,
                         RepoAccessIntent::Read,
                     )? {
                         Ok(again) if again.same_lease(&admitted) => Ok(again.stamp(

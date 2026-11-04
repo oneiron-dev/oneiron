@@ -14,8 +14,9 @@ use crate::calendar::claims::CalendarBusyTransparency;
 /// the runner needs the summary to name the minted EVENT, the description to
 /// build the CAL-09 safeguard's [`CalendarInboundBody`](crate::calendar::CalendarInboundBody), and
 /// the cancelled flag to write `calendar.status` with basis
-/// `imported_cancel`. The three fields are a deliberate CAL-02 amendment to
-/// that skeleton, not an accidental widening of the parsed surface.
+/// `imported_cancel` and the pre-start cancellation outcome. The three fields
+/// are a deliberate CAL-02 amendment to that skeleton, not an accidental
+/// widening of the parsed surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedVEvent {
     /// Original calendar semantics, before UTC conversion.
@@ -36,11 +37,12 @@ pub struct ParsedVEvent {
     /// order (nested components such as `VALARM` excluded). Provenance only —
     /// the authoritative raw bytes live in the feed's blob archive.
     pub raw_component: Vec<u8>,
-    /// `SUMMARY`, unescaped, when present.
+    /// `SUMMARY`, decoded once by the parser, when present.
     pub summary: Option<String>,
-    /// `DESCRIPTION`, unescaped, when present.
+    /// `DESCRIPTION`, decoded once by the parser, when present.
     pub description: Option<String>,
-    /// `STATUS:CANCELLED` as sent by the feed.
+    /// An explicit cancellation as sent by the feed: the VEVENT's own
+    /// `STATUS:CANCELLED`, or `METHOD:CANCEL` on the VCALENDAR carrying it.
     pub cancelled: bool,
 }
 
@@ -53,12 +55,14 @@ pub struct ParsedIcsFeed {
 
 /// Parses one complete `.ics` feed body.
 ///
-/// Strict by design: the input must be UTF-8, wrapped in a single
-/// `BEGIN:VCALENDAR` … `END:VCALENDAR` document, and fully parseable. Every
-/// VEVENT must carry a non-empty `UID`, and any present `SEQUENCE`,
+/// Strict by design: the input must be UTF-8, wrapped in `BEGIN:VCALENDAR` …
+/// `END:VCALENDAR`, and fully parseable once RFC 5545 line folding is undone.
+/// Every VEVENT must carry a non-empty `UID`, and any present `SEQUENCE`,
 /// `DTSTART`, or `DTEND` must be well-formed — a feed the adapter cannot read
 /// completely fails as one typed error rather than diffing as a partial
-/// feed, so a parse failure can never be read as event removal.
+/// feed, so a parse failure can never be read as event removal. Component
+/// names match case-insensitively, so every VEVENT the feed carries, under any
+/// spelling, is in the present set the absence sweep reads.
 ///
 /// # Errors
 ///
@@ -68,18 +72,33 @@ pub struct ParsedIcsFeed {
 /// for `TZID`-parametrized times.
 pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
     let text = std::str::from_utf8(input).map_err(|_| ics_parse("feed body is not valid UTF-8"))?;
-    let trimmed = text.trim();
-    if !trimmed.starts_with("BEGIN:VCALENDAR") || !trimmed.ends_with("END:VCALENDAR") {
+    let unfolded = icalendar::parser::unfold(text);
+    let trimmed = unfolded.trim();
+    let starts = trimmed
+        .get(..BEGIN_VCALENDAR.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(BEGIN_VCALENDAR));
+    let ends = trimmed
+        .get(trimmed.len().saturating_sub(END_VCALENDAR.len())..)
+        .is_some_and(|tail| tail.eq_ignore_ascii_case(END_VCALENDAR));
+    if !starts || !ends {
         return Err(ics_parse("feed body is not a complete VCALENDAR document"));
     }
-    let calendar = icalendar::parser::read_calendar(text)
+    let roots = icalendar::parser::read_components(&unfolded)
         .map_err(|message| ics_parse(&format!("feed body did not parse: {message}")))?;
 
     let mut events = Vec::new();
     let mut seen_uids = std::collections::HashSet::new();
-    for component in &calendar.components {
-        if component.name.as_str() == "VEVENT" {
-            let event = parse_vevent(component)?;
+    for calendar in roots.iter().filter(|root| is_named(root, "VCALENDAR")) {
+        let method_cancel = calendar.properties.iter().any(|prop| {
+            prop.name.as_str().eq_ignore_ascii_case("METHOD")
+                && prop.val.as_str().trim().eq_ignore_ascii_case("CANCEL")
+        });
+        for component in calendar
+            .components
+            .iter()
+            .filter(|component| is_named(component, "VEVENT"))
+        {
+            let event = parse_vevent(component, method_cancel)?;
             // A duplicated UID would attach two live passports for the same
             // (system, uid) — the one-live law fails closed at parse.
             if !seen_uids.insert((event.uid.clone(), event.properties.recurrence_id_utc)) {
@@ -92,12 +111,21 @@ pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
     Ok(ParsedIcsFeed { events })
 }
 
+const BEGIN_VCALENDAR: &str = "BEGIN:VCALENDAR";
+const END_VCALENDAR: &str = "END:VCALENDAR";
+
+/// Whether `component` is named `name` under any ASCII spelling (RFC 5545
+/// names are case-insensitive).
+fn is_named(component: &icalendar::parser::Component<'_>, name: &str) -> bool {
+    component.name.as_str().eq_ignore_ascii_case(name)
+}
+
 /// What one invitation's ICS actually says about itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct InviteIcsIdentity {
     /// The VCALENDAR `METHOD`, as written.
     pub(crate) method: String,
-    /// The single VEVENT's UID, unescaped.
+    /// The single VEVENT's UID, decoded once by the parser.
     pub(crate) uid: String,
     /// The single VEVENT's SEQUENCE (absent reads as 0).
     pub(crate) sequence: u32,
@@ -112,10 +140,12 @@ pub(crate) struct InviteIcsIdentity {
 /// throughout, and one METHOD, UID, ORGANIZER and at most one SEQUENCE. The
 /// transport sends these bytes whole, so a second calendar, a second event
 /// under any spelling, or a repeated identity property is refused rather
-/// than shipped beside the event that was checked.
+/// than shipped beside the event that was checked. Folded lines are unfolded
+/// first, so the identity read is the one the delivered bytes denote.
 pub(crate) fn invite_identity(input: &[u8]) -> Result<InviteIcsIdentity, CalendarError> {
     let text = std::str::from_utf8(input).map_err(|_| ics_parse("invite is not UTF-8"))?;
-    let roots = icalendar::parser::read_calendar_simple(text)
+    let unfolded = icalendar::parser::unfold(text);
+    let roots = icalendar::parser::read_calendar_simple(&unfolded)
         .map_err(|_| ics_parse("invite did not parse"))?;
     let [calendar] = roots.as_slice() else {
         return Err(ics_parse("invite must be exactly one VCALENDAR"));
@@ -195,8 +225,13 @@ fn names_are_upper_case(component: &icalendar::parser::Component<'_>) -> bool {
 }
 
 /// Parses one VEVENT parser component into the calendar-owned row.
+///
+/// The pinned parser has already decoded every TEXT value once, so `UID`,
+/// `SUMMARY`, and `DESCRIPTION` are read as it returns them; decoding again
+/// would turn a literal backslash sequence into different content.
 fn parse_vevent(
     component: &icalendar::parser::Component<'_>,
+    method_cancel: bool,
 ) -> Result<ParsedVEvent, CalendarError> {
     let uid = required_uid(component)?;
     let sequence = vevent_sequence(component)?;
@@ -205,19 +240,20 @@ fn parse_vevent(
     let busy_transparency = CalendarBusyTransparency::from_ics_transp(
         component.find_prop("TRANSP").map(|prop| prop.val.as_str()),
     );
-    let cancelled = component
-        .find_prop("STATUS")
-        .is_some_and(|prop| prop.val.as_str() == "CANCELLED");
+    let cancelled = method_cancel
+        || component
+            .find_prop("STATUS")
+            .is_some_and(|prop| prop.val.as_str().trim().eq_ignore_ascii_case("CANCELLED"));
     let summary = component
         .find_prop("SUMMARY")
-        .map(|prop| prop.val.clone().unescape_text().as_str().to_owned());
+        .map(|prop| prop.val.as_str().to_owned());
     let description = component
         .find_prop("DESCRIPTION")
-        .map(|prop| prop.val.clone().unescape_text().as_str().to_owned());
+        .map(|prop| prop.val.as_str().to_owned());
 
     Ok(ParsedVEvent {
         properties: properties::parse(component)?,
-        content_hash: canonical_vevent_hash(component),
+        content_hash: canonical_vevent_hash(component, method_cancel),
         raw_component: render_raw_component(component),
         uid,
         sequence,
@@ -243,12 +279,13 @@ fn vevent_sequence(component: &icalendar::parser::Component<'_>) -> Result<u32, 
     }
 }
 
-/// Reads the required VEVENT UID, unescaped.
+/// Reads the required VEVENT UID as the parser decoded it, so a literal
+/// backslash in the UID stays in the passport and invite identity.
 fn required_uid(component: &icalendar::parser::Component<'_>) -> Result<String, CalendarError> {
     let prop = component
         .find_prop("UID")
         .ok_or_else(|| ics_parse("VEVENT is missing its UID"))?;
-    let value = prop.val.clone().unescape_text().as_str().to_owned();
+    let value = prop.val.as_str().to_owned();
     if value.is_empty() {
         return Err(ics_parse("VEVENT carries an empty UID"));
     }
@@ -362,42 +399,67 @@ fn parse_datetime_fields(value: &str) -> Result<DateTimeFields, CalendarError> {
 }
 
 /// Days-from-civil UTC conversion for `...Z` values, kept local so this module
-/// adds no second datetime dependency at the border: Howard Hinnant's
-/// proleptic-Gregorian algorithm, pre-epoch instants excluded by the `u64`
-/// image.
+/// adds no second datetime dependency at the border; pre-epoch instants are
+/// excluded by the `u64` image.
 fn unix_seconds(fields: &DateTimeFields) -> Option<u64> {
-    let leap = fields.year % 4 == 0 && (fields.year % 100 != 0 || fields.year % 400 == 0);
-    let days = match fields.month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap => 29,
-        2 => 28,
-        _ => return None,
-    };
-    if fields.day == 0
-        || fields.day > days
-        || fields.hour > 23
-        || fields.minute > 59
-        || fields.second > 59
-    {
+    if fields.hour > 23 || fields.minute > 59 || fields.second > 59 {
         return None;
     }
-
-    let year = i64::from(fields.year);
-    let month = i64::from(fields.month);
-    let adjusted_year = if month <= 2 { year - 1 } else { year };
-    let era = adjusted_year.div_euclid(400);
-    let year_of_era = adjusted_year - era * 400;
-    let month_prime = (month + 9) % 12;
-    let day_of_year = (153 * month_prime + 2) / 5 + i64::from(fields.day) - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    let days = era * 146_097 + day_of_era - 719_468;
+    let days = days_from_civil(fields.year, fields.month, fields.day)?;
     let seconds = days
         .checked_mul(86_400)?
         .checked_add(i64::from(fields.hour) * 3_600)?
         .checked_add(i64::from(fields.minute) * 60)?
         .checked_add(i64::from(fields.second))?;
     u64::try_from(seconds).ok()
+}
+
+/// Days since 1970-01-01 for one proleptic-Gregorian date (Howard Hinnant's
+/// algorithm), or `None` for a day its month does not have.
+fn days_from_civil(year: i32, month: u8, day: u8) -> Option<i64> {
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let month_days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if day == 0 || day > month_days {
+        return None;
+    }
+    let month = i64::from(month);
+    let adjusted_year = i64::from(year) - i64::from(month <= 2);
+    let era = adjusted_year.div_euclid(400);
+    let year_of_era = adjusted_year - era * 400;
+    let month_prime = (month + 9) % 12;
+    let day_of_year = (153 * month_prime + 2) / 5 + i64::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some(era * 146_097 + day_of_era - 719_468)
+}
+
+/// The proleptic-Gregorian `(year, month, day)` for days since 1970-01-01,
+/// the inverse of [`days_from_civil`].
+fn civil_from_days(days: i64) -> Option<(i32, u8, u8)> {
+    let shifted = days.checked_add(719_468)?;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = if month_prime < 10 {
+        month_prime + 3
+    } else {
+        month_prime - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    Some((
+        i32::try_from(year).ok()?,
+        u8::try_from(month).ok()?,
+        u8::try_from(day).ok()?,
+    ))
 }
 
 /// The deterministic canonical VEVENT representation the content hash covers.
@@ -409,8 +471,10 @@ fn unix_seconds(fields: &DateTimeFields) -> Option<u64> {
 /// excluded: reminders are not event content. Two feeds that agree on every
 /// content property therefore hash equal regardless of property order, and
 /// any content drift under an unchanged SEQUENCE still hashes differently —
-/// the same-sequence-drift update path.
-fn canonical_vevent(component: &icalendar::parser::Component<'_>) -> Vec<u8> {
+/// the same-sequence-drift update path. A `METHOD:CANCEL` on the carrying
+/// VCALENDAR is event content too and adds its own line, so a cancellation
+/// that leaves the VEVENT untouched still reads as an update.
+fn canonical_vevent(component: &icalendar::parser::Component<'_>, method_cancel: bool) -> Vec<u8> {
     let mut lines: Vec<String> = component
         .properties
         .iter()
@@ -435,13 +499,19 @@ fn canonical_vevent(component: &icalendar::parser::Component<'_>) -> Vec<u8> {
             line
         })
         .collect();
+    if method_cancel {
+        lines.push("METHOD:CANCEL".to_owned());
+    }
     lines.sort();
     lines.join("\r\n").into_bytes()
 }
 
 /// SHA-256 over [`canonical_vevent`].
-fn canonical_vevent_hash(component: &icalendar::parser::Component<'_>) -> [u8; 32] {
-    let digest = Sha256::digest(canonical_vevent(component));
+fn canonical_vevent_hash(
+    component: &icalendar::parser::Component<'_>,
+    method_cancel: bool,
+) -> [u8; 32] {
+    let digest = Sha256::digest(canonical_vevent(component, method_cancel));
     let mut out = [0_u8; 32];
     out.copy_from_slice(&digest);
     out

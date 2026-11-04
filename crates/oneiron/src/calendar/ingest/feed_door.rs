@@ -1,9 +1,13 @@
 //! Owner-installed ICS feeds and public observations of completed polls.
 use serde::{Deserialize, Serialize};
 
-use super::{IcsFeedCursorSnapshot, IcsFeedPollConfig, IcsPollRunState, ics_feed_cursor_snapshot};
+use super::{
+    IcsFeedCursorSnapshot, IcsFeedFetcher, IcsFeedPollConfig, IcsPollRunState,
+    enqueue_ics_feed_poll, ics_feed_cursor_snapshot, run_ics_feed_poll_with_screener,
+};
+use crate::calendar::safeguard::{CALENDAR_SAFEGUARD_CONFIG_KEY, CalendarBodyScreener};
 use crate::consent::AuthenticatedOwner;
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::{KeyValueAddress, Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, Vault};
 
@@ -68,6 +72,8 @@ fn check_owner(
 
 /// A system names exactly one complete feed: two feeds sharing a system would
 /// otherwise cancel each other's absent UIDs. Reconfiguration cannot change it.
+/// Installation starts the feed's poll chain, due at once; a chain already
+/// pending for the feed is adopted, never forked.
 pub fn configure(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
@@ -77,7 +83,7 @@ pub fn configure(
         .config
         .validate()
         .map_err(|error| MemoryError::bad_request(error.to_string()))?;
-    memory.with_verified_actor_write_txn(|txn| {
+    let row = memory.with_verified_actor_write_txn(|txn| {
         check_owner(memory, owner, txn)?;
         let vault = memory.vault();
         if let Some(row) = FEEDS.get(&vault.store, txn, &input.config.system)? {
@@ -94,7 +100,11 @@ pub fn configure(
         };
         FEEDS.put(&vault.store, txn, &input.config.system, &row)?;
         Ok(row)
-    })
+    })?;
+    let vault = memory.vault();
+    enqueue_ics_feed_poll(vault, row.config.clone(), vault.now_recorded_at())
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    Ok(row)
 }
 
 pub fn get(
@@ -183,4 +193,52 @@ pub fn observe_poll(
         FEEDS.put(&vault.store, txn, &config.system, &row)?;
         Ok(completion)
     })
+}
+
+/// The owner's inbound-safeguard dial (CAL-09): the owner's own keyed value
+/// at [`CALENDAR_SAFEGUARD_CONFIG_KEY`], its last dotted segment the key and
+/// the rest its namespace. Absent, or anything but `true`, is off.
+pub fn inbound_safeguard_enabled(memory: &Memory<'_>) -> MemoryResult<bool> {
+    let mut segments: Vec<String> = CALENDAR_SAFEGUARD_CONFIG_KEY
+        .split('.')
+        .map(str::to_owned)
+        .collect();
+    let key = segments.pop().unwrap_or_default();
+    let item = memory.key_value_get(&KeyValueAddress {
+        namespace: segments,
+        key,
+    })?;
+    Ok(item.is_some_and(|item| item.value == serde_json::Value::Bool(true)))
+}
+
+/// One poll of an installed feed as its owner, recorded on the feed: the
+/// owner's safeguard dial decides whether `screener` (or its recorded
+/// absence) screens each imported admission, the poll runs through
+/// `fetcher`, and the completion lands as the feed's last poll. The manual
+/// poll door and the host's queued-poll worker both run this.
+///
+/// # Errors
+/// The owner no longer holds, the feed moved, or the poll failed.
+pub fn run_installed_poll(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    fetcher: &dyn IcsFeedFetcher,
+    screener: Option<&dyn CalendarBodyScreener>,
+    config: &IcsFeedPollConfig,
+    poll_ref: String,
+) -> MemoryResult<CalendarIcsPollCompletion> {
+    let safeguard_enabled = inbound_safeguard_enabled(memory)?;
+    let vault = memory.vault();
+    let now = vault.now_recorded_at();
+    let outcome = run_ics_feed_poll_with_screener(
+        vault,
+        fetcher,
+        screener,
+        safeguard_enabled,
+        config,
+        now,
+        now,
+    )
+    .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    observe_poll(memory, owner, config, poll_ref, outcome)
 }

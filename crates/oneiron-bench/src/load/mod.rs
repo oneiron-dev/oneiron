@@ -12,6 +12,9 @@
 //! * `oneiron-bench load run --server <oneiron-server> --work <dir> --out <file.json> [flags]`
 //! * `oneiron-bench load startup --server <oneiron-server> --work <dir> --out <file.json>`
 //!   — the startup peak while the shipped local embedding model loads
+//! * `oneiron-bench load corpus-recall --server <oneiron-server> --corpus <turns.jsonl> --work <dir> --out <file.json>`
+//!   — warm recall latency, per stage when the server logs stage timers, on a
+//!   vault seeded from a recorded conversation corpus
 //! * `oneiron-bench load compare <a.json> <b.json>`
 //!
 //! Latencies are measured by the client on loopback, so they include HTTP and
@@ -20,6 +23,7 @@
 
 mod client;
 mod corpus;
+mod corpus_recall;
 mod dream;
 mod embedder;
 mod phases;
@@ -76,6 +80,9 @@ const USAGE: &str = "usage: oneiron-bench load run --server <oneiron-server> --w
 or:    oneiron-bench load dream --server <oneiron-server> --work <dir> --corpus <turns.jsonl> --out <file.json> --model-base-url <url> --model <slug> --model-key-file <path> [flags]\n\
 or:    oneiron-bench load startup --server <oneiron-server> --work <dir> --out <file.json>\n\
   [--label TEXT] [--repeat 3] [--server-env KEY=VALUE]...\n\
+or:    oneiron-bench load corpus-recall --server <oneiron-server> --corpus <turns.jsonl> --work <dir>\n\
+  --out <file.json> [--query TEXT]... [--repeat 10] [--warmup 2] [--limit 20] [--effort light]\n\
+  [--as-of corpus|none] [--claims notes|none] [--profile-repeat N] [--server-env KEY=VALUE]...\n\
 or:    oneiron-bench load compare <a.json> <b.json>";
 
 fn list<T: std::str::FromStr>(value: &str) -> Result<Vec<T>, String> {
@@ -180,9 +187,12 @@ const LINUX_ONLY: &str =
 pub(crate) fn run(args: &[String]) -> ExitCode {
     let linux = cfg!(target_os = "linux");
     let result = match args {
-        [cmd, ..] if (cmd == "run" || cmd == "startup") && !linux => Err(LINUX_ONLY.to_owned()),
+        [cmd, ..] if (cmd == "run" || cmd == "startup" || cmd == "corpus-recall") && !linux => {
+            Err(LINUX_ONLY.to_owned())
+        }
         [cmd, rest @ ..] if cmd == "run" => parse(rest).and_then(|plan| execute(&plan)),
         [cmd, rest @ ..] if cmd == "startup" => startup::run(rest),
+        [cmd, rest @ ..] if cmd == "corpus-recall" => corpus_recall::run(rest),
         [cmd, a, b] if cmd == "compare" => {
             report::compare(Path::new(a), Path::new(b)).and_then(|table| {
                 writeln!(std::io::stdout().lock(), "{table}").map_err(|e| e.to_string())

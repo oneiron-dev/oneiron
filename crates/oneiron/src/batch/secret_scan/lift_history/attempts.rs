@@ -16,8 +16,9 @@ use heed::{RoTxn, RwTxn};
 use super::super::write_payload_hit;
 use super::{Done, LiftCause, Page, hex};
 use crate::Vault;
-use crate::attempt_queue::{AttemptId, decode_record};
+use crate::attempt_queue::decode_record;
 use crate::error::Result;
+use crate::store::attempt_id::AttemptId;
 
 /// The attempt rows after `after` (an attempt id; empty at the start), up to
 /// `limit`.
@@ -67,7 +68,7 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
         return Ok(Done::Clean);
     };
     let mut record = decode_record(&raw, AttemptId::from_bytes(key)?)?;
-    if record.kind == crate::surface_event::SURFACE_EVENT_ATTEMPT_KIND
+    if record.kind == crate::store::dispatch_attempt_kind::SURFACE_EVENT_ATTEMPT_KIND
         && let Some(payload) =
             crate::surface_event::lift_intake_payload_in_txn(vault, txn, &record.payload)?
     {

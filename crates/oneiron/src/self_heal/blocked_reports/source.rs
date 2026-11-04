@@ -566,6 +566,18 @@ pub(crate) fn erase_blocked_source_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
+    erase_blocked_source_actor_as_in_txn(vault, wtxn, actor, None)
+}
+
+/// [`erase_blocked_source_actor_in_txn`] under `act`, the owner act the
+/// erase carries out, when its door bound one: each custody record it
+/// revokes is carried to his other machines too (FIX 11883).
+pub(crate) fn erase_blocked_source_actor_as_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+    act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
+) -> Result<()> {
     let mut receipts = Vec::new();
     let mut steps = Vec::new();
     for row in SOURCE.iter_raw_from(&vault.store, &*wtxn, &[])? {
@@ -584,11 +596,11 @@ pub(crate) fn erase_blocked_source_actor_in_txn(
         }
     }
     for receipt in &receipts {
-        revoke_lifted_in_txn(vault, wtxn, &SOURCE.key_bytes(receipt))?;
+        revoke_lifted_in_txn(vault, wtxn, &SOURCE.key_bytes(receipt), act)?;
         SOURCE.delete(&vault.store, wtxn, receipt)?;
     }
     for step in &steps {
-        revoke_lifted_in_txn(vault, wtxn, &STEPS.key_bytes(step))?;
+        revoke_lifted_in_txn(vault, wtxn, &STEPS.key_bytes(step), act)?;
         STEPS.delete(&vault.store, wtxn, step)?;
     }
     Ok(())
@@ -596,11 +608,17 @@ pub(crate) fn erase_blocked_source_actor_in_txn(
 
 /// Revokes each custody record the side-row wall minted from the row this
 /// table stores under `key`, its full stored key, in `wtxn` (FIX 6710): the
-/// wall names the row by the table's place and that key.
-fn revoke_lifted_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, key: &[u8]) -> Result<()> {
+/// wall names the row by the table's place and that key. Under `act` each
+/// revoke is carried to the owner's other machines (FIX 11883).
+fn revoke_lifted_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &[u8],
+    act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
+) -> Result<()> {
     let place = format!("side:{}", SOURCE.decl().name);
     let origin = crate::batch::secret_scan::side_row_origin(&place, key)?;
-    crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin)
+    crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, act)
 }
 
 /// A hard non-erase delete of `entity` takes the requests kept for it (FIX

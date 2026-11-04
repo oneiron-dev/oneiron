@@ -19,9 +19,6 @@ use super::{
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{
-    ClaimApprovalStatus, ClaimSource, ClaimSubject, decode_claim_body, encode_claim_body,
-};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -33,6 +30,8 @@ use crate::serialize::{ExportBody, ExportBodyFile};
 use crate::temporal::TimeRange;
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body, encode_claim_body};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
 
 impl Vault {
     /// Validates a whole-vault archive (OF-222) and the document its records
@@ -152,6 +151,15 @@ impl Vault {
         // The custody values a result body's sweep replaces, and the body
         // instances it spills into, read and minted before the writer opens.
         let known = super::result_reserve::staged_result_sinks(self, &archive)?;
+        // FIX 588: the digests this import stages are tracked for post-error
+        // cleanup. Declared before the pin-all guard, so on every pre-commit
+        // return `_bodies` drops first, releasing its pins, and this drops
+        // second, once the aborted writer is gone too.
+        let mut cleanup = ImportBodyCleanup {
+            vault: self,
+            staged: Vec::new(),
+            committed: false,
+        };
         // FIX 3677: every body file stays pinned until the import commits or
         // aborts, so the collector takes none a row here is compared with or
         // staged into. The File ASSETs' instances are minted now, as the
@@ -349,10 +357,16 @@ impl Vault {
         // they index are in: each family's records, then indexes, then heads.
         let (restored_side_rows, unchanged_side_rows) =
             super::archive_side_tables::restore_side_rows_in_txn(&self.store, &mut wtxn, &archive)?;
+        // FIX 1162: every imported agent gets its model PERSON in this same
+        // writer, once the bundle's own PERSON and anchor rows are in.
+        super::agent_person_import::ensure_imported_agent_persons_in_txn(
+            self, &mut wtxn, &archive,
+        )?;
         let (imported_results, withheld_results) =
-            put_run_results_in_txn(self, &mut wtxn, &mut archive, known)?;
+            put_run_results_in_txn(self, &mut wtxn, &mut archive, known, &mut cleanup.staged)?;
         let (restored_secrets, unchanged_secrets, skipped_revoked_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &mut archive)?;
+        let owed_secrets = owed_secrets_in_txn(self, &wtxn, &archive.manifest.fold_only_secrets)?;
         // OF-013: each session's floor rises to the archive's and never falls,
         // so numbering here never goes back under an epoch a purge removed.
         let mut floors = archive.spool.rows(ArchiveRecordKind::EpochFloor);
@@ -371,6 +385,7 @@ impl Vault {
             super::import_embedding_setup_in_txn(&self.store, &mut wtxn, &archive)?;
         let setup_rows = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        cleanup.committed = true;
         self.embedding_setup_committed(setup_rows);
         let mut remapped_entities = BTreeMap::new();
         for entry in archive.index.entries(Tag::Model)? {
@@ -393,6 +408,7 @@ impl Vault {
             skipped_revoked_secrets,
             skipped_unproven_regenerates_edges,
             missing_secrets,
+            owed_secrets,
             embedding_setup,
             restored_side_rows,
             unchanged_side_rows,
@@ -468,7 +484,7 @@ fn insert_ready_row<R: Read + Seek>(
     match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let claim = decode_import_claim(&body)?;
-            if crate::learning::is_learning_predicate(&claim.predicate) {
+            if crate::write_envelope::learning_predicate::is_learning_predicate(&claim.predicate) {
                 // Option B (FIX 11626): the row stays archive data; its cells
                 // rebuild from receipts. Mark it omitted so the edge pass
                 // skips its links and the receipt counts it with the rest.
@@ -476,20 +492,20 @@ fn insert_ready_row<R: Read + Seek>(
                 archive.index.remove(Tag::Inserted, id.as_bytes())?;
                 return Ok(());
             }
-            if crate::subject_model::is_subject_model_predicate(&claim.predicate) {
+            if crate::write_envelope::subject_record::is_subject_model_predicate(&claim.predicate) {
                 vault.restore_subject_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-            } else if crate::actor_claims::is_actor_claim_predicate(&claim.predicate) {
+            } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(
+                &claim.predicate,
+            ) {
                 vault.restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else if claim.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
                 vault.restore_reliability_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-            } else if claim.predicate == crate::claim::PREDICATE_SKILL_EDIT_COST {
-                vault.restore_skill_cost_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else {
                 vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             }
         }
         ENTITY_TYPE_SKILL => {
-            let record = crate::skill::decode_skill_record(&body)?;
+            let record = crate::write_envelope::skill_record::decode_skill_record(&body)?;
             if at.section != Section::Skill {
                 return Err(Error::InvariantViolation("skill bundle missing"));
             }
@@ -566,23 +582,50 @@ fn imported_row<R: Read + Seek>(
     Ok(row)
 }
 
+/// The result-body digests this import staged (FIX 588), for post-error
+/// cleanup. A pre-commit failure drops the writer and pin guard first,
+/// then runs this cleanup with the import's pins released; setting
+/// `committed` disarms it, so success and post-commit
+/// receipt errors do no cleanup. Best-effort and warning-only: the
+/// hourly collector stays the backstop for anything left.
+struct ImportBodyCleanup<'a> {
+    vault: &'a Vault,
+    staged: Vec<[u8; 32]>,
+    committed: bool,
+}
+
+impl Drop for ImportBodyCleanup<'_> {
+    fn drop(&mut self) {
+        if self.committed || self.staged.is_empty() {
+            return;
+        }
+        if let Err(error) = self.vault.cleanup_import_staged_bodies(&self.staged) {
+            tracing::warn!(error = %error, "import staged-body cleanup failed");
+        }
+    }
+}
+
 /// Writes each run's results whose bodies came back as that run's
 /// occurrences; a result the export withheld stays a manifest in the
 /// archive. Returns the counts of both. Each body is staged from the archive
 /// as its occurrence goes in, checked against its digest and length, so the
 /// manifests and line indexes are rebuilt from the bytes; the secret scan
 /// reads them again as they go in. No body is held between two occurrences
-/// (FIX 3678): a later occurrence of the same bytes stages them again.
+/// (FIX 3678): a later occurrence of the same bytes stages them again. Each
+/// newly staged archive digest is pushed before the staging calls can fail;
+/// each final digest is retained immediately after staging, before occurrence
+/// validation, for the import's post-error cleanup (FIX 588).
 fn put_run_results_in_txn<R: Read + Seek>(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     archive: &mut IndexedArchive<'_, R>,
-    known: crate::code_run::StagedSinks,
+    known: crate::store::result_manifest::StagedSinks,
+    staged: &mut Vec<[u8; 32]>,
 ) -> Result<(usize, usize)> {
     let (mut imported, mut withheld) = (0, 0);
     // The values custody knows, read in this writer and kept no longer
     // (KS-3): each body's sweep replaces them with their handles.
-    let swept = crate::secret_custody::KnownValues::load_in_writer(&vault.store, wtxn)?
+    let swept = crate::store::known_value_index::KnownValues::load_in_writer(&vault.store, wtxn)?
         .map(std::sync::Arc::new);
     let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
     while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {
@@ -602,9 +645,26 @@ fn put_run_results_in_txn<R: Read + Seek>(
                 continue;
             }
             // Only a body's first occurrence is held to its manifest's length.
-            if archive.index.insert(Tag::Staged, &digest, &[])? && listed != output.bytes {
+            // A newly staged digest is tracked before the length check and
+            // the read/admit/stage calls below, so even a partial stage or
+            // the digest-length error is covered; later occurrences of the
+            // same bytes push nothing again.
+            let fresh = archive.index.insert(Tag::Staged, &digest, &[])?;
+            if fresh {
+                staged.push(digest);
+            }
+            if fresh && listed != output.bytes {
                 return Err(invalid("run result body does not match its digest"));
             }
+            // The manifest path is validated with from_facts' own
+            // predicate before staging publishes the spill: from_facts
+            // rejects an empty/overlong path only after publication, when
+            // cleanup would know just the archive digest (FIX 588).
+            crate::store::result_manifest::validate_text(
+                &output.path,
+                crate::store::result_manifest::CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES,
+                "raw output path",
+            )?;
             // Masked at write as a run's reply body is (FIX 5718 part 3).
             let may_spill = swept.is_some() || listed > vault.code_result_inline_bytes();
             let body = archive.files.read_file(blake3)?;
@@ -621,6 +681,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
                 vault.code_run_output_sink_knowing(known.clone(), swept.clone())?,
                 std::io::Cursor::new(body),
             )?;
+            staged.push(finished.output.raw_blake3);
             let occurrence = finished.at(output.path.clone(), output.complete)?;
             vault.put_code_run_output_in_txn(wtxn, &finished, &occurrence, Some(run_id))?;
             imported += 1;
@@ -647,7 +708,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
             if !came_back {
                 continue;
             }
-            let mut receipt: crate::code_run::ReaderFoldReceipt =
+            let mut receipt: crate::store::reader_fold_receipt::ReaderFoldReceipt =
                 serde_json::from_value(fold.receipt.clone())
                     .map_err(|_| invalid("run fold receipt"))?;
             if receipt.folded.owner != run_id || receipt.folded.path != fold.path {
@@ -655,7 +716,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
             }
             let rtxn: &heed::RoTxn<'_> = wtxn;
             receipt.mark_unresolved(|named| {
-                Ok(crate::provenance::body::owned_body_in_txn(
+                Ok(crate::store::owned_body::owned_body_in_txn(
                     &vault.store,
                     rtxn,
                     &named.owner,
@@ -699,7 +760,7 @@ fn restore_secrets_in_txn<R: Read + Seek>(
     usize,
     usize,
     usize,
-    Vec<crate::secret_custody::SecretCustodyMetadata>,
+    Vec<crate::secret_record::SecretCustodyMetadata>,
 )> {
     use base64::Engine as _;
     let (mut restored, mut unchanged, mut skipped, mut missing) = (0, 0, 0, Vec::new());
@@ -725,7 +786,7 @@ fn restore_secrets_in_txn<R: Read + Seek>(
         let body = base64::engine::general_purpose::STANDARD
             .decode(body)
             .map_err(|_| invalid("invalid archive custody record body"))?;
-        let mut record = crate::secret_custody::decode_secret_custody_body(&body)?;
+        let mut record = crate::secret_record::decode_secret_custody_body(&body)?;
         if record.metadata() != secret.metadata {
             return Err(invalid("archive custody record disagrees with its body"));
         }
@@ -738,9 +799,9 @@ fn restore_secrets_in_txn<R: Read + Seek>(
                 &existing,
                 &record,
             ) {
-                crate::secret_custody::ArchiveSameId::Same => unchanged += 1,
-                crate::secret_custody::ArchiveSameId::Pending => skipped += 1,
-                crate::secret_custody::ArchiveSameId::Different => {
+                crate::secret_record::ArchiveSameId::Same => unchanged += 1,
+                crate::secret_record::ArchiveSameId::Pending => skipped += 1,
+                crate::secret_record::ArchiveSameId::Different => {
                     return Err(invalid(
                         "import ID collides with a different custody record",
                     ));
@@ -755,6 +816,24 @@ fn restore_secrets_in_txn<R: Read + Seek>(
         }
     }
     Ok((restored, unchanged, skipped, missing))
+}
+
+/// The fold-only custody secrets the archive's manifest lists (FIX 12066)
+/// that have no record here, in the import's writer: each is owed through
+/// its export secret supplement.
+fn owed_secrets_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    listed: &[String],
+) -> Result<Vec<EntityId>> {
+    let mut owed = Vec::new();
+    for id in listed {
+        let id = parse_id(id)?;
+        if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &id)? {
+            owed.push(id);
+        }
+    }
+    Ok(owed)
 }
 
 fn validate_existing_source<R: Read + Seek>(
@@ -837,9 +916,9 @@ fn withhold_unborn_projects<R: Read + Seek>(
         let (_, row) = archive
             .entity(&id)?
             .ok_or(Error::InvariantViolation("archive index lost a room"))?;
-        if let Ok(room) =
-            rmp_serde::from_slice::<crate::workspace_roster::ProjectRoom>(&row.body.to_bytes()?)
-            && withheld.contains(&room.project_id)
+        if let Ok(room) = rmp_serde::from_slice::<crate::store::conversation_body::ProjectRoom>(
+            &row.body.to_bytes()?,
+        ) && withheld.contains(&room.project_id)
         {
             archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
         }
@@ -862,7 +941,11 @@ fn map_project_root<R: Read + Seek>(
     let Ok(kind) = vault.project_type_byte() else {
         return Ok(None);
     };
-    let Some(target) = crate::workspace_roster::root_project_in(&vault.store, txn)? else {
+    let Some(target) = vault
+        .store
+        .project_writes
+        .root_project_in(&vault.store, txn)?
+    else {
         return Ok(None);
     };
     let mut source = None;
@@ -970,7 +1053,7 @@ fn omit_project_revisions<R: Read + Seek>(
     vault: &Vault,
     archive: &mut IndexedArchive<'_, R>,
 ) -> Result<()> {
-    let Some(kind) = crate::workspace_roster::project_revision_type(&vault.store) else {
+    let Some(kind) = crate::store::project_kind::project_revision_type(&vault.store) else {
         return Ok(());
     };
     let mut after = None;
@@ -1114,13 +1197,13 @@ fn imported_body(
             encode_claim_body(&body)
         }
         ENTITY_TYPE_SKILL => {
-            let mut body = crate::skill::decode_skill_record(&bytes)?;
+            let mut body = crate::write_envelope::skill_record::decode_skill_record(&bytes)?;
             body.source = ClaimSource::Imported;
             body.generated = false;
             body.human_authored = true;
             body.approval_status = ClaimApprovalStatus::Proposed;
-            body.lifecycle_status = crate::skill::SkillLifecycle::Candidate;
-            crate::skill::encode_skill_record(&body)
+            body.lifecycle_status = crate::write_envelope::skill_record::SkillLifecycle::Candidate;
+            crate::write_envelope::skill_record::encode_skill_record(&body)
         }
         ENTITY_TYPE_AGENT_DEF => {
             let mut body = crate::agent_def::decode_agent_definition(&bytes)?;
@@ -1129,7 +1212,7 @@ fn imported_body(
             body.human_authored = true;
             body.approval_status = ClaimApprovalStatus::Proposed;
             body.enabled = false;
-            body.ceiling = crate::agent_def::AgentCeiling::Proposed;
+            body.ceiling = crate::store::agent_record::AgentCeiling::Proposed;
             crate::agent_def::encode_agent_definition(&body)
         }
         _ => Ok(bytes),
@@ -1144,15 +1227,21 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
                 ClaimSubject::Entity(id) => vec![id],
                 ClaimSubject::Edge { source, target, .. } => vec![source, target],
             };
-            if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
+            if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
                 refs.extend(crate::actor_claims::imported_actor_dependencies(&body)?);
             }
-            if body.predicate == crate::subject_model::PREDICATE_ACTOR_SUBJECT_REF {
-                refs.push(crate::subject_model::validate_actor_subject_claim_structure(&body)?.1);
+            if body.predicate == crate::write_envelope::subject_record::PREDICATE_ACTOR_SUBJECT_REF
+            {
+                refs.push(
+                    crate::write_envelope::subject_record::validate_actor_subject_claim_structure(
+                        &body,
+                    )?
+                    .1,
+                );
             }
             refs
         }
-        ENTITY_TYPE_SKILL => crate::skill::decode_skill_record(bytes)?
+        ENTITY_TYPE_SKILL => crate::write_envelope::skill_record::decode_skill_record(bytes)?
             .forked_from
             .into_iter()
             .collect(),
@@ -1160,11 +1249,9 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             .forked_from
             .into_iter()
             .collect(),
-        ENTITY_TYPE_CONVERSATION => crate::workspace_roster::project_room_dependency(bytes)
-            .into_iter()
-            .collect(),
+        ENTITY_TYPE_CONVERSATION => super::project_room_dependency(bytes).into_iter().collect(),
         ENTITY_TYPE_WORKFLOW => {
-            let definition = crate::agent_def::workflow::decode_workflow(bytes)?;
+            let definition = crate::store::workflow_definition::decode_workflow(bytes)?;
             definition
                 .steps
                 .into_iter()
@@ -1235,10 +1322,12 @@ pub(super) fn import_edge(
     }
     let vad = edge
         .vad
-        .map_or(crate::affect::Vad::NEUTRAL, |v| crate::affect::Vad {
-            valence: v[0],
-            arousal: v[1],
-            dominance: v[2],
+        .map_or(oneiron_contracts::affect::Vad::NEUTRAL, |v| {
+            oneiron_contracts::affect::Vad {
+                valence: v[0],
+                arousal: v[1],
+                dominance: v[2],
+            }
         });
     // The stream alone creates this kind (FIX 5972): an archived link comes
     // back through the internal write, with its own value fields, only once
@@ -1273,17 +1362,15 @@ pub(super) fn import_edge(
     Ok(EdgeImport::Landed)
 }
 
-fn decode_import_claim(bytes: &[u8]) -> Result<crate::claim::ClaimBody> {
+fn decode_import_claim(bytes: &[u8]) -> Result<crate::write_envelope::claim_body::ClaimBody> {
     let body = decode_claim_body(bytes, true)?;
-    if crate::subject_model::is_subject_model_predicate(&body.predicate) {
-        crate::subject_model::imported_subject_body(&body)
-    } else if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
+    if crate::write_envelope::subject_record::is_subject_model_predicate(&body.predicate) {
+        crate::write_envelope::subject_record::imported_subject_body(&body)
+    } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
         crate::actor_claims::imported_actor_body(&body)
     } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
         crate::skill_reliability::imported_reliability_body(&body)
-    } else if body.predicate == crate::claim::PREDICATE_SKILL_EDIT_COST {
-        crate::edit_distance::attribution::imported_skill_cost_body(&body)
-    } else if crate::learning::is_learning_predicate(&body.predicate) {
+    } else if crate::write_envelope::learning_predicate::is_learning_predicate(&body.predicate) {
         // No archive format (FIX 11626 option B): a learning cell is a
         // projector-only view rebuilt from its receipts after import. The row
         // stays archive data under the `learning.*` omission, which the import

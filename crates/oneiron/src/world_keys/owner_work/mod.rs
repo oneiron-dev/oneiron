@@ -314,8 +314,13 @@ impl OwnerWorkReceipt {
                 state: cancel_state,
             })
         };
+        // The receipt reads the fold alone, so it names no world awaiting a
+        // reader: the executor's diagnostics read the home's newest
+        // generation (FIX 4496).
         let home_warning = match recorded.work {
-            OwnerWorkBody::PublishBundle { home } => diagnostics::bundle_home_warning(fold, home),
+            OwnerWorkBody::PublishBundle { home } => {
+                diagnostics::bundle_home_warning(fold, home, &[])
+            }
             OwnerWorkBody::WorldKey { .. }
             | OwnerWorkBody::Root { .. }
             | OwnerWorkBody::Custody { .. }

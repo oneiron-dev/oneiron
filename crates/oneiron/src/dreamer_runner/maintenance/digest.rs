@@ -43,6 +43,12 @@ const DIGEST: SideTable<[u8; 32], ProactivityDigest, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_DIGEST);
 const PRESENTATION: SideTable<(), ProactivityPresentation, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_PRESENTATION);
+/// Whether a masked copy of a `DREAMER_PROACTIVITY_PRESENTATION` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dreamer_proactivity_presentation_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<ProactivityPresentation, LegacyJson>(bytes)
+}
+
 /// Per-recipient time of the last digest that delivered judge or eval label asks.
 const JUDGE_ASK_MARK: SideTable<EntityId, u64, side_table::Raw> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_JUDGE_ASKS);
@@ -68,6 +74,10 @@ pub const NOTE_TOMBSTONE_GROUP: &str = "note.tombstone";
 /// The NOTE tombstone line's view: the owner's tombstone review, where each
 /// proposal is accepted or declined.
 pub const NOTE_TOMBSTONE_VIEW: &str = "/v1/owner/notes/tombstones";
+/// The derived group the recipient's judge asks (OF-420) render under.
+pub const JUDGE_ASK_GROUP: &str = "coach.judge_ask";
+/// The derived group the recipient's eval label asks render under.
+pub const EVAL_LABEL_ASK_GROUP: &str = "coach.eval_label_ask";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityCadence {
@@ -275,8 +285,9 @@ pub struct ProactivityDigest {
     /// view rebuilds its text with (FIX 6411).
     pub presentation: ProactivityPresentation,
     /// The witness an urgent digest was delivered under (FIX 8955): the
-    /// `dreamer.digest.urgent` job whose input keeps the ladder's answer with
-    /// its full receipt. `None` for every other digest.
+    /// `dreamer.digest.urgent` job whose input keeps the ladder's or the
+    /// host-built answer with its full receipt (FIX 10942). `None` for every
+    /// other digest.
     pub witness: Option<crate::attempt_queue::AttemptId>,
 }
 #[derive(Default, Serialize, Deserialize)]

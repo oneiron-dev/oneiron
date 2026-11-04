@@ -51,11 +51,13 @@ impl VaultBridge {
     /// `open`, then this install's own machine profile from the vault's host
     /// root secret (FIX 4730), so the owner's acts carry from it. With
     /// `initializeRoot`, a store this open creates is rooted under the
-    /// secret first, as a new local-origin vault. A secret that cannot
-    /// profile the install refuses the open with the engine's reason; a
-    /// secret that is not the vault's settled root, over a profile that
-    /// already stands, opens and says so in `wrongHostRoot`. `deviceClass`
-    /// is `open`'s (FIX 3833).
+    /// secret first, as a new local-origin vault. With
+    /// `holdCheckpointRootSigner` (FIX 5343) the vault holds this
+    /// install's root as its checkpoint signer, unless the secret went
+    /// unused. A secret that cannot profile the install refuses the open
+    /// with the engine's reason; a secret that is not the vault's settled
+    /// root, over a profile that already stands, opens and says so in
+    /// `wrongHostRoot`. `deviceClass` is `open`'s (FIX 3833).
     #[napi(factory)]
     pub fn open_with_host_root(
         path: String,

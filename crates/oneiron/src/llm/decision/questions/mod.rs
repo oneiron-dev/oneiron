@@ -8,6 +8,7 @@ mod artifact_refresh;
 mod ask_history;
 mod backfill;
 mod criteria;
+mod erase;
 mod graph_ask;
 mod health_ask;
 mod lifetime;
@@ -16,6 +17,7 @@ mod reader_authority;
 mod recipe;
 mod records;
 mod refresh;
+mod response_custody;
 mod role_asks;
 mod saved_reader;
 mod standing;
@@ -26,9 +28,13 @@ mod windows;
 #[cfg(test)]
 mod standing_tests;
 
-pub use answer_scope::question_answers_in_lane;
+pub use answer_scope::{
+    answers_in_lane, calibration_pairs_in_lane, closed_outcome_windows_in_lane,
+    outcome_labels_in_lane, project_bound_outcomes_in_lane, question_answers_in_lane,
+    read_question_in_lane, schedule_backfill_in_lane,
+};
 pub use answers::question_answers;
-pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
+pub(crate) use arrival::project_arrivals_in_txn;
 pub(crate) use artifact_refresh::artifact_unit_receipts;
 pub use artifact_refresh::{
     ArtifactAskRecord, ArtifactAskStanding, ArtifactUnitReceipt, artifact_ask_records,
@@ -42,6 +48,7 @@ pub(crate) use ask_history::{
     StandingReask, record_failed_standing_reask, record_standing_reask_in_txn,
 };
 pub use backfill::schedule_backfill;
+pub(crate) use erase::erase_questions_for_actor_in_txn;
 pub use graph_ask::validate_decision as validate_unit_decision;
 pub use graph_ask::{
     GraphAnswerer, GraphAskFailure, GraphAskReceipts, GraphAskResult, GraphContextSource,
@@ -53,6 +60,7 @@ pub use health_ask::{
     HEALTH_CROSSING_PREDICATE, HEALTH_OUTCOME_PREDICATE, HealthAnswer, HealthBound,
 };
 pub(crate) use lifetime::erase_question_source_in_txn;
+pub(crate) use lifetime::erase_standing_question_in_txn;
 pub(crate) use outcomes::calibration_pairs_in_txn;
 pub use outcomes::{
     calibration_pairs, outcome_labels, person_changed_pairs, project_bound_outcomes,
@@ -68,9 +76,10 @@ pub use refresh::{
     refresh_question, refresh_question_with, refresh_standing_question_with, standing_ask_route,
 };
 pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_question};
+pub(crate) use response_custody::{typed_question_carriage, typed_question_owners};
 pub(crate) use role_asks::keep_artifact_unit_ask;
 pub use role_asks::{QuestionUnitAsk, question_unit_correlation};
-pub(crate) use saved_reader::wake_artifact_reads;
+pub(crate) use saved_reader::{wake_artifact_reads, wake_lane};
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
 pub(crate) use store::read_question_in_txn;
 pub use store::{

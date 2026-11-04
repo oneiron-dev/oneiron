@@ -8,6 +8,7 @@ mod admission;
 mod claim_authoring;
 mod codec;
 mod constants;
+mod deferral;
 mod free_time;
 mod home;
 mod lease_fence;
@@ -19,6 +20,8 @@ mod program;
 #[cfg(feature = "sync")]
 mod progress;
 mod recipe;
+pub mod shadow_values;
+pub mod step_replay;
 mod store;
 mod types;
 mod wake_park;
@@ -43,6 +46,7 @@ pub use crate::dreamer_plugin_suggest::DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE;
 pub use self::claim_authoring::*;
 pub use self::codec::*;
 pub use self::constants::*;
+pub(crate) use self::deferral::{SELECTION_DEFERRED_REASON, selection_deferred};
 pub use self::free_time::*;
 pub(crate) use self::home::reelect_home_in_txn;
 pub(crate) use self::lease_fence::DreamerTryLease;
@@ -68,14 +72,14 @@ pub(crate) use self::program::{
 };
 // DOOR-141 PR3a/PR3b: a turn program's reads, for its host doors and the SDK.
 pub use self::program::{
-    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointConsentView,
-    ProgramCheckpointHeadView, ProgramCheckpointRequest, ProgramCheckpointView,
-    ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
-    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
-    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
-    SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
-    TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_checkpoint, program_run,
-    settled_program_step, turn_program_admission,
+    OwedWakeHoldView, ProgramAdmissionOutcomeView, ProgramCheckpointCallView,
+    ProgramCheckpointConsentView, ProgramCheckpointHeadView, ProgramCheckpointRequest,
+    ProgramCheckpointView, ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView,
+    ProgramQueueView, ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest,
+    ProgramRunStateView, ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView,
+    ProgramTryView, SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
+    TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
+    program_checkpoint, program_run, settled_program_step, turn_program_admission,
 };
 // FIX 5880: the owner's release of a held turn program.
 pub use self::program::{
@@ -117,3 +121,11 @@ pub mod authority;
 
 pub mod connector_event;
 pub mod maintenance;
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::maintenance::call_receipt_accepts_masked;
+pub(crate) use self::maintenance::digest::dreamer_proactivity_presentation_accepts_masked;
+pub(crate) use self::maintenance::dreamer_curator_rubric_accepts_masked;
+pub(crate) use self::maintenance::stewardship::dreamer_stewardship_rules_accepts_masked;
+pub(crate) use self::store::dreamer_parked_accepts_masked;

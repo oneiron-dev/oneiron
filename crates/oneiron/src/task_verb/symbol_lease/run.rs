@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::{LEASES, SymbolLease, blockers, load, save, validate_declaration};
+use super::{LEASES, SymbolLease, blockers, load, observe_declaration, save, validate_declaration};
 use crate::attempt_queue::AttemptId;
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
@@ -60,7 +60,8 @@ impl SymbolLeaseFence {
 /// declarations it waits behind (empty when held). It replaces the same
 /// holder's earlier declaration of `task`, held or not, so that one's id no
 /// longer answers. `None` when another holder's unexpired declaration holds
-/// `task`: a run never takes it over.
+/// `task`: a run never takes it over. Its symbol count and longest symbol
+/// are observed as the scheduler's are (FIX 8798), never refused.
 ///
 /// # Errors
 /// An invalid symbol set or lifetime, a TASK or holder that is not there,
@@ -92,6 +93,7 @@ pub(crate) fn declare_symbols_for_run_in_txn(
         return Ok(None);
     }
     let blocked = blockers(&vault.store, txn, task, &symbols, now)?;
+    observe_declaration(&vault.store, txn, task, &symbols);
     let lease = SymbolLease {
         task_ref: task.to_hex(),
         holder_ref: holder.to_hex(),
@@ -132,8 +134,10 @@ pub(crate) fn renew_symbols_for_run_in_txn(
     Ok(Some(lease))
 }
 
-/// Removes the declaration `fence` names, in `txn`. False, and nothing
-/// removed, when it is missing, released, replaced or expired.
+/// Removes the declaration `fence` names, in `txn`, expired or not: an
+/// expired one is still the run's own, and goes, so no later try inherits
+/// it under a fence it cannot name (FIX 7068). False, and nothing removed,
+/// when it is missing, released or replaced.
 ///
 /// # Errors
 /// A store failure.
@@ -141,9 +145,8 @@ pub(crate) fn release_symbols_for_run_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     fence: &SymbolLeaseFence,
-    now: u64,
 ) -> Result<bool> {
-    if admit_symbol_fence_in_txn(vault, txn, fence, now)?.is_none() {
+    if !load(&vault.store, txn, fence.task)?.is_some_and(|lease| fence.names(&lease)) {
         return Ok(false);
     }
     LEASES.delete(&vault.store, txn, &fence.task)

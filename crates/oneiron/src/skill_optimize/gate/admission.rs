@@ -822,24 +822,3 @@ pub(super) fn provenance_str(record: &SkillRecord, key: &str) -> Option<String> 
         .and_then(|(_, value)| value.as_str())
         .map(str::to_owned)
 }
-
-/// Keeps the most recent [`SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE`] receipts, for
-/// DISPLAY.
-///
-/// The ledger is mint-ordered, so dropping from the front drops the oldest —
-/// the citation-cap choice the reliability claim and the optimize brief both
-/// already make. A verdict cites the evidence it rested on; it is not a copy of
-/// the evidence ledger.
-///
-/// What makes the cap honest rather than a quiet lie is that it is no longer
-/// the only record of the basis: the row also carries the exact COUNT, the
-/// canonical DIGEST of the whole scored set and a truncation marker
-/// ([`HeldOutVerdict::held_out_digest`]), and every comparison this module
-/// makes — accept-time, commit-time and admission-time — runs against those,
-/// never against this list.
-pub(super) fn bounded_receipts(mut receipts: Vec<String>) -> Vec<String> {
-    if receipts.len() > SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE {
-        receipts.drain(..receipts.len() - SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE);
-    }
-    receipts
-}

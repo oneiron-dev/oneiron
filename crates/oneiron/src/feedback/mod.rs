@@ -177,16 +177,16 @@ pub use self::triage::{
     FeedbackTriageContinuation, FeedbackTriageErased, FeedbackTriageFinding, FeedbackTriageHandoff,
     FeedbackTriageHold, FeedbackTriageInput, FeedbackTriageItem, FeedbackTriageJob,
     FeedbackTriageNodeAnswer, FeedbackTriageNodeInput, FeedbackTriageNodeJob, FeedbackTriageOutput,
-    FeedbackTriagePin, FeedbackTriageResult, FeedbackTriageRun, FeedbackTriageRunRequest,
-    FeedbackTriageSourceError, FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault,
-    FeedbackTriageSourceRef, FeedbackTriageSpan, FeedbackTriageSplit, FeedbackTriageStatus,
-    FeedbackTriageStatusRequest, FeedbackTriageStep, FeedbackTriageSweep, FeedbackTriageWork,
-    FeedbackTriageWorkNode, GithubIssueKind, GithubIssuePage, GithubIssueRevision,
-    GithubSweepContinuation,
+    FeedbackTriageParkOutcome, FeedbackTriagePending, FeedbackTriagePin, FeedbackTriageProgress,
+    FeedbackTriageResult, FeedbackTriageRun, FeedbackTriageRunRequest, FeedbackTriageSourceError,
+    FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault, FeedbackTriageSourceRef,
+    FeedbackTriageSpan, FeedbackTriageSplit, FeedbackTriageStatus, FeedbackTriageStatusRequest,
+    FeedbackTriageStep, FeedbackTriageSweep, FeedbackTriageWork, FeedbackTriageWorkNode,
+    GithubIssueKind, GithubIssuePage, GithubIssueRevision, GithubSweepContinuation,
 };
 pub(crate) use self::triage::{
-    acknowledge_feedback_triage_in_txn, check_feedback_triage_findings, job_handoff_in_txn,
-    job_target, node_target,
+    acknowledge_feedback_triage_in_txn, check_feedback_triage_findings, erase_handoff_in_txn,
+    job_handoff_in_txn, job_target, node_target,
 };
 
 #[cfg(test)]

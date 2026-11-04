@@ -7,12 +7,14 @@ use heed::RoTxn;
 use super::super::document_candidate_types::{
     CodePushCandidateState, CodePushCandidateView, ReceivedRefIngress, ResolvedPushCandidate,
 };
-use super::super::document_ingress::CODE_OPERATIONS;
+use super::super::document_ingress::{
+    CODE_OPERATIONS, ProvenanceRefKey, RECEIVED_UPDATES, received_update_hash,
+};
 use super::super::publication::OriginPublicationStatus;
 use super::candidate_digest;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::merge_queue::CodePushSourceLink;
-use crate::repo_mutation::proposal::RepoProposalStatus;
+use crate::store::repo_proposal_record::RepoProposalStatus;
 use crate::{EntityId, Vault};
 
 impl Vault {
@@ -33,6 +35,39 @@ impl Vault {
             if row.source.object_store == store {
                 rows.push((key.provenance, row));
             }
+        }
+        Ok(rows)
+    }
+
+    /// The retained received refs of the object store `store` that moved
+    /// `ref_name` from exactly `old` to exactly `new`, with their push
+    /// provenance, in key order: one keyed read of the update index, never
+    /// a walk of the store's receipts (FIX 7595). A pure read.
+    ///
+    /// # Errors
+    /// A store failure, or an index row whose receipt is gone.
+    pub(crate) fn received_code_ingress_rows_for_update(
+        &self,
+        store: &str,
+        ref_name: &str,
+        old: Option<&str>,
+        new: &str,
+    ) -> Result<Vec<(EntityId, ReceivedRefIngress)>> {
+        let txn = self.store.env.read_txn()?;
+        let update = received_update_hash(store, ref_name, old, Some(new));
+        let mut rows = Vec::new();
+        for row in RECEIVED_UPDATES.iter_from(&self.store, &txn, &update)? {
+            let ((_, provenance), ()) = row?;
+            let row = CODE_OPERATIONS
+                .get(
+                    &self.store,
+                    &txn,
+                    &ProvenanceRefKey::of(provenance, ref_name),
+                )?
+                .ok_or(Error::CorruptedIndex(
+                    "received update index names no receipt",
+                ))?;
+            rows.push((provenance, row));
         }
         Ok(rows)
     }
@@ -193,7 +228,11 @@ impl Vault {
         view.base_revision = Some(resolved.base_revision);
         view.fork_session = Some(resolved.fork_session);
         view.proposal_refs = vec![resolved.proposal_id];
-        view.state = match self.repo_proposal(resolved.proposal_id)? {
+        let proposal = self.repo_proposal(resolved.proposal_id)?;
+        let stack = proposal
+            .as_ref()
+            .and_then(|proposal| proposal.merge_stack.clone());
+        view.state = match proposal {
             None => CodePushCandidateState::Pending,
             Some(proposal) => match proposal.status {
                 _ if proposal.merge_stack.is_some()
@@ -222,9 +261,37 @@ impl Vault {
                     CodePushCandidateState::Landed
                 }
                 RepoProposalStatus::Failed => CodePushCandidateState::RolledBack,
-                RepoProposalStatus::Rejected => CodePushCandidateState::Rejected,
+                // A received candidate's bundle never resolves standalone
+                // (FIX 2938 refuses it in its stack); named for completeness.
+                RepoProposalStatus::Rejected | RepoProposalStatus::Superseded => {
+                    CodePushCandidateState::Rejected
+                }
             },
         };
+        // A quarantine that names its proposal, with no live batch carrying
+        // it on, is where it stands; every check work of its batches is
+        // named (FIX 7536).
+        let (quarantined, checks) = self.queue_proposal_quarantine_and_checks(
+            &row.source.object_store,
+            resolved.proposal_id,
+            &view.batch_refs,
+        )?;
+        let carried_on = match view.state {
+            CodePushCandidateState::Queued => {
+                stack.is_none_or(|stack| !quarantined.contains(&stack))
+            }
+            CodePushCandidateState::Proposed => false,
+            _ => true,
+        };
+        if !quarantined.is_empty() && !carried_on {
+            view.state = CodePushCandidateState::Quarantined;
+        }
+        for batch in quarantined {
+            if !view.batch_refs.contains(&batch) {
+                view.batch_refs.push(batch);
+            }
+        }
+        view.check_work_refs = checks;
         // An active projection hold wins over the proposal's progress, its
         // links kept (FIX 7608 2b-ii-B2).
         if let (Some(_), Some(held)) = (&view.detail, &candidate.hold) {

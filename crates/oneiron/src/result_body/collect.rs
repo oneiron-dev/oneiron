@@ -1,8 +1,13 @@
 //! The result body collector: released bodies first, then orphan files.
 
+use std::collections::BTreeSet;
 use std::time::SystemTime;
 
-use super::files::{BodyEntry, body_entries, remove_unnamed, sync_dir, unlink_body};
+use super::ResultBodyPin;
+use super::files::{
+    BodyEntry, RemoveOutcome, body_entries, remove_unnamed, remove_unnamed_entry_now,
+    remove_unnamed_now, sync_dir, unlink_body,
+};
 use super::{
     RAW_OUTPUT_ROWS, RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, raw_output_handle, unowned_mark_key,
 };
@@ -26,7 +31,8 @@ pub struct ResultBodyCollectReport {
     /// publisher named again before their file went: off the queue, left
     /// as they are.
     pub held: usize,
-    /// Released bodies a reader still pinned: left for a later pass.
+    /// Released bodies, and orphan files (FIX 11137), a reader still
+    /// pinned: left for a later pass.
     pub pinned: usize,
     /// Orphan body files (and line indexes whose body is gone) removed.
     pub orphans: usize,
@@ -61,7 +67,10 @@ impl Vault {
     pub fn collect_result_bodies(&self, limit: usize) -> Result<ResultBodyCollectReport> {
         let mut report = self.collect_released_result_bodies(limit)?;
         if limit > 0 {
-            report.orphans = self.sweep_orphan_result_bodies(&self.store.body_dir()?, limit)?;
+            let (orphans, pinned) =
+                self.sweep_orphan_result_bodies(&self.store.body_dir()?, limit)?;
+            report.orphans = orphans;
+            report.pinned += pinned;
         }
         // Unnamed debris and expired history go by the one retention policy
         // (FIX 6022, 6228), warning-only.
@@ -149,6 +158,55 @@ impl Vault {
         Ok(report)
     }
 
+    /// Gives back a save's `pins` and unlinks each body it brought into
+    /// `bodies/` as a new instance that nothing names once its transaction
+    /// has ended: a refused save, or a copy that skipped its MESSAGE, leaves
+    /// no base copy of off-record bytes for the orphan sweep (FIX 3633). Each
+    /// goes in a fresh writer that finds it unnamed; one a reader pins stays
+    /// for the sweep. Warning-only: it never fails the save it follows.
+    pub(crate) fn discard_unnamed_promoted_bodies(&self, pins: Vec<ResultBodyPin>) {
+        let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
+        let imported: Vec<BodyEntry> = pins
+            .iter()
+            .filter_map(|pin| {
+                let digest = pin.digest()?;
+                let instance = self.result_body_pins.promoted(&digest)?;
+                Some(BodyEntry {
+                    digest,
+                    instance: sealed.then_some(instance),
+                    index: false,
+                })
+            })
+            .collect();
+        drop(pins);
+        if imported.is_empty() {
+            return;
+        }
+        let discarded = self.store.body_dir().and_then(|dir| {
+            let went = self.with_write_txn_grouped(|txn| {
+                let mut went = 0usize;
+                for entry in &imported {
+                    if self.entry_unnamed_in_txn(txn, entry, sealed)?
+                        && remove_unnamed_now(&dir, entry, &self.result_body_pins)?
+                    {
+                        went += 1;
+                    }
+                }
+                Ok(went)
+            })?;
+            if went > 0 {
+                sync_dir(&dir)?;
+            }
+            Ok(())
+        });
+        if let Err(error) = discarded {
+            tracing::warn!(
+                error = %error,
+                "an unnamed promoted result body is left to the orphan sweep"
+            );
+        }
+    }
+
     /// Carries out every body instance retirement nothing names any longer
     /// (KS-2A). Post-commit and warning-only: the intent is durable, so a
     /// failure here is retried by the next pass and never fails the act
@@ -199,12 +257,14 @@ impl Vault {
     /// Removes up to `limit` body files in `dir` that no raw-output row or
     /// descriptor names, each with its line index, and line indexes whose
     /// body is gone: what a writer left before its row committed, or the
-    /// collector left to a reader. Returns how many went.
-    fn sweep_orphan_result_bodies(&self, dir: &BodyDir, limit: usize) -> Result<usize> {
+    /// collector left to a reader. Returns how many went, and how many a
+    /// reader's pin kept (FIX 11137).
+    fn sweep_orphan_result_bodies(&self, dir: &BodyDir, limit: usize) -> Result<(usize, usize)> {
         let now = SystemTime::now();
         let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
         let mut entries = body_entries(dir)?;
         let mut removed = 0;
+        let mut pinned = 0;
         while removed < limit {
             let batch = entries
                 .by_ref()
@@ -220,26 +280,76 @@ impl Vault {
             // Each goes in a fresh writer that finds it unnamed again, so no
             // row naming it commits between that check and the unlink (FIX
             // 5399b).
-            let went = self.with_write_txn_grouped(|txn| {
-                let mut went = 0;
+            let (went, kept) = self.with_write_txn_grouped(|txn| {
+                let (mut went, mut kept) = (0, 0);
                 for entry in &unnamed {
                     if removed + went == limit {
                         break;
                     }
-                    if self.entry_unnamed_in_txn(txn, entry, sealed)?
-                        && remove_unnamed(dir, entry, now, &self.result_body_pins)?
-                    {
-                        went += 1;
+                    if !self.entry_unnamed_in_txn(txn, entry, sealed)? {
+                        continue;
+                    }
+                    match remove_unnamed(dir, entry, now, &self.result_body_pins)? {
+                        RemoveOutcome::Removed => went += 1,
+                        RemoveOutcome::Pinned => kept += 1,
+                        RemoveOutcome::Skipped => {}
                     }
                 }
-                Ok(went)
+                Ok((went, kept))
             })?;
             removed += went;
+            pinned += kept;
         }
         if removed > 0 {
             sync_dir(dir)?;
         }
-        Ok(removed)
+        Ok((removed, pinned))
+    }
+
+    /// Removes the staged `digests` an aborted import left unnamed (FIX
+    /// 588): the import's post-error cleanup, run once its pins are
+    /// released. Each entry goes only once a fresh writer finds it unnamed
+    /// again, as the orphan sweep's do, so a newly named or shared body is
+    /// never deleted; there is no age floor, as a just-staged body is
+    /// still debris once its writer aborted. Returns how many went, how
+    /// many a reader's pin kept, and how many were not their entry's to
+    /// remove. The hourly sweep stays the backstop for what this leaves.
+    pub(crate) fn cleanup_import_staged_bodies(
+        &self,
+        staged: &[[u8; 32]],
+    ) -> Result<(usize, usize, usize)> {
+        if staged.is_empty() {
+            return Ok((0, 0, 0));
+        }
+        let dir = self.store.body_dir()?;
+        let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
+        let wanted: BTreeSet<&[u8; 32]> = staged.iter().collect();
+        let entries = body_entries(&dir)?
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|entry| wanted.contains(&entry.digest))
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            return Ok((0, 0, 0));
+        }
+        let (mut removed, mut pinned, mut skipped) = (0, 0, 0);
+        self.with_write_txn_grouped(|txn| {
+            for entry in &entries {
+                if !self.entry_unnamed_in_txn(txn, entry, sealed)? {
+                    continue;
+                }
+                match remove_unnamed_entry_now(&dir, entry, &self.result_body_pins)? {
+                    RemoveOutcome::Removed => removed += 1,
+                    RemoveOutcome::Pinned => pinned += 1,
+                    RemoveOutcome::Skipped => skipped += 1,
+                }
+            }
+            Ok(())
+        })?;
+        if removed > 0 {
+            sync_dir(&dir)?;
+        }
+        Ok((removed, pinned, skipped))
     }
 
     /// The entries of `batch` nothing names, read in one transaction (see

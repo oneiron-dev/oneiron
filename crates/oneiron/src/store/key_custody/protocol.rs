@@ -28,16 +28,21 @@ use crate::error::{Error, Result};
 pub use super::identity::{CustodyNamespace, CustodyVaultId};
 pub use super::log::{CustodyEpoch, CustodyPosition};
 
+// Where a restore asks its residence home to start the log (FIX 12045).
+pub(crate) use super::anchor::anchored_position;
+
 use super::files::read_whole;
 use super::identity::hex_decode;
 use super::log::{frame_hash, frame_name};
 
 mod drain;
+mod fetched;
 
 pub use self::drain::{
     DRAIN_VERSION, DrainAck, DrainTicket, DrainToken, drain_operation_id, drain_origin,
     drain_placement,
 };
+pub use self::fetched::{CustodyHomeCursor, CustodyHomePage, FetchedCustodySource};
 
 /// One lineage a target holds: a vault's custody in one namespace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

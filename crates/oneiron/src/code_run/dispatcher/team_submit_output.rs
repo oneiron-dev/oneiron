@@ -37,7 +37,7 @@ pub(super) struct OutputDescriptor {
     /// The output's own recorded claim its scope is read from.
     scope_claim: EntityId,
     world: Option<EntityId>,
-    rel: Option<EntityId>,
+    rel: crate::claim::RelationshipScope,
     scope: Option<Value>,
     facet: EntityId,
     project: EntityId,
@@ -57,9 +57,7 @@ impl OutputDescriptor {
         if let Some(world) = self.world {
             candidate = candidate.with_world(world);
         }
-        if let Some(rel) = self.rel {
-            candidate = candidate.with_relationship(rel);
-        }
+        candidate = candidate.with_relationships(self.rel.clone());
         if let Some(scope) = &self.scope {
             candidate = candidate.with_scope(scope.clone());
         }
@@ -75,19 +73,17 @@ impl OutputDescriptor {
             && body.scope_project == self.project
     }
 
-    /// Whether the output's scope still stands in `txn`: the relationship it
-    /// names, if any, must still be a live RELATIONSHIP, as the review's own
-    /// write requires. A refusal is the guest's failure code.
+    /// Whether the output's scope still stands in `txn`: every relationship
+    /// it names must still be a live RELATIONSHIP, as the review's own write
+    /// requires. A refusal is the guest's failure code.
     pub(super) fn scope_stands_in_txn(&self, vault: &Vault, txn: &RoTxn<'_>) -> Result<Read<()>> {
-        let Some(rel) = self.rel else {
-            return Ok(Ok(()));
-        };
-        let found = crate::vault::live_entity_row_in_txn(&vault.store, txn, &rel)?.live_type();
-        Ok(if found == Some(ENTITY_TYPE_RELATIONSHIP) {
-            Ok(())
-        } else {
-            Err(SCOPE_STALE)
-        })
+        for rel in self.rel.iter().flatten() {
+            let found = crate::vault::live_entity_row_in_txn(&vault.store, txn, rel)?.live_type();
+            if found != Some(ENTITY_TYPE_RELATIONSHIP) {
+                return Ok(Err(SCOPE_STALE));
+            }
+        }
+        Ok(Ok(()))
     }
 }
 

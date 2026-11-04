@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::digest::{is_auth_header, request_digest};
 use crate::frame::{MAX_HEADER, PROTOCOL_VERSION};
-use crate::{Failure, MAX_BODY, Refusal, Shape};
+use crate::{Failure, MAX_STREAM, Refusal, Shape};
 
 /// Request headers a call may not carry: the HTTP stack writes the framing and
 /// connection ones itself, the broker sets the encoding (so the reply stays
@@ -29,7 +29,8 @@ const RESERVED_HEADERS: [&str; 13] = [
 const MAX_HEADER_VALUE: usize = 1024;
 
 /// What the daemon asks the broker to send. The body and the key travel as
-/// their own raw segments after it (see `frame`).
+/// their own raw segments after it, a body past [`crate::MAX_BODY`] in
+/// chunks (see `frame`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CallHeader {
@@ -52,6 +53,11 @@ pub struct CallHeader {
     /// A shape that names no model on the wire (a bodyless read of a job or a
     /// file) is bound to it here alone.
     pub wire_model: String,
+    /// Whether the daemon serves from a cloud node (ARCH-0081 §6): the
+    /// broker then sends plain, as gzip costs more on the link than it
+    /// saves. Transport context, not request identity: outside
+    /// [`request_digest`].
+    pub cloud: bool,
     /// [`request_digest`] of the method, path, headers and body.
     pub digest: String,
 }
@@ -66,6 +72,7 @@ impl CallHeader {
         path: String,
         headers: Vec<(String, String)>,
         wire_model: String,
+        cloud: bool,
         body: &[u8],
     ) -> Self {
         let method = shape.method().to_owned();
@@ -79,19 +86,21 @@ impl CallHeader {
             path,
             headers,
             wire_model,
+            cloud,
             digest,
         }
     }
 
     /// Every check on the request, with no I/O: the daemon runs it before it
     /// reads the key, and the broker again before it sends. Returns the URL the
-    /// request goes to. A call too large to frame is refused here too, so the
-    /// daemon never reads a key for a frame the broker would not read.
+    /// request goes to. A call too large to frame, a body past
+    /// [`MAX_STREAM`], is refused here too, so the daemon never reads a key
+    /// for a frame the broker would not read (FIX 1895).
     pub fn check(&self, body: &[u8]) -> Result<Url, Refusal> {
         if self.version != PROTOCOL_VERSION {
             return Err(Refusal::Version);
         }
-        if body.len() > MAX_BODY {
+        if body.len() > MAX_STREAM {
             return Err(Refusal::Body);
         }
         if !serde_json::to_vec(self).is_ok_and(|header| header.len() <= MAX_HEADER) {
@@ -185,7 +194,7 @@ pub struct ReplyHeader {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Outcome {
     /// The provider answered (any status). The headers are stripped, and so
-    /// is a buffered body; a streamed body is checked and passed unchanged.
+    /// is the body: a buffered one whole, a streamed one as it passes.
     Answered {
         /// The HTTP status.
         status: u16,

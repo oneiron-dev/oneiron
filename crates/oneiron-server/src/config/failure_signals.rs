@@ -6,8 +6,9 @@
 //! the sealed code-fix records go. A hosted deployment sends to our own
 //! collector unless told otherwise; elsewhere, with no endpoint, nothing
 //! leaves and sealed records wait in the vault. The destination's credential
-//! never sits in the file: `serve` reads it from
-//! `ONEIRON_FAILURE_SIGNALS_TOKEN`.
+//! never sits in the file: `key_secret` names the vault secret holding the
+//! bearer, read at the custody door when serve starts, else a plain serve
+//! reads `ONEIRON_FAILURE_SIGNALS_TOKEN`.
 //!
 //! `[failure_signals.candidates.<id>]` names the publisher's candidate fixes
 //! the Coach replays in the vault against each real failure: an instruction
@@ -36,6 +37,12 @@ use crate::feedback_delivery::check_endpoint;
 /// Where a vault our cloud hosts sends its failure signals unless told
 /// otherwise.
 pub const CLOUD_FAILURE_SIGNALS_ENDPOINT: &str = "https://oneiron.dev/failure-signals";
+
+/// The custody effector the failure-signal bearer secret is bound to: the
+/// door hands the key to a failure-signal send and to nothing else. The
+/// owner binds it with `POST /v1/owner/secrets/bind`, effector
+/// `failure-signals:send`.
+const FAILURE_SIGNALS_BEARER_EFFECTOR: &str = "failure-signals:send";
 
 const DEFAULT_EVERY_SECS: u64 = 3_600;
 const DEFAULT_BATCH: usize = 64;
@@ -80,6 +87,10 @@ pub struct FailureSignalsConfig {
     pub every_secs: u64,
     /// Sealed code-fix records one delivery carries at most.
     pub batch: usize,
+    /// The vault secret holding the private endpoint's bearer, read at the
+    /// custody door when serve starts; wins over
+    /// `ONEIRON_FAILURE_SIGNALS_TOKEN`.
+    pub key_secret: Option<String>,
     /// The publisher's candidate fixes, by id. A later layer's table
     /// replaces an earlier one's whole.
     pub candidates: BTreeMap<String, PublisherCandidateConfig>,
@@ -91,12 +102,29 @@ impl Default for FailureSignalsConfig {
             endpoint: None,
             every_secs: DEFAULT_EVERY_SECS,
             batch: DEFAULT_BATCH,
+            key_secret: None,
             candidates: BTreeMap::new(),
         }
     }
 }
 
 impl FailureSignalsConfig {
+    /// The bearer serve sends with: the vault secret `key_secret` names,
+    /// read at the custody door bound to `failure-signals:send`; `None`
+    /// when none is named, or when the secret does not resolve (said once).
+    pub(crate) fn bearer_from_secret(
+        &self,
+        vault: &oneiron::Vault,
+    ) -> Option<zeroize::Zeroizing<String>> {
+        let name = self.key_secret.as_deref()?;
+        super::feedback::read_bearer_secret(
+            vault,
+            name,
+            FAILURE_SIGNALS_BEARER_EFFECTOR,
+            "failure_signals.key_secret",
+        )
+    }
+
     /// The endpoint sends go to: the configured one, else our collector
     /// when `hosted`. `None` sends nothing.
     #[must_use]
@@ -109,6 +137,9 @@ impl FailureSignalsConfig {
     pub(super) fn apply_override(&mut self, over: FailureSignalsConfigOverride) {
         if let Some(value) = over.endpoint {
             self.endpoint = Some(value);
+        }
+        if let Some(value) = over.key_secret {
+            self.key_secret = Some(value);
         }
         if let Some(value) = over.every_secs {
             self.every_secs = value;
@@ -137,6 +168,15 @@ impl FailureSignalsConfig {
             self.every_secs > 0 && self.batch > 0,
             "failure_signals.every_secs and batch must be at least 1"
         );
+        if let Some(secret) = &self.key_secret
+            && (secret.is_empty()
+                || secret.len() > 256
+                || !secret.bytes().all(|b| b.is_ascii_graphic()))
+        {
+            anyhow::bail!(
+                "failure_signals.key_secret must name a vault secret (printable ASCII, no spaces); put the key itself in the vault, never in the config file"
+            );
+        }
         if let Some(endpoint) = &self.endpoint {
             check_endpoint(endpoint).map_err(|_| {
                 anyhow::anyhow!(
@@ -257,6 +297,7 @@ fn engine_candidate(
 #[serde(default, deny_unknown_fields)]
 pub(super) struct FailureSignalsConfigOverride {
     pub(super) endpoint: Option<String>,
+    pub(super) key_secret: Option<String>,
     pub(super) every_secs: Option<u64>,
     pub(super) batch: Option<usize>,
     /// File layers only.
@@ -268,6 +309,8 @@ pub(super) fn lookup_failure_signals_override(
 ) -> anyhow::Result<Option<FailureSignalsConfigOverride>> {
     let over = FailureSignalsConfigOverride {
         endpoint: lookup("ONEIRON_FAILURE_SIGNALS_ENDPOINT"),
+        // File-only, like `[linear]`'s secrets: no environment names one.
+        key_secret: None,
         every_secs: lookup_parse(lookup, "ONEIRON_FAILURE_SIGNALS_EVERY_SECS")?,
         batch: lookup_parse(lookup, "ONEIRON_FAILURE_SIGNALS_BATCH")?,
         candidates: None,
@@ -281,6 +324,7 @@ impl std::fmt::Debug for FailureSignalsConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FailureSignalsConfig")
             .field("endpoint_host", &endpoint_host(self.endpoint.as_deref()))
+            .field("key_secret", &self.key_secret)
             .field("every_secs", &self.every_secs)
             .field("batch", &self.batch)
             .field("candidates", &self.candidates)
@@ -292,6 +336,7 @@ impl std::fmt::Debug for FailureSignalsConfigOverride {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FailureSignalsConfigOverride")
             .field("endpoint_host", &endpoint_host(self.endpoint.as_deref()))
+            .field("key_secret", &self.key_secret)
             .field("every_secs", &self.every_secs)
             .field("batch", &self.batch)
             .field("candidates", &self.candidates)

@@ -1,5 +1,6 @@
 //! Connector packs use the engine's real wire probes, never a publisher's grade.
-//! A built-in rides its checked setup connection instead.
+//! A built-in rides the host's isolated probes of its checked setup
+//! connection, or that checked connection alone.
 use super::{
     PackAdapter, PackFitPolicy, PackFitVerdict, PackInstallReceipt, PackInstallStatus, PackKind,
     PackObservedTool, PackPermissions, PackQualification, PackQualifier, PackRuntimeRecipe,
@@ -7,7 +8,8 @@ use super::{
 };
 use crate::Vault;
 use crate::connector_key::qualification::{
-    CONNECTOR_QUALIFICATION_SUITE, ConnectorQualificationReceipt, SETUP_CHECK_QUALIFICATION_SUITE,
+    BUILTIN_PROBE_QUALIFICATION_SUITE, CONNECTOR_QUALIFICATION_SUITE,
+    ConnectorQualificationReceipt, SETUP_CHECK_QUALIFICATION_SUITE,
 };
 use crate::connector_key::{
     ConnectorManifestQualifier, ProbeManifestQualifier, ResolvedConnectorManifest,
@@ -15,6 +17,9 @@ use crate::connector_key::{
 use crate::error::Result;
 use crate::skill::SkillContentHash;
 use serde::{Deserialize, Serialize};
+
+mod builtin_probe;
+pub use builtin_probe::BuiltinProbeQualifier;
 
 /// Source identity and the contract evidence retained in the installed receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -374,9 +379,8 @@ impl Vault {
     /// holds each hook body, and for each hook what its listing replay
     /// ([`Self::hooks_replay_binding_listing`]) lists, the binding it would
     /// get, its body's source, each entry's fact row and every row a
-    /// replayed read served. `None` once a replay's list is: an entry whose
-    /// body heard a verdict whose evidence rows are not known. The
-    /// Candidate, its author and its install are side rows.
+    /// replayed read served. Every listed row is named; an empty list means
+    /// no rows. The Candidate, its author and its install are side rows.
     ///
     /// # Errors
     /// As [`Self::qualify_pack_hooks`].
@@ -385,7 +389,7 @@ impl Vault {
         owner: &crate::consent::AuthenticatedOwner,
         runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
         source_id: crate::EntityId,
-    ) -> Result<(PackHookQualification, Option<Vec<crate::EntityId>>)> {
+    ) -> Result<(PackHookQualification, Vec<crate::EntityId>)> {
         use super::admission::{PACK_CANDIDATE, PackCommit};
         use super::{HookAuthor, PackCandidateReason, PackHookBinding, PackInstallDisposition};
         let source = self
@@ -413,7 +417,7 @@ impl Vault {
         let pack = source.manifest().name.as_str();
         let mut replays = Vec::new();
         let mut passed = true;
-        let mut rows = Some(vec![source_id]);
+        let mut rows = vec![source_id];
         for hook in source.hooks() {
             let (id, row) = PackHookBinding::for_hook(
                 pack,
@@ -425,10 +429,7 @@ impl Vault {
             )?;
             let (entries, listed) =
                 self.hooks_replay_binding_listing(runtime, None, id, &row, None, usize::MAX)?;
-            rows = rows.zip(listed).map(|(mut rows, listed)| {
-                rows.extend(listed);
-                rows
-            });
+            rows.extend(listed);
             passed &= entries.iter().all(|entry| {
                 !matches!(
                     &entry.result,
@@ -438,11 +439,8 @@ impl Vault {
             });
             replays.push(PackHookReplay::new(hook, entries));
         }
-        let rows = rows.map(|mut rows| {
-            rows.sort_unstable();
-            rows.dedup();
-            rows
-        });
+        rows.sort_unstable();
+        rows.dedup();
         if !passed {
             return Ok((
                 PackHookQualification {
@@ -598,6 +596,13 @@ fn validate_connector_evidence(
             ));
         }
         receipt.qualification.validate_setup_check()?;
+    } else if receipt.qualification.suite == BUILTIN_PROBE_QUALIFICATION_SUITE {
+        if !matches!(source.manifest().adapter, Some(PackAdapter::Builtin(_))) {
+            return Err(invalid(
+                "only a built-in connector qualifies on its isolated probe",
+            ));
+        }
+        receipt.qualification.validate_builtin_probe()?;
     } else {
         receipt.qualification.validate()?;
     }

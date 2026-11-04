@@ -21,18 +21,20 @@ use crate::dreamer_consolidation::settle::decision_pages::measure_state;
 use crate::dreamer_consolidation::step_charge::StepChargeTally;
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
-use crate::llm::decision::catalogue::QuestionFamily;
-use crate::llm::decision::{AnswerContract, AskTo, DecisionAnswer, DecisionQuestion};
-use crate::llm::{DurableStepContext, DurableStepResult};
+use crate::llm::decision::AskTo;
+use crate::model_decision::catalogue::QuestionFamily;
+use crate::model_decision::{AnswerContract, DecisionAnswer, DecisionQuestion};
+use crate::model_step_context::DurableStepContext;
+use crate::model_step_error::DurableStepResult;
 
-/// The ids `decisions` name, in order and each once: every read choice
-/// answer that is an id, never [`NONE`]. A probability only says the answer
-/// was read, as before; no decision's probability ranks them.
+/// The ids `decisions` name, in order and each once: every choice answer
+/// that is an id, never [`NONE`]. An answer with no probability (a rule
+/// rung's) names its id too (FIX 10522); no decision's probability ranks
+/// them.
 fn named_ids(decisions: &[KeptDecision]) -> Vec<EntityId> {
     let mut named = Vec::new();
     for decision in decisions {
         if let Some(DecisionAnswer::Choice(label)) = decision.answer()
-            && decision.probability().is_some()
             && label != NONE
             && let Ok(id) = EntityId::from_hex(label)
             && !named.contains(&id)

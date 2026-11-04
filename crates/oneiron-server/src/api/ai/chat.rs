@@ -39,7 +39,6 @@ use oneiron::memory::{
     MessageWriteMode, StreamCadence, StreamCancelReason, StreamSyncVisibility, WitnessAuthor,
     WitnessMessage, WitnessTurn, resolve_entity_ref,
 };
-use oneiron::runtime_hooks::verb::InvocationClaim;
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
 use oneiron::session_lifecycle::SessionKey;
 use oneiron::skill_hub::pack_catalog::HookActorClass;
@@ -64,7 +63,7 @@ fn refused(status: StatusCode, code: &str, message: impl Into<String>) -> Refuse
 use crate::ai_host::payer_funding::room_launch_funding;
 use crate::ai_host::{AiHandle, TurnGuard};
 use crate::api::credential_memory;
-use crate::api::facade::{self, DoorClaim};
+use crate::api::facade::{self, DoorClaim, DoorInvocationClaim};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
@@ -79,6 +78,7 @@ mod hook_ask;
 mod hooks;
 mod recall;
 mod segments;
+pub(crate) use segments::ActionSession;
 mod sitting;
 mod sources;
 
@@ -419,6 +419,7 @@ pub(crate) fn witness_turn(
             author,
             message_type: MESSAGE_TYPE.to_owned(),
             content,
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 0,
@@ -446,9 +447,25 @@ pub(super) async fn chat_turn(
     let claim = match (invocation(&headers), &payload) {
         (Ok(Some(named)), Ok(Json(request))) => {
             let body = turn_invocation_body(&auth, locality, request);
-            match facade::claim_door_invocation(&server, named, body).await {
+            match facade::claim_door_invocation(&server, named, body, auth.principal_entity()).await
+            {
                 DoorClaim::Run(claim) => Some(claim),
-                DoorClaim::Answered(outcome) => return facade::door_replay(outcome),
+                DoorClaim::Answered(outcome) => {
+                    // The waiter's credential is judged again once the wait
+                    // is over, before a reply is its (FIX 8212): a revoked
+                    // or expired one gets the refusal it gets anywhere.
+                    if !auth.credential_is_live(server.vault()) {
+                        return refusal(
+                            StatusCode::UNAUTHORIZED,
+                            "credential_revoked",
+                            "the admission credential is no longer live",
+                        );
+                    }
+                    // The first call's reply, released again for this
+                    // waiter through the same release record as a facade
+                    // waiter's (FIX 10499).
+                    return facade::door_replay_for(server.vault(), &auth, "chat", outcome);
+                }
                 DoorClaim::InFlight => {
                     return refusal(
                         StatusCode::CONFLICT,
@@ -463,23 +480,43 @@ pub(super) async fn chat_turn(
                         "this invocation id names a different call",
                     );
                 }
+                DoorClaim::ReplyNotKept { committed_writes } => {
+                    return refusal(
+                        StatusCode::CONFLICT,
+                        crate::idempotency::REPLY_NOT_KEPT_STATE,
+                        format!(
+                            "the first request with this invocation committed {committed_writes} write(s) while it ran; its reply was not kept"
+                        ),
+                    );
+                }
+                DoorClaim::Erased => {
+                    return refusal(
+                        StatusCode::CONFLICT,
+                        facade::INVOCATION_RESPONSE_ERASED,
+                        "the first response with this invocation was erased",
+                    );
+                }
+                DoorClaim::StoreFailed => {
+                    return refusal(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        facade::INVOCATION_STORE_FAILED,
+                        "the invocation claim could not be stored",
+                    );
+                }
             }
         }
         _ => None,
     };
-    // FIX 6794: the turn reads the vault's memory through the context board,
-    // before anything is written. FIX 8133: the reply's newcomer barrier is
-    // marked before that read, so an attendee who entered once the board was
-    // read stops the reply as one who entered later does.
+    // FIX 8133: the reply's newcomer barrier is marked before the turn's
+    // reads, so an attendee who entered once the board below was read stops
+    // the reply as one who entered later does. FIX 6794: the turn reads the
+    // vault's memory through the context board inside `start_turn`, after
+    // its funding/hook/keepalive refusals (FIX 6924), so those refusals
+    // consume no board.
     let mark = server.vault().container_output_mark();
-    let board = match &payload {
-        Ok(Json(request)) => recall::turn_board(&server, &auth, request).await,
-        Err(_) => Ok(None),
-    };
-    let read = recall::TurnRead { mark, board };
-    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, read) {
+    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, mark).await {
         Ok(started) if started.stream => return streamed(started, claim),
-        Ok(started) => whole(started).await,
+        Ok(started) => return whole(started, claim).await,
         Err(refused) => *refused,
     };
     match claim {
@@ -512,6 +549,9 @@ struct Started {
     turn: EntityId,
     answering: Answering,
     credential: TurnCredential,
+    /// The caller's proved connection and known rows for the cached reply.
+    peer: oneiron::authority::PeerMachine,
+    reply_rows: Vec<EntityId>,
     /// Why the call goes without the context board the turn read (FIX
     /// 8136).
     board_omitted: Option<recall::BoardOmission>,

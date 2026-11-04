@@ -1,0 +1,691 @@
+use super::*;
+use crate::overlay_db::OverlayDb;
+use heed::types::Bytes;
+use heed::{Database, DatabaseFlags, Env, EnvOpenOptions};
+use oneiron_contracts::error::OffRecordError;
+use oneiron_contracts::temporal::TimeRange;
+use std::sync::mpsc::{RecvTimeoutError, sync_channel};
+use std::time::{Duration, Instant};
+
+const CONCURRENCY_TIMEOUT: Duration = Duration::from_secs(1);
+
+fn put_op(data: Vec<u8>) -> BatchOp {
+    BatchOp::Put {
+        id: EntityId::now(),
+        entity_type: 1,
+        occurred: TimeRange { start: 1, end: 1 },
+        learned_at: 1,
+        data,
+        allow_maintenance: false,
+        allow_reserved_predicate: false,
+        hub_sync_imported: false,
+    }
+}
+
+/// A journal entry carrying the role and timestamps a witness write would
+/// preserve; the budget/atomicity tests care about bytes, not the tag.
+fn journal_entry(scope: JournalScope, role: JournalRole, op: BatchOp) -> JournalEntry {
+    JournalEntry {
+        scope,
+        role,
+        learned_at: 1,
+        occurred: TimeRange { start: 1, end: 1 },
+        op,
+    }
+}
+
+fn dupsort_test_db() -> (tempfile::TempDir, Env, Database<Bytes, Bytes>) {
+    let dir = tempfile::tempdir().expect("session overlay test temp dir");
+    // SAFETY: this test owns the freshly created directory and opens it
+    // exactly once; the returned directory outlives the environment.
+    let env = unsafe {
+        EnvOpenOptions::new()
+            .map_size(16 * 1024 * 1024)
+            .max_dbs(1)
+            .open(dir.path())
+            .expect("open session overlay test env")
+    };
+    let mut wtxn = env.write_txn().expect("open setup write txn");
+    let db = env
+        .database_options()
+        .types::<Bytes, Bytes>()
+        .name("rows")
+        .flags(DatabaseFlags::DUP_SORT)
+        .create(&mut wtxn)
+        .expect("create session overlay test database");
+    wtxn.commit().expect("commit session overlay setup");
+    (dir, env, db)
+}
+
+#[test]
+fn same_overlay_segments_serialize_across_threads() -> Result<()> {
+    let budget = 7;
+    let overlay = SessionOverlay::new(budget);
+    let (first_installed_tx, first_installed_rx) = sync_channel(0);
+    let (release_first_tx, release_first_rx) = sync_channel(0);
+    let first_overlay = overlay.clone();
+    let first = std::thread::spawn(move || -> Result<()> {
+        let segment = first_overlay.install_txn_segment()?;
+        first_overlay.put(OverlayKeyspace::Entities, b"a", &[1_u8; 3])?;
+        first_installed_tx
+            .send(())
+            .expect("first install receiver remains live");
+        release_first_rx
+            .recv()
+            .expect("first release sender remains live");
+        segment.commit()
+    });
+    first_installed_rx
+        .recv_timeout(CONCURRENCY_TIMEOUT)
+        .expect("first segment installs");
+
+    let (second_attempting_tx, second_attempting_rx) = sync_channel(0);
+    let (second_installed_tx, second_installed_rx) = sync_channel(0);
+    let second_overlay = overlay.clone();
+    let second = std::thread::spawn(move || -> Result<()> {
+        second_attempting_tx
+            .send(())
+            .expect("second attempt receiver remains live");
+        let segment = second_overlay.install_txn_segment()?;
+        second_installed_tx
+            .send(())
+            .expect("second install receiver remains live");
+        match second_overlay.put(OverlayKeyspace::Entities, b"b", &[2_u8; 3]) {
+            Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
+                budget_bytes,
+                attempted_bytes,
+            })) => {
+                assert_eq!(budget_bytes, budget);
+                assert_eq!(attempted_bytes, budget + 1);
+                segment.commit()
+            }
+            Err(other) => Err(other),
+            Ok(()) => {
+                segment.commit()?;
+                Err(Error::InvariantViolation(
+                    "serialized second segment escaped budget preflight",
+                ))
+            }
+        }
+    });
+    second_attempting_rx
+        .recv_timeout(CONCURRENCY_TIMEOUT)
+        .expect("second thread reaches install");
+
+    // Without the per-overlay permit, this arrives while both previews are
+    // empty; both puts stage, and one of the later applies tears at the budget.
+    let second_was_blocked = match second_installed_rx.recv_timeout(CONCURRENCY_TIMEOUT) {
+        Err(RecvTimeoutError::Timeout) => true,
+        Ok(()) => false,
+        Err(RecvTimeoutError::Disconnected) => {
+            panic!("second installer disconnected before reporting")
+        }
+    };
+    release_first_tx
+        .send(())
+        .expect("first segment remains live until release");
+    if second_was_blocked {
+        second_installed_rx
+            .recv_timeout(CONCURRENCY_TIMEOUT)
+            .expect("second segment installs after first commit");
+    }
+
+    let first_apply = first.join().expect("first segment thread does not panic");
+    let second_apply = second.join().expect("second segment thread does not panic");
+    assert!(
+        second_was_blocked,
+        "second segment installed before the first segment finished"
+    );
+    match first_apply {
+        Ok(()) => {}
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull { .. })) => {
+            panic!("first post-commit apply returned OffRecordOverlayFull")
+        }
+        Err(other) => panic!("first post-commit apply failed: {other}"),
+    }
+    match second_apply {
+        Ok(()) => {}
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull { .. })) => {
+            panic!("second post-commit apply returned OffRecordOverlayFull")
+        }
+        Err(other) => panic!("second segment failed: {other}"),
+    }
+    let snapshot = overlay.snapshot()?;
+    assert_eq!(snapshot.row_count(OverlayKeyspace::Entities), 1);
+    assert_eq!(snapshot.bytes_used(), 4);
+    Ok(())
+}
+
+#[test]
+fn close_wakes_all_blocked_segment_installers() -> Result<()> {
+    let overlay = SessionOverlay::new(64);
+    let (active_installed_tx, active_installed_rx) = sync_channel(0);
+    let (release_active_tx, release_active_rx) = sync_channel(0);
+    let active_overlay = overlay.clone();
+    let active = std::thread::spawn(move || -> Result<()> {
+        let segment = active_overlay.install_txn_segment()?;
+        active_installed_tx
+            .send(())
+            .expect("active install receiver remains live");
+        release_active_rx
+            .recv()
+            .expect("active release sender remains live");
+        drop(segment);
+        Ok(())
+    });
+    active_installed_rx
+        .recv_timeout(CONCURRENCY_TIMEOUT)
+        .expect("active segment installs");
+
+    let (first_attempting_tx, first_attempting_rx) = sync_channel(0);
+    let (first_result_tx, first_result_rx) = sync_channel(0);
+    let first_overlay = overlay.clone();
+    let first_waiter = std::thread::spawn(move || {
+        first_attempting_tx
+            .send(())
+            .expect("first attempt receiver remains live");
+        let result = match first_overlay.install_txn_segment() {
+            Err(Error::OffRecord(OffRecordError::OffRecordOverlayLeaseClosed { .. })) => Ok(()),
+            Err(other) => Err(other),
+            Ok(segment) => {
+                drop(segment);
+                Err(Error::InvariantViolation(
+                    "first blocked installer acquired a closing overlay",
+                ))
+            }
+        };
+        first_result_tx
+            .send(result)
+            .expect("first result receiver remains live");
+    });
+
+    let (second_attempting_tx, second_attempting_rx) = sync_channel(0);
+    let (second_result_tx, second_result_rx) = sync_channel(0);
+    let second_overlay = overlay.clone();
+    let second_waiter = std::thread::spawn(move || {
+        second_attempting_tx
+            .send(())
+            .expect("second attempt receiver remains live");
+        let result = match second_overlay.install_txn_segment() {
+            Err(Error::OffRecord(OffRecordError::OffRecordOverlayLeaseClosed { .. })) => Ok(()),
+            Err(other) => Err(other),
+            Ok(segment) => {
+                drop(segment);
+                Err(Error::InvariantViolation(
+                    "second blocked installer acquired a closing overlay",
+                ))
+            }
+        };
+        second_result_tx
+            .send(result)
+            .expect("second result receiver remains live");
+    });
+
+    first_attempting_rx
+        .recv_timeout(CONCURRENCY_TIMEOUT)
+        .expect("first waiter reaches install");
+    second_attempting_rx
+        .recv_timeout(CONCURRENCY_TIMEOUT)
+        .expect("second waiter reaches install");
+
+    let (close_result_tx, close_result_rx) = sync_channel(0);
+    let closing_overlay = overlay.clone();
+    let closer = std::thread::spawn(move || {
+        close_result_tx
+            .send(closing_overlay.close())
+            .expect("close result receiver remains live");
+    });
+
+    let closing_deadline = Instant::now() + CONCURRENCY_TIMEOUT;
+    loop {
+        let state = overlay
+            .lifecycle
+            .lock()
+            .expect("overlay lifecycle remains available")
+            .state;
+        if state == OverlayLifecycleState::Closing {
+            break;
+        }
+        assert!(
+            Instant::now() < closing_deadline,
+            "closer did not transition the overlay to Closing"
+        );
+        std::thread::yield_now();
+    }
+
+    release_active_tx
+        .send(())
+        .expect("active segment remains live until release");
+    first_result_rx
+        .recv_timeout(CONCURRENCY_TIMEOUT)
+        .expect("first blocked installer wakes on close")?;
+    second_result_rx
+        .recv_timeout(CONCURRENCY_TIMEOUT)
+        .expect("second blocked installer wakes on close")?;
+    close_result_rx
+        .recv_timeout(CONCURRENCY_TIMEOUT)
+        .expect("closer returns after the active segment drains")?;
+
+    active
+        .join()
+        .expect("active segment thread does not panic")?;
+    first_waiter
+        .join()
+        .expect("first blocked installer does not panic");
+    second_waiter
+        .join()
+        .expect("second blocked installer does not panic");
+    closer.join().expect("closer thread does not panic");
+    Ok(())
+}
+
+#[test]
+fn close_while_holding_own_segment_fails_fast() -> Result<()> {
+    let overlay = SessionOverlay::new(64);
+    let segment = overlay.install_txn_segment()?;
+
+    match overlay.close() {
+        Err(Error::InvariantViolation(message)) => assert_eq!(
+            message,
+            "session overlay close called while this thread holds an active txn segment"
+        ),
+        Err(other) => panic!("unexpected close error: {other}"),
+        Ok(()) => panic!("same-thread close unexpectedly succeeded"),
+    }
+
+    drop(segment);
+    let fresh_segment = overlay.install_txn_segment()?;
+    let snapshot = overlay.snapshot()?;
+    assert_eq!(snapshot.bytes_used(), 0);
+    drop(snapshot);
+    drop(fresh_segment);
+    Ok(())
+}
+
+#[test]
+fn apply_is_budget_infallible_after_authoritative_preflight() -> Result<()> {
+    let budget = 8;
+    let overlay = SessionOverlay::new(budget);
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(OverlayKeyspace::Entities, b"a", &[1_u8; 5])?;
+    segment.commit()?;
+    assert_eq!(overlay.snapshot()?.bytes_used(), 6);
+
+    let segment = overlay.install_txn_segment()?;
+    match overlay.put(OverlayKeyspace::Entities, b"b", &[2_u8; 2]) {
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {
+            budget_bytes,
+            attempted_bytes,
+        })) => {
+            assert_eq!(budget_bytes, budget);
+            assert_eq!(attempted_bytes, budget + 1);
+        }
+        Err(other) => panic!("unexpected preflight error: {other}"),
+        Ok(()) => panic!("over-budget mutation escaped preflight"),
+    }
+    match segment.commit() {
+        Ok(()) => {}
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull { .. })) => {
+            panic!("empty post-preflight apply returned OffRecordOverlayFull")
+        }
+        Err(other) => panic!("empty post-preflight apply failed: {other}"),
+    }
+    assert_eq!(overlay.snapshot()?.bytes_used(), 6);
+
+    // Production staging cannot create this state: preflight above rejects it.
+    // Injecting it test-only proves the post-base-commit helper is structurally
+    // budget-free and cannot construct OffRecordOverlayFull even at 9/8 bytes.
+    let segment = overlay.install_txn_segment()?;
+    ACTIVE_SEGMENT.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let active = slot.as_mut().expect("the test segment is installed");
+        active.mutations.push(OverlayMutation::Put {
+            keyspace: OverlayKeyspace::Entities,
+            key: b"b".to_vec(),
+            value: vec![2_u8; 2],
+        });
+    });
+    match segment.commit() {
+        Ok(()) => {}
+        Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull { .. })) => {
+            panic!("post-commit apply reconstructed OffRecordOverlayFull")
+        }
+        Err(other) => panic!("post-commit apply failed: {other}"),
+    }
+    let snapshot = overlay.snapshot()?;
+    assert_eq!(snapshot.row_count(OverlayKeyspace::Entities), 2);
+    assert_eq!(snapshot.bytes_used(), budget + 1);
+    Ok(())
+}
+
+#[test]
+fn delete_removes_overlay_only_rows_but_retains_base_masks() -> Result<()> {
+    let keyspace = OverlayKeyspace::Entities;
+    let key = b"key";
+
+    let overlay_only = SessionOverlay::new(64);
+    let segment = overlay_only.install_txn_segment()?;
+    overlay_only.put(keyspace, key, b"overlay")?;
+    overlay_only.delete_with_base_backing(keyspace, key, false)?;
+    segment.commit()?;
+    let snapshot = overlay_only.snapshot()?;
+    assert_eq!(snapshot.bytes_used(), 0);
+    assert_eq!(snapshot.row_count(keyspace), 0);
+
+    // delete -> re-put -> delete on a base-backed key must still end tombstoned:
+    // base backing is read from the base row, not the intervening overlay Present.
+    let base_backed = SessionOverlay::new(64);
+    let segment = base_backed.install_txn_segment()?;
+    base_backed.delete_with_base_backing(keyspace, key, true)?;
+    base_backed.put(keyspace, key, b"replacement")?;
+    base_backed.delete_with_base_backing(keyspace, key, true)?;
+    segment.commit()?;
+    let snapshot = base_backed.snapshot()?;
+    assert_eq!(snapshot.bytes_used(), key.len());
+    assert_eq!(
+        snapshot.merge_rows(keyspace, vec![(key.to_vec(), b"base".to_vec())]),
+        Vec::<(Vec<u8>, Vec<u8>)>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn delete_duplicate_removes_overlay_only_value_without_tombstone() -> Result<()> {
+    let keyspace = OverlayKeyspace::TextPostings;
+    let key = b"term";
+    let mut base_value = vec![0_u8; 17];
+    base_value[15] = 1;
+    let mut overlay_value = vec![0_u8; 17];
+    overlay_value[15] = 2;
+    let (_dir, env, base) = dupsort_test_db();
+    let mut setup_txn = env.write_txn()?;
+    base.put(&mut setup_txn, key, &base_value)?;
+    setup_txn.commit()?;
+
+    let overlay = SessionOverlay::new(4096);
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(keyspace, key, &overlay_value)?;
+    overlay.delete_duplicate(keyspace, key, &overlay_value, false)?;
+    segment.commit()?;
+
+    let snapshot = overlay.snapshot()?;
+    assert_eq!(snapshot.bytes_used(), 0);
+
+    let view = OverlayDb::composed(base, overlay, Arc::new(snapshot), keyspace);
+    let rtxn = env.read_txn()?;
+    let values = view
+        .get_duplicates(&rtxn, key)?
+        .expect("different base posting remains visible")
+        .map(|row| row.map(|(_, value)| value.into_owned()))
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(values, vec![base_value]);
+    Ok(())
+}
+
+#[test]
+fn delete_duplicate_retains_base_backed_tombstone() -> Result<()> {
+    let keyspace = OverlayKeyspace::TextPostings;
+    let key = b"term";
+    let mut value = vec![0_u8; 17];
+    value[15] = 1;
+    let (_dir, env, base) = dupsort_test_db();
+    let mut setup_txn = env.write_txn()?;
+    base.put(&mut setup_txn, key, &value)?;
+    setup_txn.commit()?;
+
+    let overlay = SessionOverlay::new(4096);
+    let segment = overlay.install_txn_segment()?;
+    overlay.delete_duplicate(keyspace, key, &value, true)?;
+    segment.commit()?;
+
+    let snapshot = overlay.snapshot()?;
+    assert_eq!(snapshot.bytes_used(), key.len() + value.len());
+
+    let view = OverlayDb::composed(base, overlay, Arc::new(snapshot), keyspace);
+    let rtxn = env.read_txn()?;
+    assert!(view.get_duplicates(&rtxn, key)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn abort_reclaims_staged_journal_bytes() -> Result<()> {
+    let overlay = SessionOverlay::new(4096);
+    let segment = overlay.install_txn_segment()?;
+    let scope = JournalScope::new(EntityId::now(), EntityId::now());
+    overlay.stage_journal_entry(journal_entry(
+        scope,
+        JournalRole::TurnPut,
+        put_op(vec![7_u8; 128]),
+    ))?;
+    drop(segment);
+
+    let snapshot = overlay.snapshot()?;
+    assert_eq!(snapshot.journal_ops(scope).len(), 0);
+    assert_eq!(snapshot.bytes_used(), 0);
+    Ok(())
+}
+
+#[test]
+fn stage_journal_without_segment_fails_closed() {
+    let overlay = SessionOverlay::new(4096);
+    let scope = JournalScope::new(EntityId::now(), EntityId::now());
+
+    match overlay.stage_journal_entry(journal_entry(
+        scope,
+        JournalRole::TurnPut,
+        BatchOp::Delete {
+            id: EntityId::now(),
+        },
+    )) {
+        Err(Error::InvariantViolation(_)) => {}
+        Err(other) => panic!("unexpected error: {other}"),
+        Ok(()) => panic!("segment-less journal staging unexpectedly succeeded"),
+    }
+}
+
+/// The namespace-separation contract. A session alias must not parse as a
+/// base short id, or a room alias could collide with — and, through the
+/// composed overlay ∪ base read, MASK — a real base entity's alias.
+/// Mirrors `api/core.rs::parse_short_ref_parts` /
+/// `mcp.rs::validate_short_ref_parts`: two lowercase letters then digits.
+fn parses_as_base_short_id(short_id: &str) -> bool {
+    let bytes = short_id.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_lowercase()
+        && bytes[1].is_ascii_lowercase()
+        && bytes[2..].iter().all(u8::is_ascii_digit)
+}
+
+#[test]
+fn session_short_ids_are_unique_and_outside_the_base_namespace() -> Result<()> {
+    let overlay = SessionOverlay::new(4096);
+    let segment = overlay.install_txn_segment()?;
+
+    let mut seen = BTreeSet::new();
+    for index in 0_u8..5 {
+        let id = EntityId::now();
+        let (short_id, content_hash) = if index == 0 {
+            super::hygiene_tests::observe_short_id_scratch(
+                super::hygiene_tests::ShortIdScratch::NewForwardKey,
+                || overlay.alloc_session_short_id(&id, &[index]),
+            )?
+        } else {
+            overlay.alloc_session_short_id(&id, &[index])?
+        };
+
+        assert!(
+            !parses_as_base_short_id(&short_id),
+            "session alias {short_id} parses as a base short id"
+        );
+        assert!(
+            short_id.starts_with(SESSION_SHORT_ID_SIGIL),
+            "session alias {short_id} lacks the room sigil"
+        );
+        assert_eq!(content_hash, session_short_id_content_hash(&[index]));
+        assert!(
+            seen.insert(short_id.clone()),
+            "session alias {short_id} was allocated twice in one room"
+        );
+
+        // Both rows land, and the forward row resolves back to the entity.
+        let forward_key = encode_session_short_id_forward_key(&short_id, content_hash);
+        let snapshot = overlay.snapshot()?;
+        match snapshot.lookup_single(OverlayKeyspace::ShortIds, &forward_key) {
+            SnapshotLookup::Present(value) => assert_eq!(value, id.as_bytes()),
+            _ => panic!("forward session short-id row missing for {short_id}"),
+        }
+        match snapshot.lookup_single(OverlayKeyspace::ShortIdsReverse, id.as_bytes()) {
+            SnapshotLookup::Present(value) => assert_eq!(value, forward_key),
+            _ => panic!("reverse session short-id row missing for {short_id}"),
+        }
+    }
+
+    drop(segment);
+    Ok(())
+}
+
+/// Re-allocating keeps the alias stable and retires the stale forward row:
+/// the content hash is part of the forward KEY, so a body change would
+/// otherwise leave a second forward row resolving the same alias.
+#[test]
+fn reallocating_keeps_the_alias_and_retires_the_stale_forward_row() -> Result<()> {
+    let overlay = SessionOverlay::new(4096);
+    let segment = overlay.install_txn_segment()?;
+
+    let id = EntityId::now();
+    let (first, first_hash) = overlay.alloc_session_short_id(&id, b"body-one")?;
+    let (second, second_hash) = super::hygiene_tests::observe_short_id_scratch(
+        super::hygiene_tests::ShortIdScratch::StaleForwardKey,
+        || overlay.alloc_session_short_id(&id, b"body-two"),
+    )?;
+
+    assert_eq!(first, second, "the room alias must be stable for an entity");
+    assert_ne!(
+        first_hash, second_hash,
+        "fixture bodies must hash differently for this test to mean anything"
+    );
+
+    let snapshot = overlay.snapshot()?;
+    // The stale row was overlay-only, so the delete REMOVES it outright
+    // rather than tombstoning it — no wasted budget byte. `Passthrough`
+    // then falls through to base, which by the sigil rule can never hold a
+    // session alias, so the alias genuinely resolves to nothing.
+    assert!(
+        matches!(
+            snapshot.lookup_single(
+                OverlayKeyspace::ShortIds,
+                &encode_session_short_id_forward_key(&first, first_hash),
+            ),
+            SnapshotLookup::Passthrough
+        ),
+        "the stale forward row survived a content change"
+    );
+    assert!(
+        matches!(
+            snapshot.lookup_single(
+                OverlayKeyspace::ShortIds,
+                &encode_session_short_id_forward_key(&second, second_hash),
+            ),
+            SnapshotLookup::Present(_)
+        ),
+        "the refreshed forward row is missing"
+    );
+
+    drop(snapshot);
+    segment.commit()?;
+    assert_ne!(second_hash, session_short_id_content_hash(b"body-three"));
+    // No txn segment: the stale-key delete fails before staging. Both the
+    // encoded key and the borrowed alias must scrub on this error exit.
+    let failure = super::hygiene_tests::observe_short_id_scratch(
+        super::hygiene_tests::ShortIdScratch::StaleForwardKey,
+        || overlay.alloc_session_short_id(&id, b"body-three"),
+    );
+    assert!(matches!(failure, Err(Error::InvariantViolation(_))));
+    let failure = super::hygiene_tests::observe_short_id_scratch(
+        super::hygiene_tests::ShortIdScratch::Alias,
+        || overlay.alloc_session_short_id(&id, b"body-three"),
+    );
+    assert!(matches!(failure, Err(Error::InvariantViolation(_))));
+    Ok(())
+}
+
+#[test]
+fn closed_overlay_retains_taint_until_registry_release_without_wiping_live_state() -> Result<()> {
+    let overlay = SessionOverlay::new(4096);
+    let id = EntityId::now();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(OverlayKeyspace::Entities, id.as_bytes(), b"private-row")?;
+    segment.commit()?;
+    // Closing does not scrub an Arc also held by the registry taint guard.
+    assert!(overlay.contains_entity(&id)?);
+    overlay.close()?;
+    assert!(overlay.contains_entity(&id)?);
+    assert!(matches!(
+        overlay.snapshot(),
+        Err(Error::OffRecord(
+            OffRecordError::OffRecordOverlayLeaseClosed { .. }
+        ))
+    ));
+    Ok(())
+}
+
+#[test]
+fn journal_refuses_payloads_outside_its_scrubbed_vocabulary() -> Result<()> {
+    let overlay = SessionOverlay::new(4096);
+    let segment = overlay.install_txn_segment()?;
+    let scope = JournalScope::new(EntityId::now(), EntityId::now());
+    let result = overlay.stage_journal_entry(journal_entry(
+        scope,
+        JournalRole::TurnOwnedArtifact,
+        BatchOp::ReconcileLexicalQueryHints {
+            source: EntityId::now(),
+            keep: Vec::new(),
+        },
+    ));
+    assert!(matches!(result, Err(Error::InvariantViolation(_))));
+    segment.commit()?;
+    assert!(overlay.snapshot()?.journal_ops(scope).is_empty());
+    Ok(())
+}
+
+#[test]
+fn live_snapshot_defers_old_body_scrub_until_its_final_release() -> Result<()> {
+    use super::hygiene_tests::{allocation, observe_drop};
+    use super::keyspace::{KeyspaceState, OverlayValue};
+
+    let overlay = SessionOverlay::new(4096);
+    let id = EntityId::now();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(
+        OverlayKeyspace::Entities,
+        id.as_bytes(),
+        b"snapshot-private-body",
+    )?;
+    segment.commit()?;
+    let snapshot = overlay.snapshot()?;
+    let KeyspaceState::Single { rows, .. } =
+        snapshot.state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
+    else {
+        panic!("entities are single valued");
+    };
+    let Some(OverlayValue::Present(bytes)) = rows.get(id.as_bytes().as_slice()) else {
+        panic!("snapshot owns old body");
+    };
+    let watched = allocation(bytes);
+    let segment = overlay.install_txn_segment()?;
+    observe_drop(watched, false, || {
+        overlay
+            .put(
+                OverlayKeyspace::Entities,
+                id.as_bytes(),
+                b"replacement-body",
+            )
+            .unwrap();
+        segment.commit().unwrap();
+    });
+    assert!(
+        matches!(snapshot.lookup_single(OverlayKeyspace::Entities, id.as_bytes()), SnapshotLookup::Present(ref value) if value == b"snapshot-private-body")
+    );
+    observe_drop(watched, true, || drop(snapshot));
+    Ok(())
+}

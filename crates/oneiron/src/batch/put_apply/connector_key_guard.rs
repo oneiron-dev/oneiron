@@ -31,13 +31,15 @@ pub(super) fn validate_connector_manifest_put(
             let old = crate::connector_key::decode_connector_key_body(
                 &previous[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )?;
-            let leaves_pending = old.status == crate::connector_key::ConnectorKeyStatus::Pending
+            let leaves_pending = old.status
+                == crate::connector_key_status::ConnectorKeyStatus::Pending
                 && incoming.status != old.status;
             if leaves_pending
                 || incoming.retained_manifest != old.retained_manifest
                 || incoming.protocol_revision != old.protocol_revision
                 || incoming.pending_manifest != old.pending_manifest
                 || incoming.slate_ref != old.slate_ref
+                || incoming.staged_slate_ref != old.staged_slate_ref
                 || incoming.slate_revision != old.slate_revision
                 || incoming.admission_epoch != old.admission_epoch
                 || incoming.consent_required != old.consent_required

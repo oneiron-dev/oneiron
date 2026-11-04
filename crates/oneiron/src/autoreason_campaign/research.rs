@@ -23,7 +23,10 @@
 //!   record of that landing, its common ancestor and its validation overlap,
 //!   and is refused until a held-out win in this campaign turned merge
 //!   crossover on. A controller weaves only a claim it wrote; one past
-//!   Proposed stands only on the gate's Allow for it under the owner's Grant.
+//!   Proposed stands only where the gate recorded the owner's auto-weave
+//!   Grant for it, scoped to this campaign, its skill or the claim's project
+//!   (minted by `vault.consent.create_auto_weave_grant`; the gate's Allow
+//!   alone no longer counts).
 //! - Parents rank by the DGM formula until the engine estimator's information
 //!   gain wins a held-out selection benchmark (`estimator`). Each round
 //!   receipts every branch's Beta belief either way.
@@ -38,14 +41,19 @@ use super::selection::{
     decide_experiment_for, selection_policy_for,
 };
 use super::{CampaignDatasetRef, CampaignError};
-use crate::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
+use crate::agent_dispatch::AgentDispatcher;
+use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::run_tree::{RunTree, RunTreeNode, render_run_tree};
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::{EvalSeat, GoalAxisKind, GoalAxisSpec, skill_edit_goal};
 use crate::{
     AttemptId, AttemptQueue, ClaimApprovalStatus, ClaimLifecycleStatus, EntityId, Error, Result,
     Vault,
+};
+use crate::{
+    attempt_queue::run_tree_view::{RunTree, RunTreeNode},
+    run_tree::render_run_tree,
 };
 
 mod binding;
@@ -105,8 +113,6 @@ const ROUND: SideTable<([u8; 16], u64), SelectionReceipt, Named> =
     SideTable::new(&side_table::AUTORESEARCH_ROUND);
 
 const MAX_REF_BYTES: usize = 256;
-const MAX_REFS: usize = 64;
-const MAX_WEAVE_PARENTS: usize = 8;
 /// The gate's recorded content kind and outcomes a weave claim is read by.
 const WEAVE_CONTENT_KIND: &str = "claim";
 const OUTCOME_ALLOW: &str = "allow";
@@ -449,15 +455,18 @@ fn bounded(value: &str, what: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn bounded_refs(refs: &[String], required: bool) -> Result<()> {
+/// Evidence names its receipt refs, each bounded. How many it names is
+/// measured against the vault's row-items limit, which asks past its bound
+/// and keeps every ref (FIX 9121, rule 5).
+pub(super) fn bounded_refs(vault: &Vault, refs: &[String], required: bool) -> Result<()> {
     if (required && refs.is_empty())
-        || refs.len() > MAX_REFS
         || refs
             .iter()
             .any(|value| value.trim().is_empty() || value.len() > MAX_REF_BYTES)
     {
-        return Err(invalid("evidence names one to 64 bounded receipt refs"));
+        return Err(invalid("evidence names at least one bounded receipt ref"));
     }
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, refs.len() as u64);
     Ok(())
 }
 

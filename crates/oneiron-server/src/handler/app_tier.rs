@@ -35,7 +35,8 @@ pub(super) async fn handle_sync_message(
             super::lfs_chunks::handle(server, payload, direct_tx, conn_state, session_gone).await
         }
         SyncMessage::AssetBody { tag, payload } => {
-            super::asset_bodies::handle(server, conn_state, tag, &payload, direct_tx)
+            super::asset_bodies::handle(server, conn_state, tag, payload, direct_tx)
+                .await
                 .map(ControlFlow::Continue)
         }
         SyncMessage::LeafKey { tag, payload } => {
@@ -449,6 +450,17 @@ fn answer_app_message(
             && crate::livequery::machine_handoff_method(&request.method)
         {
             let peer = state.peer_machine(&server.vault);
+            // FIX 11113: counted as the bound path counts, under the machine
+            // the upgrade proved.
+            let actor = match &peer {
+                oneiron::authority::PeerMachine::Proven { machine, .. } => machine.to_hex(),
+                oneiron::authority::PeerMachine::Unknown => "unauthenticated".to_owned(),
+            };
+            let _ = server.wire_telemetry.record(
+                &request.method,
+                &actor,
+                oneiron_vault_contract::now_ts(),
+            );
             let conn = connection
                 .as_deref()
                 .map_or(0, crate::livequery::connection::Connection::conn_id);
@@ -508,6 +520,7 @@ fn answer_app_message(
                 request,
                 &mut state.residence_index,
                 &mut state.authority_append_stage,
+                &mut state.residence_touch,
             )?
             .queued(conn)
         } else {

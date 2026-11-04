@@ -273,6 +273,10 @@ pub struct SnapshotCapability {
     pub encoding: String,
     pub hash: String,
     pub state_kinds: Vec<String>,
+    /// The worker's attention and position settings digest, named in hello;
+    /// `None` on workers that predate it.
+    #[serde(default)]
+    pub attention: Option<String>,
 }
 
 impl SnapshotCapability {
@@ -587,6 +591,8 @@ pub enum SessionInvalidation {
     WorkerEpoch,
     /// The worker or the host evicted it.
     Evicted,
+    /// The vault locked: every session of it is released with the key.
+    VaultLocked,
     /// The worker no longer holds it resident.
     ResidencyLost,
 }

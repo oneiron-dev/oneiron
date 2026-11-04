@@ -2,7 +2,7 @@
 //! The durable bytes never enter a decay operation. Only the context view changes.
 
 use crate::side_table::{self, Raw, SideTable};
-use crate::{Error, Result, Vault};
+use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Deserializer, Serialize, de};
 
 /// The occurrence path a context output's manifest names. Its body is one of
@@ -331,10 +331,24 @@ impl OutputContextEntry {
 /// Stores an output in the vault's result-body store, keyed by its content.
 /// No interpretation or claim write.
 pub fn store_output(vault: &Vault, bytes: &[u8]) -> Result<OutputRef> {
+    store_output_sourced(vault, bytes, None)
+}
+
+/// [`store_output`] with the rows the output was made from, or `None` when
+/// any of them is unknown (FIX 10447, Engine 10-31 00:19): they are recorded
+/// as its occurrence's input rows, so once any of them is erased or
+/// withdrawn, every read of the reference ([`restore_output`],
+/// [`summarize_output`]) is the withheld mark. The reference and the stored
+/// bytes stay.
+pub fn store_output_sourced(
+    vault: &Vault,
+    bytes: &[u8],
+    sources: Option<Vec<EntityId>>,
+) -> Result<OutputRef> {
     let mut sink = vault.code_run_output_sink()?;
     sink.write(bytes)?;
     Ok(vault
-        .publish_code_run_output(CONTEXT_OUTPUT_PATH.to_owned(), sink, true, None)?
+        .publish_code_run_output_sourced(CONTEXT_OUTPUT_PATH.to_owned(), sink, true, None, sources)?
         .output_ref())
 }
 
@@ -344,13 +358,51 @@ pub fn store_output(vault: &Vault, bytes: &[u8]) -> Result<OutputRef> {
 /// is redacted, the stored body never rewritten.
 pub fn restore_output(vault: &Vault, source: OutputRef) -> Result<Vec<u8>> {
     if !output_clean(vault, source)? {
-        return Ok(crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
-            .as_bytes()
-            .to_vec());
+        return Ok(
+            crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+                .as_bytes()
+                .to_vec(),
+        );
     }
     vault
         .get_raw_body(source)?
         .ok_or(Error::CorruptedIndex("missing recoverable output"))
+}
+
+/// Bytes of a stored output a windowed read carries: the compaction window's
+/// for one observation.
+pub const OUTPUT_WINDOW_BYTES: usize = 256 * 1024;
+
+/// [`restore_output`] up to `cap` bytes (FIX 314): the whole body within
+/// them, else its first `cap` bytes, read by range, and a note naming the
+/// whole stored body. Nothing past `cap` is read.
+pub fn restore_output_window(vault: &Vault, source: OutputRef, cap: usize) -> Result<Vec<u8>> {
+    if source.byte_len <= cap as u64 {
+        return restore_output(vault, source);
+    }
+    if !output_clean(vault, source)? {
+        return Ok(
+            crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+                .as_bytes()
+                .to_vec(),
+        );
+    }
+    // A ranged read checks the manifest it is given: this one names the
+    // path every context output's does.
+    let mut output = crate::store::result_manifest::CodeRunRawOutput::of_ref(source);
+    output.path = CONTEXT_OUTPUT_PATH.to_owned();
+    let mut head = vault
+        .read_code_run_raw_output_range(&output, 0, cap)?
+        .ok_or(Error::CorruptedIndex("missing recoverable output"))?;
+    let note = format!(
+        "\n[the first {} of {} bytes; the whole result is stored as output:blake3:{}:{}]",
+        head.len(),
+        source.byte_len,
+        crate::entity_id::bytes_to_hex_lower(&source.hash),
+        source.byte_len,
+    );
+    head.extend_from_slice(note.as_bytes());
+    Ok(head)
 }
 
 /// Whether the body `source` names may enter model context as it stands. A
@@ -360,7 +412,7 @@ fn output_clean(vault: &Vault, source: OutputRef) -> Result<bool> {
     crate::engine_executor::clean_for_context(
         &crate::code_run::ExecutorStorage::Canonical(vault),
         None,
-        &crate::code_run::CodeRunRawOutput::of_ref(source),
+        &crate::store::result_manifest::CodeRunRawOutput::of_ref(source),
     )
 }
 
@@ -375,9 +427,10 @@ pub fn summarize_output(
     summarize: impl FnOnce(&[u8]) -> Result<String>,
 ) -> Result<String> {
     if !output_clean(vault, source)? {
-        return Ok(crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned());
+        return Ok(crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned());
     }
-    let bytes = restore_output(vault, source)?;
+    // A summary made already is one keyed read; the body is read only to
+    // make one (FIX 314).
     let key = (source.hash, *blake3::hash(recipe).as_bytes());
     {
         let txn = vault.store.env.read_txn()?;
@@ -385,6 +438,7 @@ pub fn summarize_output(
             return Ok(existing);
         }
     }
+    let bytes = restore_output(vault, source)?;
     let summary = summarize(&bytes)?;
     vault.with_write_txn_grouped(|txn| {
         if let Some(existing) = OUTPUT_SUMMARY.get(&vault.store, txn, &key)? {

@@ -8,7 +8,9 @@
 //! its deadline ([`ADMISSION_DEADLINE`]); no count refuses one. Grants go out
 //! in that order whenever a slot is free ([`ADMISSION_SLOTS`]: grants under
 //! way and admitted connections no accept took yet), so acknowledgements run
-//! side by side and a slow one holds only its own slot. A granted admission
+//! side by side and a slow one holds only its own slot, and that for at most
+//! [`ACKNOWLEDGEMENT_TIMEOUT`] (FIX 11152): a granted peer that withholds
+//! stream credit frees its slot then, not at the deadline. A granted admission
 //! rechecks its grant, sends the acknowledgement its dialer waits for, and
 //! only then is admitted; one that expired waiting is never acknowledged.
 //! With a slot free, an admission is granted as it arrives.
@@ -16,7 +18,7 @@
 //! Every exit after the gate's proof leaves one path receipt through the
 //! admission's guard: admitted once its acknowledgement is sent, or failed
 //! with its stage (the deadline, the queue's close, the acknowledgement's
-//! open, write or finish, or the admission's own end). A grant revoked
+//! open, write, stall or finish, or the admission's own end). A grant revoked
 //! before dispatch leaves the gate's refusal receipt instead. TLS, pre-gate
 //! and policy failures keep the receipts the gate already leaves.
 
@@ -30,6 +32,11 @@ use super::*;
 /// its acknowledgement sent, before it fails and its connection closes
 /// (CALLS ADMISSION_DEADLINE).
 const ADMISSION_DEADLINE: Duration = Duration::from_secs(30);
+
+/// How long a granted admission's acknowledgement may take to open, write
+/// and finish before it fails and frees its slot (FIX 11152). Well above a
+/// slow link's round trips, well below [`ADMISSION_DEADLINE`].
+const ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Grants under way and admitted connections no accept took yet, at once:
 /// the capacity of the channel admitted connections queued on before
@@ -249,6 +256,9 @@ enum AdmissionExit {
     AcknowledgementOpen(String),
     /// The acknowledgement was not written.
     AcknowledgementWrite(String),
+    /// The acknowledgement did not end within [`ACKNOWLEDGEMENT_TIMEOUT`]:
+    /// the peer withheld its stream credit.
+    AcknowledgementStalled,
     /// The acknowledgement stream did not finish.
     AcknowledgementFinish(String),
     /// Its task ended first: cancelled, or the transport stopped.
@@ -263,6 +273,7 @@ impl AdmissionExit {
             Self::DeadlineExpired => "deadline expired".to_owned(),
             Self::AcknowledgementOpen(error) => format!("acknowledgement open: {error}"),
             Self::AcknowledgementWrite(error) => format!("acknowledgement write: {error}"),
+            Self::AcknowledgementStalled => "acknowledgement stalled".to_owned(),
             Self::AcknowledgementFinish(error) => format!("acknowledgement finish: {error}"),
             Self::Cancelled => "cancelled".to_owned(),
         }
@@ -355,11 +366,14 @@ impl Admission<'_> {
                 return self.release(None);
             }
         };
-        let acknowledged = tokio::time::timeout_at(deadline, acknowledge(&self.connection)).await;
+        let stalled_at = tokio::time::Instant::now() + ACKNOWLEDGEMENT_TIMEOUT;
+        let acknowledged =
+            tokio::time::timeout_at(deadline.min(stalled_at), acknowledge(&self.connection)).await;
         match acknowledged {
             Ok(Ok(())) => self.admitted(machine),
             Ok(Err(exit)) => self.exit(exit),
-            Err(_) => self.exit(AdmissionExit::DeadlineExpired),
+            Err(_) if Instant::now() >= self.deadline => self.exit(AdmissionExit::DeadlineExpired),
+            Err(_) => self.exit(AdmissionExit::AcknowledgementStalled),
         }
     }
 

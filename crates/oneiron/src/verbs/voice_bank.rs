@@ -18,13 +18,13 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::llm::ModelLocality;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::voice_identity::ref_bank::{
+use crate::verbs::voice_records::{
     VoiceBankActor, VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRegisterClip,
     VoiceRenderConsentWrite, VoiceRenderDecision, VoiceTargetRecord,
 };
-use crate::voice_identity::{VoiceConsentBasis, VoiceConsentState};
+use crate::verbs::voice_records::{VoiceConsentBasis, VoiceConsentState};
 
-pub use crate::voice_identity::ref_bank::{
+pub use crate::verbs::voice_records::{
     VoiceBankInspection, VoiceClipSummary, VoiceDroppedTargetView, VoiceIdentityView,
     VoicePackSummary, VoiceReferenceFenceView, VoiceRenderConsentView, VoiceRenderEventView,
     VoiceTargetCloneView, VoiceTargetInspection, VoiceTargetRender,
@@ -174,6 +174,9 @@ pub struct VoiceTargetReceipt {
     /// Unix seconds.
     pub cloned_at: u64,
     pub revision: String,
+    /// The vendor holds the clone until the voice is verified there: no
+    /// finished clone yet (FIX 1567, FIX 11479).
+    pub awaiting_verification: bool,
 }
 
 /// `vault.voices.targets.evict`'s input: the voice and the target whose

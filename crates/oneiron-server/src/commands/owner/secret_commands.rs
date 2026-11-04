@@ -8,7 +8,7 @@ use super::{
     SecretsCommand, Write, emit, io, local_owner, open_stopped_vault, open_vault,
     resolve_serve_config,
 };
-use crate::owner::{pending_custody, secret_bindings, secrets};
+use crate::owner::{export_supplement, pending_custody, secret_bindings, secrets};
 
 pub fn secret_scan(args: SecretScanArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
@@ -50,6 +50,8 @@ pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
         SecretsCommand::Bind(args) => emit(&bind_secret(*args)?),
         SecretsCommand::Unbind(args) => emit(&unbind_secret(*args)?),
         SecretsCommand::Pending(args) => pending_custody(*args),
+        SecretsCommand::ImportSupplement(args) => emit(&import_supplement(*args)?),
+        SecretsCommand::ShowSupplement(args) => emit(&show_supplement(*args)?),
     }
 }
 
@@ -224,6 +226,72 @@ fn pending_custody(args: crate::cli::SecretPendingArgs) -> anyhow::Result<()> {
     }
 }
 
+/// The largest supplement read taken from stdin: a sealed copy's base64
+/// beside its request's fields.
+const SUPPLEMENT_READ_LIMIT: usize = 16 << 20;
+
+/// The fields of a supplement read (`GET
+/// /v1/core/export-secret-supplements/{request}`) the import takes; the rest
+/// of the read is left as it is.
+#[derive(serde::Deserialize)]
+struct SupplementRead {
+    request: String,
+    sealed: Option<String>,
+}
+
+/// Imports one export secret supplement through the engine doors `POST
+/// /v1/owner/secrets/export-supplements/import` uses, as the local owner
+/// (FIX 12068): the supplement read's JSON on stdin, its sealed copy opened
+/// on this install, the recipient machine the export named, and its secret
+/// restored. The value never leaves the engine.
+fn import_supplement(
+    args: crate::cli::SecretImportSupplementArgs,
+) -> anyhow::Result<export_supplement::SupplementImported> {
+    let mut text = String::new();
+    io::stdin()
+        .lock()
+        .take(SUPPLEMENT_READ_LIMIT as u64 + 1)
+        .read_to_string(&mut text)?;
+    anyhow::ensure!(
+        text.len() <= SUPPLEMENT_READ_LIMIT,
+        "a supplement read is at most 16 MiB"
+    );
+    let read: SupplementRead = serde_json::from_str(&text)
+        .map_err(|error| anyhow::anyhow!("supplement read JSON on stdin: {error}"))?;
+    let sealed = read.sealed.ok_or_else(|| {
+        anyhow::anyhow!(
+            "this supplement read carries no sealed copy: its holder has not sealed it yet, or \
+             the install it was read from keeps none; read it again from the holder"
+        )
+    })?;
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(
+        &config,
+        "POST /v1/owner/secrets/export-supplements/import --data -",
+    )?;
+    let owner = local_owner(&vault)?;
+    Ok(export_supplement::import(
+        &vault,
+        &owner,
+        oneiron::authority::ActSurface::ThisInstall,
+        &read.request,
+        &sealed,
+    )?)
+}
+
+/// Reads one export secret supplement through the engine door `GET
+/// /v1/core/export-secret-supplements/{request}` uses, as the local owner
+/// (FIX 12296): the request's entry on the command line, the same supplement
+/// the `GET` returns. It reads nothing from stdin.
+fn show_supplement(
+    args: crate::cli::SecretShowSupplementArgs,
+) -> anyhow::Result<oneiron::authority::ExportSecretSupplement> {
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "GET /v1/core/export-secret-supplements/{request}")?;
+    let owner = local_owner(&vault)?;
+    Ok(export_supplement::show(&vault, &owner, &args.request)?)
+}
+
 /// Revokes a secret through the engine door `POST /v1/owner/secrets/revoke`
 /// uses, as the local owner (OF-422). It reads nothing from stdin.
 pub fn revoke_secret(args: crate::cli::SecretRevokeArgs) -> anyhow::Result<()> {
@@ -294,7 +362,7 @@ fn sign_with_anchor(
     args: crate::cli::SecretAnchorSignArgs,
     kit: &[u8],
 ) -> anyhow::Result<secrets::AnchorSigned> {
-    use oneiron::recovery::{KitPassphrase, KitPiece, KitSecretKind, restore_kit};
+    use oneiron::recovery::{KitPassphrase, KitPiece, KitSecretKind};
     let recipients = secrets::custody_plan(None, args.recipients)?.recipients;
     let text = std::str::from_utf8(kit)
         .map_err(|_| anyhow::anyhow!("the recovery kit on stdin is not UTF-8"))?;
@@ -323,13 +391,14 @@ fn sign_with_anchor(
         anyhow::anyhow!("this vault has no authority root yet, so no recovery kit opens for it")
     })?;
     let held: Vec<&KitPiece> = pieces.iter().collect();
-    let restored = restore_kit(
-        vault_id,
-        KitSecretKind::RecoveryRoot,
-        &held,
-        passphrase.as_ref(),
-    )
-    .map_err(|error| anyhow::anyhow!("the recovery kit did not open: {error}"))?;
+    let restored = vault
+        .restore_kit_here(
+            vault_id,
+            KitSecretKind::RecoveryRoot,
+            &held,
+            passphrase.as_ref(),
+        )
+        .map_err(|error| anyhow::anyhow!("the recovery kit did not open: {error}"))?;
     let seed = oneiron::world_keys::RecoveryRootSeed::from_restored_kit(restored)?;
     Ok(secrets::sign_with_anchor(
         &vault,

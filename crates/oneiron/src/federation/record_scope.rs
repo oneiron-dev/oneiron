@@ -6,6 +6,7 @@
 //! alone is read from its live `InWorld` edges at every read (`note_world`).
 use super::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::ClaimRecordScope;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{
@@ -32,7 +33,7 @@ mod tests;
 pub(crate) use self::stamping::{
     has_stored_position, restrict_stamp_in_txn, room_rows_placed, settle_epoch_birth,
     settle_source_birth, stage_session_position, stamp_blob_project, stamp_import_audience_birth,
-    stamp_leader_project, stamp_put, stamp_task_birth, stamp_task_fact,
+    stamp_leader_project, stamp_put, stamp_task_birth, stamp_task_fact, unstage_session_position,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,19 +120,7 @@ pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityI
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
     ScopeAxis::Some(BTreeSet::from([v]))
 }
-/// What a put is to the row it writes: [`stamp_put`] mints a first position
-/// for a row stored with none only at its local birth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RowPut {
-    /// A local put of a row not stored before it, or a sweep that settles a
-    /// stored row's first position.
-    Birth,
-    /// A local put of a row stored before it: a row stored with no position,
-    /// as a replicated row is, keeps none (FIX 11925).
-    LocalReput,
-    /// A peer's replicated row.
-    Replicated,
-}
+pub(crate) use crate::batch::row_put::RowPut;
 /// The world and facet a narrowed writer's TASKs are born at (ARCH-0067 §5:
 /// a peer hears "my tasks" only where it may read them). An axis left `None`
 /// keeps the default birth: base reality, under the record's own substrate
@@ -293,7 +282,7 @@ fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
         }
         // A confirmed name keeps the facet `settle_source_birth` gave it:
         // every kind with a declared identity key (FIX 11382).
-        kind if !crate::ingest::identity_fields_for_kind(kind).is_empty() => {
+        kind if !crate::store::identity_hints::identity_fields_for_kind(kind).is_empty() => {
             Scope {
                 facets: proposed.facets.clone(),
                 ..prior.clone()
@@ -381,14 +370,12 @@ pub(crate) fn record_world_in(
     if kind == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
         return Ok(crate::world_keys::pad_world_in_body(data).ok().map(Some));
     }
-    // So do a world's key wraps; its settings entries are base reality.
+    // So do a world's side rows, its key wraps and the joins of their
+    // leaves (FIX 11868); its settings entries are base reality.
     if kind == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         return Ok(crate::authority::decode_authority_log_entry_body(data)
             .ok()
-            .map(|entry| match entry.op {
-                crate::authority::AuthorityOp::WorldKeyWraps(record) => Some(record.key.world),
-                _ => None,
-            }));
+            .map(|entry| crate::authority::side_world(&entry.op)));
     }
     if kind == crate::registry::ENTITY_TYPE_NOTE {
         return Ok(note_world::note_worlds_in(store, txn, id).world());
@@ -429,9 +416,34 @@ impl Vault {
     /// Storage errors.
     pub fn record_world(&self, id: &EntityId) -> Result<Option<Option<EntityId>>> {
         let txn = self.store.env.read_txn()?;
-        match crate::vault::live_entity_row_in_txn(&self.store, &txn, id)? {
+        self.record_world_in_txn(&txn, id)
+    }
+
+    /// One read snapshot for a dependency walk: every row the walk reads
+    /// comes from this transaction, so the walk pays one transaction, not
+    /// two per row plus one per summary (FIX 11338).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn dependency_read_txn(&self) -> Result<heed::RoTxn<'_>> {
+        Ok(self.store.env.read_txn()?)
+    }
+
+    /// [`Self::record_world`] on the caller's read snapshot, so a walk over
+    /// many rows pays one transaction, not one per row (FIX 11338).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn record_world_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Option<EntityId>>> {
+        match crate::vault::live_entity_row_in_txn(&self.store, txn, id)? {
             crate::vault::LiveEntityRow::Live { entity_type, body } => {
-                record_world_in(&self.store, &txn, *id, entity_type, &body)
+                record_world_in(&self.store, txn, *id, entity_type, &body)
             }
             crate::vault::LiveEntityRow::Absent | crate::vault::LiveEntityRow::DeletedShell => {
                 Ok(None)

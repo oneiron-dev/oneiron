@@ -9,10 +9,12 @@ mod call;
 mod codec;
 mod doors;
 mod graph;
+pub(crate) mod health_review;
 pub mod helper;
 mod helper_eval;
 mod identity;
-mod invocation;
+use oneiron_base::skill_invocations as invocation;
+pub mod learning_judge;
 mod lifecycle;
 mod loaded_revision;
 mod pack_load;
@@ -25,7 +27,10 @@ mod validate;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::call::{AnswerMemory, execute_callable_skill_cancellable, matches_shape};
+pub(crate) use self::call::{
+    AnswerMemory, erase_callable_case_actor_in_txn, erase_callable_cases_in_txn,
+    execute_callable_skill_cancellable, matches_shape,
+};
 pub use self::call::{CallableSkillAnswer, execute_callable_skill};
 pub use self::codec::{decode_skill_record, encode_skill_record};
 pub(crate) use self::codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
@@ -42,8 +47,8 @@ pub use self::lifecycle::{SkillGovernanceTier, SkillLifecycle};
 pub(crate) use self::loaded_revision::{
     pinned_skill_revisions, receipt_skill_record, receipt_skill_record_in_txn,
 };
-pub use self::pack_load::LoadedSkillPack;
 pub(crate) use self::pack_load::skill_loadable;
+pub use self::pack_load::{LoadedSkillPack, MeasuredSkillPack};
 pub use self::record::{
     SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_RECORD_BODY_KEYS,
     SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,
@@ -54,7 +59,7 @@ pub(crate) use self::saved_prose::{forked_skill_prose_links, saved_skill_prose_l
 pub(crate) use self::validate::{validate_hub_sync_skill_update, validate_skill_update};
 pub(crate) use crate::skill_optimize::exploration_trial::{
     EXPLORATION_ASK_CLIMB_HOURS, EXPLORATION_ASK_LAPSE_HOURS, ExplorationTrialStatus,
-    drive_exploration_trial, settle_exploration_route_in_txn,
+    drive_exploration_trial, revise_exploration_route_in_txn, settle_exploration_route_in_txn,
 };
 
 // The flat skill.rs module provided these names to the sibling test module
@@ -83,3 +88,5 @@ use crate::registry::ENTITY_TYPE_SKILL;
 use crate::temporal::TimeRange;
 #[cfg(test)]
 use rmpv::Value;
+
+pub mod team_shape_catalog;

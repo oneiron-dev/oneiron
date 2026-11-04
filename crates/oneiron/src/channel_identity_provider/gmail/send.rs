@@ -48,11 +48,12 @@ use crate::outbound::{
     OutboundExecutionSink,
 };
 use crate::secret_lease::DoorInjectionReceipt;
-use crate::thread_passport::{
+use crate::write_envelope::thread_claim::{
     CanonicalMessageId, ThreadPassportInput, canonical_message_id, canonical_message_id_list,
 };
 
 mod adapter;
+mod plan_store;
 
 /// Prefix of every Gmail send plan's content ref.
 pub const GMAIL_SEND_PLAN_REF_PREFIX: &str = "gmail:plan:v1:";
@@ -72,7 +73,6 @@ const MAX_SUBJECT_BYTES: usize = 600;
 const MAX_DISPLAY_NAME_BYTES: usize = 256;
 /// Gmail accepts 35 MB raw; a plain-text member reply needs far less.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
-const MAX_REFERENCES: usize = 64;
 const MAX_HYGIENE_HEADERS: usize = 8;
 
 /// The reply half of a send: the Gmail thread it joins and its RFC parents.
@@ -89,12 +89,12 @@ pub struct GmailReplyThread {
 
 impl GmailReplyThread {
     /// Builds the reply half from the parent's Gmail thread id, the parent's
-    /// RFC `Message-ID`, and the parent's own `References` chain.
+    /// RFC `Message-ID`, and the parent's own `References` chain. The full
+    /// deduped chain is kept; the render folds it across lines.
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConfig`] for a malformed thread id or Message-ID, or a
-    /// chain longer than 64 entries.
+    /// [`Error::InvalidConfig`] for a malformed thread id or Message-ID.
     pub fn new<S: AsRef<str>>(
         gmail_thread_id: &str,
         in_reply_to: &str,
@@ -109,11 +109,6 @@ impl GmailReplyThread {
         let mut references = canonical_message_id_list(parent_references)?;
         references.retain(|reference| reference != &in_reply_to);
         references.push(in_reply_to.clone());
-        if references.len() > MAX_REFERENCES {
-            return Err(Error::InvalidConfig(format!(
-                "gmail reply References exceeds {MAX_REFERENCES} entries"
-            )));
-        }
         Ok(Self {
             gmail_thread_id: gmail_thread_id.to_owned(),
             in_reply_to,
@@ -215,8 +210,24 @@ impl GmailSendPlan {
         Ok(plan)
     }
 
+    /// Sends as `alias`, one of the mailbox's verified send-as aliases the
+    /// adapter's config lists (`users.settings.sendAs`, FIX 1055), in place
+    /// of the mailbox itself as From.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] for an address the config does not list.
+    pub fn with_send_as(mut self, adapter: &GmailDelegatedAdapter, alias: &str) -> Result<Self> {
+        let alias = adapter.config().send_as_address(alias).ok_or_else(|| {
+            Error::InvalidConfig("gmail send-as alias is not one the mailbox lists".to_owned())
+        })?;
+        self.from_mailbox = alias.to_owned();
+        self.seal();
+        Ok(self)
+    }
+
     /// Sets the From display name (the member's own name, e.g. "Yuki"). The
-    /// address stays the member's mailbox; only the phrase is added.
+    /// address stays the plan's From address; only the phrase is added.
     ///
     /// # Errors
     ///
@@ -519,9 +530,11 @@ impl GmailSendAuthority<'_> {
 
 /// OF-327 execution sink for a member's Gmail send.
 ///
-/// Holds the frozen plans the host composed, keyed by content ref. The sink
+/// Holds the frozen plans the host composed, keyed by content ref, and reads
+/// back one the host kept ([`GmailSendPlan::keep`]) by its ref. The sink
 /// sends only a plan whose ref the dispatched intent names, from this
-/// adapter's mailbox, to the recipient the dispatch door bound.
+/// adapter's mailbox or a send-as alias it lists, to the recipient the
+/// dispatch door bound.
 pub struct GmailSendSink<'a, W> {
     vault: &'a Vault,
     adapter: &'a GmailDelegatedAdapter,
@@ -585,19 +598,30 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
         if request.calendar_invite.is_some() {
             return OutboundExecutionOutcome::failed("gmail_send_calendar_invite_unsupported");
         }
-        let Some(plan) = request
-            .intent
-            .content_ref
-            .as_deref()
-            .and_then(|content_ref| self.plans.get(content_ref))
-        else {
+        let Some(content_ref) = request.intent.content_ref.as_deref() else {
+            return OutboundExecutionOutcome::failed("gmail_send_plan_missing");
+        };
+        // A plan its host kept is read back by its ref (FIX 1053).
+        if !self.plans.contains_key(content_ref) {
+            match GmailSendPlan::kept(self.vault, content_ref) {
+                Ok(Some(plan)) => self.add_plan(plan),
+                Ok(None) => {}
+                Err(_) => return OutboundExecutionOutcome::failed("gmail_send_plan_unreadable"),
+            }
+        }
+        let Some(plan) = self.plans.get(content_ref) else {
             return OutboundExecutionOutcome::failed("gmail_send_plan_missing");
         };
         let recipient = request.counterparty_ref.unwrap_or(&request.intent.target);
         if plan.to != recipient || plan.to != request.intent.target {
             return OutboundExecutionOutcome::failed("gmail_send_target_mismatch");
         }
-        if plan.from_mailbox != self.adapter.config().mailbox_address() {
+        if self
+            .adapter
+            .config()
+            .send_as_address(&plan.from_mailbox)
+            .is_none()
+        {
             return OutboundExecutionOutcome::failed("gmail_send_sender_mismatch");
         }
         let Ok(raw) = plan.render(&request.hygiene_headers) else {
@@ -671,6 +695,9 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
                     rfc_message_id.into_string(),
                 );
                 fields.insert(RECEIPT_RFC_MESSAGE_ID_SOURCE.to_owned(), source.to_owned());
+                if let Err(error) = GmailSendPlan::drop_kept(self.vault, &plan.content_ref) {
+                    tracing::warn!(%error, "a delivered gmail send's kept plan stays until it is dropped");
+                }
                 OutboundExecutionOutcome::delivered_to_channel(format!(
                     "gmail:{}",
                     sent.gmail_message_id

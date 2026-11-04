@@ -88,8 +88,8 @@ pub(super) const GIT_WIRE_MAX_ARGS: usize = 64;
 
 pub(super) const GIT_WIRE_MAX_REF_BYTES: usize = 200;
 
-pub(super) const GIT_WIRE_MAX_PLAN_OBJECTS: usize = 256;
-
+/// Refs one Git read names, or one copy batch publishes, at once: a bounded
+/// work unit, never a refusal of a larger set (FIX 8784).
 pub(super) const GIT_WIRE_MAX_PUBLICATIONS: usize = 64;
 
 pub(super) const GIT_WIRE_OID_HEX_LEN: usize = 40;

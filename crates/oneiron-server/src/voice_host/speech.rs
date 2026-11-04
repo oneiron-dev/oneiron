@@ -454,7 +454,7 @@ impl VoiceHost {
             undelivered |= outputs.control.submit(update.control).is_err();
         }
         for notice in notices {
-            undelivered |= outputs.brain.notice(&notice).is_err();
+            undelivered |= outputs.brain.notice(generation, &notice).is_err();
             undelivered |= outputs
                 .control
                 .submit(ControlEvent::Notice { generation, notice })

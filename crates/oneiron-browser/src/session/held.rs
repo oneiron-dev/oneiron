@@ -62,6 +62,11 @@ pub struct HeldPress {
     pub locator: String,
     /// The page the act began on.
     pub page: Option<String>,
+    /// The counterparty the act's send reported (FIX 11907, 12395): a
+    /// mailto:/tel: link's href recipient, else the origin of the page it
+    /// acted on; none where it names none (a desktop's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
     /// The tab in front when the act began.
     pub tab: String,
     /// The documents the row's live handle was read from (its read's scope:
@@ -124,7 +129,8 @@ impl BrowserSession {
     }
 
     /// The press act `act` of `class` on `row`, given `operands`, runs
-    /// under on page `page`. An armed press is taken first: the same act on
+    /// under on page `page`, for the counterparty `audience` its send
+    /// reports (FIX 11907). An armed press is taken first: the same act on
     /// the same row runs under it, a person's press per send that pays no
     /// batch, and any other act is refused. With none armed, a classified
     /// act takes its grant's press ([`Self::press_for`]), and one refused
@@ -136,6 +142,7 @@ impl BrowserSession {
         class: Option<&str>,
         row: Option<&Row>,
         page: Option<&str>,
+        audience: Option<&str>,
     ) -> Result<PressMode, BrowserError> {
         if let Some(armed) = self.held.armed.take() {
             let same = class.zip(row).is_some_and(|(class, row)| {
@@ -145,6 +152,7 @@ impl BrowserSession {
                     && armed.name == row.name
                     && armed.locator == row.locator
                     && armed.page.as_deref() == page
+                    && armed.audience.as_deref() == audience
                     && armed.tab == self.driver.front_target()
                     && armed.document == self.handle_info(&row.target).map(|info| info.scope)
                     && armed.generation == self.manifest.generation
@@ -167,7 +175,7 @@ impl BrowserSession {
         let (Some(class), Some(row)) = (class, row) else {
             return Ok(PressMode::None);
         };
-        let pressed = self.press_for(class, row);
+        let pressed = self.press_for(class, row, audience);
         if pressed.is_ok() {
             self.pre_press = Some(self.landed_seq());
         }
@@ -187,6 +195,7 @@ impl BrowserSession {
                 name: row.name.clone(),
                 locator: row.locator.clone(),
                 page: page.map(str::to_owned),
+                audience: audience.map(str::to_owned),
                 tab: self.driver.front_target().to_owned(),
                 document: self.handle_info(&row.target).map(|info| info.scope),
                 generation: self.manifest.generation.clone(),

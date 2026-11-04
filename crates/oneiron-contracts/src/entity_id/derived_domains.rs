@@ -59,10 +59,23 @@ pub const AGENT_PRINCIPAL: &[u8] = b"oneiron/agent-principal/v1";
 /// (`commitment_schedule::commitment_projection_actor`). No parts.
 pub const COMMITMENT_PROJECTION_ACTOR: &[u8] = b"oneiron.commitment.projection.actor.v1\0";
 
+/// The System actor a facade row's verb hooks name for a scoped credential
+/// bound to no actor (`api::facade::hooks`, FIX 1439). No parts.
+pub const FACADE_UNBOUND_CALLER: &[u8] = b"oneiron:facade-unbound-caller:v1";
+
 /// One occurrence of one commitment series
 /// (`commitment_schedule::commitment_instance_id`). Parts: series, due-at, window
 /// start, window end (u64 big-endian each), ordinal (u32 big-endian).
 pub const COMMITMENT_INSTANCE: &[u8] = b"oneiron.commitment.instance.v1\0";
+
+/// The successor claim that carries one commitment's batched lapse
+/// (`commitment::lapse_claim_id`, FIX 9726). Parts: the commitment (16 bytes).
+pub const COMMITMENT_LAPSE_SUCCESSOR: &[u8] = b"oneiron.commitment.lapse_successor.v1\0";
+
+/// The proposal claim one commitment wake attempt writes
+/// (`commitment_wake::commitment_wake_proposal_claim_id`, FIX 9731). Parts: the
+/// attempt id (16 bytes).
+pub const COMMITMENT_WAKE_PROPOSAL: &[u8] = b"oneiron.commitment.wake_proposal.v1\0";
 
 /// A person or company bound to an external lead source (`linkedin_lead_preload`).
 /// Parts: source ref.
@@ -90,6 +103,10 @@ pub const CONVERSATION_MIRROR_ACTOR: &[u8] = b"oneiron:conversation-mirror-actor
 /// The raw-feed BLOB artifact of one ICS feed (`calendar::ingest::fetch`). Parts:
 /// feed dedupe key.
 pub const CALENDAR_ICS_FEED_BLOB: &[u8] = b"oneiron:calendar-ics-feed-blob:v1:";
+
+/// The archived remote copy of one calendar connector resource
+/// (`calendar::connectors::resource`). Parts: system, calendar ref, UID.
+pub const CALENDAR_CONNECTOR_SOURCE_BLOB: &[u8] = b"oneiron:calendar-connector-source-blob:v1:";
 
 /// The BLOB artifact holding one verified provider event's body
 /// (`surface_event::provider_payload`). Parts: channel, provider event id.
@@ -180,6 +197,10 @@ pub const HISTORY_MESSAGE: &[u8] = b"oneiron.ingest.history.message.v1";
 /// folder, the file's path under it.
 pub const IMPORTED_NOTE: &[u8] = b"oneiron.ingest.notes.note.v1";
 
+/// An import-audience topic cluster (`ingest::audience`). Parts: the
+/// canonical bytes of the extractor's `topic_key`.
+pub const IMPORT_AUDIENCE_TOPIC: &[u8] = b"oneiron.ingest.import_audience.topic.v1";
+
 /// A project revision companion (`workspace_roster::project::revision`).
 /// Parts: the revision's 32-byte logical hash.
 pub const PROJECT_REVISION: &[u8] = b"oneiron/project-revision-id/v1/";
@@ -258,9 +279,19 @@ pub const FILES_SOURCE: &[u8] = b"oneiron.files.source.v1";
 /// FIX 9554). Parts: the annotated row's entity type, its id.
 pub const VAD_ANNOTATION_CLAIM: &[u8] = b"oneiron:vad-annotation-claim:v1";
 
+/// A channel-identity autonomy handle (`channel_identity_autonomy::codec::address`,
+/// FIX 9675): a read or action envelope, a read or action grant, an autonomy
+/// mode, a graduation scope or evidence row, a space-posting envelope. Parts:
+/// the row kind, the MessagePack bytes of the row's value.
+pub const CHANNEL_IDENTITY_AUTONOMY: &[u8] = b"oneiron/channel-identity-autonomy/v1";
+
 /// The source-bearing ASSET of one pack source (`skill_hub::pack_catalog::codec`,
 /// FIX 10125). Parts: the source's canonical tree content hash (32 bytes).
 pub const PACK_SOURCE_ASSET: &[u8] = b"oneiron.pack-source.asset.v1\0";
+
+/// The filed wording of one commitment reminder (`commitment_wake::reminder_wording`,
+/// FIX 12000). Parts: the reminder's content ref.
+pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminder-wording:v1:";
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]

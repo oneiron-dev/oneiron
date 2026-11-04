@@ -264,8 +264,14 @@ pub trait Brain {
     /// A safeguard notice said to the person, which the model hears too: a
     /// brain that keeps the call's history keeps it there, and its next turn
     /// hears it. A turn already answering is not interrupted for it.
-    fn notice(&mut self, notice: &GateSystemNoticeRecord) -> Result<()> {
-        let _ = notice;
+    /// `generation` is the turn whose sentence the notice judged, so the
+    /// history lists it as made from that turn alone (FIX 5484).
+    fn notice(
+        &mut self,
+        generation: GenerationEpoch,
+        notice: &GateSystemNoticeRecord,
+    ) -> Result<()> {
+        let _ = (generation, notice);
         Ok(())
     }
 }

@@ -9,6 +9,7 @@
 use crate::design_plan::Cell;
 use crate::edit::xml;
 use crate::live::LiveError;
+use crate::live::convert::place_ordinals;
 use crate::live::held::{self, C, series_of};
 use crate::live::pptx::{
     ChartCategories, ChartKind, ChartSeries, NodeId, NodePayload, WRITTEN_FRAME,
@@ -16,7 +17,7 @@ use crate::live::pptx::{
 };
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn number_cells(values: &[Option<serde_json::Number>], count: usize) -> Vec<Cell> {
     (0..count)
@@ -52,10 +53,13 @@ pub(in crate::live) struct PlotTarget {
 /// PowerPoint's Change Chart Type lays them out for a whole chart or for one
 /// series. `held` is each held plot's family and series count; `resolved`
 /// is each series' family. A held plot stays while a series is drawn in its
-/// family, and a held plot no series is drawn in goes. A family no held
-/// plot draws gets a new plot after them. When no held plot stays, the
-/// first is converted to the first family. A chart with no series takes
-/// `family`. Each series stays in `own`, the held plot it was drawn in,
+/// family; one whose own series all moved to a family no plot draws is
+/// converted to it on its own axes (FIX 10294). A plot with no assigned
+/// series goes (FIX 12256), but one stays when the chart has no series so
+/// it still reads back. A family no held plot draws gets a new plot after
+/// them. When no held plot stays, the first is converted to the first
+/// family. A chart with no series takes `family`. Each series stays in
+/// `own`, the held plot it was drawn in,
 /// while that plot draws its family; any other goes to the first plot of
 /// its family with room for as many series as it held, else to that
 /// family's last plot.
@@ -84,6 +88,46 @@ pub(in crate::live) fn plot_plan(
             kind,
         })
         .collect();
+    // A held plot whose own series all moved to another family, while
+    // another held plot still draws one of its own in its family, is
+    // converted to its movers' family on its own axes, as PowerPoint
+    // converts it, where no plot draws that family yet; else it draws
+    // nothing and goes (FIX 10294).
+    let draws = |at: usize| {
+        own.iter()
+            .zip(resolved)
+            .any(|(plot, kind)| *plot == Some(at) && *kind == held[at].0)
+    };
+    let mover = |at: usize| {
+        own.iter()
+            .zip(resolved)
+            .find(|(plot, kind)| **plot == Some(at) && **kind != held[at].0)
+            .map(|(_, kind)| *kind)
+    };
+    let emptied: Vec<(usize, ChartKind)> = targets
+        .iter()
+        .enumerate()
+        .filter_map(|(place, target)| {
+            let at = target.held?;
+            let to = mover(at).filter(|_| !draws(at))?;
+            let elsewhere = targets.iter().any(|other| {
+                other.kind == target.kind
+                    && other.held.is_some_and(|other| other != at && draws(other))
+            });
+            elsewhere.then_some((place, to))
+        })
+        .collect();
+    let mut gone = Vec::new();
+    for (place, to) in emptied {
+        if targets.iter().any(|target| target.kind == to) {
+            gone.push(place);
+        } else {
+            targets[place].kind = to;
+        }
+    }
+    for place in gone.into_iter().rev() {
+        targets.remove(place);
+    }
     if targets.is_empty()
         && !held.is_empty()
         && let Some(&kind) = families.first()
@@ -103,7 +147,7 @@ pub(in crate::live) fn plot_plan(
         _ => 0,
     };
     let mut taken = vec![0_usize; targets.len()];
-    let assign = resolved
+    let mut assign: Vec<usize> = resolved
         .iter()
         .enumerate()
         .map(|(index, kind)| {
@@ -127,6 +171,24 @@ pub(in crate::live) fn plot_plan(
             at
         })
         .collect();
+    // A plot no series is drawn in goes (FIX 12256): the export would
+    // write it empty, and the reader would count it in each later series'
+    // ordinal while the payload never shows it.
+    let mut gone: Vec<usize> = (0..targets.len())
+        .filter(|&at| !assign.contains(&at))
+        .collect();
+    if gone.len() == targets.len() && !targets.is_empty() {
+        gone.remove(0);
+    }
+    if !gone.is_empty() {
+        for index in assign.iter_mut() {
+            let shift = gone.iter().filter(|&&at| at < *index).count();
+            *index -= shift;
+        }
+        for &at in gone.iter().rev() {
+            targets.remove(at);
+        }
+    }
     (targets, assign)
 }
 
@@ -426,7 +488,9 @@ pub(super) fn layout(
         })
         .collect();
     let own_plots: Vec<Option<usize>> = own.iter().map(|at| at.map(|at| plot_of[at])).collect();
-    let (targets, assign) = plot_plan(&held_plots, family, resolved, &own_plots);
+    let (mut targets, mut assign) = plot_plan(&held_plots, family, resolved, &own_plots);
+    let settled = settled_places(&targets, &assign, resolved, series);
+    place_ordinals(&mut targets, &mut assign, resolved, &settled);
     let mut assigned: Vec<Vec<usize>> = vec![Vec::new(); targets.len()];
     for (index, &target) in assign.iter().enumerate() {
         assigned[target].push(index);
@@ -464,6 +528,54 @@ pub(super) fn layout(
         assigned,
         seats,
     })
+}
+
+/// The ordinal each of `series` (each of family `resolved`) names for
+/// [`place_ordinals`] in each family whose series the payload groups by
+/// plot otherwise than `targets` and `assign` draw them (a series the
+/// settlement moved to another plot of its family, FIX 10295, or an of-pie
+/// plot it drew once per split view, FIX 9375); none for every other
+/// series, which stays where [`plot_plan`] put it.
+fn settled_places(
+    targets: &[PlotTarget],
+    assign: &[usize],
+    resolved: &[ChartKind],
+    series: &[ChartSeries],
+) -> Vec<Option<u32>> {
+    let ordinal = |index: usize| series.get(index).and_then(|line| line.plot).unwrap_or(0);
+    let mut out = vec![None; resolved.len()];
+    let mut families: Vec<ChartKind> = Vec::new();
+    for kind in resolved {
+        if !families.contains(kind) {
+            families.push(*kind);
+        }
+    }
+    for kind in families {
+        let members: Vec<usize> = (0..resolved.len())
+            .filter(|&index| resolved[index] == kind && index < assign.len())
+            .collect();
+        let mut named: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+        for &index in &members {
+            named.entry(ordinal(index)).or_default().push(index);
+        }
+        let drawn: Vec<Vec<usize>> = (0..targets.len())
+            .filter(|&at| targets[at].kind == kind)
+            .map(|at| {
+                members
+                    .iter()
+                    .copied()
+                    .filter(|&index| assign[index] == at)
+                    .collect::<Vec<usize>>()
+            })
+            .filter(|group| !group.is_empty())
+            .collect();
+        if named.into_values().collect::<Vec<_>>() != drawn {
+            for &index in &members {
+                out[index] = Some(ordinal(index));
+            }
+        }
+    }
+    out
 }
 
 /// One chart part as a rewrite reads it, and how the live series take its

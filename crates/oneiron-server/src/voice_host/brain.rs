@@ -28,13 +28,13 @@ use futures_util::StreamExt;
 use oneiron::claim::ScopedRead;
 use oneiron::context_board::{BoardBlockHeader, BoardBudgetRequest};
 use oneiron::conversation::RoomLiveSpeakerEntries;
-use oneiron::llm::run_admission::PayerPerson;
+use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, FinishReason};
 use oneiron::store::GateSystemNoticeRecord;
 use oneiron::voice_cascade::{Brain, BrainEvent, BrainRequest, GenerationEpoch, TurnMemories};
 use oneiron::{
-    BudgetExhaustionPolicy, DisclosureContext, EntityId, LlmMessage, LlmMessageRole, LlmStream,
-    LlmStreamEvent, MemoriesSection, Vault, WriteActor,
+    BudgetExhaustionPolicy, DisclosureContext, EntityId, LlmMessage, LlmMessageRole, LlmResponse,
+    LlmStream, LlmStreamEvent, MemoriesSection, Vault, WriteActor,
 };
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -45,7 +45,7 @@ use crate::ai_host::{AiHandle, CHAT_ROLE};
 use crate::api::RoomAudience;
 use crate::api::ai::chat::{chat_request, text_message};
 use crate::auth::CoreAuth;
-use crate::models::Seat;
+use crate::models::{ModelCallBinding, OfferLadder, Seat};
 
 // Vault memory/diary material is exempt from the external/tool sentence
 // safeguard. Live connector results enter separately and always add taint.
@@ -112,14 +112,14 @@ pub struct ChatBrain {
     retiring: Vec<JoinHandle<()>>,
     /// Each tool context, beside the rows the connector call listed.
     foreign: Vec<(oneiron::task_verb::sdk::ConnectorToolResult, Vec<EntityId>)>,
-    /// Every row this call's turns were made from so far: a safeguard
-    /// notice is not told which turn's sentence it judged.
-    said_ever: Vec<EntityId>,
+    /// The rows each of this call's turns was made from, by generation: a
+    /// safeguard notice is made from the turn whose sentence it judged.
+    said_by: BTreeMap<GenerationEpoch, Vec<EntityId>>,
 }
 
 /// One history message, beside the rows it was made from (FIX 4778): the
-/// person's words none, an answer its own turn's, a notice every turn's so
-/// far and the policy row it names, so each is known (FIX 6080).
+/// person's words none, an answer its own turn's, a notice the turn's it
+/// judged and the policy row it names, so each is known (FIX 6080, 5484).
 type HistoryEntry = (LlmMessage, Vec<EntityId>);
 
 /// The turn answering now.
@@ -153,6 +153,16 @@ type TurnRead = (
     Option<RoomLiveSpeakerEntries>,
 );
 
+struct ModelCallCapture {
+    vault: Arc<Vault>,
+    ladder: Arc<OfferLadder>,
+    run: RunAdmission,
+    request: oneiron::LlmRequest,
+    room: Option<EntityId>,
+    no_record_at_arrival: bool,
+    binding: tokio::sync::oneshot::Receiver<ModelCallBinding>,
+}
+
 /// What opening a turn gives: its stream, whether it heard outside context,
 /// its memories receipt and the rows its model input was read from.
 type OpenedTurn = (
@@ -160,6 +170,7 @@ type OpenedTurn = (
     bool,
     Option<TurnMemories>,
     Vec<EntityId>,
+    ModelCallCapture,
 );
 
 impl ChatBrain {
@@ -179,7 +190,7 @@ impl ChatBrain {
             turn: None,
             retiring: Vec::new(),
             foreign: Vec::new(),
-            said_ever: Vec::new(),
+            said_by: BTreeMap::new(),
         })
     }
 
@@ -297,12 +308,23 @@ impl ChatBrain {
         // read from (FIX 6935).
         let read = oneiron::skill_optimize::union_source_rows([Some(said_from.as_slice())]);
         let run = run.sourced(read);
-        let stream = admitted
+        let (stream, binding) = admitted
             .ladder
-            .stream(&run, admitted.request, None)
+            .stream_recorded(&run, admitted.request.clone(), None)
             .map_err(|error| refused(format!("{error:?}")))?;
+        let room = self.bindings.room;
+        let no_record_at_arrival = room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
+        let capture = ModelCallCapture {
+            vault: Arc::clone(vault),
+            ladder: Arc::clone(&admitted.ladder),
+            run,
+            request: admitted.request,
+            room,
+            no_record_at_arrival,
+            binding,
+        };
         let Some(memories) = memories else {
-            return Ok((stream, !self.foreign.is_empty(), heard, said_from));
+            return Ok((stream, !self.foreign.is_empty(), heard, said_from, capture));
         };
         // The rows are going out: a contact who heard one under standing
         // clearance gets its quiet receipt. The owner alone gets none.
@@ -314,7 +336,7 @@ impl ChatBrain {
                 &request.session_ref,
             )]),
         )?;
-        Ok((stream, !self.foreign.is_empty(), heard, said_from))
+        Ok((stream, !self.foreign.is_empty(), heard, said_from, capture))
     }
 
     /// The rows the turn's retrieval found, read under the call's credential,
@@ -517,7 +539,8 @@ impl Brain for ChatBrain {
         self.abort();
         let (memories, heard, live) = self.memories(request)?;
         self.rebuild_history(request.audience_revision, live)?;
-        let (stream, tainted, memories, said_from) = self.open(request, memories, heard)?;
+        let (stream, tainted, memories, said_from, capture) =
+            self.open(request, memories, heard)?;
         let generation = request.generation;
         // The person's words: no stored row.
         self.history
@@ -527,7 +550,7 @@ impl Brain for ChatBrain {
                 text_message(LlmMessageRole::User, request.transcript.clone()),
                 Vec::new(),
             ));
-        self.said_ever.extend_from_slice(&said_from);
+        self.said_by.insert(generation, said_from.clone());
         let sources = Arc::new(Mutex::new(Some(TurnSources {
             said: said_from.clone(),
             found: request
@@ -541,6 +564,7 @@ impl Brain for ChatBrain {
         let memories = Arc::new(Mutex::new(memories));
         let turn = Turn {
             generation,
+            capture,
             tainted,
             memories: Arc::clone(&memories),
             sources: Arc::clone(&sources),
@@ -583,10 +607,14 @@ impl Brain for ChatBrain {
 
     /// The notice enters the call's history as System context, so the next
     /// turn hears it; a turn already answering is not interrupted.
-    /// It is heard as made from every turn so far, whose sentence it may
-    /// have judged, and the policy row it names.
-    fn notice(&mut self, notice: &GateSystemNoticeRecord) -> oneiron::Result<()> {
-        let mut rows = self.said_ever.clone();
+    /// It is heard as made from the rows of `generation`, the turn whose
+    /// sentence it judged, and the policy row it names (FIX 5484).
+    fn notice(
+        &mut self,
+        generation: GenerationEpoch,
+        notice: &GateSystemNoticeRecord,
+    ) -> oneiron::Result<()> {
+        let mut rows = self.said_by.get(&generation).cloned().unwrap_or_default();
         rows.extend(notice_rows(notice));
         self.history
             .lock()
@@ -614,6 +642,7 @@ impl Drop for ChatBrain {
 /// One turn's stream, handed back event by event.
 struct Turn {
     generation: GenerationEpoch,
+    capture: ModelCallCapture,
     /// The turn heard context from outside it: every event says so, from
     /// the first delta, so its first sentence already passes the safeguard.
     tainted: bool,
@@ -665,8 +694,37 @@ impl Turn {
                 // end, and the turn is marked one that never finished.
                 Some(Ok(LlmStreamEvent::Done {
                     finish_reason: FinishReason::Stop,
+                    message,
+                    usage,
+                    reply_assertions,
                     ..
-                })) => break BrainEvent::Done,
+                })) => {
+                    let response = LlmResponse {
+                        message: message.clone(),
+                        usage: usage.clone(),
+                        finish_reason: FinishReason::Stop,
+                        reply_assertions: reply_assertions.clone(),
+                        token_scores: None,
+                    };
+                    let no_record = self.capture.no_record_at_arrival
+                        || self.capture.room.is_some_and(|room| {
+                            self.capture.vault.room_has_unrecorded_stretch(room)
+                        });
+                    // A recorded turn's exact answering binding travels beside
+                    // its answer (FIX 12743); it resolved before this Done on
+                    // the answering task, so it is found, never guessed.
+                    let binding = self.capture.binding.try_recv().ok();
+                    crate::api::record_raw_response(
+                        self.capture.vault.as_ref(),
+                        &self.capture.ladder,
+                        &self.capture.run,
+                        &self.capture.request,
+                        &response,
+                        binding.as_ref(),
+                        no_record,
+                    );
+                    break BrainEvent::Done;
+                }
                 Some(Ok(LlmStreamEvent::Done { .. })) => break BrainEvent::Incomplete,
                 Some(Ok(_)) => {}
                 Some(Err(error)) => break BrainEvent::Error(error.to_string()),

@@ -12,33 +12,43 @@
 //! latest adjustment included) once it is withdrawn. The receipt key, the cell, the anchor and the
 //! judge/goal/context provenance never move, and no attempt-keyed row is
 //! added beside it. The flip is read per executor arm, like the attempt
-//! lane's own outcomes: it assumes the attempt's stamped executor is the
-//! arm its amendment charges (the pack stamp's validity rule), so a
-//! callable invoked under other executors would need the scan widened to
-//! every invoker arm.
+//! lane's own outcomes: the scan covers the arm the attempt's stamp names
+//! under every redirect-equivalent subject (FIX 11673), and the amendment's
+//! share reads across every arm (FIX 11674), so a callable invoked under
+//! other executors still flips on its invoker arms' share — one share per
+//! attempt, charged on each arm.
 
 use std::collections::BTreeMap;
 
 use crate::Vault;
+use crate::claim::learning_evidence::EVIDENCE;
+use crate::claim::learning_evidence::EvidenceRow;
+use crate::claim::learning_evidence::EvidenceSource;
+use crate::claim::learning_evidence::LearningEvidence;
+use crate::claim::learning_evidence::Observation;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::learning::evidence::{EVIDENCE, EvidenceRow, cells_for_subject_in_txn};
-use crate::learning::{
-    EvidenceSource, LearningCell, LearningEvidence, LearningPredicate, Observation,
+use crate::learning::LearningCell;
+use crate::learning::evidence::cells_for_subject_in_txn;
+use crate::side_table::{self, Named, SideTable};
+use crate::skill_attribution::{
+    LateCreditReceipt, late_credit_receipt_in_txn, standing_credit_observation_in_txn,
 };
-use crate::skill_attribution::{late_credit_receipt_in_txn, standing_credit_observation_in_txn};
 
-/// One anchored pack-outcome observation held in `skill`'s reliability
-/// cells, with the attempt its stored context names.
+/// One anchored pack-outcome observation held in a reliability cell,
+/// with the subject holding it and the attempt its stored context names.
 pub(super) struct AnchoredRow {
     pub(super) cell: LearningCell,
+    pub(super) subject: EntityId,
     pub(super) receipt: String,
     pub(super) attempt: String,
     pub(super) row: EvidenceRow,
 }
 
-/// Every anchored pack-outcome observation in `skill`'s reliability cells
-/// for `executor`: evidence rows carrying their pack outcome context.
+/// Every anchored pack-outcome observation in `subjects`' reliability
+/// cells for `executor`: evidence rows carrying their pack outcome
+/// context, each stamped with the subject holding it.
 ///
 /// # Errors
 ///
@@ -46,30 +56,33 @@ pub(super) struct AnchoredRow {
 pub(super) fn anchored_rows_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    skill: &EntityId,
+    subjects: &[EntityId],
     executor: &str,
 ) -> Result<Vec<AnchoredRow>> {
     let mut rows = Vec::new();
-    for held in cells_for_subject_in_txn(vault, txn, skill)? {
-        if held.cell.predicate != LearningPredicate::Reliability
-            || held.cell.executor.as_deref() != Some(executor)
-        {
-            continue;
-        }
-        let digest = held.cell.digest();
-        for ((held_digest, receipt), row) in EVIDENCE.scan_from(&vault.store, txn, &digest)? {
-            if held_digest != digest {
+    for subject in subjects {
+        for held in cells_for_subject_in_txn(vault, txn, subject)? {
+            if held.cell.predicate != LearningPredicate::Reliability
+                || held.cell.executor.as_deref() != Some(executor)
+            {
                 continue;
             }
-            let Some(context) = &row.pack_attribution else {
-                continue;
-            };
-            rows.push(AnchoredRow {
-                cell: held.cell.clone(),
-                receipt,
-                attempt: context.attempt_receipt.clone(),
-                row,
-            });
+            let digest = held.cell.digest();
+            for ((held_digest, receipt), row) in EVIDENCE.scan_from(&vault.store, txn, &digest)? {
+                if held_digest != digest {
+                    continue;
+                }
+                let Some(context) = &row.pack_attribution else {
+                    continue;
+                };
+                rows.push(AnchoredRow {
+                    cell: held.cell.clone(),
+                    subject: *subject,
+                    receipt,
+                    attempt: context.attempt_receipt.clone(),
+                    row,
+                });
+            }
         }
     }
     Ok(rows)
@@ -102,7 +115,6 @@ pub(super) enum AnchoredEffect {
 pub(super) fn effective_evidence_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    skill: &EntityId,
     held: &AnchoredRow,
     amended: &BTreeMap<String, f32>,
 ) -> Result<AnchoredEffect> {
@@ -121,7 +133,7 @@ pub(super) fn effective_evidence_in_txn(
     if credit.attribution.is_none() {
         return Ok(AnchoredEffect::Stand);
     }
-    match standing_credit_observation_in_txn(vault, txn, &credit, skill)? {
+    match standing_credit_observation_in_txn(vault, txn, &credit, &held.subject)? {
         Some((success, weight)) => {
             let evidence = restated(held, success, weight);
             Ok(if matches_row(row, &evidence) {
@@ -174,4 +186,93 @@ fn matches_row(row: &EvidenceRow, evidence: &LearningEvidence) -> bool {
         && row.pack_attribution == evidence.pack_attribution
         && row.goal_revision == evidence.goal_revision
         && row.measurement_version == evidence.measurement_version
+}
+
+/// Mint the flipped loss for an amendment whose attempt has no anchored row
+/// to flip and no desired row (FIX 11676): the sealed credit's context gives
+/// the cell and provenance, the amendment's defect share the loss weight.
+/// `None` when no sealed credit for `attempt` names `skill` on this arm, no
+/// sealed credit matches the attempt's axis, or its attribution is gone. The
+/// receipt key is the credit's id, so re-minting
+/// replaces in place.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn mint_flipped_from_credit_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    executor: &str,
+    attempt: &str,
+    share: f32,
+) -> Result<Option<(LearningCell, LearningEvidence)>> {
+    const CREDIT: SideTable<String, LateCreditReceipt, Named> =
+        SideTable::new(&side_table::SKILL_ATTRIBUTION_LATE_CREDIT);
+    let mut candidates = Vec::new();
+    for (_, credit) in CREDIT.scan(&vault.store, txn)? {
+        if credit.attempt_receipt != attempt {
+            continue;
+        }
+        let Some(fields) = &credit.attribution else {
+            continue;
+        };
+        if fields.executor != executor {
+            continue;
+        }
+        // The sealed lists or the latest adjustment's effective subjects
+        // (REVIEW-4322 P1): a subject a later adjustment adds still mints its
+        // amendment loss here.
+        let mut names = credit.direct_subjects.contains(&Some(*skill))
+            || credit
+                .shares
+                .iter()
+                .any(|share| share.subject == Some(*skill));
+        if !names {
+            names = crate::skill_attribution::effective_credit_subjects_in_txn(
+                &vault.store,
+                txn,
+                &credit,
+            )?
+            .contains(skill);
+        }
+        if !names {
+            continue;
+        }
+        candidates.push(credit);
+    }
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let axis = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, attempt)?
+        .and_then(|receipt| receipt.fields.get("axis").cloned())
+        .unwrap_or_else(|| crate::skill_reliability::SKILL_OUTCOME_AXIS.to_owned());
+    candidates.retain(|candidate| candidate.axis == axis);
+    let Some(credit) = candidates.into_iter().next() else {
+        return Ok(None);
+    };
+    let Some(fields) = credit.attribution.clone() else {
+        return Ok(None);
+    };
+    let cell = LearningCell::new(LearningPredicate::Reliability, *skill)
+        .executor(fields.executor.clone())
+        .type_ref(fields.type_ref.clone())
+        .axis(credit.axis.clone())
+        .project(fields.project);
+    let mut evidence = LearningEvidence::anchored(
+        credit.receipt_id.clone(),
+        credit.at,
+        credit.anchor,
+        Observation::Success(false),
+    );
+    evidence.weight = f64::from(share);
+    evidence.judge.clone_from(&fields.judge);
+    evidence.on_judge_model = fields.judge.as_deref() == Some(fields.executor.as_str());
+    evidence.pack_attribution = Some(crate::receipt::PackLearningContext {
+        attempt_receipt: credit.attempt_receipt.clone(),
+        outcome_receipt: credit.outcome_receipt.clone(),
+        attribution: fields,
+    });
+    evidence.goal_revision.clone_from(&credit.goal_revision);
+    Ok(Some((cell, evidence)))
 }

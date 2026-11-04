@@ -5,97 +5,6 @@
 // Section 5 — pull read: ScopedRead clamp plus provenance-labelled DATA
 // ---------------------------------------------------------------------------
 
-/// The bounded always-on subset: interface and policy contracts only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CodeMemoryContractKind {
-    Interface,
-    Policy,
-}
-
-impl CodeMemoryContractKind {
-    const fn tag(self) -> u8 {
-        match self {
-            Self::Interface => CONTRACT_TAG_INTERFACE,
-            Self::Policy => CONTRACT_TAG_POLICY,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        match tag {
-            CONTRACT_TAG_INTERFACE => Ok(Self::Interface),
-            CONTRACT_TAG_POLICY => Ok(Self::Policy),
-            _ => Err(record_error()),
-        }
-    }
-}
-
-/// One registered always-on interface/policy contract.
-///
-/// Always-on status is ATTACHMENT METADATA, not a NOTE payload field.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AlwaysOnCodeMemoryContract {
-    pub symbol_id: EntityId,
-    pub slot: CodeMemorySlotName,
-    pub payload: CodeMemoryPayloadRef,
-    pub kind: CodeMemoryContractKind,
-    pub actor_id: EntityId,
-    pub valid_time: TimeRange,
-    pub recorded_at: u64,
-    pub provenance_claim_id: EntityId,
-}
-
-/// What an L2 pull returns is DATA. There is deliberately no instruction or
-/// executable material kind in this enum, and none may be added: an L2 note
-/// is context a caller reasons about, never a command it obeys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProvenanceMaterialKind {
-    Data,
-}
-
-/// The provenance label carried by every pulled item.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CodeMemoryProvenance {
-    pub actor_id: EntityId,
-    pub valid_time: TimeRange,
-    pub recorded_at: u64,
-    pub provenance_claim_id: EntityId,
-}
-
-/// A pulled item and its label. There is no unlabelled read surface.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProvenanceLabelled<T> {
-    pub data: T,
-    pub provenance: CodeMemoryProvenance,
-    pub material_kind: ProvenanceMaterialKind,
-}
-
-/// An L2 pull request. PULL, never push: nothing in this module calls back
-/// into a caller with memory it did not ask for.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CodeMemoryPullRequest {
-    /// UNSCORED `CODE_SYMBOL` ids. PPR assigns relevance; callers do not.
-    pub seed_symbols: Vec<EntityId>,
-    /// Threshold on the inherited symbol relevance — the score type carried
-    /// by `pipeline::ScoredEntity`.
-    pub minimum_relevance: f32,
-    /// Caller cut, applied EXACTLY ONCE and only to the note list.
-    pub limit: usize,
-    pub include_always_on_contracts: bool,
-}
-
-impl CodeMemoryPullRequest {
-    /// A request over `seed_symbols` with the default note limit and no
-    /// relevance floor.
-    pub fn new(seed_symbols: Vec<EntityId>) -> Self {
-        Self {
-            seed_symbols,
-            minimum_relevance: 0.0,
-            limit: CODE_MEMORY_DEFAULT_PULL_LIMIT,
-            include_always_on_contracts: true,
-        }
-    }
-}
-
 /// Provenance-labelled DATA returned by an L2 pull.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeMemoryPullResult {
@@ -191,7 +100,8 @@ fn collect_pull_candidates(
     let note_limit = request.limit;
     let examined_values = Cell::new(0_usize);
     let withheld = Cell::new(0_usize);
-    let mut candidate_notes: PullNoteCandidates = Vec::with_capacity(note_limit);
+    let mut candidate_notes: PullNoteCandidates =
+        Vec::with_capacity(note_limit.min(CODE_MEMORY_MAX_PULL_LIMIT));
     let mut candidate_contracts: Vec<AlwaysOnCodeMemoryContract> = Vec::new();
 
     for scored in retained {
@@ -242,6 +152,16 @@ fn collect_pull_candidates(
     Ok((candidate_notes, candidate_contracts, withheld.get()))
 }
 
+/// One pull's `rows` against `scan`'s row: past it the pull serves whole
+/// and raises the check. A threshold row that does not read skips the
+/// observation, never the pull.
+fn observe_pull(store: &Store, rtxn: &RoTxn<'_>, scan: EngineScan, rows: usize) {
+    if let Ok(mut count) = ScanCount::start(store, rtxn, scan, &[]) {
+        count.rows(rows);
+        count.defer(store);
+    }
+}
+
 /// ScopedRead-clamped L2 pull.
 ///
 /// Read order is fixed and load-bearing:
@@ -261,7 +181,7 @@ fn collect_pull_candidates(
 ///    boundary — the shared `ppr_cache` carries no actor, so this walk neither
 ///    reads nor writes it, and takes no dependency or graph-version write;
 /// 3. keep every scored `CODE_SYMBOL` at or above `minimum_relevance` — the
-///    caller's note limit is NOT applied to symbols;
+///    caller's note limit is NOT applied to symbols, and no count cuts them;
 /// 4. resolve slots and always-on registrations for those symbols, and clamp
 ///    every referenced PAYLOAD, all in THAT SAME transaction. The walk gate
 ///    above admits the SYMBOLS a ranking may traverse; the payload clamp stays
@@ -294,26 +214,33 @@ pub fn pull_code_memory(
             reason: "pull requires at least one CODE_SYMBOL seed",
         }));
     }
-    if request.seed_symbols.len() > CODE_MEMORY_MAX_PULL_LIMIT {
-        return Err(Error::Code(CodeError::CodeMemoryLimitExceeded {
-            kind: "pull seed symbols",
-            limit: CODE_MEMORY_MAX_PULL_LIMIT,
-        }));
-    }
     if !request.minimum_relevance.is_finite() || request.minimum_relevance < 0.0 {
         return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
             reason: "pull minimum relevance must be a finite non-negative score",
         }));
     }
-    if request.limit == 0 || request.limit > CODE_MEMORY_MAX_PULL_LIMIT {
-        return Err(Error::Code(CodeError::CodeMemoryLimitExceeded {
-            kind: "pull note limit",
-            limit: CODE_MEMORY_MAX_PULL_LIMIT,
+    if request.limit == 0 {
+        return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
+            reason: "pull note limit must be positive",
         }));
     }
 
     scoped_read.persist_grant_clock()?;
     let rtxn = vault.store.env.read_txn()?;
+    // The request is served whole, however many seeds and notes it names:
+    // past each row it raises one check and reads on (FIX 9690, 10008, 10210).
+    observe_pull(
+        &vault.store,
+        &rtxn,
+        EngineScan::CodeMemoryPullSeeds,
+        request.seed_symbols.len(),
+    );
+    observe_pull(
+        &vault.store,
+        &rtxn,
+        EngineScan::CodeMemoryPullNotes,
+        request.limit,
+    );
     for seed in &request.seed_symbols {
         if entity_type_in_txn(&vault.store, &rtxn, seed)? != Some(ENTITY_TYPE_CODE_SYMBOL) {
             return Err(Error::Code(CodeError::CodeMemoryInvalidAnchor {
@@ -335,9 +262,6 @@ pub fn pull_code_memory(
 
     let mut retained: Vec<ScoredEntity> = Vec::new();
     for score in scores {
-        if retained.len() == CODE_MEMORY_MAX_PULL_LIMIT {
-            break;
-        }
         if score.score < request.minimum_relevance {
             continue;
         }
@@ -345,6 +269,12 @@ pub fn pull_code_memory(
             retained.push(score);
         }
     }
+    observe_pull(
+        &vault.store,
+        &rtxn,
+        EngineScan::CodeMemoryPullSymbols,
+        retained.len(),
+    );
 
     let (mut permitted_notes, mut candidate_contracts, mut withheld) =
         collect_pull_candidates(vault, &rtxn, scoped_read, &request, &retained)?;
@@ -427,10 +357,10 @@ pub fn pull_code_memory(
 /// Registers one always-on interface/policy contract.
 ///
 /// Accepts ONLY a [`CodeMemoryPayloadRef::NoteEntity`] that resolves live to
-/// `ENTITY_TYPE_NOTE` on a live `CODE_SYMBOL` anchor, under the per-symbol
-/// bound of [`CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS`] distinct
-/// `(symbol, slot, payload)` keys. Re-registering an existing key is an
-/// idempotent upsert that does not consume a fresh slot.
+/// `ENTITY_TYPE_NOTE` on a live `CODE_SYMBOL` anchor. A symbol's distinct
+/// `(symbol, slot, payload)` keys are observed against
+/// [`CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS`], never refused (FIX 8562).
+/// Re-registering an existing key is an idempotent upsert that adds no key.
 ///
 /// POSITIVE NOTE TYPING (ARCH-0032 has landed, `ENTITY_TYPE_NOTE = 106`):
 /// docs contracts outrank the blueprint's stale "no NOTE entity type exists
@@ -466,12 +396,7 @@ pub fn register_always_on_contract(
         let registered = ALWAYS_ON
             .scan_keys(store, txn, &always_on_symbol_prefix(&contract.symbol_id))?
             .len();
-        if registered >= CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS {
-            return Err(Error::Code(CodeError::CodeMemoryLimitExceeded {
-                kind: "always-on contracts per symbol",
-                limit: CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS,
-            }));
-        }
+        observe_always_on_contracts(store, txn, &contract.symbol_id, registered + 1);
     }
     write_always_on(store, txn, &contract)
 }

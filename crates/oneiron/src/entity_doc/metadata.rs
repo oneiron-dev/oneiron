@@ -139,6 +139,8 @@ impl Vault {
                 .set_peer_id(LoroDoc::new().peer_id())
                 .map_err(|_| invalid("document peer rotation"))?;
             super::forks::bind_actor(self, txn, &doc, actor, at)?;
+            // The edit's commit names the actor's stamp token (FIX 10930).
+            let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
             let map = doc.doc.get_map("meta");
             for edit in edits {
                 if !is_metadata_field(&edit.field)
@@ -157,7 +159,7 @@ impl Vault {
                     }
                 }
             }
-            super::document::stamp(&doc.doc, actor, at, "metadata")?;
+            super::document::stamp(&doc.doc, stamp, at, "metadata")?;
             storage::persist(self, txn, entity, &mut head, &doc, Some(&before))?;
             Ok(doc.frontier())
         })?;

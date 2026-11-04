@@ -130,7 +130,7 @@ pub enum PassportDecision {
 ///
 /// [`CalendarError::IcsIngest`] on store or stored-claim decode failures.
 pub fn resolve_event_by_uid(vault: &Vault, uid: &str) -> Result<Option<EntityId>, CalendarError> {
-    resolve_uid(vault, uid, carries_live_uid)
+    resolve_uid(vault, uid, carries_live_uid, is_live_series_exception)
 }
 
 /// Resolves one UID to its EVENT through admitted passports only.
@@ -147,13 +147,23 @@ pub(crate) fn resolve_admitted_event_by_uid(
     vault: &Vault,
     uid: &str,
 ) -> Result<Option<EntityId>, CalendarError> {
-    resolve_uid(vault, uid, carries_admitted_uid)
+    resolve_uid(
+        vault,
+        uid,
+        carries_admitted_uid,
+        is_admitted_series_exception,
+    )
 }
 
+/// The shared resolver. `vouches` and `detached` read the same authority: a
+/// passport that vouches for the UID and an exception claim that excludes a
+/// detached instance are judged by one reader, so the two never disagree on
+/// which claims count.
 fn resolve_uid(
     vault: &Vault,
     uid: &str,
     vouches: fn(&Vault, &EntityId, &str) -> Result<bool, CalendarError>,
+    detached: fn(&Vault, &EntityId) -> Result<bool, CalendarError>,
 ) -> Result<Option<EntityId>, CalendarError> {
     let digest = passport_digest(uid);
     let indexed = {
@@ -162,7 +172,7 @@ fn resolve_uid(
     };
     if let Some(id) = indexed
         && vault.get_entity_type(&id)? == Some(ENTITY_TYPE_EVENT)
-        && !is_series_exception(vault, &id)?
+        && !detached(vault, &id)?
         && vouches(vault, &id, uid)?
     {
         return Ok(Some(id));
@@ -182,7 +192,7 @@ fn resolve_uid(
     };
     let mut found: Option<EntityId> = None;
     for event_ref in event_ids {
-        if !is_series_exception(vault, &event_ref)?
+        if !detached(vault, &event_ref)?
             && vouches(vault, &event_ref, uid)?
             && found.is_none_or(|current| event_ref.as_bytes() < current.as_bytes())
         {
@@ -515,10 +525,39 @@ fn ingest(reason: &'static str) -> CalendarError {
     }
 }
 
-fn is_series_exception(vault: &Vault, event: &EntityId) -> Result<bool, CalendarError> {
+/// Whether the ingest diff reads `event` as a detached series instance.
+///
+/// The importer's comparison form: an admitted exception head counts, and so
+/// does the importer's own pending one, since the import gate files its
+/// exception claims pending review exactly as it files its passports.
+fn is_live_series_exception(vault: &Vault, event: &EntityId) -> Result<bool, CalendarError> {
+    series_exception_with(vault, event, |body| {
+        claim_surfaceable(body)
+            || (body.approval == crate::claim::ClaimApprovalStatus::Proposed
+                && body.source == Some(crate::claim::ClaimSource::Imported))
+    })
+}
+
+/// Whether an admitted exception head makes `event` a detached instance.
+fn is_admitted_series_exception(vault: &Vault, event: &EntityId) -> Result<bool, CalendarError> {
+    series_exception_with(vault, event, claim_surfaceable)
+}
+
+/// Folds the current exception state: only a lifecycle-active
+/// `calendar.series_exception` head that `counts` admits excludes `event`.
+/// Superseded, retracted and rejected history is inert and never steers
+/// identity.
+fn series_exception_with(
+    vault: &Vault,
+    event: &EntityId,
+    counts: impl Fn(&crate::claim::ClaimBody) -> bool,
+) -> Result<bool, CalendarError> {
     for id in vault.claims_for_subject(event)? {
         if vault.get_claim(&id)?.is_some_and(|body| {
             body.predicate == super::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION
+                && body.lifecycle == ClaimLifecycleStatus::Active
+                && body.approval != crate::claim::ClaimApprovalStatus::Rejected
+                && counts(&body)
         }) {
             return Ok(true);
         }

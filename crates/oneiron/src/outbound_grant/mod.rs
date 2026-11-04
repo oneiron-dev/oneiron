@@ -11,14 +11,19 @@ mod grant;
 mod index;
 mod mint;
 mod scope;
+mod verb_class;
 
 pub use self::codec::{
     OUTBOUND_GRANT_BODY_KEYS, OUTBOUND_GRANT_SCHEMA_VERSION, decode_standing_outbound_grant_body,
     encode_standing_outbound_grant_body,
 };
-pub use self::consume::CHANNEL_IDENTITY_GRANT_USAGE_PREFIX;
+pub use self::consume::{
+    CHANNEL_IDENTITY_GRANT_USAGE_PREFIX, CHANNEL_IDENTITY_WINDOW_WAIT_REASON,
+    ChannelIdentityGrantOutcome, ChannelIdentityWindowWait,
+};
 pub(crate) use self::consume::{
-    ChannelIdentityGrantReservation, reserve_channel_identity_grant_in_txn,
+    ChannelIdentityGrantAdmission, ChannelIdentityGrantReservation, ChannelIdentityGrantRetention,
+    admit_channel_identity_grant_in_txn,
 };
 pub use self::grant::{StandingOutboundGrant, StandingOutboundGrantStatus};
 pub use self::scope::{

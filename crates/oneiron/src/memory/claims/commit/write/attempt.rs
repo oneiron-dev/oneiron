@@ -15,13 +15,13 @@ impl Memory<'_> {
         &self,
         write: &ClaimWrite<'_>,
         approval: ClaimApprovalStatus,
-    ) -> Result<bool, Error> {
+    ) -> Result<Option<EntityId>, Error> {
         let ClaimWrite {
             input,
             subject,
             ref value,
             world,
-            relationship,
+            ref relationship,
             ref scope_rmpv,
             source,
             occurred_at,
@@ -43,9 +43,7 @@ impl Memory<'_> {
         if let Some(world) = world {
             candidate = candidate.with_world(world);
         }
-        if let Some(relationship) = relationship {
-            candidate = candidate.with_relationship(relationship);
-        }
+        candidate = candidate.with_relationships(relationship.clone());
         if let Some(scope) = scope_rmpv.clone() {
             candidate = candidate.with_scope(scope);
         }
@@ -60,8 +58,8 @@ impl Memory<'_> {
             })
     }
 
-    /// The write transaction's body; `true` means a hard-delete marker
-    /// refused the id.
+    /// The write transaction's body; returns the identity refused by a
+    /// hard-delete marker, or `None` when admitted.
     fn write_claim_in_txn(
         &self,
         content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
@@ -69,14 +67,14 @@ impl Memory<'_> {
         candidate: ClaimCandidate,
         envelope: crate::WriteEnvelope,
         occurred: TimeRange,
-    ) -> Result<bool, Error> {
-        if self.admit_claim_write_in_txn(content, write, &envelope)? {
-            return Ok(true);
+    ) -> Result<Option<EntityId>, Error> {
+        if let Some(refused) = self.admit_claim_write_in_txn(content, write, &envelope)? {
+            return Ok(Some(refused));
         }
         let support = self.stage_claim_support_in_txn(content, write)?;
         let closure_envelope =
             self.apply_claim_candidate_in_txn(content, write, candidate, envelope, occurred)?;
         self.finish_claim_write_in_txn(content, write, support, &closure_envelope)?;
-        Ok(false)
+        Ok(None)
     }
 }

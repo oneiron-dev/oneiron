@@ -319,7 +319,7 @@ fn take_in_txn(
         true,
         Some(agent),
     )?;
-    vault.complete_deferred_claim_in_txn(wtxn, &proposal_ref, false, now)?;
+    vault.complete_deferred_claim_in_txn(wtxn, &proposal_ref, false, now, Some(agent))?;
     settle_task_proposal_in_txn(vault, wtxn, proposal_ref, Some(agent), now)?;
     let task_ref = EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[proposal_ref.as_bytes()])?;
     vault.prove_task_actor_in_txn(wtxn, task_ref, &agent, TaskActorVerb::Accept)?;

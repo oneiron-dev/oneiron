@@ -17,6 +17,7 @@ pub(crate) use storage::archive_document_tables;
 pub(crate) use storage::checkpoint;
 
 pub use blame::CodeRangePair;
+pub(crate) use blame::code_document_line_writers_in_txn;
 pub use file_metadata::{CodeFileMetadataEdit, CodeFilePresence};
 pub use review_views::{
     CodeFileChange, CodeFileDiffView, CodeProposalFileView, CodeProposalView,
@@ -25,8 +26,9 @@ pub use review_views::{
 };
 pub use session::CodeDocumentSession;
 pub(crate) use storage::{
-    CodeDocumentRows, CodeFileIngress, code_document_texts_in_txn, erase_head_actor_in_txn,
-    erase_ingress_actor_in_txn, verify_frontier_in_txn,
+    CodeDocumentRows, CodeFileIngress, code_document_genesis_id, code_document_identity_in_txn,
+    code_document_texts_in_txn, erase_head_actor_in_txn, erase_ingress_actor_in_txn,
+    verify_frontier_in_txn,
 };
 pub use types::{
     CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeOpAttribution, CodeOpProvenance,

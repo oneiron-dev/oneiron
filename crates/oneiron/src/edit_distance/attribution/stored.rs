@@ -29,6 +29,13 @@ pub(super) const JUDGMENT: SideTable<String, StoredJudgment, Raw> =
 pub(super) const AMENDMENT_CAUSE: SideTable<([u8; 32], String), StoredAmendmentCause, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_AMENDMENT_CAUSE);
 
+/// Amendment cause rows by the attempt receipt they name (FIX 11639): blake3
+/// of the attempt's pack receipt, then the cause row's own key. Empty markers;
+/// the cause row stays the record. No erase hook: a project erase re-keys
+/// the rows' project field, never their keys, so these entries stay true.
+pub(super) const AMENDMENT_ATTEMPT: SideTable<([u8; 32], [u8; 32], String), (), Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_AMENDMENT_ATTEMPT);
+
 /// Minted preference proposals, keyed by receipt id.
 pub(super) const PREFERENCE: SideTable<String, StoredPreference, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_PREFERENCE_PROPOSAL);
@@ -162,8 +169,8 @@ pub(super) struct StoredJudgment {
     /// is judged again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) attempt: Option<StoredAttempt>,
-    /// Each changed hunk's label and substitution identities, in text order; empty for an
-    /// amendment judged as one region (FIX 9808).
+    /// Each changed hunk's label and located ranges, in text order; empty for an
+    /// amendment judged as one region (FIX 9808, 11344).
     pub(super) hunks: Vec<StoredHunk>,
     /// The drafting executor at revision the evidence carried when judged; absent when unknown.
     /// Routing folds and rebuilds read this stamp alone (FIX 9812).
@@ -235,7 +242,17 @@ pub(super) struct StoredAmendmentCause {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredHunk {
     pub(super) class: String,
-    pub(super) substitutions: Vec<String>,
+    pub(super) ranges: Vec<StoredHunkRange>,
+}
+
+/// One recorded change a hunk's substitution was located at (FIX 11344):
+/// the retained artifact (hex) and the change's op span.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct StoredHunkRange {
+    pub(super) artifact: String,
+    pub(super) peer_id: u64,
+    pub(super) counter: i32,
+    pub(super) len: u32,
 }
 
 /// The amended attempt's pack receipt, and the skill its pack loaded (hex) when the evidence

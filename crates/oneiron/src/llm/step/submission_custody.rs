@@ -11,27 +11,18 @@
 //! receipt's metadata (actor, step hash, key, retry policy and model) and
 //! answers `Erased`: the step is over and is never asked again.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::ResponseFormat;
-use super::public::{ModelStepResult, ModelStepSubmit};
+use super::public::ModelStepResult;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideKey, SideTable};
+pub(super) use crate::store::model_step_submission::Submission;
 use crate::store::{ResponseCarriage, ResponseScan, Store};
 
 pub(super) const SUBMISSIONS: SideTable<AttemptId, Submission, Named> =
     SideTable::new(&side_table::MODEL_STEP_SUBMISSION);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Submission {
-    pub(super) actor: EntityId,
-    pub(super) input: ModelStepSubmit,
-    pub(super) step_hash: [u8; 32],
-    pub(super) result: Option<ModelStepResult>,
-}
 
 /// Whether an erase already took the row's copies.
 pub(super) fn erased(row: &Submission) -> bool {
@@ -105,6 +96,24 @@ pub(crate) fn submission_carriage(value: &[u8]) -> ResponseScan {
         retired: stub.len(),
         stub,
     })
+}
+
+/// Who owns the submission row at `id`'s copies, read in `txn`: none when
+/// it is gone or does not decode. The queue reads it to take its own copy
+/// of the step's failure text with the submission's (FIX 10460).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn submission_owners_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &AttemptId,
+) -> Result<Vec<EntityId>> {
+    let Some(bytes) = SUBMISSIONS.get_bytes(store, txn, id)? else {
+        return Ok(Vec::new());
+    };
+    Ok(submission_owners(&bytes))
 }
 
 /// Who owns the submission row `value`'s copies: none for a row that does

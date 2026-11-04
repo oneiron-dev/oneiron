@@ -11,21 +11,28 @@
 //! content-free receipt.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::bytes_to_hex_lower;
+use crate::error::SyncError;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 use crate::sync::federation_burst::erase::{self, CarriedBy};
 use crate::sync::federation_burst::schedule::{self, RetainedWorkQueue, Waiting};
 use crate::sync::ingest::{EntityStep, IngestCtx, RefusalRetry, ingest_entity_in_txn};
 use crate::sync::loro_support::TombstoneIndex;
+use crate::sync::selector::authority_beside::AuthorityBeside;
 use crate::{EntityId, Error, Result, Vault};
 
 /// The retained operations, by signer key (64 hex) then entity id (32 hex).
 const WORK: SideTable<String, RetainedMaintenance, Named> =
     SideTable::new(&side_table::SYNC_MAINTENANCE_RETAINED_WORK);
+
+/// The schedule queue these operations wait in: its deadline index notes
+/// each Pending one.
+const QUEUE: RetainedWorkQueue = RetainedWorkQueue::MaintenanceIngest;
 
 /// The most retained operations one drain pass replays; the next pass starts
 /// with the signer after the last one served.
@@ -97,6 +104,11 @@ impl<'a> MaintenanceOp<'a> {
             blob,
         }
     }
+
+    /// Full envelope bytes this op would debit against the byte share.
+    pub(super) fn quota_bytes(&self) -> u64 {
+        self.blob.len() as u64
+    }
 }
 
 thread_local! {
@@ -167,19 +179,20 @@ pub(super) fn retain_in_txn(
         state: MaintenanceWorkState::Pending,
     };
     WORK.put(vault, wtxn, &key, &work)?;
+    schedule::note_deadline_in_txn(&vault.store, wtxn, QUEUE, work.deadline, key.as_bytes())?;
     erase::register_in_txn(vault, wtxn, &[*op.id], &CarriedBy::Maintenance(key))
 }
 
 /// Ends the Pending op at `key` with `state`: its bytes go, and only the
 /// content-free receipt stays.
 fn end_in_txn(
-    dbs: &impl SideTableDbs,
+    store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     key: &str,
     state: MaintenanceWorkState,
 ) -> Result<()> {
     let key = key.to_owned();
-    let Some(mut work) = WORK.get(dbs, wtxn, &key)? else {
+    let Some(mut work) = WORK.get(store, wtxn, &key)? else {
         return Ok(());
     };
     if work.state != MaintenanceWorkState::Pending {
@@ -187,9 +200,10 @@ fn end_in_txn(
     }
     work.blob = None;
     work.state = state;
-    WORK.put(dbs, wtxn, &key, &work)?;
+    WORK.put(store, wtxn, &key, &work)?;
+    schedule::drop_deadline_in_txn(store, wtxn, QUEUE, work.deadline, key.as_bytes())?;
     let id = entity_of(&key)?;
-    erase::forget_in_txn(dbs, wtxn, &[id], &CarriedBy::Maintenance(key))
+    erase::forget_in_txn(store, wtxn, &[id], &CarriedBy::Maintenance(key))
 }
 
 /// Scrubs the retained op at `key` for an erase of its row (FIX 7998).
@@ -203,8 +217,27 @@ pub(crate) fn erase_retained_in_txn(
 
 /// Replays the retained op at `key` through the entity ladder in a savepoint,
 /// its share passed over; `true` when it landed. A refusal a later pass may
-/// lift leaves it waiting; any other refusal ends it as Rejected.
-fn replay(vault: &Vault, key: &str) -> Result<bool> {
+/// lift leaves it waiting; any other refusal ends it as Rejected. `windows`
+/// holds each window this pass loaded, so a window is loaded once per pass,
+/// however many of its ops the pass replays.
+fn replay(vault: &Vault, key: &str, windows: &mut HashMap<String, ReplayWindow>) -> Result<bool> {
+    // The window first, in a read of its own: the tombstone index below
+    // loads the window document, which opens its own read transactions and
+    // takes the materializer lock on a live window — neither crosses into
+    // the write below (lock order materializer → LMDB).
+    let window = {
+        let txn = vault.store.env.read_txn()?;
+        let Some(work) = WORK.get(vault, &txn, &key.to_owned())? else {
+            return Ok(false);
+        };
+        let (MaintenanceWorkState::Pending, Some(_)) = (work.state, &work.blob) else {
+            return Ok(false);
+        };
+        work.window.clone()
+    };
+    let loaded = windows
+        .entry(window.clone())
+        .or_insert_with(|| replay_window(vault, &window));
     vault.with_write_txn_grouped(|wtxn| {
         let Some(work) = WORK.get(vault, wtxn, &key.to_owned())? else {
             return Ok(false);
@@ -212,10 +245,14 @@ fn replay(vault: &Vault, key: &str) -> Result<bool> {
         let (MaintenanceWorkState::Pending, Some(blob)) = (work.state, &work.blob) else {
             return Ok(false);
         };
+        if work.window != window {
+            // Re-retained under another window between the two reads; the
+            // next pass loads that window's tombstones instead.
+            return Ok(false);
+        }
         let id = entity_of(key)?;
-        let doc = loro::LoroDoc::new();
-        let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
-        let ctx = IngestCtx::new(vault, &work.window, work.lease_vault_id, &tombstones);
+        let ctx = IngestCtx::new(vault, &work.window, work.lease_vault_id, &loaded.tombstones)
+            .with_authority_beside(loaded.authority.clone());
         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
         let step = {
             REPLAYING.with(|replaying| replaying.set(true));
@@ -225,15 +262,80 @@ fn replay(vault: &Vault, key: &str) -> Result<bool> {
         if let EntityStep::Quarantine(refusal) = step {
             drop(savepoint);
             if refusal.retry == RefusalRetry::Terminal {
-                end_in_txn(vault, wtxn, key, MaintenanceWorkState::Rejected)?;
+                end_in_txn(&vault.store, wtxn, key, MaintenanceWorkState::Rejected)?;
             }
             return Ok(false);
         }
         savepoint.commit()?;
         WORK.delete(vault, wtxn, &key.to_owned())?;
+        schedule::drop_deadline_in_txn(&vault.store, wtxn, QUEUE, work.deadline, key.as_bytes())?;
         erase::forget_in_txn(vault, wtxn, &[id], &CarriedBy::Maintenance(key.to_owned()))?;
         Ok(true)
     })
+}
+
+/// One window a drain pass replays into, loaded once for the pass: its
+/// tombstones (FIX 11185), and its AUTHORITY_LOG rows, which each retained
+/// authority op is judged beside, as its carrier's are (FIX 11959).
+struct ReplayWindow {
+    tombstones: TombstoneIndex,
+    authority: AuthorityBeside,
+}
+
+impl ReplayWindow {
+    fn of(doc: &loro::LoroDoc) -> Self {
+        Self {
+            tombstones: TombstoneIndex::build(&doc.get_map("tombstones")),
+            authority: AuthorityBeside::gather(&doc.get_map("entities"), |_| true),
+        }
+    }
+}
+
+/// `window` for one pass's replays: the live document's when the window is
+/// open here, read under its materializer lock, else the persisted state
+/// with its pending updates. A window that does not read replays as it did
+/// before its index, gated by the `dt:` marker and the row fence the ladder
+/// still checks, and with no authority rows beside its own.
+fn replay_window(vault: &Vault, window: &str) -> ReplayWindow {
+    let Some(key) = crate::sync::WindowKey::try_new(window) else {
+        tracing::warn!(
+            "retained maintenance: window key does not parse; replaying without CRDT tombstones"
+        );
+        return empty_window();
+    };
+    if let Some((live, materializer, _)) = vault.live_window(&key) {
+        let _guard = materializer.lock();
+        return ReplayWindow::of(&live.doc);
+    }
+    let doc = match crate::sync::window::load_window_from_state(vault, "local", &key) {
+        Ok(doc) => doc,
+        Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+            match crate::sync::window::rebuild_window_from_updates(vault, "local", &key) {
+                Ok(doc) => doc,
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "retained maintenance: window rebuild failed; replaying without CRDT tombstones"
+                    );
+                    return empty_window();
+                }
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "retained maintenance: window load failed; replaying without CRDT tombstones"
+            );
+            return empty_window();
+        }
+    };
+    ReplayWindow::of(&doc)
+}
+
+/// No tombstones and no authority rows: what a replay the window's index
+/// does not cover falls back to.
+fn empty_window() -> ReplayWindow {
+    ReplayWindow::of(&loro::LoroDoc::new())
 }
 
 /// Replays the retained maintenance work whose turn has come, at most
@@ -272,7 +374,7 @@ pub(crate) fn drain_retained_maintenance(vault: &Vault) -> Result<u64> {
                     .get(vault, wtxn, key)?
                     .is_some_and(|work| work.deadline <= now)
                 {
-                    end_in_txn(vault, wtxn, key, MaintenanceWorkState::Expired)?;
+                    end_in_txn(&vault.store, wtxn, key, MaintenanceWorkState::Expired)?;
                 }
             }
             Ok(())
@@ -280,8 +382,10 @@ pub(crate) fn drain_retained_maintenance(vault: &Vault) -> Result<u64> {
     }
     let mut landed = 0;
     let mut served = None;
+    // Each window this pass replays into is loaded once (FIX 11185).
+    let mut windows = HashMap::new();
     for (caller, key) in turns.due.into_iter().take(MAINTENANCE_DRAIN_TURNS) {
-        if replay(vault, &key)? {
+        if replay(vault, &key, &mut windows)? {
             landed += 1;
         }
         served = Some(caller);
@@ -291,6 +395,14 @@ pub(crate) fn drain_retained_maintenance(vault: &Vault) -> Result<u64> {
             .with_write_txn_grouped(|wtxn| schedule::set_cursor_in(vault, wtxn, queue, &caller))?;
     }
     Ok(landed)
+}
+
+/// The earliest deadline of the Pending retained ops, or `None` when none
+/// waits: the same rows [`drain_retained_maintenance`] ends (FIX 11183),
+/// read from the first row of their deadline index.
+pub(crate) fn earliest_retained_deadline(vault: &Vault) -> Result<Option<u64>> {
+    let txn = vault.store.env.read_txn()?;
+    schedule::earliest_deadline_in(&vault.store, &txn, QUEUE)
 }
 
 /// Every retained maintenance operation and receipt, without bytes, by

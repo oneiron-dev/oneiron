@@ -25,6 +25,9 @@ use crate::retained_opc::Package;
 use build::{broken_run, insert_paragraphs, new_run};
 
 mod build;
+mod field_cut;
+
+pub(crate) use field_cut::cell_text_cut;
 
 /// U+000B: an `a:br` in paragraph text, as PowerPoint writes it.
 pub(crate) const BREAK: char = '\u{b}';
@@ -68,7 +71,8 @@ pub(super) struct Paragraph {
     items: Vec<Item>,
     pub(super) text: Vec<char>,
     /// A child the mapping does not know (not `pPr`, `r`, `br`, `fld` or
-    /// `endParaRPr`): such a paragraph is never rewritten.
+    /// `endParaRPr`) holding text: such a paragraph is never rewritten. Any
+    /// other unknown child passes through unchanged (FIX 10385).
     opaque: bool,
 }
 
@@ -94,7 +98,9 @@ pub(super) fn paragraphs(tree: &XmlTree, body: usize) -> Vec<Paragraph> {
                     (A, "br") => (Kind::Break, BREAK.to_string()),
                     (A, "pPr" | "endParaRPr") => continue,
                     _ => {
-                        paragraph.opaque = true;
+                        if holds_text(tree, child) {
+                            paragraph.opaque = true;
+                        }
                         continue;
                     }
                 };
@@ -110,6 +116,16 @@ pub(super) fn paragraphs(tree: &XmlTree, body: usize) -> Vec<Paragraph> {
             paragraph
         })
         .collect()
+}
+
+/// Whether the element's subtree holds an `a:t` with text (FIX 10385): an
+/// unknown paragraph child holding none passes through the mapping
+/// unchanged, as alternate content and math do.
+fn holds_text(tree: &XmlTree, at: usize) -> bool {
+    tree.nodes[at].children.iter().any(|&child| {
+        let node = &tree.nodes[child];
+        (node.is(A, "t") && !node.text.is_empty()) || holds_text(tree, child)
+    })
 }
 
 /// The characters run `run` holds in paragraph `paragraph`, runs and
@@ -571,7 +587,7 @@ pub(super) fn rewrite_body(
 /// changed text, keep their bytes. A cell's text counts no line break, so a
 /// paragraph whose text reads as before, its breaks aside, keeps them.
 /// `None` when the mapping refuses (a change cutting into a field, content
-/// it does not know); the caller keeps its own rebuild then.
+/// holding text it does not know); the caller keeps its own rebuild then.
 pub(crate) fn cell_text(bytes: &[u8], tree: &XmlTree, body: usize, value: &str) -> Option<Vec<u8>> {
     let old = paragraphs(tree, body);
     let new: Vec<Vec<char>> = value

@@ -20,6 +20,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::receipt::{ActionInputs, call_reads_world, json_entity_refs};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{HookActorClass, PackHookBinding};
 use crate::task_verb::{
@@ -41,6 +42,11 @@ const PROCEED: &str = "proceed";
 const HOLD: &str = "hold";
 pub(super) const USED: &str =
     "this invocation's ask was already used; call again with a new invocation";
+/// A consumed-but-unfinished WRITE's honest answer (FIX 1443): its outcome
+/// is unknown because its call never finished, so the retry must use a new
+/// invocation instead of meeting the misleading "already used".
+pub(super) const UNKNOWN: &str =
+    "this invocation's ask was used but its call never finished; call again with a new invocation";
 /// The most bytes of JSON a drained call's saved result keeps for its
 /// caller's retry. Encoding stops past it.
 pub(super) const MAX_SAVED_VERB_RESULT_BYTES: usize = 65_536;
@@ -62,6 +68,11 @@ struct VerbAsk {
     domain: VerbDomain,
     /// The args the asking hook saw, re-validated, as JSON.
     args: String,
+    /// The input versions the parked call reads, captured when it parked
+    /// (OF-568), for the drain's refusal receipt; `None` when they were not
+    /// captured (a world call, over the entity bound, or no credential
+    /// target).
+    inputs: Option<ActionInputs>,
     /// The asking hook's place in the pre chain.
     position: u32,
     #[serde(with = "crate::serialize::entity_ref")]
@@ -197,7 +208,7 @@ pub(super) enum Retry {
 /// The proceed answer a resumed chain uses up in its own commit: the
 /// invocation's key and the ask it answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct AskToken {
+pub(crate) struct AskToken {
     key: [u8; 16],
     ask: EntityId,
     /// `<pack>/<hook>`: the asking hook.
@@ -209,6 +220,16 @@ impl AskToken {
     /// stays parked on its ask until they are back on.
     pub(super) fn parked(&self, invocation: InvocationId) -> VerbHookStop {
         pending(invocation, self.ask)
+    }
+
+    /// The invocation whose ask this token answers (chain-resume reopen path).
+    pub(super) fn key(&self) -> [u8; 16] {
+        self.key
+    }
+
+    /// The ask this token answers (chain-resume reopen path).
+    pub(super) fn ask(&self) -> EntityId {
+        self.ask
     }
 }
 
@@ -278,11 +299,47 @@ pub(super) fn retry(
         return skipped("this invocation belongs to another call");
     }
     if row.state == VerbAskState::Consumed {
-        return match &row.outcome {
-            Some(outcome) if same => Ok(Retry::Stop(completed(call.invocation, outcome)?)),
-            _ => skipped(USED),
+        if let Some(outcome) = &row.outcome {
+            if same {
+                return Ok(Retry::Stop(completed(call.invocation, outcome)?));
+            }
+            return skipped(USED);
+        }
+        // FIX 1443: a consumed-but-unfinished READ re-opens inline and
+        // resumes, while the same state on a WRITE answers Skipped with an
+        // honest unknown-outcome reason instead of "already used".
+        if row.domain == VerbDomain::Write {
+            return skipped(UNKNOWN);
+        }
+        let token = AskToken {
+            key,
+            ask: row.ask,
+            hook: row.hook.clone(),
         };
+        let reopened = vault.with_write_txn_grouped(|txn| reopen_in_txn(vault, txn, &token))?;
+        if !reopened {
+            return skipped(USED);
+        }
+        return resume_from(vault, call, &row, key, turn);
     }
+    resume_from(vault, call, &row, key, turn)
+}
+
+/// The Open-path resume construction, shared by a fresh Open row and a
+/// consumed-but-unfinished READ row re-opened inline (FIX 1443).
+fn resume_from(
+    vault: &Vault,
+    call: &VerbCall,
+    row: &VerbAsk,
+    key: [u8; 16],
+    turn: Option<&Arc<TaskWorkTurn>>,
+) -> Result<Retry> {
+    let skipped = |reason: &str| -> Result<Retry> {
+        Ok(Retry::Stop(VerbHookStop::Skipped {
+            hook: row.hook.clone(),
+            reason: reason.to_owned(),
+        }))
+    };
     let status = author_memory(vault, row.author, row.author_class, turn)
         .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
     let result = match status {
@@ -313,7 +370,7 @@ pub(super) fn retry(
         token: AskToken {
             key,
             ask: row.ask,
-            hook: row.hook,
+            hook: row.hook.clone(),
         },
     })
 }
@@ -337,6 +394,32 @@ pub(super) fn consume_in_txn(
     row.ready = false;
     ASKS.put(&vault.store, txn, &token.key, &row)?;
     credential::forget_in_txn(vault, txn, token.key)?;
+    Ok(true)
+}
+
+/// Re-opens the consumed ask `token` names (FIX 1431), in the same grouped
+/// write the caller holds: flips `Consumed` back to `Open` only when the row
+/// still names this ask and holds no outcome, else no-ops false. A retried
+/// call then resumes through the ordinary Resume path instead of meeting
+/// Skipped "already used". Re-opening restores the drain's `ready` mark for
+/// a row with a resume target, so a transient failure still leaves it ready
+/// for the next pass; a row with none keeps none, as the drain never runs
+/// it.
+pub(super) fn reopen_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    token: &AskToken,
+) -> Result<bool> {
+    let Some(mut row) = ASKS.get(&vault.store, txn, &token.key)? else {
+        return Ok(false);
+    };
+    if row.state != VerbAskState::Consumed || row.ask != token.ask || row.outcome.is_some() {
+        return Ok(false);
+    }
+    row.state = VerbAskState::Open;
+    row.consumed_at = None;
+    row.ready = row.resume.is_some();
+    ASKS.put(&vault.store, txn, &token.key, &row)?;
     Ok(true)
 }
 
@@ -413,7 +496,21 @@ pub(super) fn open(
         call.invocation.to_hex(),
         binding_id.to_hex()
     );
+    // OF-568: what the parked call reads, captured before it runs, for the
+    // drain's refusal receipt. Only a credential call keeps it; a world call
+    // or one over the entity bound keeps none, as on the wire. A capture
+    // that failed keeps none, so the ask still opens.
+    let inputs = match resume {
+        Some(VerbResume::Credential { .. }) if !call_reads_world(&call.verb) => {
+            vault.action_inputs(&json_entity_refs(args)).ok().flatten()
+        }
+        _ => None,
+    };
     let row = |ask: EntityId, resume: Option<VerbResume>| -> Result<VerbAsk> {
+        let inputs = match &resume {
+            Some(VerbResume::Credential { .. }) => inputs.clone(),
+            _ => None,
+        };
         Ok(VerbAsk {
             verb: call.verb.clone(),
             actor: call.actor,
@@ -422,6 +519,7 @@ pub(super) fn open(
             domain: call.domain,
             args: serde_json::to_string(args)
                 .map_err(|_| Error::InvariantViolation("verb hook ask args encode"))?,
+            inputs,
             position: u32::try_from(position).unwrap_or(u32::MAX),
             binding: binding_id,
             hook: format!("{}/{}", binding.pack, binding.hook),
@@ -515,6 +613,9 @@ pub(super) struct Ready {
     pub(super) class: HookActorClass,
     /// The saved args, as JSON.
     pub(super) args: String,
+    /// The input versions captured when the call parked, for the drain's
+    /// refusal receipt; `None` when they were not captured.
+    pub(super) inputs: Option<ActionInputs>,
     pub(super) resume: VerbResume,
     pub(super) ask: EntityId,
 }
@@ -544,6 +645,7 @@ pub(super) fn ready(vault: &Vault) -> Result<Vec<Ready>> {
             actor: row.actor,
             class: row.class,
             args: row.args,
+            inputs: row.inputs,
             resume,
             ask: row.ask,
         });

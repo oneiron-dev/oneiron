@@ -5,15 +5,14 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 
 use super::door_types::{
-    CredentialDoorError, DOOR_EFFECTORS, DOOR_MAX_LEASE_TTL_SECS, DoorResult, TtlCeiling,
-    names_a_floor,
+    CredentialDoorError, DOOR_EFFECTORS, DoorResult, TtlCeiling, names_a_floor,
 };
 use crate::secret_custody::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 use crate::store::Store;
 
 /// MessagePack keys this door reads out of POLICY_MANIFEST bodies.
 pub(super) mod door_policy_keys {
-    /// Narrowed TTL ceiling, in seconds.
+    /// The holder's TTL ceiling, in seconds (FIX 9777).
     pub(in crate::credential_door) const MAX_LEASE_TTL_SECS: &str =
         "secret.door.max_lease_ttl_secs";
     /// Narrowed effector set.
@@ -160,14 +159,11 @@ impl EffectorDial {
     }
 }
 
-/// The dial-narrowable catastrophe floors, RESOLVED — a snapshot, never a
-/// second resolver.
+/// The dial's resolved bounds — a snapshot, never a second resolver.
 ///
-/// Every floor a `secret.door.*` row may narrow lives here, and lives in its
-/// LATTICE form ([`TtlCeiling`]) rather than as a number. That is why there is
-/// no `max_lease_ttl_secs: u64` field any more: a raw `u64` can hold a ceiling
-/// above [`DOOR_MAX_LEASE_TTL_SECS`], can be assigned from anywhere, and puts
-/// the floor back in the hands of whoever remembers to `min` against it last.
+/// The lease ceiling a `secret.door.*` row sets lives here in its LATTICE
+/// form ([`TtlCeiling`]) rather than as a number: the holder's rows meet, and
+/// the door's default holds only while none declared one (FIX 9777).
 ///
 /// [`DOOR_SCAN_ALWAYS_ON`] and [`DOOR_ONE_SHOT_MAX_LIFETIME_SECS`] are
 /// deliberately NOT here. They are not dial space at all, and a field on a
@@ -179,8 +175,7 @@ pub(super) struct PolicyFloors {
 }
 
 impl PolicyFloors {
-    /// The floors a declaration of `secs` buys. Narrowing only by construction:
-    /// [`TtlCeiling::at_most`] clamps at the hard floor on the way in.
+    /// The bounds a holder's declaration of `secs` sets.
     pub(super) fn at_most_lease_ttl(secs: u64) -> Self {
         Self {
             lease_ttl: TtlCeiling::at_most(secs),
@@ -320,13 +315,11 @@ fn reject_floor_naming_rows(entries: &[(Value, Value)]) -> DoorResult<()> {
     Ok(())
 }
 
-/// Decodes the dial-narrowable floors out of one body.
+/// Decodes the holder's lease ceiling out of one body.
 ///
-/// The refusals are unchanged and stay LOUD: a non-integer ceiling, a
-/// duplicated row, and a row that tries to RAISE the ceiling above
-/// [`DOOR_MAX_LEASE_TTL_SECS`] each fail closed here rather than being clamped
-/// silently by [`TtlCeiling::at_most`] downstream. Only a declaration that
-/// genuinely narrows becomes a [`PolicyFloors`].
+/// A non-integer ceiling and a duplicated row stay LOUD and fail closed. Any
+/// declared value is the holder's to choose, above the door's default
+/// included (FIX 9777).
 fn decode_floors_row(entries: &[(Value, Value)]) -> DoorResult<PolicyFloors> {
     let key = door_policy_keys::MAX_LEASE_TTL_SECS;
     let invalid = |reason| CredentialDoorError::InvalidDoorPolicy { key, reason };
@@ -336,9 +329,6 @@ fn decode_floors_row(entries: &[(Value, Value)]) -> DoorResult<PolicyFloors> {
             let Some(secs) = as_u64(value) else {
                 return Err(invalid("TTL ceiling must be an unsigned integer"));
             };
-            if secs > DOOR_MAX_LEASE_TTL_SECS {
-                return Err(invalid("a dial may only narrow the TTL ceiling"));
-            }
             Ok(PolicyFloors::at_most_lease_ttl(secs))
         }
         MapValue::Duplicate => Err(invalid("duplicated row leaves the ceiling ambiguous")),

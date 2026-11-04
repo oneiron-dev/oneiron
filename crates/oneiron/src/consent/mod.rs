@@ -48,9 +48,12 @@
 //! rewrite, or a byte/status/codec change to the source record.
 
 mod adapters;
+pub mod approval_proof;
 mod ask_holders;
 mod bound;
+mod browser;
 pub mod bypass_lifecycle;
+pub mod code_wait_state;
 mod codec;
 mod contact_clearance;
 mod doors;
@@ -60,6 +63,7 @@ pub mod lifecycle;
 mod owner_reason;
 mod registry;
 mod support;
+pub mod tool_scope;
 pub mod widen;
 
 mod bypass;
@@ -76,6 +80,7 @@ pub use self::bound::{
     BoundSubject, ConsentDomain, DisclosureClass, DisclosureEnvelope, GrantBound,
     MAX_AUDIENCE_MEMBERS, MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS,
 };
+pub use self::browser::{BrowserConsentFacts, BrowserSendScope, browser_approve_once_digest};
 pub use self::bypass::{BypassActive, BypassExtent, BypassGrantWarning, BypassScope};
 pub use self::codec::{
     CONSENT_GRANT_BODY_KEYS, CONSENT_GRANT_SCHEMA_VERSION, decode_consent_grant_row,
@@ -144,7 +149,7 @@ pub(crate) use self::doors::QueuedCheckApproval;
 pub(crate) use self::doors::{
     OwnerAuthoredWrite, approve_once_authorization_in_txn, approve_once_decision_in_txn,
     person_is_live_for_store_in_txn, person_is_live_in_txn, revoke_standing_grant_in_txn,
-    spend_approve_once_in_txn, standing_grant_is_active_in_txn,
+    spend_approve_once_in_txn, standing_grant_is_active_in_txn, standing_grant_row_in_txn,
 };
 pub(crate) use self::effect::{
     ApproveOnceAuthorization, classify_composed_effect, evaluate_consent,
@@ -180,3 +185,7 @@ use self::codec::{
 };
 #[cfg(test)]
 use self::support::SUBJECT_KIND_AUDIENCE;
+
+pub mod bundle_projection;
+
+pub mod settlement_fact;

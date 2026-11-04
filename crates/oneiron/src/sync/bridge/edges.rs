@@ -12,7 +12,6 @@ use super::companion_identity::{
 use super::entities::take_injected_batch_commit_failure;
 use super::entities::{committed_entity_state_matches, set_remat_marker_logged};
 
-use crate::affect::Vad;
 use crate::batch::BatchOp;
 use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::entity_id::EntityId;
@@ -23,6 +22,7 @@ use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
 };
 use crate::{Error, Result, Vault};
+use oneiron_contracts::affect::Vad;
 
 /// The committed parent projection for one child. Read through the SAME
 /// transaction as the batch so resolver-injected removals are observable.
@@ -198,6 +198,7 @@ pub(super) fn materialize_edges_from_delta(
                             &tgt,
                         )?
                     {
+                        super::shell_pin::pin_from_edge(vault, wtxn, &edges_map, kind, &src, &tgt)?;
                         continue;
                     }
                     // FIX 5972: a stored `regenerates` pair was proven when it
@@ -704,8 +705,10 @@ pub(super) fn materialize_edges_from_delta(
             })
             .collect();
         let linked_facts = crate::task_verb::scoped_to_sources(&ops);
+        let fact_links = super::task_fact_edges::scoped_to_links(&ops);
         apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key, &tombstones)?;
         crate::task_verb::wake_linked_facts_in_txn(vault, wtxn, linked_facts)?;
+        super::task_fact_edges::announce_linked_tasks_in_txn(vault, wtxn, fact_links)?;
         for (src, tgt) in considered_child_of {
             // The candidate has reached the winner arbiter or its terminal
             // rejection, so no earlier missing-endpoint obligation remains.

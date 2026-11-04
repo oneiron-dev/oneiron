@@ -229,10 +229,18 @@ fn object_matches(
         .map(|patterns| {
             patterns
                 .iter()
-                .map(|(pattern, rule)| Ok((compiled(pattern)?, rule)))
-                .collect::<Result<Vec<_>>>()
+                .filter_map(|(pattern, rule)| match compiled(pattern) {
+                    Ok(compiled) => Some((compiled, rule)),
+                    Err(_) => {
+                        // A key this host cannot compile is an annotation, as
+                        // `pattern` is (FIX 10416): this entry names no keys
+                        // here, so they fall to `additionalProperties`.
+                        log_unenforceable_pattern(tool, pattern);
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
         })
-        .transpose()?
         .unwrap_or_default();
     if let Some(required) = fields.get("required") {
         for key in required.as_array().ok_or_else(invalid_schema)? {
@@ -354,21 +362,26 @@ fn pattern_matches(pattern: &str, text: &str, tool: &str) -> Option<bool> {
     match compiled(pattern) {
         Ok(compiled) => Some(compiled.is_match(text)),
         Err(_) => {
-            static LOGGED: OnceLock<Mutex<BTreeSet<(String, String)>>> = OnceLock::new();
-            let first = LOGGED
-                .get_or_init(Mutex::default)
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert((tool.to_owned(), pattern.to_owned()));
-            if first {
-                tracing::info!(
-                    tool,
-                    pattern,
-                    "a tool's pattern this host cannot compile is not enforced"
-                );
-            }
+            log_unenforceable_pattern(tool, pattern);
             None
         }
+    }
+}
+
+/// Note, once per tool and pattern, a pattern this host cannot compile.
+fn log_unenforceable_pattern(tool: &str, pattern: &str) {
+    static LOGGED: OnceLock<Mutex<BTreeSet<(String, String)>>> = OnceLock::new();
+    let first = LOGGED
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert((tool.to_owned(), pattern.to_owned()));
+    if first {
+        tracing::info!(
+            tool,
+            pattern,
+            "a tool's pattern this host cannot compile is not enforced"
+        );
     }
 }
 

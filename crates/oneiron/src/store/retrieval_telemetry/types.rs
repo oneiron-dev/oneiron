@@ -7,10 +7,10 @@ use uuid::Uuid;
 
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::pipeline::Signal;
 use crate::retrieval_quality::{
     ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality, RetrievalQualityReport,
 };
+use crate::store::retrieval_signal::Signal;
 
 use super::run_store::RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT;
 
@@ -466,7 +466,7 @@ pub struct RetrievalRunRecord {
     #[serde(default)]
     pub state: super::state::RetrievalState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub policy_trace: Option<crate::pipeline::retrieval_policy::RetrievalPolicyTrace>,
+    pub policy_trace: Option<crate::store::retrieval_policy::RetrievalPolicyTrace>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_inputs: Option<super::state::RetrievalReplayInputs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

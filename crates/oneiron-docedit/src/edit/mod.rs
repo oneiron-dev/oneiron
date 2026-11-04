@@ -27,10 +27,10 @@ pub(crate) mod xml;
 
 pub(crate) use structure::recount_slide_text;
 pub use structure::{
-    ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, StructureEdit,
+    ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, ShapeId, StructureEdit,
     StructureReport, structure_patch,
 };
-pub(crate) use text::{BREAK, cell_text};
+pub(crate) use text::{BREAK, cell_text, cell_text_cut};
 pub use transaction::{
     AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets,
     PartChange, StepRefusal, TransactionError, run_transaction,
@@ -189,6 +189,17 @@ pub enum Effect {
     TimingRemoved { timing_ids: Vec<u32> },
     /// A relationship only the deleted shape used is kept, unreferenced.
     Unreferenced { relationship: String },
+    /// `release_media` (FIX 10387): a relationship no element of its slide
+    /// referenced left the slide, with the part it reached (`part`) once no
+    /// relationship in the package reached that part any more; `None` when
+    /// one still does, or the relationship was external.
+    MediaReleased {
+        relationship: String,
+        part: Option<String>,
+    },
+    /// A relationship `release_media` named that its slide still
+    /// references: it stays.
+    MediaKept { relationship: String },
     /// A copy of a slide, with its slide id and minted `p14:creationId`.
     SlideAdded {
         part: String,
@@ -222,6 +233,9 @@ pub enum Effect {
         node: crate::live::NodeId,
         conversion: crate::live::Conversion,
     },
+    /// A table-cell write cut these `a:fld` fields whole (FIX 12227): each
+    /// named dynamic field, by its `type` attribute, became static text.
+    TableFieldsCut { fields: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -6,15 +6,15 @@
 //! the authority it sealed stands no more.
 
 use crate::error::Result;
-use crate::side_table::SideKey;
 use crate::{EntityId, Vault};
 
 use super::ADMISSION;
 
 /// Rewrites each decodable admission whose waking actor is `actor` without
-/// its slip's instrument, in the erase's own writer. ADMISSION is keyed by
-/// a hash that names no actor, so a row that does not decode is not this
-/// actor's by proof and stays as it is.
+/// its slip's instrument, in the erase's own writer. The actor's admissions
+/// are read by their actor index (FIX 5735). ADMISSION is keyed by a hash
+/// that names no actor, so a row that does not decode is not this actor's
+/// by proof and stays as it is.
 pub(super) fn scrub_actor_admission_instruments_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -24,12 +24,8 @@ pub(super) fn scrub_actor_admission_instruments_in_txn(
         return Ok(());
     }
     let mut scrubbed = Vec::new();
-    for row in ADMISSION.iter_raw_from(vault, wtxn, &[])? {
-        let (key, bytes) = row?;
-        let Some(key) = <[u8; 32] as SideKey>::decode_key(&key) else {
-            continue;
-        };
-        let Ok(mut record) = ADMISSION.decode_value(&bytes) else {
+    for key in super::index::actor_admissions_in_txn(vault, wtxn, actor)? {
+        let Some(mut record) = ADMISSION.get_lenient(vault, wtxn, &key)? else {
             continue;
         };
         if record.wake.authority.scrub_instrument_of(actor) {

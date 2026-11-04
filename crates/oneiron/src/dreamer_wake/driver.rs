@@ -4,6 +4,7 @@ mod admission;
 mod attribution;
 mod claim_authoring;
 mod concurrent;
+mod dispatch;
 mod executor_error;
 mod hooks;
 mod observe;
@@ -11,17 +12,19 @@ mod park_cause;
 mod rewrite;
 mod settle;
 mod stop;
+mod window;
 
 pub use self::claim_authoring::{BoundClaimAuthoringSelector, ClaimAuthoringSelection};
+use self::dispatch::Dispatch;
 use self::observe::WakePassClock;
-pub(crate) use self::park_cause::{llm_waits_on_owner_act, waits_on_owner_act};
+pub(crate) use self::park_cause::{
+    executor_error_ends_pass, llm_waits_on_owner_act, waits_on_owner_act,
+};
 pub(crate) use self::rewrite::check_host_wake_rewrite;
-use self::settle::Settlement;
-use self::stop::{attempt_stop, boundary_stop};
+use self::stop::boundary_stop;
+use self::window::{SettleFlow, WindowSlot, window_eligible};
 
 use std::future::poll_fn;
-use std::panic::AssertUnwindSafe;
-use std::pin::pin;
 use std::task::Poll;
 
 use crate::Vault;
@@ -34,13 +37,15 @@ use crate::dreamer_runner::{
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
-use crate::llm::{
+use oneiron_model::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID, BUDGET_PLAN_PROMPT_TEMPLATE,
     BUDGET_PLAN_PROMPT_TEMPLATE_ID, BudgetGuard, BudgetSignalDeliveryChannel, BudgetSteeringSignal,
-    BudgetThreshold,
+    BudgetThreshold, WorkCancel,
 };
 
-use super::deadline::{DREAMER_WRAP_UP_NOTICE_PERCENT, WakeCancellation, WakePassDeadline};
+use super::deadline::{
+    DREAMER_WRAP_UP_NOTICE_PERCENT, WakeCancellation, WakePassDeadline, sync_wake_cancel,
+};
 use super::settlement::admitted_lease;
 #[cfg(feature = "sync")]
 use super::types::WakeProgressLane;
@@ -132,6 +137,12 @@ pub struct DreamerWakeDriver<'a> {
     claim_authoring_fallback_stash: Option<ClaimAuthoringFallback>,
     /// The material this pass's `host.wake` pre-hooks added (FIX 8722).
     hook_material: Vec<String>,
+    /// The device-work cancellation the pass lends its attempts (FIX 11963):
+    /// each attempt admits under a clone, and the pass trips it beside the
+    /// wake flag at its checkpoints, so in-flight device work aborts with
+    /// the pass. Concurrent workers share it: each clones this same token
+    /// (FIX 11963), so a wake ask trips every worker's checkpoints alike.
+    pub(super) device_cancel: WorkCancel,
     #[cfg(feature = "sync")]
     pub(super) progress: Option<WakeProgressLane<'a>>,
 }
@@ -156,9 +167,16 @@ impl<'a> DreamerWakeDriver<'a> {
             claim_authoring: ClaimAuthoringSelection::None,
             claim_authoring_fallback_stash: None,
             hook_material: Vec::new(),
+            device_cancel: WorkCancel::new(),
             #[cfg(feature = "sync")]
             progress: None,
         }
+    }
+
+    /// The device-work cancellation this pass lends its attempts (FIX 11963).
+    #[must_use]
+    pub fn device_cancel(&self) -> &WorkCancel {
+        &self.device_cancel
     }
 
     /// The material this pass's `host.wake` pre-hooks added, in order, each
@@ -250,14 +268,17 @@ impl<'a> DreamerWakeDriver<'a> {
         cancel: &WakeCancellation,
     ) -> Result<WakePassReport> {
         let clock = WakePassClock::start(&input);
-        let hooks = match self.pre_wake_hooks(&input)? {
+        let hooks = match self
+            .pre_wake_hooks(&input)
+            .inspect_err(|error| clock.log_err(error))?
+        {
             Ok(hooks) => hooks,
             Err(skipped) => return Ok(skipped),
         };
         self.start_wake_observation(&input);
         let report = self.run_begun_wake_pass(input, exec, cancel).await;
         self.finish_wake_observation(report.as_ref());
-        let report = report?;
+        let report = report.inspect_err(|error| clock.log_err(error))?;
         warn_claim_authoring_fallback(&report.claim_authoring_fallback);
         self.post_wake_hooks(hooks, &report);
         clock.log(&report);
@@ -342,6 +363,15 @@ impl<'a> DreamerWakeDriver<'a> {
         prepared_wake: &crate::dreamer_consolidation::PreparedWake,
     ) -> Result<WakePassReport> {
         let admission_policy = self.vault.dreamer_wake_policy()?;
+        // Plain Micro partitions extract side by side up to this width
+        // (FIX 12487); their finishes and settles stay serial in
+        // admission order.
+        let partition_parallelism = self
+            .vault
+            .consolidation_selection()?
+            .partition_extraction_parallelism
+            .max(1);
+        let mut window: Vec<WindowSlot> = Vec::new();
         let mut report = WakePassReport {
             admitted: 0,
             completed: 0,
@@ -371,71 +401,159 @@ impl<'a> DreamerWakeDriver<'a> {
             // flag until the whole queue drained.
             yield_once().await;
             if let Some(stop) = boundary_stop(self, cancel) {
+                if let SettleFlow::FailPass(error) = self
+                    .flush_window(
+                        &mut window,
+                        &input,
+                        exec,
+                        cancel,
+                        prepared_wake,
+                        &mut held_error,
+                        &mut report,
+                    )
+                    .await?
+                {
+                    return Err(error);
+                }
                 report.stop = stop;
                 break;
             }
 
-            let priority = self.admit_priority(
+            // A collection-time error leaves the pass only after the
+            // admissions the window already holds are released (FIX
+            // 12487 round 2); the original error returns either way.
+            let priority = match self.admit_priority(
                 &input,
                 exec,
                 &admission_policy,
                 &mut task_admission_refused,
                 &mut program_admission_refused,
-            )?;
-            let mut admitted =
-                match priority {
-                    DreamerAdmissionOutcome::Admitted(attempt) => *attempt,
-                    DreamerAdmissionOutcome::BudgetExhausted(_) => {
-                        report.stop = WakePassStop::BudgetExhausted;
-                        break;
-                    }
-                    DreamerAdmissionOutcome::Empty => match self.store.admit_next_consolidation(
-                        AdmitDreamerConsolidationAttempt {
+            ) {
+                Ok(priority) => priority,
+                Err(error) => {
+                    self.release_window_for_collection_error(
+                        &mut window,
+                        &input,
+                        cancel,
+                        &mut report,
+                    );
+                    return Err(error);
+                }
+            };
+            // A stopped admission still settles what the window holds
+            // before the pass ends; the arm that stops names the stop.
+            let mut stop_after = None;
+            let admitted = match priority {
+                DreamerAdmissionOutcome::Admitted(attempt) => Some(*attempt),
+                DreamerAdmissionOutcome::BudgetExhausted(_) => {
+                    stop_after = Some(WakePassStop::BudgetExhausted);
+                    None
+                }
+                DreamerAdmissionOutcome::Empty => {
+                    let claim_authoring = match self.selected_claim_authoring(&mut report) {
+                        Ok(claim_authoring) => claim_authoring,
+                        Err(error) => {
+                            self.release_window_for_collection_error(
+                                &mut window,
+                                &input,
+                                cancel,
+                                &mut report,
+                            );
+                            return Err(error);
+                        }
+                    };
+                    let started_milestone =
+                        match self.milestone_claim(DreamerMilestoneKind::Started, input.now) {
+                            Ok(claim) => claim,
+                            Err(error) => {
+                                self.release_window_for_collection_error(
+                                    &mut window,
+                                    &input,
+                                    cancel,
+                                    &mut report,
+                                );
+                                return Err(error);
+                            }
+                        };
+                    match self
+                        .store
+                        .admit_next_consolidation(AdmitDreamerConsolidationAttempt {
                             scope: input.scope,
                             local_node_id: input.local_node_id,
                             claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
-                            claim_authoring: self.selected_claim_authoring(&mut report)?,
+                            claim_authoring,
                             admission: AdmitDreamerAttempt {
                                 lease_owner: input.lease_owner.clone(),
                                 now: input.now,
                                 budget_id: self.budget_id.clone(),
                                 budget_total_units: input.budget_total_units,
                                 reserve_units: input.reserve_units,
-                                started_milestone: self
-                                    .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                                started_milestone,
                             },
+                        }) {
+                        Ok(outcome) => match outcome {
+                            DreamerConsolidationAdmissionOutcome::NoHomeNode => {
+                                stop_after = Some(WakePassStop::NoHomeNode);
+                                None
+                            }
+                            DreamerConsolidationAdmissionOutcome::NotHomeNode(_) => {
+                                stop_after = Some(WakePassStop::NotHomeNode);
+                                None
+                            }
+                            DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(_) => {
+                                // The store already paused the attempt (admission-level trap).
+                                stop_after = Some(WakePassStop::Trapped);
+                                None
+                            }
+                            DreamerConsolidationAdmissionOutcome::Admission(
+                                DreamerAdmissionOutcome::Empty,
+                            ) => {
+                                stop_after = Some(WakePassStop::QueueEmpty);
+                                None
+                            }
+                            DreamerConsolidationAdmissionOutcome::Admission(
+                                DreamerAdmissionOutcome::BudgetExhausted(_),
+                            ) => {
+                                stop_after = Some(WakePassStop::BudgetExhausted);
+                                None
+                            }
+                            DreamerConsolidationAdmissionOutcome::Admission(
+                                DreamerAdmissionOutcome::Admitted(attempt),
+                            ) => Some(*attempt),
                         },
-                    )? {
-                        DreamerConsolidationAdmissionOutcome::NoHomeNode => {
-                            report.stop = WakePassStop::NoHomeNode;
-                            break;
+                        Err(error) => {
+                            self.release_window_for_collection_error(
+                                &mut window,
+                                &input,
+                                cancel,
+                                &mut report,
+                            );
+                            return Err(error);
                         }
-                        DreamerConsolidationAdmissionOutcome::NotHomeNode(_) => {
-                            report.stop = WakePassStop::NotHomeNode;
-                            break;
-                        }
-                        DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(_) => {
-                            // The store already paused the attempt (admission-level trap).
-                            report.stop = WakePassStop::Trapped;
-                            break;
-                        }
-                        DreamerConsolidationAdmissionOutcome::Admission(
-                            DreamerAdmissionOutcome::Empty,
-                        ) => {
-                            report.stop = WakePassStop::QueueEmpty;
-                            break;
-                        }
-                        DreamerConsolidationAdmissionOutcome::Admission(
-                            DreamerAdmissionOutcome::BudgetExhausted(_),
-                        ) => {
-                            report.stop = WakePassStop::BudgetExhausted;
-                            break;
-                        }
-                        DreamerConsolidationAdmissionOutcome::Admission(
-                            DreamerAdmissionOutcome::Admitted(attempt),
-                        ) => *attempt,
-                    },
-                };
+                    }
+                }
+            };
+            let mut admitted = match admitted {
+                Some(admitted) => admitted,
+                None => {
+                    if let SettleFlow::FailPass(error) = self
+                        .flush_window(
+                            &mut window,
+                            &input,
+                            exec,
+                            cancel,
+                            prepared_wake,
+                            &mut held_error,
+                            &mut report,
+                        )
+                        .await?
+                    {
+                        return Err(error);
+                    }
+                    report.stop = stop_after.expect("a stopped admission named its stop");
+                    break;
+                }
+            };
 
             report.admitted += 1;
             let attempt_id = admitted.status.attempt.id;
@@ -483,250 +601,122 @@ impl<'a> DreamerWakeDriver<'a> {
                 }
             }
 
-            // Cooperative-preemption checkpoint (H-S5/R2): the ONE point
-            // between admission and settle where a cancel is honored is
-            // HERE, before the executor dispatch — never mid-await. The
-            // admitted attempt flows through the ordinary Park arm below, which
-            // refunds its budget reservation and parks it before the pass
-            // stops.
+            // Pre-dispatch sync (FIX 11963): a wake ask raised while the
+            // attempt above admitted trips the device work its dispatch
+            // admits under, before the executor runs.
+            sync_wake_cancel(cancel, &self.device_cancel);
             let cancel_requested = cancel.is_cancelled();
-            let mut backlog_left = false;
             // What the attempt's own run line charged, read outside the
             // executor's future (SCAN C012): an attempt that never
             // dispatched registers nothing and settles zero.
             let spend_meter = WakeAttemptMeter::default();
-            // Where a non-executor outcome came from, for its outcome line
-            // (FIX 7271); `None` is the executor's own.
-            let mut stage = None;
-            let mut hard_cut_error = None;
-            let executed = if let Err(pressure_error) = pressure {
-                stage = Some("budget_pressure");
-                Err(pressure_error)
-            } else if cancel_requested && cancel.is_paused() {
-                // The host's pause (FIX 6909): a later pass resumes it.
-                stage = Some("paused");
-                Ok(DreamerAttemptExecution::Park {
-                    reason: DREAMER_PAUSED_PARK_REASON.to_owned(),
-                    cause: DreamerParkCause::Paused,
-                })
-            } else if cancel_requested {
-                stage = Some("cancelled");
-                Ok(DreamerAttemptExecution::Park {
-                    reason: DREAMER_CANCELLED_PARK_REASON.to_owned(),
-                    cause: DreamerParkCause::Cancelled,
-                })
-            } else if let Err(publish_error) =
-                self.publish(attempt_id, ProgressKind::Running, None, input.now)
-            {
-                // A Running-progress publish failure after admission flows
-                // through the same release arm as an executor error —
-                // propagating it directly would leave the admitted attempt
-                // leased and its reservation held.
-                stage = Some("progress_publish");
-                Err(publish_error)
-            } else if admitted.status.attempt.kind == input.scope.attempt_kind()
-                && !prepared_wake.contains_attempt(attempt_id)
-            {
-                // Enqueued after the frozen wake revision, or past the head of
-                // a backlog larger than one wake prepares: never admit it to
-                // this snapshot or fall back to a newer per-attempt read. Past
-                // the head, the pass ends here and the next prepares the rest.
-                stage = Some("backlog_deferred");
-                backlog_left = prepared_wake.left_for_later(attempt_id);
-                Ok(DreamerAttemptExecution::Deferred {
-                    completed_units: 0,
-                    retry_at: input.now.saturating_add(1),
-                    step_hashes: Vec::new(),
-                })
-            } else if let Some(crate::dreamer_consolidation::AttemptPreparation::Refused {
-                reason,
-                ..
-            }) = prepared_wake.preparation(attempt_id)
-            {
-                // A refused preparation is prepared again after its retry
-                // delay (FIX 7272); none waits on an owner act.
-                stage = Some("prepared_refused");
-                Ok(DreamerAttemptExecution::Park {
-                    reason: (*reason).to_owned(),
-                    cause: DreamerParkCause::Retry,
-                })
-            } else if matches!(
-                prepared_wake.preparation(attempt_id),
-                Some(crate::dreamer_consolidation::AttemptPreparation::ResidencyDeferred)
+            // A plain Micro partition with its plan ready joins the
+            // extraction window instead of dispatching alone (FIX
+            // 12487); anything else first flushes what the window
+            // holds, so no later admission settles ahead of partitions
+            // admitted before it.
+            if window_eligible(
+                &admitted,
+                prepared_wake,
+                pressure.is_ok(),
+                cancel_requested,
+                partition_parallelism,
             ) {
-                // A source away from this replica (OF-534) is a wait, never
-                // a park: the attempt stays queued and runs on promotion.
-                stage = Some("residency_deferred");
-                Ok(DreamerAttemptExecution::Deferred {
-                    completed_units: 0,
-                    retry_at: input
-                        .now
-                        .saturating_add(crate::dreamer_consolidation::RESIDENCY_RETRY_SECS),
-                    step_hashes: Vec::new(),
-                })
-            } else {
-                let mut ctx = WakeAttemptContext {
-                    vault: self.vault,
-                    deadline: &self.deadline,
-                    cancel: Some(cancel),
-                    budget_id: &line,
-                    now_ms: input.now.saturating_mul(1_000),
-                    prepared_wake: Some(prepared_wake),
-                    prepared_attempt: match prepared_wake.preparation(attempt_id) {
-                        Some(crate::dreamer_consolidation::AttemptPreparation::Ready(plan)) => {
-                            Some(plan)
-                        }
-                        _ => None,
-                    },
-                    spend_meter: Some(&spend_meter),
-                };
-                if ctx.prepared_attempt.is_some_and(
-                    crate::dreamer_consolidation::PreparedConsolidationAttempt::sources_truncated,
-                ) {
-                    report.sources_truncated = report.sources_truncated.saturating_add(1);
-                }
-                // Panic containment at the per-attempt boundary (ONE-1683): a
-                // panicking executor unwinding past the driver would skip
-                // the park/refund bookkeeping below, leaving the attempt leased
-                // and the reservation held until external lease cleanup.
-                // Catch it and route it through the executor-error arm. It
-                // parks as its cause says, but this executor is not used
-                // again in this pass: the pass ends on the panic and the
-                // next one gets a fresh executor (FIX 7322).
-                let mut execute = pin!(async {
-                    if admitted.status.attempt.kind
-                        == crate::dreamer_runner::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
-                    {
-                        crate::vault_cleanup::run_vault_cleanup(self.vault, &attempt_id)?;
-                        Ok(DreamerAttemptExecution::Completed {
-                            completed_units: 0,
-                            step_hashes: Vec::new(),
-                        })
-                    } else if admitted.status.attempt.kind
-                        == crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
-                    {
-                        crate::dreamer_runner::maintenance::optimize::execute(
-                            &admitted,
-                            &ctx,
-                            self.skill_optimizer.as_ref(),
-                        )
-                    } else if admitted.status.attempt.kind
-                        == crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
-                        && admitted.status.payload.attempt_type
-                            != crate::dreamer_runner::maintenance::COMPACTION_CHECK_FACET
-                        && admitted.status.payload.attempt_type
-                            != crate::dreamer_runner::maintenance::digest::DIGEST_ASSESS_FACET
-                    {
-                        crate::dreamer_runner::maintenance::execute(
-                            &admitted,
-                            &ctx,
-                            self.contribution_host,
-                        )
-                    } else if admitted.status.attempt.kind
-                        == crate::dreamer_runner::DREAMER_RECIPE_WAKE_ATTEMPT_KIND
-                    {
-                        super::recipe_wake::execute(&admitted, &ctx)
-                    } else {
-                        // The host's executor runs the rest, a self-written
-                        // compaction's check (FIX 4465 B) and an urgent
-                        // digest's harm question (OF-194) among them: each
-                        // is judged on the model or ladder the host lends.
-                        exec.execute(&admitted, &mut ctx).await
-                    }
+                window.push(WindowSlot {
+                    admitted,
+                    line,
+                    spend_meter,
                 });
-                let caught = poll_fn(|task_cx| {
-                    match std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        execute.as_mut().poll(task_cx)
-                    })) {
-                        Ok(poll) => poll.map(Ok),
-                        Err(panic) => Poll::Ready(Err(panic)),
-                    }
-                })
-                .await;
-                match caught {
-                    Ok(result) => result,
-                    // The payload is dropped unread: a panic message can quote
-                    // the row the executor was working on, and logs never
-                    // carry world text. The attempt id says where to look.
-                    Err(_payload) => {
-                        tracing::error!(
-                            attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
-                            kind = "executor_panic",
-                            "dreamer attempt executor panicked; parking the admitted attempt"
-                        );
-                        stage = Some("executor_panic");
-                        Err(crate::Error::InvariantViolation(
-                            "dreamer attempt executor panicked",
-                        ))
-                    }
-                }
-            };
-            let execution = match executed {
-                Ok(execution) => execution,
-                Err(error) => {
-                    // An executor may already have parked a hard-cut attempt
-                    // before surfacing an error. The budget refund, park
-                    // bookkeeping, and checkpoint milestone must still run.
-                    let step_layer_parked = self
-                        .store
-                        .parked_attempt(attempt_id)?
-                        .is_some_and(|row| row.reason == DREAMER_HARD_CUT_PARK_REASON);
-                    if !step_layer_parked && !self.deadline.expired() {
-                        // H-S5/R2 (ONE-1683): a non-deadline executor error
-                        // releases what admission acquired before the error
-                        // leaves the pass.
-                        let stage = stage.unwrap_or("executor_err");
-                        let ends_pass = self.park_executor_error(
-                            &admitted,
-                            &line,
-                            &spend_meter,
-                            &error,
-                            stage,
+                if window.len() >= partition_parallelism {
+                    if let SettleFlow::FailPass(error) = self
+                        .flush_window(
+                            &mut window,
                             &input,
-                        )?;
-                        // A contained panic ends the pass once it parked
-                        // (FIX 7322, Engine 10-21); other errors go on.
-                        if ends_pass || stage == "executor_panic" {
-                            return Err(error);
-                        }
-                        // FIX 7272: parked as a Retry a later pass resumes
-                        // after its delay, so this pass goes on and fails at
-                        // its end.
-                        report.parked += 1;
-                        held_error.get_or_insert(error);
-                        if cancel_requested {
-                            report.stop = WakePassStop::Cancelled;
-                            break;
-                        }
-                        continue;
-                    }
-                    hard_cut_error = Some(error.kind());
-                    DreamerAttemptExecution::Park {
-                        reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
-                        cause: DreamerParkCause::Checkpoint,
+                            exec,
+                            cancel,
+                            prepared_wake,
+                            &mut held_error,
+                            &mut report,
+                        )
+                        .await?
+                    {
+                        return Err(error);
                     }
                 }
+                continue;
+            }
+            // The attempt admitted above is not yet dispatched: a flush
+            // failure ends the pass only after that admission is
+            // released (parked resumable, reservation refunded), never
+            // left leased behind the error (FIX 12487 round 1).
+            let flush_error = match self
+                .flush_window(
+                    &mut window,
+                    &input,
+                    exec,
+                    cancel,
+                    prepared_wake,
+                    &mut held_error,
+                    &mut report,
+                )
+                .await
+            {
+                Ok(SettleFlow::FailPass(error)) => Some(error),
+                Ok(_) => None,
+                Err(error) => Some(error),
             };
-
-            self.settle_execution(
-                &*exec,
-                Settlement {
-                    input: &input,
-                    admitted: &admitted,
-                    line: &line,
-                    spend_meter: &spend_meter,
-                    attempt_id,
-                    execution,
-                    stage,
-                    hard_cut_error,
-                },
-                &mut report,
-            )
-            .await?;
-
-            if let Some(stop) = attempt_stop(cancel_requested, backlog_left) {
-                report.stop = stop;
-                break;
+            if let Some(error) = flush_error {
+                if let Err(release_error) = self.release_unflushed_admission(
+                    &input,
+                    &admitted,
+                    &line,
+                    cancel,
+                    cancel_requested,
+                    &mut report,
+                ) {
+                    tracing::warn!(
+                        kind = ?release_error.kind(),
+                        "release of the undispatched admission failed; its lease falls to the maintenance reclaim"
+                    );
+                }
+                return Err(error);
+            }
+            let dispatched = self
+                .dispatch_admitted(
+                    Dispatch {
+                        input: &input,
+                        admitted: &admitted,
+                        cancel,
+                        cancel_requested,
+                        prepared_wake,
+                        line: &line,
+                        spend_meter: &spend_meter,
+                        pressure,
+                    },
+                    exec,
+                    &mut report,
+                )
+                .await;
+            match self
+                .settle_attempt_outcome(
+                    &input,
+                    &admitted,
+                    &line,
+                    &spend_meter,
+                    cancel_requested,
+                    dispatched,
+                    &*exec,
+                    &mut held_error,
+                    &mut report,
+                )
+                .await?
+            {
+                SettleFlow::Continue => {}
+                SettleFlow::Break(stop) => {
+                    report.stop = stop;
+                    break;
+                }
+                SettleFlow::FailPass(error) => return Err(error),
             }
         }
 

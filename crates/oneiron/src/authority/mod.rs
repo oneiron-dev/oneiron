@@ -62,6 +62,7 @@ mod checkpoint_root_stage;
 mod checkpoint_root_status;
 mod claim_write;
 mod clock_repair;
+pub mod consolidation_evidence;
 mod conversation_training;
 mod conversation_training_vault;
 mod critical_confirm_door;
@@ -139,11 +140,14 @@ mod slip_replay;
 mod slip_state;
 mod slip_vault;
 mod stale_roster;
+pub(crate) mod store_order;
 mod support_admission;
 mod support_grant;
 mod support_receipt;
 mod support_repair;
 mod task_actor;
+pub mod task_ask_handle;
+mod valid_entries;
 mod vault_api;
 mod weave_admin;
 mod withdrawn_grant;
@@ -195,11 +199,11 @@ pub use oneiron_authority::authority::{
     sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
     verify_authority_signature,
 };
-// The custody work body's own types (WILL L04 row 04), and its permits in
-// pieces (FIX 11866).
+// The custody work body's own types (WILL L04 row 04), its permits in
+// pieces (FIX 11866) and its shared permit set (FIX 12281).
 pub use oneiron_authority::authority::{
     CustodyChange, CustodyPermitPiece, CustodyPermitPieces, CustodyRecipientPermit,
-    CustodyRequestAuthority,
+    CustodyRecipientPermits, CustodyRequestAuthority,
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
@@ -345,12 +349,12 @@ pub use slip_renewal::{
     OwnerDeviceRenewalProof, RENEWAL_GRANT_AND_DEVICE, RENEWAL_K04, RENEWAL_LIFETIME,
     RENEWAL_PROOF_NOT_FRESH,
 };
-pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
+pub(crate) use slip_replay::{SpentNonces, refuse_moved_proof_freshness};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::{
-    ConnectOffer, ConnectRescopeOffer, HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT,
-    HostSlipIssuer, ScopeOpeningKey,
+    ConnectOffer, ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
+    HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer, ScopeOpeningKey,
 };
 pub use support_grant::{
     SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,
@@ -358,6 +362,7 @@ pub use support_grant::{
 };
 pub use task_actor::AdmittedTaskGrant;
 pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
+pub use valid_entries::{EntryHashSet, ValidEntries};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{
     AdminStepUp, AuthenticatedWeaveAdmin, WEAVE_ADMIN_MFA_REQUIRED, WEAVE_ADMIN_NOT_CURRENT,
@@ -381,7 +386,8 @@ pub(crate) use adopted_fold::proven_residence_result_parents_in_txn;
 pub(crate) use agent_grant_act::{AgentGrantAct, AgentGrantActRef};
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use checkpoint_adopt::{
-    adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn,
+    adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn, adopted_image_row_key,
+    adopted_pin_row_key,
 };
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
@@ -396,7 +402,7 @@ pub(crate) use handover_evidence::HandoverEvidence;
 pub(crate) use history_admission::{
     RowsBeside, preflight_authority_rows_beside_in_txn, preflight_authority_rows_in_txn,
 };
-pub(crate) use host_action::{HostActionGuard, host_action_refused};
+pub(crate) use host_action::{HostActionGuard, HostActionIdentity, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
 #[cfg(test)]
@@ -449,8 +455,9 @@ use sequence_observation::{AuthorityLocalObservations, authority_local_observati
 use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
 pub use world_key_fold::{FoldedWorldKey, WORLD_KEY_WRAPS_PER_RECIPIENT, WrappedKey};
 pub(crate) use world_key_support::{
-    KeyFrontier, next_sequence, own_world_key_records_in_txn, owner_root_record_in_txn,
-    owner_root_records_in_txn, scope_head, sign_side_entry, standing_rows, unsigned_side_entry,
+    KeyFrontier, WideFrontier, next_sequence, own_world_key_records_in_txn,
+    owner_root_record_in_txn, owner_root_records_in_txn, scope_head, sign_side_entry,
+    standing_rows, unsigned_side_entry,
 };
 pub use world_models::WorldModelRoutes;
 #[cfg(feature = "sync")]

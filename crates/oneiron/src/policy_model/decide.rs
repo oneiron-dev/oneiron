@@ -7,20 +7,24 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::llm::decision::catalogue::{
+use crate::llm::decision::{
+    GENERATED_SETTLEMENT_INVARIANT, GeneratedDecisions, GeneratedMiss, GeneratedRung,
+    GeneratedStep, HeldLadder, TypedDecision,
+};
+use crate::model_decision::catalogue::{
     POLICY_HOSTED_ROW, POLICY_HOSTED_VIOLATION, POLICY_OWNER_ROW, POLICY_OWNER_VIOLATION,
 };
-use crate::llm::decision::{
+use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
-    DecisionQuestion, DecisionRung, GENERATED_SETTLEMENT_INVARIANT, GeneratedDecisions,
-    GeneratedMiss, GeneratedRung, GeneratedStep, HeldLadder, MAX_DECISION_STATE_BYTES, ProviderPin,
-    Reversibility, TypedDecision, cut_text, fit_state,
+    DecisionQuestion, DecisionRung, MAX_DECISION_STATE_BYTES, ProviderPin, Reversibility, cut_text,
+    fit_state,
 };
-use crate::llm::{
-    BudgetGuard, BudgetLease, ContentPart, DurableStepError, DurableStepResult, LlmBackend,
-    LlmMessage, LlmMessageRole, LlmRequest, ResponseFormat,
-};
+use crate::model_step_error::{DurableStepError, DurableStepResult};
 use crate::{EntityId, Error, Result};
+use oneiron_model::llm::{
+    BudgetGuard, BudgetLease, ContentPart, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
+    ResponseFormat,
+};
 
 mod checked;
 use checked::{CheckedReplies, answer_tokens};
@@ -389,8 +393,14 @@ pub(super) async fn safeguard_verdict(
     }
     let decisions = match outcome {
         Ok(GeneratedDecisions::Decided { decisions, .. }) => decisions,
-        Ok(GeneratedDecisions::Unread(GeneratedMiss::Budget(_))) => {
-            return Ok(skipped(PolicySkipReason::BudgetExhausted, audit));
+        Ok(GeneratedDecisions::Unread(GeneratedMiss::Budget(denied))) => {
+            let reason = match denied {
+                crate::llm::BudgetDenied::Exhausted => PolicySkipReason::BudgetExhausted,
+                crate::llm::BudgetDenied::LeaseInvalid
+                | crate::llm::BudgetDenied::AdmissionDenied
+                | crate::llm::BudgetDenied::HostCheck => PolicySkipReason::AdmissionDenied,
+            };
+            return Ok(skipped(reason, audit));
         }
         // A raw read never traps, and a backend the read could not reach
         // gave no answer.

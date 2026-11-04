@@ -10,7 +10,7 @@
 //!   fresh start. Nothing retires it.
 //! - Each history entry is kind `KnownValueEntry`: item = the holding
 //!   custody record's id, never a name derived from a value; generation =
-//!   the holder's entry slot; secret = [`KnownEntry`]'s 44 bytes. A slot is
+//!   the holder's entry slot; secret = [`KnownEntry`]'s 46 bytes. A slot is
 //!   taken past every slot the holder's references or its custody hold, an
 //!   aborted writer's included, and an entry of the same bytes is never
 //!   written twice for one holder. Two holders of the same bytes keep two
@@ -34,6 +34,9 @@
 //! - A pass reads the history in the writer it runs in (no custody guard,
 //!   none after the writer), or, for a stream, through [`KnownHistoryIds`]:
 //!   the ids the stream began with, each pass under the custody read guard.
+
+// A writer's history read with its ids (FIX 12210).
+mod writer_ids;
 
 use std::sync::{Arc, Weak};
 
@@ -89,6 +92,11 @@ impl HistoryRefs {
     fn slots(&self) -> impl Iterator<Item = u64> + '_ {
         self.0.iter().map(|held| held.slot)
     }
+
+    /// Each reference's record generation and slot, in write order.
+    fn tagged(&self) -> impl Iterator<Item = (u32, u64)> + '_ {
+        self.0.iter().map(|held| (held.generation, held.slot))
+    }
 }
 
 impl RawValue for HistoryRefs {
@@ -121,12 +129,14 @@ impl RawValue for HistoryRefs {
 }
 
 /// One history entry as the index keeps it: a value's byte length, the
-/// keyed tag of its first window and the keyed fingerprint of all of it,
-/// never the value. `len (u32be) | tag (8) | fingerprint (32)` in custody;
-/// wiped when dropped, and never printed.
+/// keyed tag and the keyed rolling value of its first window (FIX 12209),
+/// and the keyed fingerprint of all of it, never the value. `len (u32be) |
+/// tag (8) | rolling (u16be) | fingerprint (32)` in custody; wiped when
+/// dropped, and never printed.
 pub(crate) struct KnownEntry {
     pub(crate) len: u32,
     pub(crate) tag: [u8; KNOWN_TAG_BYTES],
+    pub(crate) rolling: u16,
     pub(crate) fingerprint: [u8; 32],
 }
 
@@ -135,6 +145,7 @@ impl KnownEntry {
         let mut bytes = Zeroizing::new(Vec::with_capacity(ENTRY_BYTES));
         bytes.extend_from_slice(&self.len.to_be_bytes());
         bytes.extend_from_slice(&self.tag);
+        bytes.extend_from_slice(&self.rolling.to_be_bytes());
         bytes.extend_from_slice(&self.fingerprint);
         CustodySecret::from_bytes(bytes)
     }
@@ -146,7 +157,8 @@ impl KnownEntry {
             return None;
         }
         let (len, rest) = bytes.split_at(4);
-        let (tag, fingerprint) = rest.split_at(KNOWN_TAG_BYTES);
+        let (tag, rest) = rest.split_at(KNOWN_TAG_BYTES);
+        let (rolling, fingerprint) = rest.split_at(2);
         let len = u32::from_be_bytes(len.try_into().ok()?);
         if len == 0 {
             return None;
@@ -154,6 +166,7 @@ impl KnownEntry {
         Some(Self {
             len,
             tag: tag.try_into().ok()?,
+            rolling: u16::from_be_bytes(rolling.try_into().ok()?),
             fingerprint: fingerprint.try_into().ok()?,
         })
     }
@@ -162,6 +175,7 @@ impl KnownEntry {
 impl Drop for KnownEntry {
     fn drop(&mut self) {
         self.tag.zeroize();
+        self.rolling.zeroize();
         self.fingerprint.zeroize();
     }
 }
@@ -200,9 +214,22 @@ fn read_entries(
     holder: &EntityId,
     slots: impl Iterator<Item = u64>,
 ) -> Result<Vec<KnownEntry>> {
+    let tagged = read_entries_tagged(custody, holder, slots.map(|slot| (0, slot)))?;
+    Ok(tagged.into_iter().map(|(_, entry)| entry).collect())
+}
+
+/// `holder`'s live entries at the `(generation, slot)` references in
+/// `custody`, each with the record generation it was written at, as its
+/// committed reference names it: the read a per-generation matcher builds
+/// from (FIX 10550). Skips and failures as [`read_entries`].
+fn read_entries_tagged(
+    custody: LocalCustody<'_>,
+    holder: &EntityId,
+    refs: impl Iterator<Item = (u32, u64)>,
+) -> Result<Vec<(u32, KnownEntry)>> {
     let subject = holder_subject(custody.binding(), holder)?;
     let mut entries = Vec::new();
-    for slot in slots {
+    for (generation, slot) in refs {
         let id = subject.at(slot);
         match custody.state(&id)? {
             EntryState::Retired => continue,
@@ -210,10 +237,9 @@ fn read_entries(
             EntryState::Live => {}
         }
         let secret = custody.read(&id)?;
-        entries.push(
-            KnownEntry::from_secret(&secret)
-                .ok_or_else(|| CustodyKind::KnownValueEntry.corrupt())?,
-        );
+        let entry = KnownEntry::from_secret(&secret)
+            .ok_or_else(|| CustodyKind::KnownValueEntry.corrupt())?;
+        entries.push((generation, entry));
     }
     Ok(entries)
 }
@@ -260,13 +286,26 @@ impl Store {
         drop(key);
         let subject = holder_subject(custody.binding(), holder)?;
         let mut refs = HISTORY.get(self, wtxn, holder)?.unwrap_or_default();
+        let mut live_slot = None;
         for slot in refs.slots() {
             let id = subject.at(slot);
             if custody.state(&id)? == EntryState::Live
                 && custody.read(&id)?.expose() == secret.expose()
             {
-                return Ok(false);
+                live_slot = Some(slot);
+                break;
             }
+        }
+        if let Some(slot) = live_slot {
+            // The bytes are already indexed under this holder, so no entry
+            // is written twice; the calling generation still gets its own
+            // reference to the live slot, or a per-generation read finds
+            // nothing at it (REVIEW-4461 P1, FIX 10550).
+            if !refs.0.iter().any(|held| held.generation == generation) {
+                refs.0.push(HistoryRef { generation, slot });
+                HISTORY.put(self, wtxn, holder, &refs)?;
+            }
+            return Ok(false);
         }
         let slot = match refs.slots().max().max(custody.newest_generation(&subject)?) {
             None => 0,
@@ -305,6 +344,34 @@ impl Store {
         Ok(Some(KnownHistory { master, holders }))
     }
 
+    /// The index master and `holder`'s live entries, each with the record
+    /// generation it was written at, as the writer `wtxn` reads them (FIX
+    /// 10550): the read a matcher over one custody record's named
+    /// generations builds from, touching that holder's slots alone. `None`
+    /// while the index keys no value or the holder has no committed
+    /// history. The writer contract is [`Self::known_history_in_writer`]'s.
+    ///
+    /// # Errors
+    ///
+    /// Custody lost or damaged under a committed reference, and storage
+    /// faults.
+    pub(crate) fn known_entries_for_in_writer(
+        &self,
+        wtxn: &RwTxn<'_>,
+        holder: &EntityId,
+    ) -> Result<Option<(Zeroizing<[u8; 32]>, Vec<(u32, KnownEntry)>)>> {
+        let Some(at) = INDEX.get(self, wtxn, &())? else {
+            return Ok(None);
+        };
+        let Some(refs) = HISTORY.get(self, wtxn, holder)? else {
+            return Ok(None);
+        };
+        let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
+        let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
+        let entries = read_entries_tagged(custody, holder, refs.tagged())?;
+        Ok(Some((master, entries)))
+    }
+
     /// The keyed fingerprint of a run-tree steer intent (FIX 10066): `input`
     /// hashed under a subkey derived from the index's master, read in the
     /// writer `wtxn` as [`Self::known_history_in_writer`] reads it. `None`
@@ -327,7 +394,7 @@ impl Store {
         };
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
         let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
-        let subkey = crate::world_keys::derive_guarded(CONTEXT, &[&master[..]]);
+        let subkey = crate::key_material::derive_guarded(CONTEXT, &[&master[..]]);
         Ok(Some(*blake3::keyed_hash(&subkey, input).as_bytes()))
     }
 
@@ -354,7 +421,7 @@ impl Store {
         };
         let custody = self.core.key_custody.bind_in_txn(self, txn)?;
         let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
-        let subkey = crate::world_keys::derive_guarded(CONTEXT, &[&master[..]]);
+        let subkey = crate::key_material::derive_guarded(CONTEXT, &[&master[..]]);
         Ok(Some(*blake3::keyed_hash(&subkey, rationale).as_bytes()))
     }
 

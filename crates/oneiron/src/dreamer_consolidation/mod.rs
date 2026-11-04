@@ -32,6 +32,7 @@ mod call_labels;
 pub mod confession;
 mod conflict;
 pub(crate) mod evidence;
+pub mod excluded_conversations;
 mod executor;
 mod extracted_people;
 mod failure_rules;
@@ -74,6 +75,7 @@ pub(crate) mod reviewed;
 mod roles;
 pub(crate) mod root_evidence;
 pub mod routing;
+mod running_buckets;
 mod scope_summary_attempt;
 pub mod selection;
 mod settle;
@@ -99,6 +101,7 @@ pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub(crate) use conflict::topic_key_canonical_bytes;
 pub use conflict::*;
 pub use executor::*;
+pub(crate) use extracted_people::pin_lineage_origin_in_txn;
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub use partition::*;
@@ -107,8 +110,8 @@ pub(crate) use persistence::conflict_close_candidate;
 pub(crate) use persistence::on_axes_of;
 pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub(crate) use person_about::{
-    enqueue_person_about_on_wake, erase_person_about_in_txn, mark_person_about_moved_in_txn,
-    person_of_about_input,
+    enqueue_person_about_on_wake, erase_person_about_in_txn, mark_person_about_dropped_in_txn,
+    mark_person_about_moved_in_txn, person_of_about_input,
 };
 pub use provenance::*;
 pub(crate) use provenance::{
@@ -137,6 +140,7 @@ pub use roles::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
     RoleBackend, RoleBackends, RoleCall,
 };
+pub(crate) use running_buckets::running_bucket_set_in_txn;
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub(crate) use scope_summary_attempt::{
     ScopeSummaryEvidence, arc_evidence_in_txn, editor_source_pins_in_txn, note_source_pins_in_txn,

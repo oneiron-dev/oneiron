@@ -14,7 +14,7 @@ pub(super) struct AdmittedRevision {
 pub(crate) struct RevisionedHits {
     pub(crate) vector_refinement: Option<crate::pipeline::VectorRefinement>,
     pub(crate) embedding_matches:
-        std::collections::HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
+        std::collections::HashMap<EntityId, Vec<crate::store::embedding::EmbeddingMatchEvidence>>,
     pub(crate) hits: Vec<ScoredEntity>,
     pub(crate) receipt: ScopedReadReceipt,
     pub(crate) revisions: std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
@@ -29,9 +29,9 @@ enum DenseChannel<'q> {
     /// A vector that `query_kind`'s tower of space `space_id` encoded.
     Space {
         space_id: &'q str,
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         query: &'q [f32],
-        kinds: &'q [crate::embed::InputKind],
+        kinds: &'q [crate::store::embedding::InputKind],
     },
 }
 
@@ -68,7 +68,7 @@ impl<'v> ScopedRead<'v> {
     pub(crate) fn search_space_revisioned(
         &self,
         space_id: &str,
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         query: &[f32],
         limit: usize,
         requested: Option<&RetrievalFilter>,
@@ -80,9 +80,9 @@ impl<'v> ScopedRead<'v> {
     pub(crate) fn search_space_kinds_revisioned(
         &self,
         space_id: &str,
-        query_kind: crate::embed::InputKind,
+        query_kind: crate::store::embedding::InputKind,
         query: &[f32],
-        kinds: &[crate::embed::InputKind],
+        kinds: &[crate::store::embedding::InputKind],
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<RevisionedHits> {
@@ -245,21 +245,9 @@ impl<'v> ScopedRead<'v> {
             .map(|revision| revision.raw))
     }
 
-    /// Historical bytes never inherit a later live body's authority, or vice versa.
-    pub(super) fn entity_raw_with_mode_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        filter: &ResolvedRetrievalFilter,
-        id: &EntityId,
-        mode: ReadMode,
-    ) -> Result<Option<AdmittedRevision>> {
-        let authority = HeldAuthority::default();
-        self.entity_raw_with_mode_held_in(txn, policy, filter, id, mode, &authority)
-    }
-
-    /// [`Self::entity_raw_with_mode_in`] under the authority one serving txn
-    /// holds for all its rows (FIX 7462).
+    /// Historical bytes never inherit a later live body's authority, or vice
+    /// versa. Judged under the authority one serving txn holds for all its
+    /// rows (FIX 7462).
     pub(super) fn entity_raw_with_mode_held_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -269,13 +257,19 @@ impl<'v> ScopedRead<'v> {
         mode: ReadMode,
         authority: &HeldAuthority<'v>,
     ) -> Result<Option<AdmittedRevision>> {
-        let Some(mut raw) = self.admitted_raw_in(txn, policy, filter, id, mode, authority)? else {
+        let Some(raw) = self.admitted_raw_in(txn, policy, filter, id, mode, authority)? else {
             return Ok(None);
         };
         // The short-reference hash names the stored revision, so it is taken
-        // before any live projection replaces the body.
+        // before any live projection replaces the body. A file-plane ASSET's
+        // comes from its manifest, never from the manifest's own bytes.
         let content_hash =
-            (xxhash_rust::xxh32::xxh32(&raw[ENTITY_METADATA_HEADER_LEN..], 0) % 256) as u8;
+            crate::store::short_content_hash_in_txn(&self.vault.store, txn, id, &raw)?;
+        // A file-plane ASSET's live row serves its body, not its manifest;
+        // an older revision keeps the manifest it was stored as. It is
+        // materialized while it is still the stored row, so the live
+        // projection below reads the body, never the manifest (FIX 12149).
+        let mut raw = self.vault.materialized_revision_in_txn(txn, id, raw)?;
         if mode == ReadMode::Live {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -319,8 +313,12 @@ impl<'v> ScopedRead<'v> {
         // A read by id matches no meaning, so it takes the row predicate
         // alone. The TURN rule of `is_entity_retrievable_with_policy_in`
         // guards the doors that find a row (search, recall, packs, graph
-        // edges), and each runs it before it reads the row here.
-        if !self.is_entity_readable_held_in(txn, policy, id, filter, authority)? {
+        // edges), and each runs it before it reads the row here. The bytes
+        // judged are kept: a revision read that returns them is admitted.
+        let Some(judged) = self.entity_record_in(txn, id)?.map(|row| row.encode()) else {
+            return Ok(None);
+        };
+        if !self.is_entity_raw_readable_held_in(txn, policy, id, &judged, filter, authority)? {
             return Ok(None);
         }
         let raw = match self.session_view {
@@ -348,25 +346,34 @@ impl<'v> ScopedRead<'v> {
             });
         let admitted = if stable_text_scope {
             self.text_sources_readable_in(txn, policy, id, authority)?
+        } else if raw == judged {
+            // The very bytes judged above, under the same txn, policy,
+            // filter and authority: the judge would repeat its answer
+            // (L02 04:25).
+            true
         } else {
             self.is_entity_raw_readable_held_in(txn, policy, id, &raw, filter, authority)?
         };
         Ok(admitted.then_some(raw))
     }
 
+    /// Whether `entity`'s revision reads in `txn` under `authority`, the
+    /// serving txn's own (FIX 11915).
     pub(super) fn context_entity_revision_is_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         entity: &ContextEntity,
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         let mode = entity
             .source_revision_ref
             .map_or(ReadMode::Live, |revision| {
                 ReadMode::Pinned(crate::vault::RevisionRef(revision))
             });
-        let Some(revision) = self.entity_raw_with_mode_in(txn, policy, filter, &entity.id, mode)?
+        let Some(revision) =
+            self.entity_raw_with_mode_held_in(txn, policy, filter, &entity.id, mode, authority)?
         else {
             return Ok(false);
         };

@@ -7,7 +7,7 @@ pub use oneiron_contracts::limit_ask::{EngineLimit, EngineLimits, LimitAsk};
 
 use std::sync::Arc;
 
-use crate::Vault;
+use crate::{EntityId, Vault};
 
 impl Vault {
     /// Installs where this vault's engine `[limits]` rows ask when they are
@@ -26,6 +26,25 @@ impl Vault {
         let bound = watch.bound(row);
         (measured > bound).then(|| {
             watch.crossed(row, bound, measured);
+            bound
+        })
+    }
+
+    /// [`Self::measure_limit`] for work `owner` ran, when the host knows
+    /// which vault owner's or co-owner's credential admitted it (FIX 5702):
+    /// the question names that owner, so in a co-owned vault it names the
+    /// co-owner whose work crossed the row. With none, exactly
+    /// [`Self::measure_limit`]. It never refuses.
+    pub fn measure_limit_for(
+        &self,
+        row: EngineLimit,
+        measured: u64,
+        owner: Option<EntityId>,
+    ) -> Option<u64> {
+        let watch = self.limit_watch();
+        let bound = watch.bound(row);
+        (measured > bound).then(|| {
+            watch.crossed_for(row, bound, measured, owner);
             bound
         })
     }

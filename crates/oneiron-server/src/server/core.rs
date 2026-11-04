@@ -59,6 +59,8 @@ pub use oneiron::work_line::TaskWorkTurn;
 /// Core sync server state shared across all connections.
 pub struct SyncServer {
     pub(crate) vault: Arc<oneiron::Vault>,
+    /// Durable client-named invocation intents, outcomes and admission locks.
+    pub(crate) invocation_claims: crate::invocation_claims::InvocationClaimStore,
     /// Root LoroDoc (server-authoritative, contains meta.windows).
     pub(crate) root_doc: LoroDoc,
     /// Hub-held Loro ephemeral state for late join/reconnect snapshots.
@@ -89,6 +91,9 @@ pub struct SyncServer {
     pub(super) lifecycle_in_flight: std::sync::Mutex<HashSet<LifecycleJobKey>>,
     /// Housekeeping passes in flight, scheduled or asked for by the owner.
     pub(crate) housekeeping_passes: super::housekeeping::HousekeepingPasses,
+    /// Whether this server's merge queue checker ran a pass yet: its first
+    /// asks again for a check that needed host configuration (FIX 7310).
+    pub(crate) queue_driver_started: std::sync::atomic::AtomicBool,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.

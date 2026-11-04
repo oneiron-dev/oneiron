@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use heed::RwTxn;
 
-use super::{IdempotencyEntry, Rows, Store};
+use super::{IdempotencyEntry, ManifestDbs, Rows, Store};
 use crate::error::{Error, Result};
 
 thread_local! {
@@ -37,8 +37,8 @@ impl IdempotencyEntry {
     }
 }
 
-/// The key of a keyed request's intent row, under the HTTP idempotency
-/// cache's rows.
+/// The key of a keyed request's or durable invocation's intent row, under
+/// its declared `sync_state` family.
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdempotencyIntent(Arc<str>);
@@ -53,6 +53,9 @@ impl IdempotencyIntent {
         if !store_key
             .as_bytes()
             .starts_with(crate::side_table::HTTP_IDEMPOTENCY_REPLY.prefix)
+            && !store_key
+                .as_bytes()
+                .starts_with(crate::side_table::INVOCATION_CLAIM.prefix)
         {
             return Err(Error::InvariantViolation(
                 "an idempotency intent outside its rows",
@@ -69,11 +72,30 @@ impl IdempotencyIntent {
     ///
     /// Storage errors, which the write answers as its own.
     #[cfg(feature = "sync")]
-    fn count_commit_in_txn(&self, store: &Store, txn: &mut RwTxn<'_>) -> Result<()> {
-        let kept = match store.sync_state.get(txn, &self.0)? {
-            Some(row) => IdempotencyEntry::decode(&row).ok(),
-            None => None,
-        };
+    pub(super) fn count_commit_in_txn(
+        &self,
+        store: &impl ManifestDbs,
+        txn: &mut RwTxn<'_>,
+    ) -> Result<()> {
+        let raw = store.sync_state().get(txn, &self.0)?;
+        if self
+            .0
+            .as_bytes()
+            .starts_with(crate::side_table::INVOCATION_CLAIM.prefix)
+        {
+            let kept = raw
+                .as_deref()
+                .and_then(|row| crate::store::InvocationClaimEntry::decode(row).ok());
+            let Some(mut intent) = kept.filter(|entry| entry.is_open_intent()) else {
+                return Ok(());
+            };
+            intent.committed_writes = intent.committed_writes.saturating_add(1);
+            let raw = intent.encode()?;
+            return crate::side_table::host_sync_state_put(store, txn, &self.0, &raw);
+        }
+        let kept = raw
+            .as_deref()
+            .and_then(|row| IdempotencyEntry::decode(row).ok());
         let Some(mut intent) = kept.filter(IdempotencyEntry::is_open_intent) else {
             return Ok(());
         };
@@ -84,7 +106,11 @@ impl IdempotencyIntent {
 
     /// A build without sync keeps no HTTP idempotency rows to count on.
     #[cfg(not(feature = "sync"))]
-    fn count_commit_in_txn(&self, _store: &Store, _txn: &mut RwTxn<'_>) -> Result<()> {
+    pub(super) fn count_commit_in_txn(
+        &self,
+        _store: &impl ManifestDbs,
+        _txn: &mut RwTxn<'_>,
+    ) -> Result<()> {
         Ok(())
     }
 }
@@ -133,7 +159,7 @@ where
 }
 
 /// The intent open on this thread.
-fn open_intent() -> Option<IdempotencyIntent> {
+pub(super) fn open_intent() -> Option<IdempotencyIntent> {
     OPEN_INTENT.with(|slot| slot.borrow().clone())
 }
 

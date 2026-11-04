@@ -17,11 +17,12 @@ use zeroize::Zeroizing;
 
 use super::{CustodyRequirement, CustodySourceAt, admit_recovery, refused};
 use crate::entity_id::EntityId;
-use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because};
 use crate::store::Store;
-use crate::store::key_custody::folder::FolderTarget;
 use crate::store::key_custody::head::CustodyOpener;
 use crate::store::key_custody::identity::{CustodyKind, CustodySubject};
+use crate::store::restore_admission::Rejected;
+use crate::store::restore_admission::RestoreAdmissionReason as R;
+use crate::store::restore_admission::because;
 
 /// A world pad's full id: world (16) | generation (8, big-endian) | mint (16).
 type PadItem = [u8; 40];
@@ -117,7 +118,7 @@ impl Store {
             data_key: Some(data_key),
             machine: source.machine,
         };
-        let target = FolderTarget::at(source.folder.to_path_buf());
+        let target = source.reader();
         let admitted = admit_recovery(&position, &target, &opener, source.anchor)?;
         let mut pads = AdmittedWorldPads {
             live: BTreeMap::new(),

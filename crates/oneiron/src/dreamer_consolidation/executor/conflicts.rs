@@ -90,6 +90,14 @@ impl ConsolidationExecutor<'_> {
                     "fast_path",
                 );
                 candidate.answers.extend(answer);
+                // FIX 12084: a fast-path/bound-correction head resolved its
+                // conflict; the tournament gate reads it as contested.
+                if matches!(
+                    self.strategy,
+                    crate::dreamer_runner::DreamerClaimAuthoringStrategy::Tournament
+                ) {
+                    candidate.contested = true;
+                }
                 dropped.extend(conflict.candidate_indexes.iter().copied());
                 merged.push(candidate);
                 continue;
@@ -195,6 +203,27 @@ impl ConsolidationExecutor<'_> {
             if ctx.deadline.expired() {
                 return Ok(ControlFlow::Break(PartitionRun::Checkpoint));
             }
+            // A cross-predicate merge that names no candidate has no one
+            // identity to land under (FIX 10521): that conflict stays open,
+            // as an escalation does, and the rest of the partition lands.
+            let resolution = match resolution {
+                MergeResolution::Merge {
+                    candidate_ref: None,
+                    ..
+                } if members.iter().any(|member| {
+                    candidate_facts(&member.candidate)
+                        .is_ok_and(|facts| facts.predicate != conflict.identity.predicate)
+                }) =>
+                {
+                    tracing::info!(
+                        target: "oneiron::dreamer",
+                        code = "cross_predicate_merge_unnamed",
+                        "a cross-predicate merge named no candidate: its conflict stays open"
+                    );
+                    MergeResolution::Escalate
+                }
+                resolution => resolution,
+            };
             match resolution {
                 // Keep every member, each with the pack that kept it.
                 MergeResolution::Accumulate => {
@@ -227,14 +256,6 @@ impl ConsolidationExecutor<'_> {
                                 .identity;
                         let matching = resources.matching_priors(member, resources.key_rules())?;
                         selected.prior_head = (matching.len() == 1).then(|| matching[0].0);
-                    } else if members.iter().any(|member| {
-                        candidate_facts(&member.candidate)
-                            .is_ok_and(|facts| facts.predicate != conflict.identity.predicate)
-                    }) {
-                        return Err(invalid_consolidation(
-                            "cross-predicate merge requires a candidate identity",
-                        )
-                        .into());
                     }
                     dropped.extend(conflict.candidate_indexes.iter().copied());
                     let mut output = merged_candidate(
@@ -256,6 +277,13 @@ impl ConsolidationExecutor<'_> {
                         answers.resolution.as_deref().unwrap_or("merge"),
                     );
                     output.answers.extend(answer);
+                    // FIX 12084: a merged head resolved its conflict.
+                    if matches!(
+                        self.strategy,
+                        crate::dreamer_runner::DreamerClaimAuthoringStrategy::Tournament
+                    ) {
+                        output.contested = true;
+                    }
                     merged.push(output);
                 }
                 MergeResolution::Escalate => {

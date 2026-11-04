@@ -29,7 +29,7 @@ use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
 use super::error_map::core_engine_error;
-use super::openapi::OwnerRoute;
+use super::openapi::{ByteBody, CHANGED, OwnerRoute, RestShape};
 use super::query_params;
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -68,6 +68,7 @@ pub(super) mod embedding_space_routes;
 mod export_audit_routes;
 pub(super) mod federation_connect_routes;
 mod feedback_triage_routes;
+mod folder_source_routes;
 mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
@@ -91,6 +92,7 @@ pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
 pub(super) mod recovery_kit_routes;
 pub(super) mod recovery_kit_target_routes;
+mod removal_archive_routes;
 pub(super) mod room_thread_setting_routes;
 pub(super) mod root_routes;
 pub(super) mod schema;
@@ -103,11 +105,13 @@ pub(super) mod shared_training_setup_routes;
 pub(super) mod skill_judge_routes;
 pub(super) mod space_posting_routes;
 pub(super) mod steer_routes;
+mod stream_recovery_routes;
 mod support_grant_routes;
 mod support_repair_routes;
 mod training_swap_routes;
 mod usage_repair_routes;
 pub(super) mod vault_key_routes;
+pub(super) mod weave_digest_channel_routes;
 pub(super) mod weave_routes;
 pub(super) mod widen_proposal_routes;
 pub(super) mod wire_health_routes;
@@ -144,6 +148,7 @@ fn owner_tables() -> OwnerTable {
         embedding_space_routes::owner_table(),
         export_audit_routes::owner_table(),
         history_routes::owner_table(),
+        folder_source_routes::owner_table(),
         house_routes::owner_table(),
         inbox_routes::owner_table(),
         intent_routes::owner_table(),
@@ -163,6 +168,7 @@ fn owner_tables() -> OwnerTable {
         agent_grant_routes::owner_table(),
         proactivity_routes::owner_table(),
         weave_routes::owner_table(),
+        weave_digest_channel_routes::owner_table(),
         pack_routes::owner_table(),
         pack_preview_routes::owner_table(),
         courtesy_delete_routes::owner_table(),
@@ -184,6 +190,7 @@ fn owner_tables() -> OwnerTable {
         secret_found_routes::owner_table(),
         secret_lift_routes::owner_table(),
         steer_routes::owner_table(),
+        stream_recovery_routes::owner_table(),
         training_swap_routes::owner_table(),
         usage_repair_routes::owner_table(),
         conversation_learning_routes::owner_table(),
@@ -194,6 +201,7 @@ fn owner_tables() -> OwnerTable {
         owner_work_routes::owner_table(),
         root_routes::owner_table(),
         recovery_kit_target_routes::owner_table(),
+        removal_archive_routes::owner_table(),
         super::owner_origin::owner_table(),
         super::packs::owner_table(),
         carrier_table(),
@@ -1003,7 +1011,10 @@ async fn witness_off_record(
 ) -> OwnerReply<oneiron::memory::WitnessReceipt> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
-    let receipt = blocking(move || off_record::witness(server.vault(), &owner, &request)).await?;
+    let receipt = blocking(move || {
+        off_record::witness(server.vault(), &owner, &request, server.embedder.as_ref())
+    })
+    .await?;
     Ok(Json(receipt))
 }
 

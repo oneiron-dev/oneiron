@@ -1,7 +1,6 @@
 //! Two-phase plan assembly: object writes plus the ref publications they authorize.
 
 use super::argv::FrozenGitArgv;
-use super::config::{GIT_WIRE_MAX_PLAN_OBJECTS, GIT_WIRE_MAX_PUBLICATIONS};
 use super::failure::invalid;
 use super::record::hash_field;
 use super::retained_object::GitRetainedObject;
@@ -85,8 +84,7 @@ impl GitWirePlan {
     }
 
     /// Adds one retained object's write and returns a handle to its object
-    /// id (FIX 7608 slice 2b-i). A copy writes each object as its own plan,
-    /// so the plan bound never limits how many it writes.
+    /// id (FIX 7608 slice 2b-i).
     pub fn write_retained(
         &mut self,
         object: GitRetainedObject,
@@ -96,9 +94,6 @@ impl GitWirePlan {
 
     /// Names an object that already exists in the store.
     pub fn existing_object(&mut self, oid: GitOid) -> GitWireResult<GitWirePlannedOid> {
-        if self.existing.len() >= GIT_WIRE_MAX_PLAN_OBJECTS {
-            return Err(invalid("git wire plan exceeds its object bound"));
-        }
         self.existing.push(oid);
         Ok(GitWirePlannedOid::Existing(self.existing.len() - 1))
     }
@@ -124,9 +119,6 @@ impl GitWirePlan {
     }
 
     fn push_object(&mut self, write: GitWireObjectWrite) -> GitWireResult<GitWirePlannedOid> {
-        if self.objects.len() >= GIT_WIRE_MAX_PLAN_OBJECTS {
-            return Err(invalid("git wire plan exceeds its object bound"));
-        }
         self.objects.push(write);
         Ok(GitWirePlannedOid::Written(self.objects.len() - 1))
     }
@@ -137,9 +129,6 @@ impl GitWirePlan {
         expected: GitRefExpectation,
         next: Option<GitWirePlannedOid>,
     ) -> GitWireResult<()> {
-        if self.publications.len() >= GIT_WIRE_MAX_PUBLICATIONS {
-            return Err(invalid("git wire plan exceeds its publication bound"));
-        }
         if name.is_keep_ref() {
             return Err(invalid(
                 "git wire plan must not publish an engine keep-ref directly",

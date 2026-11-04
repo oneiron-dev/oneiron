@@ -5,6 +5,8 @@ pub use credential_filter::{
     write_door_refuses_claim,
 };
 pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
+pub(crate) mod agent_knowledge_format;
+pub(crate) mod agent_knowledge_selection;
 mod archive_index;
 mod archive_project;
 mod archive_read;
@@ -55,6 +57,7 @@ use crate::store::{STORAGE_ABI_VERSION, STORAGE_SCHEMA_VERSION};
 #[cfg(test)]
 use std::collections::BTreeSet;
 
+mod agent_person_import;
 mod asset_reserve;
 mod document_import;
 mod document_snapshot;
@@ -65,6 +68,8 @@ pub use embedding_setup::*;
 mod expression_import;
 #[cfg(test)]
 mod expression_import_tests;
+mod home_room_project;
+pub(crate) use home_room_project::project_room_dependency;
 mod provenance_import;
 mod result_reserve;
 mod secret_supplement;
@@ -89,3 +94,5 @@ pub(crate) use receipt_sources::{receipt_sources_for_body, task_receipt_refs};
 
 #[cfg(test)]
 mod receipt_source_tests;
+
+pub(crate) mod secret_supplement_record;

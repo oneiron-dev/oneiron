@@ -30,9 +30,11 @@
 //! Nothing here delivers. [`fire_due_commitment_wake`] enqueues; the executor
 //! proposes; only [`schedule_approved_commitment_wake`], behind an inbox
 //! approval and an actor binding, reaches
-//! [`crate::memory::Memory::schedule_outbound`].
+//! [`crate::memory::Memory::schedule_outbound`]. A promise an agent owes
+//! proposes no message: the executor dispatches the agent's own run instead.
 
 mod reminder;
+mod reminder_wording;
 mod wake_approval;
 mod wake_event;
 mod wake_fire;
@@ -40,6 +42,11 @@ mod wake_proposal;
 
 pub use self::reminder::{
     COMMITMENT_REMINDER_CONTENT_PREFIX, CommitmentReminderPlanner, CommitmentReminderRoute,
+};
+pub use self::reminder_wording::{
+    COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND, COMMITMENT_REMINDER_WORDING_MAX_BYTES,
+    CommitmentReminderVoice, CommitmentReminderWorder, CommitmentReminderWordingPayload,
+    CommitmentReminderWordingRequest, run_commitment_reminder_wording,
 };
 pub(crate) use self::wake_approval::scheduled_commitment_wake_authorised;
 pub use self::wake_approval::{
@@ -49,7 +56,7 @@ pub use self::wake_approval::{
 pub use self::wake_event::{
     COMMITMENT_WAKE_PROPOSAL_SCHEMA_VERSION, COMMITMENT_WAKE_RUN_PREFIX,
     COMMITMENT_WAKE_SCHEMA_VERSION, COMMITMENT_WAKE_TRIGGER, COMMITMENT_WAKE_TRIGGER_REF_PREFIX,
-    CommitmentWakeDue, CommitmentWakeEvent, CommitmentWakePhase, MAX_COMMITMENT_WAKE_STRING_BYTES,
+    CommitmentWakeDue, CommitmentWakeEvent, CommitmentWakePhase,
     PREDICATE_COMMITMENT_WAKE_PROPOSAL, decode_commitment_wake_event, encode_commitment_wake_event,
 };
 pub use self::wake_fire::{

@@ -60,17 +60,41 @@ pub fn review_slides(
     if !inspection.signature_parts.is_empty() {
         return Err(PptxError::SignedPackage.into());
     }
+    // A resource refusal is the engine's error (FIX 10587), never an invalid deck.
     let package = Package::open(
         base.bytes,
         base.package_limits,
         &crate::office_body::document_resources(),
     )
-    .map_err(|_| invalid("slide review package"))?;
-    let view = DeckView::read(&package).map_err(|_| invalid("slide review deck view"))?;
+    .map_err(|error| {
+        crate::office_body::document_error(error.resource(), "slide review package")
+    })?;
+    let view = DeckView::read(&package).map_err(|error| {
+        crate::office_body::document_error(error.resource(), "slide review deck view")
+    })?;
+    // A live deck's units read their text where they were rendered (FIX 11981).
+    let shown = match base.shown {
+        Some(bytes) => {
+            let package = Package::open(
+                bytes,
+                base.package_limits,
+                &crate::office_body::document_resources(),
+            )
+            .map_err(|error| {
+                crate::office_body::document_error(error.resource(), "slide review live deck")
+            })?;
+            Some(DeckView::read(&package).map_err(|error| {
+                crate::office_body::document_error(error.resource(), "slide review live deck view")
+            })?)
+        }
+        None => None,
+    };
     // A located answer is kept in slide EMU when the deck gives its size.
     let slide_size = if question.contract.locates() {
         TemplateView::read(&package)
-            .map_err(|_| invalid("slide review deck size"))?
+            .map_err(|error| {
+                crate::office_body::document_error(error.resource(), "slide review deck size")
+            })?
             .slide_size
     } else {
         None
@@ -137,17 +161,23 @@ pub fn review_slides(
                     continue;
                 }
             };
+            let text = match &shown {
+                None => read.text.clone(),
+                Some(shown) => match shown_text(shown, slide, shape_key.as_deref()) {
+                    Some(text) => text,
+                    None => {
+                        refused.push(refusal(target, SlideUnitRefusalReason::MissingShape));
+                        continue;
+                    }
+                },
+            };
             // An unavailable image is not a negative answer or a malformed call.
             if unit.image.is_empty() || unit.renderer.trim().is_empty() {
                 abstained.push(SlideAbstention {
                     target: target.clone(),
                     decision: None,
+                    judged_live: None,
                 });
-                continue;
-            }
-            // A decision reads an image whole or not at all: none is scaled to fit.
-            if unit.image.len() > MAX_DECISION_IMAGE_BYTES {
-                refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
                 continue;
             }
             // A render's pixel size, which a located answer maps onto the slide.
@@ -191,6 +221,7 @@ pub fn review_slides(
                 abstained.push(SlideAbstention {
                     target: target.clone(),
                     decision: None,
+                    judged_live: None,
                 });
                 continue;
             }
@@ -204,15 +235,13 @@ pub fn review_slides(
                         "shape_id": read.anchor.shape.as_ref().and_then(|shape| shape.shape_id),
                         "shape_name": read.name,
                     },
-                    "text": read.text,
+                    "text": text,
                     "renderer": unit.renderer,
                 }))
                 .map_err(|_| invalid("slide review unit state"))?;
             let state_bytes =
                 serde_json::to_vec(&state).map_err(|_| invalid("slide review unit state"))?;
-            if read.text.len() > limits.max_text_bytes
-                || state_bytes.len() > MAX_DECISION_STATE_BYTES
-            {
+            if text.len() > limits.max_text_bytes || state_bytes.len() > MAX_DECISION_STATE_BYTES {
                 refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
                 continue;
             }
@@ -274,6 +303,7 @@ pub fn review_slides(
                 abstained.push(SlideAbstention {
                     target: target.clone(),
                     decision: Some(decision),
+                    judged_live: None,
                 });
                 continue;
             }
@@ -307,6 +337,7 @@ pub fn review_slides(
                 presence,
                 location,
                 band_mode: band_policy.mode,
+                ceiling: call.dial.ceiling,
                 renderer: unit.renderer.clone(),
                 frontier,
                 media: call.entries,
@@ -413,6 +444,33 @@ pub(super) fn read_unit(
     })
 }
 
+/// The text `slide`'s unit reads on `shown`, a live deck's projection: the
+/// slide of the same part and id there, and on it the one shape `shape_key`
+/// names or every text-bearing shape, as [`read_unit`] reads them. `None`
+/// when the slide or the shape is gone there.
+fn shown_text(shown: &DeckView, slide: &SlideView, shape_key: Option<&str>) -> Option<String> {
+    let slide = shown
+        .slides
+        .iter()
+        .find(|shown| shown.part == slide.part && shown.sld_id == slide.sld_id)?;
+    let Some(key) = shape_key else {
+        return Some(
+            slide
+                .shapes
+                .iter()
+                .filter_map(shape_text)
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        );
+    };
+    let shape = slide
+        .shapes
+        .iter()
+        .find(|shape| shape.creation_id.as_deref() == Some(key))?;
+    Some(shape_text(shape).unwrap_or_default())
+}
+
 pub(super) fn refusal(
     target: &PptxCommentTarget,
     reason: SlideUnitRefusalReason,
@@ -433,6 +491,7 @@ pub(super) fn refusal(
         target: target.clone(),
         reason,
         offer,
+        judged_live: None,
     }
 }
 

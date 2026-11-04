@@ -5,7 +5,9 @@
 use super::semantic_code_diff;
 use super::semantic_diff::{CodeContentVersion, CodeSemanticChange, render_code_semantic_diff};
 use crate::Vault;
-use crate::code_document::{CodeDocumentFrontier, CodeOpAttribution, CodeSpanBlame};
+use crate::code_document::{
+    CodeDocumentFrontier, CodeOpAttribution, CodeRangeChange, CodeSpanBlame,
+};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -56,23 +58,41 @@ impl Vault {
         let old = self.code_document_at(before)?;
         let new = self.code_document_at(after)?;
         let changes = semantic_code_diff(&after.path, &old, &new)?;
-        let ranges: Vec<_> = changes
-            .iter()
-            .map(|change| {
-                (
-                    change.before.as_ref().map(|v| unit_chars(&old, v)),
-                    change.after.as_ref().map(|v| unit_chars(&new, v)),
-                )
-            })
-            .collect();
-        let ops = self.code_document_range_changes(before, after, &ranges)?;
+        // One range pair per span of each side, so a joined unit reads only
+        // its own blocks; its operations are the union over its spans.
+        let mut ranges = Vec::new();
+        let mut owners = Vec::new();
+        for (index, change) in changes.iter().enumerate() {
+            for span in change.before.iter().flat_map(|v| unit_chars(&old, v)) {
+                ranges.push((Some(span), None));
+                owners.push(index);
+            }
+            for span in change.after.iter().flat_map(|v| unit_chars(&new, v)) {
+                ranges.push((None, Some(span)));
+                owners.push(index);
+            }
+        }
+        let mut merged = vec![CodeRangeChange::default(); changes.len()];
+        for (index, ops) in owners
+            .into_iter()
+            .zip(self.code_document_range_changes(before, after, &ranges)?)
+        {
+            merged[index].inserted_by.extend(ops.inserted_by);
+            merged[index].deleted_by.extend(ops.deleted_by);
+        }
         Ok(changes
             .into_iter()
-            .zip(ops)
-            .map(|(change, ops)| CodeAttributedChange {
-                change,
-                inserted_by: ops.inserted_by,
-                deleted_by: ops.deleted_by,
+            .zip(merged)
+            .map(|(change, mut ops)| {
+                for list in [&mut ops.inserted_by, &mut ops.deleted_by] {
+                    list.sort_by_key(|op| op.sequence);
+                    list.dedup_by_key(|op| op.sequence);
+                }
+                CodeAttributedChange {
+                    change,
+                    inserted_by: ops.inserted_by,
+                    deleted_by: ops.deleted_by,
+                }
             })
             .collect())
     }
@@ -91,9 +111,12 @@ impl Vault {
                     .map(|version| (change.path, change.symbol, version))
             })
             .map(|(path, symbol, version)| {
-                let (start, end) = unit_chars(&text, &version);
+                let mut spans = Vec::new();
+                for (start, end) in unit_chars(&text, &version) {
+                    spans.extend(self.code_document_blame(tested, start, end)?);
+                }
                 Ok(CodeUnitBlame {
-                    spans: self.code_document_blame(tested, start, end)?,
+                    spans,
                     path,
                     symbol,
                     version,
@@ -136,34 +159,19 @@ pub fn render_op(op: &CodeOpAttribution) -> String {
     )
 }
 
-/// The unit's exact Unicode scalar span when its text sits at its first line,
-/// else the whole lines it covers (impl blocks joined from several places).
-fn unit_chars(text: &str, version: &CodeContentVersion) -> (usize, usize) {
-    let mut line = 1;
-    let mut start_byte = if version.start_line <= 1 {
-        Some(0)
-    } else {
-        None
-    };
-    let mut end_byte = text.len();
-    for (index, byte) in text.bytes().enumerate() {
-        if byte != b'\n' {
-            continue;
-        }
-        if line >= version.end_line {
-            end_byte = index;
-            break;
-        }
-        line += 1;
-        if line == version.start_line {
-            start_byte = Some(index + 1);
-        }
+/// The unit's exact Unicode scalar spans, one per byte span its version was
+/// cut from: a definition that shares a line with a sibling, or an impl
+/// joined from several places, blames only its own text (FIX 9720).
+fn unit_chars(text: &str, version: &CodeContentVersion) -> Vec<(usize, usize)> {
+    let (mut byte, mut chars) = (0, 0);
+    let mut spans = Vec::with_capacity(version.byte_spans.len());
+    for &(start, end) in &version.byte_spans {
+        // Spans are in source order and were cut from this very text.
+        chars += text.get(byte..start).map_or(0, |gap| gap.chars().count());
+        let first = chars;
+        chars += text.get(start..end).map_or(0, |unit| unit.chars().count());
+        spans.push((first, chars));
+        byte = byte.max(end);
     }
-    let start_byte = start_byte.unwrap_or(end_byte).min(end_byte);
-    let chars = |byte: usize| text[..byte].chars().count();
-    if text[start_byte..].starts_with(&version.text) {
-        let start = chars(start_byte);
-        return (start, start + version.text.chars().count());
-    }
-    (chars(start_byte), chars(end_byte))
+    spans
 }

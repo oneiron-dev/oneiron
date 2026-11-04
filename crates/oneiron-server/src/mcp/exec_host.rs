@@ -4,7 +4,7 @@ use super::LiveLeaseBackend;
 use super::actors::McpResolvedActor;
 use super::run_seats::RunSeats;
 use crate::admission::Admission;
-use crate::ai_host::live_lease::LeaseLine;
+use crate::ai_host::live_lease::{LeaseLine, LiveLeaseState};
 use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use oneiron::agent_def::AgentModel;
@@ -19,7 +19,10 @@ use oneiron::engine_executor::{
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatTask};
 use oneiron::task_type::TaskTypeRef;
-use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelLocality, Vault, WriteActor};
+use oneiron::{
+    BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelId, ModelLocality, Vault, WriteActor,
+};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -114,6 +117,8 @@ pub struct McpCodeExecutionRequest<'a> {
     /// the call arrived at, so the host binds no vault of its own.
     pub vault: Arc<Vault>,
     pub actor: &'a McpResolvedActor,
+    /// The gateway-bound execution session, never the STREAM connection.
+    pub off_record_session: Option<String>,
     /// The caller's handle onto the durable run.
     pub run_ref: &'a str,
     /// The REPL task the durable run carries out.
@@ -210,6 +215,15 @@ pub trait McpCodeModeProvider: Send + Sync {
 
     /// The backend the durable REPL generates each step against.
     fn backend(&self) -> &dyn LlmBackend;
+    /// The same unscoped run backend with its authenticated model-call caller.
+    /// None keeps the ordinary backend without recording a guessed caller.
+    fn backend_with_model_call_context(
+        &self,
+        _principal: EntityId,
+        _session: Option<String>,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
     /// The admission lease every generated step is charged to.
     fn lease(&self) -> &BudgetLease;
     /// A FRESH sandbox/REPL runtime for one run.
@@ -228,6 +242,19 @@ pub trait McpCodeModeProvider: Send + Sync {
         &self,
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
+    /// [`Self::reader_backend`] with the caller's shared live-lease state.
+    /// The default returns None, so an unmodified provider keeps the existing
+    /// LiveLeaseBackend wrapper and exactly one look per backend call. A Some
+    /// backend MUST look per rung on the threaded lease; one that cannot look
+    /// MUST return None and keep that wrapper.
+    fn reader_backend_with_lease(
+        &self,
+        _meter: BudgetGuard,
+        _payer: Option<PayerPerson>,
+        _lease: Option<LiveLeaseState>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -312,6 +339,12 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn seat_facet(&self) -> Option<&str> {
         None
     }
+    /// The models this host's router serves now, with where each runs (FIX
+    /// 2745): a seat birth admits only these. The default serves no set
+    /// (legacy and fixture providers), and the birth admits all, as before.
+    fn seat_served(&self) -> Option<BTreeMap<ModelId, ModelLocality>> {
+        None
+    }
     /// The host's type-feedback service (FIX 8277), shared by every run;
     /// absent, each step's feedback says no checker is attached.
     fn code_check(&self) -> Option<&oneiron::engine_executor::TypeFeedback> {
@@ -347,6 +380,18 @@ pub trait McpCodeModeProvider: Send + Sync {
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
         _planned: &PlannedModel,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
+    /// [`Self::planned_backend`] with the caller's shared live-lease state.
+    /// A Some backend MUST look per rung on the threaded lease; one that cannot
+    /// look MUST return None and keep the existing LiveLeaseBackend wrapper.
+    fn planned_backend_with_lease(
+        &self,
+        _meter: BudgetGuard,
+        _payer: Option<PayerPerson>,
+        _planned: &PlannedModel,
+        _lease: Option<LiveLeaseState>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -395,7 +440,14 @@ pub type PlannedRoute =
 /// is given and billed to the payer, when one is given, bound to its plan
 /// (`McpCodeModeProvider::planned_backend`).
 pub type PlannedMeter = Arc<
-    dyn Fn(BudgetGuard, Option<PayerPerson>, &PlannedModel) -> Arc<dyn LlmBackend> + Send + Sync,
+    dyn Fn(
+            BudgetGuard,
+            Option<PayerPerson>,
+            &PlannedModel,
+            Option<LiveLeaseState>,
+        ) -> Arc<dyn LlmBackend>
+        + Send
+        + Sync,
 >;
 
 /// Builds one run's compaction seat from the run's authenticated host
@@ -405,10 +457,17 @@ pub type PlannedMeter = Arc<
 pub type RunCompactionSeat =
     Arc<dyn Fn(CompactionHostBinding, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync>;
 
+/// Binds one authenticated MCP run's model-call evidence to its actual caller.
+pub(crate) type ModelCallBackend =
+    Arc<dyn Fn(EntityId, Option<String>) -> Arc<dyn LlmBackend> + Send + Sync>;
+
 /// Builds one reader child's backend over the host's model, its calls spent
 /// on the guard it is given and billed to the payer, when one is given.
-pub type ReaderMeter =
-    Arc<dyn Fn(BudgetGuard, Option<PayerPerson>) -> Arc<dyn LlmBackend> + Send + Sync>;
+pub type ReaderMeter = Arc<
+    dyn Fn(BudgetGuard, Option<PayerPerson>, Option<LiveLeaseState>) -> Arc<dyn LlmBackend>
+        + Send
+        + Sync,
+>;
 
 /// How many `execute_code` runs one server works on at once.
 ///
@@ -530,6 +589,11 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         let active = &self.active;
         let seats = Arc::clone(&self.seats);
         let write_actor = request.actor.write_actor();
+        let model_call_context = request
+            .actor
+            .auth
+            .as_ref()
+            .map(|_| (request.actor.actor_ref, request.off_record_session.clone()));
         let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
         let verbs = Arc::clone(&request.verbs);
         // The gated run source is HOST-derived: the caller's handle is a label
@@ -618,6 +682,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         &vault,
                         provider.as_ref(),
                         write_actor,
+                        model_call_context,
                         &run_ref,
                         &config,
                         verbs,
@@ -706,6 +771,7 @@ fn run_engine_native_code_mode(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     write_actor: WriteActor,
+    model_call_context: Option<(EntityId, Option<String>)>,
     run_ref: &str,
     config: &EngineExecutorConfig,
     verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
@@ -737,18 +803,33 @@ fn run_engine_native_code_mode(
         worlds,
     )
     .map_err(McpCodeExecutionError::RunBinding)?;
-    enter_engine_native_run(
-        vault,
-        provider,
-        &gated_write,
-        config,
-        compaction,
-        &reactor,
-        None,
-        seat.as_ref(),
-        // An `execute_code` run is no planned child.
-        None,
-    )
+    let model_call_backend = model_call_context.and_then(|(principal, session)| {
+        provider.backend_with_model_call_context(principal, session)
+    });
+    match model_call_backend.as_ref() {
+        Some(backend) => enter_on(
+            vault,
+            provider,
+            backend.as_ref(),
+            &gated_write,
+            config,
+            compaction,
+            &reactor,
+            seat.as_ref(),
+        ),
+        None => enter_engine_native_run(
+            vault,
+            provider,
+            &gated_write,
+            config,
+            compaction,
+            &reactor,
+            None,
+            seat.as_ref(),
+            // An `execute_code` run is no planned child.
+            None,
+        ),
+    }
     .map_err(|error| match error.provider_outage() {
         Some(retry_after) => McpCodeExecutionError::ProviderUnavailable { retry_after },
         None => match error {
@@ -886,26 +967,56 @@ pub(crate) fn enter_engine_native_run(
             vault, provider, backend, bound, config, compaction, reactor, seat,
         );
     };
-    // The backend a reader child's calls take, on this scope's guard; a
-    // planned child's is bound to its plan as well.
-    let backend = planned
-        .and_then(|planned| provider.planned_backend(guard.clone(), payer.clone(), planned))
-        .or_else(|| provider.reader_backend(guard.clone(), payer));
+    // The lease the entry's door and planner runner were lent: one ledger.
+    let live = lease.on(vault);
+    let scoped = live.state();
+    let scoped_backend = planned
+        .and_then(|planned| {
+            provider.planned_backend_with_lease(
+                guard.clone(),
+                payer.clone(),
+                planned,
+                Some(scoped.clone()),
+            )
+        })
+        .or_else(|| {
+            provider.reader_backend_with_lease(guard.clone(), payer.clone(), Some(scoped.clone()))
+        });
+    let per_rung = scoped_backend.is_some();
+    // An unmodified provider takes its old wrapper; the scoped code-mode
+    // backend looks per rung on this same ledger instead.
+    let backend = match scoped_backend {
+        Some(backend) => Some(backend),
+        None => planned
+            .and_then(|planned| provider.planned_backend(guard.clone(), payer.clone(), planned))
+            .or_else(|| provider.reader_backend(guard.clone(), payer)),
+    };
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
     })?;
-    // The lease the entry's door and planner runner were lent: one ledger.
-    let live = lease.on(vault);
-    let entered = enter_on(
-        vault,
-        provider,
-        &LiveLeaseBackend::new(&live, backend.as_ref()),
-        bound,
-        config,
-        compaction,
-        reactor,
-        seat,
-    );
+    let entered = if per_rung {
+        enter_on(
+            vault,
+            provider,
+            backend.as_ref(),
+            bound,
+            config,
+            compaction,
+            reactor,
+            seat,
+        )
+    } else {
+        enter_on(
+            vault,
+            provider,
+            &LiveLeaseBackend::new(&live, backend.as_ref()),
+            bound,
+            config,
+            compaction,
+            reactor,
+            seat,
+        )
+    };
     live.book_rest()
         .map_err(|error| EngineRunError::Binding(error.to_string()))?;
     entered
@@ -1035,6 +1146,9 @@ fn seat_for(
     // The run's read scope (FIX 11768): the birth pre-filters to the routes
     // these worlds' orders name. Empty inherits, as before.
     task.worlds = worlds;
+    // The models the host's router serves now (FIX 2745): the birth admits
+    // only these. None serves no set, and the birth admits all, as before.
+    task.served = provider.seat_served();
     match pin {
         // A typed run is born on its description route when one applies (FIX 11307).
         SeatPin::Base(Some(type_ref)) => {
@@ -1115,6 +1229,8 @@ fn engine_seat_task(
         listed,
         // Stamped by `seat_for` from the run's read scope (FIX 11768).
         worlds: Vec::new(),
+        // Stamped by `seat_for` from the host's served set (FIX 2745).
+        served: None,
     }
 }
 

@@ -1,9 +1,9 @@
 //! Terminal transitions and the host-driven quiet-stream pump.
 use super::*;
-use crate::FinishReason;
 use crate::error::Error;
 use crate::memory::{MemoryResult, WitnessAssertions};
 use crate::store::Callback;
+use oneiron_model::llm::FinishReason;
 
 mod terminal;
 
@@ -35,6 +35,7 @@ impl Memory<'_> {
             None,
             &WitnessAssertions::default(),
             None,
+            None,
         )
     }
     /// [`Self::finalize_stream`], committed only while `admit` holds inside
@@ -55,6 +56,7 @@ impl Memory<'_> {
             ),
             None,
             &WitnessAssertions::default(),
+            None,
             Some(&admit),
         )
     }
@@ -76,6 +78,38 @@ impl Memory<'_> {
     pub fn finalize_model_stream_if(
         &self,
         handle: MessageStreamHandle,
+        finish_reason: FinishReason,
+        assertions: &WitnessAssertions,
+        admit: impl Fn(&heed::RwTxn<'_>) -> bool,
+    ) -> MessageStreamResult<MessageStreamReceipt> {
+        self.finalize_model_stream_with_parts(handle, None, finish_reason, assertions, admit)
+    }
+
+    /// [`Self::finalize_model_stream_if`] for a model reply whose ordered
+    /// output parts are witnessed with its text: the same finish, finality
+    /// and gate semantics, with `parts` carried transiently into the new
+    /// MESSAGE as birth facts. The witnessed text stays what the caller
+    /// already saved through the stream; parts never enter the checkpoint,
+    /// the receipt, metadata or any other row. On a continuation, `parts`
+    /// is only this generation's suffix: the stored prefix stays verbatim,
+    /// and the same writer appends the suffix with its text. An empty suffix
+    /// leaves today's text-only continuation unchanged. Internal until the
+    /// parts admission and server call-site wiring land.
+    pub(crate) fn finalize_model_stream_parts_if(
+        &self,
+        handle: MessageStreamHandle,
+        parts: Vec<crate::ContentPart>,
+        finish_reason: FinishReason,
+        assertions: &WitnessAssertions,
+        admit: impl Fn(&heed::RwTxn<'_>) -> bool,
+    ) -> MessageStreamResult<MessageStreamReceipt> {
+        self.finalize_model_stream_with_parts(handle, Some(parts), finish_reason, assertions, admit)
+    }
+
+    fn finalize_model_stream_with_parts(
+        &self,
+        handle: MessageStreamHandle,
+        parts: Option<Vec<crate::ContentPart>>,
         finish_reason: FinishReason,
         assertions: &WitnessAssertions,
         admit: impl Fn(&heed::RwTxn<'_>) -> bool,
@@ -116,6 +150,7 @@ impl Memory<'_> {
             outcome,
             Some(finish_reason),
             assertions,
+            parts,
             gate,
         )
     }
@@ -144,6 +179,7 @@ impl Memory<'_> {
             (StreamFinality::Cancelled, reason),
             None,
             &WitnessAssertions::default(),
+            None,
             None,
         )
     }
@@ -181,6 +217,10 @@ impl Memory<'_> {
     }
 }
 impl Vault {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the stream close joins its outcome, parts, assertions and its gate"
+    )]
     fn finish_stream_entry(
         &self,
         entry: &Arc<Mutex<State>>,
@@ -188,6 +228,7 @@ impl Vault {
         outcome: (StreamFinality, StreamFinalityReason),
         finish_reason: Option<FinishReason>,
         assertions: &WitnessAssertions,
+        parts: Option<Vec<crate::ContentPart>>,
         gate: TerminalGate<'_>,
     ) -> MessageStreamResult<MessageStreamReceipt> {
         let mut state = lock(entry)?;
@@ -199,6 +240,7 @@ impl Vault {
             outcome,
             finish_reason,
             assertions,
+            parts,
             false,
             gate,
         )?;
@@ -246,6 +288,7 @@ impl Vault {
                     (StreamFinality::Partial, reason),
                     None,
                     &WitnessAssertions::default(),
+                    None,
                     false,
                     None,
                 )
@@ -312,9 +355,9 @@ impl Vault {
     /// past the checkpoint is invented, and saved text is never dropped.
     /// A refused replay (a revoked grant, an actor that no longer proves, a
     /// policy that moved) is that stream's alone (FIX 9974): its seed stays
-    /// for explicit repair, its typed refusal is logged and returned (the open
-    /// does not keep the list yet: FIX-LIST 11933), and the open goes on for
-    /// every other stream. A storage failure fails the open.
+    /// for explicit repair, its typed refusal is logged, returned and kept in
+    /// place of the last open's for the owner to read (FIX 11933), and the
+    /// open goes on for every other stream. A storage failure fails the open.
     pub(crate) fn recover_message_streams(
         &self,
     ) -> MessageStreamResult<Vec<StreamRecoveryRefusal>> {
@@ -352,6 +395,7 @@ impl Vault {
                 seeds
             };
             let Some(last) = seeds.last().map(|seed| seed.message_id) else {
+                self.message_streams.keep_refused(&refused);
                 return Ok(refused);
             };
             for mut seed in seeds {
@@ -385,6 +429,7 @@ impl Vault {
                     ),
                     None,
                     &WitnessAssertions::default(),
+                    None,
                     true,
                     None,
                 ) && !state.terminal
@@ -392,17 +437,13 @@ impl Vault {
                     if !stream_refusal(&error) {
                         return Err(error);
                     }
-                    let refusal = StreamRecoveryRefusal {
-                        message_id: state.seed.message_id,
-                        conversation: state.seed.conversation,
-                        actor: state.seed.actor,
-                        error,
-                    };
+                    let refusal = StreamRecoveryRefusal::new(&state.seed, error);
                     tracing::warn!(
                         stream_message = %refusal.message_id.to_hex(),
                         conversation = %refusal.conversation.to_hex(),
                         actor = %refusal.actor.to_hex(),
-                        error = %refusal.error,
+                        code = %refusal.code,
+                        error = %refusal.message,
                         "a surviving stream seed's recovery was refused; its seed stays for repair"
                     );
                     refused.push(refusal);
@@ -411,17 +452,6 @@ impl Vault {
             after = Some(last);
         }
     }
-}
-
-/// One surviving stream seed open-time recovery could not replay (FIX
-/// 9974): the MESSAGE it names, where and by whom it was streamed, and the
-/// refusal its write met. Its seed stays for explicit repair.
-#[derive(Debug)]
-pub(crate) struct StreamRecoveryRefusal {
-    pub(crate) message_id: EntityId,
-    pub(crate) conversation: EntityId,
-    pub(crate) actor: EntityId,
-    pub(crate) error: MessageStreamError,
 }
 
 /// Whether `error`, a seed's refused replay, is that stream's own refusal,

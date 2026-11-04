@@ -11,29 +11,35 @@ use super::{
     ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryLedger, ExportEdge,
     ExportManifest, ExportScope, ExportSecretsNulledManifest, ExportSnapshotEntityBody,
     WholeVaultExport, WholeVaultExportReceipt, carries_embedding_setup,
-    whole_vault_export_excludes_entity,
+    whole_vault_export_excludes_entity_in_txn,
 };
 use crate::Vault;
-use crate::authority::{HolderExportNeed, HolderExportRequest};
+use crate::authority::HolderExportRequest;
+use crate::batch::export::secret_supplement_record::HolderExportNeed;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::CallerLocality;
 use crate::edge::{EdgeActorClass, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::serialize::{DocumentTail, DocumentWriter};
+use crate::settings::CallerLocality;
 use crate::settings::ReadDestination;
-use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 
 /// One run's result manifests, as its replay record names them, each with
 /// why the egress door withholds the run's occurrence of it, if it does.
 pub(crate) struct ExportSnapshotRun {
     pub(crate) run_id: EntityId,
-    pub(crate) outputs: Vec<(crate::code_run::CodeRunRawOutput, Option<&'static str>)>,
+    pub(crate) outputs: Vec<(
+        crate::store::result_manifest::CodeRunRawOutput,
+        Option<&'static str>,
+    )>,
     /// The run's fold receipts, each with why the egress door withholds the
     /// occurrence it describes, if it does.
-    pub(crate) receipts: Vec<(crate::code_run::ReaderFoldReceipt, Option<&'static str>)>,
+    pub(crate) receipts: Vec<(
+        crate::store::reader_fold_receipt::ReaderFoldReceipt,
+        Option<&'static str>,
+    )>,
 }
 
 /// One result body a clean occurrence names: its bytes as they stream, read
@@ -41,8 +47,10 @@ pub(crate) struct ExportSnapshotRun {
 /// not exported.
 pub(crate) struct ExportSnapshotBody<'t> {
     pub(crate) bytes: u64,
-    pub(crate) body:
-        std::result::Result<crate::code_run::CodeRunResultBodyReader<'t>, &'static str>,
+    pub(crate) body: std::result::Result<
+        crate::store::result_body_reader::CodeRunResultBodyReader<'t>,
+        &'static str,
+    >,
 }
 
 /// One live row as the snapshot reads it, with what it carries beside it.
@@ -53,11 +61,11 @@ pub(crate) struct ExportSnapshotEntity<'t> {
     pub(crate) body: ExportSnapshotEntityBody<'t>,
     pub(crate) tainted: bool,
     /// A SKILL's stored source package.
-    pub(crate) skill_package: Option<crate::skill_hub::HubPackage>,
+    pub(crate) skill_package: Option<crate::store::skill_package::HubPackage>,
     /// The pack source an ASSET body is.
     pub(crate) pack_source: Option<crate::skill_hub::pack_catalog::PackSource>,
     /// The task receipts a CLAIM cites, by id.
-    pub(crate) task_receipts: BTreeMap<String, crate::receipt::ReceiptRecord>,
+    pub(crate) task_receipts: BTreeMap<String, crate::store::receipt_row::ReceiptRecord>,
     /// A CLAIM's archived receipt sources.
     pub(crate) archived_receipts: Option<BTreeMap<String, super::ExportReceiptSource>>,
 }
@@ -98,7 +106,7 @@ impl Vault {
             |_| Ok::<_, Error>(()),
             sink,
         )?;
-        let format = crate::memory::EXPORT_TARGET_ARCHIVE;
+        let format = crate::serialize::EXPORT_TARGET_ARCHIVE;
         crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
         Ok(receipt)
     }
@@ -159,7 +167,7 @@ impl Vault {
             |_| Ok::<_, Error>(()),
             sink,
         )?;
-        let format = crate::memory::EXPORT_TARGET_OKF;
+        let format = crate::serialize::EXPORT_TARGET_OKF;
         crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
         Ok(receipt)
     }
@@ -305,7 +313,7 @@ impl Vault {
         {
             let (id, raw) = entry?;
             if only.is_some_and(|only| !only.contains(&id))
-                || whole_vault_export_excludes_entity(self, &id)?
+                || whole_vault_export_excludes_entity_in_txn(&self.store, &rtxn, &id)?
             {
                 continue;
             }
@@ -330,7 +338,7 @@ impl Vault {
             if header.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
                 if only.is_none()
                     && cut == ExportCut::Archive
-                    && live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
+                    && row_live_in_txn(&self.store, &rtxn, &id)?
                 {
                     let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
                         &self.store,
@@ -362,6 +370,25 @@ impl Vault {
             {
                 continue;
             }
+            // FIX 1496 S5: an epoch summary stays home when any transitive
+            // source is excluded (use-limited or off-record), same as the
+            // JSON bundle door. Non-epoch rows answer None and pass through.
+            if crate::compaction::epoch_sources_admitted_in(
+                &self.store,
+                &rtxn,
+                &id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                |source, _| {
+                    Ok(!whole_vault_export_excludes_entity_in_txn(
+                        &self.store,
+                        &rtxn,
+                        source,
+                    )?)
+                },
+            )? == Some(false)
+            {
+                continue;
+            }
             sources.insert(id);
             // A file-plane ASSET goes out as its body, never the manifest its
             // row keeps, and any other row as the snapshot holds it, never
@@ -388,7 +415,7 @@ impl Vault {
                 && let Some(record) = body.bytes()
                 && let Some(package) = self.export_hub_package_in_txn(&rtxn, &id)?
             {
-                let record = crate::skill::decode_skill_record(record)?;
+                let record = crate::write_envelope::skill_record::decode_skill_record(record)?;
                 if record.content_hash != Some(package.content_hash()?) {
                     return Err(Error::CorruptedIndex("stored skill package identity drift").into());
                 }
@@ -430,7 +457,7 @@ impl Vault {
             if !tainted
                 && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && let Some(claim) = body.bytes()
-                && let Ok(claim) = crate::claim::decode_claim_body(claim, true)
+                && let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(claim, true)
             {
                 // SCAN C022: each receipt source is folded from its carrier
                 // only when the carrier passes the same filter, and the
@@ -552,6 +579,16 @@ impl Vault {
             }
             writer.side_rows_withheld(withheld);
         }
+        // FIX 11844: a custody secret only the fold knows here is named for
+        // its holder too, as a held row's unopened value is above.
+        // The manifest names each by id, so the import shows it owed (FIX
+        // 12066).
+        let mut fold_only_secrets = Vec::new();
+        if include_secrets && only.is_none() && cut == ExportCut::Archive {
+            let fold_only = self.fold_only_holder_needs_in_txn(&rtxn);
+            fold_only_secrets = fold_only.iter().map(|need| need.secret).collect();
+            holder_requests.extend(fold_only.into_iter().map(HolderExportRequest::unrecorded));
+        }
         // Each carried thread's binding, read in this snapshot, so its
         // members are told should its root go before the audit (FIX 6681).
         thread_roots.capture_in(&self.store.read(), &rtxn);
@@ -571,6 +608,7 @@ impl Vault {
                     secrets_included: include_secrets
                         && only.is_none()
                         && cut == ExportCut::Archive,
+                    fold_only_secrets,
                     embedding_setup,
                     sources: sources.into_iter().collect(),
                 },
@@ -681,12 +719,12 @@ fn archive_custody_secret(
     on_device: bool,
     include_secrets: bool,
 ) -> Result<Option<(ArchiveSecretCustody, Option<HolderExportNeed>)>> {
-    use crate::secret_custody::{CustodyClass, SecretCustodyStatus};
+    use crate::secret_record::{CustodyClass, SecretCustodyStatus};
     use base64::Engine as _;
     let (record, value) = crate::secret_custody::archive_custody_body(store, id, body, |record| {
         include_secrets
             && record.status == SecretCustodyStatus::Active
-            && !crate::secret_custody::is_cloud_registration_slot(&record.name)
+            && !crate::secret_record::is_cloud_registration_slot(&record.name)
             && (on_device || (!record.device_only && record.class == CustodyClass::CustodyPortable))
     })?;
     if record.status == SecretCustodyStatus::Revoked {
@@ -727,6 +765,9 @@ fn carrier_withheld(
     let Some(carrier) = carrier else {
         return Ok(false);
     };
+    if crate::store::legal_hold::use_limit_in_txn(store, rtxn, carrier)?.is_some() {
+        return Ok(true);
+    }
     crate::settings::device_only_withholds(store, rtxn, device_only, carrier).or_else(|error| {
         match error {
             Error::CorruptedIndex(_) => Ok(true),

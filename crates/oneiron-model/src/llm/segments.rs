@@ -2,7 +2,8 @@
 //! bytes of which [`LlmRequest`](super::LlmRequest) message came from where,
 //! on which clock, behind which trust fence, and whether they belong to the
 //! canonical path (the stable prefix and the selected log) or to the turn's
-//! ephemeral tail (the context board and the newest user message).
+//! ephemeral tail (the context board, the newest user message and a
+//! Continue's request-only suffix).
 //!
 //! The host builds a manifest beside the messages as it assembles them and
 //! sets it on the request after admission
@@ -124,6 +125,10 @@ pub enum SegmentKind {
     BoardSection(String),
     /// The turn's newest user message.
     NewestUser,
+    /// The saved assistant reply a Continue extends, not a retained log line.
+    ContinuationAssistant,
+    /// The request-only instruction to continue, not a new user turn.
+    ContinuationInstruction,
 }
 
 /// The clock a segment changes on (ARCH-0067 canon): the stable epoch
@@ -208,12 +213,15 @@ pub enum SegmentClass {
 }
 
 impl SegmentClass {
-    /// The class `kind` always has: the board and the newest user message
-    /// are ephemeral; every other kind is canonical.
+    /// The class `kind` always has: the board, newest user message and
+    /// Continue's request-only suffix are ephemeral; the rest is canonical.
     #[must_use]
     pub fn of(kind: &SegmentKind) -> Self {
         match kind {
-            SegmentKind::BoardSection(_) | SegmentKind::NewestUser => Self::Ephemeral,
+            SegmentKind::BoardSection(_)
+            | SegmentKind::NewestUser
+            | SegmentKind::ContinuationAssistant
+            | SegmentKind::ContinuationInstruction => Self::Ephemeral,
             _ => Self::Canonical,
         }
     }
@@ -313,6 +321,63 @@ impl SegmentManifest {
             anchor,
             messages,
             digest,
+        }
+    }
+
+    /// Extends this exact request with the saved assistant reply and an
+    /// optional continuation instruction. Both stay ephemeral: neither is
+    /// a retained log line or the newest real user message.
+    #[must_use]
+    pub fn continued(&self, saved_message: EntityId, messages: &[LlmMessage]) -> Option<Self> {
+        let prefix = messages.get(..self.messages.len())?;
+        if !self.describes(prefix) {
+            return None;
+        }
+        let tail = messages.get(self.messages.len()..)?;
+        let (saved, instruction) = match tail {
+            [saved] => (saved, None),
+            [saved, instruction] => (saved, Some(instruction)),
+            _ => return None,
+        };
+        if saved.role != LlmMessageRole::Assistant
+            || instruction.is_some_and(|message| message.role != LlmMessageRole::User)
+        {
+            return None;
+        }
+        let mut segments = self.segments.clone();
+        segments.push(
+            Segment::whole(
+                SegmentKind::ContinuationAssistant,
+                SegmentClock::Live,
+                self.messages.len(),
+            )
+            .at(SegmentLocator::Message { id: saved_message }),
+        );
+        if instruction.is_some() {
+            segments.push(Segment::whole(
+                SegmentKind::ContinuationInstruction,
+                SegmentClock::Live,
+                self.messages.len() + 1,
+            ));
+        }
+        Some(Self::new(segments, self.anchor.clone(), messages))
+    }
+
+    /// The manifest of `segments` over `messages`, keeping the digest this
+    /// manifest was admitted under: a restamp of the same admitted turn
+    /// for the call a rung reshapes (FIX 10366), so the turn's pending,
+    /// its commit claim and its restore-authority lookup still name it.
+    /// `describes` still checks the reshaped segments and messages; the
+    /// digest is the admitted turn's identity, and the worker never sees
+    /// it.
+    #[must_use]
+    pub fn restamped(&self, segments: Vec<Segment>, messages: &[LlmMessage]) -> Self {
+        let messages: Vec<MessageStamp> = messages.iter().map(message_stamp).collect();
+        Self {
+            segments,
+            anchor: self.anchor.clone(),
+            messages,
+            digest: self.digest,
         }
     }
 

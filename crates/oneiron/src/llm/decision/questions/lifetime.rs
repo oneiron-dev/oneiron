@@ -70,6 +70,52 @@ pub(crate) fn erase_question_source_in_txn(
     unwatch(store, wtxn, &record)
 }
 
+/// Erases the standing question `question` whole, in the caller's
+/// transaction (FIX 12218): every typed-question row kept under its id (its
+/// versions, head, answer receipts, outcome labels, windows, backfill marks
+/// and ask log head), its ask log, its pending refreshes, its artifact-asked
+/// stamps and its unit asks (FIX 12224), and the unit, predicate and source
+/// watches of each version. Gives back the answer claims its receipts named,
+/// for the caller to tear; an id no question has erases nothing.
+pub(crate) fn erase_standing_question_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    question: EntityId,
+) -> Result<Vec<EntityId>> {
+    let answers: Vec<EntityId> = QUESTION_ANSWER
+        .scan_keys(store, &*wtxn, &family_prefix(question, b"answer"))?
+        .into_iter()
+        .map(|key| key.claim)
+        .collect();
+    let versions =
+        QUESTION_VERSION.scan_from(store, &*wtxn, &family_prefix(question, b"version"))?;
+    for (_, record) in &versions {
+        unwatch(store, wtxn, record)?;
+        for unit in &record.definition.units {
+            super::arrival::unwatch_sources(store, wtxn, question, *unit)?;
+        }
+    }
+    // A unit ask is kept by its arrival number, so the rows that name the
+    // question are found by the declined decision's receipt, as the erase
+    // door for actors finds its own rows.
+    let unit_asks: Vec<u64> = super::role_asks::UNIT_ASKS
+        .scan(store, &*wtxn)?
+        .into_iter()
+        .filter(|(_, ask)| ask.declined.receipt.question == question)
+        .map(|(seq, _)| seq)
+        .collect();
+    let mut own = question.as_bytes().to_vec();
+    own.push(b':');
+    QUESTION_VERSION.delete_from(store, wtxn, &own)?;
+    super::arrival::PENDING.delete_from(store, wtxn, question.as_bytes())?;
+    super::ask_history::ASK_HISTORY.delete_from(store, wtxn, question.as_bytes())?;
+    super::artifact_refresh::ASKED.delete_from(store, wtxn, question.as_bytes())?;
+    for seq in unit_asks {
+        super::role_asks::UNIT_ASKS.delete(store, wtxn, &seq)?;
+    }
+    Ok(answers)
+}
+
 /// The answer receipt `id` carries when it is a live `judgment.answer`
 /// claim whose body is one.
 fn bound_answer_in_txn(

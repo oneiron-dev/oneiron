@@ -22,9 +22,7 @@ use crate::outbound::dispatch_pipeline::retry_after::{
 use crate::receipt::ReceiptRecord;
 use crate::receipt::outbound_intent_receipt;
 
-/// FIX 6424 (Engine 10-20 20:4x): the receipt field a held send's
-/// approve-once digest rides, beside its gate outcome.
-pub(crate) const APPROVAL_DIGEST_FIELD: &str = "approval_digest";
+pub(crate) use crate::receipt::dispatch_identity::APPROVAL_DIGEST_FIELD;
 
 pub(super) fn append_optional_receipt_field(
     receipt: &mut ReceiptRecord,
@@ -320,6 +318,7 @@ pub(super) fn dispatch_result_receipt(
         held_approval_actor,
         provider_wait,
         provider_wait_held_until,
+        paced_until,
         budget_reservation,
     } = verdict;
     let gate_outcome_kind = gate_outcome;
@@ -390,6 +389,16 @@ pub(super) fn dispatch_result_receipt(
         APPROVAL_DIGEST_FIELD,
         approval_digest.as_deref(),
     );
+    // The sender's send ran under the posture the default manifest ships:
+    // the vault's manifests name no act row for its pairing.
+    if request.sender_posture_fallback {
+        receipt.fields.insert(
+            SEND_POSTURE_FALLBACK_FIELD.to_owned(),
+            crate::channel_identity::SHIPPED_OUTBOUND_SEND_POSTURE
+                .as_str()
+                .to_owned(),
+        );
+    }
     // The provider's own stated cool-down, normalized to whole seconds and
     // stamped beside the gate evidence rather than mixed into it. Only a
     // well-formed value is promoted: the connector's raw string still
@@ -420,6 +429,34 @@ pub(super) fn dispatch_result_receipt(
         provider_wait_held_until,
         budget_reservation,
     );
+    // FIX 7948: a send a full window paces names the instant it comes back,
+    // which its executor re-arms at, and the window it waits for. FIX 8813,
+    // FIX 8791: a send its seat's own policy holds names the seat's reason.
+    let seat_hold_reason = if outcome == OutboundDispatchOutcome::Held {
+        execution
+            .as_ref()
+            .and_then(|execution| execution.hold.as_ref())
+            .map(|hold| hold.reason.as_str())
+            .or_else(|| {
+                admission
+                    .and_then(|stage| stage.seat.as_ref())
+                    .and_then(|seat| seat.hold_reason())
+            })
+    } else {
+        None
+    };
+    if let Some(edge) = paced_until {
+        receipt
+            .fields
+            .insert("retry_at".to_owned(), edge.to_string());
+    }
+    if paced_until.is_some() || seat_hold_reason.is_some() {
+        append_optional_receipt_field(
+            &mut receipt,
+            "hold_reason",
+            seat_hold_reason.or(gate_reason_codes.first().map(String::as_str)),
+        );
+    }
     append_contract_receipt(&mut receipt, verb_contract, policy_risk);
     for (key, value) in engine_receipt_fields {
         receipt.fields.insert(key, value);
@@ -483,6 +520,10 @@ pub(super) fn dispatch_result_receipt(
         budget_pool,
     }
 }
+
+/// Receipt field naming the posture a send ran under when the vault's
+/// manifests name no act row for its sender's pairing: the shipped one.
+pub(crate) const SEND_POSTURE_FALLBACK_FIELD: &str = "send_posture_fallback";
 
 /// Receipt field naming the kind of provider wait a queued send keeps (FIX
 /// 8818).

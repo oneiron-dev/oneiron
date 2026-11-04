@@ -120,7 +120,7 @@ impl Vault {
             caller,
             &member,
             PublishTarget::of(&view),
-            || Ok(paths.clone()),
+            || Ok((!view.review.lossy_paths).then(|| paths.clone())),
         )? {
             Ok(authority) => authority,
             Err(denial) => return Ok(Err(denial)),

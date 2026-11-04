@@ -20,8 +20,8 @@ use super::{RepoProposal, invalid};
 use crate::critic::{CriticLens, CritiqueArtifact, CritiqueVerdict, LensCatalog, triage_critiques};
 use crate::error::{Error, Result};
 use crate::merge_queue::{
-    ActiveQueueReviewPolicy, DEFAULT_QUEUE_REVIEW_VOTES, QueueReviewRequirement,
-    StoredQueueReviewPolicy, review_policy_unreadable_hold,
+    ActiveQueueReviewPolicy, QueueReviewRequirement, StoredQueueReviewPolicy,
+    review_policy_unreadable_hold,
 };
 
 /// The review a proposal is held to. Stored under the row's `catalog` key
@@ -139,15 +139,17 @@ impl RepoProposal {
             })
     }
 
-    /// Keeps one authenticated critic vote: on a lens of its own catalog as
-    /// before (at most 64), else on a lens of the vault policy `policy` read
-    /// in the same writer, bound to that catalog's digest (at most the
-    /// policy's `votes`). A critic's vote under one binding is immutable;
-    /// an identical repeat keeps nothing new and answers `false`.
+    /// Keeps one authenticated critic vote: on a lens of its own catalog,
+    /// every one (its writer asks past a threshold row, rule 5, FIX 8837),
+    /// else on a lens of the vault policy `policy` read in the same writer,
+    /// bound to that catalog's digest (at most the policy's `votes`). A
+    /// critic's vote under one binding is immutable; an identical repeat,
+    /// full proposal or not, keeps nothing new and answers `false`.
     ///
     /// # Errors
-    /// A full proposal, a changed vote, a lens outside its review, a vault
-    /// policy that does not read, or a triage that refuses.
+    /// A proposal full under the vault policy's `votes`, a changed vote, a
+    /// lens outside its review, a vault policy that does not read, or a
+    /// triage that refuses.
     pub(crate) fn record_critique(
         &mut self,
         critique: CritiqueArtifact,
@@ -158,11 +160,6 @@ impl RepoProposal {
             .catalog()
             .is_some_and(|own| own.lens(&critique.lens_id, &critique.domain).is_some())
         {
-            if self.critiques.len() >= DEFAULT_QUEUE_REVIEW_VOTES as usize {
-                return Err(invalid(
-                    "critic is unbound, self-reviewing, or proposal is closed",
-                ));
-            }
             if let Some(existing) = self.critiques.iter().find(|c| same_vote(c, &critique)) {
                 return if existing == &critique {
                     Ok(false)
@@ -204,17 +201,18 @@ impl RepoProposal {
                 repeat = Some(vote.critique == critique);
             }
         }
-        if kept >= active.policy.thresholds.votes as usize {
-            return Err(invalid(
-                "critic is unbound, self-reviewing, or proposal is closed",
-            ));
-        }
+        // An exact retry answers before the owner's vote limit (FIX 8837).
         if let Some(identical) = repeat {
             return if identical {
                 Ok(false)
             } else {
                 Err(invalid("critic vote is immutable"))
             };
+        }
+        if kept >= active.policy.thresholds.votes as usize {
+            return Err(invalid(
+                "critic is unbound, self-reviewing, or proposal is closed",
+            ));
         }
         self.policy_critiques.push(RepoProposalCritique {
             catalog_digest: active.digest.clone(),

@@ -138,7 +138,7 @@ impl NativeClient {
         device_class: Option<String>,
     ) -> napi::Result<Self> {
         crate::facade::before_vault_open();
-        let options = open_options(dimensions, device_class)?;
+        let options = open_options(dimensions, device_class, None)?;
         let path = path.map(std::path::PathBuf::from);
         let inner =
             oneiron_remote::OneironClient::open(path.as_deref(), &options).map_err(facade_error)?;
@@ -150,16 +150,19 @@ impl NativeClient {
     /// `open_with_host_root`. `hostRootSecret` is the secret's exact bytes,
     /// borrowed from JavaScript memory for this call only; the caller keeps
     /// them and clears them. `hostRootProfile` says what it did.
-    /// `deviceClass` is `open`'s (FIX 5560).
+    /// `deviceClass` is `open`'s (FIX 5560). `holdCheckpointRootSigner`
+    /// holds this install's host root as the vault's checkpoint signer for
+    /// the handle's life (FIX 5343); omitted is `false`.
     #[napi(factory)]
     pub fn open_with_host_root(
         path: Option<String>,
         dimensions: Option<f64>,
         host_root_secret: Buffer,
         device_class: Option<String>,
+        hold_checkpoint_root_signer: Option<bool>,
     ) -> napi::Result<Self> {
         crate::facade::before_vault_open();
-        let options = open_options(dimensions, device_class)?;
+        let options = open_options(dimensions, device_class, hold_checkpoint_root_signer)?;
         let path = path.map(std::path::PathBuf::from);
         let inner = oneiron_remote::OneironClient::open_with_host_root(
             path.as_deref(),
@@ -336,9 +339,12 @@ impl NativeClient {
 
 /// What an embedded open takes from JavaScript. The device class is the one
 /// its host declares ([`host_device_class`]), `None` when it gave none.
+/// `hold_checkpoint_root_signer` is `open_with_host_root`'s only (FIX 5343);
+/// `open` passes `None`.
 fn open_options(
     dimensions: Option<f64>,
     device_class: Option<String>,
+    hold_checkpoint_root_signer: Option<bool>,
 ) -> napi::Result<oneiron_remote::OpenOptions> {
     let dimensions = dimensions
         .map(dimensions_to_engine)
@@ -358,6 +364,7 @@ fn open_options(
     Ok(oneiron_remote::OpenOptions {
         dimensions,
         device_class,
+        hold_checkpoint_root_signer: hold_checkpoint_root_signer.unwrap_or(false),
     })
 }
 

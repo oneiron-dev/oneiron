@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::authority::{AuthorityFold, AuthorityKey, ROLE_OWNER};
+use crate::authority::AuthorityFold;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::transition::{
     ClaimTransitionProjection, SignedClaimTransitionEvent, TransitionFoldError,
@@ -15,10 +15,12 @@ use crate::claim::transition::{
     machine_claim_transition_event_hash, machine_claim_transition_event_id,
 };
 use crate::error::{ClaimError, Error, Result};
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::side_table::{Raw, SideTable};
+use crate::store::EngineScan;
 use crate::store::Store;
 use crate::{EntityId, Vault};
+use oneiron_authority::authority::{AuthorityKey, ROLE_OWNER};
 use rand_core::RngCore;
 use rmpv::Value;
 
@@ -40,9 +42,10 @@ mod pin;
 mod resolve;
 
 pub(crate) use self::chain::{
-    chain_transitions, machine_history_for_restriction, machine_history_rows,
-    machine_history_rows_at, read_handoff_chain, resolved_machine_history,
-    restricts_held_machine_history, trusted_machine_handoff, verified_handoff_chain,
+    ControlRows, StoreRows, chain_transitions, machine_history_for_restriction,
+    machine_history_rows, machine_history_rows_at, machine_history_rows_from, read_handoff_chain,
+    resolved_machine_history, resolved_machine_history_from, restricts_held_machine_history,
+    trusted_machine_handoff, verified_handoff_chain, verified_handoff_chain_from,
     verify_handoff_signature,
 };
 pub(crate) use self::pin::{PIN_PREFIX, pin_key};
@@ -118,16 +121,17 @@ fn events_match_chain(rows: &MachineHistoryRows) -> bool {
         })
 }
 
-/// The verified, folded history of `target`, and the ids of every carrier it
-/// was folded from: the birth, the present pin, each handoff in its chain
-/// and each transition of the chain's union.
+/// The verified, folded history of `target`, read through `source`, and the
+/// ids of every carrier it was folded from: the birth, the present pin, each
+/// handoff in its chain and each transition of the chain's union.
 fn machine_history(
+    source: &dyn ControlRows,
     store: &Store,
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
     target: EntityId,
 ) -> Result<(ClaimTransitionProjection, Vec<EntityId>)> {
-    let rows = machine_history_rows(store, txn, target)?;
+    let rows = machine_history_rows_from(source, store, txn, target)?;
     let packet = trusted_machine_handoff(store, txn, target)?;
     if fold.vault_id != Some(rows.birth.vault_id)
         || packet.vault_id != rows.birth.vault_id
@@ -151,7 +155,7 @@ fn machine_history(
     {
         return Err(missing());
     }
-    let handoff_chain = verified_handoff_chain(store, txn, &packet, fold)?;
+    let handoff_chain = verified_handoff_chain_from(source, store, txn, &packet, fold)?;
     let mut hashes = vec![rows.birth.digest, packet.content_hash().map_err(|_| bad())?];
     hashes.extend(rows.transitions.keys().copied());
     for handoff in &handoff_chain {

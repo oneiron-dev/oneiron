@@ -20,10 +20,8 @@ use serde::{Deserialize, Serialize};
 
 pub const REPRESENTATION_FACET: &str = "dreamer.representation";
 const PREDICATE: &str = "dreamer.representation.proposal";
-const CONTENT_PREFIX: &str = "representation:";
-/// The prefix of an approved representation's content ref, for the served
-/// sink's content resolver (FIX 1469).
-pub(crate) const REPRESENTATION_CONTENT_PREFIX: &str = CONTENT_PREFIX;
+use crate::attempt_queue::maintenance_predicate::CONTENT_PREFIX;
+pub(crate) use crate::attempt_queue::maintenance_predicate::REPRESENTATION_CONTENT_PREFIX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

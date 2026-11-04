@@ -5,6 +5,7 @@ use crate::server::SyncServer;
 use oneiron::checkout::lease::{
     CheckoutError, CheckoutId, CheckoutLiveness, CheckoutLivenessPulse, CheckoutResult,
 };
+use oneiron::claim::ScopedReadResult;
 use oneiron::memory::checkout_doors::*;
 use oneiron::memory::{Memory, MemoryResult};
 use oneiron::sync::{EphemeralStore, LoroValue};
@@ -121,9 +122,9 @@ pub(crate) async fn vault_code_checkout_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: CheckoutGetInput,
-) -> Listed<CheckoutLeaseView> {
+) -> Listed<ScopedReadResult<Option<CheckoutLeaseView>>> {
     as_caller(server, auth, "vault.code.checkout.get", move |_, memory| {
-        memory.checkout_get(input)
+        memory.checkout_scoped_get(input)
     })
     .await
 }

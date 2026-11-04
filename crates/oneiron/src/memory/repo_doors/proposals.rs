@@ -32,19 +32,24 @@ use crate::code_symbol::{CodeSymbolManifest, code_symbol_entity_id};
 use crate::codebase::RepoRef;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 use crate::git_wire::GitOid;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::merge_queue::{
-    MergeBatch, MergeFile, MergeProposal, MergeQueue, RepoQueueOrder, RepoQueuePredecessor,
+    MergeBatch, MergeFile, MergeFileExpected, MergeProposal, MergeQueue, RepoQueueOrder,
+    RepoQueuePredecessor,
 };
 use crate::repo_mutation::mount::RepoMountRef;
-use crate::repo_mutation::proposal::{
-    RepoProposal, RepoProposalOperation, RepoProposalReview, RepoProposalStatus,
-};
-use crate::repo_mutation::{RepoMutationOperation, RepoMutationRequest};
 use crate::task_verb::SymbolLease;
 use crate::{EntityId, Vault};
+use crate::{
+    repo_mutation::RepoMutationRequest, store::repo_mutation_record::RepoMutationOperation,
+};
+use crate::{
+    repo_mutation::proposal::RepoProposal, repo_mutation::proposal::RepoProposalReview,
+    store::repo_proposal_record::RepoProposalOperation,
+    store::repo_proposal_record::RepoProposalStatus,
+};
+use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 
 /// The code a run's proposal answered while the host bound no review policy
 /// for its repo (CALL "FIX 6867 review policy and provenance"). Superseded
@@ -55,6 +60,12 @@ pub const REPO_REVIEW_POLICY_REQUIRED: &str = "repo_review_policy_required";
 /// The code a run's proposal answers while its host holds no witness of the
 /// model request the run is serving. No author is made up.
 pub const REPO_PROVENANCE_REQUIRED: &str = "repo_provenance_required";
+
+/// The code a run's proposal answers when its work's pinned base no longer
+/// captures as it did at open: the host's snapshot custody changed between
+/// them, so the base's hash moved (FIX 7070). The work is kept; a fresh
+/// work opens at the base as custody keeps it now.
+pub const REPO_WORK_BASE_CHANGED: &str = "repo_work_base_changed";
 
 /// The host's review policy for a run's proposals. A host binds it; no
 /// guest field reaches it. The stock one holds every proposal to the
@@ -242,6 +253,14 @@ impl Memory<'_> {
         };
         let green = GitOid::parse_hex(own.stamp.base_green.as_str())?;
         let base = self.vault.capture_repo_snapshot_at_commit(&repo, &green)?;
+        if base.fork_hash != own.stamp.base_snapshot {
+            return Err(MemoryError::new(
+                REPO_WORK_BASE_CHANGED,
+                "this work's pinned base no longer captures as it did at open: snapshot custody \
+                 changed since",
+                &["Open a fresh work at the current green and propose the change there."],
+            ));
+        }
         let sources = sources(&own.stamp)?;
         let request = RepoMutationRequest::new(
             RepoRef::LocalFolder {
@@ -266,6 +285,7 @@ impl Memory<'_> {
         let proposed =
             self.vault
                 .propose_repo_mutation_for_run(request, review, base, stamp, |txn| {
+                    let now = self.vault.now_recorded_at();
                     if let Err(refused) =
                         admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)?
                     {
@@ -281,8 +301,16 @@ impl Memory<'_> {
                     Ok(Ok(()))
                 })?;
         let proposal = proposed.map_err(refusal_error)?;
+        // The answer names the proposal (its `repo.proposed_diff` journal
+        // claim's id), its session and its provenance claim: send-time
+        // admission judges each of them (FIX 7069).
         Ok(RepoRunAnswer {
-            rows: vec![own.stamp.repo],
+            rows: vec![
+                own.stamp.repo,
+                proposal.id,
+                proposal.session,
+                proposal.provenance_claim,
+            ],
             output: RepoProposalSubmitOutput {
                 proposal: proposal.id,
                 work: input.work,
@@ -352,6 +380,7 @@ impl Memory<'_> {
         let manifest = self.vault.get_code_symbol_manifest(&own.stamp.repo)?;
         let accepted: Vec<EntityId> = rows.iter().map(|row| row.id).collect();
         let formed = queue.enqueue_for_run(candidates, |txn| {
+            let now = self.vault.now_recorded_at();
             let declaration =
                 match admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)? {
                     Ok(declaration) => declaration,
@@ -393,8 +422,14 @@ impl Memory<'_> {
             }))
         })?;
         let batch = formed.map_err(refusal_error)?;
-        let (entry, blockers) = self.repo_entry_view(binding, &queue, batch, now)?;
+        let (entry, blockers) =
+            self.repo_entry_view(binding, &queue, batch, self.vault.now_recorded_at())?;
+        // Each queued proposal, its session and its provenance claim are
+        // served rows too, so send-time admission judges them (FIX 7069).
         let mut answer_rows = vec![own.stamp.repo];
+        for row in &rows {
+            answer_rows.extend([row.id, row.session, row.provenance_claim]);
+        }
         answer_rows.extend(blockers);
         Ok(RepoRunAnswer {
             rows: answer_rows,
@@ -496,7 +531,9 @@ impl Memory<'_> {
             .vault
             .mount_repo_ref(&pointer, RepoMountRef::Fork(row.pre_action_fork_hash))?;
         let (path, content) = row.ordinary_file()?;
-        let expected = base.read_file(path)?.map(<[u8]>::to_vec);
+        let expected = base
+            .read_file(path)?
+            .map(|bytes| MergeFileExpected::Bytes(bytes.to_vec()));
         Ok(MergeProposal {
             id: row.id.to_hex(),
             base_green: base_green.to_owned(),

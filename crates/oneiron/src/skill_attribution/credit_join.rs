@@ -30,8 +30,11 @@ use super::contribution::{followed_in_txn, with_recorded_checks_in_txn};
 use super::contribution_targets::CheckedEdge;
 use super::late_credit::{CREDIT_RECEIPT, LateCreditReceipt, LateCreditShare, shares_in_txn};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::claim::learning_evidence::LearningEvidence;
+use crate::claim::learning_evidence::Observation;
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::entity_id::EntityId;
-use crate::learning::{LearningCell, LearningEvidence, LearningPredicate, Observation};
+use crate::learning::LearningCell;
 use crate::receipt::{PackAttributionFields, PackLearningContext};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -145,6 +148,29 @@ pub(super) fn latest_direct_in_txn(
             || credit.direct_subjects.clone(),
             |(_, last)| last.direct_subjects,
         ))
+}
+
+/// Every subject the credit stands with now: the latest adjustment's direct
+/// subjects and shares, else the sealed receipt's own (REVIEW-4322 P1). A
+/// subject a later adjustment adds still governs the person rows that fold
+/// this credit.
+pub(crate) fn effective_credit_subjects_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+) -> Result<Vec<EntityId>> {
+    let (direct, shares) = match chain_in_txn(store, txn, &credit.receipt_id)?.pop() {
+        Some((_, last)) => (last.direct_subjects, last.shares),
+        None => (credit.direct_subjects.clone(), credit.shares.clone()),
+    };
+    let mut subjects: Vec<EntityId> = direct
+        .into_iter()
+        .flatten()
+        .chain(shares.into_iter().filter_map(|share| share.subject))
+        .collect();
+    subjects.sort();
+    subjects.dedup();
+    Ok(subjects)
 }
 
 /// The decay `credit` was projected under: the frozen one, or, for a
@@ -639,8 +665,8 @@ pub(super) fn credit_roots_in_txn(
 }
 
 /// The uses that landed late for the try of the run `attempt_receipt` that
-/// closed it, its attempt's last lease generation; none for a receipt that
-/// names no attempt.
+/// closed it, every lease generation of its attempt's try, oldest first;
+/// none for a receipt that names no attempt.
 fn landed_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -652,7 +678,12 @@ fn landed_in_txn(
     let Some(record) = AttemptQueue::from_store(&vault.store).get_in_txn(txn, attempt)? else {
         return Ok(Vec::new());
     };
-    super::derivation_witness::landed_pairs_in_txn(&vault.store, txn, attempt, record.attempt_count)
+    super::derivation_witness::landed_all_pairs_in_txn(
+        &vault.store,
+        txn,
+        attempt,
+        record.attempt_count,
+    )
 }
 
 /// The attempt a terminal pack receipt names, when it is one.

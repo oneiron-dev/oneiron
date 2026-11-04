@@ -254,6 +254,8 @@ pub(super) fn rebuild(
         vault.store.rebuild_commitment_due_sidecars(txn)?;
         vault.store.rebuild_pending_gate_consent_sidecars(txn)?;
         crate::workspace_roster::rebuild_project_revision_indexes(&vault.store, txn)?;
+        // Restored authority rows bypassed the put that sequences them (FIX 12369).
+        crate::authority::store_order::rebuild_in_txn(&vault.store, txn, &rows)?;
         // Runtime budget rows were excluded from the image, not refunded in the billing ledger.
         Ok((rows.len(), texts, embeddings))
     })
@@ -262,6 +264,9 @@ pub(super) fn rebuild(
 /// Backfills that own their transactions run after the base index transaction.
 pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<()> {
     crate::skill_hub::backfill_content_hash_index_if_needed(vault)?;
+    // Restored proposals and contact claims bypassed their index writers.
+    vault.backfill_widen_contact_verdict_index(true)?;
+    crate::counterparty_contact::backfill_counterparty_identity_index(vault, true)?;
     // Restored PROJECT rows bypassed the staging hook: keep their chains.
     vault.capture_project_revisions(true)?;
     crate::skill_convert::rebuild_skill_source_index(vault)?;

@@ -27,9 +27,12 @@
 //! frontier merges with the head unit by unit.
 
 mod chart;
+mod json_values;
 mod node;
 mod order;
 mod table;
+
+pub(crate) use json_values::deck_json_values;
 
 use super::{invalid, live, log::LoggedOp};
 use crate::error::{Error, Result};

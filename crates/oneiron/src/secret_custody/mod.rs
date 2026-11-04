@@ -73,6 +73,8 @@ mod control;
 mod doors;
 mod floor;
 mod found_keys;
+pub(crate) use self::found_keys::{HANDLE_TEXT_OPEN, unmask_value};
+mod handle_labels;
 pub(crate) mod holder_export;
 mod known_values;
 mod leaf_delivery;
@@ -89,14 +91,7 @@ mod use_handle;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
 mod floor_keys {
-    pub(super) const PORTABLE_MIN: &str = "secret.custody.floor.portable.min";
-    pub(super) const PORTABLE_MAX: &str = "secret.custody.floor.portable.max";
-    pub(super) const DEVICE_BOUND_MIN: &str = "secret.custody.floor.device_bound.min";
-    pub(super) const DEVICE_BOUND_MAX: &str = "secret.custody.floor.device_bound.max";
-    pub(super) const CROSS_VAULT_MIN: &str = "secret.custody.floor.cross_vault.min";
-    pub(super) const CROSS_VAULT_MAX: &str = "secret.custody.floor.cross_vault.max";
-    pub(super) const ROTATION_MAX_AGE_SECS: &str = "secret.custody.rotation_max_age_secs";
-    pub(super) const ENV_BINDINGS: &str = "secret.custody.env_bindings";
+    pub(super) use crate::secret_record::floor_keys::*;
 }
 
 pub(crate) use self::carrier_marks::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
@@ -118,7 +113,7 @@ pub(crate) use self::control::input::{
     keep_input_in_txn, keep_witness_in_txn,
 };
 pub(crate) use self::control::{
-    ActiveChange, Material, custody_work_executor, drop_revoked_copies_in_txn,
+    ActiveChange, EraseOwnerAct, Material, custody_work_executor, drop_revoked_copies_in_txn,
     erase_pending_revoke_actor_in_txn, refuse_revoked_use_in_txn,
 };
 pub use self::control::{
@@ -134,16 +129,26 @@ pub(crate) use self::doors::{
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 // KS-6: the stored schema-2 form, its value sealed under its custody key.
 pub use self::found_keys::{
-    FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyCursor, FoundKeyNotice,
-    FoundKeyNoticePage, FoundKeySettled, NOTIFICATION_PRODUCER_FOUND_KEY,
+    FOUND_KEY_REASON_KEPT_AS_TEXT, FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard,
+    FoundKeyCursor, FoundKeyNotice, FoundKeyNoticePage, FoundKeySettled,
+    NOTIFICATION_PRODUCER_FOUND_KEY,
 };
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
-    found_key_notices_due_in_txn, note_found_keys_in_txn, raise_found_key_notices_in_txn,
-    raise_found_key_notices_page, ruled_no_secret_in_txn, settle_found_key_in_txn,
+    found_key_notices_due_in_txn, kept_as_text_in_txn, move_side_row_custody_in_txn,
+    note_found_keys_in_txn, raise_found_key_notices_in_txn, raise_found_key_notices_page,
+    ruled_no_secret_in_txn, settle_found_key_in_txn,
+};
+pub use self::handle_labels::{
+    SecretHandleLabel, SecretHandleLabelSet, suggest_secret_handle_label_for_kind,
+    suggest_secret_handle_label_for_prefix,
+};
+pub(crate) use self::handle_labels::{
+    erase_secret_handle_label_in_txn, secret_handle_label_in_txn,
+    suggested_secret_handle_label_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
-pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues};
+pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues, known_index_scope};
 // FIX 7402: live carrier key delivery, the L02 halves of L03's sync frame.
 pub(crate) use self::leaf_delivery::CustodyLeafSession;
 pub use self::leaf_delivery::{
@@ -179,6 +184,7 @@ pub(crate) use self::reveal::{
     RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, SecretRevealWait,
     erase_reveal_actor_in_txn, parse_secret_handle, reveal_value_in_txn,
 };
+pub(crate) use self::run_bound::run_secret_effector;
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
 pub(crate) use self::storage_seal::{
     ArchiveSameId, CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
@@ -207,10 +213,10 @@ pub use self::types::{
 };
 pub use self::use_handle::{
     KeptSentValue, SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_CLEAR_VALUE_SOURCE,
-    SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SecretBindRequest,
-    SecretBound, SecretClearValueSource, SecretReleasePolicy, SecretUseDecision,
-    SecretUseOperation, SecretUseOutcome, SecretUseReceipt, SecretUseSend, SentPresentation,
-    SentValue,
+    SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SECRET_USE_SEAL_EFFECTOR,
+    SECRET_USE_SEAL_SIGN, SecretBindRequest, SecretBound, SecretClearValueSource,
+    SecretReleasePolicy, SecretUseDecision, SecretUseOperation, SecretUseOutcome, SecretUseReceipt,
+    SecretUseSend, SentPresentation, SentValue,
 };
 pub(crate) use self::use_handle::{
     SecretUseConsumed, SecretUseContext, SecretUser, handle_record_in_txn,

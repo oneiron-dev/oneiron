@@ -52,7 +52,7 @@ pub(crate) fn manual_enrollment_candidate_in_txn(
     )?;
     if campaign.definition.lifecycle != CampaignLifecycle::Active {
         return Err(Error::InvalidClaimBody(
-            "an archived campaign cannot enroll",
+            "a campaign that is not active (draft, paused or archived) cannot enroll",
         ));
     }
     if vault.get_entity_type_in_txn(txn, &person)? != Some(crate::registry::ENTITY_TYPE_PERSON) {
@@ -127,9 +127,7 @@ fn with_isolation_stamps(mut candidate: ClaimCandidate, head: &ClaimBody) -> Cla
     if let Some(world) = head.world {
         candidate = candidate.with_world(world);
     }
-    if let Some(relationship) = head.rel {
-        candidate = candidate.with_relationship(relationship);
-    }
+    candidate = candidate.with_relationships(head.rel.clone());
     if let Some(scope) = &head.scope {
         candidate = candidate.with_scope(scope.clone());
     }

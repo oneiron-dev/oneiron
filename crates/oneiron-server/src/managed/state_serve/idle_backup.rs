@@ -430,10 +430,11 @@ impl ManagedState {
         Ok(())
     }
 
-    /// Waits for the background passes in flight to end: `true` once none
-    /// is, `false` once the attempt `id`'s deadline passed, settling it as
-    /// it stands then, or once the attempt was dropped. It wakes as each
-    /// pass ends and as the attempt changes, cancels nothing and releases
+    /// Waits for the background passes in flight, and device sync's run and
+    /// refresh, which pause at the freeze (FIX 5127), to end: `true` once
+    /// none is, `false` once the attempt `id`'s deadline passed, settling it
+    /// as it stands then, or once the attempt was dropped. It wakes as each
+    /// ends and as the attempt changes, cancels nothing and releases
     /// nothing. `host`'s backup jobs decide the reason at the deadline.
     async fn drain_background(&self, id: &str, host: Option<Arc<OwnerHost>>) -> bool {
         let idle = &self.idle_backup;
@@ -445,7 +446,7 @@ impl ManagedState {
             }
         });
         loop {
-            if self.admission.in_flight().background() == 0 {
+            if self.admission.in_flight().waited_for() == 0 {
                 idle.with_attempt(id, |attempt| {
                     if matches!(attempt.phase, Phase::Draining(_)) {
                         attempt.phase = Phase::Preparing;

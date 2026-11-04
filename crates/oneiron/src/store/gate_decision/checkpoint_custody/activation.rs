@@ -150,7 +150,7 @@ impl Store {
         expected: Option<&ExpectedPadObjects>,
     ) -> Result<(
         Vec<String>,
-        Vec<crate::world_keys::WorldKeyId>,
+        Vec<oneiron_authority::authority::WorldKeyId>,
         crate::secret_custody::PlannedCredentials,
         PadObjectsLanding,
     )> {
@@ -164,6 +164,8 @@ impl Store {
             prefixes.push(GATE_DECISION_KEY_PREFIX);
             prefixes.extend(body_prefixes());
             prefixes.extend(known_history_prefixes());
+            // Its erasable keys' refs, planned with the rest (FIX 11205).
+            prefixes.push(side_table::KEY_CUSTODY_ERASABLE_REF.prefix);
             let rows = vault_meta_rows(&self.env, &txn, &prefixes)?;
             (rows, self.credential_fences_in_txn(&txn))
         };
@@ -264,7 +266,7 @@ impl Store {
             self.side_vault_meta().put(wtxn, key, value)?;
         }
         for digest in &prune.files {
-            crate::provenance::body::queue_pruned_file_in_txn(self, wtxn, digest)?;
+            crate::store::owned_body::queue_pruned_file_in_txn(self, wtxn, digest)?;
         }
         if !prune.assets.is_empty() {
             let at = crate::ports::recorded_at_in_txn(self, wtxn)?;

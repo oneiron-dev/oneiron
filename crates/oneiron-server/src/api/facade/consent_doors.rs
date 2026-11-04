@@ -8,8 +8,8 @@ use oneiron::consent::bypass_lifecycle::{
     CreateBypassGrantRequest,
 };
 use oneiron::consent::lifecycle::{
-    self, ApproveOnceRequest, ConsentActReceipt, CreateStandingGrantRequest, DenyConsentRequest,
-    RevokeGrantRequest,
+    self, ApproveOnceRequest, AutoWeaveGrantRequest, ConsentActReceipt, CreateStandingGrantRequest,
+    DenyConsentRequest, RevokeGrantRequest,
 };
 use oneiron::consent::{AuthenticatedOwner, ConsentRegistry, ConsentRegistryQuery};
 use oneiron::failure_signals::HeldFailureSignalBatchView;
@@ -90,6 +90,22 @@ pub(crate) async fn vault_consent_create_standing_grant(
         auth,
         "vault.consent.create_standing_grant",
         move |vault, owner| lifecycle::create_standing_grant(vault, owner, input),
+    )
+    .await
+}
+
+/// The owner grants a writer auto-weave in one project, research campaign or
+/// governed skill (FIX 3433): a standing `research.auto_weave` grant.
+pub(crate) async fn vault_consent_create_auto_weave_grant(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: AutoWeaveGrantRequest,
+) -> Listed<ConsentActReceipt> {
+    as_owner(
+        server,
+        auth,
+        "vault.consent.create_auto_weave_grant",
+        move |vault, owner| lifecycle::mint_auto_weave_grant(vault, owner, input),
     )
     .await
 }

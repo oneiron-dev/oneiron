@@ -19,8 +19,22 @@ use std::collections::BTreeSet;
 use heed::RoTxn;
 
 use crate::Vault;
-use crate::authority::{Destination, EffectiveRead, PeerMachine, WorldPrivacyView};
-use crate::claim::CallerLocality;
+use crate::authority::WorldPrivacyView;
+use oneiron_base::machine_destination::{Destination, EffectiveRead, PeerMachine};
+/// Where a read's caller sits relative to this device (DEC-0005). Only the
+/// host decides it, from the connection the caller reached it on; nothing the
+/// caller sends sets it. A device that forwards its caller's search to the
+/// home states it there, signed with the request (FIX 3550).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallerLocality {
+    /// On this device: the embedded host, or a caller on its local socket or
+    /// loopback.
+    OnDevice,
+    /// Anywhere else.
+    OffDevice,
+}
+
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 

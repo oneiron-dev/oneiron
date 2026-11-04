@@ -203,6 +203,49 @@ pub struct OfferAnswerRecord {
     pub at: u64,
 }
 
+/// What an offer check concluded, so readers tell a verified promise from
+/// an unreadable window without parsing the note's head code (FIX 6315).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OfferCheckOutcome {
+    /// The window's bill compared against the promise and held.
+    Held,
+    /// The window's bill compared against the promise and broke it.
+    Broken,
+    /// The window priced in another currency than the offer's, so no bill
+    /// compared.
+    CurrencyMismatch,
+    /// The cost held but the promised score was never measured.
+    PromisedScoreUnknown,
+    /// The offer promised no monthly figure, so no bill compared.
+    PromisedCostUnknown,
+    /// The seat ran no call on the approved model in the window.
+    UnverifiableNoCalls,
+    /// No usage meter is bound for the vault.
+    UnverifiableNoMeter,
+    /// No handed-off run reached Bound.
+    UnverifiableNotBound,
+    /// The offer's seat names no model role.
+    UnverifiableNoModelRole,
+    /// The seat's other calls were counted out, so the approved model's are
+    /// only part of its month.
+    UnverifiableMixedModel,
+    /// Calls measured no tokens.
+    UnverifiableNoUsage,
+    /// Calls had no list price frozen on them at admission.
+    UnverifiableUnpricedModel,
+    /// Calls carry a frozen price naming no currency.
+    UnverifiableUnknownCurrency,
+    /// Calls measured cached tokens their frozen price quotes no rate for.
+    UnverifiableUnpricedCache,
+    /// Calls priced in another currency than the window's.
+    UnverifiableMixedCurrency,
+    /// Calls priced past what the window's sum holds.
+    UnverifiableSumOverflow,
+    /// Calls with no price and a record naming no reason.
+    UnverifiableUnclassified,
+}
+
 /// What later receipts showed against the offer's promise.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OfferCheckInput {
@@ -211,6 +254,8 @@ pub struct OfferCheckInput {
     pub observed_score: Option<f64>,
     /// Whether the promise held, as the checking observer read it.
     pub held: Option<bool>,
+    /// What the check concluded.
+    pub outcome: OfferCheckOutcome,
     pub note: Option<String>,
     /// The rows the check was read from (FIX 5482), ids only: `None` when
     /// they are not all known.
@@ -226,6 +271,8 @@ pub struct OfferCheck {
     pub observed_monthly_cost: Option<f64>,
     pub observed_score: Option<f64>,
     pub held: Option<bool>,
+    /// What the check concluded.
+    pub outcome: OfferCheckOutcome,
     pub note: Option<String>,
     pub at: u64,
     /// The rows the check was read from (FIX 5482), ids only, sorted: `None`
@@ -432,16 +479,4 @@ pub(super) fn digest(offer: &TrainingOffer) -> Result<String> {
     Ok(bytes_to_hex_lower(&hash.finalize()))
 }
 
-/// The union of source sets (FIX 5482), sorted and deduplicated: `None` once
-/// any set is unknown; no set at all unions to a known empty one.
-pub fn union_source_rows<S: AsRef<[EntityId]>>(
-    sets: impl IntoIterator<Item = Option<S>>,
-) -> Option<Vec<EntityId>> {
-    let mut rows = Vec::new();
-    for set in sets {
-        rows.extend_from_slice(set?.as_ref());
-    }
-    rows.sort_unstable();
-    rows.dedup();
-    Some(rows)
-}
+pub use crate::attempt_queue::source_rows::union_source_rows;

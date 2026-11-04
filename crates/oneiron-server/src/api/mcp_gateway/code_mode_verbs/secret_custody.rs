@@ -43,12 +43,7 @@ impl RunSecretCustody {
         run: EntityId,
         seat: RunSecretSeat,
     ) -> Self {
-        let (actor, actor_class) = match caller {
-            VerdictAsker::Connector(actor) => (actor.actor_ref, actor.actor_class),
-            VerdictAsker::Credential(_, actor) | VerdictAsker::Agent(actor, _) => {
-                (actor.entity_ref(), actor.actor_class())
-            }
-        };
+        let (actor, actor_class) = caller_actor(caller);
         Self {
             vault: Arc::clone(vault),
             holder: RunSecretHolder {
@@ -57,6 +52,17 @@ impl RunSecretCustody {
                 actor,
                 actor_class,
             },
+        }
+    }
+}
+
+/// The verified actor `caller` acts for, and its class: the connector's
+/// credential, the public call's credential, or the pumped run's agent.
+pub(super) fn caller_actor(caller: &VerdictAsker) -> (EntityId, oneiron::EdgeActorClass) {
+    match caller {
+        VerdictAsker::Connector(actor) => (actor.actor_ref, actor.actor_class),
+        VerdictAsker::Credential(_, actor) | VerdictAsker::Agent(actor, _) => {
+            (actor.entity_ref(), actor.actor_class())
         }
     }
 }
@@ -94,6 +100,14 @@ impl SecretCustody for RunSecretCustody {
         use_: &mut dyn FnMut(&str) -> Result<(), BrowserError>,
     ) -> Result<(), BrowserError> {
         self.lend(handle, browser_secret_use(operation), use_)
+    }
+
+    /// The custody's admission of `handle` for this run's seat, its bytes
+    /// unread and no use recorded (FIX 10424).
+    fn holds(&self, handle: &str) -> Result<bool, BrowserError> {
+        self.vault
+            .holds_run_secret(&self.holder, handle)
+            .map_err(|error| BrowserError::SecretRefused(error.to_string()))
     }
 }
 

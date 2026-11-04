@@ -96,9 +96,13 @@ pub enum Conversion {
     /// points by index): a point a series holds no value for is a missing
     /// height, never zero.
     SurfaceAligned { count: usize },
-    /// The nth of-pie plot's custom split lost `count` point(s) the set its
-    /// first series draws no longer holds.
+    /// The nth of-pie plot's custom split lost `count` point(s) no set its
+    /// series draw holds any more.
     SplitPointsDropped { nth: u32, count: usize },
+    /// The nth of-pie plot's series draw sets of their own that place its
+    /// custom split at different points, so it is drawn as `count` of-pie
+    /// plots, one per placement, each holding its settings (FIX 9375).
+    OfPieSplitViews { nth: u32, count: usize },
     /// A title or label linked to a cell keeps its text, unlinked.
     TitleLinkDropped,
     /// This many SmartArt nodes' text was written into the data part and
@@ -147,8 +151,9 @@ pub enum Conversion {
     LabelRangesUnlinked { labels: u32 },
     /// The chart's embedded workbook could not be edited in place, so the
     /// chart's data was rebuilt from the live chart data: on `sheet`, a new
-    /// sheet of the original workbook, which shows it first and keeps every
-    /// other sheet, name and table it held (FIX 6714); or, `None`, in a new
+    /// sheet of the original workbook (FIX 6714) or the sheet that held only
+    /// the chart's data, rewritten (FIX 9169), which it shows first, keeping
+    /// every other sheet, name and table it held; or, `None`, in a new
     /// workbook, when the original could not be read.
     WorkbookRebuilt {
         part: String,
@@ -160,6 +165,9 @@ pub enum Conversion {
     /// wrote: they keep their expressions and their stale results, and the
     /// opening application recalculates them.
     WorkbookRecalcDeferred { part: String },
+    /// A table-cell write cut these `a:fld` fields whole (FIX 12227): each
+    /// named dynamic field, by its `type` attribute, became static text.
+    TableFieldsCut { fields: Vec<String> },
 }
 
 /// Why a rewritten chart's embedded workbook was rebuilt rather than
@@ -191,6 +199,9 @@ pub enum RebuildReason {
     ReadBack,
     /// A series' categories changed how many levels they hold.
     LevelsChanged,
+    /// The host's memory or deadline refused the workbook the edit reads
+    /// or writes (FIX 10587): never the editor's refusal.
+    Resource(crate::resource::ResourceRefusal),
 }
 
 impl RebuildReason {
@@ -206,6 +217,7 @@ impl RebuildReason {
             Self::Projection => "the workbook editor refused the edit",
             Self::ReadBack => "the edited workbook did not read back as the live data",
             Self::LevelsChanged => "a series' categories changed how many levels they hold",
+            Self::Resource(_) => "the host's memory or deadline refused the edit",
         }
     }
 }
@@ -334,6 +346,10 @@ impl Conversion {
                 "of-pie plot {} drops {count} custom split point(s) its categories no longer hold",
                 nth + 1
             ),
+            Self::OfPieSplitViews { nth, count } => format!(
+                "of-pie plot {} is drawn as {count} of-pie plots, one per placement its series' categories give its custom split",
+                nth + 1
+            ),
             Self::TitleLinkDropped => {
                 "a title linked to a cell keeps its text, unlinked".to_owned()
             }
@@ -385,7 +401,7 @@ impl Conversion {
                 reason,
                 sheet: Some(sheet),
             } => format!(
-                "chart workbook {part} not edited in place ({}): the live chart data rebuilt on its new sheet {sheet}, shown first; its other sheets, names and tables kept",
+                "chart workbook {part} not edited in place ({}): the live chart data rebuilt on its sheet {sheet}, shown first; its other sheets, names and tables kept",
                 reason.describe()
             ),
             Self::WorkbookRebuilt {
@@ -398,6 +414,10 @@ impl Conversion {
             ),
             Self::WorkbookRecalcDeferred { part } => format!(
                 "chart workbook {part} keeps its formulas; the opening application recalculates them"
+            ),
+            Self::TableFieldsCut { fields } => format!(
+                "table field(s) {} cut whole: each became static text",
+                fields.join(", ")
             ),
         }
     }

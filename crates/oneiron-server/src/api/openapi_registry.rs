@@ -1,6 +1,7 @@
 //! OpenAPI ApiDoc registration for the HTTP API.
 
 use super::__path_core_reject_widen;
+use super::__path_restore_quarantined_booking;
 use super::run_tree::CoreAttemptPlacement;
 use super::{
     __path_annotate_turn_vad, __path_append_core_record, __path_booking_agent_instructions,
@@ -194,6 +195,7 @@ use utoipa::OpenApi;
         booking_book,
         booking_reschedule,
         booking_cancel,
+        restore_quarantined_booking,
         create_companion_access_grant,
         revoke_companion_access_grant,
         get_companion_profile,
@@ -212,6 +214,7 @@ use utoipa::OpenApi;
         super::courtesy_delete::take_succession,
         super::recovery_bundle::part,
         super::recovery_bundle::index,
+        super::recovery_bundle::custody::custody_page,
 
         lease_revoke
     ),
@@ -431,6 +434,9 @@ use utoipa::OpenApi;
         super::recovery_bundle::KitPadIndexRequest,
         super::recovery_bundle::KitPadIndexResponse,
         super::recovery_bundle::KitPadIndexEntry,
+        super::recovery_bundle::custody::KitCustodyPageRequest,
+        super::recovery_bundle::custody::KitCustodyPageResponse,
+        super::recovery_bundle::custody::KitCustodyFrame,
 
         UsageEvent,
         UsageRecordResult,

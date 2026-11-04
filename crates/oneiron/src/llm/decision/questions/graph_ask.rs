@@ -442,6 +442,8 @@ fn answer_unit(
     if !kind_is_graph_evidence(kind) {
         return Ok(UnitOutcome::Hidden);
     }
+    // The funnel supplies the live revision's logical bytes (FIX 5396), so
+    // the supplied length is the logical length (FIX 5398).
     if body.is_empty() || body.len() > MAX_SOURCE_BYTES {
         return Ok(UnitOutcome::Abstain);
     }
@@ -630,6 +632,8 @@ pub(super) fn recipe_context(
         let Some((kind, _, body)) = lane.graph_ask_parts_in_txn(&txn, id)? else {
             return Ok(None);
         };
+        // The funnel supplies the live revision's logical bytes (FIX 5396),
+        // so the supplied length is the logical length (FIX 5398).
         if !kind_is_graph_evidence(kind) || body.is_empty() || body.len() > MAX_SOURCE_BYTES {
             return Ok(None);
         }
@@ -709,6 +713,9 @@ pub(crate) fn trial_unit_context_in_txn(
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("model trial source header"))?;
         let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        // The funnel supplies the live revision's logical bytes (FIX 5396):
+        // an older revision's manifest bytes miss the recorded hash and the
+        // trial refuses the frontier (FIX 5398).
         if *blake3::hash(&body).as_bytes() != pin.body_hash
             || !source_eligible(vault, txn, &pin.id, header.entity_type)?
         {

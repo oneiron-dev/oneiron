@@ -23,13 +23,16 @@ impl Vault {
     /// keeps custody, then writes the journal claims, the base snapshot and
     /// the proposal in one transaction whose first act is `check`. A
     /// refusal there writes nothing. A run's stamp and class are on the row
-    /// before that write; the trusted and owner proposer write none.
+    /// before that write; the trusted and owner proposer write none. An
+    /// owner `opener`'s verified credential lineage is frozen on the row in
+    /// that transaction (FIX 8838).
     pub(in crate::repo_mutation) fn propose_repo_mutation_checked<R>(
         &self,
         request: RepoMutationRequest,
         review: RepoProposalReview,
         base: ProposalBase,
         run: Option<RepoRunStamp>,
+        opener: Option<&crate::consent::AuthenticatedOwner>,
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoProposal, R>> {
         validate_operation(&request.operation)?;
@@ -120,17 +123,22 @@ impl Vault {
             policy_critiques: Vec::new(),
             queue_review: None,
             status: RepoProposalStatus::Proposed,
+            resolves: None,
             settlement: None,
             operation_seq: None,
             created_at: now_millis() / 1000,
             run,
             actor_class: request_class.map(|class| class as u8),
+            opener_lineage: Vec::new(),
         };
         validate_conflict(self, &row, &repo_root)?;
-        let prepared = super::persist::PreparedRepoProposal::new(row, snapshot)?;
+        let mut prepared = super::persist::PreparedRepoProposal::new(row, snapshot)?;
         let mut txn = self.store.env.write_txn()?;
         if let Err(refused) = check(&txn)? {
             return Ok(Err(refused));
+        }
+        if let Some(opener) = opener {
+            prepared.row.opener_lineage = opener.credential_lineage_in_txn(self, &txn)?;
         }
         prepared.persist_in_txn(self, &mut txn)?;
         txn.commit()?;
@@ -153,7 +161,7 @@ impl Vault {
             RepoProposalReview::Explicit(catalog),
             ProposalBase::CurrentCheckout,
             None,
-            &BTreeSet::new(),
+            &crate::repo_mutation::bundle::ProvenFiles::new(),
             |_| Ok(Ok(())),
         )?;
         Ok(proposed.unwrap_or_else(|never| match never {}))
@@ -164,15 +172,15 @@ impl Vault {
     /// bundle. A path in `proven` is one a secret remediation read whole
     /// from the canonical commit its pinned base is (FIX 7608 slice 6): it
     /// may change a file the base withholds, whose old bytes are never
-    /// stored, while its new bytes are kept under custody as any are. A
-    /// refusal in `check` writes nothing.
+    /// stored (only their BLAKE3, FIX 10974), while its new bytes are kept
+    /// under custody as any are. A refusal in `check` writes nothing.
     pub(in crate::repo_mutation) fn propose_repo_bundle_checked<R>(
         &self,
         request: RepoMutationRequest,
         review: RepoProposalReview,
         base: ProposalBase,
         run: Option<RepoRunStamp>,
-        proven: &BTreeSet<String>,
+        proven: &crate::repo_mutation::bundle::ProvenFiles,
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoProposal, R>> {
         validate_operation(&request.operation)?;
@@ -218,7 +226,7 @@ impl Vault {
         let custody = SnapshotCustody::of(self, &repo_root)?;
         for file in &files {
             match &file.content {
-                Some(content) if proven.contains(&file.path) => {
+                Some(content) if proven.contains_key(&file.path) => {
                     if let Some(withheld) = custody.withholds(&file.path, content) {
                         return Err(withheld.refusal());
                     }
@@ -251,11 +259,13 @@ impl Vault {
             policy_critiques: Vec::new(),
             queue_review: None,
             status: RepoProposalStatus::Proposed,
+            resolves: None,
             settlement: None,
             operation_seq: None,
             created_at: now_millis() / 1000,
             run,
             actor_class: request_class.map(|class| class as u8),
+            opener_lineage: Vec::new(),
         };
         let prepared = super::persist::PreparedRepoProposal::new(row, snapshot)?;
         let mut txn = self.store.env.write_txn()?;

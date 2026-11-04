@@ -12,6 +12,7 @@
 //!        ├─ a launch estimate in the goal budget's unit
 //!        ├─ inside the goal claim's slice ─▶ reserve, route, load the PROPOSAL
 //!        └─ past it ─▶ the incumbent loads; the trial asks about that charge
+//! pinned load of the proposal ─▶ the same charge, reserved; the pinned arm loads
 //! spend scope settles ─▶ the reservation becomes what the run spent
 //! unmetered launch ─▶ the estimate is the run's final charge at its route
 //! bound reached · live report kept · verdict recorded ─▶ trial closes
@@ -33,11 +34,12 @@ use std::collections::{BTreeSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
-use crate::llm::decision::{
-    AnswerContract, AskAct, AskAnswer, AskRole, AskTo, DecisionAnswer, DecisionClass,
-    DecisionQuestion, DecisionRung, HumanAskReason, HumanDecisionRequest, ProviderPin, RoleRank,
+use crate::llm::decision::{AskAnswer, AskRole, AskTo, HumanDecisionRequest};
+use crate::model_decision::{
+    AnswerContract, AskAct, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
+    HumanAskReason, ProviderPin, RoleRank,
 };
-use crate::llm::run_admission::LeaseUnit;
+use crate::run_budget::LeaseUnit;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill::SkillRecord;
 use crate::skill_optimize::{HeldOutReplayNotes, SkillEditTrialBasis};
@@ -50,7 +52,7 @@ use self::overrun_ask::{answer_in_txn, climb_stale_ask};
 use self::routing::lineage_route_in_txn;
 
 pub(crate) use self::overrun_ask::queue_trial_ask;
-pub(crate) use self::routing::route_in_txn;
+pub(crate) use self::routing::{charge_pinned_in_txn, route_in_txn};
 
 /// Each proposal's trial. Key: the proposal.
 const TRIALS: SideTable<EntityId, ExplorationTrial, Named> =
@@ -74,8 +76,8 @@ const MAX_PROJECT_LINEAGE: usize = 256;
 /// Hours an unanswered overrun ask waits on the role it went to before it
 /// climbs to the next role up its chain: the ask's reminder. At the chain's
 /// top it waits on, until [`EXPLORATION_ASK_LAPSE_HOURS`].
-pub(crate) const EXPLORATION_ASK_CLIMB_HOURS: crate::learning_setting::SettingSpec =
-    crate::learning_setting::SettingSpec {
+pub(crate) const EXPLORATION_ASK_CLIMB_HOURS: crate::store::setting_seed::SettingSpec =
+    crate::store::setting_seed::SettingSpec {
         key: "exploration.ask.climb_hours",
         min: 1.0,
         max: 720.0,
@@ -85,8 +87,8 @@ pub(crate) const EXPLORATION_ASK_CLIMB_HOURS: crate::learning_setting::SettingSp
 /// Hours an unanswered overrun ask waits at the top of its chain, counted
 /// from its last climb, before it lapses as a decline: the trial closes and
 /// its routed runs are measured. Checked once the climb window has passed too.
-pub(crate) const EXPLORATION_ASK_LAPSE_HOURS: crate::learning_setting::SettingSpec =
-    crate::learning_setting::SettingSpec {
+pub(crate) const EXPLORATION_ASK_LAPSE_HOURS: crate::store::setting_seed::SettingSpec =
+    crate::store::setting_seed::SettingSpec {
         key: "exploration.ask.lapse_hours",
         min: 1.0,
         max: 2160.0,
@@ -249,6 +251,35 @@ pub(crate) fn settle_exploration_route_in_txn(
         ledger.charged = ledger
             .charged
             .saturating_sub(route.reserved)
+            .saturating_add(spent);
+        SLICES.put(&vault.store, txn, &route.goal_claim, &ledger)?;
+    }
+    route.settled = Some(spent);
+    ROUTES.put(&vault.store, txn, routed.as_bytes(), &route)
+}
+
+/// Corrects an already-settled route to the scope's latest total. Repeating
+/// the same correction changes nothing; admission and reservations stay put.
+pub(crate) fn revise_exploration_route_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    unit: &LeaseUnit,
+    spent: u64,
+) -> Result<()> {
+    let Some((routed, mut route)) = lineage_route_in_txn(vault, txn, attempt)? else {
+        return Ok(());
+    };
+    let Some(previous) = route.settled else {
+        return Ok(());
+    };
+    if previous == spent || route.unit != *unit {
+        return Ok(());
+    }
+    if let Some(mut ledger) = SLICES.get(&vault.store, txn, &route.goal_claim)? {
+        ledger.charged = ledger
+            .charged
+            .saturating_sub(previous)
             .saturating_add(spent);
         SLICES.put(&vault.store, txn, &route.goal_claim, &ledger)?;
     }

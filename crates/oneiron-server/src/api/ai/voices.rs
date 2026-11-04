@@ -34,7 +34,7 @@ use oneiron::voice_identity::ref_bank::{
 };
 use oneiron::voice_identity::{VoiceConsentBasis, VoiceConsentState};
 use oneiron::{EntityId, ModelLocality};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use super::refusal;
 use crate::auth::CoreAuth;
@@ -90,15 +90,6 @@ pub(crate) struct ViewQuery {
     /// generated packs.
     #[serde(default)]
     include_generated: bool,
-}
-
-/// A provisioning's answer on the route: the clone's receipt, and whether
-/// its vendor holds it until the voice is verified there (FIX 1567).
-#[derive(Serialize)]
-struct ProvisionAnswer {
-    #[serde(flatten)]
-    receipt: VoiceTargetReceipt,
-    awaiting_verification: bool,
 }
 
 /// The voice as the bank holds it, for the owner (FIX 1567): its identity,
@@ -270,12 +261,8 @@ pub(super) async fn provision(
         include_generated: body.include_generated,
         language: body.language.as_deref(),
     };
-    match provision_record(&server, None, None, request).await {
-        Ok(record) => Json(ProvisionAnswer {
-            receipt: target_receipt(&record),
-            awaiting_verification: record.awaiting_verification,
-        })
-        .into_response(),
+    match provision_record(&server, None, clone_payer(), request).await {
+        Ok(record) => Json(target_receipt(&record)).into_response(),
         Err(refused) => refused.response(),
     }
 }
@@ -339,6 +326,16 @@ pub(crate) async fn provision_clone(
         language,
     };
     provision_clone_funded(server, actor, None, request).await
+}
+
+/// The payer a voice clone's vendor calls bill (FIX 10630): the calling
+/// live run's, whose line fixed it from its spend scope's funding when the
+/// run began — an acting payer's own account or consent explicitly funding
+/// this clone (FIX 9421). None outside a run, or for a run no scope funds:
+/// the clone runs on the vault's run, as it always did, and none missing
+/// refuses it.
+pub(crate) fn clone_payer() -> Option<oneiron::llm::run_admission::PayerPerson> {
+    crate::api::facade::host_doors::calling_line().and_then(|line| line.payer().cloned())
 }
 
 /// One clone a door asks for: the voice, the target, whether generated refs
@@ -626,6 +623,7 @@ fn target_receipt(record: &VoiceTargetRecord) -> VoiceTargetReceipt {
         vendor_voice_id: record.vendor_voice_id.clone(),
         cloned_at: record.cloned_at,
         revision: hex(&record.revision),
+        awaiting_verification: record.awaiting_verification,
     }
 }
 

@@ -29,13 +29,13 @@ use crate::agent_def::{
     AgentCeiling, AgentModel, AgentScope, AgentWakeCadence, DreamingMode, McpRef, MemoryProfile,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::campaign::compliance::{
-    JurisdictionObservation, rank_jurisdiction_observation, select_jurisdiction,
-};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::conversation::{ConversationBody, RoomRole};
 use crate::counterparty_contact::{
     CounterpartyContactStatus, CounterpartyFirstTouch, CounterpartyOptOut,
+};
+use crate::gate::dispatch_compliance::observations::{
+    JurisdictionObservation, rank_jurisdiction_observation, select_jurisdiction,
 };
 use crate::llm::{ModelId, ModelTierRef};
 use crate::note::{NoteActor, NoteKind};
@@ -64,13 +64,16 @@ fn fenced_id(key: &[u8]) -> Option<Vec<u8>> {
 /// Rewrites `databases` so every live row is `current`'s, or refuses when a
 /// refused family moved since the checkpoint. Returns the notes for the home
 /// tables that came from the image (FIX 5661 C2b), and `current`'s pad
-/// objects captured in the read its live rows came from (PAD-1).
+/// objects captured in the read its live rows came from (PAD-1), with the
+/// bundles of the generations the image does not keep (FIX 11824).
 pub(super) fn carry_current_authority(
     databases: &mut BTreeMap<String, CanonicalRows>,
     current: &Vault,
 ) -> Result<(Vec<super::HomeTableNote>, crate::store::PadObjectsCapture)> {
     let classes = Classes::new(current, databases)?;
-    let live = current_rows(current, &classes)?;
+    // The copy keeps the generations the image keeps (FIX 11824).
+    let copy = crate::store::CopyGenerations::of_rows(&databases["sync_state"]);
+    let live = current_rows(current, &classes, &copy)?;
     // A store's random id, minted at its first open, names the vault even
     // before it has an authority log. Every image carries one; a missing or
     // different id is another vault.
@@ -169,14 +172,18 @@ struct LiveRows {
 /// Entity ids with the authority their bodies carry and the class's name.
 type Projected = BTreeMap<Vec<u8>, (&'static str, Projection, Compared)>;
 
-fn current_rows(current: &Vault, classes: &Classes) -> Result<LiveRows> {
+fn current_rows(
+    current: &Vault,
+    classes: &Classes,
+    copy: &crate::store::CopyGenerations,
+) -> Result<LiveRows> {
     let txn = current.store.env.read_txn()?;
     let mut live = LiveRows {
         rows: BTreeMap::new(),
         authority: BTreeMap::new(),
         claim_of: Vec::new(),
         fences: BTreeSet::new(),
-        pad_objects: super::pad_objects::capture_open_in_txn(current, &txn),
+        pad_objects: super::pad_objects::capture_open_in_txn(current, &txn, copy),
     };
     for entry in crate::store::DB_MANIFEST {
         if !Classes::has_authority(entry.name) {
@@ -591,7 +598,7 @@ enum Compared {
     /// A claim's read scope, and, for a claim of an authority family, the
     /// family's name and the claim's whole body.
     Claim {
-        space: Option<EntityId>,
+        space: crate::claim::RelationshipScope,
         private: bool,
         authority: Option<(&'static str, Vec<u8>)>,
     },
@@ -615,24 +622,26 @@ enum Compared {
     /// A skill scan verdict claim: its read scope, and the verdict, compared
     /// as a posture.
     ScanVerdict {
-        access: (Option<EntityId>, bool),
+        access: (crate::claim::RelationshipScope, bool),
         verdict: ScanVerdictFacts,
     },
     /// A `comm.jurisdiction` claim: its read scope, and its observation,
     /// compared as part of the selection the campaign gate makes for each
     /// subject it reaches.
     Jurisdiction {
-        access: (Option<EntityId>, bool),
+        access: (crate::claim::RelationshipScope, bool),
         observation: Observation,
     },
 }
 
 impl Compared {
     /// The read scope of a claim of any kind.
-    fn access(&self) -> Option<(Option<EntityId>, bool)> {
+    fn access(&self) -> Option<(crate::claim::RelationshipScope, bool)> {
         match self {
-            Self::Claim { space, private, .. } => Some((*space, *private)),
-            Self::ScanVerdict { access, .. } | Self::Jurisdiction { access, .. } => Some(*access),
+            Self::Claim { space, private, .. } => Some((space.clone(), *private)),
+            Self::ScanVerdict { access, .. } | Self::Jurisdiction { access, .. } => {
+                Some(access.clone())
+            }
             _ => None,
         }
     }
@@ -648,7 +657,7 @@ impl Compared {
             return false;
         };
         crate::claim::decode_claim_body(body, true).is_ok_and(|claim| {
-            claim.predicate == crate::campaign::claims::PREDICATE_CAMPAIGN_MEMBER
+            claim.predicate == crate::write_envelope::cohort_claims::PREDICATE_CAMPAIGN_MEMBER
                 && claim.lifecycle == ClaimLifecycleStatus::Active
         })
     }
@@ -793,7 +802,9 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
                         verdict: scan_verdict(&claim),
                     };
                 }
-                if claim.predicate == crate::campaign::claims::PREDICATE_COMM_JURISDICTION {
+                if claim.predicate
+                    == crate::write_envelope::cohort_claims::PREDICATE_COMM_JURISDICTION
+                {
                     return Compared::Jurisdiction {
                         access: (space, private),
                         observation: jurisdiction(&claim),

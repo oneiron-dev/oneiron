@@ -11,18 +11,19 @@ use serde::Serialize;
 pub(crate) mod confined;
 mod files;
 mod markdown;
+mod present_links;
 mod reader;
 mod source;
 #[cfg(unix)]
 mod worker;
 
 #[cfg(unix)]
-use confined::{walk_files, walk_notes};
+use confined::{walk_files, walk_notes, walk_notes_rescan};
 pub(crate) use reader::{
     LinkCounts, NoteCounts, TitleCounts, choose_title, crossed_rows, earlier_titles, read_folder,
     resolve_links,
 };
-pub(crate) use source::{canonical_folder, files_attached, files_rescan, rescanned};
+pub(crate) use source::{Rescanned, canonical_folder, files_attached, files_rescan, rescanned};
 #[cfg(unix)]
 pub(crate) use worker::spawn_rescans;
 
@@ -68,12 +69,23 @@ fn walk_notes(
 }
 
 #[cfg(not(unix))]
+fn walk_notes_rescan(
+    path: &std::path::Path,
+    _unopened_dir: &mut dyn FnMut(&std::path::Path),
+    visit: &mut dyn FnMut(&std::path::Path, std::fs::File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    walk_notes(path, visit)
+}
+
+#[cfg(not(unix))]
 fn walk_files(
     path: &std::path::Path,
+    _vault: Option<(u64, u64)>,
     _excluded: &dyn Fn(&std::path::Path) -> bool,
     _unopened: &mut dyn FnMut(&std::path::Path),
+    _unopened_dir: &mut dyn FnMut(&std::path::Path),
     _visit: &mut dyn FnMut(&std::path::Path, std::fs::File) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     anyhow::bail!(
         "reading a Files source ({}) needs a unix host",
         path.display()

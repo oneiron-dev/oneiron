@@ -11,6 +11,7 @@ use crate::outbound_grant::{
     StandingOutboundGrantStatus, standing_outbound_grant_principal_index_entity_id,
     standing_outbound_grant_principal_index_prefix,
 };
+use crate::ports::EntityStoreRead;
 use crate::side_table::{self, Raw, SideTable};
 
 /// Bound to the same declaration `outbound_grant::index` binds privately for
@@ -60,6 +61,35 @@ pub fn mint_publish_page_invite_grant(
             .ok_or_else(|| refused("the existing booking page invite grant did not read back")),
         Err(error) => Err(engine_failure("page invite grant mint", error)),
     }
+}
+
+/// Mints the page's invite grant inside the owner's publication write (FIX
+/// 7849): publishing a page is the owner act that lets its confirmed
+/// bookings carry invites. The grant id is derived from the page, so a
+/// republish finds the grant already stored and writes nothing, and a grant
+/// the owner revoked stays revoked.
+///
+/// # Errors
+///
+/// Storage errors, and the grant's own validation.
+pub(crate) fn mint_page_invite_grant_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    page_ref: EntityId,
+    publisher_principal: EntityId,
+    issued_at: u64,
+) -> crate::Result<()> {
+    let id = page_invite_grant_id(&page_ref)
+        .map_err(|_| Error::CorruptedIndex("booking page invite grant id"))?;
+    if vault.store.port_entity_record(&*txn, &id)?.is_some() {
+        return Ok(());
+    }
+    let intent = BookingPageInviteGrantMintIntent {
+        page_ref,
+        publisher_principal,
+    };
+    vault.mint_booking_page_invite_outbound_grant_in_txn(txn, &id, &intent, issued_at)?;
+    Ok(())
 }
 
 /// The live `BookingPageInvites` grant this principal holds for `page_ref`.

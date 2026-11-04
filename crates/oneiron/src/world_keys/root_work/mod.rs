@@ -75,7 +75,7 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::recovery::{KitIssue, KitPassphrase, KitPiece};
+use crate::store::recovery_kit::{KitIssue, KitPassphrase, KitPiece};
 use crate::{EntityId, Vault};
 
 /// Which install makes a root change (CALLS ROOT_WORK_EXECUTOR).

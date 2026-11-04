@@ -21,7 +21,7 @@ use crate::actor_claims::{
 };
 use crate::attempt_queue::AttemptId;
 use crate::feedback::COACH_FEEDBACK_DELIVERY_FACET;
-use crate::llm::decision::{PersonChangedAnswer, PersonThreshold};
+use crate::model_decision::{PersonChangedAnswer, PersonThreshold};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::skill_attribution::{
     AttributionDecisions, AttributionSweepReport, ReceiptAttributionSource,
@@ -41,8 +41,7 @@ pub use self::think_threshold::ThinkThresholdPolicy;
 
 pub(crate) use self::eval_measurement::enqueue_coach_eval_measurement_in_txn;
 
-/// Host-run Coach queue kind. The payload `job_type` names the facet.
-pub const COACH_HOST_QUEUE_KIND: &str = "coach.host";
+pub use crate::claim::maintenance_kind::COACH_HOST_QUEUE_KIND;
 /// Skill authoring from sessions: the session-end `actor.*` craft-note distill
 /// (ARCH-0003 §G.1 `actor.lesson`).
 pub const COACH_SKILL_DISTILL_FACET: &str = "coach.skill_distill";
@@ -65,16 +64,9 @@ pub const COACH_TRIPWIRES_FACET: &str = "coach.tripwires";
 /// ARCH-0079): a pending skill tradeoff ask that waited out a reminder window
 /// climbs one rung of its role chain, ending at the vault owners.
 pub const COACH_TRADEOFF_ESCALATION_FACET: &str = "coach.tradeoff_escalation";
-/// Training offers (OF-577), drafted on the host from the offer skill's draft
-/// and recorded through [`Vault::run_coach_training_offer`].
-pub const COACH_TRAINING_OFFER_FACET: &str = "coach.training_offer";
-/// Digest settings (FIX 5609): each owner's rhythm or lead step, drafted by
-/// the Coach's model and filed through [`Vault::run_coach_weave_digest_settings`].
-pub const COACH_WEAVE_DIGEST_SETTINGS_FACET: &str = "coach.weave_digest_settings";
-/// Eval authoring (OF-578, ARCH-0053): each seat's test set kept from the
-/// vault's own history by the eval-authoring skill, and applied through
-/// [`Vault::run_coach_eval_authoring`].
-pub const COACH_EVAL_AUTHORING_FACET: &str = "coach.eval_authoring";
+pub use crate::claim::maintenance_kind::COACH_EVAL_AUTHORING_FACET;
+pub use crate::claim::maintenance_kind::COACH_TRAINING_OFFER_FACET;
+pub use crate::claim::maintenance_kind::COACH_WEAVE_DIGEST_SETTINGS_FACET;
 /// Browser programs (CUA E8, FIX 7605): programs proposed from solved runs
 /// and repairs of failed ones, with no model, through
 /// [`Vault::run_coach_browser_programs`].
@@ -115,10 +107,7 @@ pub const COACH_LEARNING_SWEEP_FACET: &str = "coach.learning_sweep";
 /// run's skill measured on matched forks through the host's replay capsule
 /// (see [`super::ContributionReplayHost`]).
 pub const COACH_CONTRIBUTION_CHECK_FACET: &str = "coach.contribution_check";
-/// Issues (ARCH-0066 #coach, OF-418): the blocked reports agents filed, each
-/// asked which fix its agent needs and filed as a proposed heal. A report
-/// wakes it at once; the nightly pass wakes it again while reports wait.
-pub const COACH_ISSUES_FACET: &str = "coach.issues";
+pub use crate::claim::maintenance_kind::COACH_ISSUES_FACET;
 /// Code fixes (DEC-0005 FIX6, OF-380): for one failure case the Coach filed a
 /// heal for, an invented example of the failure and the shadow result of its
 /// own candidate fix, each verified in the vault before either may leave.
@@ -426,7 +415,9 @@ impl Vault {
             let owners = crate::policy_model::owners_in_txn(self, &*txn)?;
             notify_offer_in_txn(self, txn, &owners, &offer)
         })?;
-        crate::task_verb::issue_training_offer_asks(self, now);
+        if training_offers_at_home(self)? {
+            crate::task_verb::issue_training_offer_asks(self, now);
+        }
         // The digest deadline re-reads: a pending offer arms it.
         self.store.notify_proactivity_changes();
         Ok(offer)
@@ -500,6 +491,28 @@ impl Vault {
         }
         Ok(())
     }
+}
+
+/// The person-changed tables' actor scrub (FIX 5222): an actor's erase drops
+/// each override record bound to it or naming it as principal, in both the
+/// person and think tables, so the principal does not survive. Read marks
+/// stay, so a replay cannot resurrect a record.
+pub(crate) fn erase_person_changed_principal_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    for (source, record) in PERSON_CHANGED.scan(&vault.store, txn)? {
+        if source == *id || record.principal == *id {
+            PERSON_CHANGED.delete(&vault.store, txn, &source)?;
+        }
+    }
+    for (source, record) in think_threshold::THINK_MISSED.scan(&vault.store, txn)? {
+        if source == *id || record.principal == *id {
+            think_threshold::THINK_MISSED.delete(&vault.store, txn, &source)?;
+        }
+    }
+    Ok(())
 }
 
 /// The nightly read-side pass. Detector ids are stable, so a night that sees
@@ -645,6 +658,20 @@ fn notify_offer_in_txn(
     Ok(())
 }
 
+/// Whether this device should issue training-offer and swap questions. Before
+/// the first home election every device keeps today's behavior; afterwards
+/// only the elected home asks, while every device keeps its idempotent upkeep.
+/// The shared swap-ask issuer enforces this itself, so post-score and nightly
+/// calls alike stay single-issuer.
+pub(crate) fn training_offers_at_home(vault: &Vault) -> Result<bool> {
+    let store = DreamerRunnerStore::new(vault);
+    let Some(home) = store.home_node_designation()? else {
+        return Ok(true);
+    };
+    let local = store.local_home_node_candidate(true, true, false)?;
+    Ok(home.node_id == local.node_id)
+}
+
 /// The nightly offer pass. Each pending offer reaches every owner's inbox as
 /// one NOTIFICATION keyed by offer and owner, so a replayed night delivers
 /// nothing twice and the owner's seen and acked marks stay theirs. Each
@@ -663,6 +690,7 @@ pub(super) fn run_training_offers(
     let parent = Some(attempt.status.attempt.id);
     let run_id = attempt.status.attempt.run_id.as_deref();
     vault.requeue_authorized_training_runs(parent, run_id, now)?;
+    vault.requeue_running_training_runs(parent, run_id, now)?;
     let pending = crate::skill_optimize::pending_training_offers(vault)?;
     let mut due = Vec::new();
     for (offer, answer) in crate::skill_optimize::training_offers(vault, None)? {
@@ -674,6 +702,12 @@ pub(super) fn run_training_offers(
         }
     }
     if pending.is_empty() && due.is_empty() {
+        // No offer work, but a scored run may still wait for its swap ask:
+        // the home asks independently of offers (post-score asks are
+        // suppressed off-home, so this fallback must not depend on them).
+        if training_offers_at_home(vault)? {
+            crate::task_verb::issue_training_swap_asks(vault, now);
+        }
         return Ok(());
     }
     let store = DreamerRunnerStore::new(vault);
@@ -698,8 +732,10 @@ pub(super) fn run_training_offers(
         }
         Ok(())
     })?;
-    crate::task_verb::issue_training_offer_asks(vault, now);
-    crate::task_verb::issue_training_swap_asks(vault, now);
+    if training_offers_at_home(vault)? {
+        crate::task_verb::issue_training_offer_asks(vault, now);
+        crate::task_verb::issue_training_swap_asks(vault, now);
+    }
     Ok(())
 }
 

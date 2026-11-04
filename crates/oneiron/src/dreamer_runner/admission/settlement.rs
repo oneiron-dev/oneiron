@@ -67,13 +67,7 @@ impl DreamerRunnerStore<'_> {
         step_hash: &[u8; 32],
     ) -> Result<bool> {
         let rtxn = self.vault.store.env.read_txn()?;
-        match BUDGET_STEP_CHARGE.get(&self.vault.store, &rtxn, &(attempt_id, *step_hash))? {
-            None => Ok(false),
-            Some([1]) => Ok(true),
-            Some(_) => Err(invalid_dreamer_runner(
-                "invalid checkpoint step charge receipt",
-            )),
-        }
+        self.step_charge_marked_in_txn(&rtxn, attempt_id, step_hash)
     }
 
     /// Forgets the paid receipt of `attempt_id`'s terminal step `step_hash`
@@ -99,7 +93,25 @@ impl DreamerRunnerStore<'_> {
         attempt_id: AttemptId,
         step_hash: &[u8; 32],
     ) -> Result<bool> {
-        Ok(BUDGET_STEP_CHARGE.contains(&self.vault.store, txn, &(attempt_id, *step_hash))?)
+        let Some(paid) =
+            BUDGET_STEP_CHARGE.get(&self.vault.store, txn, &(attempt_id, *step_hash))?
+        else {
+            return Ok(false);
+        };
+        Ok(Self::terminal_claim_in(self.vault, txn, attempt_id, step_hash)? == Some(paid))
+    }
+
+    /// The terminal claim the step's memo replays now. A receipt counts only
+    /// while it names that claim: a re-ask after the memo's claim was erased
+    /// or deindexed answers with a new claim, so its paid usage is tallied
+    /// once and pinned again (FIX 7489).
+    fn terminal_claim_in(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        attempt_id: AttemptId,
+        step_hash: &[u8; 32],
+    ) -> Result<Option<EntityId>> {
+        crate::llm::model_step::step_terminal_claim_in_txn(vault, txn, attempt_id, step_hash)
     }
 
     /// Retire paid-step receipts, and the listing its extraction pinned,
@@ -128,11 +140,14 @@ impl DreamerRunnerStore<'_> {
         let settled = self.settle_budget_in_txn(wtxn, input)?;
         if matches!(settled, DreamerBudgetSettlementOutcome::Settled(_)) {
             for hash in step_hashes {
-                let key = (child, *hash);
-                if BUDGET_STEP_CHARGE.contains(&self.vault.store, wtxn, &key)? {
+                if self.step_charge_marked_in_txn(wtxn, child, hash)? {
                     return Err(invalid_dreamer_runner("checkpoint step charged twice"));
                 }
-                BUDGET_STEP_CHARGE.put(&self.vault.store, wtxn, &key, &[1])?;
+                // A step with no memo has nothing a replay could reuse.
+                let Some(paid) = Self::terminal_claim_in(self.vault, wtxn, child, hash)? else {
+                    continue;
+                };
+                BUDGET_STEP_CHARGE.put(&self.vault.store, wtxn, &(child, *hash), &paid)?;
             }
         }
         Ok(settled)
@@ -152,9 +167,7 @@ impl DreamerRunnerStore<'_> {
             let child = input.child_attempt;
             let mut unpinned = Vec::with_capacity(step_hashes.len());
             for hash in step_hashes {
-                if !unpinned.contains(hash)
-                    && !BUDGET_STEP_CHARGE.contains(&self.vault.store, &*wtxn, &(child, *hash))?
-                {
+                if !unpinned.contains(hash) && !self.step_charge_marked_in_txn(wtxn, child, hash)? {
                     unpinned.push(*hash);
                 }
             }

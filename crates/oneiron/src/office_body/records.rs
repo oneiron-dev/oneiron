@@ -16,6 +16,11 @@ pub(super) const FORKS: SideTable<(EntityId, EntityId), OfficeBodyFork, Named> =
 pub(super) const EXPORTS: SideTable<Vec<u8>, OfficeBodyExportRecord, Named> =
     SideTable::new(&side_table::OFFICE_BODY_EXPORT);
 
+/// One consecutive actor group's opaque DOCX revision token, by artifact,
+/// export version and zero-based group index (FIX 595).
+pub(super) const EXPORT_AUTHORS: SideTable<(EntityId, u64, u64), OfficeBodyExportAuthor, Named> =
+    SideTable::new(&side_table::OFFICE_BODY_EXPORT_AUTHOR);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OfficeBodyKind {
@@ -125,7 +130,7 @@ pub struct OfficeBodyExportRequest<'a> {
 /// NOW() at, as the caller's device knows it: its offset east of UTC now,
 /// and the IANA zone it read that from, kept as a label. The vault keeps no
 /// owner zone; a caller that names none gets the default, UTC (FIX 790).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfficeRecalcZone {
     pub utc_offset_minutes: i16,
     pub iana_timezone: Option<String>,
@@ -166,6 +171,13 @@ pub struct OfficeBodyExportRecord {
     pub artifact: EntityId,
     pub version: u64,
     pub frontier: Vec<u8>,
+    /// The frontier the deck's rebinding to this export left (FIX 12325):
+    /// `frontier` and the one commit that bound the deck to this version,
+    /// wherever the head stands since. The deck there holds the slides and
+    /// shapes `frontier` holds, each bound to its ids in this version.
+    /// `None` for DOCX and XLSX, and for a deck export a Keep did not bind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebind_frontier: Option<Vec<u8>>,
     pub source_version: u64,
     pub actor: BodyActor,
     /// The author the export showed; empty once its actor was erased.
@@ -180,11 +192,31 @@ pub struct OfficeBodyExportRecord {
     /// The engine that recalculated an XLSX export and the local time it
     /// read; `None` when the file recalculates on open, and for DOCX.
     pub recalc: Option<String>,
+    /// The zone its caller named for TODAY() and NOW(); `None` for a deck
+    /// export (FIX 12183).
+    pub recalc_zone: Option<OfficeRecalcZone>,
     /// What the projection adapted, as Excel would, so the file stays one
     /// its application opens: a pivot cache whose source went keeps its
     /// cached results, a picture whose cells were deleted collapses, a note
     /// goes with its cell. One line each; none for DOCX.
     pub effects: Vec<String>,
+}
+
+/// One consecutive actor group's author binding for a multi-revision DOCX
+/// export. `None` is a missing or erased receipt, presented as `erased`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeBodyExportAuthor {
+    pub actor: Option<EntityId>,
+    pub token: String,
+}
+
+impl OfficeBodyExportRecord {
+    /// The export's own recalculation clock: the time it exported at, in
+    /// the zone its caller named. `None` for a deck export, which keeps
+    /// no zone (FIX 12183).
+    pub(super) fn recalc_clock(&self) -> Option<(u64, OfficeRecalcZone)> {
+        self.recalc_zone.clone().map(|zone| (self.at, zone))
+    }
 }
 
 /// `version` is `None` when the body equals its import: a no-op keeps the

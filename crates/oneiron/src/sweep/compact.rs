@@ -156,8 +156,25 @@ pub(super) fn compact_all_windows(
     let owners = documents::SlotOwners::read(vault)?;
     for label in &labels {
         if let Some(hex) = label.strip_prefix("e:") {
-            let id = owners.entity(hex)?;
-            let erase = erased.contains(&id) || drops_withdrawn_document(vault, &id, withdrawn)?;
+            // A slot no live entity owns (orphan, moved away, shared) is
+            // compacted only to carry out the erase or withdrawal of its own
+            // id, as before; otherwise it keeps its rows, which neither its
+            // birth's owner nor the NOTE loader can read (FIX 11188).
+            let (id, erase) = match owners.entity(vault, hex)? {
+                Some(id) => {
+                    let erase =
+                        erased.contains(&id) || drops_withdrawn_document(vault, &id, withdrawn)?;
+                    (id, erase)
+                }
+                None => {
+                    let id = EntityId::from_hex(hex)?;
+                    if !erased.contains(&id) && !drops_withdrawn_document(vault, &id, withdrawn)? {
+                        tracing::warn!("sweep: document slot with no live owner left as it is");
+                        continue;
+                    }
+                    (id, true)
+                }
+            };
             // A held document keeps its bytes and its history, erased or not
             // (OF-470, FIX 10160): it waits, as a live one does. Its writer
             // checks the hold again, and a hold placed since defers it too.
@@ -376,8 +393,12 @@ pub(super) fn compact_window_with(
     // and an erased message's document.
     crate::sync::document_pins::scrub_document_pins(vault, &doc, None)?;
     crate::sync::message_docs::scrub_message_docs(vault, &doc, None)?;
+    // FIX 6870: and an erased repo's portable manifest.
+    crate::sync::repo_manifests::scrub_repo_manifests(vault, &doc, None)?;
     // FIX 3877: an origin claim carrier names no erased actor.
     crate::sync::origin_claims::scrub_origin_claims(vault, &doc, None)?;
+    // FIX 12769: nor does a section-fit receipt carrier.
+    crate::sync::origin_claims::scrub_section_fit_receipts(vault, &doc, None)?;
     // FIX 6387: nor does a birth carrier, so the history kept has no erased birth.
     crate::sync::row_birth::scrub_erased_births_for_compaction(vault, &doc)?;
     crate::workspace_roster::scrub_audience_edits(vault, &doc, None)?;

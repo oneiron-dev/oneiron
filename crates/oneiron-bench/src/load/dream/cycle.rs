@@ -259,6 +259,21 @@ pub(super) fn outcomes(scan: &Scan, t0_ms: f64) -> (BTreeMap<String, String>, f6
     (last, at_ms)
 }
 
+/// How many partition attempts of each scope the stage lines read at or
+/// after `t0_ms` named, a parked one that resumed counted once.
+pub(super) fn attempts_by_scope(scan: &Scan, t0_ms: f64) -> BTreeMap<String, usize> {
+    let mut seen_attempts = BTreeMap::<String, std::collections::BTreeSet<String>>::new();
+    for seen in scan.stages.iter().filter(|seen| seen.at_ms >= t0_ms) {
+        let scope = seen.fields.get("scope").cloned().unwrap_or_default();
+        let attempt = seen.fields.get("attempt").cloned().unwrap_or_default();
+        seen_attempts.entry(scope).or_default().insert(attempt);
+    }
+    seen_attempts
+        .into_iter()
+        .map(|(scope, attempts)| (scope, attempts.len()))
+        .collect()
+}
+
 /// What the wait reads and decides with.
 pub(super) struct Wait<'a> {
     pub(super) agent: &'a Agent,

@@ -22,12 +22,13 @@ use std::path::Path;
 use super::PublishScope;
 use super::types::{OriginPublishAuthority, OriginPublishForce, OriginPublishRequestView};
 use crate::Vault;
-use crate::codebase::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{AgentGrantStanding, RepoAccessRefusal, RepoTarget, ScopeAxis};
+use crate::federation::AgentGrantStanding;
+use crate::store::code_snapshot::RepoRef;
+use oneiron_authority::federation::{RepoAccessRefusal, RepoTarget, ScopeAxis};
 
 /// The verb class a Grant's Scope lists to publish within its repo bounds.
 pub const ORIGIN_PUBLISH_GRANT_VERB: &str = "publish";
@@ -212,14 +213,16 @@ impl Vault {
     }
 
     /// The act admission, in the snapshot the act commits in. `paths` is
-    /// read only for a Grant holder.
+    /// read only for a Grant holder: `None` names a review whose Git path
+    /// bytes are not UTF-8, which a Grant's path bounds cannot judge, so a
+    /// Grant holder is denied it (FIX 10003).
     pub(super) fn admit_publish_act_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         caller: &OriginPublishCaller<'_>,
         member: &PublishMember,
         target: PublishTarget<'_>,
-        paths: impl FnOnce() -> Result<BTreeSet<String>>,
+        paths: impl FnOnce() -> Result<Option<BTreeSet<String>>>,
     ) -> Result<PublishAnswer<OriginPublishAuthority>> {
         let PublishMember::Grant { anchor } = member else {
             let owner = caller.owner.ok_or(Error::InvariantViolation(
@@ -231,10 +234,17 @@ impl Vault {
         let code_repo = target.code_repo.ok_or(Error::InvariantViolation(
             "a Grant member names its repo handle",
         ))?;
+        let Some(paths) = paths()? else {
+            return Ok(Err(denial(
+                "publish_path_not_utf8",
+                "a reviewed path's Git bytes are not UTF-8, so a Grant's path bounds cannot \
+                 judge it; the owner publishes it",
+            )));
+        };
         let asked = RepoTarget {
             repo: code_repo,
             git_ref: target.ref_name.to_owned(),
-            paths: paths()?,
+            paths,
         };
         let admitted = self.admit_origin_publish_grant_in_txn(
             txn,

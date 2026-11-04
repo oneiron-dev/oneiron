@@ -1,5 +1,7 @@
 //! Diff-to-claim admission path and its test module.
 
+mod continuation;
+mod import_claim;
 mod preflight;
 mod recurrence;
 use super::ingest;
@@ -19,15 +21,20 @@ use crate::calendar::passport::{
 use crate::calendar::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
-use crate::entity_id::derived_domains::CALENDAR_ICS_IMPORT_ACTOR;
-use crate::ingest::{
-    ICS_FEED_SOURCE_ID, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
-};
 use crate::ports::EntityStoreRead;
-use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE};
+use crate::registry::ENTITY_TYPE_EVENT;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
+use continuation::OwedProperties;
+pub use continuation::{
+    ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload,
+    run_ics_property_continuation,
+};
+pub(in crate::calendar) use import_claim::admit_calendar_import_claim;
+pub(crate) use import_claim::ensure_ics_import_actor;
+pub use import_claim::ics_import_actor_id;
+use import_claim::{admit_calendar_import_claim_screened, imported_screen};
 
 #[cfg(test)]
 use super::fetch::{IcsFeedFetcher, IcsFetchResponse};
@@ -44,6 +51,12 @@ pub(super) struct PollAdmission<'a> {
     pub(crate) now: u64,
     pub(crate) blob_ref: &'a str,
     pub(crate) verdict_fold: VerdictFold,
+    /// The events whose property admissions passed one pass's count, each
+    /// queued a continuation once the feed is applied (FIX 11997, FIX
+    /// 12163) that reads an archived version of its source again. `None`
+    /// admits every property in one pass: a connector source no archived
+    /// version holds.
+    pub(crate) continuations: Option<Vec<OwedProperties>>,
 }
 
 impl PollAdmission<'_> {
@@ -60,7 +73,7 @@ impl PollAdmission<'_> {
         for event in &feed.events {
             self.apply_event(event)?;
         }
-        Ok(())
+        self.queue_property_continuations()
     }
 
     fn apply_event(&mut self, event: &ParsedVEvent) -> Result<(), CalendarError> {
@@ -264,6 +277,9 @@ impl PollAdmission<'_> {
 
     /// Reconciles this source's properties, including removing its time kind
     /// when DTSTART disappears. Claims owned by other sources are untouched.
+    /// While the admission keeps continuations, one pass admits at most
+    /// [`super::property_claims::CALENDAR_PROPERTY_ADMISSIONS_PER_PASS`] new
+    /// ones and a queued continuation admits the rest (FIX 11997).
     fn admit_properties(
         &mut self,
         event_ref: EntityId,
@@ -272,16 +288,23 @@ impl PollAdmission<'_> {
         let body = screen_body(event);
         let source_prefix = super::property_claims::source_prefix(self.system);
         let source_record_id = format!("{source_prefix}{}", self.source_record_id(event));
-        super::property_claims::reconcile(
+        let budget = self
+            .continuations
+            .is_some()
+            .then_some(super::property_claims::CALENDAR_PROPERTY_ADMISSIONS_PER_PASS);
+        let owed = super::property_claims::reconcile(
             self.vault,
             event_ref,
             event,
             &source_prefix,
             self.now,
+            budget,
             |predicate, value| {
                 self.admit_screened(event_ref, &body, &source_record_id, predicate, value)
             },
-        )
+        )?;
+        self.signal_property_continuation(event_ref, event, owed);
+        Ok(())
     }
 
     /// Screens and admits the next passport head for `(system × UID)` —
@@ -330,10 +353,11 @@ impl PollAdmission<'_> {
         Ok(())
     }
 
-    /// Explicit `STATUS:CANCELLED` in the feed: write `calendar.status`
-    /// cancelled with basis `imported_cancel`, unless a live claim already
-    /// says exactly that. Never writes `confirmed` — resurrection is not a
-    /// v1 basis.
+    /// An explicit cancellation in the feed (`METHOD:CANCEL` or
+    /// `STATUS:CANCELLED`): write `calendar.status` cancelled with basis
+    /// `imported_cancel`, unless a live claim already says exactly that, and
+    /// carry it to CAL-07 as pre-start cancellation evidence. Never writes
+    /// `confirmed` — resurrection is not a v1 basis.
     fn apply_imported_cancel(
         &mut self,
         event_ref: EntityId,
@@ -344,27 +368,31 @@ impl PollAdmission<'_> {
         }
         let body = screen_body(event);
         let source_record_id = self.source_record_id(event);
-        self.admit_status_if_changed(
+        if let Some(status_ref) = self.admit_status_if_changed(
             event_ref,
             &body,
             &source_record_id,
             CalendarStatus::Cancelled,
             CalendarStatusBasis::ImportedCancel,
-        )
+        )? {
+            self.record_cancel_outcome(event_ref, status_ref)?;
+        }
+        Ok(())
     }
 
     /// The multi-source law's conclusion: every live inbound passport
     /// reports absence, so the EVENT reads cancelled with basis
     /// `imported_absence` for an omission or `imported_cancel` for an explicit
-    /// provider tombstone. The EVENT row is never deleted and CAL-07's
-    /// outcome predicate is never written here. The screen body is empty:
-    /// absence carries no inbound content to screen.
+    /// provider tombstone. The EVENT row is never deleted. Only the explicit
+    /// tombstone is cancellation evidence for CAL-07; an omission writes the
+    /// status alone. The screen body is empty: absence carries no inbound
+    /// content to screen.
     fn admit_absence_cancellation(
         &mut self,
         event_ref: EntityId,
         basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
-        self.admit_status_if_changed(
+        let status_ref = self.admit_status_if_changed(
             event_ref,
             &CalendarInboundBody::default(),
             if basis == CalendarStatusBasis::ImportedCancel {
@@ -374,11 +402,48 @@ impl PollAdmission<'_> {
             },
             CalendarStatus::Cancelled,
             basis,
-        )
+        )?;
+        if let Some(status_ref) = status_ref
+            && basis == CalendarStatusBasis::ImportedCancel
+        {
+            self.record_cancel_outcome(event_ref, status_ref)?;
+        }
+        Ok(())
+    }
+
+    /// Carries one explicit imported cancellation into CAL-07 as
+    /// `CancelReceived` machine evidence citing the status claim that
+    /// recorded it. Seen before the EVENT's start it records
+    /// `cancelled_pre_start`; seen after, or on an EVENT with no anchored
+    /// start, it earns nothing. The engine observed the cancellation in the
+    /// bytes it fetched, so the outcome lands as `observed`.
+    fn record_cancel_outcome(
+        &self,
+        event_ref: EntityId,
+        status_ref: EntityId,
+    ) -> Result<(), CalendarError> {
+        let Some(header) = self.vault.read_entity_header(&event_ref)? else {
+            return Ok(());
+        };
+        if header.occurred_start == 0 && header.occurred_end == 0 {
+            return Ok(());
+        }
+        crate::calendar::outcome::record_machine_event_outcome(
+            self.vault,
+            event_ref,
+            header.occurred_start,
+            &crate::calendar::outcome::MachineOutcomeEvidence::CancelReceived {
+                evidence_ref: status_ref,
+                observed_at: self.now,
+            },
+            crate::claim::ClaimSource::Observed,
+        )?;
+        Ok(())
     }
 
     /// Admits one `calendar.status` claim, superseding the prior live status
     /// claim, and skips when the live claim already carries the exact value.
+    /// Returns the new claim's id, or `None` when nothing was written.
     fn admit_status_if_changed(
         &mut self,
         event_ref: EntityId,
@@ -386,7 +451,7 @@ impl PollAdmission<'_> {
         source_record_id: &str,
         status: CalendarStatus,
         basis: CalendarStatusBasis,
-    ) -> Result<(), CalendarError> {
+    ) -> Result<Option<EntityId>, CalendarError> {
         let mut prior_live: Option<EntityId> = None;
         for claim_id in self.vault.claims_for_subject(&event_ref)? {
             let Some(claim) = self.vault.get_claim(&claim_id)? else {
@@ -400,7 +465,7 @@ impl PollAdmission<'_> {
             let current = decode_status_value(&claim.value)
                 .map_err(|_| ingest("stored status claim did not decode"))?;
             if current.status == status && current.basis == basis {
-                return Ok(());
+                return Ok(None);
             }
             prior_live = Some(claim_id);
         }
@@ -415,14 +480,15 @@ impl PollAdmission<'_> {
         if let Some(old_id) = prior_live {
             self.vault.supersede_claim(&new_id, &old_id, self.now)?;
         }
-        Ok(())
+        Ok(Some(new_id))
     }
 
     /// The one admission door: CAL-09's hook runs immediately before the
     /// imported-evidence admission, and the admission executes from the
     /// typed `CalendarAdmissionRequest` — never from a zero-argument closure
-    /// that could not see the verdict. The verdict is folded into the feed
-    /// cursor as the run's admission-metadata witness.
+    /// that could not see the verdict. A screen that ran rides the admitted
+    /// claim's evidence, verdict and reason codes, beside its source record;
+    /// the run's worst verdict is also folded into the feed cursor.
     fn admit_screened(
         &mut self,
         event_ref: EntityId,
@@ -433,13 +499,14 @@ impl PollAdmission<'_> {
     ) -> Result<EntityId, CalendarError> {
         let screened = screen_then_claim(self.safeguard_enabled, self.screener, body, |request| {
             let token = verdict_token(&request.verdict);
-            let admitted = admit_calendar_import_claim(
+            let admitted = admit_calendar_import_claim_screened(
                 self.vault,
                 &event_ref,
                 predicate,
                 value,
                 source_record_id,
                 self.now,
+                imported_screen(&request.verdict),
             );
             Ok((admitted, token))
         })?;
@@ -515,6 +582,7 @@ fn connector_admission<'a>(
         now,
         blob_ref: source,
         verdict_fold: VerdictFold::default(),
+        continuations: None,
     }
 }
 pub(in crate::calendar) fn preflight_connector_feed(
@@ -530,14 +598,43 @@ pub(in crate::calendar) fn preflight_connector_feed(
     }
     Ok(())
 }
-pub(in crate::calendar) fn admit_connector_event(
-    vault: &Vault,
-    system: &str,
-    source: &str,
+/// What a connector admission admits from: the pull record its claims cite,
+/// and the archived resource version a property continuation reads again.
+#[derive(Clone, Copy)]
+pub(in crate::calendar) struct ConnectorAdmissionSource<'a> {
+    pub(in crate::calendar) record: &'a str,
+    pub(in crate::calendar) source_version: Option<&'a str>,
+}
+
+impl<'a> From<&'a str> for ConnectorAdmissionSource<'a> {
+    /// A pull record with no archived version: every property is admitted
+    /// in one pass.
+    fn from(record: &'a str) -> Self {
+        Self {
+            record,
+            source_version: None,
+        }
+    }
+}
+
+/// Admits one connector event as an ICS admission admits it: one pass's
+/// count of new property claims, and a queued continuation reading the
+/// archived resource version again for the rest (FIX 12163).
+pub(in crate::calendar) fn admit_connector_event<'a>(
+    vault: &'a Vault,
+    system: &'a str,
+    source: impl Into<ConnectorAdmissionSource<'a>>,
     event: &ParsedVEvent,
     now: u64,
 ) -> Result<(), CalendarError> {
-    connector_admission(vault, system, source, now).apply_event(event)
+    let source = source.into();
+    let mut admission = connector_admission(vault, system, source.record, now);
+    let Some(source_version) = source.source_version else {
+        return admission.apply_event(event);
+    };
+    admission.continuations = Some(Vec::new());
+    admission.apply_event(event)?;
+    admission.queue_property_continuations_reading(source_version)
 }
 pub(in crate::calendar) fn sweep_connector_resource(
     vault: &Vault,
@@ -574,8 +671,48 @@ pub(in crate::calendar) fn delete_connector_resource(
 fn screen_body(event: &ParsedVEvent) -> CalendarInboundBody {
     CalendarInboundBody {
         description: event.description.clone().unwrap_or_default(),
-        attachment_text: Vec::new(),
+        attachment_text: attachment_text(&event.raw_component),
     }
+}
+
+/// Every ATTACH of one raw VEVENT as text: an inline `ENCODING=BASE64`
+/// attachment's content when it decodes to UTF-8 text, else the value as the
+/// source wrote it (a URI, or inline bytes that are no text). A component
+/// that does not read again yields none; its parse already succeeded once.
+fn attachment_text(raw_component: &[u8]) -> Vec<String> {
+    let Ok(text) = std::str::from_utf8(raw_component) else {
+        return Vec::new();
+    };
+    let unfolded = icalendar::parser::unfold(text);
+    let Ok(components) = icalendar::parser::read_calendar_simple(&unfolded) else {
+        return Vec::new();
+    };
+    components
+        .iter()
+        .flat_map(|component| component.properties.iter())
+        .filter(|prop| prop.name.as_str().eq_ignore_ascii_case("ATTACH"))
+        .map(|prop| {
+            let base64 = prop.params.iter().any(|param| {
+                param.key.as_str().eq_ignore_ascii_case("ENCODING")
+                    && param
+                        .val
+                        .as_ref()
+                        .is_some_and(|val| val.as_str().eq_ignore_ascii_case("BASE64"))
+            });
+            let value = prop.val.as_str().trim();
+            if base64 {
+                use base64::Engine;
+                if let Some(content) = base64::engine::general_purpose::STANDARD
+                    .decode(value)
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                {
+                    return content;
+                }
+            }
+            value.to_owned()
+        })
+        .collect()
 }
 
 /// The EVENT's display name: SUMMARY, with a UID fallback.
@@ -585,72 +722,6 @@ fn event_name(event: &ParsedVEvent) -> &str {
         .as_deref()
         .filter(|summary| !summary.is_empty())
         .unwrap_or(event.uid.as_str())
-}
-
-/// Admits one typed-value claim through the Gate-backed imported-evidence
-/// door and returns the new claim id. The write actor is the adapter's own
-/// MACHINE entity, ensured on first use.
-pub(in crate::calendar) fn admit_calendar_import_claim(
-    vault: &Vault,
-    event_ref: &EntityId,
-    predicate: &str,
-    value: rmpv::Value,
-    source_record_id: &str,
-    recorded_at: u64,
-) -> crate::Result<EntityId> {
-    let actor = ensure_ics_import_actor(vault, recorded_at)?;
-    let claim_id = vault.store.clock.entity_id()?;
-    let admission = ImportedEvidenceAdmission::proposed(
-        ICS_FEED_SOURCE_ID,
-        claim_id,
-        ImportedEvidenceEntityResolution::subject(*event_ref),
-        WriteActor::new(actor, crate::edge::EdgeActorClass::System),
-        TimeRange {
-            start: recorded_at,
-            end: recorded_at,
-        },
-        recorded_at,
-    );
-    crate::ingest::admit_imported_evidence_claim_typed_for_machine(
-        vault,
-        predicate,
-        value,
-        source_record_id,
-        &admission,
-    )?;
-    Ok(claim_id)
-}
-
-/// The adapter's write actor: one deterministic MACHINE entity, minted on
-/// first use. Imported claims attribute to it as `EdgeActorClass::System`.
-pub fn ics_import_actor_id() -> crate::Result<EntityId> {
-    EntityId::derive(CALENDAR_ICS_IMPORT_ACTOR, &[])
-}
-
-pub(crate) fn ensure_ics_import_actor(vault: &Vault, now: u64) -> crate::Result<EntityId> {
-    let id = ics_import_actor_id()?;
-    if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_MACHINE) {
-        let mut body = Vec::new();
-        rmpv::encode::write_value(
-            &mut body,
-            &rmpv::Value::Map(vec![(
-                rmpv::Value::from("name"),
-                rmpv::Value::from("calendar ICS feed importer"),
-            )]),
-        )
-        .map_err(|_| crate::Error::InvariantViolation("actor body did not encode"))?;
-        vault.put_entity(
-            &id,
-            ENTITY_TYPE_MACHINE,
-            TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
-            &body,
-        )?;
-    }
-    Ok(id)
 }
 
 fn list_event_ids(vault: &Vault) -> Result<Vec<EntityId>, CalendarError> {

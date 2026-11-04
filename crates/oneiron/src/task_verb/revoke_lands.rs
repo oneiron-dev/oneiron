@@ -142,6 +142,10 @@ const ROWS: &[Row] = &[
         [pin(&["records"], records)],
     ),
     always!(
+        "vault.legal_holds.withdraw_erase",
+        [pin(&["records"], records)],
+    ),
+    always!(
         "vault.records.erase_confirm",
         [
             pin(&["record"], typed),
@@ -796,4 +800,22 @@ fn clip(text: &str, max: usize) -> String {
         end -= 1;
     }
     format!("{}…", &text[..end])
+}
+
+use crate::connector_key::SlatePackSource;
+use serde::{Deserialize, Serialize};
+
+/// What the owner reviewed, not a mutable pack name or source alias.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorPackBasis {
+    pub connector: String,
+    pub source: SlatePackSource,
+    pub key_ref: String,
+    pub slate_ref: String,
+    pub slate_revision: u64,
+    pub manifest_hash: String,
+    pub grant_hash: String,
+    pub advisory_hash: String,
+    pub protocol_revision: String,
 }

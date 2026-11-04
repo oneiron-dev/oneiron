@@ -11,11 +11,14 @@ use heed::{RoTxn, RwTxn};
 
 use super::BatchOp;
 use crate::Vault;
-use crate::claim::{ClaimBody, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::gate::{GateReasonCode, GateRetentionContext, RecordedClaimGateDecision};
+use crate::gate::RecordedClaimGateDecision;
+use crate::store::GateRetentionContext;
 use crate::store::Store;
+use crate::store::gate_reason::GateReasonCode;
+use crate::write_envelope::claim_body::ClaimBody;
 
 /// One CLAIM body the batch's preflight gates, as it gates it.
 pub(super) struct GatedClaim {
@@ -143,9 +146,11 @@ pub(super) struct StagedDenial {
 /// staged snapshot gives, a Dreamer precommit refusal seen only there
 /// included, decides or shadows it; every other verdict is the preflight's,
 /// which already gave it. For the CLAIM it finds, the claim gate's reader-bound
-/// door is asked in a savepoint that is always rolled back, only for the
-/// receipt the gate records with that denial; a door that answers with
-/// another verdict there leaves the denial standing without one. The whole
+/// door is asked in a savepoint that is always rolled back, in the
+/// reference-only probe mode that skips the Dreamer precommit (FIX 11304),
+/// only for the receipt the gate records with that denial; the gate's own
+/// receipt path runs for the reference verdict, and `settle_denial_in`
+/// re-appends the carried copy once the savepoint rolls back. The whole
 /// staged run it replaces gave no item any other outcome: it dropped every
 /// other gate verdict and raised only a non-gate refusal, which here is each
 /// write envelope's own check, kept on this path for every CLAIM in order.
@@ -158,7 +163,7 @@ pub(super) fn staged_reference_denial(
     let mut found = None;
     for claim in claims {
         if let Some(envelope) = &claim.envelope {
-            crate::gate::validate_write_envelope(envelope)?;
+            crate::write_envelope::validate_write_envelope(envelope)?;
         }
         if let Some(field) = crate::gate::unresolved_claim_reference(reader, &*txn, &claim.body)? {
             found = Some((claim, field));
@@ -172,7 +177,7 @@ pub(super) fn staged_reference_denial(
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &*txn)?;
     let mut probe = vault.store.env.nested_write_txn(txn)?;
     let mut recorded = None;
-    let verdict = crate::gate::check_claim_policy_for_write_with_record_with_reader(
+    let verdict = crate::gate::check_claim_policy_for_write_with_record_with_reader_reference_probe(
         &vault.store,
         &mut probe,
         &claim.id,
@@ -184,9 +189,10 @@ pub(super) fn staged_reference_denial(
             defer_metrics_until_commit: true,
             transition: None,
             owner_authored: None,
+            pending_prompt: None,
         },
         &policy,
-        crate::gate::GateWriteMode {
+        crate::store::GateWriteMode {
             record_decision: true,
             persist_pending_consent: false,
             resolve_pending: false,
@@ -197,6 +203,8 @@ pub(super) fn staged_reference_denial(
         reader,
     );
     drop(probe);
+    // The probe runs reference-only, so a reference denial arrives with the
+    // gate's receipt; any other verdict still leaves the denial bare.
     let (err, decision) = match verdict {
         Err(err) if unresolved_reference(&err) => (err, recorded),
         Ok(()) | Err(Error::Gate(_)) => (reference_rejection(), None),
@@ -207,7 +215,12 @@ pub(super) fn staged_reference_denial(
         decision,
         claim: claim.id,
         retention: GateRetentionContext {
-            world: Some(claim.body.world.unwrap_or_else(crate::claim::base_world_id)),
+            world: Some(
+                claim
+                    .body
+                    .world
+                    .unwrap_or_else(oneiron_contracts::claim::base_world_id),
+            ),
             project: Some(claim.body.scope_project),
             sub_project: None,
             thread: None,

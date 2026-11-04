@@ -41,6 +41,9 @@ pub struct SyncClient {
     pub(crate) manager: Arc<WindowManager>,
     pub(crate) root_doc: LoroDoc,
     pub(crate) note_session_bound: bool,
+    /// FIX 11111: the main socket already logged that it withholds this
+    /// machine's credentials from a cleartext server.
+    pub(crate) cleartext_withhold_logged: bool,
     pub(crate) document_updates: tokio::sync::broadcast::Receiver<Vec<u8>>,
     pub(crate) client_id: u64,
     pub(crate) config: SyncClientConfig,
@@ -170,6 +173,7 @@ impl SyncClient {
         let document_updates = manager.documents().subscribe();
         let mut client = Self {
             note_session_bound: false,
+            cleartext_withhold_logged: false,
             document_updates,
             vault,
             manager,
@@ -451,7 +455,9 @@ impl SyncClient {
     pub(crate) fn setup_catch_up(&self, key: &str) -> bool {
         self.config.residence_mode == super::SyncResidenceMode::Opened
             && self.config.federation_peer.is_none()
-            && key == WindowKey::from_timestamp(crate::embed::EMBEDDING_SETUP_LEARNED_AT).as_str()
+            && key
+                == WindowKey::from_timestamp(crate::store::embedding::EMBEDDING_SETUP_LEARNED_AT)
+                    .as_str()
             && self
                 .vault
                 .sync_state_get(&format!("rp:w:{key}"))

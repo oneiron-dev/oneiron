@@ -19,6 +19,7 @@ use oneiron_llm_systemone::{
 use zeroize::Zeroizing;
 
 use super::broker::{BrokerSite, KeyDoor, REPLY_MARGIN, VaultKeyDoor, answered, call_with_key};
+use super::http::is_cloud_node;
 use crate::config::ServeConfig;
 use crate::config::models::{BrokerConfig, ModelsConfig};
 
@@ -156,7 +157,9 @@ impl BrokerContext {
         header
             .check(body)
             .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
-        let client = self.client(wait)?;
+        // The reply timeout runs a frame past `wait`, so the broker answers
+        // `Timeout` before the daemon gives up (FIX 8559).
+        let client = self.client(wait.saturating_add(oneiron_broker::FRAME_DEADLINE))?;
         let reply = call_with_key(&client, &self.inner.keys, secret, header, body).await?;
         let (status, _) = answered(reply.outcome)?;
         Ok(BrokerAnswer {
@@ -270,6 +273,7 @@ impl SystemOneTransport for SystemOneLeg {
                 url.path().to_owned(),
                 request.headers,
                 request.model,
+                is_cloud_node(),
                 &request.body,
             );
             let mut answer = self

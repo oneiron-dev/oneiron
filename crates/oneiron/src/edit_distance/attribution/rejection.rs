@@ -171,6 +171,9 @@ fn judge_rejection_cause_in_txn(
     let Some(split) = split else {
         return Ok(None);
     };
+    // Kept whole, and measured as the other attribution callers measure it
+    // (FIX 5465).
+    crate::skill_attribution::measure_split_notes(vault, &split);
     let shares: Vec<AmendmentShare> = split
         .shares
         .iter()
