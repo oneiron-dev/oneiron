@@ -29,9 +29,8 @@ pub(super) fn masked_body_view<T: Serialize + DeserializeOwned>(
     if !(lifted || unplaced || spanning) {
         return Ok(view);
     }
-    Ok(serde_json::from_value(value).map_err(|_| {
-        crate::Error::InvariantViolation("a masked typed body view did not decode")
-    })?)
+    Ok(serde_json::from_value(value)
+        .map_err(|_| crate::Error::InvariantViolation("a masked typed body view did not decode"))?)
 }
 
 /// Each DOCX paragraph of `view` with a key in `keys` across one of its mark
@@ -79,7 +78,12 @@ pub(super) fn join_unmasked_runs(view: &mut OfficeBodyView) {
     };
     for block in &mut body.blocks {
         if block.runs.is_empty()
-            || block.runs.iter().map(|run| run.text.as_str()).collect::<String>() == block.text
+            || block
+                .runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>()
+                == block.text
         {
             continue;
         }

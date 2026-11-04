@@ -3,6 +3,13 @@
 use super::*;
 
 impl WorkTicket {
+    /// The admission this ticket was taken on: a parent link naming this
+    /// ticket resolves only against this same live admission (FIX 11960).
+    #[must_use]
+    pub fn admission_id(&self) -> u64 {
+        self.admission.admission_id()
+    }
+
     /// Waits until this is the next runnable ticket, its deadline passes, or
     /// it is cancelled. No execution grant is held during this wait.
     pub async fn wait_runnable(&self) -> Result<(), AdmissionStop> {
