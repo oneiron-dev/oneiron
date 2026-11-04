@@ -229,7 +229,6 @@ pub(crate) use claim_vad_owed::{
 };
 pub mod body_descriptor;
 mod commitment_due;
-pub mod commitment_due_record;
 mod credential_custody;
 mod deadline_jobs;
 pub mod decision_ask_role;
@@ -497,7 +496,6 @@ pub(crate) use self::outbound_send_receipt::send_receipt_summary_accepts_masked;
 pub mod dispatch_attempt_kind;
 
 pub mod checkout_lease;
-pub mod contract_oracle;
 
 pub mod repo_mutation_record;
 
