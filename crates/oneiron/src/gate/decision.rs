@@ -7,7 +7,9 @@ use crate::write_envelope::communication::SendOverrideMatch;
 
 use super::input::ExternalEffectGateContext;
 
-pub(super) use crate::store::gate_reason::{GATE_METRIC_OUTCOME_COUNT, GATE_METRIC_REASON_CLASS_COUNT};
+pub(super) use crate::store::gate_reason::{
+    GATE_METRIC_OUTCOME_COUNT, GATE_METRIC_REASON_CLASS_COUNT,
+};
 
 /// One vault's gate outcome x reason-class counters.
 ///
@@ -58,8 +60,8 @@ impl GateMetrics {
     }
 }
 
-pub(crate) use crate::store::gate_reason::{GateOutcome, GateReasonCode};
 pub(super) use crate::store::gate_reason::GateMetricReasonClass;
+pub(crate) use crate::store::gate_reason::{GateOutcome, GateReasonCode};
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]

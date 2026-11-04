@@ -30,7 +30,8 @@ pub use crate::store::body_descriptor::{
 use crate::store::owned_body::{BODY, BODY_DIGEST, BODY_RELEASED};
 
 pub(crate) use crate::store::owned_body::{
-    owned_body_in_txn, owned_bodies_in_txn, file_body_of_row, prune_digest_in_rows, digest_is_held_in_txn, released_bodies_in_txn, take_released_in_txn, queue_pruned_file_in_txn,
+    digest_is_held_in_txn, file_body_of_row, owned_bodies_in_txn, owned_body_in_txn,
+    prune_digest_in_rows, queue_pruned_file_in_txn, released_bodies_in_txn, take_released_in_txn,
 };
 
 /// Publishes `body`'s descriptor in the caller's transaction. An occurrence
