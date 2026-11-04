@@ -31,6 +31,28 @@ impl AgentDispatcher<'_> {
                 now,
                 String::new(),
             )?;
+            if let Err(error) = crate::skill_attribution::bind_agent_run_attribution(
+                self.vault,
+                status.attempt.id,
+                lease_owner,
+            ) {
+                tracing::warn!(kind = ?error.kind(), "workflow output attribution did not bind");
+            }
+            match self.attach_workflow_output(&status.attempt, lease_owner, entry.source, now) {
+                Ok(output) => {
+                    if let Err(error) = crate::skill_attribution::witness_agent_run_close(
+                        self.vault,
+                        &status.attempt,
+                        lease_owner,
+                        output,
+                    ) {
+                        tracing::warn!(kind = ?error.kind(), "workflow output close was not witnessed");
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "workflow output entity was not recorded");
+                }
+            }
             AttemptResultRef::new(entry.source.handle())
         })
     }
@@ -144,5 +166,105 @@ impl AgentDispatcher<'_> {
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
         self.advance_workflow(root, now)
+    }
+
+    /// Attribution sidecar for this live leaf's actual captured bytes. The
+    /// attempt and its successors still carry the original output handle.
+    fn attach_workflow_output(
+        &self,
+        attempt: &crate::attempt_queue::AttemptRecord,
+        lease_owner: &str,
+        output: crate::compaction::output::OutputRef,
+        now: u64,
+    ) -> Result<crate::EntityId> {
+        use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
+        use crate::{EntityId, Error, TimeRange};
+        use rmpv::Value;
+
+        const RESULT: &[u8] = b"oneiron:workflow-run-result:v1";
+        const BODY: &[u8] = b"oneiron:workflow-run-result-body:v1";
+        let result = EntityId::derive(RESULT, &[attempt.id.as_bytes().as_slice()])?;
+        let inline = {
+            let txn = self.vault.store.env.read_txn()?;
+            self.vault.code_run_body_inline_in_txn(&txn, &output.hash)?
+        };
+        // Probe files before the writer, in the native result TURN's lock order.
+        let location = if inline {
+            BodyLocation::Inline
+        } else if self
+            .vault
+            .store
+            .body_file_present(&output.hash, output.byte_len)?
+        {
+            BodyLocation::File
+        } else {
+            return Err(Error::CorruptedIndex("workflow output body missing"));
+        };
+        let field = |key: &str, value: Value| (Value::from(key), value);
+        let artifact = Value::Map(vec![
+            field("kind", Value::from("workflow.run_result")),
+            field(
+                "attempt_ref",
+                Value::from(crate::entity_id::bytes_to_hex_lower(attempt.id.as_bytes())),
+            ),
+            // run_id is an opaque scheduling label, not a typed code-run id.
+            field("run_ref", Value::Nil),
+            field(
+                "task_ref",
+                attempt.task_ref.clone().map_or(Value::Nil, Value::from),
+            ),
+            field(
+                "answer",
+                Value::Map(vec![
+                    field("handle", Value::from(output.handle())),
+                    field("bytes", Value::from(output.byte_len)),
+                ]),
+            ),
+        ]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &artifact)
+            .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+        let held = OwnedBody {
+            owner: result,
+            occurrence: EntityId::derive(BODY, &[result.as_bytes().as_slice()])?,
+            state: BodyState::Complete {
+                body: BodyRef {
+                    blake3: output.hash,
+                    bytes: output.byte_len,
+                    location,
+                },
+            },
+            result: None,
+        };
+        let mut txn = self.vault.store.env.write_txn()?;
+        AttemptQueue::new(self.vault).require_skill_load_lease_in_txn(
+            &txn,
+            attempt.id,
+            lease_owner,
+            attempt.attempt_count,
+        )?;
+        if !self.vault.code_run_body_inline_in_txn(&txn, &output.hash)?
+            && !crate::code_run::code_run_body_held_in_txn(&self.vault.store, &txn, &output.hash)?
+        {
+            return Err(Error::CorruptedIndex("workflow output body missing"));
+        }
+        if self.vault.get_entity_type_in_txn(&txn, &result)?.is_none() {
+            self.vault
+                .batch_in()
+                .put(
+                    &result,
+                    crate::registry::ENTITY_TYPE_TURN,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &bytes,
+                )
+                .apply(&mut txn)?;
+        }
+        crate::provenance::body::publish_body_in_txn(&self.vault.store, &mut txn, &held)?;
+        txn.commit()?;
+        Ok(result)
     }
 }
