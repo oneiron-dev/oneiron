@@ -19,7 +19,7 @@ use heed::{RoTxn, RwTxn};
 use super::KeepReason;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
-use crate::embed::EmbeddingProvenance;
+use crate::store::embedding::EmbeddingProvenance;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, StoreError};
 use crate::overlay_db::OverlayDb;
