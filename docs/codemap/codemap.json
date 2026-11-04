@@ -2413,28 +2413,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "AttemptCancelPressure",
-      "AttemptCancelReceipt",
-      "AttemptCancelReceiptKind",
-      "AttemptCancelState",
-      "AttemptCancellation",
-      "AttemptLanding",
-      "AttemptLandingReserve",
-      "AttemptResumePoint",
-      "CancelMode",
-      "CancelStanding",
-      "ForceCancelAuthority",
-      "ForceCancelGrounds",
-      "LandingTrigger"
+      "ForceCancelAuthority"
      ],
      "path": "src/attempt_queue/cancel/types.rs",
      "purpose": "Durable wire types of the ONE-1896 two-rung graceful-cancel protocol",
      "surface": {
       "const": 5,
       "crate-vis": 3,
-      "enum": 5,
       "fn": 20,
-      "struct": 8
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -69380,6 +69368,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AttemptCancelPressure",
+      "AttemptCancelReceipt",
+      "AttemptCancelReceiptKind",
+      "AttemptCancelState",
+      "AttemptCancellation",
+      "AttemptLanding",
+      "AttemptLandingReserve",
+      "AttemptResumePoint",
+      "CancelMode",
+      "CancelStanding",
+      "ForceCancelGrounds",
+      "LandingTrigger"
+     ],
+     "path": "src/store/attempt_cancel.rs",
+     "purpose": "The graceful-cancel vocabulary an attempt row carries (ONE-1896): the landing and its trigger, the resume…",
+     "surface": {
+      "enum": 5,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AttemptQueueCleanupMetricsSnapshot",
       "AttemptQueueCleanupReport",
       "AttemptQueueRetryReason",
@@ -72172,7 +72184,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 105,
-      "mod": 102,
+      "mod": 103,
       "re-export": 31
      }
     },
@@ -90497,7 +90509,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 408,
+     "files": 409,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90737,7 +90749,7 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6304,
+   "source_files": 6305,
    "test_files": 898
   },
   "oneiron-android": {
