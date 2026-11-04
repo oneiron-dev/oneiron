@@ -16,7 +16,7 @@ fn carried_proposal_admitted(
     actor: EntityId,
     position: crate::federation::record_scope::BirthPosition,
 ) -> Result<(), Error> {
-    use crate::federation::{Scope, ScopeAxis, ScopeId};
+    use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
     let axis = |id: Option<EntityId>| {
         id.map_or(ScopeAxis::All, |id| {
             ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(id)]))

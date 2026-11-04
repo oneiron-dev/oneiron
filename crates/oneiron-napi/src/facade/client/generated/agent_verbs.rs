@@ -430,6 +430,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_memory_pads_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.pads.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_memory_pads_admin_reads(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.pads.admin_reads", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("cancel", js_json(input))
@@ -3213,6 +3231,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_federation_connect_world_privacy_export(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb(
+                "vault.federation.connect.world_privacy.export",
+                js_json(input),
+            )
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_world_privacy_receive(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb(
+                "vault.federation.connect.world_privacy.receive",
+                js_json(input),
+            )
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_trusted_contacts_name(
         &self,
         input: serde_json::Value,
@@ -4314,6 +4356,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_legal_holds_withdraw_erase(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.legal_holds.withdraw_erase", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_courtesy_delete_send(
         &self,
         input: serde_json::Value,
@@ -4542,6 +4593,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consent.create_standing_grant", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_create_auto_weave_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.create_auto_weave_grant", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

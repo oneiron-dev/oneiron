@@ -13,7 +13,7 @@ use super::{
     GitWireResult, ObservedGitRef, lock_repository,
 };
 use crate::error::Result;
-use crate::scan_check::EngineScan;
+use crate::store::EngineScan;
 
 impl GitWire<'_> {
     /// Publishes refs through the one transactional path, under the repository

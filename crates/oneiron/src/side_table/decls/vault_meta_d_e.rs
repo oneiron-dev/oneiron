@@ -47,7 +47,7 @@ side_tables! {
     /// visible claim. Key: id16.
     DISCLOSURE_TIER_A: VaultMeta b"disclosure.tier_a.v1:" Raw;
     /// Passive outbound dispatch audit observation for one attempt/try. Key: id16 + u32be.
-    DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw Authored;
+    DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw Authored [accepts: crate::receipt::dispatch_observation_accepts_masked];
     /// Classifier-derived annotation (derivation envelope + annotation body) for one imported docs
     /// page/asset. Key: hex32 ":" hex32.
     INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson Admitted;
@@ -125,6 +125,8 @@ side_tables! {
         => crate::learning::erase_review_scope_in_txn;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
+    /// Operator-set conversation ids excluded from Dreamer consolidation. Key: ().
+    DREAMER_EXCLUDED_CONVERSATIONS: VaultMeta b"dreamer:excluded_conversations:v1" Named;
     /// FIX 8531: the first frame after a follower session's keyframe that holds one chunk, and
     /// the chunk's place in it, written with the frame. Key: hash32(session) + id16(turn) +
     /// id16(source) + hash32(chunk words); value: (frame ordinal, chunk index).
@@ -134,7 +136,7 @@ side_tables! {
     DREAMER_FOLLOWER_FRAME: VaultMeta b"dreamer:follower:frame:v1:" Named Admitted;
     /// FIX 7510: one follower model result: a suffix's batch readings with its cache evidence, or
     /// a keyframe's folded text. Key: id16(attempt) + u64be(session sequence).
-    DREAMER_FOLLOWER_RESULT: VaultMeta b"dreamer:follower:result:v1:" Named Authored;
+    DREAMER_FOLLOWER_RESULT: VaultMeta b"dreamer:follower:result:v1:" Named Authored [accepts: crate::dreamer_wake::dreamer_follower_result_accepts_masked];
     /// FIX 7510: one follower session's cursors, prefix digest, epoch, keyframe ref, writer fence
     /// and prepared suffix. Key: hash32(session).
     DREAMER_FOLLOWER_STATE: VaultMeta b"dreamer:follower:state:v1:" Named Engine;
@@ -178,8 +180,8 @@ side_tables! {
     DREAMER_IDENTITY_ASK: VaultMeta b"dreamer:identity:v1:ask:" Named
         => crate::dreamer_runner::maintenance::identity::erase_actor_sources_in_txn;
     /// Each open identity ask under every id its erase reads (FIX 10376):
-    /// its turn, message, candidates and provisional. Key: id16(source) +
-    /// hash32(ask key).
+    /// its turn, message, candidates, provisional and surfaced turn. Key:
+    /// id16(source) + hash32(ask key).
     DREAMER_IDENTITY_ASK_BY_SOURCE: VaultMeta b"dreamer:identity:v1:ask_by_source:" Raw;
     /// The identity re-check's page cursor: the last TURN a nightly pass read. Key: ().
     DREAMER_IDENTITY_CURSOR: VaultMeta b"dreamer:identity:v1:cursor" Named;
@@ -227,7 +229,7 @@ side_tables! {
     /// Due-time index of hinted provider-outage parks. Key: u64be(due at) + id16(attempt).
     DREAMER_OUTAGE_DUE: VaultMeta b"dreamer:outage_due:v1:" Named Engine;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
-    DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored;
+    DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored [accepts: crate::dreamer_runner::dreamer_parked_accepts_masked];
     /// Private step-only wait binding for one (task, trap) pair. Key: id16(task ref) + id16(trap
     /// ref).
     DREAMER_PEER_WAIT: VaultMeta b"dreamer:peer_wait:v1:" Raw;
@@ -465,7 +467,7 @@ side_tables! {
         => crate::edit_distance::miner::erase_principal_decision_entity_in_txn;
     /// Finalized proposal-text artifact (span attributions, actor/class per span), write-once keyed
     /// by artifact ref. Key: id16.
-    EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored
+    EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored [accepts: crate::edit_distance::edit_distance_proposal_artifact_accepts_masked]
         => crate::edit_distance::erase_proposal_texts_in_txn;
     /// Raw proposal document whose served texts were custody-marked before it was kept, outside
     /// the side-row wall as an entity document is (FIX 11539), keyed by artifact ref. Key: id16.
@@ -544,6 +546,12 @@ side_tables! {
     /// A published revision whose vector an embedding-space swap dropped, to be embedded again at
     /// idle. Key: id16.
     ENTITY_REVISION_VECTOR_REFILL: VaultMeta b"entity_revision:vector_refill:" Raw;
+    /// The erase previews a caller was shown and may still confirm (FIX
+    /// 12522): the digest the preview showed, and when it was issued and
+    /// expires on the vault's recording clock. Key: id16 (caller) + id16
+    /// (record).
+    ERASE_PREVIEW: VaultMeta b"erase:preview:v1:" Named
+        => crate::verbs::erase_preview_actor_in_txn;
     /// Esign machine actor id. Key: ().
     ESIGN_ARTIFACT_ACTOR: VaultMeta b"esign.artifact_actor.v1" Raw;
     /// Esign document audit event. Key: id16 + u64be.
@@ -581,8 +589,10 @@ side_tables! {
     ESIGN_SEALED_DOCUMENT: VaultMeta b"esign.sealed.v1/" LegacyJson;
     /// Signature image ownership marker. Key: id16 + string + string.
     ESIGN_SIGNATURE_IMAGE_BINDING: VaultMeta b"esign.signature_image.v1/" Raw;
-    /// One whole-vault export receipt: when, which format, how many bytes and their digest, by
-    /// whom; never the exported bytes. Key: u64be(sequence).
+    /// The export audit (FIX 6427): one row per Owner copy that left the vault, the whole vault
+    /// or an off-record room's talk. It holds the export id, scope, exporter, time, format and
+    /// actor, and the copy's length and digest where its door read the copy back; never the
+    /// exported bytes. Key: u64be(sequence).
     EXPORT_RECEIPT: VaultMeta b"export:receipt:v1:" Named;
     /// Binding proof tying a restored foreign expression-preference claim to the exact local row it
     /// reconstructed. Key: id16.

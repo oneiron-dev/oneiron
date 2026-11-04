@@ -19,6 +19,11 @@ use crate::{EntityId, Vault};
 
 const COPIES: SideTable<EntityId, AcceptedCopy, Named> =
     SideTable::new(&side_table::PERSONA_SNAPSHOT_COPY);
+/// Whether a masked copy of a `PERSONA_SNAPSHOT_COPY` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn persona_snapshot_copy_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<AcceptedCopy, Named>(bytes)
+}
 
 #[derive(Serialize, Deserialize)]
 struct AcceptedCopy {

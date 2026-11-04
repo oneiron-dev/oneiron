@@ -20,6 +20,11 @@ use crate::memory::{MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 
 const STREAMS: SideTable<AttemptId, StreamRow, Named> = SideTable::new(&side_table::MODEL_STREAM);
+/// Whether a masked copy of a `MODEL_STREAM` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn model_stream_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StreamRow, Named>(bytes)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]

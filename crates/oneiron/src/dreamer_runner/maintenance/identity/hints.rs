@@ -60,14 +60,14 @@ impl StoredIdentityHint {
 pub(super) fn hint_key(ask: &IdentityAsk, entity: EntityId) -> HintKey {
     (
         [ask.kind],
-        crate::ingest::identity_hint_digest(&ask.name),
+        crate::store::identity_hints::identity_hint_digest(&ask.name),
         entity,
     )
 }
 
 fn hint_prefix(kind: u8, name: &str) -> Vec<u8> {
     let mut prefix = vec![kind];
-    prefix.extend_from_slice(&crate::ingest::identity_hint_digest(name));
+    prefix.extend_from_slice(&crate::store::identity_hints::identity_hint_digest(name));
     prefix
 }
 

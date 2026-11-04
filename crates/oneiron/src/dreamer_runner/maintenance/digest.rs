@@ -43,6 +43,12 @@ const DIGEST: SideTable<[u8; 32], ProactivityDigest, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_DIGEST);
 const PRESENTATION: SideTable<(), ProactivityPresentation, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_PRESENTATION);
+/// Whether a masked copy of a `DREAMER_PROACTIVITY_PRESENTATION` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dreamer_proactivity_presentation_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<ProactivityPresentation, LegacyJson>(bytes)
+}
+
 /// Per-recipient time of the last digest that delivered judge or eval label asks.
 const JUDGE_ASK_MARK: SideTable<EntityId, u64, side_table::Raw> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_JUDGE_ASKS);

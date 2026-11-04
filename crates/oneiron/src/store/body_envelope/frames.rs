@@ -93,7 +93,7 @@ impl FileKey {
         instance: [u8; 16],
         raw: Zeroizing<[u8; 32]>,
     ) -> Self {
-        let lines = crate::world_keys::derive_guarded(LINES_CONTEXT, &[&raw[..]]);
+        let lines = crate::key_material::derive_guarded(LINES_CONTEXT, &[&raw[..]]);
         Self {
             vault_id,
             instance,
@@ -107,9 +107,9 @@ impl FileKey {
     /// random instance.
     pub(super) fn generate(vault_id: [u8; 32]) -> Result<Self> {
         let mut raw = Zeroizing::new([0u8; 32]);
-        crate::world_keys::os_fill(&mut raw[..])?;
+        crate::key_material::os_fill(&mut raw[..])?;
         let mut instance = [0u8; 16];
-        crate::world_keys::os_fill(&mut instance)?;
+        crate::key_material::os_fill(&mut instance)?;
         Ok(Self::from_raw(vault_id, instance, raw))
     }
 
@@ -162,7 +162,7 @@ fn seal_frame(
         plaintext,
         &mut SysRng,
     )
-    .map_err(|_| crate::world_keys::refused("sealing a body file failed"))?
+    .map_err(|_| crate::key_material::refused("sealing a body file failed"))?
     .to_bytes())
 }
 

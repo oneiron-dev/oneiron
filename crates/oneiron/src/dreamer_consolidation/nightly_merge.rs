@@ -19,14 +19,16 @@ use crate::dreamer_runner::{
     DreamerParkCause, DreamerRunnerStore,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
-use crate::llm::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext, DurableStepError,
-    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat, Scope,
-    StepOutcome, TierPrecedence, call_as_step_checked,
-};
+use crate::llm::call_as_step_checked;
+use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_error::DurableStepError;
 use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{ClaimCandidate, EntityId, Error, Result, Vault};
+use oneiron_model::llm::{
+    CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
+    LlmResponse, ModelTierRef, ResponseFormat, Scope, TierPrecedence,
+};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -633,7 +635,7 @@ fn check_narrative_reply(response: &LlmResponse) -> std::result::Result<(), Stri
     if super::step_charge::retry_fallback(response) {
         return Err(NARRATIVE_FALLBACK.to_owned());
     }
-    if crate::llm::fallback_failure_class(response).is_some() {
+    if oneiron_model::llm::fallback_failure_class(response).is_some() {
         return Ok(());
     }
     narrative_text(response).map(|_| ()).map_err(str::to_owned)

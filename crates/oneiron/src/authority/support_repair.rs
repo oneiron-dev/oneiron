@@ -12,7 +12,9 @@
 use super::*;
 use crate::Vault;
 use crate::error::Result;
-use crate::housekeeping::{HousekeepingBudget, HousekeepingReport, HousekeepingSweep};
+use crate::store::housekeeping_report::HousekeepingReport;
+use crate::store::housekeeping_schedule::HousekeepingBudget;
+use crate::store::housekeeping_schedule::HousekeepingSweep;
 
 /// The housekeeping sweep a support repair runs.
 const fn repair_sweep(repair: SupportRepair) -> HousekeepingSweep {

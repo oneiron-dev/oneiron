@@ -53,6 +53,7 @@ pub use self::doors::{
 };
 pub use self::errors::{PluginResult, PluginSectionError};
 pub(crate) use self::fit_install::erase_section_fit_receipts_in_txn;
+pub(crate) use self::fit_install::scrub_section_fit_receipt_actors_in_txn;
 pub use self::fit_install::{
     PREDICATE_SKILL_SECTION_FIT, PluginSectionFitEvidence, PluginSectionFitOutcome,
     PluginSectionInstalled, install_plugin_section_after_fit, plugin_section_fit_evidence,
@@ -99,3 +100,7 @@ use crate::entity_id::EntityId;
 use crate::skill::{SkillLifecycle, SkillRecord};
 #[cfg(test)]
 use rmpv::Value;
+
+// The lift sweep's typed acceptance for this module's authored side
+// tables (FIX 2680), named by their declarations.
+pub(crate) use self::state::context_board_plugin_block_accepts_masked;

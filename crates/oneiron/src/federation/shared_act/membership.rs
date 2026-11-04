@@ -199,27 +199,36 @@ impl Vault {
         Ok(ids)
     }
     /// Delete the grants that conferred `member`'s standing: its own grants
-    /// when `leaves`, and the delegate grants it minted either way.
+    /// when `leaves`, and the delegate grants it minted either way. With
+    /// `slips`, each deleted Grant an owner's signed mint made (a GitPush
+    /// grant or an owner's agent grant) gets the host's signed withdrawal in
+    /// this writer (FIX 7135), so the authority audit pairs its mint with a
+    /// revoke this membership change made, never one an owner signed.
     fn drop_member_grants_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         vault_id: u64,
         member: EntityId,
         leaves: bool,
+        slips: Option<&HostSlipIssuer>,
     ) -> Result<Vec<EntityId>> {
-        let ids: Vec<EntityId> = self
+        let dropped: Vec<(EntityId, bool)> = self
             .vault_grants_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| {
                 (leaves && grant.member_ref == member) || grant.delegated_by == Some(member)
             })
-            .map(|(id, _)| id)
+            .map(|(id, grant)| (id, grant.is_git_push() || grant.owner_agent))
             .collect();
         // Each withdrawal stays known here and reaches its peers, in this
         // writer (FIX-LIST 5107, 10772).
-        for id in &ids {
+        for (id, signed_mint) in &dropped {
             crate::authority::withdraw_grant_row_in_txn(&self.store, txn, *id)?;
+            if *signed_mint && let Some(issuer) = slips {
+                self.log_membership_grant_withdrawal_in_txn(txn, issuer, *id)?;
+            }
         }
+        let ids: Vec<EntityId> = dropped.into_iter().map(|(id, _)| id).collect();
         self.apply_grant_ops(
             txn,
             ids.iter().map(|id| BatchOp::Delete { id: *id }).collect(),
@@ -245,7 +254,13 @@ impl Vault {
             grants.extend(self.set_member_role_in_txn(txn, vault_id, member, role, now)?);
         }
         if to.is_none_or(|role| !role.is_admin()) {
-            grants.extend(self.drop_member_grants_in_txn(txn, vault_id, member, to.is_none())?);
+            grants.extend(self.drop_member_grants_in_txn(
+                txn,
+                vault_id,
+                member,
+                to.is_none(),
+                slips,
+            )?);
         }
         let mut retired_own_device = Vec::new();
         if crate::federation::own_device::own_device_grant_retires(from, to) {

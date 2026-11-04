@@ -127,7 +127,7 @@ pub(super) fn wire_body(signature: &IssueSignature) -> Result<String> {
             .collect(),
         content_hash: signature.content_hash().to_owned(),
     };
-    crate::llm::canonical_json_bytes(&wire)
+    oneiron_model::llm::canonical_json_bytes(&wire)
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or(Error::InvariantViolation("issue signature wire encode"))
