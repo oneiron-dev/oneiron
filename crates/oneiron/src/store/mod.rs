@@ -146,6 +146,7 @@ pub mod outbound_outcome;
 pub mod outbound_trigger;
 #[cfg(feature = "sync")]
 pub(crate) mod pad_object_membership;
+pub(crate) mod project_kind;
 pub mod proposal_spool;
 pub mod recovery_write_budget;
 pub(crate) mod repo_environment;
