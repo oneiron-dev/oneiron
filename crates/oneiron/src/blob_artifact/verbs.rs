@@ -23,8 +23,9 @@ use crate::edit_roundtrip::slides_review::{
 };
 use crate::edit_roundtrip::{
     ArtifactAsk, DeckEditContext, DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk,
-    RangeRef, SheetRowsAsk, UnitAbstention, UnitCall, UnitDecider, UnitRefusal,
+    SheetRowsAsk, UnitAbstention, UnitCall, UnitDecider, UnitRefusal,
 };
+use crate::blob_artifact::office_address::RangeRef;
 use crate::edit_settle::{
     KeepUndo, MadeByReader, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
     SettledReview,
