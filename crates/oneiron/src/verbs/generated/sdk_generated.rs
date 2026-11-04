@@ -32425,10 +32425,11 @@ pub fn vault_workflows_dispatch(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::WorkflowDispatchRequest,
 ) -> MemoryResult<crate::task_verb::sdk::WorkflowRunView> {
-    crate::task_verb::sdk::dispatch_workflow_as(
+    crate::task_verb::sdk::dispatch_workflow_as_with_origin(
         memory.vault(),
         &memory.embedded_owner("vault.workflows.dispatch")?,
         input,
+        memory.caller_origin(),
     )
 }
 pub fn vault_workflows_dispatch_bound(
