@@ -16,7 +16,9 @@ pub(super) fn guard_storage_owned_body(
     let (entity_type, _, _) = metadata;
     crate::conversation_dag::guard_record_put(store, wtxn, id, metadata, data, replicated)?;
     if crate::store::project_kind::is_project_type(store, entity_type) {
-        crate::workspace_roster::guard_goal_pointer_put(store, wtxn, *id, data, replicated)?;
+        store
+            .project_writes
+            .guard_goal_pointer_put(store, wtxn, *id, data, replicated)?;
     }
     crate::scope_summary::validate_summary_put(store, wtxn, id, entity_type, data, replicated)?;
     crate::origin::lfs::guard_lfs_asset_put(store, wtxn, id, entity_type, data)?;
