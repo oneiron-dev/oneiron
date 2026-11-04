@@ -1,9 +1,7 @@
 //! Sealed resource handoff. Only the executor can construct one; every real
 //! promotion and attachment checks its pins inside the write transaction.
 use super::{BranchResources, FallbackOutputPin, SourcePin, document_version};
-#[cfg(test)]
-use crate::claim::ClaimSource;
-use crate::claim::{ScopedRead, ScopedReadActorKey, ScopedReadReceipt};
+use crate::claim::{ClaimSource, ScopedRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_consolidation::PromotionCandidate;
 use crate::dreamer_consolidation::evidence::{
     ResolvedConflictOutput, VerifiedCandidate, VerifiedEvidenceSet,
@@ -194,8 +192,20 @@ impl BranchResources<'_> {
                     "multiple admitted prior heads for one question",
                 ));
             }
-            if let [(id, true)] = matches.as_slice() {
-                let id = *id;
+            let attachment_head = match matches.as_slice() {
+                [(id, true)] => Some(*id),
+                // Equivalent vetted heads already admitted by the branch need
+                // no further duplicate. Imported inputs keep their review path.
+                _ if evidence.meet() != ClaimSource::Imported
+                    && matches
+                        .iter()
+                        .all(|(id, equal)| *equal && !self.provisional.contains(id)) =>
+                {
+                    matches.first().map(|(id, _)| *id)
+                }
+                _ => None,
+            };
+            if let Some(id) = attachment_head {
                 // Nothing attaches to an unvetted head, so a candidate that
                 // restates one is already said; this attempt's own head met
                 // again is its replay.
