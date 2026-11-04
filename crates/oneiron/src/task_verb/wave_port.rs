@@ -225,6 +225,33 @@ struct WaveFingerprint {
     tasks: Vec<WaveFingerprintTask>,
 }
 
+/// FIX 12732: erasure nulls a sealed assignee while the supplied cut still
+/// names the erased actor. The seal still matches when every task agrees
+/// except that a sealed null accepts the supplied assignee; the stored
+/// scrubbed seal is retained, never rewritten here.
+fn seal_matches_erased_assignees(seal: &[u8], plan: &ValidatedWavePlan) -> bool {
+    let Ok(sealed) = serde_json::from_slice::<WaveFingerprint>(seal) else {
+        return false;
+    };
+    let Ok(supplied) = serde_json::from_slice::<WaveFingerprint>(&fingerprint(plan)) else {
+        return false;
+    };
+    if sealed.epic != supplied.epic || sealed.tasks.len() != supplied.tasks.len() {
+        return false;
+    }
+    sealed
+        .tasks
+        .iter()
+        .zip(supplied.tasks.iter())
+        .all(|(old, new)| {
+            old.key == new.key
+                && old.label == new.label
+                && old.spec == new.spec
+                && old.blocked_by == new.blocked_by
+                && (old.assignee == new.assignee || old.assignee.is_none())
+        })
+}
+
 /// Scrubs an erased recipient from the wave-plan index copies (FIX 4699):
 /// frozen statement rows (`per_peer` naming the actor) and seal fingerprint
 /// rows (`assignee` hex to null). Per-task id rows never decode as JSON and
@@ -673,7 +700,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        if seal != fingerprint(plan) {
+        if seal != fingerprint(plan) && !seal_matches_erased_assignees(&seal, plan) {
             return Err(Error::InvalidConfig(
                 "wave plan seal does not match the cut".into(),
             ));
