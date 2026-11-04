@@ -458,6 +458,15 @@ impl StoreRecordHooks for EngineRecordHooks {
     ) -> Result<()> {
         crate::workspace_roster::erase_audience_actor_in_txn(vault, wtxn, actor)
     }
+
+    fn read_secret_custody_meta_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<crate::secret_record::SecretCustodyRecord>> {
+        crate::secret_custody::read_secret_custody_meta_in_txn(store, txn, id)
+    }
 }
 
 #[cfg(feature = "sync")]

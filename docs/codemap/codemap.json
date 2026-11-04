@@ -39602,19 +39602,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "HeapDropReport"
-     ],
-     "path": "src/heap_drop.rs",
-     "purpose": "Counts reported by rebuildable index and window heap drops",
-     "surface": {
-      "crate-vis": 1,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/hnsw/delete.rs",
      "purpose": "Node delete with symmetric/legacy backlink scrub",
@@ -42291,8 +42278,8 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 203,
-      "re-export": 102
+      "mod": 202,
+      "re-export": 103
      }
     },
     {
@@ -56308,19 +56295,6 @@
       "fn": 5,
       "re-export": 6,
       "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "VectorRefinement"
-     ],
-     "path": "src/pipeline/vector_refinement.rs",
-     "purpose": "The dimensional space the existing HNSW funnel actually scores in",
-     "surface": {
-      "crate-vis": 1,
-      "struct": 1
      }
     },
     {
@@ -72309,9 +72283,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/key_encoding.rs",
-     "purpose": "Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders and…",
+     "purpose": "Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders, and…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -72754,7 +72728,7 @@
      "purpose": "Version stamps, vault-meta key consts, HNSW layout consts, error strings, process locks, DB manifest, and…",
      "surface": {
       "const": 5,
-      "crate-vis": 41,
+      "crate-vis": 40,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -73251,7 +73225,7 @@
       "StoreRecordHooks"
      ],
      "path": "src/store/record_hooks.rs",
-     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation and room…",
+     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation, room and…",
      "surface": {
       "trait": 1
      }
@@ -74502,20 +74476,10 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/store/vector_index/keys.rs",
-     "purpose": "HNSW metadata key/counter literals, error strings, and the one-way prefix",
-     "surface": {
-      "crate-vis": 31
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/store/vector_index/mod.rs",
-     "purpose": "Persisted vector-index metadata and admission vocabulary",
+     "purpose": "Persisted vector-index metadata and admission vocabulary, defined in `oneiron_store::vector_index`: each…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -74532,11 +74496,9 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/store/vector_insert_plan.rs",
-     "purpose": "Prepared vector-index neighbor choices bound to a read snapshot",
-     "surface": {
-      "crate-vis": 1
-     }
+     "path": "src/store/vector_index_dbs.rs",
+     "purpose": "The engine's [`VectorIndexDbs`] for each of its store handles: the table accessors and union flag of…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -90358,13 +90320,6 @@
      "layout": "file",
      "purpose": "Productivity-pack task-role vocabulary + task/habit checkin validators, plus the derived Habit streak…"
     },
-    "heap_drop": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Counts reported by rebuildable index and window heap drops"
-    },
     "hnsw": {
      "files": 12,
      "impl_vault": false,
@@ -90667,7 +90622,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 69,
+     "files": 68,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91010,7 +90965,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 472,
+     "files": 471,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91250,7 +91205,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6354,
+   "source_files": 6351,
    "test_files": 895
   },
   "oneiron-android": {
@@ -127708,6 +127663,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HeapDropReport"
+     ],
+     "path": "src/heap_drop.rs",
+     "purpose": "Counts reported by rebuildable index and window heap drops",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/identity_hints.rs",
      "purpose": "Per-kind declared identity fields (human-facing identity hints)",
@@ -127747,7 +127715,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 37
+      "mod": 42
      }
     },
     {
@@ -128461,6 +128429,67 @@
       "enum": 1,
       "fn": 17,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vector_index/keys.rs",
+     "purpose": "HNSW metadata key/counter literals, error strings, and the one-way prefix",
+     "surface": {
+      "const": 33
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VectorIndexDbs"
+     ],
+     "path": "src/vector_index/mod.rs",
+     "purpose": "Persisted vector-index metadata and admission vocabulary: the `hnsw_meta` keys and counters, read and bumped…",
+     "surface": {
+      "fn": 5,
+      "mod": 1,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InsertPlan"
+     ],
+     "path": "src/vector_insert_plan.rs",
+     "purpose": "Prepared vector-index neighbor choices bound to a read snapshot",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VectorRefinement"
+     ],
+     "path": "src/vector_refinement.rs",
+     "purpose": "The dimensional space the existing HNSW funnel actually scores in",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vector_row.rs",
+     "purpose": "The persisted vector row codec (EMB-3 v1): little-endian f16 components behind a one-byte format tag",
+     "surface": {
+      "const": 1,
+      "fn": 3
      }
     },
     {
@@ -129609,6 +129638,13 @@
      "layout": "file",
      "purpose": "The graph version counter in `hnsw_meta`, which PPR caches are keyed and validated by, and its little-endian…"
     },
+    "heap_drop": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Counts reported by rebuildable index and window heap drops"
+    },
     "identity_hints": {
      "files": 1,
      "impl_vault": false,
@@ -129749,6 +129785,34 @@
      "layout": "file",
      "purpose": "The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under…"
     },
+    "vector_index": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Persisted vector-index metadata and admission vocabulary: the `hnsw_meta` keys and counters, read and bumped…"
+    },
+    "vector_insert_plan": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Prepared vector-index neighbor choices bound to a read snapshot"
+    },
+    "vector_refinement": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The dimensional space the existing HNSW funnel actually scores in"
+    },
+    "vector_row": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The persisted vector row codec (EMB-3 v1): little-endian f16 components behind a one-byte format tag"
+    },
     "window_key": {
      "files": 1,
      "impl_vault": false,
@@ -129773,7 +129837,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 151,
+   "source_files": 157,
    "test_files": 4
   },
   "oneiron-uniffi": {
