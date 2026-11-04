@@ -181,7 +181,14 @@ pub(in crate::sync) fn release_landed_stamps(
     (row, carrier): (EntityId, Vec<u8>),
 ) -> Result<Option<ReleasedStamps>> {
     let lane = crate::federation::facet_read::HeldLane::Peer(peer).key();
-    release_born_stamps(vault, key, &lane, &[(row, carrier)], &BTreeSet::from([row]), &[])
+    release_born_stamps(
+        vault,
+        key,
+        &lane,
+        &[(row, carrier)],
+        &BTreeSet::from([row]),
+        &[],
+    )
 }
 
 /// The rows a staged artifact's admitted bytes bring that this vault lacks

@@ -222,8 +222,7 @@ async fn pdf(
         verified_actor,
         ip,
         ua,
-    )
-    {
+    ) {
         Ok(bytes) => {
             let mut response = (
                 [

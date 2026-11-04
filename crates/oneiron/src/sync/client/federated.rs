@@ -568,7 +568,12 @@ impl SyncClient {
         &mut self,
         births: Vec<(WindowKey, crate::EntityId)>,
     ) {
-        let Some(peer) = self.config.federation_peer.as_ref().map(|peer| peer.principal()) else {
+        let Some(peer) = self
+            .config
+            .federation_peer
+            .as_ref()
+            .map(|peer| peer.principal())
+        else {
             return;
         };
         for (window, row) in births {
