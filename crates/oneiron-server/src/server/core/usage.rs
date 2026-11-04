@@ -25,6 +25,8 @@ impl SyncServer {
             owner.into(),
             vault_id,
             Arc::clone(&self.vault),
+            Arc::clone(&self.retained),
+            Arc::clone(self.wire_telemetry.limit_questions()),
         )?;
         self.run_receipts.meter(usage);
         Ok(self)
@@ -61,7 +63,14 @@ impl SyncServer {
     /// if any. Serve calls it at stop, before the vault closes; the buffer's
     /// drop is the backstop for paths that stop elsewhere (FIX 11011).
     pub(crate) fn flush_retrieval_meters(&self) {
+        self.flush_usage_meters(true);
+    }
+
+    fn flush_usage_meters(&self, stopping: bool) {
         self.retrieval_buffer.flush();
+        if let Some(usage) = self.vault_usage() {
+            usage.flush_settlements(stopping);
+        }
     }
 
     /// Starts the retrieval-meter flush worker once: every
@@ -91,7 +100,7 @@ impl SyncServer {
                 };
                 // The grouped write runs off the runtime's workers: a write
                 // that waits for the vault's writer holds back only the tick.
-                let _ = tokio::task::spawn_blocking(move || server.retrieval_buffer.flush()).await;
+                let _ = tokio::task::spawn_blocking(move || server.flush_usage_meters(false)).await;
             }
         });
     }
