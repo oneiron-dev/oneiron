@@ -24,7 +24,6 @@ use crate::error::{Error, Result, SecretError};
 use crate::secret_record::{CustodyTier, SecretBinding, SecretCustodyFloor};
 use crate::secret_custody::run_secret_effector;
 use crate::vault::Vault;
-use oneiron_store::secret_record::SecretCustodyFloorSource;
 
 /// Why a leased or local grant does not redeem at a door: its value went to
 /// its destination, never to a door's send.
@@ -233,7 +232,7 @@ impl Vault {
                 secret_ref: rec.name,
             }));
         }
-        let floor = self.store.resolve_secret_custody_floor(wtxn)?;
+        let floor = SecretCustodyFloor::resolve(&self.store, wtxn)?;
         admit_record_use(&rec, bound, row.tier, &floor)?;
         crate::credential_door::admit_materialization_in_txn(
             &self.store,

@@ -20,7 +20,6 @@ use crate::secret_custody::{resolve_secret_ref_in_txn, reveal_value_in_txn};
 use crate::side_table::HexId;
 use crate::store::Store;
 use crate::vault::Vault;
-use oneiron_store::secret_record::SecretCustodyFloorSource;
 
 // ---------------------------------------------------------------------------
 // Row IO
@@ -254,7 +253,7 @@ pub(super) fn stamp_secret_lease_in_txn(
     not_after: Option<VaultInstant>,
 ) -> Result<SecretLeaseMaterialization> {
     let (id, rec) = read_record_for_ref_in_txn(&vault.store, wtxn, secret_ref)?;
-    let floor = vault.store.resolve_secret_custody_floor(wtxn)?;
+    let floor = SecretCustodyFloor::resolve(&vault.store, wtxn)?;
     admit_record_use(&rec, effector, CustodyTier::T1Leased, &floor)?;
     // ONE instant stamps `granted_at`, dates the receipt, and answers the
     // bound. Nothing between authorization and here can move them apart.
@@ -320,7 +319,7 @@ pub(crate) fn stamp_reveal_lease_in_txn(
             "the secret's custody class changed since its reveal was asked",
         )));
     }
-    let floor = vault.store.resolve_secret_custody_floor(wtxn)?;
+    let floor = SecretCustodyFloor::resolve(&vault.store, wtxn)?;
     reveal_tier_admission(&rec, &floor)?;
     crate::secret_custody::refuse_revoked_use_in_txn(
         vault,
@@ -388,7 +387,7 @@ pub(crate) fn reread_reveal_lease_in_txn(
     {
         return Ok(None);
     }
-    let floor = vault.store.resolve_secret_custody_floor(txn)?;
+    let floor = SecretCustodyFloor::resolve(&vault.store, txn)?;
     reveal_tier_admission(&rec, &floor)?;
     crate::secret_custody::refuse_revoked_use_in_txn(
         vault,

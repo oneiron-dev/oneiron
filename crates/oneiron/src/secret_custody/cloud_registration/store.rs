@@ -31,7 +31,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
 use crate::secret_lease::DoorInjectionReceipt;
 use crate::store::Store;
-use oneiron_store::secret_record::SecretCustodyFloorSource;
 
 /// The live owner `owner` proves in `txn`: the actor every act binds.
 fn owner_actor_in_txn(
@@ -246,7 +245,7 @@ impl Vault {
             bindings: slot_bindings(),
             manifest_ref: String::new(),
             declared_paths: Vec::new(),
-            policy_floor_snapshot: self.store.resolve_secret_custody_floor(&wtxn)?,
+            policy_floor_snapshot: SecretCustodyFloor::resolve(&self.store, &wtxn)?,
         });
         register_secret_in_txn(self, &mut wtxn, &slot, &mut rec.0)?;
         let row = Row {
