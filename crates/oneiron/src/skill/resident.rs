@@ -11,10 +11,10 @@ use crate::store::Store;
 
 use super::SkillRecord;
 
+use crate::write_envelope::skill_record::resident::invalid_owner;
 pub(crate) use crate::write_envelope::skill_record::resident::{
     RESIDENT_PROVENANCE_KEY, resident_of,
 };
-use crate::write_envelope::skill_record::resident::invalid_owner;
 
 /// Resolve a resident in the same snapshot as a skill birth or a pack stamp.
 /// A replicated Candidate may wait for an out-of-order actor row, but an

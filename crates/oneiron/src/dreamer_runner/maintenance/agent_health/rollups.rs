@@ -38,10 +38,10 @@ use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::receipt::CallReceipt;
 use crate::run_budget::LeaseUnit;
 use crate::self_heal::ENTITY_TYPE_DIAGNOSTIC;
+use crate::side_table::{self, Named, SideTable};
 use crate::store::diagnostic_record::{
     AgentHealthSignal, DiagnosticEventClass, decode_diagnostic_event_body,
 };
-use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
 mod spend;

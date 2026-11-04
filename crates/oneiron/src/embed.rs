@@ -86,14 +86,14 @@ use crate::error::{Error, SideTableRowProblem, StoreError};
 #[cfg(feature = "sync")]
 use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 
+#[cfg(feature = "sync")]
+pub use crate::store::embedding::{
+    DEFAULT_PENDING_EMBEDDING_LEASE_MS, DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS, RemoteRung,
+};
 pub use crate::store::embedding::{
     EMBED_PRIORITY_BACKFILL, EMBED_PRIORITY_DEVICE, EMBED_PRIORITY_SERVER,
     EMBED_PRIORITY_SURFACED_HOT, EgressDecision, EgressPredicate, Embedder, EmbedderLocality,
     PendingEmbeddingInput, PendingEmbeddingPayload,
-};
-#[cfg(feature = "sync")]
-pub use crate::store::embedding::{
-    DEFAULT_PENDING_EMBEDDING_LEASE_MS, DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS, RemoteRung,
 };
 
 /// Canonical rung-2 INT8-transport receipt: `codes[i] as f32 * scale`.

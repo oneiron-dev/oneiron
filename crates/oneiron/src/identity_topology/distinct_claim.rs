@@ -12,14 +12,14 @@ use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
-pub use crate::write_envelope::identity_pair::distinct_pair_key;
-pub(crate) use crate::write_envelope::identity_pair::validate_distinct_from_claim_structure;
-pub(super) use crate::write_envelope::identity_pair::distinct_claim_value;
-use crate::write_envelope::identity_pair::decode_distinct_claim_pair;
 use super::ledger_fold::{IdentityTopologyAction, fold_identity_topology_log};
 use super::op_apply::{IdentityOpWrite, is_effective_approval};
 use super::op_vocabulary::{IdentityTopologyOp, MergeOp};
 use super::wire_keys::PREDICATE_ENTITY_DISTINCT_FROM;
+use crate::write_envelope::identity_pair::decode_distinct_claim_pair;
+pub(super) use crate::write_envelope::identity_pair::distinct_claim_value;
+pub use crate::write_envelope::identity_pair::distinct_pair_key;
+pub(crate) use crate::write_envelope::identity_pair::validate_distinct_from_claim_structure;
 
 /// One lifecycle-`Active` `entity.distinct_from` claim as the family's
 /// readers see it: the row, its consent axis, and the pair it covers.

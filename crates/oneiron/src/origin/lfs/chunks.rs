@@ -116,7 +116,10 @@ impl LfsManifest {
 
     /// The ordinary ASSET that stores this manifest.
     pub fn asset_id(&self) -> Result<EntityId> {
-        crate::store::code_snapshot::entity_id_from_hash_material(VAULT_LFS_ASSET_ID_DOMAIN, &[&self.hash()?])
+        crate::store::code_snapshot::entity_id_from_hash_material(
+            VAULT_LFS_ASSET_ID_DOMAIN,
+            &[&self.hash()?],
+        )
     }
 
     fn validate(&self) -> Result<()> {

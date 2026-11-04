@@ -46,4 +46,3 @@ pub struct RetrievalWithPendingVectors<T> {
     pub pending_vectors: Vec<PendingVectorEmbedding>,
     pub run_id: Option<RetrievalRunId>,
 }
-

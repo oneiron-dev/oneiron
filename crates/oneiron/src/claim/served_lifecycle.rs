@@ -12,4 +12,3 @@ pub enum ServedLifecycle {
     Retracted,
     Installed(String),
 }
-

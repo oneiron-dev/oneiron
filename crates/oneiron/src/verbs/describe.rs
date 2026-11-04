@@ -4,8 +4,8 @@
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use serde::Deserialize;
 
-pub use crate::memory::DescribeRequest;
 use crate::memory::AFTER_NEEDS_HANDLE;
+pub use crate::memory::DescribeRequest;
 
 /// `describe({handle, after})` (OF-220): the status of one highway handle,
 /// or a poll when `after` names the last observation, as the highway answers
