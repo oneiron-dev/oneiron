@@ -4,16 +4,20 @@ use crate::entity_id::EntityId;
 use crate::write_envelope::cohort_claims::snooze_policy::SnoozePolicyData;
 
 /// CAMPAIGN definition schema version.
-pub const CAMPAIGN_SCHEMA_VERSION: u32 = 1;
+pub const CAMPAIGN_SCHEMA_VERSION: u32 = 2;
 
 /// Lifecycle state of a campaign.
 ///
-/// Mirrors [`SavedQueryLifecycle`](crate::saved_query::SavedQueryLifecycle)'s archive-is-a-transition rule; a campaign
-/// has no paused state because it holds no evaluator to pause.
+/// A new campaign is authored as Draft, launches into Active, may pause with
+/// an owner question, and archives once. Archive remains a one-way transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CampaignLifecycle {
-    /// Addressable and mutable.
+    /// Authored but not launched. Programs may be edited; nothing enrolls.
+    Draft,
+    /// Launched and enrolling.
     Active,
+    /// Held out of enrollment until the owner clears its pause or launches it.
+    Paused,
     /// Retired. Still readable; never re-opened.
     Archived,
 }
@@ -23,7 +27,9 @@ impl CampaignLifecycle {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Draft => "draft",
             Self::Active => "active",
+            Self::Paused => "paused",
             Self::Archived => "archived",
         }
     }
@@ -32,7 +38,9 @@ impl CampaignLifecycle {
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "draft" => Some(Self::Draft),
             "active" => Some(Self::Active),
+            "paused" => Some(Self::Paused),
             "archived" => Some(Self::Archived),
             _ => None,
         }
