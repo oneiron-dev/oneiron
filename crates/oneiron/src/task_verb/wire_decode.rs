@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::write_envelope::task_body::TaskRole;
 
-use super::consts::{TASK_VERB_BODY_SCHEMA_VERSIONS, TASK_VERB_BODY_SUBKIND};
+use super::consts::TASK_VERB_BODY_SCHEMA_VERSIONS;
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef};
 use super::consult_result::TaskVerbBody;
 use super::refusal::TaskRefusalRecord;
@@ -26,6 +26,7 @@ use super::terminal_state::{
 };
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 use crate::error::RecordError;
+pub(super) use crate::store::linear_task_revision::task_body_has_typed_subkind;
 
 pub(super) fn task_verb_body(vault: &Vault, task_ref: EntityId) -> Result<Option<TaskVerbBody>> {
     let rtxn = vault.store.env.read_txn()?;
@@ -823,30 +824,4 @@ pub(crate) fn task_binding(body: &[u8]) -> Option<TaskBinding> {
             .map(|(_, value)| value.clone())
             .collect(),
     })
-}
-
-pub(super) fn task_body_has_typed_subkind(body: &[u8]) -> Result<bool> {
-    let mut cursor = body;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.create.body")))?;
-    if !cursor.is_empty() {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.create.body",
-        )));
-    }
-    let Some(entries) = value.as_map() else {
-        return Ok(false);
-    };
-    Ok(entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some("subkind"))
-        .count()
-        == 1
-        && entries
-            .iter()
-            .filter(|(key, value)| {
-                key.as_str() == Some("subkind") && value.as_str() == Some(TASK_VERB_BODY_SUBKIND)
-            })
-            .count()
-            == 1)
 }

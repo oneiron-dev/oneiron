@@ -144,8 +144,8 @@ pub use self::storage::{
     bind_wait_trap, park_and_bind_wait_trap,
 };
 pub(crate) use self::storage::{
-    CodeRunResultBodyReader, OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding,
-    ReceiptPartial, ReceiptSource, ReceiptTree,
+    OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
+    ReceiptSource, ReceiptTree,
 };
 pub(crate) use self::storage::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
@@ -157,8 +157,8 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
-    code_run_inline_body_of_row, code_run_row_inline, deliver_wait_in_txn,
-    deliver_wait_listing_in_txn, lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
+    code_run_inline_body_of_row, deliver_wait_in_txn, deliver_wait_listing_in_txn,
+    lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StepKey, StoredStepFeedback, erase_spawn_targets_in_txn, erase_type_diagnostics_actor_in_txn,
@@ -186,10 +186,7 @@ pub(crate) use self::storage::{
     settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
 // FIX 6588: a wait's replies in checkpoint images, as row-held responses.
-pub(crate) use self::storage::{
-    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_erased,
-    wait_reply_scan, wait_settled_owners,
-};
+pub(crate) use self::storage::wait_delivery_owners;
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
 pub use self::type_diagnostics::{
@@ -293,7 +290,6 @@ pub(crate) use self::storage::code_run_reader_job_accepts_masked;
 pub(crate) use self::storage::code_run_reader_wait_accepts_masked;
 pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
 pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
-pub(crate) use self::storage::code_run_wait_delivery_accepts_masked;
 
 pub use self::dispatcher::{
     ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorQuestionAnswer,
