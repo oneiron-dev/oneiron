@@ -6,7 +6,7 @@ use heed::RwTxn;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::store::Store;
 
 /// What currently occupies a validated AUTHORITY_LOG row's content-derived store

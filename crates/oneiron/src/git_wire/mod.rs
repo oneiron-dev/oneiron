@@ -119,7 +119,7 @@ use crate::checkout::lease::{
     CheckoutError, CheckoutLeaseAct, CheckoutRepoOps, PushedHeadReceipt, TeardownReceiptMatch,
 };
 #[cfg(test)]
-use crate::codebase::RepoRef;
+use crate::store::code_snapshot::RepoRef;
 #[cfg(test)]
 use crate::error::Error;
 #[cfg(test)]

@@ -168,7 +168,7 @@ struct BatchApplyState {
     claim_transitions: VecDeque<super::VerifiedClaimTransition>,
     preflight_gate_decision_ids: HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
     pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::store::text_index::AnalyzedText>>>,
-    nsw_plans: HashMap<EntityId, VecDeque<crate::hnsw::InsertPlan>>,
+    nsw_plans: HashMap<EntityId, VecDeque<crate::store::vector_insert_plan::InsertPlan>>,
     masked_files: super::secret_scan::MaskedFiles,
     masked_claims: HashMap<EntityId, VecDeque<ClaimCandidate>>,
     habit_streak_candidates: BTreeSet<EntityId>,

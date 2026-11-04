@@ -7,6 +7,7 @@ use crate::store::{EMBEDDING_MODEL_EPOCH_KEY, ManifestDbs, VECTOR_VERSION_KEY};
 use heed::{RoTxn, RwTxn};
 
 pub(crate) mod keys;
+pub(crate) mod rebuild;
 pub(crate) use keys::COUNT_KEY;
 use keys::{
     ENTRY_POINT_KEY, ERR_COUNT_BYTES, ERR_EMBEDDING_MODEL_EPOCH_BYTES, ERR_VECTOR_VERSION_BYTES,

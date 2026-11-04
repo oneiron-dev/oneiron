@@ -92,7 +92,10 @@ pub(super) fn erase_actor_fields_in_txn(
     scrub_actor_fields_in_txn(&mut erase)?;
     if hard {
         let (vault, wtxn, actor) = erase.parts();
-        crate::attempt_queue::erase_attempt_payload_actor_in_txn(&vault.store, wtxn, &actor)?;
+        vault
+            .store
+            .attempt_operations
+            .erase_attempt_payload_actor_in_txn(&vault.store, wtxn, &actor)?;
     }
     Ok(())
 }
@@ -202,7 +205,10 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     }
     // Their dispatch text, carried back by the image's attempt rows, goes
     // again: one pass over the ledger for every id (FIX 7076).
-    crate::attempt_queue::erase_attempt_payload_actors_in_txn(&vault.store, wtxn, &erased)?;
+    vault
+        .store
+        .attempt_operations
+        .erase_attempt_payload_actors_in_txn(&vault.store, wtxn, &erased)?;
     Ok(())
 }
 

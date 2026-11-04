@@ -33,7 +33,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 10460: the queue copy of a public model step's failure text.
     // First: it reads the step's terminal claim out of the live submission
     // row, which the submission scrub below replaces with Erased.
-    crate::attempt_queue::erase_model_step_failure_reasons_in_txn,
+    crate::store::attempt_operations::erase_model_step_failure_reasons_in_txn,
     // FIX 9929: a public model step's kept request and result.
     crate::llm::erase_submissions_in_txn,
     // FIX 10089: every verdict memo the erased row is a source of.
@@ -137,7 +137,7 @@ pub(crate) fn tear_derived_rows_in_txn(
         store
             .record_hooks
             .forget_claim_reassignments_in_txn(store, wtxn, id)?;
-        crate::identity_redirect::forget_deleted_in_txn(store, wtxn, id)?;
+        crate::store::identity_redirect_rows::forget_deleted_in_txn(store, wtxn, id)?;
     }
     Ok(())
 }

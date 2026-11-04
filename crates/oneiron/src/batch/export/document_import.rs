@@ -498,7 +498,7 @@ fn insert_ready_row<R: Read + Seek>(
                 &claim.predicate,
             ) {
                 vault.restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-            } else if claim.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
+            } else if claim.predicate == crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY {
                 vault.restore_reliability_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else {
                 vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
@@ -898,8 +898,12 @@ fn withhold_unborn_projects<R: Read + Seek>(
             .map(|at| EntityAt::decode(&at))
             .transpose()?
             .is_some_and(|at| at.entity_type == project_kind)
-            && crate::gate::project_depth::birth_for_project(&vault.store, txn, id)?.is_none()
-            && !crate::gate::project_depth::implicit_birth_applies(
+            && vault
+                .store
+                .gate_hooks
+                .birth_for_project(&vault.store, txn, id)?
+                .is_none()
+            && !vault.store.gate_hooks.implicit_birth_applies(
                 &vault.store,
                 txn,
                 vault.privacy_posture(),
@@ -1368,7 +1372,7 @@ fn decode_import_claim(bytes: &[u8]) -> Result<crate::write_envelope::claim_body
         crate::write_envelope::subject_record::imported_subject_body(&body)
     } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
         crate::actor_claims::imported_actor_body(&body)
-    } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
+    } else if body.predicate == crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY {
         crate::skill_reliability::imported_reliability_body(&body)
     } else if crate::write_envelope::learning_predicate::is_learning_predicate(&body.predicate) {
         // No archive format (FIX 11626 option B): a learning cell is a

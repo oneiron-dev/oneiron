@@ -17,6 +17,8 @@ use super::types::AGENT_REF_KEY_MAX_BYTES;
 use crate::context_pack::FieldProfile;
 use crate::error::{ArtifactError, Error, Result};
 
+pub use crate::store::agent_optional_memory::{OptionalMemory, OptionalMemoryProfile};
+
 /// The pinned sub-map keys for an [`OptionalMemoryProfile`], in encode order.
 pub const OPTIONAL_MEMORY_PROFILE_KEYS: [&str; 2] = ["default", "families"];
 
@@ -25,18 +27,6 @@ pub const OPTIONAL_MEMORY_BUDGET_KEYS: [&str; 2] = ["tokens", "view"];
 
 /// The encoded form of [`OptionalMemory::None`].
 const NONE: &str = "none";
-
-/// One reader's optional recall for one task family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OptionalMemory {
-    /// No optional recall. Not a budget of 0, which means no limit.
-    None,
-    /// At most `tokens` of optional recall, at `view` detail or less.
-    Budget {
-        tokens: NonZeroU64,
-        view: FieldProfile,
-    },
-}
 
 impl OptionalMemory {
     /// Narrows a caller's pack budget (0 is no limit) and view. `None` means
@@ -71,14 +61,6 @@ const fn view_rank(view: FieldProfile) -> u8 {
 
 const fn narrower_view(a: FieldProfile, b: FieldProfile) -> FieldProfile {
     if view_rank(b) < view_rank(a) { b } else { a }
-}
-
-/// A reader's optional recall: a default, and the task families that differ.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct OptionalMemoryProfile {
-    pub default: OptionalMemory,
-    pub families: BTreeMap<String, OptionalMemory>,
 }
 
 impl OptionalMemoryProfile {

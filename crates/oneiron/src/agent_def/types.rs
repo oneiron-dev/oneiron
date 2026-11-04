@@ -161,23 +161,7 @@ pub(super) const AGENT_DISPLAY_NAME_MAX_BYTES: usize = 256;
 
 pub use crate::store::agent_record::McpRef;
 
-/// The run scope persisted with an `AgentDefinition`.
-///
-/// A new persisted descriptor rather than an embedded [`WorldScope`], which is
-/// a runtime-only type that does not implement `Serialize`. `World` carries the
-/// world's [`EntityId`], hex-encoded into the body. `WorldSet` is deliberately
-/// not modelled here — it is a repo-clamp key with no day-1 caller, and a later
-/// additive variant per the `#[non_exhaustive]` marker.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum AgentScope {
-    /// Span every world (the constructor default; matches `PipelineBuilder`).
-    All,
-    /// Base-reality only.
-    Base,
-    /// This world plus base reality.
-    World(EntityId),
-}
+pub use crate::store::agent_scope::AgentScope;
 
 impl AgentScope {
     /// Maps to the runtime [`WorldScope`] a dispatch layer (AGENT-3) reconstitutes.
@@ -203,39 +187,9 @@ pub use crate::store::agent_record::{
     AgentCeiling, AgentWakeCadence, CompactionOwnership, ContextBudgetSplit, DreamingMode,
 };
 
-/// The per-agent context-window memory profile (RT-05, ONE-1687).
-///
-/// Additive and optional: an `AgentDefinition` carrying `None` reproduces
-/// today's behavior byte-for-byte, so the record grew without moving any
-/// existing agent's assembly.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct MemoryProfile {
-    /// Context-window token budget for this agent — the lift of
-    /// `context_pack`'s builder-constant default.
-    pub window_token_budget: u64,
-    /// Optional per-entity-class split; absent = the engine default split.
-    pub budget_split: Option<ContextBudgetSplit>,
-    /// Host-registered compaction backend key. Resolved against the
-    /// compaction registry at drive time; never a frontier tier. The ban is
-    /// enforced at registration, not by sniffing this string.
-    pub compaction_backend: ModelTierRef,
-    /// Who compacts this agent's context WINDOW.
-    pub compaction: CompactionOwnership,
-    /// How many recent steps stay raw past a compaction (agent-runtime-v1
-    /// #d7 hot window, Docs Q13); absent = the host's configured hot window.
-    pub hot_steps: Option<u64>,
-    /// When a stored output decays to its overview, then to a stub, in turns
-    /// (#d7 decay thresholds); absent = the executor's default decay.
-    pub output_decay: Option<crate::compaction::output::OutputDecayPolicy>,
-    /// Literal text every summary of this agent's window keeps verbatim when
-    /// the span holds it (#d7 verbatim pins). User messages and failure lines
-    /// stay pinned regardless; these are added, never a replacement.
-    pub verbatim_pins: Vec<String>,
-    /// The optional recall this reader takes per task family; absent = the
-    /// caller's request as sent. Separate from the window above.
-    pub optional_memory: Option<OptionalMemoryProfile>,
-}
+pub use crate::store::agent_memory_profile::MemoryProfile;
+
+pub use crate::store::agent_definition::AgentDefinition;
 
 impl MemoryProfile {
     #[must_use]
@@ -295,67 +249,6 @@ impl MemoryProfile {
         self.optional_memory = Some(optional_memory);
         self
     }
-}
-
-/// A saved, host-agnostic agent composition record.
-///
-/// The lifecycle block (`approval_status` … `provenance`) is the shared
-/// `SkillRecord` machinery, field-for-field. `generated`/`human_authored` are a
-/// mutually-exclusive authorship pair and `generated` tracks
-/// `source == ClaimSource::Generated`; both invariants are frozen on update.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct AgentDefinition {
-    pub agent_id: String,
-    pub desc: String,
-    pub version: String,
-    pub instructions: Option<String>,
-    pub skills: Vec<SkillDependency>,
-    pub connectors: Vec<String>,
-    pub code_mode_mcps: Vec<McpRef>,
-    pub model_tier: Option<ModelTierRef>,
-    pub scope: AgentScope,
-    pub ceiling: AgentCeiling,
-    /// The fork parent's stored row id. Frozen on update.
-    pub forked_from: Option<EntityId>,
-    pub approval_status: ClaimApprovalStatus,
-    pub lifecycle_status: ClaimLifecycleStatus,
-    pub source: ClaimSource,
-    pub confidence: f32,
-    pub generated: bool,
-    pub human_authored: bool,
-    pub provenance: Value,
-    /// Stable lookup key for a seeded row (`sys.*`). User-created definitions
-    /// carry `None`; once `Some`, it is frozen on update.
-    pub logical_id: Option<String>,
-    /// Whether this definition may be dispatched. Row state, not absence —
-    /// reseeding never resurrects a user's "off".
-    pub enabled: bool,
-    /// Runtime-editable display name; deliberately NOT in the freeze-set.
-    pub display_name: Option<String>,
-    /// Per-agent context-window memory profile (RT-05, ONE-1687). A dial, not
-    /// identity: it may change on update under the ordinary version-bump rule,
-    /// so it is deliberately NOT in the freeze-set.
-    pub memory_profile: Option<MemoryProfile>,
-    /// Absent means enabled and inheriting the vault weaver model and window.
-    pub dreaming: Option<DreamingMode>,
-    /// Optional per-resident model slot for `Own` dreaming. Host-resolved.
-    pub dreaming_model: Option<ModelTierRef>,
-    /// An absent role follows the owner-editable wake-policy absent-role row.
-    pub wake_cadence: Option<AgentWakeCadence>,
-    /// Her refusal dial (OF-533). Absent, or a domain left unset, takes the
-    /// vault-kind default; resolve through [`super::resolve_refusal`]. A
-    /// dial, not identity: deliberately NOT in the freeze-set.
-    pub refusal: Option<RefusalDial>,
-    /// The models the agent may run on, in its owner's order, each with the
-    /// owner's words on when (FIX 4472). Empty: its one house-routed model.
-    /// A dial, not identity: deliberately NOT in the freeze-set.
-    pub models: Vec<AgentModel>,
-    /// The model that compacts the agent's window; absent takes the default
-    /// its host supplies (for a `self` writer, the self-compaction row's
-    /// cheap model, FIX 6029). It need not be listed; resolve through
-    /// [`super::resolve_compaction_model`].
-    pub compaction_model: Option<ModelId>,
 }
 
 impl AgentDefinition {

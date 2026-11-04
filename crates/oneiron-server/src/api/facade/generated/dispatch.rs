@@ -17971,6 +17971,40 @@ async fn vault_settings_learning_clear(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_secrets_code_run_lifts(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.code_run_lifts")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.code_run_lifts", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.code_run_lifts", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_code_run_lifts(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_secrets_lift_history(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40112,6 +40146,9 @@ async fn call_verb_row(
         }
         "vault.settings.learning.clear" => {
             Box::pin(vault_settings_learning_clear(server, call, input)).await
+        }
+        "vault.secrets.code_run_lifts" => {
+            Box::pin(vault_secrets_code_run_lifts(server, call, input)).await
         }
         "vault.secrets.lift_history" => {
             Box::pin(vault_secrets_lift_history(server, call, input)).await

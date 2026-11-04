@@ -3,7 +3,7 @@
 use super::validation::{birth_stamp_target, consume_preflight_decisions, validate_put_type};
 use super::*;
 use crate::error::RegistryError;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::temporal::TimeRange;
 use zeroize::Zeroizing;
 
