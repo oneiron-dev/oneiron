@@ -372,9 +372,9 @@ struct RoomState {
 }
 
 /// The machine's lease behind one room's native memory for the organ's own
-/// buffers: one handle, grown as the buffers take shape and given back as
-/// the room drops, so repeated growth never waits behind its own earlier
-/// leases (FIX 12440).
+/// buffers: one cumulative handle, grown as the buffers take shape and
+/// given back as the room drops (FIX 12440). Earlier unallocated grants
+/// remain charged as pending memory.
 #[derive(Default)]
 struct Leases(Option<Box<dyn FloorLease>>);
 
@@ -477,11 +477,11 @@ impl CallRoom {
         if ended() {
             return Err(NativeRefusal::Deadline);
         }
-        // One handle for all of the room's native memory: later growth widens
-        // the same lease, so it never queues behind what the room already
-        // holds (FIX 12440). A refused growth leaves the lease it widens
-        // unchanged. The slot's own lock is held across the floor wait; the
-        // room's accounting lock is not.
+        // One cumulative native reservation (FIX 12440). Earlier grants
+        // remain pending until their allocation is established: growing a
+        // handle must not treat them as already allocated. A refused growth
+        // leaves the lease unchanged. Only the slot's lock spans the floor
+        // wait, not the accounting lock.
         let mut slot = lock_leases(&self.leases);
         if let Some(held) = slot.0.as_mut() {
             held.grow(bytes, deadline, &ended)

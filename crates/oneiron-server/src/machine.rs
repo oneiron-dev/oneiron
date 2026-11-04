@@ -633,7 +633,18 @@ impl MemoryLease {
         deadline: Instant,
         stopped: &dyn Fn() -> bool,
     ) -> Result<(), MemoryRefusal> {
-        self.grow_in_line(more, Some(deadline), stopped)
+        self.grow_in_line(more, Some(deadline), stopped, self.pending)
+    }
+
+    /// Grows a reservation whose earlier bytes may still be unallocated.
+    /// Every pending byte stays charged against the live memory reading.
+    pub(crate) fn grow_pending(
+        &mut self,
+        more: u64,
+        deadline: Instant,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), MemoryRefusal> {
+        self.grow_in_line(more, Some(deadline), stopped, 0)
     }
 
     /// [`Self::grow`] with no deadline: only `stopped` ends the wait.
@@ -643,7 +654,7 @@ impl MemoryLease {
         more: u64,
         stopped: &dyn Fn() -> bool,
     ) -> Result<(), MemoryRefusal> {
-        self.grow_in_line(more, None, stopped)
+        self.grow_in_line(more, None, stopped, self.pending)
     }
 
     fn grow_in_line(
@@ -651,6 +662,7 @@ impl MemoryLease {
         more: u64,
         deadline: Option<Instant>,
         stopped: &dyn Fn() -> bool,
+        own_pending_credit: u64,
     ) -> Result<(), MemoryRefusal> {
         let whole = self.bytes.saturating_add(more);
         let shared = Arc::clone(&self.shared);
@@ -663,7 +675,9 @@ impl MemoryLease {
         }
         let started = Instant::now();
         let mut line = lock(&shared.line);
-        if line.waiting.is_empty() && shared.fits_excluding(&line, more, self.pending, self.bytes) {
+        if line.waiting.is_empty()
+            && shared.fits_excluding(&line, more, own_pending_credit, self.bytes)
+        {
             self.admit_growth(&mut line, more);
             return Ok(());
         }
@@ -672,7 +686,7 @@ impl MemoryLease {
         line.waiting.push_back(ticket);
         loop {
             if line.waiting.front() == Some(&ticket)
-                && shared.fits_excluding(&line, more, self.pending, self.bytes)
+                && shared.fits_excluding(&line, more, own_pending_credit, self.bytes)
             {
                 line.waiting.pop_front();
                 self.admit_growth(&mut line, more);

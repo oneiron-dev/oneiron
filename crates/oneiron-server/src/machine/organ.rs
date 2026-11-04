@@ -12,7 +12,7 @@ impl oneiron_organ_host::FloorLease for MemoryLease {
         deadline: Instant,
         stopped: &dyn Fn() -> bool,
     ) -> Result<(), oneiron_organ_host::FloorRefusal> {
-        MemoryLease::grow(self, more, deadline, stopped).map_err(organ_refusal)
+        MemoryLease::grow_pending(self, more, deadline, stopped).map_err(organ_refusal)
     }
 
     fn shrink(&mut self, bytes: u64) {
