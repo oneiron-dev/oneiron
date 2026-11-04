@@ -121,12 +121,7 @@ pub const HANDLE_TEXT_OPEN: &str = "[secret ";
 
 /// [`unmasked_body`] over one decoded value: whether anything changed. The
 /// claim-restore proof recomputes a restored claim body with it (FIX 11882).
-pub fn unmask_value(
-    tree: &mut Value,
-    handle: &str,
-    text_form: &str,
-    value: &[u8],
-) -> Result<bool> {
+pub fn unmask_value(tree: &mut Value, handle: &str, text_form: &str, value: &[u8]) -> Result<bool> {
     let restored = match &*tree {
         Value::String(text) => match text.as_str() {
             Some(text) => unmasked_text(text, handle, text_form, value)?,
