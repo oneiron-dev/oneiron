@@ -485,6 +485,33 @@ enum Done {
     Marked,
     /// Left for the owner.
     Propose(LiftCause, &'static str),
+    /// A row its door rewrote that also leaves a proposal: the masked row's
+    /// history filing and the proposal file together, and neither closes the
+    /// row's open proposal as clean.
+    MaskedAndPropose {
+        history: bool,
+        reason: &'static str,
+        cause: LiftCause,
+        proposal_reason: &'static str,
+    },
+}
+
+impl Done {
+    /// A masked row whose current sequence text also proposes keeps both
+    /// facts; anything else keeps the proposal alone.
+    fn with_proposal(self, proposal: Done) -> Done {
+        match (self, proposal) {
+            (Done::Masked { history, reason }, Done::Propose(cause, proposal_reason)) => {
+                Done::MaskedAndPropose {
+                    history,
+                    reason,
+                    cause,
+                    proposal_reason,
+                }
+            }
+            (_, proposal) => proposal,
+        }
+    }
 }
 
 /// One census page: rows read, the keys of the rows that hold a hit, and
@@ -759,34 +786,32 @@ fn settle(
         Done::Clean | Done::Masked { .. } => {
             proposals::close_clean_in_txn(vault, &mut txn, family, key)?
         }
-        Done::Marked | Done::Propose(..) => false,
+        Done::Marked | Done::Propose(..) | Done::MaskedAndPropose { .. } => false,
     };
     if closed {
         notice::settle_in_txn(vault, &mut txn)?;
     }
+    let mut file = |cause: LiftCause, reason: &'static str| -> Result<bool> {
+        file_in_txn(vault, &mut txn, run.run_id, family, key, cause, reason)
+    };
     let filed = match done {
         Done::Clean => None,
-        Done::Marked => Some((true, false)),
+        Done::Marked => Some((true, 0)),
         Done::Masked { history, reason } => {
-            let filed = (history && PROPOSE_HISTORY)
-                .then(|| {
-                    file_in_txn(
-                        vault,
-                        &mut txn,
-                        run.run_id,
-                        family,
-                        key,
-                        LiftCause::History,
-                        reason,
-                    )
-                })
-                .transpose()?;
-            Some((true, filed.unwrap_or(false)))
+            let history_filed = history && PROPOSE_HISTORY && file(LiftCause::History, reason)?;
+            Some((true, u64::from(history_filed)))
         }
-        Done::Propose(cause, reason) => Some((
-            false,
-            file_in_txn(vault, &mut txn, run.run_id, family, key, cause, reason)?,
-        )),
+        Done::Propose(cause, reason) => Some((false, u64::from(file(cause, reason)?))),
+        Done::MaskedAndPropose {
+            history,
+            reason,
+            cause,
+            proposal_reason,
+        } => {
+            let history_filed = history && PROPOSE_HISTORY && file(LiftCause::History, reason)?;
+            let filed = u64::from(history_filed) + u64::from(file(cause, proposal_reason)?);
+            Some((true, filed))
+        }
     };
     progress_in_txn(vault, &mut txn, run, family, key, |current| {
         if !first {
@@ -799,10 +824,8 @@ fn settle(
                 current.counts(family).masked += 1;
                 pass.masked += 1;
             }
-            if filed {
-                current.counts(family).proposals += 1;
-                pass.proposals += 1;
-            }
+            current.counts(family).proposals += filed;
+            pass.proposals += filed;
         }
     })?;
     txn.commit()?;
