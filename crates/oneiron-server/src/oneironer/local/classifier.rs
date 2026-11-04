@@ -142,10 +142,13 @@ pub(crate) struct QuestionHead {
 }
 
 impl QuestionHead {
-    /// Loads only the returned load set. No model path, download or fallback.
+    /// Loads the returned load set for this batch of actual inputs. Rotary
+    /// tables cover only its longest window, not an untrusted config length.
+    /// No model path, download, fallback or policy token limit is added.
     pub(crate) fn load(
         question: &QuestionTarget,
         export: &CheckpointUpload,
+        inputs: &[&Value],
     ) -> anyhow::Result<Self> {
         let manifest: Manifest =
             serde_json::from_slice(file(export, "classifier.json", CheckpointFileKind::Config)?)?;
@@ -206,18 +209,21 @@ impl QuestionHead {
             manifest.max_positions == config.max_position_embeddings,
             "question-head positions differ"
         );
+        let tokenizer = QuestionTokenizer::load(export)?;
+        let cap = inputs
+            .iter()
+            .try_fold(0usize, |cap, input| -> anyhow::Result<usize> {
+                let windows = tokenizer.windows(&question.render_target_text(input)?)?;
+                Ok(cap.max(windows.iter().map(Vec::len).max().unwrap_or(0)))
+            })?;
+        anyhow::ensure!(cap > 0, "question-head load needs a nonempty input window");
         let device = Device::Cpu;
         let weights = VarBuilder::from_slice_safetensors(
             file(export, "trunk.safetensors", CheckpointFileKind::Weights)?,
             DType::F32,
             &device,
         )?;
-        let backbone = Backbone::load(
-            weights.pp("encoder"),
-            &config,
-            gte,
-            config.max_position_embeddings,
-        )?;
+        let backbone = Backbone::load(weights.pp("encoder"), &config, gte, cap)?;
         let weights = VarBuilder::from_slice_safetensors(
             file(export, "head.safetensors", CheckpointFileKind::Weights)?,
             DType::F32,
@@ -226,7 +232,7 @@ impl QuestionHead {
         let head = linear(config.hidden_size, 2, weights.pp("head"))?;
         Ok(Self {
             question: question.clone(),
-            tokenizer: QuestionTokenizer::load(export)?,
+            tokenizer,
             backbone,
             head,
         })

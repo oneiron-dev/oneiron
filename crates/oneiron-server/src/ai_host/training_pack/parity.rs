@@ -31,7 +31,12 @@ pub(super) fn candle_parity(
         })
         .map(|probe| probe.probe_id.clone())
         .collect();
-    let head = QuestionHead::load(question, export).ok();
+    let inputs: Vec<_> = probes
+        .iter()
+        .filter_map(|probe| cases.iter().find(|case| case.id == probe.probe_id))
+        .map(|case| &case.input)
+        .collect();
+    let head = QuestionHead::load(question, export, &inputs).ok();
     let logits_match = tolerance.is_finite()
         && tolerance >= 0.0
         && reference_logits.len() == probes.len()
