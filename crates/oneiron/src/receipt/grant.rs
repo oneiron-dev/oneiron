@@ -9,7 +9,10 @@ use super::kernel::{
 };
 use super::projection::{GrantReceiptProjection, project_receipts_by_grant_limited};
 use crate::Vault;
-use crate::access_grant::{AccessGrant, AccessGrantScope, decode_live_access_grant_body};
+use crate::access_grant::{
+    AccessGrant, AccessGrantOwnerActReceipt, AccessGrantScope, access_grant_owner_acts_in_txn,
+    decode_live_access_grant_body,
+};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -180,6 +183,10 @@ pub(super) fn access_grant_receipts(
             ) {
                 return Ok(());
             }
+            if crate::ingest::connector_witness_read_reason(&id, &grant).is_some() {
+                append_witness_read_receipts(id, &grant, body, query, &mut receipts)?;
+                return Ok(());
+            }
             let created = access_grant_receipt(id, &grant, grant.created_at, "active", "created");
             if query.matches(&created) {
                 receipts.push(created);
@@ -194,6 +201,43 @@ pub(super) fn access_grant_receipts(
         },
     )?;
     Ok(receipts)
+}
+
+fn append_witness_read_receipts(
+    id: EntityId,
+    grant: &AccessGrant,
+    body: &[u8],
+    query: &ReceiptQuery,
+    receipts: &mut Vec<ReceiptRecord>,
+) -> Result<()> {
+    for generation in crate::access_grant::witness_read_generations(body, grant)? {
+        let mut snapshot = grant.clone();
+        snapshot.created_at = generation.created_at;
+        snapshot.revoked_at = generation.revoked_at;
+        snapshot.status = generation.status;
+        let mut created =
+            access_grant_receipt(id, &snapshot, generation.created_at, "active", "created");
+        created.receipt_id = format!(
+            "scoped_read:{}:v{}:created",
+            id.to_hex(),
+            generation.generation_ref.to_hex(),
+        );
+        if query.matches(&created) {
+            receipts.push(created);
+        }
+        if let Some(revoked_at) = generation.revoked_at {
+            let mut revoked = access_grant_receipt(id, &snapshot, revoked_at, "revoked", "revoked");
+            revoked.receipt_id = format!(
+                "scoped_read:{}:v{}:revoked",
+                id.to_hex(),
+                generation.generation_ref.to_hex(),
+            );
+            if query.matches(&revoked) {
+                receipts.push(revoked);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn access_grant_receipt(
@@ -228,6 +272,38 @@ fn access_grant_receipt(
         policy_trace: Vec::new(),
         fields,
     }
+}
+
+/// Owner acts from the typed local index, not signed authority evidence.
+pub(super) fn access_grant_owner_act_receipts(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query: &ReceiptQuery,
+) -> Result<Vec<ReceiptRecord>> {
+    let mut receipts = Vec::new();
+    for (sequence, row) in access_grant_owner_acts_in_txn(vault, txn)? {
+        let grant_hex = row.act.target.to_hex();
+        let event = row.change.as_str();
+        let mut fields = BTreeMap::new();
+        fields.insert("act".to_owned(), row.act.act.as_str().to_owned());
+        fields.insert("change".to_owned(), event.to_owned());
+        let receipt = ReceiptRecord {
+            receipt_id: format!("scoped_read:owner_act:{sequence:020}:{grant_hex}:{event}"),
+            receipt_kind: ReceiptKind::ScopedRead,
+            occurred_at: row.at,
+            actor: Some(row.act.owner.to_hex()),
+            on_behalf_of: None,
+            outcome: event.to_owned(),
+            job_ref: None,
+            trigger_ref: Some(format!("access_grant:{grant_hex}")),
+            policy_trace: Vec::new(),
+            fields,
+        };
+        if query.matches(&receipt) {
+            receipts.push(receipt);
+        }
+    }
+    Ok(receipts)
 }
 
 pub(super) fn outbound_grant_receipts(

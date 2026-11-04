@@ -4,9 +4,9 @@
 use super::*;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
+use crate::batch::shared_vault_write::SharedVaultWrite;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::SharedVaultWrite;
 use crate::write_envelope::WriteActor;
 use oneiron_authority::federation::Scope;
 use std::collections::{BTreeMap, BTreeSet};
@@ -151,9 +151,9 @@ impl ContentWriteSet {
                 // replay never enters this adapter and stays unstamped, and
                 // so does a replicated row an actor re-puts (FIX 11925).
                 let put = if effect.old.is_some() {
-                    crate::federation::record_scope::RowPut::LocalReput
+                    crate::batch::row_put::RowPut::LocalReput
                 } else {
-                    crate::federation::record_scope::RowPut::Birth
+                    crate::batch::row_put::RowPut::Birth
                 };
                 crate::federation::record_scope::stamp_put(
                     &vault.store,
