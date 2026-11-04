@@ -19815,7 +19815,7 @@
      "purpose": "A conversation's landed self-written summaries (FIX 4465 D): one durable receipt per SUMMARY, written in its…",
      "surface": {
       "crate-vis": 5,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -23544,7 +23544,7 @@
      "purpose": "Actor-bound room deletion and per-person erasure over the existing delete door",
      "surface": {
       "crate-vis": 7,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -35754,7 +35754,7 @@
      "surface": {
       "crate-vis": 17,
       "enum": 1,
-      "fn": 1,
+      "fn": 3,
       "struct": 2
      }
     },
