@@ -1760,6 +1760,9 @@ impl OneironClient {
                 "vault.settings.learning.clear" => remote_agent_verb_output::<
                     oneiron::learning_setting_doors::LearningSettingsView,
                 >(client, verb, &input),
+                "vault.secrets.code_run_lifts" => remote_agent_verb_output::<
+                    oneiron::code_run::CodeRunSecretLiftStatus,
+                >(client, verb, &input),
                 "vault.secrets.lift_history" => remote_agent_verb_output::<
                     oneiron::policy_model::SecretLiftStatus,
                 >(client, verb, &input),
@@ -10736,6 +10739,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.settings.learning.clear", value)
+    }
+    pub fn vault_secrets_code_run_lifts(
+        &self,
+        input: &oneiron::code_run::CodeRunSecretLiftRequest,
+    ) -> Result<oneiron::code_run::CodeRunSecretLiftStatus, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.secrets.code_run_lifts", value)
     }
     pub fn vault_secrets_lift_history(
         &self,
