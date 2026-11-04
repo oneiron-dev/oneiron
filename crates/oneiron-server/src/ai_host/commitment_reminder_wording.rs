@@ -318,7 +318,7 @@ fn messages(
     persona: Option<&str>,
 ) -> Vec<LlmMessage> {
     let data = serde_json::json!({
-        "reader": request.reader, "phase": request.phase, "promise": request.promise,
+        "reader": request.reader.as_str(), "phase": request.phase.as_str(), "promise": request.promise,
         "due": request.due, "fixed_text": request.fixed_text, "persona": persona,
     })
     .to_string();
