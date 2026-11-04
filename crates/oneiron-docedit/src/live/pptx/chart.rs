@@ -450,7 +450,8 @@ fn plot_key(family: ChartKind, line: &ChartSeries) -> (ChartKind, u32) {
 /// where it left its base plot-mates: beside series of another base plot,
 /// or alone while a mate it left behind stayed put. A series with its
 /// mates, one whose mates are gone, and one whose family changed (placed
-/// by settlement, not moved) never count as moved.
+/// by settlement, not moved) never count as moved. A co-occupant that
+/// itself moved to the destination names its own move, never this one's.
 fn plot_moved(
     base_family: ChartKind,
     base_series: &[ChartSeries],
@@ -480,7 +481,10 @@ fn plot_moved(
     // (mates beside it, mates gone, family changed) stays silent.
     // Its side plot's base series, drawn in its family there as in the
     // base: a new series never moves it, and a series that changed family
-    // is judged by that field instead.
+    // is judged by that field instead. A co-occupant that left surviving
+    // base-plot mates behind moved here on its own: it names its own move,
+    // never this series' destination; one beside its mates, or with none
+    // surviving elsewhere, still anchors it.
     let mut targets: Vec<u32> = Vec::new();
     for line in side_series {
         let Some(other) = line.id else {
@@ -499,6 +503,17 @@ fn plot_moved(
             continue;
         }
         if nth != ordinal {
+            let left_mates = base_series.iter().filter_map(|line| line.id).any(|mate| {
+                mate != other
+                    && base_key(mate) == Some((family, nth))
+                    && side_series.iter().any(|line| line.id == Some(mate))
+                    && !side_series.iter().any(|line| {
+                        line.id == Some(mate) && plot_key(side_family, line) == (family, at)
+                    })
+            });
+            if left_mates {
+                continue;
+            }
             targets.push(nth);
         }
     }
@@ -581,6 +596,16 @@ fn plot_moved(
         }
     }
     None
+}
+
+/// Whether two move destinations name the same plot (review-4320 P1):
+/// two non-empty destinations share a base-plot ordinal, while a solo
+/// `[]` only ever equals `[]`.
+fn same_plot_destination(head: &[u32], proposal: &[u32]) -> bool {
+    if head.is_empty() || proposal.is_empty() {
+        return head == proposal;
+    }
+    head.iter().any(|nth| proposal.contains(nth))
 }
 
 /// The conflicts of a chart both sides of a fork wrote, when the base, the
@@ -752,7 +777,7 @@ pub(crate) fn conflicts(
                     id,
                 );
                 if let (Some(head_plot), Some(proposal_plot)) = (head_plot, proposal_plot)
-                    && head_plot != proposal_plot
+                    && !same_plot_destination(&head_plot, &proposal_plot)
                 {
                     out.push(series(SeriesField::Plot));
                 }

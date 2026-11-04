@@ -82,16 +82,16 @@ pub(super) async fn facade_invocation_claim(
             }
             // An account key carries no slip, token id or attested owner
             // for the check above to judge, so it always reads live there.
-            // Judge its cached verdict again after the wait (lease, key
-            // expiry, punch), locally only: a miss never falls back to the
-            // always-live answer (review-4320 P1).
-            if let Some(instrument) = auth.instrument()
-                && auth.verified_slip().is_none()
+            // Judge it again after the wait instead (review-4320 P1): a
+            // live cached verdict answers from memory, while a cache miss
+            // (lease race, eviction, full cache) re-presents the waiter's
+            // own bearer to the verifier. Only revoked or expired keys,
+            // or an unreachable control plane, refuse here.
+            if auth.verified_slip().is_none()
                 && auth.jti().is_none()
                 && auth.managed_owner().is_none()
-                && !server.account_keys.as_ref().is_some_and(|keys| {
-                    keys.instrument_is_live(&instrument, oneiron_vault_contract::now_ts())
-                })
+                && auth.instrument().is_some()
+                && !auth.account_key_still_live(server, &parts.headers).await
             {
                 return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
                     .into_response();
