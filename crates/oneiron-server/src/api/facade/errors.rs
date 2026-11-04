@@ -252,7 +252,10 @@ impl FacadeApiError {
     /// then goes again as it was.
     pub(super) fn replayed(status: StatusCode, body: &serde_json::Value) -> Option<Self> {
         if (status.is_success() && status != StatusCode::ACCEPTED)
-            || !body.as_object()?.keys().all(|key| key == "error" || key == "narrowing")
+            || !body
+                .as_object()?
+                .keys()
+                .all(|key| key == "error" || key == "narrowing")
         {
             return None;
         }
