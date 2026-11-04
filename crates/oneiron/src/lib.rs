@@ -276,7 +276,7 @@ pub(crate) mod key_material;
 pub mod merge_queue;
 pub mod office_body;
 pub mod origin;
-pub(crate) mod receive_scan;
+pub(crate) use oneiron_store::receive_scan;
 pub mod repo_mutation;
 pub mod scan_check;
 pub mod scope_summary;

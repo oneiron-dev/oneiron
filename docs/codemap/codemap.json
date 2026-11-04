@@ -59640,16 +59640,6 @@
      "surface": {}
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/receive_scan.rs",
-     "purpose": "Pushed-blob scan inputs, value-free hits, and the receive-pack effector name",
-     "surface": {
-      "crate-vis": 5
-     }
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -90672,13 +90662,6 @@
      "layout": "dir",
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
-    "receive_scan": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Pushed-blob scan inputs, value-free hits, and the receive-pack effector name"
-    },
     "recovery": {
      "files": 114,
      "impl_vault": true,
@@ -91200,7 +91183,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6274,
+   "source_files": 6273,
    "test_files": 900
   },
   "oneiron-android": {
@@ -107844,11 +107827,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "LiveLeaseState"
+     ],
      "path": "src/ai_host/live_lease.rs",
      "purpose": "A metered try's spend lease, read live (FIX 1819): a workflow step's try, a reader child's run, or an…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9,
+      "struct": 1
      }
     },
     {
@@ -107871,8 +107857,8 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 24,
-      "mod": 3,
+      "crate-vis": 23,
+      "mod": 4,
       "re-export": 1,
       "struct": 2
      }
@@ -120930,7 +120916,7 @@
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
       "crate-vis": 28,
-      "fn": 12,
+      "fn": 13,
       "re-export": 1,
       "struct": 1
      }
@@ -125450,7 +125436,24 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 1
+      "mod": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PushedBlob",
+      "ReceiveBlobKind",
+      "ReceiveScanHit"
+     ],
+     "path": "src/receive_scan.rs",
+     "purpose": "Pushed-blob scan inputs, value-free hits, and the receive-pack effector name",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
      }
     }
    ],
@@ -125461,11 +125464,18 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Connector-key lifecycle status and its pinned wire strings"
+    },
+    "receive_scan": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Pushed-blob scan inputs, value-free hits, and the receive-pack effector name"
     }
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 2,
+   "source_files": 3,
    "test_files": 0
   },
   "oneiron-uniffi": {
