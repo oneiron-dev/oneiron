@@ -306,11 +306,12 @@ impl<'v> ScopedRead<'v> {
                 Some(view) => crate::compaction::stored_epoch_in(view, rtxn, id, body)?,
                 None => crate::compaction::stored_epoch_in(&self.vault.store, rtxn, id, body)?,
             };
-            if epoch == crate::compaction::StoredEpoch::Yes {
+            // Epoch keyframes traverse for Yes and Unresolved alike: an
+            // unresolved head hides no source (review P1 on #4466).
+            if epoch == crate::compaction::StoredEpoch::Yes
+                || epoch == crate::compaction::StoredEpoch::Unresolved
+            {
                 return self.owner_epoch_sources_use_limited_in(rtxn, id);
-            }
-            if epoch == crate::compaction::StoredEpoch::Unresolved {
-                return Ok(false);
             }
         }
         match crate::scope_summary::word_sources_in(self.vault, rtxn, id, raw)? {
@@ -329,16 +330,88 @@ impl<'v> ScopedRead<'v> {
                 }
                 Ok(false)
             }
-            crate::scope_summary::WordSources::Own
-            | crate::scope_summary::WordSources::Unresolved => Ok(false),
+            crate::scope_summary::WordSources::Own => Ok(false),
+            // Validation failure is not proof of no limited source (review
+            // P1 on #4466): check the recorded IDs without admission
+            // validation.
+            crate::scope_summary::WordSources::Unresolved => {
+                self.recorded_word_sources_use_limited_in(rtxn, id, raw)
+            }
         }
+    }
+
+    /// Whether any RECORDED word source of `id` carries a standing C6 use
+    /// limit, without source-admission validation (FIX 1496 P1 review on
+    /// #4466): graph-recorded `DerivedFrom` targets + dependency sources,
+    /// plus a merge claim's named summary covers. A validation failure
+    /// (withheld NOTE pins, failed landing, conversation mismatch) leaves
+    /// the recorded IDs readable; the use limit is a table fact either way.
+    fn recorded_word_sources_use_limited_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        let mut recorded = std::collections::BTreeSet::new();
+        for edge in self.out_edges_in(
+            rtxn,
+            id,
+            Some(crate::edge::EdgeKind::DerivedFrom),
+        )? {
+            recorded.insert(edge?.target);
+        }
+        for source in
+            crate::ports::dependency_sources_in(&self.vault.store, rtxn, id)?
+        {
+            recorded.insert(source);
+        }
+        // A merge claim's words are its named summary's recorded covers.
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(body, true)
+            {
+                if let Ok(Some((_, summary))) =
+                    crate::scope_summary::merge_summary_ref(&claim)
+                {
+                    if let Some(row) = self.entity_record_in(rtxn, &summary)? {
+                        if let Ok(logical) = crate::entity_doc::resolve_record_body(
+                            &self.vault.store,
+                            rtxn,
+                            &summary,
+                            &row.body,
+                        ) {
+                            if let Ok(summary_body) =
+                                crate::scope_summary::decode_scope_summary_body(&logical)
+                            {
+                                recorded.extend(summary_body.covers);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for source in &recorded {
+            if crate::store::legal_hold::use_limit_in_txn(
+                &self.vault.store,
+                rtxn,
+                source,
+            )?
+            .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether any record an epoch summary's words came from, through nested
     /// epoch summaries, carries a standing C6 use limit (FIX 1496 S8). The
     /// walk skips rows that no longer resolve instead of refusing (owner
-    /// policy), and expands only through nested epoch summaries, mirroring
-    /// `epoch_sources_admitted_in`'s expansion with a use-limit-only predicate.
+    /// policy), and expands through nested epoch summaries with Yes or
+    /// Unresolved keyframes, mirroring `epoch_sources_admitted_in`'s
+    /// expansion with a use-limit-only predicate.
     fn owner_epoch_sources_use_limited_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -382,7 +455,11 @@ impl<'v> ScopedRead<'v> {
                         &row.body,
                     )?,
                 };
-                if epoch == crate::compaction::StoredEpoch::Yes {
+                // Yes and Unresolved alike: an unresolved head hides no
+                // source (review P1 on #4466).
+                if epoch == crate::compaction::StoredEpoch::Yes
+                    || epoch == crate::compaction::StoredEpoch::Unresolved
+                {
                     pending.push(source);
                 }
             }
