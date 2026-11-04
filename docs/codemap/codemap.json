@@ -64888,18 +64888,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "SecretManifest",
-      "SecretManifestEntry"
-     ],
+     "notable": [],
      "path": "src/secret_manifest.rs",
      "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)",
      "surface": {
-      "const": 1,
-      "fn": 3,
-      "struct": 2
+      "re-export": 1
      }
     },
     {
@@ -64942,14 +64937,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/secret_record/floor.rs",
      "purpose": "Vault floor resolution plus the shared strict POLICY_MANIFEST walk",
      "surface": {
-      "crate-vis": 8,
-      "fn": 2
+      "crate-vis": 7
      }
     },
     {
@@ -64964,25 +64958,22 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "SecretBinding",
-      "SecretCustodyFloor",
       "SecretCustodyMetadata",
       "SecretCustodyRecord",
-      "SecretCustodyStatus",
-      "TierBand"
+      "SecretCustodyStatus"
      ],
      "path": "src/secret_record/types.rs",
      "purpose": "Custody domain types: classes, tiers, bands, floors, bindings, records, and metadata",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 9,
-      "re-export": 1,
-      "struct": 5
+      "fn": 5,
+      "re-export": 2,
+      "struct": 2
      }
     },
     {
@@ -91545,7 +91536,7 @@
     "secret_manifest": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file+dir",
      "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)"
     },
@@ -126692,7 +126683,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 8
+      "mod": 10
      }
     },
     {
@@ -126949,6 +126940,40 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SecretManifest",
+      "SecretManifestEntry"
+     ],
+     "path": "src/secret_manifest.rs",
+     "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)",
+     "surface": {
+      "const": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SecretBinding",
+      "SecretCustodyFloor",
+      "SecretCustodyFloorSource",
+      "TierBand"
+     ],
+     "path": "src/secret_record.rs",
+     "purpose": "Secret custody floor and binding vocabulary used by the store layer",
+     "surface": {
+      "const": 1,
+      "fn": 7,
+      "re-export": 1,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -127013,6 +127038,20 @@
      "layout": "file",
      "purpose": "Pushed-blob scan inputs, value-free hits, and the receive-pack effector name"
     },
+    "secret_manifest": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)"
+    },
+    "secret_record": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Secret custody floor and binding vocabulary used by the store layer"
+    },
     "window_key": {
      "files": 1,
      "impl_vault": false,
@@ -127023,7 +127062,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 21,
+   "source_files": 23,
    "test_files": 0
   },
   "oneiron-uniffi": {
