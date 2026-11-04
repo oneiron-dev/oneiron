@@ -3234,6 +3234,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/hnsw/storage.rs` | src | m | 16 crate-vis | — | Metadata/counter reads and neighbor/vector codec |
 | `src/hnsw/tests.rs` | test | L | — | — | — |
 | `src/hnsw/types.rs` | src | s | 8 crate-vis | — | Shared graph, heap, and beam option types |
+| `src/host_memory.rs` | src | s | 1 re-export | — | The process-wide physical-memory admission line |
 | `src/housekeeping/claim_vad_payment.rs` | src | s | 1 struct · 3 fn · 4 crate-vis | ClaimVadPaymentWorker | The claim VAD payment worker's wake (FIX 11702, Engine 10-31 04:1x) |
 | `src/housekeeping/mod.rs` | src | m | 3 fn · 3 re-export · 4 crate-vis | — | The engine's housekeeping pass: every sweep the engine relies on, run when due |
 | `src/housekeeping/report.rs` | src | s | 1 re-export | — | Housekeeping report vocabulary |
@@ -3425,7 +3426,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/tests/support.rs` | test | m | 52 crate-vis | — | Shared fixtures and helpers for the lens behaviour tests |
 | `src/lens/tests/surface_dispatch.rs` | test | s | — | — | Client interactions remain frame-bound plans behind the existing write gate |
 | `src/lens/tests/versioning.rs` | test | s | — | — | Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs |
-| `src/lib.rs` | src | m | 202 mod · 102 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 203 mod · 102 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 4 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/linear_sync/approval.rs` | src | m | 2 struct · 2 enum · 4 fn · 5 crate-vis | LinearEffectAdmission, LinearEffectHold, LinearEffectRole, LinearRoleApproval | FIX 6424 part 2a (Engine 10-20 21:0x rulings 1, 2 and 8): the owner's approve-once asks on one Linear mirror… |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 3 crate-vis | — | Stable link keys, operation/event digests, field hashes |

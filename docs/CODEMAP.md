@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6296 | 895 | 141 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6297 | 895 | 141 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 58 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 33 | 2 | 0 |
@@ -24,7 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-code-check](codemap/oneiron-code-check.md) | A type check of code-mode programs, run beside them as feedback | 9 | 1 | 0 |
 | [oneiron-code-source](codemap/oneiron-code-source.md) | Host-side preparation of a code-mode program in the oneiron engine: TypeScript stripped by Oxc in process… | 2 | 0 | 0 |
 | [oneiron-container](codemap/oneiron-container.md) | Container sessions with an engine-owned Linux Landlock/seccomp fence | 23 | 0 | 0 |
-| [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 63 | 1 | 1 |
+| [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 64 | 1 | 1 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 22 | 8 | 0 |
 | [oneiron-delivery-vocabulary](codemap/oneiron-delivery-vocabulary.md) | Delivery-window vocabulary of the oneiron engine: the quiet-hours and channel claim keys, decisions and… | 4 | 0 | 0 |
 | [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 166 | 14 | 7 |
@@ -168,6 +168,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `habit` | file | 1 | s | yes | Productivity-pack task-role vocabulary + task/habit checkin validators, plus the derived Habit streak… |
 | `heap_drop` | file | 1 | s | — | Counts reported by rebuildable index and window heap drops |
 | `hnsw` | dir | 12 | m | — | HNSW graph index over the persisted neighbor graph |
+| `host_memory` | file | 1 | s | — | The process-wide physical-memory admission line |
 | `housekeeping` | dir | 8 | m | yes | The engine's housekeeping pass: every sweep the engine relies on, run when due |
 | `human_task` | dir | 7 | m | — | Human-assigned TASK follow-up and the identity-bound human response signal (ONE-1708) |
 | `identity` | file | 1 | m | — | Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world… |
@@ -465,6 +466,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `entity_id` | file+dir | 3 | m | `EntityId` + world-id newtypes + id parsing/hex |
 | `error` | dir | 15 | m | — |
 | `gate` | file | 1 | s | The caller-supplied retrieval filter |
+| `host_memory` | file | 1 | m | The process's physical-memory admission line for host and native work |
 | `identity_topology` | file | 1 | s | Identity-topology lifecycle states and per-op rejections: the values the topology ledger, the sync replay… |
 | `limit_ask` | file+dir | 3 | m | The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520) |
 | `limits` | file | 1 | s | Traversal safety caps for the engine's graph walks |
