@@ -2104,7 +2104,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/executor/extraction/wire.rs` | src | m | 16 crate-vis | — | The extraction reply's wire (FIX 7506, ARCH-0026 row 1): its contract's shape, and how a reply's call-local… |
 | `src/dreamer_consolidation/executor/failure.rs` | src | s | 1 crate-vis | — | How a partition attempt's failed step parks with what it spent (FIX 414) |
 | `src/dreamer_consolidation/executor/merge_resolution.rs` | src | m | 5 crate-vis | — | A conflict set's resolution: the typed pack (how it resolves, and which candidate's identity a merge keeps)… |
-| `src/dreamer_consolidation/executor/partition_run.rs` | src | m | 1 crate-vis | — | The prepared partition run `execute` ends in: the branch's resources at the wake's pin, the partition's… |
+| `src/dreamer_consolidation/executor/partition_run.rs` | src | L | 3 crate-vis | — | The prepared partition run `execute` ends in: the branch's resources at the wake's pin, the partition's… |
 | `src/dreamer_consolidation/extracted_people.rs` | src | s | 5 crate-vis | — | Explicit PERSON outputs from the production extraction response |
 | `src/dreamer_consolidation/extracted_people/bindings.rs` | src | s | 10 crate-vis | — | The engine's person mint (FIX 7506, ARCH-0026 row 1): a reply declares a person it names as `new:P<n>`… |
 | `src/dreamer_consolidation/failure_rules.rs` | src | m | 1 fn · 13 crate-vis | — | Resident-owned v1 failure rules for the two Dreamer consolidation call sites |
@@ -2132,7 +2132,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/note_text.rs` | src | s | 2 crate-vis | — | The text of one NOTE as the Dreamer may read it (ARCH-0032 stage 2), in the caller's transaction: one… |
 | `src/dreamer_consolidation/note_topics.rs` | src | m | 7 crate-vis | — | The stage-2 topic summary trigger (ARCH-0032 write gate, OF-073 / FIX 907) |
 | `src/dreamer_consolidation/open_conflict.rs` | src | s | 1 crate-vis | — | A judge outage is an open question, persisted through the shared write gate |
-| `src/dreamer_consolidation/parallel.rs` | src | m | 1 crate-vis | — | Read-only neighbourhood fan-out, followed by one parent-owned merge |
+| `src/dreamer_consolidation/parallel.rs` | src | L | 6 crate-vis | — | Read-only neighbourhood fan-out, followed by one parent-owned merge |
 | `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 6 fn · 1 re-export · 14 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | Partition planning: cuts dirty turns into consolidation partitions |
 | `src/dreamer_consolidation/partition/payload.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | PartitionThing | The consolidation payload codec (FIX 7524): a branch's world and facet, the thing a nightly child is cut… |
 | `src/dreamer_consolidation/persistence.rs` | src | s | 1 fn · 5 crate-vis | — | Persistent contradiction markers and prior-head context for consolidation |
@@ -2156,7 +2156,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/resources/nightly_link_grant.rs` | src | s | 1 crate-vis | — | The owner's standing grant that lets the Dreamer apply the SameAs links its nightly continuations propose… |
 | `src/dreamer_consolidation/resources/parts.rs` | src | s | 4 crate-vis | — | A branch's declared sources (FIX 7524): every part's conversation and its queued TURNs, pinned at one revision |
 | `src/dreamer_consolidation/resources/pins.rs` | src | s | 14 crate-vis | — | What reading an extraction candidate needs from its branch: the pinned sources, the prior heads and the… |
-| `src/dreamer_consolidation/resources/prior.rs` | src | m | 8 crate-vis | — | Exact stored-head admission and question routing |
+| `src/dreamer_consolidation/resources/prior.rs` | src | m | 9 crate-vis | — | Exact stored-head admission and question routing |
 | `src/dreamer_consolidation/resources/signals.rs` | src | s | 4 crate-vis | — | Actor- and branch-filtered graph/vector inputs for mechanical selection |
 | `src/dreamer_consolidation/resources/slices.rs` | src | s | 2 crate-vis | — | Read-only extraction children attenuated from one prepared branch |
 | `src/dreamer_consolidation/resources/write.rs` | src | m | 1 struct · 2 fn · 18 crate-vis | ScopedConsolidationWrite | Sealed resource handoff |
@@ -2193,7 +2193,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/sieve_attempt.rs` | src | m | 1 crate-vis | — | The sieve's owed novelty/typing rungs and its sampled expensive-path audit |
 | `src/dreamer_consolidation/sieve_attempt/audit.rs` | src | m | 1 crate-vis | — | The sieve audit of an unflagged window (OF-498f, FIX 486): the expensive path reads a source range the cheap… |
 | `src/dreamer_consolidation/sieve_decisions.rs` | src | s | 5 crate-vis | — | The sieve's typed questions (OF-498a) |
-| `src/dreamer_consolidation/sieve_ports.rs` | src | m | 7 struct · 1 enum · 2 trait · 20 fn · 1 type · 3 crate-vis | ExtractionPorts, NeighbourhoodExtraction, NeighbourhoodExtractionPort, RoleNeighbourhoodExtractionPort, RoleSieveNoveltyPort, SieveNoveltyPort, SieveRungCall, SieveRungOutcome +2 | The sieve's and a child extraction's injected ports (OF-498a) |
+| `src/dreamer_consolidation/sieve_ports.rs` | src | m | 7 struct · 1 enum · 2 trait · 20 fn · 1 type · 4 crate-vis | ExtractionPorts, NeighbourhoodExtraction, NeighbourhoodExtractionPort, RoleNeighbourhoodExtractionPort, RoleSieveNoveltyPort, SieveNoveltyPort, SieveRungCall, SieveRungOutcome +2 | The sieve's and a child extraction's injected ports (OF-498a) |
 | `src/dreamer_consolidation/stage_log.rs` | src | s | 8 crate-vis | — | The one line a consolidation partition attempt logs when it ends (L07 DREAM-OBSERVE): the wall ms of each… |
 | `src/dreamer_consolidation/step_charge.rs` | src | s | 14 crate-vis | — | Attempt-local step spend due to the shared wake ledger after memo replay |
 | `src/dreamer_consolidation/strength.rs` | src | m | 2 struct · 3 fn · 3 crate-vis | ConsolidationStrengthPolicy, ConsolidationStrengthSnapshot | Consolidation strength observations and an archive-only lifecycle (OF-216) |
@@ -2461,17 +2461,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/driver/executor_error.rs` | src | s | 1 crate-vis | — | The executor-error arm (H-S5/R2, ONE-1683; FIX 7272): what a non-deadline error settles and parks before it… |
 | `src/dreamer_wake/driver/hooks.rs` | src | s | 3 crate-vis | — | `host.wake` (ARCH-0080 §5) around one wake pass |
 | `src/dreamer_wake/driver/observe.rs` | src | s | 8 crate-vis | — | The wake observation's seams in the pass (DOOR-144): its header and end, the attempt generations it admits… |
-| `src/dreamer_wake/driver/park_cause.rs` | src | s | 3 crate-vis | — | What a non-deadline executor error parks as (FIX 7272) |
+| `src/dreamer_wake/driver/park_cause.rs` | src | s | 4 crate-vis | — | What a non-deadline executor error parks as (FIX 7272) |
 | `src/dreamer_wake/driver/rewrite.rs` | src | s | 3 crate-vis | — | The Rewrite a `host.wake` pre-hook may make (ARCH-0080 §5): add material for the wake, and nothing else (FIX… |
 | `src/dreamer_wake/driver/settle.rs` | src | s | 2 crate-vis | — | Where one executed attempt settles: its budget, its completion, its failure, deferral, landing or park, with… |
 | `src/dreamer_wake/driver/stop.rs` | src | s | 2 crate-vis | — | Where a wake pass stops between attempts: at the attempt boundary (a cancellation, the hard deadline, or the… |
+| `src/dreamer_wake/driver/window.rs` | src | m | 7 crate-vis | — | One wake pass's partition window (FIX 12487): plain Micro partitions admitted back to back, up to the… |
 | `src/dreamer_wake/follower/keyframe.rs` | src | m | 1 fn · 13 crate-vis | — | The follower's keyframe (FIX 7510): how a session sizes its calls and how it folds its retained frames when… |
 | `src/dreamer_wake/follower/log.rs` | src | s | 10 crate-vis | — | The follower's log (FIX 7510): the ordered feed of newly admitted source observations, read forward from the… |
 | `src/dreamer_wake/follower/mod.rs` | src | m | 16 crate-vis | — | The Dreamer's cheap arm as a follower session over the admitted log (ARCH-0026 #cheap-arm, FIX 7510) |
 | `src/dreamer_wake/follower/state.rs` | src | m | 37 crate-vis | — | A follower session's rows (FIX 7510), each through a typed side table in the caller's transaction: the… |
 | `src/dreamer_wake/grain.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | WakeGrain | Vault-local turn cadence and the last queued projector image |
 | `src/dreamer_wake/legibility.rs` | src | s | 1 struct · 2 fn | BudgetLegibilityEnvelope | Budget legibility envelope derived from one BudgetGuard read |
-| `src/dreamer_wake/mod.rs` | src | s | 1 mod · 15 re-export · 24 crate-vis | — | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
+| `src/dreamer_wake/mod.rs` | src | s | 1 mod · 15 re-export · 25 crate-vis | — | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `src/dreamer_wake/night_step.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | NightStepRequestId | The Dreamer's night step on the owner's say (FIX 6903): a Timer `host.wake` asks for what a Timer wake asks… |
 | `src/dreamer_wake/nightly.rs` | src | s | 6 crate-vis | — | Budgeted interest-queue spending, one thing per entity or topic (OF-498c, see `things`): its world, facet… |
 | `src/dreamer_wake/nightly/exposure.rs` | src | s | 3 crate-vis | — | What each planned TURN's text may be read beside in another conversation (FIX 7524, Engine ruling C): its… |
@@ -2517,7 +2518,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/tests.rs` | test | L | 1 crate-vis | — | — |
 | `src/dreamer_wake/tests/cleanup_lane.rs` | test | s | — | — | — |
 | `src/dreamer_wake/tests/coach_tune.rs` | test | s | — | — | The Coach's nightly retrieval tune (owner ruling 2026-10-16): a Timer wake runs it on the Dreamer's runner… |
-| `src/dreamer_wake/types.rs` | src | m | 7 struct · 3 enum · 1 trait · 6 fn · 1 re-export · 4 crate-vis | DreamerAttemptExecution, DreamerAttemptExecutor, LandingRequestNotice, RunWakePass, WakeAttemptContext, WakeAttemptMeter, WakeMilestoneAuthor, WakePassReport +3 | Wake request and outcome vocabulary plus the executor contract |
+| `src/dreamer_wake/types.rs` | src | m | 7 struct · 3 enum · 1 trait · 6 fn · 1 re-export · 6 crate-vis | DreamerAttemptExecution, DreamerAttemptExecutor, LandingRequestNotice, RunWakePass, WakeAttemptContext, WakeAttemptMeter, WakeMilestoneAuthor, WakePassReport +3 | Wake request and outcome vocabulary plus the executor contract |
 | `src/edge_regeneration.rs` | src | s | 3 crate-vis | — | The `regenerates` link proofs over stored rows (FIX 5972) |
 | `src/edit_distance.rs` | src | m | 4 struct · 1 enum · 11 fn · 3 const · 11 mod · 1 re-export · 5 crate-vis | FinalizedProposalText, LoroOpRef, OpAttribution, OpSpan, ProposalArtifactRef | ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the… |
 | `src/edit_distance/attribution/audit.rs` | src | s | 2 struct · 5 fn | AmendmentAuditFixture, AmendmentAuditRecord | Held-out judge audit (Blind Curator guard) |
@@ -5082,7 +5083,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/carrier_marks.rs` | src | s | 1 crate-vis | — | Historical-lift carrier marks, defined in the store layer |
 | `src/secret_custody/cloud_registration/lifecycle.rs` | src | s | 2 crate-vis | — | An erase's reach into the cloud registration (L04 08:3x, FIX 9056): the `CLOUD_REGISTRATION` table's actor… |
 | `src/secret_custody/cloud_registration/mod.rs` | src | s | 4 struct · 3 enum · 3 fn · 2 crate-vis | CloudRegistrationBinding, CloudRegistrationErased, CloudRegistrationFence, CloudRegistrationLink, CloudRegistrationLinked, CloudRegistrationPhase, CloudRegistrationTokenUse | The engine's own custody for its cloud registration (G7, FIX 5347; L04 FIX 9056): the token set the native… |
-| `src/secret_custody/cloud_registration/store.rs` | src | m | 9 fn · 2 crate-vis | — | The owner's doors over the cloud registration's slots: each rechecks the owner proof and live ownership in… |
+| `src/secret_custody/cloud_registration/store.rs` | src | m | 9 fn · 3 crate-vis | — | The owner's doors over the cloud registration's slots: each rechecks the owner proof and live ownership in… |
 | `src/secret_custody/codec.rs` | src | s | 1 re-export · 2 crate-vis | — | Custody body codecs, defined with the store-layer record vocabulary |
 | `src/secret_custody/control.rs` | src | m | 3 struct · 1 enum · 2 fn · 4 re-export · 13 crate-vis | CustodyDelivery, SecretCustodyWork, SecretRevoked, SecretRotated | Custody control on the shared owner-work request (WILL L04 row 04): every change to a portable secret's… |
 | `src/secret_custody/control/doors.rs` | src | m | 3 struct · 3 fn | CustodyCandidate, SealedCustodyChange, SecretCustodyView | The owner's custody doors beside register, rotate and revoke (WILL L04 row 04): a rewrap, a register or… |
@@ -5097,7 +5098,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/control/input/surface_seal.rs` | src | s | 1 struct · 1 fn | CustodyInputBinding | A surface's own seal of a custody input (WILL L04 row 04, FIX 4993): the bytes a register or rotate the… |
 | `src/secret_custody/control/input/witness.rs` | src | m | 21 crate-vis | — | A relayed custody input's witness in numbered parts (FIX 8088) |
 | `src/secret_custody/control/manifest.rs` | src | m | 1 enum · 2 fn · 4 crate-vis | CustodyManifestCheck | A sealed register whose surface stated no `manifest_ref` (CALLS CUSTODY_MANIFEST_UNSTATED… |
-| `src/secret_custody/control/pending_revoke.rs` | src | s | 6 crate-vis | — | A revoke this install could not carry for the owner when he made it (FIX 4851) |
+| `src/secret_custody/control/pending_revoke.rs` | src | m | 6 crate-vis | — | A revoke this install could not carry for the owner when he made it (FIX 4851) |
 | `src/secret_custody/control/permits.rs` | src | s | 7 crate-vis | — | Who may hold an active custody change's bytes (WILL L04 row 04): the recipients the owner permits, each… |
 | `src/secret_custody/control/revoked.rs` | src | m | 11 crate-vis | — | The owner's revoke on a custody request (WILL L04 row 04): its carrier records it with no byte, and every… |
 | `src/secret_custody/control/roster.rs` | src | s | 1 crate-vis | — | The holder's own rewrap when the roster gains one of the owner's machines (WILL L04 row 04, CALLS… |
@@ -5105,21 +5106,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/doors/admission.rs` | src | s | 1 crate-vis | — | Borrowing custody admission projection, defined in the store layer |
 | `src/secret_custody/floor.rs` | src | s | 2 crate-vis | — | Stored custody floor resolution, defined in the store layer |
 | `src/secret_custody/found_keys.rs` | src | m | 2 struct · 1 fn · 1 const · 4 re-export · 15 crate-vis | FoundKeyCard, FoundKeyNotice | The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record… |
-| `src/secret_custody/found_keys/actions.rs` | src | m | 4 fn · 1 const · 5 crate-vis | — | The owner's four answers to a found key: rotate (the rotate door settles it), delete, grant and not a secret |
+| `src/secret_custody/found_keys/actions.rs` | src | L | 5 fn · 2 const · 6 crate-vis | — | The owner's five answers to a found key: rotate (the rotate door settles it), delete, grant, not a secret… |
 | `src/secret_custody/found_keys/page.rs` | src | s | 2 struct · 3 fn | FoundKeyCursor, FoundKeyNoticePage | The found-key notices a page at a time (FIX 8204): the order [`Vault::found_keys`] reads, newest key first… |
+| `src/secret_custody/handle_labels.rs` | src | s | 2 struct · 3 fn · 3 crate-vis | SecretHandleLabel, SecretHandleLabelSet | An owner's display label on a secret handle (L04 s43 FIX 12541, engine part) |
 | `src/secret_custody/holder_export.rs` | src | m | 2 fn · 5 crate-vis | — | The holder's side of a holder-mediated export (FIX 4624(b)), and the owner's fetch and open of what it sealed |
 | `src/secret_custody/holder_export/import_mark.rs` | src | s | 1 crate-vis | — | The owner's mark that he imported one export secret supplement (FIX 12062), signed in the import's own… |
 | `src/secret_custody/holder_export/relay.rs` | src | m | 18 crate-vis | — | An export secret request's sealed copy as it is kept and relayed (FIX 11843): a label, the second its holder… |
 | `src/secret_custody/holder_export/sealed.rs` | src | s | 4 crate-vis | — | The bytes of a sealed export secret supplement (FIX 4624(b)): the archive row of one custody secret, sealed… |
 | `src/secret_custody/holder_export/settle.rs` | src | s | 1 crate-vis | — | The settle of kept export secret copies (FIX 12064): a sealed copy kept under its request's entry, on its… |
-| `src/secret_custody/known_values.rs` | src | m | 1 const · 20 crate-vis | — | The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later… |
-| `src/secret_custody/known_values/forms.rs` | src | m | 12 crate-vis | — | A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not… |
+| `src/secret_custody/known_values.rs` | src | m | 1 const · 22 crate-vis | — | The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later… |
+| `src/secret_custody/known_values/forms.rs` | src | m | 13 crate-vis | — | A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not… |
 | `src/secret_custody/known_values/rolling.rs` | src | s | 9 crate-vis | — | The keyed rolling prefilter (FIX 12209): each entry keeps a 2-byte keyed rolling value of its first window… |
 | `src/secret_custody/known_values/writer_index.rs` | src | s | 4 crate-vis | — | One known-value index per write (FIX 12210): the index a write the group commit runs loads is kept, on the… |
 | `src/secret_custody/leaf_delivery.rs` | src | m | 2 struct · 1 enum · 13 fn · 2 const · 4 crate-vis | LeafKeyAnswer, LeafKeyFailureCause, LeafKeyRequest | The live delivery of a carrier's key (KS-6, FIX 7402 and 11785; Engine 10-30 ruling A): the L02 halves of… |
 | `src/secret_custody/leaf_delivery/doors.rs` | src | m | 4 fn · 3 crate-vis | — | The `Vault` doors of live leaf delivery (FIX 7402): the asker's pending asks, the holder's answer, the… |
 | `src/secret_custody/masked_files.rs` | src | m | 3 fn · 1 re-export · 18 crate-vis | — | Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2) |
-| `src/secret_custody/mod.rs` | src | s | 15 re-export · 23 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
+| `src/secret_custody/mod.rs` | src | s | 16 re-export · 24 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
 | `src/secret_custody/owner_door.rs` | src | m | 4 struct · 2 fn · 2 crate-vis | ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered | The owner registers a secret (ARCH-0069 S1–S3): the production door that puts a value into custody |
 | `src/secret_custody/owner_door/tests.rs` | test | L | — | — | ARCH-0069 S2 at register time: a name the repo manifest declares carries the manifest's entry on its custody… |
 | `src/secret_custody/pending_restore.rs` | src | m | 1 enum · 1 fn · 1 re-export · 9 crate-vis | PendingCredentialResult | A credential a restore landed pending because the vault whose custody it kept did not read (FIX-LIST 10671… |
@@ -5783,7 +5785,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/key_custody/targets.rs` | src | m | 27 crate-vis | — | The all-target acknowledgement journal (KS-4A2, FIX 5685), kept beside the keyless log in… |
 | `src/store/key_custody/targets/drain.rs` | src | m | 10 crate-vis | — | The journal's half of a member drain (FIX 5843, ruled 10-20): the owner's door out of the required set… |
 | `src/store/key_encoding.rs` | src | s | 3 fn · 4 crate-vis | — | Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders and… |
-| `src/store/known_history.rs` | src | m | 17 crate-vis | — | The known-value index's custody client (KS-3, FIX 5684 = FIX 5503 card A; owner KEY STORE = A): the index's… |
+| `src/store/known_history.rs` | src | L | 18 crate-vis | — | The known-value index's custody client (KS-3, FIX 5684 = FIX 5503 card A; owner KEY STORE = A): the index's… |
 | `src/store/known_history/writer_ids.rs` | src | s | 2 crate-vis | — | A writer's known-value history read with the ids it was read from (FIX 12210): what a later pass in the same… |
 | `src/store/l2_evidence.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | L2BaseSummary | Bounded, vault-owned cache of score-free context evidence |
 | `src/store/legal_hold/events.rs` | src | s | 5 crate-vis | — | The two hold logs (C2, C3): customer holds' and the host-only one |
