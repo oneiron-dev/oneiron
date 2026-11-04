@@ -75,6 +75,12 @@ impl DecisionLadder<'_> {
         }
     }
 
+    /// The provider in `rung`'s slot, if one is seated there.
+    #[must_use]
+    pub fn provider(&self, rung: DecisionRung) -> Option<&dyn DecisionProvider> {
+        self.slot(rung)
+    }
+
     /// The first rung from `dial.first` to its ceiling, short of the person, whose provider
     /// takes `question` over `images`. A pack's first read starts at the first rung that
     /// serves it (FIX 12278), so a caller with images may start there, or ask without them
