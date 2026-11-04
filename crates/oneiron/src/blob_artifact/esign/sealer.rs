@@ -15,6 +15,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::render::{PdfPreparation, PreparedEsignPdf};
+
 /// A PAdES baseline profile. The serde names are the seal organ's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -165,4 +167,20 @@ pub trait EsignSealer: Send + Sync {
     /// See [`EsignSealerError`]; a PDF whose signature fails is a verdict,
     /// not an error.
     fn verify(&self, pdf: &[u8]) -> Result<EsignVerdict, EsignSealerError>;
+
+    /// Prepares one immutable original PDF for the seal in an isolated
+    /// process: the host runs the PDF work there, never in the engine.
+    /// `chain`/`trail` are the engine audit replay's checked output, which
+    /// the caller ran: the isolated work takes them as given and never
+    /// replays the audit itself.
+    ///
+    /// # Errors
+    /// See [`EsignSealerError`].
+    fn prepare_esign_pdf(
+        &self,
+        original: &[u8],
+        request: &PdfPreparation<'_>,
+        chain: [u8; 32],
+        trail: Vec<String>,
+    ) -> Result<PreparedEsignPdf, EsignSealerError>;
 }
