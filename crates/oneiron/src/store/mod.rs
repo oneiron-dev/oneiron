@@ -139,11 +139,17 @@ pub use delete_guards::StoreDeleteGuards;
 mod hooks;
 pub use hooks::StoreHooks;
 mod scope_stamps;
-pub use scope_stamps::StoreScopeStamps;
+pub(crate) use scope_stamps::StoreScopeStamps;
 mod project_writes;
 pub use project_writes::StoreProjectWrites;
 mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
+pub(crate) mod actor_scrubs;
+pub use actor_scrubs::StoreActorScrubs;
+#[cfg(feature = "sync")]
+mod sync_hooks;
+#[cfg(feature = "sync")]
+pub(crate) use sync_hooks::StoreSyncHooks;
 #[cfg(feature = "sync")]
 pub mod document_frame_tags;
 pub mod housekeeping_report;
