@@ -174,7 +174,9 @@ impl Vault {
         };
         let mut digest = blake3::Hasher::new();
         digest.update(b"oneiron.lens-slot-decision.v1\0");
-        digest.update(&serde_json::to_vec(receipt)?);
+        let bytes = serde_json::to_vec(receipt)
+            .map_err(|_| Error::InvariantViolation("lens slot receipt encoding failed"))?;
+        digest.update(&bytes);
         let record = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
             decision_id,
