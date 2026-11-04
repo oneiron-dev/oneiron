@@ -123534,7 +123534,7 @@
      "path": "src/models/llama_identity.rs",
      "purpose": "What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
