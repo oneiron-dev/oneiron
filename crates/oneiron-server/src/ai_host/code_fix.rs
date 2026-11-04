@@ -222,6 +222,21 @@ impl<'a> HostModels<'a> {
             .map(|(text, _)| text))
     }
 
+    /// The session distill's sourced call, with its execution actor from
+    /// the admitted attempt's validated authority stamp. No other Coach
+    /// call acquires that identity or records through this method.
+    pub(super) fn generate_sourced_recorded(
+        &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+        rows: Option<Vec<EntityId>>,
+        caller: Option<EntityId>,
+    ) -> oneiron::Result<Option<String>> {
+        Ok(self
+            .served_on_recorded(&self.run.sourced(rows), role, messages, caller)?
+            .map(|(text, _)| text))
+    }
+
     /// [`Self::generate`], with the model of the rung that answered,
     /// fallback included.
     pub(super) fn generate_served(
@@ -252,6 +267,16 @@ impl<'a> HostModels<'a> {
         role: ModelRole,
         messages: Vec<LlmMessage>,
     ) -> oneiron::Result<Option<(String, String)>> {
+        self.served_on_recorded(run, role, messages, None)
+    }
+
+    fn served_on_recorded(
+        &self,
+        run: &RunAdmission,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+        caller: Option<EntityId>,
+    ) -> oneiron::Result<Option<(String, String)>> {
         let Some(seat) = self.runtime.seat(role) else {
             return Ok(None);
         };
@@ -279,10 +304,35 @@ impl<'a> HostModels<'a> {
         let Ok(call) = self.runtime.admit_role(self.vault, role, request) else {
             return Ok(None);
         };
-        let (response, served) = self
+        let no_record_at_arrival = caller.is_some_and(|principal| {
+            self.vault
+                .model_call_keeps_no_record_for(None, Some(principal))
+        });
+        let record_request = caller.map(|_| call.request.clone());
+        let (response, binding) = self
             .handle
-            .block_on(call.ladder.generate_served(run, call.request, None))
+            .block_on(
+                call.ladder
+                    .generate_recorded_while(run, call.request, None, &|| true),
+            )
             .map_err(|error| Error::InvalidConfig(format!("a Coach call failed: {error}")))?;
+        if let (Some(principal), Some(record_request)) = (caller, record_request) {
+            let no_record = no_record_at_arrival
+                || self
+                    .vault
+                    .model_call_keeps_no_record_for(None, Some(principal));
+            let evidence = run.initiated_by(Some(principal));
+            crate::api::record_raw_response(
+                self.vault,
+                &call.ladder,
+                &evidence,
+                &record_request,
+                &response,
+                Some(&binding),
+                no_record,
+            );
+        }
+        let served = binding.rung.model;
         let text = response
             .message
             .content

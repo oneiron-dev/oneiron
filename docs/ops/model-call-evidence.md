@@ -30,7 +30,7 @@ The capture uses the actual caller at each entry:
 The Big-rung caller context is one thread-local scope on the blocking decision
 thread. It restores the entire previous context on return or panic. It is not
 authority, a payer, or an async context propagated to another thread. Generative
-eval arms pass their recording principal directly.
+eval arms and the Coach distill pass their recording principal directly.
 
 ## Native house reads
 
@@ -98,6 +98,28 @@ and session are checked at arrival and terminal, and NoRecord on either suppress
 the write. Evidence uses only a post-terminal initiated-by clone and the shared
 run sequence. No new call, run, receipt, store or replay permission is created.
 
+## Coach session distill
+
+The standing Coach session distill records successful provider terminals before
+its unchanged text and notes parsing. Its caller is the execution actor on the
+admitted attempt's validated authority stamp, with an exact `coach.skill_distill`
+facet match. The enqueue path stamps that actor; the core distill door validates
+it against the Coach authority it uses for the drain's writes before invoking
+the model. Budget authority, input speakers and the sitting being read are not
+used to infer the caller. The standing execution has no calling session.
+
+A missing, mismatched or unreadable stamp suppresses only evidence; the existing
+core door and distill retain their behavior. The explicit actor reaches only the
+distill's recorded call. Other Coach calls and exact replays stay uncaptured by
+this hook. The shared model call keeps its existing run, host wait, full fallback
+walk, settlement, text result and error mapping. It retains the actual admitted
+request, terminal response and answering binding for the existing raw writer.
+
+The same actor is checked for NoRecord before and after the call, with either
+check suppressing evidence. Only a post-terminal run clone carries that actor
+for evidence. A successful provider answer that later fails notes parsing can
+still have evidence; provider errors add no record or retry.
+
 ## Recording and privacy
 
 For a bound session, the existing NoRecord/off-record check runs both before the
@@ -111,7 +133,7 @@ or typed decision. A failed evidence write is logged and never fails the answer.
 An unbound call records as usual; a call outside every capture scope is not
 assigned a guessed actor.
 
-Each captured raw, Big, generative-eval, Local-vision, house or caller-System-One
+Each captured raw, Big, generative-eval, Coach-distill, Local-vision, house or caller-System-One
 evidence row takes a distinct record
 stamp from its shared run. This is an evidence-key sequence, not an admission or receipt
 number. Cloned handles share it and declaration revisions do not reset it.
