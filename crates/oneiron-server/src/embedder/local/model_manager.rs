@@ -15,7 +15,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
@@ -949,14 +949,32 @@ pub(crate) fn hub_url(repo: &str, revision: &str, file: &str) -> String {
 
 /// Fetches `url` into `partial`, resuming from the bytes already in it.
 ///
+/// [`fetch_resumable_with_progress`] without progress: same bytes, same
+/// outcomes.
+pub(crate) fn fetch_resumable(
+    url: &str,
+    partial: &Path,
+    artifact: &PinnedArtifact,
+    authorization: Option<&HeaderValue>,
+    tool: &'static str,
+) -> oneiron::Result<ResumableFetch> {
+    fetch_resumable_with_progress(url, partial, artifact, authorization, tool, |_| {})
+}
+
+/// Fetches `url` into `partial`, resuming from the bytes already in it,
+/// telling `progress` the bytes held after each piece.
+///
 /// A partial with bytes in it asks for the rest (`Range: bytes=<len>-`): a
 /// `206` for exactly that range appends, any other success restarts the file
-/// from zero. A partial already the pinned size asks nothing. At most one
-/// byte past the pinned size is written, so a body that runs over shows as a
-/// size the caller refuses. Nothing here checks the bytes: the caller checks
-/// the whole file's size and digest. What arrived before a transfer failed
-/// stays in the partial, so the next call resumes after it. The caller holds
-/// whatever lock keeps a second writer off `partial`.
+/// from zero. A partial already the pinned size asks nothing, and tells
+/// nothing. At most one byte past the pinned size is written, so a body that
+/// runs over shows as a size the caller refuses. Nothing here checks the
+/// bytes: the caller checks the whole file's size and digest. What arrived
+/// before a transfer failed stays in the partial, so the next call resumes
+/// after it. The caller holds whatever lock keeps a second writer off
+/// `partial`. `progress` hears `start` + written after each piece, so a
+/// resumed fetch reports from where it resumes; it never changes the bytes
+/// or the outcome.
 ///
 /// `authorization` is sent to the Hugging Face origin and nowhere else.
 /// Redirects are followed here, hop by hop, not by the client: its follower
@@ -965,12 +983,13 @@ pub(crate) fn hub_url(repo: &str, revision: &str, file: &str) -> String {
 /// second redirect inside the CDN would carry them. A hop here carries the
 /// header only when its own origin is Hugging Face's, and only `https`
 /// locations are followed.
-pub(crate) fn fetch_resumable(
+pub(crate) fn fetch_resumable_with_progress(
     url: &str,
     partial: &Path,
     artifact: &PinnedArtifact,
     authorization: Option<&HeaderValue>,
     tool: &'static str,
+    mut progress: impl FnMut(u64),
 ) -> oneiron::Result<ResumableFetch> {
     let failed = |reason: &str| oneiron::Error::UpstreamToolFailure {
         tool,
@@ -1029,7 +1048,7 @@ pub(crate) fn fetch_resumable(
     file.set_len(start).map_err(oneiron::Error::Io)?;
     file.seek(SeekFrom::Start(start))
         .map_err(oneiron::Error::Io)?;
-    let copied = std::io::copy(&mut response.take(cap + 1 - start), &mut file);
+    let copied = copy_with_progress(response, &mut file, cap + 1 - start, start, &mut progress);
     let synced = file.sync_all();
     match copied {
         Ok(fetched) => {
@@ -1046,6 +1065,33 @@ pub(crate) fn fetch_resumable(
             )))
         }
     }
+}
+
+/// Copies `limit` bytes from `response` to `file`, telling `progress` the
+/// bytes held (`start` + written) after each piece. The same bytes
+/// `std::io::copy` would move on the same limit, in larger pieces; an error
+/// reads or writes nothing more, and the caller keeps the partial as it
+/// found it.
+fn copy_with_progress(
+    response: reqwest::blocking::Response,
+    file: &mut std::fs::File,
+    limit: u64,
+    start: u64,
+    progress: &mut impl FnMut(u64),
+) -> std::io::Result<u64> {
+    let mut limited = response.take(limit);
+    let mut buf = [0_u8; 64 * 1024];
+    let mut written = 0_u64;
+    loop {
+        let count = limited.read(&mut buf)?;
+        if count == 0 {
+            break;
+        }
+        file.write_all(&buf[..count])?;
+        written += count as u64;
+        progress(start + written);
+    }
+    Ok(written)
 }
 
 /// Sends the GET and follows its redirects by hand ([`fetch_resumable`]):

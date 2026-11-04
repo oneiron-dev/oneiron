@@ -25,6 +25,7 @@
 //! placed bundle is never added to: more platforms go under a fresh root.
 
 use std::fs::OpenOptions;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use reqwest::header::HeaderValue;
@@ -55,6 +56,11 @@ const CLASS_DIR: &str = "oneironer";
 
 /// Names the fetch in a transfer failure.
 const FETCH_TOOL: &str = "oneironer-model-download";
+
+/// Progress prints every this many bytes of one file (FIX 6971): stderr
+/// only, monotonic milestones, so the ~1.2GB fetch is not silent. Small
+/// files print nothing; a resumed fetch prints from where it resumes.
+const PROGRESS_EVERY_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Why a `404` stops a fetch.
 const UNPUBLISHED: &str = "not found (404): the release is not published yet";
@@ -514,7 +520,32 @@ fn stage(
     let partial = staging.join(format!("{file}.partial"));
     let url = model_manager::hub_url(&source.repo, release.stack_sha16, file);
     let auth = source.authorization();
-    let answer = model_manager::fetch_resumable(&url, &partial, artifact, auth, FETCH_TOOL);
+    let expected = artifact.bytes;
+    // The first report sets the next milestone past what is already held,
+    // so a resumed fetch never reprints old ground; each milestone prints
+    // once, in order, and a stderr that is closed stays silent.
+    let mut next: Option<u64> = None;
+    let mut on_progress = |held: u64| {
+        let threshold =
+            next.get_or_insert_with(|| (held / PROGRESS_EVERY_BYTES + 1) * PROGRESS_EVERY_BYTES);
+        while held >= *threshold {
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "oneironer fetch: {file} {} of {} MiB",
+                held / (1024 * 1024),
+                expected / (1024 * 1024),
+            );
+            *threshold += PROGRESS_EVERY_BYTES;
+        }
+    };
+    let answer = model_manager::fetch_resumable_with_progress(
+        &url,
+        &partial,
+        artifact,
+        auth,
+        FETCH_TOOL,
+        on_progress,
+    );
     let (kept, fetched) = match answer.map_err(transfer_error(file))? {
         ResumableFetch::Written { kept, fetched } => (kept, fetched),
         ResumableFetch::NotFound => return Ok(Staged::NotPublished),
