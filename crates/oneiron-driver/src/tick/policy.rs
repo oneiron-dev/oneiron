@@ -92,10 +92,10 @@ impl<T: TickSource> TickSource for WakePolicyTicks<'_, T> {
     )> {
         self.inner.take_buffered_session_hint()
     }
-    fn take_buffered_session_hint_carrier(&mut self) -> Option<super::SessionHintCarrier> {
+    fn take_buffered_session_hint_carrier(&mut self) -> Option<super::QueuedSessionHint> {
         self.inner.take_buffered_session_hint_carrier()
     }
-    fn take_delivered_session_hint_carrier(&mut self) -> Option<super::SessionHintCarrier> {
+    fn take_delivered_session_hint_carrier(&mut self) -> Option<super::QueuedSessionHint> {
         self.inner.take_delivered_session_hint_carrier()
     }
     fn note_armed(&mut self, lane: ArmedLane, at_ms: Option<u64>) {

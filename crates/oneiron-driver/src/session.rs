@@ -45,8 +45,8 @@ use oneiron::session_lifecycle::{
 use oneiron::{EndedSession, EntityId, Result, SessionClosePredicate, SessionMintOutcome, Vault};
 
 use crate::tick::{
-    ArmedLane, NowMillis, SessionHintCarrier, SessionHintStamp, Tick, TickSource, sleep_until_due,
-    wait_for_change,
+    ArmedLane, NowMillis, QueuedSessionHint, SessionHintCarrier, SessionHintStamp, Tick,
+    TickSource, sleep_until_due, wait_for_change,
 };
 
 mod policy;
@@ -394,7 +394,7 @@ pub struct SessionTicks<'v, T> {
     pending_hints: VecDeque<crate::tick::HintSignal>,
     /// The oldest hint whose due-close or apply failed. Nothing newer is
     /// removed from the inner buffer until this hint applies successfully.
-    retry_hint: Option<SessionHintCarrier>,
+    retry_hint: Option<QueuedSessionHint>,
     /// Consecutive retained-hint drain failures, used for capped backoff.
     retry_backoff_failures: u32,
     /// Changes after each commit that may have moved the vault's policy
@@ -419,20 +419,29 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
     }
 
     /// Applies one timestamp-carrying point/period. Failed work stays at the
-    /// head of the pipeline and is never surfaced as if it succeeded.
-    fn apply_guarded_hint(&mut self, carrier: SessionHintCarrier) -> bool {
+    /// head of the pipeline and is never surfaced as if it succeeded. A
+    /// tracked envelope ACKs its ACTUAL effect after the apply commits, on
+    /// EVERY [`Ok`] effect; on [`Err`] the SAME envelope (completion intact)
+    /// stays on the retry head.
+    fn apply_guarded_hint(&mut self, envelope: QueuedSessionHint) -> bool {
+        let carrier = envelope.carrier;
         let applied = self.lifecycle.apply_hint_carrier(carrier);
 
         match applied {
-            Ok(SessionHintEffect::Ended(_)) => true,
-            Ok(_) => {
-                self.pending_hints.push_back(crate::tick::HintSignal {
-                    session: Some(carrier.hint),
-                });
+            Ok(effect) => {
+                if let Some(completion) = envelope.completion {
+                    // An abandoned waiter never blocks the apply.
+                    let _ = completion.send(effect);
+                }
+                if !matches!(effect, SessionHintEffect::Ended(_)) {
+                    self.pending_hints.push_back(crate::tick::HintSignal {
+                        session: Some(carrier.hint),
+                    });
+                }
                 true
             }
             Err(error) => {
-                self.retry_hint = Some(carrier);
+                self.retry_hint = Some(envelope);
                 tracing::error!(?error, "session hint apply failed; retained for retry");
                 false
             }
@@ -442,13 +451,13 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
     /// Retries the oldest failed fact first, then drains buffered facts in
     /// arrival order. A failure stops the drain so causality cannot invert.
     fn drain_buffered_hints(&mut self) -> bool {
-        if let Some(carrier) = self.retry_hint.take()
-            && !self.apply_guarded_hint(carrier)
+        if let Some(envelope) = self.retry_hint.take()
+            && !self.apply_guarded_hint(envelope)
         {
             return false;
         }
-        while let Some(carrier) = self.inner.take_buffered_session_hint_carrier() {
-            if !self.apply_guarded_hint(carrier) {
+        while let Some(envelope) = self.inner.take_buffered_session_hint_carrier() {
+            if !self.apply_guarded_hint(envelope) {
                 return false;
             }
         }
@@ -474,14 +483,14 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
         probe.as_mut().poll(&mut context)
     }
 
-    fn take_awaited_carrier(&mut self, hint: SessionHint) -> Option<SessionHintCarrier> {
-        let carrier = self.inner.take_delivered_session_hint_carrier();
-        match carrier {
-            Some(carrier) if carrier.hint == hint => Some(carrier),
-            Some(carrier) => {
+    fn take_awaited_carrier(&mut self, hint: SessionHint) -> Option<QueuedSessionHint> {
+        let envelope = self.inner.take_delivered_session_hint_carrier();
+        match envelope {
+            Some(envelope) if envelope.carrier.hint == hint => Some(envelope),
+            Some(envelope) => {
                 tracing::error!(
                     surfaced_hint = ?hint,
-                    carried_hint = ?carrier.hint,
+                    carried_hint = ?envelope.carrier.hint,
                     "session hint carrier mismatched surfaced hint; mutation refused"
                 );
                 None
@@ -553,10 +562,10 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                         let Some(hint) = signal.session else {
                             return Some(Tick::Hint(signal));
                         };
-                        let Some(carrier) = self.take_awaited_carrier(hint) else {
+                        let Some(envelope) = self.take_awaited_carrier(hint) else {
                             return Some(Tick::Hint(signal));
                         };
-                        self.apply_guarded_hint(carrier);
+                        self.apply_guarded_hint(envelope);
                     }
                     Poll::Ready(None) | Poll::Pending => {}
                 }
@@ -591,10 +600,10 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                     let Some(hint) = signal.session else {
                         return Some(Tick::Hint(signal));
                     };
-                    let Some(carrier) = self.take_awaited_carrier(hint) else {
+                    let Some(envelope) = self.take_awaited_carrier(hint) else {
                         return Some(Tick::Hint(signal));
                     };
-                    self.apply_guarded_hint(carrier);
+                    self.apply_guarded_hint(envelope);
                     if let Some(pending) = self.pending_hints.pop_front() {
                         return Some(Tick::Hint(pending));
                     }
