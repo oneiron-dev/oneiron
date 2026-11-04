@@ -2,8 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::edge::{EdgeConfirmationStatus, EdgeKind};
-use crate::entity_id::EntityId;
+use oneiron_base::edge::{EdgeConfirmationStatus, EdgeKind};
+use oneiron_contracts::entity_id::EntityId;
 
 use super::types::{
     CommunityEdge, CommunityError, CommunityProjection, PPR_COMMUNITY_DETERMINISTIC_SEED, Result,
@@ -72,13 +72,13 @@ pub fn project_graph(
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Graph {
+pub struct Graph {
     atoms: Vec<Vec<EntityId>>,
-    pub(crate) mass: Vec<usize>,
-    pub(crate) adj: Vec<BTreeMap<usize, u64>>,
+    pub mass: Vec<usize>,
+    pub adj: Vec<BTreeMap<usize, u64>>,
 }
 
-pub(crate) fn groups(labels: &[usize]) -> Vec<Vec<usize>> {
+pub fn groups(labels: &[usize]) -> Vec<Vec<usize>> {
     let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (v, &c) in labels.iter().enumerate() {
         groups.entry(c).or_default().push(v);
@@ -99,7 +99,7 @@ fn labels_for(groups: &[Vec<usize>], n: usize) -> Vec<usize> {
 }
 
 impl Graph {
-    pub(crate) fn from_projection(p: &CommunityProjection, selected: &BTreeSet<EntityId>) -> Self {
+    pub fn from_projection(p: &CommunityProjection, selected: &BTreeSet<EntityId>) -> Self {
         let ids: Vec<_> = p
             .entities
             .iter()
@@ -132,7 +132,7 @@ impl Graph {
         order
     }
 
-    pub(crate) fn aggregate(&self, partition: &[Vec<usize>]) -> Self {
+    pub fn aggregate(&self, partition: &[Vec<usize>]) -> Self {
         let labels = labels_for(partition, self.mass.len());
         let mut atoms = Vec::new();
         let mut mass = Vec::new();
@@ -177,7 +177,7 @@ fn penalty(a: usize, b: usize) -> i128 {
 }
 
 /// Split disconnected local-move communities. This strictly improves CPM.
-pub(crate) fn connected_groups(graph: &Graph, labels: &[usize]) -> Vec<Vec<usize>> {
+pub fn connected_groups(graph: &Graph, labels: &[usize]) -> Vec<Vec<usize>> {
     let mut seen = vec![false; labels.len()];
     let mut result = Vec::new();
     for v in 0..labels.len() {
@@ -202,7 +202,7 @@ pub(crate) fn connected_groups(graph: &Graph, labels: &[usize]) -> Vec<Vec<usize
     result
 }
 
-pub(crate) fn local_move(graph: &Graph, labels: &mut Vec<usize>) {
+pub fn local_move(graph: &Graph, labels: &mut Vec<usize>) {
     let order = graph.order();
     loop {
         let mut moved = false;
@@ -269,7 +269,7 @@ pub(crate) fn local_move(graph: &Graph, labels: &mut Vec<usize>) {
 /// parent, merge only singleton atoms, require gamma-connected source/target
 /// subsets, and allow only nonnegative CPM gains. Deterministic max-gain choice
 /// is the zero-temperature refinement policy; seeded order resolves ties.
-pub(crate) fn refine_partition(graph: &Graph, parent: &[usize]) -> Vec<Vec<usize>> {
+pub fn refine_partition(graph: &Graph, parent: &[usize]) -> Vec<Vec<usize>> {
     let n = parent.len();
     let mut labels: Vec<_> = (0..n).collect();
     let mut mass = graph.mass.clone();
@@ -327,7 +327,7 @@ pub(crate) fn refine_partition(graph: &Graph, parent: &[usize]) -> Vec<Vec<usize
     groups(&labels)
 }
 
-pub(crate) fn leiden(mut graph: Graph) -> (Vec<Vec<EntityId>>, Vec<Vec<EntityId>>) {
+pub fn leiden(mut graph: Graph) -> (Vec<Vec<EntityId>>, Vec<Vec<EntityId>>) {
     let mut labels: Vec<_> = (0..graph.mass.len()).collect();
     let mut fine = None;
     loop {

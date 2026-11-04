@@ -495,6 +495,9 @@ impl Vault {
             && self
                 .skill_entity_for_content_hash_in_txn(&wtxn, content_hash)?
                 .is_some_and(|holder| holder != *entity);
+        let hub_value = hub_ref.to_value()?;
+        let hash_hex = content_hash.to_hex();
+        let encoded_caps = encode_capability_surface_value(&package.capabilities);
         if !widens && !hash_held_elsewhere {
             // A changed Active body lands in a savepoint and stays only when
             // the update's own admission passes in it; otherwise the live
@@ -513,15 +516,48 @@ impl Vault {
             )?;
             if passed || !requires_held_out {
                 savepoint.commit()?;
+                for (proposal_id, mut body, proposal_start) in self
+                    .active_claims_for_predicate_in_txn(
+                        &wtxn,
+                        entity,
+                        PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
+                    )?
+                {
+                    if body.approval != ClaimApprovalStatus::Proposed
+                        || map_value(&body.value, "hubRef") != Some(&hub_value)
+                        || map_text(&body.value, "contentHash") != Some(hash_hex.as_str())
+                        || map_text(&body.value, "version") != Some(package.record.version.as_str())
+                        || map_value(&body.value, "capabilities") != Some(&encoded_caps)
+                    {
+                        continue;
+                    }
+                    let original = crate::ports::EntityStoreRead::port_entity_record(
+                        &self.store,
+                        &wtxn,
+                        &proposal_id,
+                    )?
+                    .ok_or(Error::EntityNotFound)?;
+                    let closed_at = learned_at.max(proposal_start);
+                    // The update request is moot, not an approval or held-out verdict.
+                    body.lifecycle = ClaimLifecycleStatus::Retracted;
+                    body.valid_to = Some(closed_at);
+                    self.put_reserved_claim_in_txn(
+                        &mut wtxn,
+                        &proposal_id,
+                        &body,
+                        TimeRange {
+                            start: proposal_start,
+                            end: closed_at,
+                        },
+                        original.learned_at,
+                    )?;
+                }
                 wtxn.commit()?;
                 return Ok(HubSyncDisposition::Applied);
             }
         } else if !widens && !requires_held_out {
             return Ok(HubSyncDisposition::RefusedByPolicy);
         }
-        let hub_value = hub_ref.to_value()?;
-        let hash_hex = content_hash.to_hex();
-        let encoded_caps = encode_capability_surface_value(&package.capabilities);
         for (proposal_id, body, _) in self.active_claims_for_predicate_in_txn(
             &wtxn,
             entity,
