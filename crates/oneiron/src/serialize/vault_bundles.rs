@@ -84,7 +84,9 @@ pub(crate) fn agent_bundle(
         .and_then(|b| crate::agent_def::decode_agent_definition(&b).ok());
     if let Some(definition) = definition {
         if let Some(refs) = crate::agent_def::resolve_agent_skill_refs(&definition, skills) {
-            let selected = crate::agent_def::select_agent_knowledge(&id, claims);
+            let selected = crate::batch::export::agent_knowledge_selection::select_agent_knowledge(
+                &id, claims,
+            );
             let files = crate::agent_def::agent_pack_files_in(
                 knowledge,
                 &id,

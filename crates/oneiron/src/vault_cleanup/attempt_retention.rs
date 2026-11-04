@@ -2,7 +2,9 @@
 use super::marks::{self, CleanupMark};
 use super::run_snapshot::CleanupSnapshotEntry;
 use super::{CleanupCandidate, CleanupKind};
-use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, decode_record};
+use crate::attempt_queue::{AttemptRecord, decode_record};
+use crate::store::attempt_id::AttemptId;
+use crate::store::attempt_state::AttemptState;
 use crate::error::{Error, MaintenanceError, Result};
 use crate::ports::JobQueueRead;
 use crate::side_table::{self, Raw, SideKey, SideTable};
@@ -160,7 +162,7 @@ pub(super) fn eligible(
     let record = decode_record(raw, id)?;
     // A job row whose owner prunes and bounds it is job state: cleanup never
     // proposes it, so it never mints a proposal id.
-    if crate::attempt_queue::owner_retained_kind(&record.kind) {
+    if crate::store::attempt_retention::owner_retained_kind(&record.kind) {
         return Ok(None);
     }
     Ok((record.state == AttemptState::Completed
@@ -179,7 +181,7 @@ pub(super) fn scan(
     // order: the arm stops before them, the ledger's other rows all read.
     for row in JobQueueRead::port_job_rows(&vault.store, txn, None)? {
         let (attempt, raw) = row?;
-        if crate::attempt_queue::owner_retained_id(&attempt) {
+        if crate::store::attempt_retention::owner_retained_id(&attempt) {
             break;
         }
         let entity = EntityId::from_bytes(*attempt.as_bytes())?;

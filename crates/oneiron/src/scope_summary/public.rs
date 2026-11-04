@@ -134,7 +134,7 @@ impl Memory<'_> {
         let status = match (&input.attempt, &input.session_ref) {
             (Some(attempt), None) => {
                 let id = side_id(attempt)?;
-                let attempt = crate::attempt_queue::AttemptId::from_bytes(id.as_bytes())?;
+                let attempt = crate::store::attempt_id::AttemptId::from_bytes(id.as_bytes())?;
                 self.vault().scope_summary_status(attempt)?
             }
             // A sitting's summary is its own actor's (FIX 7509): the caller

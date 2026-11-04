@@ -331,11 +331,13 @@ impl BatchBuilder<'_> {
             // The routed puts' events project here, before the gate, VAD and
             // lexical staging of the ops that remain. From here an unbound
             // writer's batch commits or is discarded whole.
+            let mut routed_changes_claims = false;
             if let Some(routed) = routed {
                 let written = match routed.record_in_txn(vault, wtxn) {
                     Ok(written) => written,
                     Err(err) => return Rows::Discard(Err(err.into())),
                 };
+                routed_changes_claims = !written.is_empty();
                 // The rows the live mirror takes: the ops that remain, the
                 // routed source events and the heads they wrote.
                 #[cfg(feature = "sync")]
@@ -400,7 +402,7 @@ impl BatchBuilder<'_> {
                         return Rows::Discard(Err(Refused::from(err)));
                     }
                     Rows::Commit(Committed {
-                        changes_claims,
+                        changes_claims: changes_claims || routed_changes_claims,
                         tasks,
                         staged_gate_decisions,
                         approved_vad_ids,
