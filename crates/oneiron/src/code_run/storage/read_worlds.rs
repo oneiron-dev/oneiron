@@ -139,7 +139,7 @@ fn row_scope_prefix(run: EntityId, row: EntityId) -> Vec<u8> {
 /// keeps the ledger from reading complete, for good.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ReadWorldUnknown {
+pub enum ReadWorldUnknown {
     /// The run had a record before its ledger began: a continuation's copied
     /// prefix, or a run from before the ledger.
     NotFromStart,
