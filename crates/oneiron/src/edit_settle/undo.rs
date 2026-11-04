@@ -69,7 +69,7 @@ impl Vault {
         self.authorize_settle(consent, actor)?;
         let key = settlement_key_parts(artifact_id, proposal_ref);
         self.with_write_txn_grouped(|wtxn| {
-            self.authorize_settle_in_txn(wtxn, consent, actor)?;
+            let _ = self.authorize_settle_in_txn(wtxn, consent, actor)?;
             let settled = RECORD
                 .get(&self.store, wtxn, &key)?
                 .ok_or(Error::EntityNotFound)?;
