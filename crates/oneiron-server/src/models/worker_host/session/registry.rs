@@ -18,11 +18,13 @@ use std::time::Instant;
 
 use oneiron::EntityId;
 use oneiron::inference_snapshot::SnapshotId;
+use oneiron::inference_snapshot::retention::SNAPSHOT_HEADROOM_BYTES;
 use oneiron::llm::{
     CanonicalCheckpointRef, ManifestDigest, MessageStamp, SessionBinding, SessionDrop,
     SessionHandle, SessionInvalidation, SessionKey, SessionOp, SessionReleased, SessionResidency,
     SessionTarget, VaultRef,
 };
+use oneiron_contracts::limit_ask::available_memory_bytes;
 use oneiron_driver::InferenceWorker;
 use serde_json::Value as JsonValue;
 use tokio::sync::Notify;
@@ -464,10 +466,13 @@ pub(super) async fn send<B: serde::Serialize, R: serde::de::DeserializeOwned>(
 
 /// The host's plaintext copies of each vault's snapshots, counted with
 /// their bytes while they live, so a park or restore admits against what
-/// the process already holds (FIX 11289).
+/// the process already holds (FIX 11289); plus the bytes admitted but not
+/// yet held, so two racers cannot both pass the screen before either
+/// registers its copy.
 #[derive(Default)]
 struct Copies {
     live: Mutex<BTreeMap<VaultRef, (u64, u64)>>,
+    reserved: Mutex<u64>,
     dropped: Notify,
 }
 
@@ -538,14 +543,71 @@ pub(super) fn host_copies(vault: &VaultRef) -> u64 {
         .unwrap_or(0)
 }
 
-/// The plaintext bytes of every vault's snapshots the host holds now.
-pub(super) fn host_held_bytes() -> u64 {
-    copies()
-        .live
+/// The plaintext bytes of every vault's snapshots the host holds now,
+/// plus the bytes admitted but not yet held: what a new copy must still
+/// fit beside.
+pub(super) fn host_committed_bytes() -> u64 {
+    let copies = copies();
+    // One order everywhere both locks are taken: live, then reserved.
+    let live = copies.live.lock().unwrap_or_else(PoisonError::into_inner);
+    let reserved = copies
+        .reserved
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .unwrap_or_else(PoisonError::into_inner);
+    live.values()
+        .fold(*reserved, |held, entry| held.saturating_add(entry.1))
+}
+
+/// A host-memory reservation for snapshot bytes not yet held as a copy:
+/// admitted atomically with the headroom screen, released on drop. The
+/// guard lives through every copy it covers, so the screen and the first
+/// registration cannot admit twice.
+pub(super) struct HostReservation {
+    bytes: u64,
+}
+
+impl Drop for HostReservation {
+    fn drop(&mut self) {
+        let mut reserved = copies()
+            .reserved
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *reserved = reserved.saturating_sub(self.bytes);
+    }
+}
+
+/// Screens `bytes` against `available` past the headroom and the committed
+/// bytes and reserves them on fit, in one lock: no await inside, so the
+/// screen and the admission are atomic. The caller reads `available` off
+/// the runtime (as `fits_host` does); only microseconds separate the read
+/// from this lock.
+pub(super) fn try_reserve_host(available: u64, bytes: u64) -> Option<HostReservation> {
+    let copies = copies();
+    let live = copies.live.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut reserved = copies
+        .reserved
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let committed = live
         .values()
-        .fold(0, |held, entry| held.saturating_add(entry.1))
+        .fold(*reserved, |held, entry| held.saturating_add(entry.1));
+    let fits = bytes
+        .saturating_add(SNAPSHOT_HEADROOM_BYTES)
+        .saturating_add(committed)
+        <= available;
+    fits.then(|| {
+        *reserved = reserved.saturating_add(bytes);
+        HostReservation { bytes }
+    })
+}
+
+/// `try_reserve_host` with the `/proc` read off the runtime, as `fits_host`
+/// does it (FIX 11290).
+pub(super) async fn reserve_host(bytes: u64) -> Option<HostReservation> {
+    let available = tokio::task::spawn_blocking(available_memory_bytes)
+        .await
+        .ok()??;
+    try_reserve_host(available, bytes)
 }
 
 /// Waits until the host holds no plaintext copy of `vault`'s snapshots, or

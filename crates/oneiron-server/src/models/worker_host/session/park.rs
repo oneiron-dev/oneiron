@@ -92,15 +92,16 @@ pub(super) fn mib(bytes: u64) -> u64 {
 /// still take with [`SNAPSHOT_HEADROOM_BYTES`] left, past the plaintext
 /// bytes it already holds; `None` when no source measures that memory.
 /// The memory read stays live on every call but runs off the runtime: it
-/// is a blocking `/proc` read (FIX 11290). Held bytes are charged, so two
-/// parks racing the same headroom do not both admit (FIX 11289).
+/// is a blocking `/proc` read (FIX 11290). Held and reserved bytes are
+/// charged, so two racers of the same headroom do not both admit
+/// (FIX 11289). A screen only: the admission itself is `reserve_host`.
 pub(super) async fn fits_host(bytes: u64) -> Option<bool> {
     let available = tokio::task::spawn_blocking(available_memory_bytes)
         .await
         .ok()??;
     let want = bytes
         .saturating_add(SNAPSHOT_HEADROOM_BYTES)
-        .saturating_add(registry::host_held_bytes());
+        .saturating_add(registry::host_committed_bytes());
     Some(want <= available)
 }
 
@@ -288,9 +289,10 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
     }
     let parked = seal(candidate, &vault, admission, budget).await;
     // The export measured the region: the device hold carries its actual
-    // bytes now, not the residency estimate (FIX 11289).
+    // bytes now, not the residency estimate (FIX 11289). `hold` replaces the
+    // same holder atomically: no release first, or a concurrent reserve
+    // takes the freed room while the session is still held.
     if let (Ok(bytes), Some(ledger)) = (&parked, &ledger) {
-        ledger.release_hold(&holder);
         ledger.hold(&holder, mib(*bytes));
     }
     if parked.is_ok() {
@@ -371,8 +373,14 @@ async fn seal(
     if bytes > budget.limit() {
         return Err(Some(Skip::Oversize));
     }
-    // Reading the region makes a second copy.
+    // Reading the region makes a second copy: reserve it with the screen,
+    // one atomic admission, held through the seal. The guard keeps the
+    // second copy committed while it lives, so a concurrent restore cannot
+    // pass its own screen on these same bytes.
     room(bytes).await?;
+    let _host_reserved = registry::reserve_host(bytes)
+        .await
+        .ok_or(Some(Skip::NoRoom))?;
     if lifecycle::admission(&vault_ref) != Some(Admitted::Granted(admission)) {
         return Err(None);
     }

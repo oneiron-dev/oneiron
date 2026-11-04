@@ -179,11 +179,13 @@ impl Restore<'_> {
     }
 
     /// The restore, in order. `Err` with whether the session it registered
-    /// holds the snapshot's pin now. Its host copy (the plaintext, then the
-    /// region made of it) runs only while it fits beside the headroom, as a
-    /// park's does; the device room is honoured where the ledger knows it,
-    /// and elsewhere the worker's own answer decides (`snapshot_busy` is
-    /// cold).
+    /// holds the snapshot's pin now. Its host copies (the plaintext, then
+    /// the region made of it) run only while they fit beside the headroom,
+    /// as a park's do: the screen admits the bytes atomically and the guard
+    /// holds them committed through the import, so a concurrent restore
+    /// cannot pass its own screen on the same bytes. The device room is
+    /// honoured where the ledger knows it, and elsewhere the worker's own
+    /// answer decides (`snapshot_busy` is cold).
     async fn run(&self) -> Result<Restored, (Cold, bool)> {
         self.recheck().await.map_err(|cold| (cold, false))?;
         let bytes = self.record.plaintext_bytes;
@@ -191,6 +193,7 @@ impl Restore<'_> {
         if fits_host(bytes).await != Some(true) || !device_room(ledger.as_deref(), bytes) {
             return Err((COLD, false));
         }
+        let _host_reserved = registry::reserve_host(bytes).await.ok_or((COLD, false))?;
         let holder = format!("snapshot-restore-{}", policy::next_op_id());
         if let Some(ledger) = &ledger {
             ledger.hold(&holder, mib(bytes));
@@ -232,13 +235,10 @@ impl Restore<'_> {
     /// Decrypts the snapshot, imports it into a fresh session, rechecks it
     /// and publishes it ready.
     async fn import(&self) -> Result<Restored, (Cold, bool)> {
+        // The region doubles the host copy; `run`'s reservation already
+        // holds those bytes committed through this import, so no second
+        // screen is needed here (it would charge the guard twice).
         let plaintext = self.open().await.ok_or((COLD, false))?;
-        // The region doubles the host copy: recheck room after the open
-        // took the first copy, before the session or region takes the
-        // second. A rejection runs the turn cold.
-        if fits_host(self.record.plaintext_bytes).await != Some(true) {
-            return Err((COLD, false));
-        }
         let created = self.create().await.ok_or((COLD, false))?;
         let target = SessionTarget {
             handle: created.handle,

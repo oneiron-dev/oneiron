@@ -363,7 +363,8 @@ pub(super) fn rows_of_conversation(
 ) -> Result<Vec<SnapshotRecord>> {
     let mut out = Vec::new();
     for (_, id) in CONVERSATION_INDEX.scan_keys(store, txn, conversation.as_bytes())? {
-        if let Some(record) = CATALOG.get(store, txn, &id)? {
+        // Lenient: one damaged row must not hide every healthy snapshot.
+        if let Some(record) = CATALOG.get_lenient(store, txn, &id)? {
             if record.reusable() {
                 out.push(record);
             }
