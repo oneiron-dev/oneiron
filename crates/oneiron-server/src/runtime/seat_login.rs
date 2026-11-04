@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::checkout::{CheckoutId, CheckoutLeaseAct};
+use oneiron::code_sandbox::ProposalSpoolFloor;
 use oneiron::code_sandbox::SandboxBoundaryContract;
 use oneiron::code_sandbox::SandboxCredentialHandle;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
@@ -28,7 +29,6 @@ use oneiron::dispatch_byoa::{
     check_seat_placement, hosted_seat_bound, register_official_dreamer_providers,
     skipped_seats_note,
 };
-use oneiron::origin::smart_http::SpillFloor;
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor, DreamerParkCause,
     HostingPrivacyPosture, WakeAttemptContext,
@@ -82,7 +82,7 @@ pub struct OfficialCliSeatExecutor {
     /// The free disk the host keeps under the output this executor spools
     /// past memory (the server's `DiskFloor`): a write that would go below it
     /// stops the run with [`ByoaError::SpoolAtDiskFloor`]. `None` keeps none.
-    pub floor: Option<Arc<dyn SpillFloor>>,
+    pub floor: Option<Arc<dyn ProposalSpoolFloor>>,
     /// Raised by the host when the run's claim is lost under it (FIX 9320):
     /// the run's process is to stop. `None` watches nothing.
     pub stop: Option<Arc<std::sync::atomic::AtomicBool>>,
