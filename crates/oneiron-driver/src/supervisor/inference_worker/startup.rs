@@ -1,5 +1,5 @@
 //! A replacement's startup follows the retirement of every pending predecessor.
-use std::sync::PoisonError;
+use std::sync::{Arc, PoisonError};
 
 use super::{InferenceWorker, Inner, Phase};
 
@@ -13,8 +13,11 @@ impl InferenceWorker {
             .predecessors
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        predecessors.push(previous.clone());
+            .iter()
+            .filter(|previous| previous.strong_count() > 0)
+            .cloned()
+            .collect::<Vec<_>>();
+        predecessors.push(Arc::downgrade(&previous.inner));
         *self
             .inner
             .predecessors
@@ -42,6 +45,10 @@ impl Inner {
             self.notify();
         }
         for previous in predecessors {
+            let Some(inner) = previous.upgrade() else {
+                continue;
+            };
+            let previous = InferenceWorker { inner };
             let retired = previous.retire();
             tokio::pin!(retired);
             loop {

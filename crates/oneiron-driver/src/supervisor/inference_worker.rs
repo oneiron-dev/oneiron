@@ -28,7 +28,7 @@
 //! timed out, and no startup has a deadline.
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
 use oneiron::llm::{
@@ -269,7 +269,7 @@ struct Inner {
     policy: WorkerPolicy,
     device: Option<(Arc<DeviceLedger>, DeclaredEnvelope)>,
     admission: Mutex<Option<Arc<DeviceAdmission>>>,
-    predecessors: Mutex<Vec<InferenceWorker>>,
+    predecessors: Mutex<Vec<Weak<Inner>>>,
     state: Mutex<State>,
     changed: watch::Sender<u64>,
 }
