@@ -112,6 +112,10 @@ pub fn run() {
                 wrong_root,
             });
             app.manage(root_rekey::RekeyState::new(vault, vault_dir));
+            #[cfg(target_os = "macos")]
+            if let Err(error) = root_rekey::clipboard::start(&handle) {
+                tracing::warn!(reason = %error, "Clipboard watcher did not start");
+            }
             install_menu_bar(&handle)?;
 
             // A menu-bar app, not a Dock app: no icon bounces when a
@@ -134,7 +138,15 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             root_rekey::private_copy::private_copy_view_settings,
             #[cfg(target_os = "macos")]
-            root_rekey::private_copy::set_private_copy_view_settings
+            root_rekey::private_copy::set_private_copy_view_settings,
+            #[cfg(target_os = "macos")]
+            root_rekey::clipboard::controls::clipboard_entries,
+            #[cfg(target_os = "macos")]
+            root_rekey::clipboard::controls::clipboard_erase,
+            #[cfg(target_os = "macos")]
+            root_rekey::clipboard::controls::clipboard_settings,
+            #[cfg(target_os = "macos")]
+            root_rekey::clipboard::controls::set_clipboard_settings
         ])
         .run(tauri::generate_context!())
         .expect("the recorder could not start");
