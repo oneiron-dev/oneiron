@@ -38,7 +38,7 @@ use crate::runtime_hooks::verb::{
     VerbHookStorage,
 };
 use crate::runtime_hooks::{
-    InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume,
+    InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookStop, VerbResume,
 };
 use crate::task_verb::revoke_lands;
 use crate::task_verb::sdk::{AgentVerb, NO_RECORD_ROWS, validate_input};
@@ -382,7 +382,7 @@ pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
     let mut call = VerbCall::for_memory(memory, verb, row_domain(verb))?;
     call.scope = memory
         .room_turn()
-        .map(|turn| format!("room:{}", turn.room.to_hex()));
+        .map(|turn| VerbCallScope::Named(format!("room:{}", turn.room.to_hex())));
     Ok(call)
 }
 
