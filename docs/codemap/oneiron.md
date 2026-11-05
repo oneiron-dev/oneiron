@@ -1610,7 +1610,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/codebase/residue.rs` | src | s | 1 crate-vis | — | Reclaim excluded historical codebase assets without deleting retained shared blobs |
 | `src/codebase/secret_projection.rs` | src | s | 4 crate-vis | — | A snapshot file as a masked reader reads it (FIX 7608 slice 2a) |
 | `src/codebase/serve_lookup.rs` | src | s | 2 crate-vis | — | Transaction-composable lookup of the exact snapshot behind a served fork |
-| `src/codebase/snapshot.rs` | src | s | 1 struct · 5 fn · 1 re-export · 1 crate-vis | CodebaseSnapshotMount | Code snapshot vocabulary and the vault-backed read-only mount |
+| `src/codebase/snapshot.rs` | src | s | 1 struct · 5 fn · 1 re-export · 2 crate-vis | CodebaseSnapshotMount | Code snapshot vocabulary and the vault-backed read-only mount |
 | `src/codebase/store/checkpoint.rs` | src | s | 3 crate-vis | — | The checkpoint getter of codebase snapshots (KS7-2): each snapshot's file manifest and its repo, project… |
 | `src/codebase/store/index_rows.rs` | src | s | 5 crate-vis | — | Codebase snapshot index insertion, removal and lookup |
 | `src/codebase/store/ingest_writer.rs` | src | m | 3 crate-vis | — | The local-repo import's one checked writer (moved from `store/mod.rs`, FIX 6867 G1 PR2a): the owner's and… |
