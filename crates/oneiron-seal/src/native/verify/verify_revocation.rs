@@ -47,22 +47,39 @@ where
 /// own signature verifies under `issuer`'s key with a consistent, allowed
 /// algorithm. This binds issuer identity by key, defeating same-subject
 /// fake-issuer shadowing.
-pub(crate) fn issued_by(cert: &EmbeddedCert, issuer: &EmbeddedCert) -> bool {
+pub(crate) fn issued_by(
+    cert: &EmbeddedCert,
+    issuer: &EmbeddedCert,
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
     use der::Encode;
     if cert.cert.tbs_certificate.issuer != issuer.cert.tbs_certificate.subject {
-        return false;
+        return Ok(false);
     }
     let Ok(alg) = cms::cert_signature_algorithm(&issuer.der) else {
-        return false;
+        return Ok(false);
     };
     let oid = cert.cert.signature_algorithm.oid.as_bytes();
     if !cms::sig_alg_permitted(alg, oid) {
-        return false;
+        return Ok(false);
     }
-    let Ok(tbs) = cert.cert.tbs_certificate.to_der() else {
-        return false;
+    let Some(tbs_len) = cert
+        .cert
+        .tbs_certificate
+        .encoded_len()
+        .ok()
+        .and_then(|len| usize::try_from(len).ok())
+    else {
+        return Ok(false);
     };
-    cms::verify_signature_value(alg, &issuer.der, &tbs, cert.cert.signature.raw_bytes()).is_ok()
+    let _tbs_held = memory.hold(tbs_len)?;
+    let Ok(tbs) = cert.cert.tbs_certificate.to_der() else {
+        return Ok(false);
+    };
+    Ok(
+        cms::verify_signature_value(alg, &issuer.der, &tbs, cert.cert.signature.raw_bytes())
+            .is_ok(),
+    )
 }
 
 /// deltaCRLIndicator (2.5.29.46) and IssuingDistributionPoint (2.5.29.28).
@@ -223,30 +240,48 @@ fn ocsp_cert_binding<'a>(
     cert_id: &x509_ocsp::CertId,
     embedded: &'a [EmbeddedCert],
     anchors: &'a [EmbeddedCert],
-) -> Option<(&'a EmbeddedCert, &'a EmbeddedCert)> {
+    memory: &MemoryLedger,
+) -> Result<Option<(&'a EmbeddedCert, &'a EmbeddedCert)>, SealMemoryRefusal> {
     let oid = cert_id.hash_algorithm.oid.as_bytes();
-    embedded
+    for target in embedded
         .iter()
         .chain(anchors.iter())
         .filter(|c| c.cert.tbs_certificate.serial_number == cert_id.serial_number)
-        .find_map(|target| {
-            let issuer = issuer_candidates(&target.cert.tbs_certificate.issuer, embedded, anchors)
-                .find(|cand| issued_by(target, cand))?;
-            let subject_der = der::Encode::to_der(&issuer.cert.tbs_certificate.subject).ok()?;
-            let key_bytes = issuer
-                .cert
-                .tbs_certificate
-                .subject_public_key_info
-                .subject_public_key
-                .raw_bytes();
-            if cert_id_hash(oid, &subject_der)? != cert_id.issuer_name_hash.as_bytes() {
-                return None;
+    {
+        let mut issuer = None;
+        for candidate in issuer_candidates(&target.cert.tbs_certificate.issuer, embedded, anchors) {
+            if issued_by(target, candidate, memory)? {
+                issuer = Some(candidate);
+                break;
             }
-            if cert_id_hash(oid, key_bytes)? != cert_id.issuer_key_hash.as_bytes() {
-                return None;
-            }
-            Some((target, issuer))
-        })
+        }
+        let Some(issuer) = issuer else {
+            continue;
+        };
+        let Ok(subject_der) = der::Encode::to_der(&issuer.cert.tbs_certificate.subject) else {
+            continue;
+        };
+        let key_bytes = issuer
+            .cert
+            .tbs_certificate
+            .subject_public_key_info
+            .subject_public_key
+            .raw_bytes();
+        let Some(name_hash) = cert_id_hash(oid, &subject_der) else {
+            continue;
+        };
+        if name_hash != cert_id.issuer_name_hash.as_bytes() {
+            continue;
+        }
+        let Some(key_hash) = cert_id_hash(oid, key_bytes) else {
+            continue;
+        };
+        if key_hash != cert_id.issuer_key_hash.as_bytes() {
+            continue;
+        }
+        return Ok(Some((target, issuer)));
+    }
+    Ok(None)
 }
 
 /// RFC 6960 §2.6: the responder is the issuer itself, or a delegate
@@ -259,11 +294,12 @@ fn ocsp_responder_authorized(
     responder: &EmbeddedCert,
     issuer: &EmbeddedCert,
     at_unix: u64,
-) -> bool {
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
     use der::Decode;
     use x509_cert::ext::pkix::KeyUsage;
     if responder.der == issuer.der {
-        return true;
+        return Ok(true);
     }
     let validity = &responder.cert.tbs_certificate.validity;
     let time_valid =
@@ -286,7 +322,7 @@ fn ocsp_responder_authorized(
     // delegate carrying a present-but-unreadable KeyUsage). An ABSENT
     // KeyUsage follows the documented RFC 5280 §4.2.1.3 posture (passes).
     let ku_permits_signing = key_usage_permits(&responder.cert, KeyUsage::digital_signature);
-    time_valid && has_eku && ku_permits_signing && issued_by(responder, issuer)
+    Ok(time_valid && has_eku && ku_permits_signing && issued_by(responder, issuer, memory)?)
 }
 
 /// Does this candidate certificate match the BasicOCSPResponse responderID?
@@ -364,13 +400,7 @@ pub(crate) fn ocsp_entry_valid<'a>(
             candidates.push(candidate);
         }
     }
-    Ok(ocsp_basic_valid(
-        &basic,
-        &candidates,
-        embedded,
-        anchors,
-        at_unix,
-    ))
+    ocsp_basic_valid(&basic, &candidates, embedded, anchors, at_unix, memory)
 }
 
 /// The rest of [`ocsp_entry_valid`]: the responder among `candidates`, the
@@ -382,9 +412,10 @@ fn ocsp_basic_valid<'a>(
     embedded: &'a [EmbeddedCert],
     anchors: &'a [EmbeddedCert],
     at_unix: u64,
-) -> Option<Vec<&'a [u8]>> {
+    memory: &MemoryLedger,
+) -> Result<Option<Vec<&'a [u8]>>, SealMemoryRefusal> {
     use der::Encode;
-    let responder = candidates
+    let Some(responder) = candidates
         .iter()
         .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
         .or_else(|| {
@@ -392,12 +423,18 @@ fn ocsp_basic_valid<'a>(
                 .iter()
                 .chain(anchors.iter())
                 .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
-        })?;
+        })
+    else {
+        return Ok(None);
+    };
     let mut targets: Vec<&[u8]> = Vec::with_capacity(basic.tbs_response_data.responses.len());
     for single in &basic.tbs_response_data.responses {
-        let (target, issuer) = ocsp_cert_binding(&single.cert_id, embedded, anchors)?;
-        if !ocsp_responder_authorized(responder, issuer, at_unix) {
-            return None;
+        let Some((target, issuer)) = ocsp_cert_binding(&single.cert_id, embedded, anchors, memory)?
+        else {
+            return Ok(None);
+        };
+        if !ocsp_responder_authorized(responder, issuer, at_unix, memory)? {
+            return Ok(None);
         }
         if !evidence_fresh(
             x509_cert::time::Time::GeneralTime(single.this_update.0),
@@ -406,25 +443,27 @@ fn ocsp_basic_valid<'a>(
                 .map(|n| x509_cert::time::Time::GeneralTime(n.0)),
             at_unix,
         ) {
-            return None;
+            return Ok(None);
         }
         // Evaluate the asserted status: only `good` supports validity.
         if !matches!(single.cert_status, x509_ocsp::CertStatus::Good(_)) {
-            return None;
+            return Ok(None);
         }
         targets.push(target.der.as_slice());
     }
     let Ok(alg) = cms::cert_signature_algorithm(&responder.der) else {
-        return None;
+        return Ok(None);
     };
     let oid = basic.signature_algorithm.oid.as_bytes();
     if !cms::sig_alg_permitted(alg, oid) {
-        return None;
+        return Ok(None);
     }
     let Ok(tbs) = basic.tbs_response_data.to_der() else {
-        return None;
+        return Ok(None);
     };
-    cms::verify_signature_value(alg, &responder.der, &tbs, basic.signature.raw_bytes())
-        .is_ok()
-        .then_some(targets)
+    Ok(
+        cms::verify_signature_value(alg, &responder.der, &tbs, basic.signature.raw_bytes())
+            .is_ok()
+            .then_some(targets),
+    )
 }
