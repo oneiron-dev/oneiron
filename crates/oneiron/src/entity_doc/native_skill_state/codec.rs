@@ -88,6 +88,7 @@ fn malformed() -> Error {
 impl SkillStateFact {
     /// Only the private native publisher calls this, with an actual post-gate
     /// input and the document it just loaded from the same Store transaction.
+    #[cfg(feature = "sync")]
     pub(super) fn from_post_gate(
         admitted: &crate::batch::NativeSkillPostGate<'_>,
         txn: &heed::RoTxn<'_>,

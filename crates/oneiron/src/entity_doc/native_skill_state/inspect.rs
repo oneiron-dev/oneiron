@@ -4,7 +4,7 @@ use loro::{ContainerID, ContainerType, ID, JsonMapOp, JsonOpContent, VersionVect
 
 use super::super::EntityDoc;
 use super::codec::SkillStateFact;
-use super::prepare::{CURRENT, ROOT, read_fact};
+use super::register::{CURRENT, ROOT, read_fact};
 use crate::error::{Error, Result};
 
 /// These are observed operations, not admitted operations. A delete must also

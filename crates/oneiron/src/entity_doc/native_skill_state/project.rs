@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 
 use super::super::EntityDoc;
-use super::prepare::read_fact;
+use super::register::read_fact;
 use crate::error::{Error, Result};
 
 /// The caller has already admitted this document's native witnesses. This
