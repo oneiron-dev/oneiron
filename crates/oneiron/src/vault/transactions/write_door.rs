@@ -45,7 +45,7 @@ impl Vault {
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
-        self.write_txn_door_classed_accounted(callback, class, None, f)
+        self.write_txn_door_classed_accounted_after_commit(callback, class, None, f, Ok)
     }
 
     pub(crate) fn write_txn_door_classed_accounted<F, T, E>(
@@ -55,6 +55,53 @@ impl Vault {
         attempt: Option<&crate::store::native_write::NativeWriteAttempt>,
         f: F,
     ) -> std::result::Result<T, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
+        self.write_txn_door_classed_accounted_after_commit(callback, class, attempt, f, Ok)
+    }
+
+    /// Publishes a write's session segment on its calling thread as soon as
+    /// the base commit is durable, before postcommit work can take a writer.
+    /// A failed base write drops its result without calling `after_commit`.
+    pub(crate) fn with_write_txn_grouped_after_commit<T, U>(
+        &self,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::error::Result<T>,
+        after_commit: impl FnOnce(T) -> crate::error::Result<U>,
+    ) -> crate::error::Result<U> {
+        self.write_txn_door_after_commit(Callback::Audited, write, after_commit)
+    }
+
+    /// The same publication point for an engine write with a typed error
+    /// and its original grouped or opaque callback discipline.
+    pub(crate) fn write_txn_door_after_commit<F, T, U, E>(
+        &self,
+        callback: Callback,
+        write: F,
+        after_commit: impl FnOnce(T) -> std::result::Result<U, E>,
+    ) -> std::result::Result<U, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
+        self.write_txn_door_classed_accounted_after_commit(
+            callback,
+            BackupWriteClass::Content,
+            None,
+            write,
+            after_commit,
+        )
+    }
+
+    fn write_txn_door_classed_accounted_after_commit<F, T, U, E>(
+        &self,
+        callback: Callback,
+        class: BackupWriteClass,
+        attempt: Option<&crate::store::native_write::NativeWriteAttempt>,
+        f: F,
+        after_commit: impl FnOnce(T) -> std::result::Result<U, E>,
+    ) -> std::result::Result<U, E>
     where
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
@@ -71,80 +118,6 @@ impl Vault {
         // Read on the calling thread: the group may run this closure on
         // another member's (FIX 11607).
         let rederive = !crate::scope_summary::rederive_deferred();
-        let write = |wtxn: &mut heed::RwTxn<'_>| {
-            let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
-                Ok(staged) => staged,
-                Err(err) => return Rows::Discard(Err(E::from(err))),
-            };
-            // A credential erase this write stages finishes after it (KS-6 part 2).
-            let credentials_before = crate::store::credential_erases_staged();
-            let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-            let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
-            let result = {
-                let _active_write_txn = crate::store::active_write_txn_guard();
-                // A key this write's mask found raises its notice here.
-                match check_federation_imports_in_txn(self, wtxn)
-                    .map_err(E::from)
-                    .and_then(|()| f(wtxn))
-                    .and_then(|result| {
-                        crate::secret_custody::raise_found_key_notices_in_txn(self, wtxn)
-                            .map_err(E::from)?;
-                        Ok(result)
-                    }) {
-                    Ok(result) => result,
-                    Err(err) => return Rows::Discard(Err(err)),
-                }
-            };
-            if let Err(err) = rekeys.finish(&self.store, wtxn) {
-                return Rows::Discard(Err(E::from(err)));
-            }
-            if rederive && let Err(err) = crate::scope_summary::rederive_changed_in_txn(self, wtxn)
-            {
-                return Rows::Discard(Err(E::from(err)));
-            }
-            let postcommit = vad_scope.finish();
-            // FIX 7957: each row this write changed leaves its window a
-            // durable marker, so a crash before the live mirror loses no edit.
-            #[cfg(feature = "sync")]
-            if let Err(err) = self.mark_pending_mirrors_in_txn(wtxn, &postcommit.rows) {
-                return Rows::Discard(Err(E::from(err)));
-            }
-            let approved =
-                match self.resolved_dreamer_vad_approvals_in_txn(wtxn, postcommit.vad_ids) {
-                    Ok(approved) => approved,
-                    Err(err) => return Rows::Discard(Err(E::from(err))),
-                };
-            // The approval's commit carries its consolidation debt (FIX 9598).
-            if !approved.is_empty() {
-                let now = self.store.clock.now_recorded_at();
-                let owed = crate::store::owe_claim_vad_in_txn(&self.store, wtxn, &approved, now);
-                if let Err(err) = owed {
-                    return Rows::Discard(Err(E::from(err)));
-                }
-            }
-            // A claim delete applied in this write staged its key's
-            // retirement; destroy the key after the commit, not at the
-            // next retention pass.
-            match self.store.gate_retirements_staged_in_txn(wtxn) {
-                Ok(staged) => Rows::Commit((
-                    result,
-                    approved,
-                    postcommit.proactivity_changed,
-                    (
-                        postcommit.task_ids,
-                        postcommit.rows,
-                        postcommit.room_joins,
-                        postcommit.pad_windows,
-                        postcommit.settled_tasks,
-                        postcommit.notifications_changed,
-                        postcommit.note_document_ids,
-                    ),
-                    staged != retirements_before
-                        || crate::store::credential_erases_staged() != credentials_before,
-                )),
-                Err(err) => Rows::Discard(Err(E::from(err))),
-            }
-        };
         let (
             result,
             approved_vad_ids,
@@ -161,7 +134,86 @@ impl Vault {
             retirement_staged,
         ) = self
             .store
-            .group_write_classed_accounted(callback, class, attempt, write)?;
+            .group_write_classed_accounted(callback, class, attempt, |wtxn| {
+                let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
+                    Ok(staged) => staged,
+                    Err(err) => return Rows::Discard(Err(E::from(err))),
+                };
+                // A credential erase this write stages finishes after it (KS-6 part 2).
+                let credentials_before = crate::store::credential_erases_staged();
+                let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
+                let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
+                let result = {
+                    let _active_write_txn = crate::store::active_write_txn_guard();
+                    // A key this write's mask found raises its notice here.
+                    match check_federation_imports_in_txn(self, wtxn)
+                        .map_err(E::from)
+                        .and_then(|()| f(wtxn))
+                        .and_then(|result| {
+                            crate::secret_custody::raise_found_key_notices_in_txn(self, wtxn)
+                                .map_err(E::from)?;
+                            Ok(result)
+                        }) {
+                        Ok(result) => result,
+                        Err(err) => return Rows::Discard(Err(err)),
+                    }
+                };
+                if let Err(err) = rekeys.finish(&self.store, wtxn) {
+                    return Rows::Discard(Err(E::from(err)));
+                }
+                if rederive
+                    && let Err(err) = crate::scope_summary::rederive_changed_in_txn(self, wtxn)
+                {
+                    return Rows::Discard(Err(E::from(err)));
+                }
+                let postcommit = vad_scope.finish();
+                // FIX 7957: each row this write changed leaves its window a
+                // durable marker, so a crash before the live mirror loses no edit.
+                #[cfg(feature = "sync")]
+                if let Err(err) = self.mark_pending_mirrors_in_txn(wtxn, &postcommit.rows) {
+                    return Rows::Discard(Err(E::from(err)));
+                }
+                let approved =
+                    match self.resolved_dreamer_vad_approvals_in_txn(wtxn, postcommit.vad_ids) {
+                        Ok(approved) => approved,
+                        Err(err) => return Rows::Discard(Err(E::from(err))),
+                    };
+                // The approval's commit carries its consolidation debt (FIX 9598).
+                if !approved.is_empty() {
+                    let now = self.store.clock.now_recorded_at();
+                    let owed =
+                        crate::store::owe_claim_vad_in_txn(&self.store, wtxn, &approved, now);
+                    if let Err(err) = owed {
+                        return Rows::Discard(Err(E::from(err)));
+                    }
+                }
+                // A claim delete applied in this write staged its key's
+                // retirement; destroy the key after the commit, not at the
+                // next retention pass.
+                match self.store.gate_retirements_staged_in_txn(wtxn) {
+                    Ok(staged) => Rows::Commit((
+                        result,
+                        approved,
+                        postcommit.proactivity_changed,
+                        (
+                            postcommit.task_ids,
+                            postcommit.rows,
+                            postcommit.room_joins,
+                            postcommit.pad_windows,
+                            postcommit.settled_tasks,
+                            postcommit.notifications_changed,
+                            postcommit.note_document_ids,
+                        ),
+                        staged != retirements_before
+                            || crate::store::credential_erases_staged() != credentials_before,
+                    )),
+                    Err(err) => Rows::Discard(Err(E::from(err))),
+                }
+            })?;
+        // Release the segment permit before any postcommit writer can wait
+        // on another writer that is itself waiting for this publication.
+        // Even a publication error keeps the durable write's postcommit work.
+        let result = after_commit(result);
         // A fence this write's erase committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
         self.store.notify_attempt_observers();
@@ -221,7 +273,7 @@ impl Vault {
         // older debts, as the door did here (FIX 11702, Engine 10-31 04:1x).
         if self.claim_vad_payment_worker_attached() {
             self.hand_claim_vads_for_payment(approved_vad_ids);
-            return Ok(result);
+            return result;
         }
         // With none (an embedded SDK, the CLI), nothing pays after the
         // answer, so the door pays before it. The canonical consolidator
@@ -242,7 +294,7 @@ impl Vault {
                 "the owed claim VAD drain after a commit failed; the housekeeping sweep retries it"
             );
         }
-        Ok(result)
+        result
     }
 
     /// Pays up to [`WRITE_DOOR_OWED_VAD_DRAIN`] owed claim VADs after a

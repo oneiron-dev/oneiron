@@ -95,6 +95,12 @@ an admission denial is its ordinary error. The commit witness is set immediately
 after the root commits, before callbacks or fallible postcommit work, so a later
 error never replays already durable rows.
 
+The ordinary, accounted and session-publication doors share one native writer.
+A session publication callback runs on the calling thread after durable commit,
+before postcommit work can take another writer. Its error is retained while the
+durable write's postcommit work still runs. The own-commit witness is already
+set before that callback, so its failure cannot replay the write.
+
 The real mesh stop interrupts these untimed admission waits. The native scope
 finishes only after its writer and growth waits return. The encoded Vec frees
 before its allocated charge is released; cached native buffers keep their own
