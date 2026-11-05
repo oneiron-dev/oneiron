@@ -48,7 +48,9 @@ pub use door::{
     EsignIssuedLink, EsignLinksIssueRequest, EsignLinksView, EsignSealAttemptView,
     EsignSealGetRequest, EsignSealView, EsignSealedItemView, EsignSealedView,
     EsignSigningImageRequest, EsignSigningImageView, EsignSigningPdfRequest, EsignSigningPdfView,
-    EsignSigningRequest, EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,
+    EsignSigningPreviewRequest, EsignSigningPreviewView, EsignSigningRequest,
+    EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,
+    layout_esign_preview,
 };
 mod escalation;
 pub(crate) use escalation::erase_held_signing_actor_in_txn;
