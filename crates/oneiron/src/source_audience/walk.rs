@@ -23,14 +23,15 @@
 //! authenticates no one reads no bound row, as a private thread is read
 //! (FIX 2951). A cycle adds no restriction of its own.
 //!
-//! A row a source landed carries its source in its own bytes (a mail
-//! CONVERSATION's or TURN's `import_source`, a MESSAGE's `import.mail.*`
-//! type). Bindings and policies are this vault's own rows and do not travel
-//! with a replica, so such a row read where its binding is absent reads to
-//! no one; and a row whose words came from a bound one does not leave this
-//! vault by window replication ([`withheld_from_replication_in`]).
+//! A row a source landed carries its source in its own bytes: a mail
+//! CONVERSATION's or TURN's `import_source` (one of the pack's own source
+//! names), a MESSAGE through its TURN. Bindings and policies are this
+//! vault's own rows and do not travel with a replica, so such a row read
+//! where its binding is absent reads to no one; and a bound row, or a row
+//! whose words came from one, does not leave this vault by window
+//! replication ([`withheld_from_replication_in`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::EdgeKind;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -40,12 +41,20 @@ use crate::registry::{
 };
 use crate::{EntityId, Vault};
 
-/// A MESSAGE body's type key, and the TURN and CONVERSATION body key naming
-/// an imported transcript's source.
-const MESSAGE_TYPE_KEY: &str = "type";
+/// The TURN and CONVERSATION body key naming an imported transcript's
+/// source.
 const IMPORT_SOURCE_KEY: &str = "import_source";
-/// The import sources a source audience lands: the Mail & Calendar pack's.
-const SOURCE_IMPORT_PREFIXES: [&str; 2] = ["mail.", "calendar."];
+/// The import sources a source audience lands: the Mail & Calendar pack's
+/// own, exactly (`mail_pack::landing::import_source`). A caller that births
+/// a conversation stamped with one of these names only hides its own rows.
+const SOURCE_IMPORTS: [&str; 6] = [
+    "mail.google_workspace",
+    "mail.google",
+    "mail.microsoft365",
+    "mail.imap",
+    "calendar.caldav",
+    "calendar.ics",
+];
 
 /// The string value of `key` in a MessagePack map body.
 fn body_string<'b>(body: &'b [u8], key: &str) -> Option<&'b str> {
@@ -63,24 +72,47 @@ fn body_string<'b>(body: &'b [u8], key: &str) -> Option<&'b str> {
     })
 }
 
-/// Whether the row `raw` says in its own bytes that a source audience
-/// landed it: a source-imported CONVERSATION, TURN or MESSAGE.
-pub(crate) fn source_marked(raw: &[u8]) -> bool {
+/// Whether a TURN or CONVERSATION row `raw` is a source's import.
+fn container_marked(raw: &[u8]) -> bool {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return false;
     };
+    if !matches!(header.entity_type, ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION) {
+        return false;
+    }
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-    let stamp = match header.entity_type {
-        ENTITY_TYPE_MESSAGE => body_string(body, MESSAGE_TYPE_KEY)
-            .and_then(|kind| kind.strip_prefix("import.")),
-        ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION => body_string(body, IMPORT_SOURCE_KEY),
-        _ => None,
+    body_string(body, IMPORT_SOURCE_KEY).is_some_and(|source| SOURCE_IMPORTS.contains(&source))
+}
+
+/// Whether the row `id` (bytes `raw`) is one a source audience landed: a
+/// source-imported TURN or CONVERSATION by its own stamp, a MESSAGE by its
+/// TURN's (`PartOf`), since a MESSAGE's type is its caller's word.
+fn source_marked_in(
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Ok(false);
     };
-    stamp.is_some_and(|source| {
-        SOURCE_IMPORT_PREFIXES
-            .iter()
-            .any(|prefix| source.starts_with(prefix))
-    })
+    match header.entity_type {
+        ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION => Ok(container_marked(raw)),
+        ENTITY_TYPE_MESSAGE => {
+            for turn in
+                crate::conversation_dag::counted_edge_ids(dbs, txn, &id, EdgeKind::PartOf, false)?
+            {
+                if let Some(bytes) =
+                    crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &turn)?
+                    && container_marked(&bytes)
+                {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// What the words of the row `id` (bytes `bytes`) came from, as the walk
@@ -148,7 +180,8 @@ fn word_sources(
 /// (any support of a CLAIM counts, so a claim also supported elsewhere stays
 /// too). Bindings and policies do not travel with a replica, so a bound row
 /// stays on the vault that landed it and is read there through the scoped
-/// reads. A vault that holds no policy withholds nothing.
+/// reads. Where the vault holds no policy only a row a source landed is
+/// withheld, by its own stamp.
 ///
 /// # Errors
 ///
@@ -158,50 +191,32 @@ pub(crate) fn withheld_from_replication_in(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    if !super::any_policy_in(vault, txn)? {
-        return Ok(false);
-    }
     let dbs = vault.store.read();
-    let mut seen = BTreeMap::new();
-    lineage_bound(vault, &dbs, txn, *id, &mut seen)
-}
-
-fn lineage_bound(
-    vault: &Vault,
-    dbs: &crate::store::StoreRead<'_>,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    seen: &mut BTreeMap<EntityId, bool>,
-) -> Result<bool> {
-    if let Some(known) = seen.get(&id) {
-        return Ok(*known);
+    if !super::any_policy_in(vault, txn)? {
+        return match crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, id)? {
+            Some(raw) => source_marked_in(&dbs, txn, *id, &raw),
+            None => Ok(false),
+        };
     }
-    seen.insert(id, false);
-    let bound = lineage_bound_uncached(vault, dbs, txn, id, seen)?;
-    seen.insert(id, bound);
-    Ok(bound)
-}
-
-fn lineage_bound_uncached(
-    vault: &Vault,
-    dbs: &crate::store::StoreRead<'_>,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    seen: &mut BTreeMap<EntityId, bool>,
-) -> Result<bool> {
-    if super::binding_in(vault, txn, &id)?.is_some() {
-        return Ok(true);
-    }
-    let Some(bytes) = crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &id)? else {
-        return Ok(false);
-    };
-    if source_marked(&bytes) {
-        return Ok(true);
-    }
-    let (every, supports) = word_sources(vault, dbs, txn, id, &bytes)?;
-    for source in every.into_iter().chain(supports) {
-        if source != id && lineage_bound(vault, dbs, txn, source, seen)? {
+    // A worklist, not recursion: an ancestry chain of any length is read
+    // without growing the stack.
+    let mut seen = BTreeSet::from([*id]);
+    let mut pending = vec![*id];
+    while let Some(row) = pending.pop() {
+        if super::binding_in(vault, txn, &row)?.is_some() {
             return Ok(true);
+        }
+        let Some(bytes) = crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, &row)? else {
+            continue;
+        };
+        if source_marked_in(&dbs, txn, row, &bytes)? {
+            return Ok(true);
+        }
+        let (every, supports) = word_sources(vault, &dbs, txn, row, &bytes)?;
+        for source in every.into_iter().chain(supports) {
+            if seen.insert(source) {
+                pending.push(source);
+            }
         }
     }
     Ok(false)
@@ -223,7 +238,7 @@ pub(crate) fn readable_with_read_in(
     if !super::any_policy_in(vault, txn)? {
         // No policy here, as on a replica the audience never reached: a row
         // a source landed still reads to no one.
-        return Ok(!source_marked(raw));
+        return Ok(!source_marked_in(dbs, txn, id, raw)?);
     }
     let mut judge = Judge {
         vault,
@@ -277,7 +292,7 @@ impl Judge<'_, '_, '_> {
             }
         };
         // A row a source landed whose binding is absent here reads to no one.
-        if binding.is_none() && source_marked(&bytes) {
+        if binding.is_none() && source_marked_in(self.dbs, self.txn, id, &bytes)? {
             return Ok(false);
         }
         let (every, supports) = word_sources(self.vault, self.dbs, self.txn, id, &bytes)?;
