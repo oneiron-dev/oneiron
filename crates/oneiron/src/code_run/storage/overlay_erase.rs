@@ -20,9 +20,9 @@
 //! room's run already answers erased (`code_run_response_erased`, the wait
 //! holder gate); the sweep is the cleanup of rows nothing reads any more.
 //! A room that is closing, sealed or gone takes no segment and is left to
-//! its close, which drops the overlay whole. The overlay's raw output
-//! bytes stay until that close: an overlay raw put publishes no body
-//! descriptor yet, so nothing maps a record's outputs to them.
+//! its close, which drops the overlay whole. Session raw puts publish body
+//! descriptors in the overlay (FIX 15865), but this sweep does not release
+//! those descriptors or their bytes yet; the bytes still stay until close.
 //!
 //! Lock order is the vault writer, then the overlay's segment permit, as a
 //! routed write takes them. No session entry lock is taken.
