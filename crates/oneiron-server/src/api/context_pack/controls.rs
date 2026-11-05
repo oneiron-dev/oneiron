@@ -154,6 +154,30 @@ pub(crate) struct CoreInterlocutorControls {
     pub(super) voice_session_ref: Option<String>,
 }
 
+impl CoreInterlocutorControls {
+    pub(super) fn retained_storage_bytes(&self) -> u64 {
+        let mut bytes = (self.third_parties.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<CoreInterlocutorParty>() as u64);
+        for party in &self.third_parties {
+            for value in [
+                &party.contact_ref,
+                &party.channel_identity_ref,
+                &party.counterparty,
+                &party.label,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                bytes = bytes.saturating_add(value.capacity() as u64);
+            }
+        }
+        if let Some(value) = &self.voice_session_ref {
+            bytes = bytes.saturating_add(value.capacity() as u64);
+        }
+        bytes
+    }
+}
+
 /// One third-party interlocutor. Exactly one of `contact_ref`,
 /// `channel_identity_ref`+`counterparty`, or `label` must be supplied.
 #[derive(Debug, Default, Deserialize, ToSchema)]
