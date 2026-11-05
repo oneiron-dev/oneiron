@@ -6,7 +6,7 @@ use crate::store::KnownEntry;
 
 impl KnownValues {
     pub(super) fn of_entries<'a>(
-        master: &[u8; 32],
+        master: &'a [u8; 32],
         values: impl IntoIterator<Item = (&'a KnownEntry, ValueOrigin, String)>,
     ) -> Result<Option<Self>> {
         let mut buckets: Vec<Bucket> = Vec::new();
