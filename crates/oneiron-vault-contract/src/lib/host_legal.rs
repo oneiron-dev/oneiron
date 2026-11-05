@@ -6,7 +6,31 @@ use std::io::{self, Read, Write};
 use crate::MAX_CTL_LINE;
 
 const MAGIC: [u8; 6] = *b"ONLC\x01\x01";
+const RELEASE_MAGIC: [u8; 6] = *b"ONLC\x01\x02";
 const ACK: u8 = 0xa1;
+
+/// One actual live registry entry. The source compares this with its own entry;
+/// neither these wire fields nor a timestamp confer capture authority.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LiveSessionTarget {
+    pub session_ref: String,
+    pub instance: [u8; 16],
+}
+
+/// Identity kept INSIDE an encrypted descriptor. Gate decisions and live
+/// session entries are separate source families, not interchangeable ids.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(
+    tag = "family",
+    content = "source",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum CaptureSource {
+    GateDecision([u8; 16]),
+    LiveSession(LiveSessionTarget),
+}
 
 /// Exact native source family chosen by the already admitted HOST order.
 /// Whole-family capture is explicit; an empty selected list captures nothing.
@@ -14,6 +38,7 @@ const ACK: u8 = 0xa1;
 pub enum CaptureScope {
     AllClaimFreeGateDecisions,
     GateDecisions(Vec<[u8; 16]>),
+    LiveSession(LiveSessionTarget),
 }
 
 impl CaptureScope {
@@ -21,6 +46,7 @@ impl CaptureScope {
         match self {
             Self::AllClaimFreeGateDecisions => true,
             Self::GateDecisions(ids) => ids.binary_search(decision).is_ok(),
+            Self::LiveSession(_) => false,
         }
     }
 
@@ -37,6 +63,12 @@ impl CaptureScope {
                     out.write_all(id)?;
                 }
                 Ok(())
+            }
+            Self::LiveSession(target) => {
+                out.write_all(&[3])?;
+                out.write_all(&(target.session_ref.len() as u64).to_be_bytes())?;
+                out.write_all(target.session_ref.as_bytes())?;
+                out.write_all(&target.instance)
             }
         }
     }
@@ -57,13 +89,28 @@ impl CaptureScope {
                 }
                 Ok(Self::GateDecisions(ids))
             }
+            3 => {
+                let count = usize::try_from(u64::from_be_bytes(read_array(input)?))
+                    .map_err(|_| invalid("legal live session ref length"))?;
+                let mut bytes = Vec::new();
+                bytes.try_reserve_exact(count).map_err(io::Error::other)?;
+                bytes.resize(count, 0);
+                input.read_exact(&mut bytes)?;
+                let session_ref = String::from_utf8(bytes)
+                    .map_err(|_| invalid("legal live session ref UTF-8"))?;
+                Ok(Self::LiveSession(LiveSessionTarget {
+                    session_ref,
+                    instance: read_array(input)?,
+                }))
+            }
             _ => Err(invalid("legal capture scope")),
         }
     }
 }
 
-/// One explicit, non-prospective gate-ledger capture. Recipient bytes
-/// are a HOST-created per-order PUBLIC hybrid key, never a private seed.
+/// One exact HOST-admitted capture. A live-session request waits for that
+/// entry's covered close; registration alone is not a captured source.
+/// Recipient bytes are a per-order PUBLIC hybrid key, never a private seed.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CaptureRequest {
     pub order: [u8; 16],
@@ -95,6 +142,10 @@ impl CaptureRequest {
         if read_array::<6>(input)? != MAGIC {
             return Err(invalid("legal capture protocol"));
         }
+        Self::read_body(input)
+    }
+
+    fn read_body(input: &mut impl Read) -> io::Result<Self> {
         let order = read_array(input)?;
         let capture = read_array(input)?;
         let source_vault = read_array(input)?;
@@ -119,19 +170,71 @@ impl CaptureRequest {
     }
 
     pub fn digest(&self) -> io::Result<[u8; 32]> {
-        struct Sink(blake3::Hasher);
-        impl Write for Sink {
-            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-                self.0.update(bytes);
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
-        }
-        let mut sink = Sink(blake3::Hasher::new());
+        let mut sink = DigestSink(blake3::Hasher::new());
         self.write_to(&mut sink)?;
         Ok(*sink.0.finalize().as_bytes())
+    }
+}
+
+/// Only this HOST order generation is ended. The receipt is not a claim
+/// that HOST clone keys or ciphertext have been destroyed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReleaseLiveOrder {
+    pub order: [u8; 16],
+    pub source_vault: [u8; 32],
+    pub generation: u64,
+}
+
+impl ReleaseLiveOrder {
+    pub fn write_to(&self, out: &mut impl Write) -> io::Result<()> {
+        out.write_all(&RELEASE_MAGIC)?;
+        out.write_all(&self.order)?;
+        out.write_all(&self.source_vault)?;
+        out.write_all(&self.generation.to_be_bytes())
+    }
+
+    fn read_body(input: &mut impl Read) -> io::Result<Self> {
+        Ok(Self {
+            order: read_array(input)?,
+            source_vault: read_array(input)?,
+            generation: u64::from_be_bytes(read_array(input)?),
+        })
+    }
+
+    pub fn digest(&self) -> io::Result<[u8; 32]> {
+        let mut sink = DigestSink(blake3::Hasher::new());
+        self.write_to(&mut sink)?;
+        Ok(*sink.0.finalize().as_bytes())
+    }
+}
+
+/// Accepted only over the manager's kernel-authenticated native connection.
+/// This enum is framing, not an authorization token.
+pub enum HostLegalRequest {
+    Capture(CaptureRequest),
+    ReleaseLiveOrder(ReleaseLiveOrder),
+}
+
+impl HostLegalRequest {
+    pub fn read_from(input: &mut impl Read) -> io::Result<Self> {
+        match read_array::<6>(input)? {
+            MAGIC => CaptureRequest::read_body(input).map(Self::Capture),
+            RELEASE_MAGIC => ReleaseLiveOrder::read_body(input).map(Self::ReleaseLiveOrder),
+            _ => Err(invalid("legal request protocol")),
+        }
+    }
+}
+
+struct DigestSink(blake3::Hasher);
+
+impl Write for DigestSink {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -144,6 +247,10 @@ pub enum FrameKind {
     Content = 3,
     Summary = 4,
     Ready = 5,
+    /// Exact live order registered, but no source snapshot has been pinned.
+    Pending = 6,
+    /// Exact native order standing ended; not HOST key destruction.
+    Released = 7,
 }
 
 /// Opaque member/part ordinals only. No source keys or content fingerprints
@@ -174,6 +281,8 @@ impl FrameHeader {
             3 => FrameKind::Content,
             4 => FrameKind::Summary,
             5 => FrameKind::Ready,
+            6 => FrameKind::Pending,
+            7 => FrameKind::Released,
             _ => return Err(invalid("legal capture frame kind")),
         };
         Ok(Self {
@@ -227,7 +336,7 @@ fn invalid(message: &'static str) -> io::Error {
 #[serde(deny_unknown_fields)]
 pub struct CaptureDescriptor {
     pub component: u8,
-    pub decision: [u8; 16],
+    pub source: CaptureSource,
     pub source_key: Vec<u8>,
     pub source_key_digest: [u8; 32],
     pub revision: [u8; 32],
@@ -236,8 +345,17 @@ pub struct CaptureDescriptor {
     pub chunk_count: u64,
 }
 
-/// Immutable capture completion manifest, itself encrypted to the SAME
-/// order recipient. The descriptor hash covers exact encoded descriptors.
+/// The native source extent actually copied. Published live bodies do not
+/// imply coverage of an in-progress written spill or completion of an order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureExtent {
+    GateDecisions,
+    PublishedLiveSessionBodies,
+}
+
+/// Immutable completion manifest for its declared extent, encrypted to the
+/// SAME order recipient. The descriptor hash covers exact encoded descriptors.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureSummary {
@@ -247,6 +365,8 @@ pub struct CaptureSummary {
     pub generation: u64,
     pub ends_at: u64,
     pub decisions: u64,
+    pub live_sessions: u64,
+    pub extent: CaptureExtent,
     pub components: u64,
     pub plaintext_bytes: u64,
     pub descriptors_hash: [u8; 32],
