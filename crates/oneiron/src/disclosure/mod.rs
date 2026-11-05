@@ -43,6 +43,7 @@ pub(crate) use self::room_party::{
     is_vault_owner, live_vault_owner_person_in_txn, room_party_entry_in, room_party_in,
 };
 
+pub(crate) use self::scope_codec::write_disclosure_scope_body;
 pub use self::scope_codec::{
     DISCLOSURE_SCOPE_BODY_KEYS, DISCLOSURE_SCOPE_SCHEMA_VERSION, DisclosureScope,
     DisclosureScopeStatus, decode_disclosure_scope_body, encode_disclosure_scope_body,

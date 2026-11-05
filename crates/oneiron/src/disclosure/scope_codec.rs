@@ -1,6 +1,6 @@
 //! Contact clearance envelope and canonical six-axis Scope codec.
 
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 
 use rmpv::Value;
 
@@ -133,13 +133,19 @@ pub(super) fn disclosure_scope_body_value(clearance: &DisclosureScope) -> Result
 
 /// Encodes the contact clearance with a canonical six-axis Scope payload.
 pub fn encode_disclosure_scope_body(clearance: &DisclosureScope) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    write_disclosure_scope_body(&mut out, clearance)?;
+    Ok(out)
+}
+
+pub(crate) fn write_disclosure_scope_body<W: Write>(
+    writer: &mut W,
+    clearance: &DisclosureScope,
+) -> Result<()> {
     clearance.validate()?;
     let value = disclosure_scope_body_value(clearance)?;
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &value).map_err(|_| {
-        Error::InvariantViolation("disclosure scope body MessagePack encode failed")
-    })?;
-    Ok(out)
+    rmpv::encode::write_value(writer, &value)
+        .map_err(|_| Error::InvariantViolation("disclosure scope body MessagePack encode failed"))
 }
 
 /// Strict decode: no trailing bytes, unknown/duplicate/missing envelope or Scope keys.

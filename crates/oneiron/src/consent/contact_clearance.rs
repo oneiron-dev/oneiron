@@ -29,7 +29,7 @@ use super::widen::WidenProposal;
 use crate::authority::VerifiedSlip;
 use crate::batch::EntityMetadataHeader;
 use crate::counterparty_contact::CounterpartyContactStatus;
-use crate::disclosure::{DisclosureScope, DisclosureScopeStatus, encode_disclosure_scope_body};
+use crate::disclosure::{DisclosureScope, DisclosureScopeStatus, write_disclosure_scope_body};
 use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, GateError};
 use crate::ports::EntityStoreRead;
@@ -393,7 +393,7 @@ fn contact_clearance_digest(clearance: Option<&DisclosureScope>) -> Result<[u8; 
     };
     let mut hasher = blake3::Hasher::new();
     hasher.update(CLEARANCE_DIGEST_DOMAIN);
-    hasher.update(&encode_disclosure_scope_body(clearance)?);
+    write_disclosure_scope_body(&mut hasher, clearance)?;
     Ok(*hasher.finalize().as_bytes())
 }
 
