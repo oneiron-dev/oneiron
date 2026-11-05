@@ -46,10 +46,12 @@ impl CodebaseSnapshotMount<'_> {
         true
     }
 
+    /// The paths this mount reads, omitting custody-withheld files.
     pub fn list_files(&self) -> Vec<&str> {
         self.snapshot
             .files
             .iter()
+            .filter(|entry| !self.is_withheld(&entry.path))
             .map(|entry| entry.path.as_str())
             .collect()
     }

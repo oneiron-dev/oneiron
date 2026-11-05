@@ -165,11 +165,14 @@ impl Vault {
                 "commit tree could not be read",
             ))
         })?;
-        let repo_path = std::fs::canonicalize(&config.repo_path).map_err(|_| {
-            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-                "repo_path must be a canonicalizable local path",
-            ))
-        })?;
+        // Commit-only imports also work when the checkout is unavailable.
+        let repo_path = std::fs::canonicalize(repo.workdir().unwrap_or_else(|| repo.path()))
+            .or_else(|_| std::fs::canonicalize(repo.path()))
+            .map_err(|_| {
+                Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                    "repo_path must be a canonicalizable local path",
+                ))
+            })?;
         let repo_ref = RepoRef::LocalFolder {
             path: repo_path.to_string_lossy().into_owned(),
             commit: commit_hash.clone(),
