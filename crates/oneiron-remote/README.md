@@ -18,3 +18,19 @@ never branch on the backend.
 | PyO3 `NativeEngine` | The optional engine class, behind the `engine` feature. `client(key)` serves a `NativeClient`; it is not the client class itself. | [`oneiron-py/src/embedded_engine.rs`](../oneiron-py/src/embedded_engine.rs) |
 
 Feature-gated rows exist only in builds with `--features engine`.
+
+## Native host limit questions
+
+The Rust host can call `OneironClient::native_limit_questions()` on the original
+handle returned by `open` or `open_with_host_root`. Internally opened vaults keep
+the latest crossing per engine limit as its configuration key, boundary and exact
+`u64` measured value. Reading returns a snapshot without clearing it; no crossing
+is `Some` with an empty vector. Same-vault opens share that collector. The actual
+embedding width is measured once per shared vault, after the SDK registry lock is
+released. A crossing still serves its work; it does not add a refusal or cap.
+
+Attached vaults keep the host's existing question sink untouched and return `None`.
+Remote clients and actor, delegated-reader, room or off-record views also return
+`None`. This is host metadata, not a facade verb or a remote request; the N-API,
+Python, and UniFFI SDK wrappers expose the same getter with the same `None` vs
+`Some` contract. It retains no actor identity, query, body, credential or event history.
