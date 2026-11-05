@@ -23,7 +23,8 @@
 //! was admitted for is the adapter's to stamp.
 use oneiron::llm::{
     CacheCounterSource, CacheDigest, CacheIdentity, CachePassReport, CachePassUsage, CachePhase,
-    INFERENCE_CALLS_KEY, InferenceCallReceipt, WorkerBuildEvidence, WorkerDescriptor, WorkerKind,
+    INFERENCE_CALLS_KEY, InferenceCallReceipt, WorkPhysical, WorkerBuildEvidence, WorkerDescriptor,
+    WorkerKind,
 };
 use serde_json::{Value as JsonValue, json};
 use sha2::{Digest, Sha256};
@@ -171,6 +172,7 @@ pub(super) fn label_read(
     answer: &JsonValue,
     answering: Option<&AnsweringIdentity>,
     execution: Option<&CacheDigest>,
+    physical: Option<WorkPhysical>,
 ) -> (u64, JsonValue) {
     let timings = answer.get("timings");
     let native = |key: &str| timings.and_then(|timings| count(timings, key));
@@ -195,6 +197,7 @@ pub(super) fn label_read(
     let call = InferenceCallReceipt {
         logical_prompt_tokens: input,
         passes: vec![pass],
+        physical,
         ..InferenceCallReceipt::unmeasured(None, llama_worker(identity, answering))
     };
     let mut usage = timings.map_or_else(|| json!({}), |timings| json!({ "timings": timings }));
