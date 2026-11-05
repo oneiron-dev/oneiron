@@ -9,7 +9,23 @@ to submit a fresh review. The request supplies a new actor, session, provenance,
 message and current checkout pin. It must name the original repository and ordinary
 operation target. Its content field is replaced with the verified redacted resolution.
 This native API has the same trusted-host authority as `propose_repo_mutation`; it is
-not an authenticated owner or leased-run door. HTTP, SDK and run adapters are not added.
+not an authenticated owner or leased-run door.
+
+Native Memory callers can use `code_proposal_rereview_as(owner, original, input)`
+or `repo_proposal_rereview_for_run(binding, original, input, policy, sources)`.
+These use their existing ordinary submission input and return records. The input's
+content is replaced internally. They submit CommitFile changes only, as their ordinary
+submission counterparts do. ResolveConflictFile-specific Memory callers, HTTP and SDK
+surfaces are not added here; the trusted core still accepts both ordinary operations.
+
+The owner caller validates the actual owner, repository and attribution sources, and
+reads the original through its current credential. The run caller admits the current
+work's target edit, checks its publication declaration, reads the original through
+its current read lane, and captures its actual pinned base before resolving handles.
+The host still supplies review policy and fresh provenance. A readable original need
+not belong to the current run, work or lease: none of those old fields grants authority.
+Both callers retain ordinary admission and revalidate it in the same writer as the
+original-row and live-handle checks. No caller copies the original's actor or critiques.
 
 The engine resolves only the original's handles under their existing `repo:landing`
 bindings. A candidate is kept only if resolving its handles reproduces the exact bytes
