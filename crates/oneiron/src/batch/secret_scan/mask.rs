@@ -30,6 +30,7 @@ mod file_plane;
 pub(super) mod known_marks;
 mod known_note;
 mod leaf_keys;
+mod promoted_message_parts;
 pub(super) mod retained_repo;
 pub(super) mod side_row;
 pub(super) mod spool;
@@ -72,6 +73,7 @@ use crate::store::file_key_masks::{masked_file_in_txn, put_masked_file_in_txn};
 use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
+pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
 use text_spans::{file_spans, merged, occurrences, secret_spans};
 use wipe::{PlanOps, PlanValues, replace_wiped};
 
@@ -689,6 +691,7 @@ impl Masker {
                 ),
                 class: CustodyClass::CustodyPortable,
                 device_only: false,
+                model_reveal_allowed: true,
                 value_bytes: std::mem::take(&mut *found.value),
                 status: SecretCustodyStatus::Active,
                 registered_at: at,

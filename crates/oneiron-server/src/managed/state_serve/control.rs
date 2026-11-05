@@ -10,35 +10,72 @@ use oneiron_vault_contract::settings_paths::SETTINGS_PATHS_REVISION;
 use oneiron_vault_contract::slim_control::SLIM_RECOVERY_REVISION;
 use oneiron_vault_contract::{
     CONTRACT_VERSION, CtlRequest, CtlResponse, LegalHoldsNotProven, LegalHoldsWire,
+    VmOutboxCompanionState,
 };
 
 use super::ManagedState;
 use super::admission::WriteKind;
 use crate::managed::ManagedError;
 
+/// Marks a vault VM outbox carrier observation as probed: its companion
+/// answered the engine's last completed look, or answered nothing (FIX
+/// 11073). The word's low bits carry that answer's revision plus one, so
+/// an actual `0` reads back and `0` is no answer; only this bit says a
+/// look completed.
+const VM_OUTBOX_OBSERVED: u64 = 1 << 63;
+
+/// Encodes `revision` for the carrier observation word: one plus the
+/// revision, so an actual `0` survives; `0` for no answer.
+fn vm_outbox_encode(revision: Option<u32>) -> u64 {
+    revision.map_or(0, |revision| u64::from(revision) + 1)
+}
+
+/// Decodes a carrier observation word's revision: `None` for no answer.
+fn vm_outbox_decode(word: u64) -> Option<u32> {
+    (word & !VM_OUTBOX_OBSERVED)
+        .checked_sub(1)
+        .map(|revision| revision as u32)
+}
+
 impl ManagedState {
     /// This state with `revision`, the vault VM outbox carrier's its
     /// companion reported at boot (FIX 5235), for every `Ping` to carry;
-    /// none until set.
+    /// none until set. The seed is no completed probe, so the typed
+    /// companion reads unobserved until a look answers (FIX 11073).
     #[must_use]
     pub(in crate::managed) fn with_vm_outbox_revision(mut self, revision: Option<u32>) -> Self {
-        *self.vm_outbox_revision.get_mut() = revision.unwrap_or(0);
+        *self.vm_outbox_revision.get_mut() = vm_outbox_encode(revision);
         self
     }
 
     /// The vault VM outbox carrier's revision, when it has one now.
     pub(in crate::managed) fn vm_outbox_revision(&self) -> Option<u32> {
-        Some(self.vm_outbox_revision.load(Ordering::Relaxed)).filter(|revision| *revision != 0)
+        self.vm_outbox_snapshot().0
+    }
+
+    /// The carrier's revision and its companion's last completed probe,
+    /// from one load: `None` until a look answers, `Down` once one
+    /// answered nothing (FIX 11073).
+    pub(in crate::managed) fn vm_outbox_snapshot(
+        &self,
+    ) -> (Option<u32>, Option<VmOutboxCompanionState>) {
+        let word = self.vm_outbox_revision.load(Ordering::Acquire);
+        let revision = vm_outbox_decode(word);
+        let companion =
+            (word & VM_OUTBOX_OBSERVED != 0).then(|| VmOutboxCompanionState::from(revision));
+        (revision.filter(|revision| *revision != 0), companion)
     }
 
     /// The carrier's revision as its companion answered a later look, or
     /// `None` once it did not answer (FIX 6683); returns the one before.
+    /// The completed look is observed, for the typed companion (FIX 11073).
     #[cfg(target_os = "linux")]
     pub(in crate::managed) fn set_vm_outbox_revision(&self, revision: Option<u32>) -> Option<u32> {
-        let was = self
-            .vm_outbox_revision
-            .swap(revision.unwrap_or(0), Ordering::Relaxed);
-        Some(was).filter(|revision| *revision != 0)
+        let was = self.vm_outbox_revision.swap(
+            vm_outbox_encode(revision) | VM_OUTBOX_OBSERVED,
+            Ordering::Release,
+        );
+        vm_outbox_decode(was).filter(|revision| *revision != 0)
     }
 
     /// Dispatches one parsed ctl request.
@@ -54,28 +91,32 @@ impl ManagedState {
                 reason: error.to_string(),
             })?;
         match request {
-            CtlRequest::Ping => Ok(CtlResponse::Ping {
-                ok: true,
-                vault: self.vault_name.clone(),
-                pid: std::process::id(),
-                contract_version: CONTRACT_VERSION,
-                readiness: self.readiness.clone(),
-                // How the browser stands now, read as the last guest start
-                // left it (FIX 7670); no state of it turns `ok` false.
-                browser: Some(self.server.browser_readiness().snapshot()),
-                managed_backup: self.backup_facts.clone(),
-                settings_paths_revision: Some(SETTINGS_PATHS_REVISION),
-                artifact_internal_host_revision: Some(ARTIFACT_INTERNAL_HOST_REVISION),
-                preview_origin_revision: Some(PREVIEW_ORIGIN_REVISION),
-                slim_recovery_revision: Some(SLIM_RECOVERY_REVISION),
-                vm_outbox_revision: self.vm_outbox_revision(),
-                relay_delete_revision: Some(RELAY_DELETE_REVISION),
-                engine_instance: Some(self.relay_delete.instance().to_owned()),
-                // The vault's deletion, kept once read present (FIX 11710):
-                // the supervisor withdraws what served it. An unreadable
-                // marker reports none; no state of it turns `ok` false.
-                deletion: self.vault_deletion(),
-            }),
+            CtlRequest::Ping => {
+                let (vm_outbox_revision, vm_outbox_companion) = self.vm_outbox_snapshot();
+                Ok(CtlResponse::Ping {
+                    ok: true,
+                    vault: self.vault_name.clone(),
+                    pid: std::process::id(),
+                    contract_version: CONTRACT_VERSION,
+                    readiness: self.readiness.clone(),
+                    // How the browser stands now, read as the last guest start
+                    // left it (FIX 7670); no state of it turns `ok` false.
+                    browser: Some(self.server.browser_readiness().snapshot()),
+                    managed_backup: self.backup_facts.clone(),
+                    settings_paths_revision: Some(SETTINGS_PATHS_REVISION),
+                    artifact_internal_host_revision: Some(ARTIFACT_INTERNAL_HOST_REVISION),
+                    preview_origin_revision: Some(PREVIEW_ORIGIN_REVISION),
+                    slim_recovery_revision: Some(SLIM_RECOVERY_REVISION),
+                    vm_outbox_revision,
+                    vm_outbox_companion,
+                    relay_delete_revision: Some(RELAY_DELETE_REVISION),
+                    engine_instance: Some(self.relay_delete.instance().to_owned()),
+                    // The vault's deletion, kept once read present (FIX 11710):
+                    // the supervisor withdraws what served it. An unreadable
+                    // marker reports none; no state of it turns `ok` false.
+                    deletion: self.vault_deletion(),
+                })
+            }
             CtlRequest::Shed {
                 cause,
                 waited_secs,

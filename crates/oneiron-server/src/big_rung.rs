@@ -498,7 +498,7 @@ impl DecisionModel for BigModel {
         // The decision's clock bounds the whole call (FIX 7792): every send,
         // wait and fallback; past it the call ends incomplete, every rung it
         // admitted settled.
-        let deadline = CallDeadline::caller_in(left);
+        let deadline = CallDeadline::caller_with_wait_cap(left, ladder.cooling_wait_budget(left));
         // A seat's answer names the rung model that served it; one model
         // alone answers or nothing does, so its pin names it already.
         let (response, served, binding) = self
