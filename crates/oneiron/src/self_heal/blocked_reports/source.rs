@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::side_table::{self, Named, SideKey, SideTable};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use crate::{EntityId, LlmRequest, Result, Vault};
 
 pub(crate) use self::ownership::blocked_capture_witness_owner;
