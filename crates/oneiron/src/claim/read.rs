@@ -179,7 +179,7 @@ impl Vault {
                 || crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
             {
                 return Ok(Some(ClaimBodyRead::retained(
-                    super::history_projection::project_machine_claim(&projection),
+                    super::history_projection::into_projected_machine_claim(projection),
                     memory,
                 )));
             }

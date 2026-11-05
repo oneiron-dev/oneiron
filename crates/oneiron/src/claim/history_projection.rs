@@ -49,7 +49,7 @@ pub(crate) use self::chain::{
     verify_handoff_signature,
 };
 pub(crate) use self::pin::{PIN_PREFIX, pin_key};
-pub(crate) use self::resolve::project_machine_claim;
+pub(crate) use self::resolve::{into_projected_machine_claim, project_machine_claim};
 
 fn missing() -> Error {
     Error::Claim(ClaimError::MachineClaimHistoryIncomplete)

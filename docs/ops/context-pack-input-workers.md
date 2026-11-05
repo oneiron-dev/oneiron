@@ -42,20 +42,21 @@ settles its actual capacity. The MessagePack DOM has already been allocated and
 is not admitted by this step. Unbound readers use the same validator without a
 memory wait.
 
-The ordinary claim read keeps its history, fold and successor selection. Those
-history intermediates and a projected set's allocation remain unadmitted; a
+The ordinary claim read keeps its history, fold and successor selection. At its
+terminal history projection, it transfers the already-owned birth through the
+same field updates instead of cloning another relationship set. The borrowed
+projection door stays unchanged. History intermediates remain unadmitted; the
 final projected body owns its own post-allocation capacity lease. The original
 body keeps its own guard until it drops, including while a replacement is built.
-The contact fold moves only the value out of each retained body; its relationship
-set drops before that body's lease. Leases do not accumulate across contacts or
-across bodies already consumed by the fold. Direct decoded heads that are later
-ignored also release their own guard. Before each admitted read, the memory floor
-includes the request controls still held by this worker and the actual leases of
-prior heads still retained by this contact. This is distinct pinned input, not a
-second ledger charge or a sum of other workers' leases. A required simultaneous
-peak that cannot fit on an idle machine returns the original typed floor instead
-of waiting on this contact's own retained heads. Channel-pair and voice-roster
-lookups stay unbound.
+Contact reads retain only each live head's predicate index and value for the
+fold. Moving the value out releases that body's unused relationship set before
+its private lease, before the next claim read can wait. The fold still sees the
+first duplicate only after every claim has been read, so a later native read
+error retains its original precedence. Ignored heads release their own guard too.
+Before each admitted allocation, the memory floor includes the request controls
+still held by this worker. This is distinct pinned input, not a second ledger
+charge or a sum of other workers' leases. An impossible required peak returns
+the original typed floor. Channel-pair and voice-roster lookups stay unbound.
 
 Native store and validation errors retain their existing response mapping. A
 memory floor is `MEMORY_FLOOR` (507, with `needed` and `available`); a stopped
@@ -63,8 +64,9 @@ memory wait is `MEMORY_WAITED_OUT` (503, with `needed` and `waitedMs`). Both use
 the existing core error envelope and keep the original refusal distinct.
 
 This change does not complete contact-read or pinned-reference memory admission.
-MessagePack DOM decoding, history/projection scratch, other retained collections,
-other request storage, auth clones and response-byte custody still need their own
+MessagePack DOM decoding, retained claim values, history/projection scratch,
+other retained collections, other request storage, auth clones and response-byte
+custody still need their own
 physical-memory accounting. Future untimed memory waits must use this caller's
 stop condition; the relationship-set wait above does so. There is no full-Q,
 runtime or throughput claim here.
