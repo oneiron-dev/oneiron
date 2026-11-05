@@ -8,8 +8,8 @@ use crate::error::{CodeError, Error, Result};
 
 use super::capture::{CaptureEntry, Directory, visit_capture_entries};
 use super::{
-    MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES, SnapshotCustody, SnapshotStats, StoredRepoSnapshotEntry,
-    is_executable, record_snapshot_entry_size,
+    MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES, MAX_REPO_MUTATION_SNAPSHOT_TOTAL_BYTES, SnapshotCustody,
+    SnapshotStats, StoredRepoSnapshotEntry, is_executable, record_snapshot_entry_size,
 };
 
 pub(super) fn collect_snapshot_entries(
@@ -34,9 +34,17 @@ pub(super) fn collect_snapshot_entries(
                             "repo mutation snapshot file exceeds max bytes",
                         )));
                     }
-                    record_snapshot_entry_size(stats, metadata.len())?;
-                    let mut content = Vec::with_capacity(metadata.len() as usize);
-                    file.read_to_end(&mut content)?;
+                    let remaining =
+                        MAX_REPO_MUTATION_SNAPSHOT_TOTAL_BYTES.saturating_sub(stats.total_bytes);
+                    let limit = MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES.min(remaining);
+                    let mut content = Vec::with_capacity(metadata.len().min(limit) as usize);
+                    (&mut file).take(limit + 1).read_to_end(&mut content)?;
+                    if content.len() as u64 > MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES {
+                        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+                            "repo mutation snapshot file exceeds max bytes",
+                        )));
+                    }
+                    record_snapshot_entry_size(stats, content.len() as u64)?;
                     entries.push(custody.file(relative, is_executable(&metadata), content));
                 }
                 link @ CaptureEntry::Symlink { expected, .. } => {
