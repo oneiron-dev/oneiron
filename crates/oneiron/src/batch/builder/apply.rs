@@ -164,8 +164,8 @@ impl BatchBuilder<'_> {
             })
             .collect();
         let mut derived = crate::embed::repo_derived_batch(&ops);
-        if let Some(actor) = actor {
-            apply_actor_ops(
+        let (native_outputs, content_writes) = if let Some(actor) = actor {
+            let (outputs, effects) = crate::batch::actor_content::apply_actor_ops_collecting(
                 vault,
                 wtxn,
                 &actor,
@@ -174,8 +174,9 @@ impl BatchBuilder<'_> {
                 gate_mode,
                 self.origin,
             )?;
+            (outputs, Some(effects))
         } else {
-            apply_ops_with_authority_beside(
+            let outputs = crate::batch::base_apply::apply_ops_with_authority_beside_collecting(
                 &vault.store,
                 &vault.config,
                 &vault.analyzer,
@@ -192,7 +193,8 @@ impl BatchBuilder<'_> {
                     content_writes: None,
                 }),
             )?;
-        }
+            (outputs, None)
+        };
         derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;
         crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
         // Queue only after admitted apply. The owner checks the final body and
@@ -211,6 +213,9 @@ impl BatchBuilder<'_> {
         // marker; the write door marks the rows.
         #[cfg(feature = "sync")]
         vault.mark_pending_edge_removals_in_txn(wtxn, &removed_edges)?;
+        // These owned inputs reach the caller's final point together. Native
+        // publication remains off until its source admission is complete.
+        drop((native_outputs, content_writes));
         Ok(())
     }
 }
