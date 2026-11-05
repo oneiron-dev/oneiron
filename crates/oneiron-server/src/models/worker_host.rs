@@ -12,9 +12,10 @@
 //!
 //! A configured rung reaches its worker by the row's explicit binding, its
 //! provider and wire model ([`managed_worker`]); nothing is inferred from a
-//! URL or a name. A row whose config changed gets a new supervisor once the
-//! old one has drained and stopped; a row that is no longer configured keeps
-//! its supervisor, since another runtime in the process may still use it.
+//! URL or a name. A row whose config changed publishes a replacement whose
+//! startup waits for the old worker and any pending predecessors to drain
+//! and stop; a row that is no longer configured keeps its supervisor, since
+//! another runtime in the process may still use it.
 //!
 //! A managed EXL3 worker's launch also has a native socket (DESIGN-V2 §8,
 //! V2-R1): its provider's calls to it go there ([`native_route`],
@@ -30,6 +31,7 @@ mod bundle;
 mod install;
 mod launch_manifest;
 mod launcher;
+mod llama_metrics;
 mod media_worker;
 mod probe;
 #[cfg(unix)]
@@ -572,6 +574,10 @@ pub(super) fn configure(
                 Some(worker) => worker,
                 None => {
                     let (worker, slot) = host.supervisor(row, provider);
+                    let worker = match workers.get(&row.id) {
+                        Some(previous) => worker.with_predecessor(&previous.worker),
+                        None => worker,
+                    };
                     let hosted = Hosted {
                         row: row.clone(),
                         provider: provider.clone(),
@@ -662,6 +668,51 @@ pub(super) fn managed_worker(provider: &str, wire_model: &str) -> Option<Inferen
         .map(|hosted| hosted.worker.clone())
 }
 
+/// The external chat workers on `provider_name` bound at construction: for
+/// each provided row that still matches its hosted row and provider exactly,
+/// the actual worker, keyed by wire model. Endpoint-split and media rows
+/// are left out. The map holds workers only, never configs or secrets.
+pub(super) fn external_workers(
+    provider_name: &str,
+    provider: &ProviderConfig,
+    rows: &[WorkerConfig],
+) -> BTreeMap<String, InferenceWorker> {
+    let Some(host) = HOST.get() else {
+        return BTreeMap::new();
+    };
+    let workers = host.lock();
+    let mut bound = BTreeMap::new();
+    for row in rows {
+        if row.binding.provider != provider_name
+            || row.mode != WorkerMode::External
+            || row.endpoint.is_some()
+            || !matches!(row.kind, WorkerKind::LlamaCpp | WorkerKind::Exl3)
+        {
+            continue;
+        }
+        let Some(hosted) = workers.get(&row.id) else {
+            continue;
+        };
+        if hosted.row != *row || hosted.provider != *provider {
+            continue;
+        }
+        bound.insert(row.binding.model.clone(), hosted.worker.clone());
+    }
+    bound
+}
+
+/// Whether `worker` is still its row's hosted supervisor: a replaced row's
+/// old clone is not. The host lock is released before the caller probes.
+pub(super) fn is_current(worker: &InferenceWorker) -> bool {
+    HOST.get()
+        .and_then(|host| {
+            host.lock()
+                .get(&worker.spec().worker_id)
+                .map(|hosted| hosted.worker.same_instance(worker))
+        })
+        .unwrap_or(false)
+}
+
 /// Whether a managed EXL3 worker this process launches is bound to
 /// `provider`: its chat transport then reaches that worker over its native
 /// socket (`models/native_exl3`).
@@ -700,9 +751,59 @@ pub(super) fn native_route(provider: &str, wire_model: &str) -> Option<NativeRou
     route.launch().is_some().then_some(route)
 }
 
+/// What an HTTP answer from a managed EXL3 worker must echo to keep a
+/// verified-artifacts claim (FIX 9296): the manifest digest of the launch
+/// this host started and the epoch the worker qualified with, each absent
+/// when that fact has no current record. Outer `None` is only a call no
+/// managed EXL3 worker is bound to.
+#[derive(Clone, Debug)]
+pub(super) struct ManagedLaunchEvidence {
+    pub(super) manifest_sha256: Option<String>,
+    pub(super) backend_epoch: Option<String>,
+}
+
+/// The managed EXL3 worker bound to `provider` calling `wire_model`, as its
+/// slot and readiness stand now, without waiting: `None` only when no
+/// managed EXL3 worker is bound there. A bound worker with no launch record
+/// or no ready epoch still returns `Some`, with those facts `None`, so its
+/// answers downgrade verification instead of passing unfiltered. Two
+/// snapshots racing only lose verification, never a refusal.
+pub(super) fn managed_http_evidence(
+    provider: &str,
+    wire_model: &str,
+) -> Option<ManagedLaunchEvidence> {
+    let host = HOST.get()?;
+    let (worker, slot) = {
+        let workers = host.lock();
+        let hosted = workers.values().find(|hosted| {
+            hosted.native_slot().is_some()
+                && hosted.row.binding.provider == provider
+                && hosted.row.binding.model == wire_model
+        })?;
+        (hosted.worker.clone(), Arc::clone(hosted.native_slot()?))
+    };
+    let manifest_sha256 = slot
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+        .map(|record| record.manifest_sha256.clone());
+    let backend_epoch = match worker.status().readiness {
+        oneiron::llm::WorkerReadiness::Ready { observed } => observed
+            .identity
+            .backend_epoch
+            .as_ref()
+            .map(|epoch| epoch.as_str().to_owned()),
+        _ => None,
+    };
+    Some(ManagedLaunchEvidence {
+        manifest_sha256,
+        backend_epoch,
+    })
+}
+
 impl WorkerHost {
     /// Starts a new supervisor's work: a managed worker launches where this
-    /// process may launch, an external one is probed once.
+    /// process may launch, an external one gets its initial probe.
     fn begin(&self, worker: &InferenceWorker) {
         match worker.spec().mode {
             WorkerMode::Managed => {

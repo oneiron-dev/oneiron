@@ -2,8 +2,7 @@
 
 use super::super::{core_engine_error, parse_entity_id_param};
 use super::controls::{
-    CoreInterlocutorControls, CoreInterlocutorParty, MAX_INTERLOCUTOR_COUNTERPARTY_BYTES,
-    MAX_INTERLOCUTOR_LABEL_BYTES, MAX_INTERLOCUTOR_THIRD_PARTIES,
+    CoreInterlocutorControls, CoreInterlocutorParty, MAX_INTERLOCUTOR_THIRD_PARTIES,
 };
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
@@ -418,17 +417,10 @@ pub(crate) fn core_interlocutor_party_input(
                     Some(&field_path("counterparty")),
                 ));
             }
-            // Engine invariant enforced at the boundary: an untrimmed or
-            // over-long key would otherwise surface from the contact lookup
-            // as an engine error instead of a client error.
-            if counterparty.trim() != counterparty
-                || counterparty.len() > MAX_INTERLOCUTOR_COUNTERPARTY_BYTES
-            {
+            // An untrimmed key surfaces as a client error before contact lookup.
+            if counterparty.trim() != counterparty {
                 return Err(ApiError::bad_request(
-                    format!(
-                        "counterparty must be trimmed and at most \
-                         {MAX_INTERLOCUTOR_COUNTERPARTY_BYTES} bytes"
-                    ),
+                    "counterparty must be trimmed",
                     Some(&field_path("counterparty")),
                 ));
             }
@@ -441,12 +433,6 @@ pub(crate) fn core_interlocutor_party_input(
             if label.trim().is_empty() {
                 return Err(ApiError::bad_request(
                     "label must be non-empty",
-                    Some(&field_path("label")),
-                ));
-            }
-            if label.len() > MAX_INTERLOCUTOR_LABEL_BYTES {
-                return Err(ApiError::bad_request(
-                    format!("label must be at most {MAX_INTERLOCUTOR_LABEL_BYTES} bytes"),
                     Some(&field_path("label")),
                 ));
             }

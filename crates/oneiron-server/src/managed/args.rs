@@ -83,6 +83,9 @@ pub enum ManagedError {
         cause: Option<&'static str>,
     },
 
+    #[error("credential broker configuration: {reason}")]
+    InvalidBrokerConfig { reason: String },
+
     #[error("--artifact-http-socket must be an absolute path")]
     RelativeArtifactSocket,
 
@@ -244,6 +247,12 @@ pub struct ManagedArgs {
     /// supervisor gave the vault one. The origin answers on the vault's
     /// internal authority alone, bound to `vault_name` (FIX 6716).
     pub artifact_socket: Option<PathBuf>,
+    /// The supervisor's fixed per-vault native preview ingress socket
+    /// (`--preview-socket`), only supplied for an explicitly configured domain.
+    pub preview_socket: Option<PathBuf>,
+    /// The supervisor's credential broker binding, validated by the same
+    /// rules as `[models.broker]`; absent keeps the same-user default.
+    pub broker: Option<crate::config::models::BrokerConfig>,
     /// The owner's settings file (`--settings-file`), in the server's own
     /// config schema (`managed::settings`).
     pub settings_file: Option<PathBuf>,

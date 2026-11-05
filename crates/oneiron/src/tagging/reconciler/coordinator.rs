@@ -149,6 +149,7 @@ impl std::fmt::Debug for PreparedTagging {
 pub struct TaggingReconciler {
     pub(super) vault: Arc<Vault>,
     pub(super) encoder: Arc<dyn ExtractionEncoder>,
+    pub(super) call_context: Option<crate::llm::TaggerCallContext>,
     /// Who its calls are made for: the vault's own background tagging,
     /// whose calls a host's dispatcher shares its room by (FIX 9519).
     pub(super) caller: ExtractionCaller,
@@ -176,21 +177,38 @@ pub struct TaggingReconciler {
 
 impl TaggingReconciler {
     /// A reconciler for an armed vault and an on-device tagger.
-    ///
-    /// A tagger off the device would carry vault text away, and extraction
-    /// leaves the device only behind the host egress predicate, which no
-    /// tagger door has yet; so it is refused here.
     pub fn new(vault: Arc<Vault>, encoder: Arc<dyn ExtractionEncoder>) -> Result<Self> {
-        let config = vault.config.tagging.clone().ok_or_else(|| {
+        Self::new_inner(vault, encoder, None)
+    }
+
+    /// A reconciler whose calls carry this vault and the host's native
+    /// extraction predicate through dispatch. Each network send admits afresh.
+    pub fn new_with_egress(
+        vault: Arc<Vault>,
+        encoder: Arc<dyn ExtractionEncoder>,
+        predicate: Arc<dyn crate::llm::TaggerEgressPredicate>,
+    ) -> Result<Self> {
+        Self::new_inner(vault, encoder, Some(predicate))
+    }
+
+    fn new_inner(
+        vault: Arc<Vault>,
+        encoder: Arc<dyn ExtractionEncoder>,
+        predicate: Option<Arc<dyn crate::llm::TaggerEgressPredicate>>,
+    ) -> Result<Self> {
+        let config = vault.tagging_marker_config().ok_or_else(|| {
             Error::InvalidConfig("tagging markers are not armed on this vault".to_owned())
         })?;
-        if encoder.locality() != EmbedderLocality::OnDevice {
+        if encoder.locality() != EmbedderLocality::OnDevice && predicate.is_none() {
             return Err(Error::InvalidConfig(
                 "a tagger off the device needs the host egress predicate".to_owned(),
             ));
         }
+        let call_context = predicate
+            .map(|predicate| crate::llm::TaggerCallContext::new(Arc::clone(&vault), predicate));
         Ok(Self {
             caller: ExtractionCaller::vault(&vault),
+            call_context,
             vault,
             encoder,
             lease_owner: DEFAULT_LEASE_OWNER.to_owned(),
@@ -246,6 +264,11 @@ impl TaggingReconciler {
     #[must_use]
     pub fn caller(&self) -> &ExtractionCaller {
         &self.caller
+    }
+
+    /// The invocation's native egress context for a host driving the staged API.
+    pub fn call_context(&self) -> Option<&crate::llm::TaggerCallContext> {
+        self.call_context.as_ref()
     }
 
     /// Claims and settles up to the batch size of ready markers, after
