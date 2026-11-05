@@ -612,6 +612,8 @@ impl LiveSpillCaptures {
     }
 
     fn capture(&self, vault: &Vault, source: Option<&WrittenSessionSpill>) -> Result<()> {
+        let bodies = u64::try_from(source.map_or(0, WrittenSessionSpill::body_count))
+            .map_err(|_| io::Error::other("live legal body count overflow"))?;
         let at_stop = vault
             .host_legal_captures
             .closing_at_stop
@@ -622,110 +624,108 @@ impl LiveSpillCaptures {
             {
                 continue;
             }
-            match Self::capture_order(vault, order, source) {
-                Ok(()) => {}
-                // Managed stop: no HOST retry can come. The order's capture of
-                // this session ends interrupted, never claimed, and the other
-                // orders and the session's close go on.
+            let started = order.current_attempt().and_then(|attempt| {
+                let capture = attempt.start(vault)?;
+                Ok((attempt, capture))
+            });
+            let (attempt, mut capture) = match started {
+                Ok(started) => started,
+                // Managed stop: an order with no working attempt can get no
+                // HOST retry. Its capture of this session ends interrupted,
+                // never claimed, and the close goes on. A failure once a
+                // capture runs, of its source or its transport, still fails
+                // the close, as it does today.
                 Err(error) if at_stop => {
                     tracing::warn!(
                         %error,
-                        "a live legal capture ended interrupted at managed stop; its spill was not captured"
+                        "a live legal capture had no working attempt at managed stop; its spill was not captured"
                     );
                     for attempt in order.attempts()? {
                         attempt.cancel(io::ErrorKind::Interrupted)?;
                     }
+                    continue;
                 }
                 Err(error) => return Err(error),
-            }
+            };
+            let outcome = (|| -> Result<()> {
+                attempt.check(vault)?;
+                let mut collector =
+                    Collector::pinned(&mut capture.stream, &attempt.public, &attempt.request)?;
+                let mut copied = 0u64;
+                if let Some(source) = source {
+                    source.for_each_written_body(|metadata, reference, reader| {
+                        attempt.check(vault)?;
+                        let metadata = match metadata {
+                            WrittenSpillMetadata::Published {
+                                raw_key,
+                                raw_file_row,
+                            } => LiveSpillMetadata::Published {
+                                raw_key: raw_key.to_vec(),
+                                raw_file_row: raw_file_row.to_vec(),
+                            },
+                            WrittenSpillMetadata::NativeFile {
+                                name,
+                                finished,
+                                physical_len,
+                            } => LiveSpillMetadata::NativeFile {
+                                name: name.to_owned(),
+                                finished,
+                                physical_len,
+                            },
+                        };
+                        let encoded = Zeroizing::new(
+                            serde_json::to_vec(&metadata).map_err(io::Error::other)?,
+                        );
+                        let source = CaptureSource::LiveSession(order.key.target.clone());
+                        let revision = *blake3::hash(&encoded).as_bytes();
+                        collector.component(
+                            SourceComponent::LiveSessionMetadata,
+                            source.clone(),
+                            metadata.metadata_family(),
+                            metadata.source_key(),
+                            revision,
+                            encoded.len() as u64,
+                            revision,
+                            &mut &encoded[..],
+                            || attempt.check(vault),
+                        )?;
+                        collector.component(
+                            SourceComponent::LiveSessionBody,
+                            source,
+                            metadata.body_family(),
+                            metadata.source_key(),
+                            revision,
+                            reference.raw_len,
+                            reference.raw_blake3,
+                            reader,
+                            || attempt.check(vault),
+                        )?;
+                        copied = copied
+                            .checked_add(1)
+                            .ok_or_else(|| io::Error::other("live legal body count overflow"))?;
+                        Ok(())
+                    })?;
+                }
+                if copied != bodies {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "live legal body count",
+                    )
+                    .into());
+                }
+                collector.finish(
+                    0,
+                    1,
+                    copied,
+                    0,
+                    CaptureExtent::WrittenLiveSessionSpill,
+                    || attempt.check(vault),
+                )
+            })();
+            capture.finish(&outcome)?;
+            outcome?;
+            vault.host_legal_captures.complete(vault, order)?;
         }
-        Ok(())
-    }
-
-    fn capture_order(
-        vault: &Vault,
-        order: &Arc<LiveOrder>,
-        source: Option<&WrittenSessionSpill>,
-    ) -> Result<()> {
-        let bodies = u64::try_from(source.map_or(0, WrittenSessionSpill::body_count))
-            .map_err(|_| io::Error::other("live legal body count overflow"))?;
-        let attempt = order.current_attempt()?;
-        let mut capture = attempt.start(vault)?;
-        let outcome = (|| -> Result<()> {
-            attempt.check(vault)?;
-            let mut collector =
-                Collector::pinned(&mut capture.stream, &attempt.public, &attempt.request)?;
-            let mut copied = 0u64;
-            if let Some(source) = source {
-                source.for_each_written_body(|metadata, reference, reader| {
-                    attempt.check(vault)?;
-                    let metadata = match metadata {
-                        WrittenSpillMetadata::Published {
-                            raw_key,
-                            raw_file_row,
-                        } => LiveSpillMetadata::Published {
-                            raw_key: raw_key.to_vec(),
-                            raw_file_row: raw_file_row.to_vec(),
-                        },
-                        WrittenSpillMetadata::NativeFile {
-                            name,
-                            finished,
-                            physical_len,
-                        } => LiveSpillMetadata::NativeFile {
-                            name: name.to_owned(),
-                            finished,
-                            physical_len,
-                        },
-                    };
-                    let encoded =
-                        Zeroizing::new(serde_json::to_vec(&metadata).map_err(io::Error::other)?);
-                    let source = CaptureSource::LiveSession(order.key.target.clone());
-                    let revision = *blake3::hash(&encoded).as_bytes();
-                    collector.component(
-                        SourceComponent::LiveSessionMetadata,
-                        source.clone(),
-                        metadata.metadata_family(),
-                        metadata.source_key(),
-                        revision,
-                        encoded.len() as u64,
-                        revision,
-                        &mut &encoded[..],
-                        || attempt.check(vault),
-                    )?;
-                    collector.component(
-                        SourceComponent::LiveSessionBody,
-                        source,
-                        metadata.body_family(),
-                        metadata.source_key(),
-                        revision,
-                        reference.raw_len,
-                        reference.raw_blake3,
-                        reader,
-                        || attempt.check(vault),
-                    )?;
-                    copied = copied
-                        .checked_add(1)
-                        .ok_or_else(|| io::Error::other("live legal body count overflow"))?;
-                    Ok(())
-                })?;
-            }
-            if copied != bodies {
-                return Err(
-                    io::Error::new(io::ErrorKind::InvalidData, "live legal body count").into(),
-                );
-            }
-            collector.finish(
-                0,
-                1,
-                copied,
-                0,
-                CaptureExtent::WrittenLiveSessionSpill,
-                || attempt.check(vault),
-            )
-        })();
-        capture.finish(&outcome)?;
-        outcome?;
-        vault.host_legal_captures.complete(vault, order)?;
         Ok(())
     }
 }
