@@ -122,6 +122,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             let Some(locality) = role.inference.selected_locality() else {
                 continue;
             };
+            let run = role.sourced.and_then(|sourced| sourced.run());
             let sources: Vec<_> = rows.iter().copied().chain(labels.rows()).collect();
             let route = role.call_backend(Some(sources));
             let backend = FreshBackend {
@@ -214,7 +215,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 actor: self.actor,
                 guard: self.guard,
             }
-            .decide_scoped(
+            .decide_scoped_on_run(
                 ScopedRead {
                     step,
                     pass: ctx.deadline,
@@ -232,6 +233,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 std::slice::from_ref(&pack.question),
                 &labels,
                 &mut spent,
+                run,
             )
             .await;
             let fresh = backend.fresh.load(Ordering::Relaxed);

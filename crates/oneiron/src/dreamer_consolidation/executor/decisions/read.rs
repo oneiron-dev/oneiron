@@ -19,6 +19,7 @@ use crate::error::Result;
 use crate::llm::decision::{
     AskTo, DecisionWireLabels, GeneratedDecisions, GeneratedRung, GeneratedStep, TypedDecision,
 };
+use crate::llm::run_admission::RunAdmission;
 use crate::model_decision::{
     DecisionQuestion, DecisionRung, EvidenceVersion, HumanAskReason, ProviderPin, Reversibility,
 };
@@ -96,6 +97,20 @@ impl Decider<'_> {
         labels: &CallLabelMap,
         spent: &mut Vec<([u8; 32], LlmUsage)>,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
+        self.decide_scoped_on_run(read, questions, labels, spent, None)
+            .await
+    }
+
+    /// The same scoped read, with the resolved host route's actual run for
+    /// its stronger providers. The generated first read keeps its own backend.
+    pub(in crate::dreamer_consolidation) async fn decide_scoped_on_run(
+        &self,
+        read: ScopedRead<'_>,
+        questions: &[DecisionQuestion],
+        labels: &CallLabelMap,
+        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        run: Option<&RunAdmission>,
+    ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let vault = read.step.vault;
         let principal = self.actor.entity_ref();
         let asked = questions
@@ -144,7 +159,7 @@ impl Decider<'_> {
         let rungs = LabelledRungs::of(&held, wire);
         let ladder = rungs.ladder(&held);
         let decided = ladder
-            .run_pack_generated_spent(
+            .run_pack_generated_spent_with_run(
                 &rung,
                 &pack,
                 principal,
@@ -159,6 +174,7 @@ impl Decider<'_> {
                 ),
                 spent,
                 Some(wire),
+                run,
             )
             .await;
         let decisions = match decided? {
