@@ -236,11 +236,11 @@ const JUDGED_JOINS_KEPT: usize = 64;
 
 /// What one store's tips came to under one mark join (FIX 10970).
 #[derive(Debug, Clone, Default)]
-struct JudgedTips {
+pub struct JudgedTips {
     /// Commits proven clean, newest last.
-    clean: Vec<GitOid>,
+    pub clean: Vec<GitOid>,
     /// Tips held `marked_live_secret`.
-    marked: BTreeSet<GitOid>,
+    pub marked: BTreeSet<GitOid>,
 }
 
 /// Every store's judged tips, by its identity and its join's digest.

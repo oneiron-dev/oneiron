@@ -29,7 +29,6 @@ pub mod body_envelope;
 pub mod build_cache;
 pub mod bundle_generations;
 pub mod channel_class;
-pub mod checkout_lease;
 pub mod checkout_task;
 pub mod checkpoint_host_recipient;
 pub mod checkpoint_payload;

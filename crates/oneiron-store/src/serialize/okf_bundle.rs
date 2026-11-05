@@ -23,7 +23,7 @@ const TEXT_KEYS: &[&str] = &["markdown", "md", "text", "content", "body", "summa
 const DESCRIPTION_CHARS: usize = 160;
 
 /// What every OKF reader is told the bundle drops.
-const LOSS_DECLARATION: &str = "This bundle is not a full copy of the vault. It is a lossy \
+pub const LOSS_DECLARATION: &str = "This bundle is not a full copy of the vault. It is a lossy \
 Open Knowledge Format view for other tools. It drops bi-temporal validity (only the time \
 each record was learned is kept, as `timestamp`), confidence, approval and lifecycle, \
 per-claim provenance beyond the citations listed, typed edge values (weight, valence, \
