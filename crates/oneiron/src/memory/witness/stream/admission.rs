@@ -245,7 +245,7 @@ impl Memory<'_> {
             if entries.contains_key(&id) {
                 return Err(MessageStreamError::StreamAlreadyActive(id));
             }
-            entries.insert(id, Arc::clone(&entry));
+            entries.insert(id, Resident::Recorded(Arc::clone(&entry)));
         }
         let admitted: MessageStreamResult<()> =
             self.vault
