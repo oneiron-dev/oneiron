@@ -28,6 +28,7 @@ mod vector_refill;
 pub(crate) use vector_refill::schedule_vector_refills;
 
 pub(crate) use storage::capture_entity_document;
+pub(crate) use storage::{capture_native_note_in_txn, finish_native_note_publication_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use storage::entity_has_pending_revision;
 pub use storage::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
