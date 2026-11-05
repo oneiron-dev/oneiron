@@ -4493,7 +4493,7 @@
      "path": "src/authority/machine_write.rs",
      "purpose": "MACHINE origin signatures for claim writes; enrollment is `machine_enroll`",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 4
      }
     },
@@ -11296,7 +11296,7 @@
      "path": "src/calendar/claims/codec.rs",
      "purpose": "Calendar claim validation dispatch plus MessagePack encode/decode and field helpers",
      "surface": {
-      "crate-vis": 43,
+      "crate-vis": 44,
       "fn": 2
      }
     },
@@ -11389,7 +11389,7 @@
      "path": "src/calendar/connectors/inbound.rs",
      "purpose": "Pull orchestration: apply, admit, enqueue, and reconcile",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -11657,7 +11657,7 @@
      "path": "src/calendar/ingest/admission/import_claim.rs",
      "purpose": "Imported-claim admission through the Gate-backed imported-evidence door, and the adapter's own write actor",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -12012,7 +12012,7 @@
      "path": "src/calendar/passport.rs",
      "purpose": "UID-first passport index and feed diff (CAL-02, ONE-1784)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 7
      }
@@ -18009,6 +18009,16 @@
      "surface": {
       "crate-vis": 31,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/records/bodies/context.rs",
+     "purpose": "One code-run output body for a heal's recorded cause (FIX 7275): the context-safe read of a raw output…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -39666,7 +39676,7 @@
      "path": "src/git_wire/bundle_tree.rs",
      "purpose": "Exact bundle bytes and modes staged through the existing Git bridge",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -41310,7 +41320,7 @@
      "path": "src/ingest/admission.rs",
      "purpose": "Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 8,
       "struct": 3
      }
@@ -42470,6 +42480,16 @@
      "notable": [],
      "path": "src/learning_setting/subject.rs",
      "purpose": "The entity a vault-wide knob's fit is learned on (FIX 8079): an engine-owned ASSET at the knob's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/learning_setting/witness.rs",
+     "purpose": "Native records of the owner PUT acts behind numeric seed and pin rows",
      "surface": {
       "crate-vis": 2
      }
@@ -51296,7 +51316,7 @@
      "path": "src/note/citation_erase.rs",
      "purpose": "Hard-erase dependency fences",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -61929,7 +61949,7 @@
      "path": "src/repo_mutation/snapshot.rs",
      "purpose": "Capture, validation and restore of repository working-tree snapshots",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -65241,7 +65261,7 @@
      "path": "src/self_heal/heal_context/records.rs",
      "purpose": "How a heal's context renders what it read (OF-418 L2, L10): the source order of a walk's links, a code run's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -80982,7 +81002,7 @@
      "path": "src/task_verb/ask_record/attendee_late_ask.rs",
      "purpose": "A placed attendee's first later identity question, separate from its immutable first-entry history cut",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -82890,7 +82910,7 @@
      "purpose": "Coordination patterns as skills (ARCH-0079 #coordination-patterns)",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 7,
       "struct": 2,
@@ -91608,7 +91628,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 176,
+     "files": 177,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92133,7 +92153,7 @@
      "purpose": "The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault…"
     },
     "learning_setting": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -92919,7 +92939,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6497,
+   "source_files": 6499,
    "test_files": 895
   },
   "oneiron-android": {
