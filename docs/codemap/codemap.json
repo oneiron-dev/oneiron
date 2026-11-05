@@ -3824,7 +3824,7 @@
      "path": "src/authority/conversation_training_vault.rs",
      "purpose": "Folds the vault's signed \"Learn from my conversations\" setting (FIX 5502 owner rulings, OF-420), and the…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 3,
       "struct": 1
      }
@@ -60636,7 +60636,7 @@
      "path": "src/recovery/checkpoint/payload/mod.rs",
      "purpose": "The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -74948,7 +74948,7 @@
      "path": "src/sync/checkpoint_payload/owners.rs",
      "purpose": "Where each window root map's values go (KS7-3a): the typed owner, dependency and actor dispatch KS7-3b's…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -133817,11 +133817,11 @@
      "purpose": "Row staging, preflight, budget checks, read probes",
      "surface": {
       "crate-vis": 1,
-      "fn": 12
+      "fn": 13
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "TxnSegmentGuard"
