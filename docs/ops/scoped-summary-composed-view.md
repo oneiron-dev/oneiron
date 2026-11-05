@@ -10,8 +10,10 @@ and retried through the view only when it fails.
 An overlay-only source can therefore resolve. An erased source or changed
 MESSAGE revision in that view does not validate against an older base copy.
 The caller retains its existing unresolved-summary and private-thread error
-behavior. The epoch-summary and registered dependency paths still retain both
-base and composed-view source obligations.
+behavior. A composed read also checks the base private-thread walk independently,
+so invalid composed content cannot remove a base privacy restriction. The
+epoch-summary and registered dependency paths still retain both base and
+composed-view source obligations.
 
 This does not make a content view an authority source. Archive controls, task
 bindings, audience checks, policy, grants and the Dreamer's NOTE-source admission
