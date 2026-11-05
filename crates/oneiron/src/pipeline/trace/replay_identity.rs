@@ -51,6 +51,9 @@ pub(in crate::pipeline) fn capture_replay_identity_in_txn(
                 query.space_id
             )));
         };
+        if let Some(memory) = media_memory.as_mut() {
+            memory.materialized(0, space.id.capacity() as u64);
+        }
         media_spaces.push(MediaSpaceReplayIdentity {
             floors: media_space_floors(&floors, &space, None),
             kind_overrides: floors.keyed.get(&space.id).cloned().unwrap_or_default(),
