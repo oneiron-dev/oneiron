@@ -9,7 +9,10 @@ The nested seat uses the current child's attempt scope, or the same host
 meter when no scope exists. It keeps the caller destination and inherited
 model list. Its window is bounded by the child's remaining time, with a
 fold reserve inside that time. It borrows no ancestor attempt lease and
-opens no new default window.
+opens no new default window. Both the native per-rung backend and its
+fallback publish settled generation spend on the same lease ledger before
+returning the answer or error. Final settlement books only the remaining
+unbooked spend. A booking fault keeps the existing warn-and-retry behavior.
 
 A durable peer wait drops the native executor and guest heap before
 releasing the shared code-run execution permit. The child keeps its model
