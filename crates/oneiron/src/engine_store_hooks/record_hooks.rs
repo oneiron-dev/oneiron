@@ -1,6 +1,54 @@
 use super::*;
 
 impl StoreRecordHooks for EngineRecordHooks {
+    fn resolve_party_ref_from_store_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        party: &str,
+    ) -> crate::write_envelope::communication::CommResult<Option<EntityId>> {
+        crate::comm::resolve_party_ref_from_store_in_txn(store, txn, party)
+    }
+
+    fn comm_party_keys_in_txn(&self, store: &Store, rtxn: &RoTxn<'_>) -> Result<BTreeSet<String>> {
+        crate::comm::comm_party_keys_in_txn(store, rtxn)
+    }
+
+    fn person_party_key_in_txn(
+        &self,
+        store: &Store,
+        rtxn: &RoTxn<'_>,
+        id: EntityId,
+    ) -> Result<Option<String>> {
+        crate::comm::person_party_key_in_txn(store, rtxn, id)
+    }
+
+    fn resolve_party_ref_in_txn(
+        &self,
+        vault: &crate::Vault,
+        rtxn: &RoTxn<'_>,
+        party: &str,
+    ) -> crate::write_envelope::communication::CommResult<Option<EntityId>> {
+        crate::comm::resolve_party_ref_in_txn(vault, rtxn, party)
+    }
+
+    fn count_active_party_claims_in_txn(
+        &self,
+        vault: &crate::Vault,
+        rtxn: &RoTxn<'_>,
+        party_ref: EntityId,
+        predicate: &str,
+        channel_class: &str,
+    ) -> crate::write_envelope::communication::CommResult<usize> {
+        crate::comm::count_active_party_claims_in_txn(
+            vault,
+            rtxn,
+            party_ref,
+            predicate,
+            channel_class,
+        )
+    }
+
     fn redact_actor_in_txn(
         &self,
         vault: &crate::Vault,
