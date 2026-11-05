@@ -1597,8 +1597,16 @@ impl OfferLadder {
         release: MediaDispatchRelease<'_>,
         admitted: Option<&AtomicBool>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_by_released(run, request, selector, voices, self.host_wait(), release, admitted)
-            .await
+        self.media_by_released(
+            run,
+            request,
+            selector,
+            voices,
+            self.host_wait(),
+            release,
+            admitted,
+        )
+        .await
     }
 
     /// [`Self::media`], on `deadline` across every rung, wait and fallback
