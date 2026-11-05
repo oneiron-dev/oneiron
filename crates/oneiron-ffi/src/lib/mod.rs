@@ -75,6 +75,7 @@ mod engine_error;
 mod entity;
 mod guard;
 mod host_root;
+mod limit_questions;
 mod parse;
 mod query;
 mod session_reads;
@@ -103,6 +104,7 @@ pub use self::entity::{
     oneiron_vault_put_entity,
 };
 pub use self::host_root::oneiron_vault_open_with_host_root;
+pub use self::limit_questions::oneiron_vault_native_limit_questions;
 pub use self::query::{
     oneiron_vault_ancestors, oneiron_vault_context_pack, oneiron_vault_edges_in,
     oneiron_vault_edges_out, oneiron_vault_entities_by_type, oneiron_vault_get_entity_type,
