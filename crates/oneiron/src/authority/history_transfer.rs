@@ -395,17 +395,18 @@ impl Vault {
     /// main-log frontier wider than one entry names (FIX 11993): `joins` are
     /// the joins its signer signed first, in the host family, over the main
     /// log's heads, and the move names their tips. They land with the move
-    /// in one write, and each must fold valid, or none does. Nothing is
-    /// re-signed and no parent is renamed; a move whose joins no longer
-    /// cover this vault's frontier is signed again by its signer. The rows
+    /// in one write, and each must fold valid, or none does. The move and its
+    /// joins must name every main-log head the write starts from. Nothing is
+    /// re-signed and no parent is renamed; a move that no longer covers this
+    /// vault's frontier is refused, for its signer to sign again. The rows
     /// are marked for the vault's loaded windows in the same write and
     /// announced once it commits, as an import's are.
     ///
     /// # Errors
     /// A move that is no ReRoot, a join that is no host-family main-log join
     /// by the move's own signer of the same vault or that the move does not
-    /// rest on, a repeated join, a transition the fold refuses, or a storage
-    /// error.
+    /// rest on, a repeated join, a move that leaves a current main-log head
+    /// uncovered, a transition the fold refuses, or a storage error.
     pub fn apply_signed_re_root_with_joins(
         &self,
         joins: &[AuthorityLogEntry],
@@ -432,11 +433,24 @@ impl Vault {
             return Err(invalid_authority());
         }
         let hash = authority_entry_hash(entry)?;
-        let join_hashes = signed_re_root_joins(joins, entry)?;
+        let (join_hashes, under) = signed_re_root_joins(joins, entry)?;
         let now = crate::unix_seconds_now();
         let before = self.authority_fold_readonly_in_txn(txn)?;
         if before.vault_id.is_none() || entry.vault_id != before.vault_id {
             return Err(invalid_authority());
+        }
+        // A move covers every main-log head this write starts from (FIX
+        // 11993 R1): a head has no resident child, so only the move or one
+        // of its joins can name it. A row that landed after the move was
+        // signed would otherwise fold invalid beside it; such a move is
+        // signed again over the frontier as it now stands. Applying the
+        // same move again is the one exception.
+        if !before.valid_entries.contains(&hash)
+            && !before.append_heads.iter().all(|head| under.contains(head))
+        {
+            return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
+                "re-root does not cover the current frontier; sign it again",
+            )));
         }
         let at = TimeRange {
             start: now,
@@ -646,11 +660,12 @@ impl Vault {
 /// The hashes of `joins`, the joins a move signed elsewhere rests on (FIX
 /// 11993): each a host-family join of the main log, of the move's vault, by
 /// the move's own signer, named once, and under the move, a parent of it or
-/// of another such join. The fold judges each signature and standing.
+/// of another such join; and every hash the move or one of those joins
+/// names. The fold judges each signature and standing.
 fn signed_re_root_joins(
     joins: &[AuthorityLogEntry],
     entry: &AuthorityLogEntry,
-) -> Result<Vec<AuthorityEntryHash>> {
+) -> Result<(Vec<AuthorityEntryHash>, BTreeSet<AuthorityEntryHash>)> {
     let mut hashes = Vec::with_capacity(joins.len());
     for join in joins {
         if !matches!(
@@ -685,7 +700,7 @@ fn signed_re_root_joins(
     if !hashes.iter().all(|hash| under.contains(hash)) {
         return Err(invalid_authority());
     }
-    Ok(hashes)
+    Ok((hashes, under))
 }
 
 /// One vault and its independently signed migration entry, with the joins
