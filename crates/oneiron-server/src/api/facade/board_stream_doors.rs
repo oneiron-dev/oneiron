@@ -173,6 +173,7 @@ pub(crate) async fn self_focus_wakes(
 ) -> MemoryResult<BoardWakeReply> {
     let (writer, run, held) = hold_live_run(server, auth, None, &input.live_run).await?;
     let connection = run_connection(run.run_id());
+    let vault = Arc::clone(server.vault());
     let (subscribed, wakes, run_reader) = {
         let mut registry = server.mcp_registry.lock().await;
         let subscribed = registry
@@ -236,5 +237,7 @@ pub(crate) async fn self_focus_wakes(
     .await
     .map_err(|_| internal("self.focus.wakes"))??;
     drop(held);
-    Ok(BoardWakeReply { wakes })
+    // FIX 15011: the batch's wake opener, on the vault clock at this delivery.
+    let opener = oneiron::context_board::wake_batch_opener(&wakes, vault.now_recorded_ms());
+    Ok(BoardWakeReply { wakes, opener })
 }

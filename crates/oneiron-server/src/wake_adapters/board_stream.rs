@@ -21,6 +21,11 @@ use crate::server::SyncServer;
 pub(crate) struct BoardDelivery {
     pub(crate) wakes: Vec<WakeEnvelope>,
     pub(crate) frames: Vec<BoardStreamFrame>,
+    /// The batch's wake opener (FIX 15011), rendered at the handoff after
+    /// the read checks; never stored with a notice, never a frame. Absent
+    /// when no wake survives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) opener: Option<String>,
 }
 
 impl BoardDelivery {

@@ -132,7 +132,7 @@ export type BoardWakeRequest = Record<string, never>
 /** `oneiron::context_board::stream::wake::WakeEnvelope` */
 export type WakeEnvelope = { event_ref: string; task_ref: string; actor_ref: string; line: string; review_ref?: string | null }
 /** `oneiron::verbs::BoardWakeReply` */
-export type BoardWakeReply = { wakes: WakeEnvelope[] }
+export type BoardWakeReply = { wakes: WakeEnvelope[]; opener?: string | null }
 /** `oneiron::verbs::scratchpad::ScratchpadRecallRequest` */
 export type ScratchpadRecallRequest = { session_id: string; query: string }
 /** `oneiron_contracts::entity_id::EntityId` */

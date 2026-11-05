@@ -898,6 +898,30 @@ instant in UTC, after the query part; `off` adds nothing. A turn whose board
 is held or not read ends at the user's message, as before. `POST
 /v1/core/context-board` and `ai.reply` still render the one frame.
 
+A session that an event started ends with the wake variant instead:
+`<turn now="…" wake="…" response="optional"/>`, where `wake` is `inbox`,
+`review`, `task` or `channel`. The cause comes from the dispatch, never
+from a briefing or a sender's words.
+
+- A resident's inbox, diary-review and TASK wakes, and an agent run that
+  realizes a TASK, put it after the executor's turn instruction, on the
+  run's opening request only. A later step, a resumed wait, a continued run
+  and a spawn without a TASK carry none. The task text never holds the time.
+- A Slack or LINE reply puts `wake="channel"` after the event's briefing.
+  An empty answer still sends nothing.
+- A STREAM wake batch carries it as `opener`, beside `wakes` and `frames`.
+  It is rendered when the batch is handed over (`oneiron/wakes`, the helper
+  or boot batch, `wake inbox`, `self.focus.wakes`) and never stored with a
+  notice. A batch that names a TASK is `task`; one of reviews only is
+  `review`. A tmux pane is still typed ids only.
+
+The executor's system prompt and the MCP setup instructions state the
+protocol once: read the live state first; to answer in a room, take the
+eligible claim first (`rooms.claim`, or the turn an accepted offer binds);
+`HeldBy` or `NotAddressed` means no ordinary room reply; no room output is
+a valid completion. `turn_opener` sets chat turns only; the wake variant
+has no switch.
+
 ## 5. Saved workflows
 
 A dispatched saved workflow runs its steps on the `generative_reasoner` seat
