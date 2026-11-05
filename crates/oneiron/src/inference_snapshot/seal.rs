@@ -17,8 +17,9 @@
 //! count. A reader checks the sealed length and count before it opens a
 //! chunk, and authenticates a chunk before it returns a byte of it: a body
 //! cut short, reordered, extended or opened under another manifest does not
-//! read. Every open failure is one [`Error::CorruptedIndex`], carrying no
-//! manifest bytes.
+//! read. Malformed or unauthenticated bodies return [`Error::CorruptedIndex`],
+//! carrying no manifest bytes. Reserving a native record's measured plaintext
+//! length can also return an I/O allocation fault.
 
 use std::borrow::Cow;
 
@@ -391,14 +392,52 @@ pub fn open_snapshot(
     manifest: &[u8],
     sealed: &SealedSnapshot<'_>,
 ) -> Result<Zeroizing<Vec<u8>>> {
+    open_snapshot_inner(vault_key, wrapped, manifest, sealed, None)
+}
+
+/// Opens a native record's body, reserving its measured plaintext length.
+/// A different header total is corruption; allocation failure is an I/O fault.
+pub(super) fn open_snapshot_with_expected_len(
+    vault_key: &[u8; 32],
+    wrapped: &WrappedSnapshotKey,
+    manifest: &[u8],
+    sealed: &SealedSnapshot<'_>,
+    expected_plaintext_len: u64,
+) -> Result<Zeroizing<Vec<u8>>> {
+    open_snapshot_inner(
+        vault_key,
+        wrapped,
+        manifest,
+        sealed,
+        Some(expected_plaintext_len),
+    )
+}
+
+fn open_snapshot_inner(
+    vault_key: &[u8; 32],
+    wrapped: &WrappedSnapshotKey,
+    manifest: &[u8],
+    sealed: &SealedSnapshot<'_>,
+    expected_plaintext_len: Option<u64>,
+) -> Result<Zeroizing<Vec<u8>>> {
     check_totals(sealed.count, sealed.total)?;
     if sealed.frames.len() as u64 != sealed.count {
+        return Err(corrupt());
+    }
+    if expected_plaintext_len.is_some_and(|expected| expected != sealed.total) {
         return Err(corrupt());
     }
     let key = open_wrapped(vault_key, &sealed.id, wrapped)?;
     let kek = Kek::from_bytes_ref(&key);
     let last_extra = last_extra_aad(manifest, sealed.total, sealed.count);
     let mut plain = Zeroizing::new(Vec::new());
+    if let Some(expected) = expected_plaintext_len {
+        let bytes = usize::try_from(expected)
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+        plain
+            .try_reserve_exact(bytes)
+            .map_err(std::io::Error::from)?;
+    }
     for (at, frame) in sealed.frames.iter().enumerate() {
         let index = u64::try_from(at).map_err(|_| corrupt())?;
         let role = if index + 1 == sealed.count {
