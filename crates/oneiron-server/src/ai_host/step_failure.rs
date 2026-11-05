@@ -97,8 +97,11 @@ pub(super) fn settle(
     };
     // Which try of its step this was: a retry is a fresh row, so the try
     // count is the lineage behind it.
+    let retained_failures = oneiron::agent_dispatch::AgentDispatcher::new(vault)
+        .workflow_tool_failure_count(&record)?;
     let tries = queue
         .retry_chain_depth(step.leaf)?
+        .saturating_add(u32::try_from(retained_failures).unwrap_or(u32::MAX))
         .saturating_add(1)
         .min(u32::from(max_tries.get()));
     DreamerRunnerStore::new(vault).fail_agent_dispatch_with_evidence(

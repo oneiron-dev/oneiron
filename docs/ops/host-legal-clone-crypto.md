@@ -12,7 +12,7 @@ host install id. `legal_clone::KEY_LABEL` is the pinned label for
 `oneiron_crypto::legal_clone` supplies `CaptureBinding`, `ContentBinding`,
 `ContentSource`, the closed seven `SourceComponent` tags, and separate
 `seal_`/`open_` functions for content, descriptors and the final summary. Every envelope uses the same host
-order public/private key pair, `Purpose::LegalClone` (30), XChaCha20-Poly1305,
+order public/private key pair, `Purpose::LegalClone` (31), XChaCha20-Poly1305,
 X25519 + ML-KEM-1024, the existing epoch 1 and only `HybridCapsule` wraps.
 There is no device, client, recovery or offline legal-recipient wrap.
 

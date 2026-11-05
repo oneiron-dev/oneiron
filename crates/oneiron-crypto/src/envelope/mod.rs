@@ -163,9 +163,14 @@ pub enum Purpose {
     /// caller binds the world key id in `key_id`, its row family as the recipient,
     /// and its native row identity and revisions as extra associated data.
     WorldSideRow = 29,
+    /// One private world's window update, sealed under a key derived from the
+    /// world's key for a home that may not read the world to store and relay
+    /// between the owner's machines (DEC-0005 fix 8). Its `key_id` is a fresh
+    /// salt and a holder-only hint, never the world or the key.
+    SealedWorldUpdate = 30,
     /// A legal-clone content chunk or encrypted descriptor/summary, sealed only
     /// to the host's independently destroyable per-order hybrid key.
-    LegalClone = 30,
+    LegalClone = 31,
 }
 
 impl Purpose {
@@ -200,7 +205,8 @@ impl Purpose {
             27 => Self::CheckpointHostOrderHolds,
             28 => Self::CheckpointHostOrderHoldsKey,
             29 => Self::WorldSideRow,
-            30 => Self::LegalClone,
+            30 => Self::SealedWorldUpdate,
+            31 => Self::LegalClone,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }
