@@ -34,13 +34,14 @@ iteration counts, tolerances and arithmetic order are unchanged. NPV, IRR, XNPV 
 also poll that same token during cashflow/date intake, date truncation and the individual
 NPV/derivative scans. Typed cancellation escapes each private helper through its actual
 caller, not a NUM result, another solver attempt or a boxed success. Financial builtins
-outside the named families, allocation internals and individual bond/coupon scans still
+outside the named families, allocation internals and remaining bond/coupon paths still
 have unpolled work; this does not bound every financial builtin.
 
 YIELD and ODDFYIELD poll the same token between Newton iterations and before their final
 valuations. Cancellation escapes as a typed error before numeric-result boxing. Original
 guesses, iteration counts, tolerances, arithmetic order and the YIELD single-coupon path
-are unchanged. Bond intake and individual coupon price/slope scans remain unpolled.
+are unchanged. Coupon price/slope scans use the same token as described below;
+bond intake and calendar/schedule helpers still have unpolled work.
 
 MIRR polls the same full token during cashflow intake and its discount/compounding
 scan. CUMIPMT and CUMPRINC poll before each payment period, retaining the existing
@@ -50,6 +51,14 @@ reuse the caller's token; no clock or work quota is added. NPV no longer refuses
 because its variadic argument count exceeds 255; its minimum arity, coercion, traversal
 and cancellation checks are unchanged. Allocation and other unpolled inner work remain
 outside this cooperative checkpoint coverage.
+
+ACCRINT, PRICE, YIELD, DURATION and MDURATION also use the same full token inside
+accrued-interest periods, coupon-price sums, YIELD price/slope valuations and duration
+cashflow sums. Cancellation propagates through the real fallible helpers and escapes
+before numeric-result boxing. Numeric formulas, traversal order, solver guesses,
+iteration counts and ordinary error results stay unchanged. Calendar/schedule helpers,
+allocation internals and other financial builtins still contain unpolled work; this is
+not a hard time bound.
 
 The recalculation behaves like Excel recalculating at edit time. Its caller passes a
 `RecalcClock`: the instant NOW() and TODAY() read (sampled once, so every call agrees), the
@@ -244,7 +253,7 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.19): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.20): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
 stage 2's linked workbooks and caller-context functions, five commits picked from upstream's
@@ -295,7 +304,7 @@ The formula bounds admit every formula Excel saves (measured at fork `f01d8eff` 
 linked-workbook forms above, 2026-10-09): the 5 that fell back over the old token bound recalculate
 natively and match Excel on every scored cell.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.19`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.20`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 
