@@ -156,9 +156,20 @@ impl RoomPosture {
     }
 }
 
+/// One open stretch in this room, read from the live registry for a current
+/// member. `session_ref` is its registry key, usable by the generic session doors.
+#[derive(Debug, Clone)]
+pub struct RoomStretch {
+    pub session_ref: String,
+    pub mode: crate::off_record::OffRecordMode,
+}
+
 #[derive(Debug, Clone)]
 pub struct RoomSection {
     pub room: EntityId,
+    /// Every open stretch, with its mode as this board is built. Like scope
+    /// and posture, this whole-room signal rides every page.
+    pub stretches: Vec<RoomStretch>,
     pub roster: Vec<RoomPresence>,
     pub scope: Scope,
     pub posture: RoomPosture,
@@ -180,7 +191,7 @@ pub struct RoomSection {
 }
 
 impl RoomSection {
-    /// Roster, invitees, scope, posture, host, rules and open offers only.
+    /// Roster, stretches, invitees, scope, posture, host, rules and open offers.
     /// Invitees are the reader's people it may invite ([`Self::invitable`]).
     /// Values are escaped again by the board frame; flattening here only
     /// prevents row/control-character tricks. An undecided host renders as
@@ -206,6 +217,17 @@ impl RoomSection {
     ) -> std::result::Result<BoardSection, BoardFrameError> {
         let mut rows = vec![format!("room: {}", self.room.to_hex())];
         rows.extend(page);
+        rows.extend(self.stretches.iter().map(|stretch| {
+            let mode = match stretch.mode {
+                crate::off_record::OffRecordMode::OffRecord => "off_record",
+                crate::off_record::OffRecordMode::OnRecord => "on_record",
+                crate::off_record::OffRecordMode::Anonymous => "anonymous",
+            };
+            format!(
+                "stretch: {} mode={mode}",
+                one_line_token(&stretch.session_ref)
+            )
+        }));
         rows.extend(self.roster.iter().map(|member| {
             let kind = people
                 .kind(member.actor)
