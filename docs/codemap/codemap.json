@@ -9314,15 +9314,17 @@
       "EsignSignatureRevision",
       "EsignVerdict",
       "SealDegrade",
+      "SealDegradeReason",
       "SealProfile",
+      "SealProfileEvidence",
       "SealVerdict"
      ],
      "path": "src/blob_artifact/esign/sealer.rs",
      "purpose": "The seal port: how the engine reaches a PAdES sealer it does not link",
      "surface": {
-      "enum": 3,
+      "enum": 4,
       "fn": 2,
-      "struct": 6,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -135256,8 +135258,12 @@
       "SealCheckReceipt",
       "SealCheckRequest",
       "SealCompleteRequest",
+      "SealDegrade",
+      "SealDegradeReason",
       "SealLevel",
       "SealPendingRequest",
+      "SealProfile",
+      "SealProfileEvidence",
       "SealReceiptView",
       "SealRunReceipt",
       "SealedAttemptReceipt",
@@ -136199,8 +136205,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1108,
-      "struct": 3374
+      "enum": 1110,
+      "struct": 3376
      }
     },
     {
