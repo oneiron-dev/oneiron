@@ -31,10 +31,11 @@ fn outside_ceiling(path: &str) -> Error {
 impl Vault {
     /// CODE entity `repo`'s body, when it is a live registered repository
     /// in `txn`: a CODE_ARTIFACT whose body carries a registration. `None`
-    /// for anything else, an unreadable body included.
+    /// for anything else. A CODE_ARTIFACT body that does not decode is an
+    /// error, never "unregistered": the ceiling fails closed.
     ///
     /// # Errors
-    /// A store failure.
+    /// A store failure, and a CODE_ARTIFACT body that does not decode.
     pub(crate) fn registered_repository_body_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -47,9 +48,8 @@ impl Vault {
         else {
             return Ok(None);
         };
-        Ok(decode_code_artifact_body(&body)
-            .ok()
-            .filter(|body| body.registration.is_some()))
+        let body = decode_code_artifact_body(&body)?;
+        Ok(body.registration.is_some().then_some(body))
     }
 
     /// Whether CODE entity `repo` is a live registered repository now.
