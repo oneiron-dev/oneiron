@@ -13,20 +13,24 @@
 //! A folder counts by the nearest well-known folder it is, or sits under:
 //! mail anywhere under Deleted Items, Junk Email, Drafts, Outbox or
 //! Conversation History is not copied, and mail moved anywhere under Deleted
-//! Items or Junk Email is deleted at the provider.
+//! Items or Junk Email is deleted at the provider. A folder the wire cannot
+//! place under the mailbox's root, after reading the folders again once for
+//! it, is refused rather than counted as copied.
 //!
 //! Graph tracks changes per mail folder, so the source's change anchor is a
-//! delta link per folder it copies, and per folder under Deleted Items and
-//! Junk Email, as the folders stood when the anchor was taken. The anchor is
-//! taken with a delta round filtered to mail received from now on, so it
-//! costs one call per folder and lists nothing; deletes and moves of older
-//! mail still come through it, as Graph reports removals whatever the
-//! filter. A message a folder reports removed is looked up: gone, or under
-//! Deleted Items or Junk Email, it is deleted at the provider; anywhere else
-//! it only moved, and one that left the trash for a copied folder is filed
-//! into the mailbox again. A copied folder that is gone has each copied
-//! message under it looked up again. A folder made after the anchor joins
-//! when the anchor is next taken.
+//! delta link per folder, as the folders stood when they were read. The
+//! anchor is taken with a delta round filtered to mail received from then
+//! on, so it costs one call per folder and lists nothing; deletes and moves
+//! of older mail still come through it, as Graph reports removals whatever
+//! the filter. A folder not copied is read only for the mail that leaves it.
+//! A message a folder reports removed is looked up: gone, or under Deleted
+//! Items or Junk Email, it is deleted at the provider; anywhere else it only
+//! moved, and one that left a folder not copied for a copied one is filed
+//! into the mailbox. A copied folder that is gone, or that moved under a
+//! folder not copied, has each copied message under it looked up again; a
+//! folder that moved out from under one lists all its mail in its next
+//! round. When a round ends, the folders made since the anchor's folders
+//! were read join it, listing their mail received since then.
 //!
 //! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
 
@@ -58,7 +62,8 @@ const GRAPH_PAGE_SIZE: u32 = 100;
 const PREFER_IMMUTABLE_IDS: &str = "IdType=\"ImmutableId\"";
 const PREFER_TEXT_BODY: &str = "IdType=\"ImmutableId\", outlook.body-content-type=\"text\"";
 /// The well-known folders the wire names.
-const WELL_KNOWN_FOLDERS: [&str; 8] = [
+const WELL_KNOWN_FOLDERS: [&str; 9] = [
+    "msgfolderroot",
     "inbox",
     "sentitems",
     "archive",
@@ -83,6 +88,9 @@ const TRASH_FOLDERS: [&str; 2] = ["deleteditems", "junkemail"];
 const MAX_FOLDERS: usize = 1_000;
 /// The deepest folder nesting walked up to a well-known folder.
 const MAX_FOLDER_DEPTH: usize = 64;
+/// How far before a folder read the mail its delta links take in starts,
+/// for clock skew between the host and Graph.
+const CLOCK_MARGIN_SECS: u64 = 300;
 /// The most folder reads one change-feed page makes while folders are quiet.
 const MAX_FOLDER_READS_PER_PAGE: usize = 100;
 /// The longest Graph id read.
@@ -90,10 +98,16 @@ const MAX_GRAPH_ID_BYTES: usize = 512;
 /// What a header stage selects.
 const MESSAGE_FIELDS: &str = "id,conversationId,internetMessageId,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,parentFolderId,isDraft,categories,internetMessageHeaders";
 
-/// A source's change anchor: one delta link per folder it copies.
+/// A source's change anchor: one delta link per folder.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct GraphAnchor {
     folders: BTreeMap<String, String>,
+    /// The folders whose mail was not copied when the folders were read.
+    #[serde(default)]
+    skipped: BTreeSet<String>,
+    /// When the folders were read, less [`CLOCK_MARGIN_SECS`], Unix seconds.
+    #[serde(default)]
+    since: u64,
 }
 
 /// Where a change-feed read stands between its pages.
@@ -107,25 +121,36 @@ struct GraphHistoryCursor {
     reached: BTreeMap<String, String>,
 }
 
-/// One mailbox's folders: the well-known ones by name, and each folder's
-/// parent, so a folder counts by the well-known folder it sits under.
+/// One mailbox's folders: the well-known ones by name (the root among
+/// them), and each folder's parent, so a folder counts by the well-known
+/// folder it sits under.
 #[derive(Debug, Clone, Default)]
 struct FolderTree {
     names: BTreeMap<String, &'static str>,
     parents: BTreeMap<String, String>,
+    /// When the folders were read, less [`CLOCK_MARGIN_SECS`], Unix seconds.
+    read_at: u64,
 }
 
 impl FolderTree {
     /// The well-known folder `id` is, or the nearest it sits under.
-    fn class(&self, id: &str) -> Option<&'static str> {
+    ///
+    /// # Errors
+    ///
+    /// A folder that does not reach a well-known one through folders read,
+    /// or only deeper than [`MAX_FOLDER_DEPTH`].
+    fn class(&self, id: &str) -> Result<&'static str> {
         let mut at = id;
         for _ in 0..=MAX_FOLDER_DEPTH {
             if let Some(name) = self.names.get(at) {
-                return Some(name);
+                return Ok(*name);
             }
-            at = self.parents.get(at)?;
+            at = self
+                .parents
+                .get(at)
+                .ok_or_else(|| refused("graph_mail_folder_unresolved"))?;
         }
-        None
+        Err(refused("graph_mail_folder_too_deep"))
     }
 
     fn knows(&self, id: &str) -> bool {
@@ -133,15 +158,20 @@ impl FolderTree {
     }
 
     /// Whether mail in the folder `id` is not copied.
-    fn skipped(&self, id: &str) -> bool {
-        self.class(id)
-            .is_some_and(|name| SKIPPED_FOLDERS.contains(&name))
+    fn skipped(&self, id: &str) -> Result<bool> {
+        Ok(SKIPPED_FOLDERS.contains(&self.class(id)?))
     }
 
     /// Whether mail moved into the folder `id` is deleted at the provider.
-    fn trash(&self, id: &str) -> bool {
-        self.class(id)
-            .is_some_and(|name| TRASH_FOLDERS.contains(&name))
+    fn trash(&self, id: &str) -> Result<bool> {
+        Ok(TRASH_FOLDERS.contains(&self.class(id)?))
+    }
+
+    /// The label mail in the folder `id` holds.
+    fn label(&self, id: &str) -> String {
+        self.names
+            .get(id)
+            .map_or_else(|| folder_label(id), |name| (*name).to_owned())
     }
 }
 
@@ -155,8 +185,9 @@ pub struct HttpGraphMailWire<'v> {
     /// Each source's folders, read once and again when a folder is met
     /// that the read did not hold.
     folders: RefCell<BTreeMap<EntityId, FolderTree>>,
-    /// The sources whose folders were read again this wire's life.
-    reread: RefCell<BTreeSet<EntityId>>,
+    /// The folders, by source, met unknown and read again for this wire's
+    /// life.
+    reread: RefCell<BTreeSet<(EntityId, String)>>,
 }
 
 impl<'v> HttpGraphMailWire<'v> {
@@ -246,13 +277,16 @@ impl<'v> HttpGraphMailWire<'v> {
         Ok(tree)
     }
 
-    /// The source's folders, read again once in this wire's life when
-    /// `folder` is one the held read does not know.
+    /// The source's folders, read again when `folder` is one the held read
+    /// does not know and was not read again for already.
     fn tree_knowing(&self, source: &MailSyncSource, folder: &str) -> Result<FolderTree> {
         let tree = self.tree(source)?;
         if folder.is_empty()
             || tree.knows(folder)
-            || !self.reread.borrow_mut().insert(source.source_ref)
+            || !self
+                .reread
+                .borrow_mut()
+                .insert((source.source_ref, folder.to_owned()))
         {
             return Ok(tree);
         }
@@ -266,7 +300,10 @@ impl<'v> HttpGraphMailWire<'v> {
     /// Every mail folder of the source with its parent, and the well-known
     /// ones by name.
     fn read_tree(&self, source: &MailSyncSource) -> Result<FolderTree> {
-        let mut tree = FolderTree::default();
+        let mut tree = FolderTree {
+            read_at: crate::unix_seconds_now().saturating_sub(CLOCK_MARGIN_SECS),
+            ..FolderTree::default()
+        };
         let select = [("$select", "id".to_owned())];
         for name in WELL_KNOWN_FOLDERS {
             let url = format!("{GRAPH_ME_URL}/mailFolders/{name}");
@@ -319,13 +356,13 @@ impl<'v> HttpGraphMailWire<'v> {
 
     /// What a message a folder reported removed became: gone, or moved
     /// under Deleted Items or Junk Email, it is deleted at the provider;
-    /// anywhere else it only moved. One that left a trash folder (`from_trash`)
-    /// for a copied folder is filed into the mailbox again.
+    /// anywhere else it only moved. One that left a folder not copied
+    /// (`from_skipped`) for a copied folder is filed into the mailbox.
     fn removal(
         &self,
         source: &MailSyncSource,
         provider_id: String,
-        from_trash: bool,
+        from_skipped: bool,
     ) -> Result<Vec<MailHistoryChange>> {
         let select = [("$select", "id,parentFolderId,categories".to_owned())];
         let Some(message) = self.found(
@@ -339,8 +376,8 @@ impl<'v> HttpGraphMailWire<'v> {
         };
         let folder = text_of(message.get("parentFolderId")).unwrap_or_default();
         let tree = self.tree_knowing(source, &folder)?;
-        let trash = tree.trash(&folder);
-        if from_trash && (trash || tree.skipped(&folder)) {
+        let trash = tree.trash(&folder)?;
+        if from_skipped && tree.skipped(&folder)? {
             // Moved from one folder not copied to another.
             return Ok(Vec::new());
         }
@@ -349,7 +386,7 @@ impl<'v> HttpGraphMailWire<'v> {
             trash_or_spam: trash,
             provider_id: provider_id.clone(),
         }];
-        if from_trash {
+        if from_skipped {
             changes.push(MailHistoryChange::Added(MailMessageRef {
                 provider_id,
                 thread_id: None,
@@ -365,30 +402,20 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
         self.folders
             .borrow_mut()
             .insert(source.source_ref, tree.clone());
-        let since = graph_time(crate::unix_seconds_now())?;
-        let mut anchor = GraphAnchor::default();
-        // The folders copied, and the trash folders mail can come back from.
-        let tracked = tree
-            .parents
-            .keys()
-            .filter(|folder| !tree.skipped(folder) || tree.trash(folder))
-            .cloned()
-            .collect::<Vec<_>>();
-        for folder in tracked {
-            let mut link = format!(
-                "{GRAPH_ME_URL}/mailFolders/{}/messages/delta",
-                path_segment(&folder)
-            );
-            let mut query = vec![
-                ("$select", "id".to_owned()),
-                ("$filter", format!("receivedDateTime ge {since}")),
-            ];
+        let mut anchor = GraphAnchor {
+            since: tree.read_at,
+            ..GraphAnchor::default()
+        };
+        for folder in tree.parents.keys() {
+            if tree.skipped(folder)? {
+                anchor.skipped.insert(folder.clone());
+            }
+            let mut link = delta_link(folder, Some(tree.read_at))?;
             loop {
-                let Some(page) = self.found(source, &link, &query, PREFER_IMMUTABLE_IDS)? else {
+                let Some(page) = self.found(source, &link, &[], PREFER_IMMUTABLE_IDS)? else {
                     // The folder went while the anchor was taken.
                     break;
                 };
-                query.clear();
                 if let Some(delta) = text_of(page.get("@odata.deltaLink")) {
                     anchor.folders.insert(folder.clone(), delta);
                     break;
@@ -442,7 +469,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
             if !tree.knows(&folder) {
                 tree = self.tree_knowing(source, &folder)?;
             }
-            if draft || tree.skipped(&folder) {
+            if draft || tree.skipped(&folder)? {
                 continue;
             }
             messages.push(MailMessageRef {
@@ -536,7 +563,6 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
         anchor: &str,
         page: Option<&str>,
     ) -> Result<MailHistoryRead> {
-        let tree = self.tree(source)?;
         let stood: GraphAnchor =
             serde_json::from_str(anchor).map_err(|_| refused("graph_mail_anchor_unreadable"))?;
         let folders: Vec<(&String, &String)> = stood.folders.iter().collect();
@@ -552,6 +578,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 break;
             };
             reads += 1;
+            let was_skipped = stood.skipped.contains(folder);
             let link = cursor.link.clone().unwrap_or_else(|| delta.clone());
             let listed = match self.get(source, &link, &[], PREFER_IMMUTABLE_IDS)? {
                 RestAnswer::Found(listed) => listed,
@@ -563,9 +590,9 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 RestAnswer::Failed { status: 404, .. } => {
                     // The folder is gone: it leaves the anchor, and each
                     // message copied from it is looked up again.
-                    if !tree.skipped(folder) {
+                    if !was_skipped {
                         changes.push(MailHistoryChange::LabelGone {
-                            label: folder_label(folder),
+                            label: self.tree(source)?.label(folder),
                         });
                     }
                     cursor.folder += 1;
@@ -576,13 +603,22 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                     return Err(Error::InvalidConfig(format!("graph_mail_status_{status}")));
                 }
             };
-            // A trash folder is read for the mail that leaves it.
-            let from_trash = tree.trash(folder);
+            let tree = self.tree_knowing(source, folder)?;
+            let now_skipped = tree.skipped(folder)?;
+            if cursor.link.is_none() && !was_skipped && now_skipped {
+                // Moved under a folder not copied: each message copied from
+                // it is looked up again.
+                changes.push(MailHistoryChange::LabelGone {
+                    label: tree.label(folder),
+                });
+            }
+            // A folder not copied is read for the mail that leaves it.
+            let from_skipped = was_skipped || now_skipped;
             for entry in array(&listed, "value") {
                 let provider_id = graph_id(entry.get("id"))?;
                 if entry.get("@removed").is_some() {
-                    changes.extend(self.removal(source, provider_id, from_trash)?);
-                } else if !from_trash {
+                    changes.extend(self.removal(source, provider_id, from_skipped)?);
+                } else if !now_skipped {
                     changes.push(MailHistoryChange::Added(MailMessageRef {
                         provider_id,
                         thread_id: text_of(entry.get("conversationId")),
@@ -592,17 +628,42 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
             if let Some(next) = text_of(listed.get("@odata.nextLink")) {
                 cursor.link = Some(next);
             } else {
-                let reached =
-                    text_of(listed.get("@odata.deltaLink")).unwrap_or_else(|| delta.clone());
+                let reached = if was_skipped && !now_skipped {
+                    // Out from under a folder not copied: its next round
+                    // lists all its mail.
+                    delta_link(folder, None)?
+                } else {
+                    text_of(listed.get("@odata.deltaLink")).unwrap_or_else(|| delta.clone())
+                };
                 cursor.reached.insert(folder.clone(), reached);
                 cursor.folder += 1;
                 cursor.link = None;
             }
         }
         if cursor.folder >= folders.len() {
-            let reached = GraphAnchor {
+            let tree = self.tree(source)?;
+            let mut reached = GraphAnchor {
                 folders: cursor.reached,
+                skipped: BTreeSet::new(),
+                since: tree.read_at,
             };
+            // Folders made since the anchor's folders were read join it,
+            // from then.
+            for folder in tree.parents.keys() {
+                if reached.folders.len() >= MAX_FOLDERS {
+                    break;
+                }
+                if !reached.folders.contains_key(folder) {
+                    reached
+                        .folders
+                        .insert(folder.clone(), delta_link(folder, Some(stood.since))?);
+                }
+            }
+            for folder in reached.folders.keys() {
+                if tree.knows(folder) && tree.skipped(folder)? {
+                    reached.skipped.insert(folder.clone());
+                }
+            }
             return Ok(MailHistoryRead::Page(MailHistoryPage {
                 changes,
                 next_page: None,
@@ -622,7 +683,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
 fn headers_of(message: &Value, tree: &FolderTree) -> Result<MailHeaders> {
     let provider_id = graph_id(message.get("id"))?;
     let folder = text_of(message.get("parentFolderId")).unwrap_or_default();
-    let class = tree.class(&folder);
+    let class = tree.class(&folder)?;
     let internet = message.get("internetMessageHeaders");
     let header = |field: &str| header_value(internet, field).map(|value| value.trim().to_owned());
     Ok(MailHeaders {
@@ -646,9 +707,9 @@ fn headers_of(message: &Value, tree: &FolderTree) -> Result<MailHeaders> {
             .and_then(Value::as_str)
             .and_then(rfc3339_seconds)
             .unwrap_or(0),
-        sent_by_mailbox: class == Some("sentitems"),
-        trash_or_spam: tree.trash(&folder),
-        draft: class == Some("drafts")
+        sent_by_mailbox: class == "sentitems",
+        trash_or_spam: TRASH_FOLDERS.contains(&class),
+        draft: class == "drafts"
             || message
                 .get("isDraft")
                 .and_then(Value::as_bool)
@@ -741,6 +802,27 @@ fn rfc3339_seconds(value: &str) -> Option<u64> {
     chrono::DateTime::parse_from_rfc3339(value.trim())
         .ok()
         .and_then(|date| u64::try_from(date.timestamp()).ok())
+}
+
+/// The first link of a folder's delta round: its mail received since
+/// `since`, or all its mail.
+fn delta_link(folder: &str, since: Option<u64>) -> Result<String> {
+    let mut url = reqwest::Url::parse(&format!(
+        "{GRAPH_ME_URL}/mailFolders/{}/messages/delta",
+        path_segment(folder)
+    ))
+    .map_err(|_| refused("graph_mail_folder_link_unreadable"))?;
+    let filter = since
+        .map(|since| graph_time(since).map(|time| format!("receivedDateTime ge {time}")))
+        .transpose()?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("$select", "id");
+        if let Some(filter) = &filter {
+            query.append_pair("$filter", filter);
+        }
+    }
+    Ok(url.into())
 }
 
 /// A message's Graph URL, its id escaped as one path segment.

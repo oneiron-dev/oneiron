@@ -104,6 +104,11 @@ impl<'v> HttpGmailMailWire<'v> {
                         .ok_or_else(|| refused("gmail_mail_profile_not_found"))?;
                     reads_mailbox(&profile, source)?;
                     self.verified.insert(source.source_ref, token);
+                    if url == GMAIL_PROFILE_URL && query.is_empty() {
+                        // The profile just read is the one asked for.
+                        answer = Some(RestAnswer::Found(profile));
+                        return Ok(());
+                    }
                 }
                 let request = self
                     .client
@@ -438,9 +443,11 @@ fn collect_parts(part: &Value, depth: usize, parts: &mut MessageParts) {
         return;
     }
     let content_type = header_value(part.get("headers"), "Content-Type");
+    // Text stored behind an attachment id comes with no data, or empty data.
     let Some(data) = body
         .and_then(|body| body.get("data"))
         .and_then(Value::as_str)
+        .filter(|data| !data.is_empty())
     else {
         if let Some(attachment_id) = attachment_id
             && (media_type == "text/plain" || media_type == "text/html")
