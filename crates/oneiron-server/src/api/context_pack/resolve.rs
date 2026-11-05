@@ -613,7 +613,7 @@ fn read_reaction_signals(
         .transpose()?;
     let deadline = req
         .signals_deadline_ms
-        .map(|ms| oneiron::store::RetrievalDeadline::after(std::time::Duration::from_millis(ms)));
+        .map(|ms| oneiron::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_millis(ms)));
     let signal_error = |error: oneiron::Error| match &error {
         oneiron::Error::Io(error)
             if error.get_ref().is_some_and(|source| {

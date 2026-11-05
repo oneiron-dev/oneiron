@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::scan_check::{EngineScan, ScanCount};
-use crate::store::RetrievalDeadline;
+use crate::store::retrieval_deadline::RetrievalDeadline;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 
