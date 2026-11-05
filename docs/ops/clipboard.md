@@ -1,9 +1,10 @@
 # Clipboard storage and Mac intake
 
 The native Clipboard backend is available through `oneiron::clipboard`.
-The macOS watcher, private-copy routing, quiet secret-purpose questions,
-cleanup scheduling, owner controls and separate Clipboard search consumer are
-not implemented by this backend alone. No OS capture or runtime proof is implied.
+The Mac app supplies the watcher, private-copy routing, cleanup scheduling
+and owner controls described below. Purpose questions have a native projection
+and owner IPC, not a new visual layout or a separate Clipboard search consumer.
+No OS capture or runtime proof is implied.
 
 ## Identity and ordinary text
 
@@ -129,9 +130,58 @@ observation never becomes a fabricated free-space value. Native current-policy
 checks and delete outcomes still govern the work; selected text bytes are
 not measured disk reclamation.
 
-This source does not supply the quiet detected-secret-purpose question,
-separate Cmd-K/related-clip consumer, default recall isolation or end-to-end
+This source does not supply a visual purpose-question layout, the separate
+Cmd-K/related-clip consumer, default recall isolation or end-to-end
 sync/key-release proof. The ordinary scanner still masks at the native CLAIM
 door; no handle is guessed from text to pretend a purpose question exists.
 No pasteboard, GUI, runtime, deployment or automatic-cleanup result is claimed
 by this source description.
+
+## Detected-secret purpose metadata
+
+The ordinary capture caller keeps the actual native clip id and asks
+`clipboard_secret_purpose_questions_as_owner` for its value-free questions.
+The reader validates the exact Clipboard CLAIM family under one owner-checked
+snapshot. It joins the existing found-key row and its actual mask origin;
+private-copy custody, known-file references to a different origin, settled
+keys and keys with a purpose answer do not become new Clipboard questions.
+The native known-value index already substitutes the existing handle for
+repeat text without filing another found-key note. No text is re-scanned or
+parsed for a guessed `scN` handle.
+
+After capture commits, the Mac caller sends nonempty metadata to the existing
+main window as `clipboard-secret-purpose`. The writer lease and owner-act
+mutex have ended before event delivery. A read or delivery failure does not
+retry an already committed capture: the existing found-key inbox notice
+remains durable, and `clipboard_secret_purpose_questions(clip)` can read the
+derived questions again. No second question queue or notice producer exists.
+The event carries no prompt prose or secret value; a visual client supplies
+its own localized presentation. Event emission is not proof that a visual
+client received or displayed it.
+
+`set_secret_handle_purpose(handle, purpose)` uses the same owner-act mutex,
+fresh lease and actual local owner as the other commands. The native setter
+revalidates that owner in its writer. Purpose is a separate custody-keyed
+attribute, not a display label, found-key disposition, grant, reveal or binding.
+None or whitespace-only input clears it; other freeform text, including line
+breaks, is preserved subject to the ordinary authored side-row secret wall.
+There is no new single-line or byte cap. The reply returns actual stored,
+possibly masked text, not a retained unmasked input copy. Native
+`secret_handle_purpose(owner, handle)` reads this metadata with its receipt.
+
+The new attribute is `Named Authored`, with a native masked-value decoder.
+It does not inherit the label row's never-scan custody classification. Its
+Gate receipt contains pointers and the set/clear action, never purpose text.
+The row stores the Gate id as native bytes, not authored prose. It has its
+own LIVE restore row and the existing Unclassified checkpoint payload class.
+Holder erase, both run-bound cleanup paths and cloud-registration slot erase
+revoke the attribute's own lifted side-row custody, then delete the attribute
+in the same writer as the custody row. Clear uses that same native side-row
+origin and revoke-before-delete path. Existing found-key history is not claimed
+physically erased by that revoke. Rotation and revoke preserve
+the stable custody-keyed attribute; the custody body and value codec do not
+change.
+
+This is source and interface coverage only. No native Mac compile, GUI,
+clipboard observation, question delivery, authored-wall execution, checkpoint
+restore or whole-vault erasure result is claimed here.

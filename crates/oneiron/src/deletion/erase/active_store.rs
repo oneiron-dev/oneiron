@@ -99,6 +99,9 @@ impl Vault {
                 wtxn,
                 id,
             )?;
+            crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(
+                self, wtxn, id,
+            )?;
             // An erased pad row takes its key's pad out of custody, never
             // another of its world's (KS-5, FIX 7192): every caller wrote
             // the row's hard marker in this transaction, which the

@@ -144,6 +144,10 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             root_rekey::clipboard::controls::clipboard_erase,
             #[cfg(target_os = "macos")]
+            root_rekey::clipboard::controls::clipboard_secret_purpose_questions,
+            #[cfg(target_os = "macos")]
+            root_rekey::clipboard::controls::set_secret_handle_purpose,
+            #[cfg(target_os = "macos")]
             root_rekey::clipboard::controls::clipboard_settings,
             #[cfg(target_os = "macos")]
             root_rekey::clipboard::controls::set_clipboard_settings

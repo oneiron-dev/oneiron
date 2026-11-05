@@ -8,7 +8,7 @@ use objc2_foundation::{NSFileManager, NSFileSystemFreeSize, NSNumber, NSString};
 use oneiron::EntityId;
 use oneiron::authority::ActSurface;
 use oneiron::secret_custody::{CustodyClass, CustodyTier};
-use tauri::{AppHandle, Manager, RunEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent};
 use zeroize::Zeroizing;
 
 use super::super::RekeyState;
@@ -21,6 +21,7 @@ use super::with_owner;
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 const PRIVATE_COPY_NAME_PREFIX: &str = "private-copy-";
+const SECRET_PURPOSE_EVENT: &str = "clipboard-secret-purpose";
 
 // Not serializable or Debug: private bytes never become diagnostics or IPC.
 enum CopyValue {
@@ -185,16 +186,34 @@ fn read_changed(last: isize) -> Option<Observation> {
 fn capture(app: &AppHandle, observation: Observation) -> Result<(), String> {
     match observation.value {
         None => Ok(()),
-        Some(CopyValue::Ordinary(text)) => with_owner(app, |vault, owner| {
-            vault
-                .capture_clipboard_text_as_owner(
+        Some(CopyValue::Ordinary(text)) => {
+            let questions = with_owner(app, |vault, owner| {
+                let clip = vault.capture_clipboard_text_as_owner(
                     owner,
                     ActSurface::ThisInstall,
                     &text,
                     observation.observed_at,
-                )
-                .map(|_| ())
-        }),
+                )?;
+                Ok(vault.clipboard_secret_purpose_questions_as_owner(owner, clip))
+            })?;
+            let delivery = questions.map_err(|_| ()).and_then(|questions| {
+                if questions.is_empty() {
+                    Ok(())
+                } else {
+                    app.emit_to(crate::MAIN_WINDOW, SECRET_PURPOSE_EVENT, questions)
+                        .map_err(|_| ())
+                }
+            });
+            if delivery.is_err() {
+                // The clip and its existing found-key inbox notice are durable.
+                // Owner IPC can read the question again without recapturing text.
+                tracing::warn!(
+                    reason = "purpose_delivery_failed",
+                    "Clipboard purpose metadata remains available through owner controls"
+                );
+            }
+            Ok(())
+        }
         Some(CopyValue::Private(value)) => {
             let registration = PrivateCopyRegistration {
                 name: format!("{PRIVATE_COPY_NAME_PREFIX}{}", EntityId::now().to_hex()),

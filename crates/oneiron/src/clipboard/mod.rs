@@ -5,6 +5,7 @@
 
 mod erase;
 mod intake;
+mod purpose;
 mod retention;
 mod world;
 

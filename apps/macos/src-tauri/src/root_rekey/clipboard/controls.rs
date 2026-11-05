@@ -101,3 +101,25 @@ pub(crate) fn clipboard_erase(
         vault.erase_clipboard_as_owner(owner, selection)
     })
 }
+
+/// Reads a derived question again, including after a missed quiet event.
+#[tauri::command]
+pub(crate) fn clipboard_secret_purpose_questions(
+    app: AppHandle,
+    clip: EntityId,
+) -> Result<Vec<oneiron::secret_custody::SecretPurposeQuestion>, String> {
+    with_owner(&app, |vault, owner| {
+        vault.clipboard_secret_purpose_questions_as_owner(owner, clip)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn set_secret_handle_purpose(
+    app: AppHandle,
+    handle: String,
+    purpose: Option<String>,
+) -> Result<oneiron::secret_custody::SecretHandlePurposeSet, String> {
+    with_owner(&app, |vault, owner| {
+        vault.set_secret_handle_purpose(owner, &handle, purpose.as_deref())
+    })
+}
