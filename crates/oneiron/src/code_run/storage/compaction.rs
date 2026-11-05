@@ -142,7 +142,9 @@ impl CodeRunCompactionCoverage {
     /// Withdraws every coverage row bound to the epoch summary `summary`,
     /// in the writer that withdraws it (FIX 928; ARCH-0038: deleted words
     /// leave no confirmation hash): each keeps its run, summary, epoch and
-    /// span, and loses its body digest for good.
+    /// span, and loses its body digest for good, and a self-written row's
+    /// receipt loses the accepted snapshot's hash and length; its
+    /// content-free execution record stays.
     ///
     /// # Errors
     /// A store failure, or a coverage row that does not decode.
@@ -154,10 +156,17 @@ impl CodeRunCompactionCoverage {
         let mut withdrawn = Vec::new();
         for item in WRITTEN.iter_from(dbs, &*txn, &[])? {
             let (key, mut written) = item?;
-            if key.1 != *summary || written.row.digest.is_none() {
+            let snapshot = written.writer.as_ref().is_some_and(|writer| {
+                writer.snapshot_hash.is_some() || writer.snapshot_len.is_some()
+            });
+            if key.1 != *summary || (written.row.digest.is_none() && !snapshot) {
                 continue;
             }
             written.row.digest = None;
+            if let Some(writer) = written.writer.as_mut() {
+                writer.snapshot_hash = None;
+                writer.snapshot_len = None;
+            }
             withdrawn.push((key, written));
         }
         for (key, written) in withdrawn {
