@@ -55,13 +55,16 @@ impl Vault {
         commit: &GitOid,
         base: Option<&GitOid>,
     ) -> Result<BuiltReview> {
-        self.build_publish_review_excluding(wire, handle, commit, base, &[])
+        let blocking = self.publication_blocking_objects();
+        self.build_publish_review_excluding(wire, handle, commit, base, &[], blocking.as_ref())
     }
 
     /// [`Self::build_publish_review`] that also leaves out what `reviewed`
     /// reach: the commits an automatic mirror plan reviewed under its earlier
     /// refs (FIX 6866 part 2), each bound into the digest. With none, the
-    /// review and its digest are an exact publish's.
+    /// review and its digest are an exact publish's. With `blocking`, the
+    /// objects a blocking mark marks, it says whether the history names one
+    /// (FIX 10969); the digest never binds that advisory.
     pub(super) fn build_publish_review_excluding(
         &self,
         wire: &GitWire<'_>,
@@ -69,6 +72,7 @@ impl Vault {
         commit: &GitOid,
         base: Option<&GitOid>,
         reviewed: &[GitOid],
+        blocking: Option<&BTreeSet<GitOid>>,
     ) -> Result<BuiltReview> {
         let mut hasher = blake3::Hasher::new_derive_key(ORIGIN_PUBLISH_REVIEW_DIGEST_CONTEXT);
         field(&mut hasher, commit.as_str().as_bytes());
@@ -84,11 +88,23 @@ impl Vault {
         let mut paths = BTreeSet::new();
         let mut lossy_paths = false;
         let (mut commits, mut entries) = (0_u64, 0_u64);
+        let mut secret_history = blocking.map(|_| false);
         let exclude: Vec<GitOid> = base.into_iter().chain(reviewed).cloned().collect();
         // Retained reads: a page or one tree level past the wire's output
         // bound is read whole, so no review fails for a level's width.
         wire.for_each_review_item_retained(handle, commit, &exclude, &mut |item| {
             hash_item(&mut hasher, &item);
+            if let (
+                Some(blocking),
+                GitReviewItem::Path {
+                    object: Some(object),
+                    ..
+                },
+            ) = (blocking, &item)
+                && blocking.contains(object)
+            {
+                secret_history = Some(true);
+            }
             page.push(match item {
                 GitReviewItem::Commit { commit, parents } => {
                     commits = commits.saturating_add(1);
@@ -136,6 +152,7 @@ impl Vault {
                 pages: count(pages.len()),
                 lfs_bytes: OriginPublishLfsBytes::NotSent,
                 lossy_paths,
+                secret_history,
             },
             pages,
             paths,
@@ -147,7 +164,9 @@ impl Vault {
 
 /// The one hook a history policy plugs into: every review passes it before
 /// a request records it. The owner's secrets-in-history rule is pending (FIX
-/// 6866 ruling), so no rule is built and every review passes.
+/// 6866 ruling), so no rule is built and every review passes; an exact
+/// review carries the marked-history advisory its approver reads (FIX
+/// 10969), and the send-time gate refuses.
 pub(super) fn admit_review_policy(_review: &BuiltReview) -> Result<()> {
     Ok(())
 }

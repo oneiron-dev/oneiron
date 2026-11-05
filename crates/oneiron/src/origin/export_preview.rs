@@ -12,7 +12,7 @@
 //! store failures stay errors. The caller's credential, sight and Grant
 //! are judged above it, at the door (`memory::origin_doors::preview`).
 mod handles;
-mod types;
+use oneiron_store::origin::export_preview::types;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -176,6 +176,16 @@ impl Vault {
                 "engine commit belongs to another object store or inventory",
             ));
         }
+        // Its ancestors and its Baseline's import approval are sources too,
+        // listed for the caller's credential, never judged again (FIX 8270).
+        pinned.sources.extend(
+            self.code_revision_ancestry_sources(revision.revision_id)?
+                .into_iter()
+                .map(|entity| PreviewSource {
+                    entity,
+                    required: false,
+                }),
+        );
         let manifest = self.resolve_code_revision_import_anchor(revision.revision_id)?;
         let anchor_repo = manifest
             .as_ref()
@@ -403,11 +413,18 @@ fn gap_blocker(revision: EntityId, gap: &ExportGap) -> CodeExportPreviewBlocker 
             "Restore the revision's provenance claim; a revision without active provenance \
              does not export.",
         ),
-        ExportGap::Author(author) => CodeExportPreviewBlocker::new(
+        ExportGap::Author(Some(author)) => CodeExportPreviewBlocker::new(
             entity(*author),
             CodeExportPreviewBlockReason::Unavailable,
             "this revision's author record is gone",
             "Restore the author's record; the export names its author.",
+        ),
+        ExportGap::Author(None) => CodeExportPreviewBlocker::new(
+            entity(revision),
+            CodeExportPreviewBlockReason::Unavailable,
+            "this revision's author was erased before it was sealed",
+            "Land the same change again as a fresh combined proposal under a live author; the \
+             export names its author.",
         ),
     }
 }

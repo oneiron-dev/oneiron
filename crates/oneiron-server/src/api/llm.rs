@@ -15,8 +15,8 @@ use axum::{
 use futures_util::StreamExt;
 use oneiron::code_run::ReadWorldUnknown;
 use oneiron::code_run::model_call::{
-    ModelCallInputPart, ModelCallReasoningPart, ModelCallRecord, model_call_digests,
-    record_model_call_in_txn,
+    MODEL_CALL_SCHEMA, ModelCallInputPart, ModelCallKind, ModelCallReasoningPart, ModelCallRecord,
+    model_call_digests, record_model_call_in_txn,
 };
 use oneiron::llm::run_admission::{RunAdmission, RunDenied};
 use oneiron::{LlmError, LlmRequest, LlmResponse, LlmStreamEvent};
@@ -195,8 +195,9 @@ pub(super) fn admit(
 
 /// [`admit_owner`] for a connector's call through the OpenAI-compatible
 /// proxy (OF-445): the vault's inference policy for the model, on the raw
-/// routes' meter. The proxy has already authenticated its connector and
-/// narrowed the model to one `[models]` configures.
+/// routes' meter. The proxy has already authenticated its connector;
+/// [`admit_owner`] binds the selected model as configured here or registered
+/// in the catalog.
 pub(super) fn admit_proxied(
     server: &SyncServer,
     request: &mut LlmRequest,
@@ -302,25 +303,30 @@ pub(crate) fn record_raw_response(
     } else {
         Vec::new()
     };
+    let call_metadata = response.usage.call_metadata.as_ref();
     let record = ModelCallRecord {
-        schema: 1,
+        schema: MODEL_CALL_SCHEMA,
         attempt: run.instance(),
         lease_generation: u64::from(run.revision()),
         call_index: 1,
-        digests,
+        kind: ModelCallKind::Generate {
+            digests,
+            usage: response.usage.clone(),
+            finish_reason: response.finish_reason.clone(),
+        },
         route,
         rung,
         issuing_login: None,
         organization: None,
         project: None,
         credential_id: None,
-        response_id: None,
+        response_id: call_metadata.and_then(|metadata| metadata.response_id.clone()),
         thread_id: None,
-        previous_response_id: None,
-        store: None,
+        previous_response_id: call_metadata
+            .and_then(|metadata| metadata.previous_response_id.clone()),
+        store: call_metadata.and_then(|metadata| metadata.store),
+        endpoint: call_metadata.map(|metadata| metadata.endpoint),
         captured_at: vault.now_recorded_at(),
-        usage: response.usage.clone(),
-        finish_reason: response.finish_reason.clone(),
         receipt_ref: None,
         actor: run.principal(),
         produced_pending: false,

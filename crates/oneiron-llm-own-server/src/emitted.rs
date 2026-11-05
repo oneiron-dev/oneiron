@@ -93,6 +93,14 @@ impl Emitted {
                     shown.push_str(text);
                 }
             }
+            Event::ReasoningEnd { part_id, signature } => {
+                if let Some(Shown::Reasoning {
+                    signature: shown, ..
+                }) = self.parts.get_mut(part_id)
+                {
+                    shown.clone_from(signature);
+                }
+            }
             Event::ToolCallStart {
                 part_id,
                 call_id,
@@ -134,7 +142,12 @@ impl Emitted {
     pub(crate) fn is_empty(&self) -> bool {
         self.parts.values().all(|part| match part {
             Shown::Text(text) => text.is_empty(),
-            Shown::Reasoning { text, data, .. } => text.is_empty() && data.is_none(),
+            Shown::Reasoning {
+                text,
+                signature,
+                data,
+                ..
+            } => text.is_empty() && signature.is_none() && data.is_none(),
             Shown::Tool { .. } | Shown::Image { .. } => false,
         })
     }

@@ -16,6 +16,13 @@
 //! the approved words, a version of the same artifact under its own run
 //! prefix, and never sent (FIX 12167).
 
+mod attempt;
+mod output;
+mod source;
+
+pub(crate) use output::wording_source_binding;
+pub use source::{CommitmentReminderWordingRead, CommitmentReminderWordingSource};
+
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -95,7 +102,7 @@ pub(super) fn split_wording_pin(content_ref: &str) -> (&str, Option<CommitmentRe
 
 /// Who words the owner's reminders in place of the fixed wording: the host's
 /// model, in the voice of the persona `persona_ref` names when set.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommitmentReminderVoice {
     #[serde(default)]

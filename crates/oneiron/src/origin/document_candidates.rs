@@ -39,6 +39,7 @@ use crate::{
 };
 
 mod files;
+pub(super) mod pending_index;
 pub(crate) mod projected;
 mod projected_clearance;
 mod projected_decide;
@@ -49,6 +50,7 @@ pub(crate) mod projected_source;
 mod projected_tree;
 mod reads;
 use files::prepare_push_candidate_documents;
+use pending_index::index_received_row_in_txn;
 
 type Held<T> = std::result::Result<T, CodePushCandidateHold>;
 
@@ -155,7 +157,9 @@ fn candidate_digest(candidate: &CodePushCandidate) -> Result<[u8; 32]> {
 
 impl Vault {
     /// Every retained received ref of the object store `store` that has no
-    /// resolved candidate yet, held ones included, in key order.
+    /// resolved candidate yet, held ones included, in key order: its own
+    /// store's open markers alone, never the whole table (FIX 7535). A
+    /// final hold leaves the set.
     ///
     /// # Errors
     /// A store failure.
@@ -165,21 +169,16 @@ impl Vault {
     ) -> Result<Vec<ReceivedCandidateRef>> {
         let txn = self.store.env.read_txn()?;
         let mut pending = Vec::new();
-        for row in CODE_OPERATIONS.iter_from(&self.store, &txn, &[])? {
-            let (key, row) = row?;
-            if row.source.object_store == store
-                && row
-                    .candidate
+        self.open_received_candidates_in_txn(
+            &txn,
+            store,
+            |row| {
+                row.candidate
                     .as_ref()
                     .is_none_or(|candidate| candidate.resolved.is_none())
-            {
-                pending.push(ReceivedCandidateRef {
-                    object_store: row.source.object_store,
-                    provenance: key.provenance,
-                    ref_name: row.source.ref_name,
-                });
-            }
-        }
+            },
+            &mut pending,
+        )?;
         drop(txn);
         // Pushes received into a masked copy's private ingress for this
         // store join its intake (FIX 7608 2b-ii-B2).
@@ -327,12 +326,24 @@ impl Vault {
             return hold(HeldShape, "not_a_commit");
         }
         let repo_id = super::lfs::lfs_repo_id(&source.object_store)?;
-        let Some(record) = self.find_origin_publication(repo_id, |record| {
+        let admits = |record: &super::publication::OriginPublicationRecord| {
             record.provenance_claim_id == provenance
                 && record.ref_name.as_str() == source.ref_name
                 && record.new_oid == new
-        })?
-        else {
+        };
+        // The move's own owner row first, one key (FIX 7535); a refused
+        // move frees that row, so only then are the store's rows walked.
+        let owner = match crate::git_wire::GitRefName::parse_full(source.ref_name.clone()) {
+            Ok(ref_name) => self
+                .origin_move_owner(repo_id, &ref_name, Some(&old), &new)?
+                .filter(|record| admits(record)),
+            Err(_) => None,
+        };
+        let found = match owner {
+            Some(record) => Some(record),
+            None => self.find_origin_publication(repo_id, admits)?,
+        };
+        let Some(record) = found else {
             return Ok(None);
         };
         match record.status {
@@ -414,13 +425,15 @@ impl Vault {
                     content: file.1.clone(),
                     source_operation: Some(file.0.source_operation),
                     metadata_edit: Some(file.0.metadata_edit.clone()),
+                    withheld_base_blake3: None,
                 })
                 .collect(),
             created_at: row.received_at,
+            original_spans: std::collections::BTreeMap::new(),
         };
         let prepared = match self.prepare_received_files_proposal(repo, input)? {
             Ok(prepared) => prepared,
-            Err(_) => return hold(HeldShape, "base_snapshot_refused"),
+            Err(reason) => return hold(HeldShape, reason),
         };
         Ok(Some(Ok(PreparedPushCandidate {
             candidate: CodePushCandidate {
@@ -551,22 +564,10 @@ impl Vault {
     }
 
     /// Whether an earlier received ref of `store` resolved to the incoming
-    /// tip `old`: the push it continues has no sealed revision yet.
+    /// tip `old`: the push it continues has no sealed revision yet. One
+    /// keyed read (FIX 7535).
     fn received_predecessor_pending(&self, store: &str, old: &GitOid) -> Result<bool> {
-        let txn = self.store.env.read_txn()?;
-        for row in CODE_OPERATIONS.iter_from(&self.store, &txn, &[])? {
-            let (_, row) = row?;
-            if row.source.object_store == store
-                && row.source.new_oid.as_deref() == Some(old.as_str())
-                && row
-                    .candidate
-                    .as_ref()
-                    .is_some_and(|candidate| candidate.resolved.is_some())
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        self.received_tip_resolved(store, old.as_str())
     }
 
     /// Writes a changed hold on the source row in `wtxn`; an identical one
@@ -592,6 +593,7 @@ impl Vault {
         }
         current.candidate = Some(candidate);
         CODE_OPERATIONS.put(&self.store, wtxn, key, &current)?;
+        index_received_row_in_txn(self, wtxn, key, &current)?;
         Ok(true)
     }
 
@@ -672,6 +674,7 @@ impl Vault {
         // from it, in this same transaction.
         current.candidate = Some(prepared.candidate.clone());
         CODE_OPERATIONS.put(&self.store, wtxn, key, &current)?;
+        index_received_row_in_txn(self, wtxn, key, &current)?;
         self.persist_received_files_proposal_in_txn(wtxn, &prepared.proposal)?;
         // Marked keys its files carry are offered a SEPARATE remediation;
         // the candidate's bytes never change (FIX 7608 slice 6).

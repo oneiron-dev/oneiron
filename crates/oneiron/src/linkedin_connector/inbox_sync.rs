@@ -1,5 +1,6 @@
 //! Inbox-sync config, runner, poll cursor, and claim/provenance helpers.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
@@ -317,27 +318,21 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                 .transport
                 .get_conversation(&pending.thread_id)
                 .map_err(|err| linkedin_tool_failure(LINKEDIN_MCP_GET_CONVERSATION_TOOL, &err))?;
-            let messages = conversation_messages_from_tool_output(
+            let page = conversation_message_page(
                 &conversation_output,
                 Some(&pending.thread_id),
                 Some(&self.config.receiving_address_or_handle),
+                pending.handled_messages,
+                Some(MAX_LINKEDIN_CONVERSATION_MESSAGES_PER_POLL),
             )?;
-            let message_count = messages.len();
-            let handled = pending.handled_messages.min(message_count);
-            let messages = messages
-                .into_iter()
-                .skip(handled)
-                .take(MAX_LINKEDIN_CONVERSATION_MESSAGES_PER_POLL)
-                .collect::<Vec<_>>();
-            let handled = handled.saturating_add(messages.len());
-            self.admit_conversation_messages(messages, now, &mut report)?;
+            self.admit_conversation_messages(page.messages, now, &mut report)?;
             report.threads_seen = report.threads_seen.saturating_add(1);
-            if handled < message_count {
+            if page.has_more {
                 cursor
                     .pending_threads
                     .push_back(LinkedInInboxPendingThread {
                         thread_id: pending.thread_id,
-                        handled_messages: handled,
+                        handled_messages: page.handled,
                     });
             }
             store_linkedin_inbox_sync_cursor(self.vault, &self.config, &cursor)?;
@@ -350,7 +345,7 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
     /// Claims, routes and durably admits one batch of a thread's messages.
     fn admit_conversation_messages(
         &self,
-        messages: Vec<LinkedInConversationMessage>,
+        messages: Vec<(bool, LinkedInConversationMessage)>,
         now: u64,
         report: &mut LinkedInInboxSyncReport,
     ) -> Result<()> {
@@ -365,7 +360,7 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
             .backfill_skipped_messages
             .saturating_add(all_message_count.saturating_sub(events.len()));
 
-        for event in events {
+        for (incoming, event) in events {
             match claim_linkedin_inbox_message(self.vault, &self.config, &event.message)? {
                 LinkedInInboxClaim::Claimed => {}
                 LinkedInInboxClaim::Reclaimed => {
@@ -377,17 +372,10 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                 }
             }
 
-            // The message's words go to the provider-event archive, as a
-            // Slack or LINE inbound's do (FIX 12328), and its event names the
-            // archive, which the connector reply responder reads them from.
-            let event_input = match archive_linkedin_message(self.vault, &event, now) {
-                Ok(payload_ref) => event.event_input.clone().with_payload_ref(payload_ref),
-                Err(err) => {
-                    release_linkedin_inbox_message_claim(self.vault, &self.config, &event.message)?;
-                    return Err(err);
-                }
-            };
-            let receipt = match self.vault.route_inbound_surface_event(event_input.clone()) {
+            let receipt = match self
+                .vault
+                .route_inbound_surface_event(event.event_input.clone())
+            {
                 Ok(receipt) => receipt,
                 Err(err) => {
                     release_linkedin_inbox_message_claim(self.vault, &self.config, &event.message)?;
@@ -395,6 +383,23 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                 }
             };
             if receipt.outcome == InboundSurfaceRouteOutcome::Routed {
+                // Every message keeps its admission. Only positively incoming
+                // words become a body the reply responder can read.
+                let event_input = if incoming {
+                    match archive_linkedin_message(self.vault, &event, now) {
+                        Ok(payload_ref) => event.event_input.clone().with_payload_ref(payload_ref),
+                        Err(err) => {
+                            release_linkedin_inbox_message_claim(
+                                self.vault,
+                                &self.config,
+                                &event.message,
+                            )?;
+                            return Err(err);
+                        }
+                    }
+                } else {
+                    event.event_input.clone()
+                };
                 // The durable handoff commits before the seen marker: a
                 // crash between them leaves the claim, the next poll
                 // reclaims it, and the handoff's correlation id dedupes the
@@ -454,9 +459,9 @@ pub fn linkedin_inbox_sync_runner_from_attempt<'a, T>(
     ))
 }
 
-pub(super) fn mcp_payload(output: &Value) -> Result<Value> {
+pub(super) fn mcp_payload(output: &Value) -> Result<Cow<'_, Value>> {
     if output.get("sections").is_some() {
-        return Ok(output.clone());
+        return Ok(Cow::Borrowed(output));
     }
     if let Some(messages) = output.get("messages") {
         if !messages.is_array() {
@@ -464,10 +469,10 @@ pub(super) fn mcp_payload(output: &Value) -> Result<Value> {
                 "LinkedIn MCP messages must be an array".to_owned(),
             ));
         }
-        return Ok(output.clone());
+        return Ok(Cow::Borrowed(output));
     }
     if let Some(structured) = output.get("structuredContent") {
-        return Ok(structured.clone());
+        return Ok(Cow::Borrowed(structured));
     }
     if let Some(content) = output.get("content").and_then(Value::as_array)
         && let Some(text) = content.iter().find_map(|entry| {
@@ -477,7 +482,7 @@ pub(super) fn mcp_payload(output: &Value) -> Result<Value> {
                 .filter(|text| !text.trim().is_empty())
         })
     {
-        return serde_json::from_str(text).map_err(|err| {
+        return serde_json::from_str(text).map(Cow::Owned).map_err(|err| {
             Error::InvalidConfig(format!("LinkedIn MCP content text was not JSON: {err}"))
         });
     }
@@ -510,16 +515,30 @@ fn linkedin_tool_failure(tool: &'static str, err: &str) -> Error {
     }
 }
 
-/// The messages of a `get_conversation` output, in page order. With a
-/// `seat_key`, a message the output shows the seat sent is left out
-/// (FIX 12328): one whose `sender` is the seat's key, or a page-text turn
-/// headed by a name a link to the seat's own profile carries. A seat's own
-/// reply is never an inbound message.
+/// Every message of a `get_conversation` output, in page order, with whether
+/// its sender is positively incoming to `seat_key`. Own and unattributed
+/// messages still keep their admission, but do not supply reply text.
 pub(super) fn conversation_messages_from_tool_output(
     output: &Value,
     fallback_thread_id: Option<&str>,
     seat_key: Option<&str>,
-) -> Result<Vec<LinkedInConversationMessage>> {
+) -> Result<Vec<(bool, LinkedInConversationMessage)>> {
+    Ok(conversation_message_page(output, fallback_thread_id, seat_key, 0, None)?.messages)
+}
+
+struct LinkedInConversationPage {
+    messages: Vec<(bool, LinkedInConversationMessage)>,
+    handled: usize,
+    has_more: bool,
+}
+
+fn conversation_message_page(
+    output: &Value,
+    fallback_thread_id: Option<&str>,
+    seat_key: Option<&str>,
+    skipped: usize,
+    limit: Option<usize>,
+) -> Result<LinkedInConversationPage> {
     let payload = mcp_payload(output)?;
     let conversation_references = section_references(&payload, "conversation");
     let thread_id = match thread_id_from_payload_url(&payload)? {
@@ -537,26 +556,49 @@ pub(super) fn conversation_messages_from_tool_output(
         },
     };
 
-    let mut messages =
-        if let Some(message_values) = payload.get("messages").and_then(Value::as_array) {
-            explicit_conversation_messages(&thread_id, message_values)?
-        } else {
-            Vec::new()
-        };
-    if messages.is_empty()
-        && let Some(conversation_text) = optional_section_text(&payload, "conversation")?
-    {
-        messages = fallback_conversation_messages(&thread_id, conversation_text)?;
+    let (seat_names, other_names) = seat_key
+        .map(|seat| conversation_link_names(&payload, seat))
+        .unwrap_or_default();
+    let mut messages = Vec::new();
+    let mut emitted = 0usize;
+    let mut has_more = false;
+    let mut emit = |sender: Option<String>, message, structured| {
+        let incoming = seat_key
+            .zip(sender.as_deref())
+            .is_some_and(|(seat, sender)| {
+                !sender.eq_ignore_ascii_case(seat)
+                    && !matches_any_name(&seat_names, sender)
+                    && (structured || matches_any_name(&other_names, sender))
+            });
+        emitted = emitted.saturating_add(1);
+        if emitted <= skipped {
+            return true;
+        }
+        if limit.is_some_and(|limit| messages.len() >= limit) {
+            has_more = true;
+            return false;
+        }
+        messages.push((incoming, message));
+        true
+    };
+    let explicit = if let Some(message_values) = payload.get("messages").and_then(Value::as_array) {
+        explicit_conversation_messages(&thread_id, message_values, |sender, message| {
+            emit(sender, message, true)
+        })?
+    } else {
+        false
+    };
+    if !explicit && let Some(conversation_text) = optional_section_text(&payload, "conversation")? {
+        fallback_conversation_messages(&thread_id, conversation_text, |sender, message| {
+            emit(sender, message, false)
+        })?;
     }
-    if let Some(seat_key) = seat_key {
-        let (seat_names, _) = conversation_link_names(&payload, seat_key);
-        messages.retain(|(sender, _)| {
-            sender
-                .as_deref()
-                .is_none_or(|sender| sender != seat_key && !matches_any_name(&seat_names, sender))
-        });
-    }
-    Ok(messages.into_iter().map(|(_, message)| message).collect())
+    let handled = skipped.min(emitted).saturating_add(messages.len());
+    Ok(LinkedInConversationPage {
+        messages,
+        handled,
+        has_more,
+    })
 }
 
 pub(super) fn message_in_backfill_window(

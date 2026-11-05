@@ -389,8 +389,11 @@ pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> R
         // or pending-tombstone replay completes it under its own fail-closed
         // handling. Failing the open would wedge the vault instead.
         let mut wtxn = vault.store.env.write_txn()?;
+        let mut cancelled = Vec::new();
         let completed = match vault.apply_replayed_tombstone_in_txn(&mut wtxn, &entity, &raw) {
-            Ok(_) => wtxn.commit(),
+            Ok((_, _, actual_cancelled)) => wtxn.commit().map(|()| {
+                cancelled = actual_cancelled;
+            }),
             Err(error) => {
                 drop(wtxn);
                 tracing::warn!(
@@ -404,6 +407,8 @@ pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> R
         // A hold's refusal is logged now this item's writer has ended.
         vault.store.flush_legal_hold_refusals_settled();
         completed?;
+        crate::attempt_queue::AttemptQueue::new(vault)
+            .erased_payload_cancellations_committed(&cancelled);
     }
     Ok(())
 }
@@ -447,7 +452,7 @@ fn matching_recovery_tombstone_in_txn(
     {
         use crate::ports::WindowAddress;
         use crate::store::loro_document::{doc_from_snapshot, import_doc};
-        use crate::sync::loro_support::tombstone_values_for_id;
+        use crate::store::loro_tombstones::tombstone_values_for_id;
         for row in store.port_window_doc_rows_raw(txn, |label, snapshot| {
             doc_from_snapshot(snapshot).map(|doc| (label.as_str().to_owned(), doc))
         })? {

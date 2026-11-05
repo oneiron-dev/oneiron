@@ -4,19 +4,17 @@
 //! ([`GmailDelegatedAdapter::run_mailbox_page`]) once per
 //! [`GMAIL_POLL_EVERY`], from where the seat's stored progress left it.
 //!
-//! The read wire is header-only, as the adapter's message metadata is:
-//! `users.messages.list` for one page of the placement the read asks for,
-//! then `users.messages.get` with `format=metadata` for each message's
-//! labels, receive time and the headers the adapter reads. No body is
-//! fetched or carried. Each page's calls run inside the seat's
-//! identity-bound credential door, on the seat's own grant; the mailbox
-//! address is the user id each call names, so Gmail refuses a grant that
-//! does not open that mailbox.
+//! The wire lists the placement and reads each message's metadata first.
+//! A MailRead seat also reads the non-attachment plain-text body of messages
+//! its placement admits, so the archived email can feed the reply worker.
+//! MailMetadata seats stay header-only. Each page's calls run inside the
+//! seat's identity-bound credential door, on its own grant; the mailbox
+//! address is the user id each call names.
 
 use std::io::Read;
 use std::time::{Duration, Instant};
 
-use oneiron::channel_identity::{AssignmentAddress, MailboxAddr};
+use oneiron::channel_identity::{AssignmentAddress, DelegatedGrantScope, MailboxAddr};
 use oneiron::channel_identity_provider::gmail::{
     GmailDelegatedAdapter, GmailInboxPage, GmailMessageMetadata, GmailReadAuthority, GmailReadWire,
     HeaderMailbox, active_gmail_seats, gmail_authorization,
@@ -49,8 +47,9 @@ const GMAIL_PAGE_SIZE: u32 = 50;
 /// threading headers.
 const GMAIL_METADATA_HEADERS: [&str; 5] =
     ["From", "Subject", "Message-ID", "References", "In-Reply-To"];
-/// The largest reply one Gmail call reads.
-const MAX_GMAIL_REPLY_BYTES: u64 = 1_048_576;
+/// The largest Gmail JSON reply, including a full MIME message and its
+/// base64url body (which can exceed the old metadata-only reply size).
+const MAX_GMAIL_REPLY_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Whether the Gmail mailboxes are served, and when they were last paged,
 /// kept across passes in memory. Each poll builds its own HTTPS client on
@@ -123,6 +122,10 @@ fn poll_seat(
     let wire = HttpGmailReadWire {
         client,
         read_since: read_since(vault, &adapter, identity)?,
+        read_body: adapter
+            .config()
+            .scopes()
+            .contains(&DelegatedGrantScope::MailRead),
     };
     let mut admitted = 0_usize;
     for _ in 0..GMAIL_PAGES_PER_POLL {
@@ -179,6 +182,8 @@ struct HttpGmailReadWire<'a> {
     /// Mail Gmail received before this instant (Unix seconds) ends a scan:
     /// the seat's last full scan listed it. `None` reads the whole mailbox.
     read_since: Option<u64>,
+    /// Metadata-only grants never fetch message bodies.
+    read_body: bool,
 }
 
 impl HttpGmailReadWire<'_> {
@@ -206,7 +211,7 @@ impl HttpGmailReadWire<'_> {
         if let Some(cursor) = cursor {
             list = list.query(&[("pageToken", cursor.as_str())]);
         }
-        let listed = gmail_json(list, "list")?.ok_or_else(|| gmail_error("list", 404))?;
+        let listed = gmail_json(list, "list", false)?.ok_or_else(|| gmail_error("list", 404))?;
         let ids = listed
             .get("messages")
             .and_then(Value::as_array)
@@ -223,7 +228,12 @@ impl HttpGmailReadWire<'_> {
             reached_read = self
                 .read_since
                 .is_some_and(|since| message.internal_date_secs < since);
-            if let Some(message) = message.metadata.filter(|m| policy.includes(m.placement)) {
+            if let Some(mut message) = message.metadata.filter(|m| policy.includes(m.placement)) {
+                if self.read_body
+                    && let Some(text) = self.read_plain_text(auth, mailbox, id)?
+                {
+                    message = message.with_plain_text(text);
+                }
                 messages.push(message);
             }
             if reached_read {
@@ -256,10 +266,59 @@ impl HttpGmailReadWire<'_> {
             .get(messages_url(mailbox, Some(id))?)
             .header(AUTHORIZATION, auth.clone())
             .query(&query);
-        let Some(message) = gmail_json(request, "get")? else {
+        let Some(message) = gmail_json(request, "get", false)? else {
             return Ok(None);
         };
         project_message(mailbox, id, &message).map(Some)
+    }
+
+    /// Reads only a MIME plain-text message body, never an attachment,
+    /// HTML alternative or Gmail's snippet of earlier/quoted words.
+    fn read_plain_text(
+        &self,
+        auth: &HeaderValue,
+        mailbox: &str,
+        id: &str,
+    ) -> oneiron::Result<Option<String>> {
+        let request = self
+            .client
+            .get(messages_url(mailbox, Some(id))?)
+            .header(AUTHORIZATION, auth.clone())
+            .query(&[("format", "full"), ("fields", "payload")]);
+        let Some(message) = gmail_json(request, "get body", true)? else {
+            return Ok(None);
+        };
+        let Some(part) = message.get("payload").and_then(plain_text_part) else {
+            return Ok(None);
+        };
+        let charset = plain_text_charset(part);
+        if let Some(data) = part
+            .pointer("/body/data")
+            .and_then(Value::as_str)
+            .filter(|data| !data.is_empty())
+        {
+            // These are sender-controlled bytes, not a transport failure.
+            // Preserve the admitted metadata when this body cannot be decoded.
+            return Ok(GmailMessageMetadata::decode_plain_text(data, charset).ok());
+        }
+        let Some(attachment) = part.pointer("/body/attachmentId").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        // Gmail can keep a message body's bytes behind this endpoint too.
+        // plain_text_part already excluded MIME attachments.
+        let mut url = messages_url(mailbox, Some(id))?;
+        url.path_segments_mut()
+            .map_err(|()| oneiron::Error::InvalidConfig("gmail body URL did not build".to_owned()))?
+            .push("attachments")
+            .push(attachment);
+        let request = self.client.get(url).header(AUTHORIZATION, auth.clone());
+        let Some(body) = gmail_json(request, "get body bytes", true)? else {
+            return Ok(None);
+        };
+        Ok(body
+            .get("data")
+            .and_then(Value::as_str)
+            .and_then(|data| GmailMessageMetadata::decode_plain_text(data, charset).ok()))
     }
 }
 
@@ -279,6 +338,77 @@ impl GmailReadWire for HttpGmailReadWire<'_> {
         })?;
         page.ok_or_else(|| oneiron::Error::InvalidConfig("gmail page was not read".to_owned()))
     }
+}
+
+/// The first non-attachment plain-text part, in MIME order. Nested message
+/// attachments are not traversed as if their words were the new reply.
+fn plain_text_part(payload: &Value) -> Option<&Value> {
+    let mut parts = vec![payload];
+    while let Some(part) = parts.pop() {
+        let attachment = part
+            .get("filename")
+            .and_then(Value::as_str)
+            .is_some_and(|name| !name.is_empty())
+            || part
+                .get("headers")
+                .and_then(Value::as_array)
+                .is_some_and(|headers| {
+                    headers.iter().any(|header| {
+                        header
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .is_some_and(|name| name.eq_ignore_ascii_case("Content-Disposition"))
+                            && header
+                                .get("value")
+                                .and_then(Value::as_str)
+                                .is_some_and(|value| {
+                                    value
+                                        .split(';')
+                                        .next()
+                                        .unwrap_or_default()
+                                        .trim()
+                                        .eq_ignore_ascii_case("attachment")
+                                })
+                    })
+                });
+        if attachment {
+            continue;
+        }
+        let mime = part
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if mime.eq_ignore_ascii_case("text/plain") {
+            return Some(part);
+        }
+        if mime.to_ascii_lowercase().starts_with("multipart/")
+            && let Some(children) = part.get("parts").and_then(Value::as_array)
+        {
+            parts.extend(children.iter().rev());
+        }
+    }
+    None
+}
+
+fn plain_text_charset(part: &Value) -> Option<&str> {
+    let content_type = part
+        .get("headers")?
+        .as_array()?
+        .iter()
+        .find(|header| {
+            header
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name.eq_ignore_ascii_case("Content-Type"))
+        })?
+        .get("value")?
+        .as_str()?;
+    content_type.split(';').skip(1).find_map(|parameter| {
+        let (name, value) = parameter.split_once('=')?;
+        name.trim()
+            .eq_ignore_ascii_case("charset")
+            .then(|| value.trim().trim_matches('"'))
+    })
 }
 
 /// One listed message as Gmail returned it: when Gmail received it, and its
@@ -429,11 +559,14 @@ fn messages_url(mailbox: &str, message: Option<&str>) -> oneiron::Result<reqwest
 }
 
 /// One Gmail call's JSON reply; `None` when Gmail answers 404. Any other
-/// refusal fails the page, which the next poll reads again. The URL names
-/// the mailbox, so an error drops it.
+/// refusal fails the page, which the next poll reads again. An oversized
+/// optional body leaves the already-read metadata intact instead of blocking
+/// the page. Network, authentication and unreadable-response errors still
+/// propagate. The URL names the mailbox, so an error drops it.
 fn gmail_json(
     request: reqwest::blocking::RequestBuilder,
     call: &str,
+    optional_body: bool,
 ) -> oneiron::Result<Option<Value>> {
     let response = request.send().map_err(|error| {
         oneiron::Error::InvalidConfig(format!(
@@ -454,6 +587,9 @@ fn gmail_json(
         .read_to_end(&mut body)
         .map_err(|_| oneiron::Error::InvalidConfig(format!("gmail {call} reply unreadable")))?;
     if body.len() as u64 > MAX_GMAIL_REPLY_BYTES {
+        if optional_body {
+            return Ok(None);
+        }
         return Err(oneiron::Error::InvalidConfig(format!(
             "gmail {call} reply exceeds its bound"
         )));

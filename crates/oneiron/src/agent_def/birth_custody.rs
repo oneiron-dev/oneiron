@@ -1,19 +1,16 @@
 //! Physical custody of captured agent source, without authorship or delete grants.
-use super::portable_source::{birth_source_id, decode_birth_source};
+use super::portable_source::decode_birth_source;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::agent_birth_custody::{OWNED, birth_carriers_for_holder_in_txn};
 use crate::{
     entity_id::EntityId,
     error::{Error, Result},
     store::Store,
 };
 
-/// Which asset entity currently holds custody of a birthed agent's captured
-/// source. Key: the birthed child's id; value: the holder asset's id.
-const OWNED: SideTable<EntityId, EntityId, Raw> =
-    SideTable::new(&side_table::AGENT_DEF_BIRTH_CUSTODY_OWNED);
 /// Binds a captured-source ASSET id back to the child agent it was birthed
 /// for. Key: the asset's id; value: the child's id.
 const BINDING: SideTable<EntityId, EntityId, Raw> =
@@ -78,12 +75,13 @@ pub(super) fn check_registered_birth_target(
     Ok(())
 }
 pub(crate) fn stage_birth_custody_put(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     kind: u8,
     bytes: &[u8],
 ) -> Result<()> {
+    let store = write.store;
     if kind == ENTITY_TYPE_ASSET
         && let Some(source) = decode_birth_source(bytes)?
     {
@@ -94,45 +92,18 @@ pub(crate) fn stage_birth_custody_put(
         BINDING.put(store, txn, id, &child)?;
     }
     if kind != ENTITY_TYPE_AGENT_DEF && OWNED.contains(store, txn, id)? {
-        retire_birth_source_holder_in_txn(store, txn, id)?;
+        retire_birth_source_holder_in_txn(write, txn, id)?;
     }
     Ok(())
-}
-pub(crate) fn birth_carriers_for_holder_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    child: &EntityId,
-) -> Result<Vec<EntityId>> {
-    match OWNED.get(store, txn, child)? {
-        None => Ok(vec![]),
-        Some(id) => {
-            if id != birth_source_id(child)? {
-                return Err(Error::CorruptedIndex("agent source custody ID"));
-            }
-            Ok(vec![id])
-        }
-    }
-}
-pub(crate) fn birth_custody_exists_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    child: &EntityId,
-) -> Result<bool> {
-    for id in super::birth_dependencies::birth_carriers_for_erased_entity_in_txn(store, txn, child)?
-    {
-        if crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 /// Source-only retirement also records tombstone-before-source arrival. It
 /// does not write a generic tombstone, restore authority, or remove the child.
 pub(crate) fn retire_birth_source_holder_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     child: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     mark_birth_source_retired(store, txn, child)?;
     for id in birth_carriers_for_holder_in_txn(store, txn, child)? {
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
@@ -148,7 +119,7 @@ pub(crate) fn retire_birth_source_holder_in_txn(
         if source.child()? != *child {
             return Err(Error::CorruptedIndex("agent source carrier holder"));
         }
-        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &id)?;
+        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(write, txn, &id)?;
         crate::ppr::invalidate_ppr_for_delete(store, txn, &id, &neighbors)?;
         if graph {
             crate::ppr::increment_graph_version(store, txn)?;
@@ -160,10 +131,11 @@ pub(crate) fn retire_birth_source_holder_in_txn(
     Ok(())
 }
 pub(crate) fn remove_birth_custody_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("agent source delete header"))?;
@@ -172,18 +144,18 @@ pub(crate) fn remove_birth_custody_in_txn(
         {
             // Direct carrier deletion retires its payload, never its agent row.
             RETIRED.put(store, txn, &source.child()?, &())?;
-            super::birth_dependencies::retire_input(store, txn, id)?;
+            super::birth_dependencies::retire_input(write, txn, id)?;
             return Ok(());
         }
         if header.entity_type == ENTITY_TYPE_AGENT_DEF {
             return super::birth_dependencies::retire_birth_sources_for_entity_in_txn(
-                store, txn, id,
+                write, txn, id,
             );
         }
     }
-    super::birth_dependencies::retire_input(store, txn, id)?;
+    super::birth_dependencies::retire_input(write, txn, id)?;
     if OWNED.contains(store, txn, id)? {
-        retire_birth_source_holder_in_txn(store, txn, id)?;
+        retire_birth_source_holder_in_txn(write, txn, id)?;
     }
     Ok(())
 }

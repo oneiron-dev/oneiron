@@ -120,11 +120,17 @@ impl Vault {
             else {
                 continue;
             };
-            let party = crate::comm::resolve_party_ref_in_txn(self, &txn, &facts.address_or_handle)
+            let party = self
+                .store
+                .record_hooks
+                .resolve_party_ref_in_txn(self, &txn, &facts.address_or_handle)
                 .map_err(comm_error)?;
             let Some(party) = party else { continue };
-            for thread in
-                crate::comm::active_thread_refs_in_txn(self, &txn, party).map_err(comm_error)?
+            for thread in self
+                .store
+                .record_hooks
+                .active_thread_refs_in_txn(self, &txn, party)
+                .map_err(comm_error)?
             {
                 if out.iter().any(|item| {
                     item.identity_ref == Some(identity_ref)

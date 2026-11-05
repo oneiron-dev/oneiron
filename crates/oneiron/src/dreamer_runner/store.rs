@@ -819,6 +819,11 @@ impl<'a> DreamerRunnerStore<'a> {
                 },
                 turn,
             )?;
+            if let Some(record) = crate::agent_dispatch::requeue_workflow_tool_failure_in_txn(
+                self.vault, txn, &source, &input,
+            )? {
+                return Ok(record);
+            }
             let crate::attempt_queue::RetryOutcome::Retried(record) =
                 self.attempts.retry_in_txn(txn, input)?;
             super::authority::stamp_attempt(self.vault, txn, &record, &payload.attempt_type)?;
@@ -1164,6 +1169,15 @@ impl<'a> DreamerRunnerStore<'a> {
             .scan_keys(&self.vault.store, &rtxn, &[])?
             .into_iter()
             .collect())
+    }
+
+    /// The working attempts that hold a parked row, in creation order, each
+    /// read by its key on one snapshot, so a reader of parks decodes no
+    /// other attempt (FIX 12253).
+    pub fn parked_working_rows(&self) -> Result<Vec<AttemptRecord>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let ids = PARKED.scan_keys(&self.vault.store, &rtxn, &[])?;
+        self.attempts.working_rows_in_txn(&rtxn, ids)
     }
 
     /// Pure proposal step. This method performs no LMDB write and enqueues no

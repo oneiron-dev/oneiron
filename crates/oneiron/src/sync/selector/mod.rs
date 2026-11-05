@@ -38,6 +38,11 @@ pub use secret_projection::{
     repo_document_copy_id, repo_document_copy_vector, repo_document_lineage_edit,
     repo_document_source,
 };
+/// The empty root whose deletes retain a held row write's causal unit.
+pub(crate) const HELD_EDIT_CAUSALITY_MAP: &str = "held_edit_causality";
+/// Every neutral delete uses this one non-entity key.
+pub(crate) const HELD_EDIT_CAUSALITY_KEY: &str = "0";
+
 mod text_egress;
 // FIX 10161: the tombstones a narrower grant's export carries.
 mod tombstones;
@@ -69,8 +74,16 @@ pub(in crate::sync) use self::admission::{
 pub use self::authorize::authorize_sync_selector;
 pub(in crate::sync) use self::authorize::authorize_sync_selector_in_txn;
 pub(crate) use self::born_with::{
-    carried_born_with, carried_born_with_in_txn, erase_carried_born_with_in_txn,
+    CarriedText, carried_born_with, carried_born_with_in_txn, erase_carried_born_with_in_txn,
 };
+
+/// Keeps the native text retained beside a staged artifact's admitted rows.
+pub(crate) fn keep_carried_born_with(
+    vault: &crate::Vault,
+    carried: &[CarriedText],
+) -> crate::error::Result<()> {
+    born_with::keep_carried(vault, carried)
+}
 pub(in crate::sync) use self::codec::granted_window_doc;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,

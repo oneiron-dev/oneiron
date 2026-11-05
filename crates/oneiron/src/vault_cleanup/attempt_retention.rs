@@ -2,11 +2,14 @@
 use super::marks::{self, CleanupMark};
 use super::run_snapshot::CleanupSnapshotEntry;
 use super::{CleanupCandidate, CleanupKind};
-use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, decode_record};
+use crate::attempt_queue::{AttemptRecord, decode_record};
 use crate::error::{Error, MaintenanceError, Result};
 use crate::ports::JobQueueRead;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
+pub(crate) use crate::store::attempt_archive_mark::refresh_archived_attempt_in_txn;
+use crate::store::attempt_id::AttemptId;
+use crate::store::attempt_state::AttemptState;
 use crate::{EntityId, Vault};
 
 const TASK_ARCHIVE: SideTable<TaskAttemptKey, (), Raw> =
@@ -67,30 +70,6 @@ pub(crate) fn attempt_is_archived(
         marks::mark_in_txn(store, txn, id.as_bytes())?,
         Some(CleanupMark::Archived { revision, .. }) if revision == marks::revision_of(raw)
     ))
-}
-
-/// Moves an attempt's cleanup mark to the bytes its row was rewritten to in
-/// this transaction, when the mark bound the row as it stood (`before`): an
-/// erase that rewrites a row in place leaves it archived by the same run
-/// (FIX 7076), or kept by the owner. A stale or unreadable mark bound bytes
-/// the row no longer holds, so it is removed, never rebound: no hash of
-/// those bytes outlives the erase (FIX 7615). An absent mark stays absent.
-pub(crate) fn refresh_archived_attempt_in_txn(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: AttemptId,
-    before: &[u8],
-    after: &[u8],
-) -> Result<()> {
-    let bound = marks::revision_of(before);
-    let revision = marks::revision_of(after);
-    let Some(raw) = marks::raw_in_txn(store, txn, id.as_bytes())? else {
-        return Ok(());
-    };
-    match CleanupMark::decode(&raw).and_then(|mark| mark.moved(&bound, &revision)) {
-        Some(moved) => marks::put_in_txn(store, txn, id.as_bytes(), moved),
-        None => marks::delete_in_txn(store, txn, id.as_bytes()),
-    }
 }
 
 /// [`refresh_archived_attempt_in_txn`] over a checkpoint image's sorted
@@ -160,12 +139,41 @@ pub(super) fn eligible(
     let record = decode_record(raw, id)?;
     // A job row whose owner prunes and bounds it is job state: cleanup never
     // proposes it, so it never mints a proposal id.
-    if crate::attempt_queue::owner_retained_kind(&record.kind) {
+    if crate::store::attempt_retention::owner_retained_kind(&record.kind) {
         return Ok(None);
     }
     Ok((record.state == AttemptState::Completed
         && vault.now_recorded_at().saturating_sub(record.updated_at) > days.saturating_mul(86_400))
     .then_some(record))
+}
+
+/// The gated source rows of `entity`'s queue row (FIX 10494): the rows its
+/// producers recorded its inputs read from, through
+/// [`AttemptRecord::source_rows`], which reads unknown unless every declared
+/// producer reported completely. `entity` is the original 16-byte queue-id
+/// alias a [`CleanupCandidate`] carries, not a stored entity: it rehydrates
+/// to [`AttemptId`] for this lookup and is never listed itself.
+///
+/// `Ok(None)` is honest unknown: the row is gone, or its set never
+/// completed. `Some` holds only genuine known rows from that same decoded
+/// record; `Some([])` is only a genuinely declared-empty set. Raw `read_set`
+/// is never read. Storage errors propagate. A row the native operation
+/// skipped before decoding can be unreadable; this optional projection then
+/// stays unknown rather than turning that successful skip into an error.
+/// The operation's own validation and review's unreadable slots stay intact.
+pub(super) fn attempt_source_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity: EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    let id = AttemptId::from_bytes(entity.as_bytes())?;
+    let Some(raw) = JobQueueRead::port_job_row(&vault.store, txn, &id)? else {
+        return Ok(None);
+    };
+    let Ok(record) = decode_record(&raw, id) else {
+        return Ok(None);
+    };
+    Ok(record.source_rows().map(|rows| rows.to_vec()))
 }
 
 /// Every completed queue record retention would archive, the ledger read
@@ -179,7 +187,7 @@ pub(super) fn scan(
     // order: the arm stops before them, the ledger's other rows all read.
     for row in JobQueueRead::port_job_rows(&vault.store, txn, None)? {
         let (attempt, raw) = row?;
-        if crate::attempt_queue::owner_retained_id(&attempt) {
+        if crate::store::attempt_retention::owner_retained_id(&attempt) {
             break;
         }
         let entity = EntityId::from_bytes(*attempt.as_bytes())?;

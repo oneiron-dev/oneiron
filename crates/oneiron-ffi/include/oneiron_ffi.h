@@ -7,7 +7,8 @@
  * to free(), and do not free the same value twice.
  *
  * Boundary validation: EntityId inputs must be exactly 16 bytes. Text queries
- * are capped at 8 KiB and dimensions at 16384; a search limit is served whole.
+ * are capped at 8 KiB; dimensions are the vault's configured width with no
+ * ceiling; a search limit is served whole.
  *
  * Intentionally absent: start_sync and stop_sync are not exported while sync
  * remains disabled pre-launch.
@@ -84,6 +85,16 @@ typedef enum OneironStatus {
    * Retry without it, or on a server that serves that rung.
    */
   OneironStatus_ModelUnavailable = 8,
+  /**
+   * The owner's world recipient choice keeps the row from this answer
+   * (`WORLD_RECIPIENT_LIMIT`, FIX 7463a).
+   */
+  OneironStatus_WorldRecipientLimit = 9,
+  /**
+   * The row's world placement cannot be verified, so nothing is released
+   * (`WORLD_PLACEMENT_UNVERIFIABLE`, FIX 7463a).
+   */
+  OneironStatus_WorldPlacementUnverifiable = 10,
 } OneironStatus;
 
 /**
@@ -724,6 +735,33 @@ enum OneironStatus oneiron_vault_free(struct OneironVault *vault);
  */
 enum OneironStatus oneiron_vault_health_json(struct OneironVault *vault,
                                              struct OneironBuffer *out_buffer);
+
+/**
+ * The latest engine-limit questions this raw-opened vault asked, as UTF-8 JSON.
+ *
+ * `out_available` is the collector fact: 1 when this handle opened its vault
+ * raw and carries its questions, 0 on a bound handle or an engine-shared
+ * handle, which carry none. `out_json` is the exact UTF-8 JSON array on a
+ * carrying handle, `[]` when no row has been crossed yet, and the empty
+ * buffer otherwise; a non-empty buffer is released with
+ * `oneiron_buffer_free`. Each element is exactly
+ * `{"row": <EngineLimit::key>, "bound": <u64>, "measured": <u64>}` in
+ * `EngineLimit::ALL` order, with full `u64` digits (never narrowed
+ * through a float). The read does not clear. The caller's JSON parser
+ * chooses its own number precision; this side promises the digits only.
+ *
+ * Both out pointers are initialized before anything is read or allocated.
+ * A null `vault` with both outs writable is `NullArg`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`,
+ * `oneiron_engine_vault` or `oneiron_vault_bind`, not freed during the
+ * call. Each non-null out pointer is writable for the whole call.
+ */
+enum OneironStatus oneiron_vault_native_limit_questions(const struct OneironVault *vault,
+                                                        uint8_t *out_available,
+                                                        struct OneironBuffer *out_json);
 
 /**
  * Store an entity blob. A bound handle stores it as its caller

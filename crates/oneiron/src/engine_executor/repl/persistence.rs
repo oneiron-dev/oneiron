@@ -204,7 +204,7 @@ impl EngineNativeExecutor<'_> {
         // A flaky commit converts to success on one identical retry (FIX
         // 1443); a first commit that actually landed fails the retry closed
         // on its generation mismatch instead.
-        match self
+        let _ = match self
             .storage
             .put_code_run_replay_record_with_receipts_if_generation(
                 record,
@@ -227,7 +227,7 @@ impl EngineNativeExecutor<'_> {
                     )?
             }
             result => result?,
-        }
+        };
         // The run parks on the step's wait; a reply already delivered
         // resumes it at its next entry.
         if let Some(EngineExecutorStatus::Waiting(wait)) = &terminal_status {
@@ -259,7 +259,10 @@ impl EngineNativeExecutor<'_> {
     ) -> EngineExecutorResult<LoadedReplayRecord> {
         let continuation_digest = continuation.map(|note| &note.digest);
         if let Some(record) = self.storage.get_code_run_replay_record(&config.run_id)? {
-            if record.determinism != config.determinism {
+            let determinism = record.determinism.ok_or_else(|| {
+                Error::InvalidConfig("engine executor code run has unknown determinism".to_owned())
+            })?;
+            if determinism != config.determinism {
                 return Err(Error::InvalidConfig(
                     "engine executor determinism changed for existing run".to_owned(),
                 )

@@ -141,13 +141,15 @@ pub trait SealBackend: Send + Sync {
     }
 }
 
-/// Bound for `operation_id` (§4): opaque, non-empty, at most this many UTF-8
-/// bytes, stable for one logical seal. Validated before any signing work.
+/// The backend's bound for an operation id (§4): at most this many UTF-8
+/// bytes. Every id the seal derives for its backend fits it, whatever the
+/// caller's id holds (FIX 6271).
 pub const MAX_OPERATION_ID_BYTES: usize = 256;
 
 /// Reserved headroom for the engine's derived sub-operation-id suffix
-/// (`:{16 hex}:{phase}:{capacity}`). Caller-supplied ids must leave this
-/// budget so every derived id still fits the backend's 256-byte bound.
+/// (`:{16 hex}:{phase}:{capacity}`). A caller id longer than the bound less
+/// this goes to the backend as its alias
+/// (`oneiron_organ_protocol::seal::backend_operation_id`).
 pub const OPERATION_ID_SUFFIX_RESERVE: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,13 +159,13 @@ pub struct SealRequest {
 }
 
 impl SealRequest {
-    /// Enforce the `operation_id` contract. Engines must run this before the
-    /// request reaches any signing or fetch path. Caller ids are bounded to
-    /// [`MAX_OPERATION_ID_BYTES`] minus [`OPERATION_ID_SUFFIX_RESERVE`] so the
-    /// suffixed sub-operation ids the engine derives stay inside the bound.
+    /// Enforce the `operation_id` contract: opaque, non-empty, stable for one
+    /// logical seal. Engines must run this before the request reaches any
+    /// signing or fetch path. No length is refused (FIX 6271): a caller id
+    /// past [`MAX_OPERATION_ID_BYTES`] minus [`OPERATION_ID_SUFFIX_RESERVE`]
+    /// reaches the backend as its bounded alias.
     pub fn validate_operation_id(&self) -> Result<(), SealError> {
-        let max_caller = MAX_OPERATION_ID_BYTES - OPERATION_ID_SUFFIX_RESERVE;
-        if self.operation_id.is_empty() || self.operation_id.len() > max_caller {
+        if self.operation_id.is_empty() {
             return Err(SealError::Fatal {
                 stage: crate::error::SealStage::InputValidation,
                 code: crate::error::FatalCode::InvalidConfiguration,
@@ -199,7 +201,10 @@ pub use report::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedPdf {
-    pub bytes: Vec<u8>,
+    /// Shared output bytes. The native engine retains their reservation
+    /// with them (FIX 8452): clones share the buffer and its lease through
+    /// the `Arc`, and the lease drops with the last owner.
+    pub bytes: crate::SharedBytes,
     pub evidence_sha256: Sha256Digest,
     pub requested_profile: PadesProfile,
     pub achieved_profile: PadesProfile,
@@ -502,15 +507,17 @@ pub mod config {
         pub content_type: Option<String>,
     }
 
-    /// A fetched response. Its body is admitted memory (FIX 7655): its bytes
-    /// were reserved before they were allocated, and every owner shares them
-    /// and their reservation, so a clone copies no bytes. A custom fetcher
-    /// builds it with `AdmittedBytes::copy_from` (or `AdmittedBytes::empty`)
-    /// over the engine's `SealResourceLimits::memory`.
+    /// A fetched response. Its body and content type are admitted memory
+    /// (FIX 7655, FIX 8455): their bytes were reserved before they were
+    /// allocated, and every owner shares them and their reservation, so a
+    /// clone copies no bytes. A custom fetcher builds them with
+    /// `AdmittedBytes::copy_from` (or `AdmittedBytes::shared_empty`) and
+    /// `AdmittedStr::copy_from` (or `AdmittedStr::shared_empty`) over the engine's
+    /// `SealResourceLimits::memory`.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct FetchResponse {
         pub body: crate::memory::SharedBytes,
-        pub content_type: Option<String>,
+        pub content_type: Option<crate::memory::SharedStr>,
     }
 
     #[derive(Debug, thiserror::Error)]

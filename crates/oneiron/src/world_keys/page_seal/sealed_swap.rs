@@ -7,11 +7,32 @@ use std::path::Path;
 use std::sync::PoisonError;
 
 use super::{
-    MIRROR_VERSION, MIRRORING, Mirror, custody_root, page_seal_custody_path, write_mirror,
+    MIRROR_VERSION, MIRRORING, Mirror, VaultPageSeal, custody_root, page_seal_custody_path,
+    read_mirror, write_mirror,
 };
 use crate::Vault;
 use crate::error::Result;
 use crate::world_keys::{CarriedVaultKey, refused};
+
+/// Finishes the mirror of a previous sealed vault after an interrupted restore
+/// claimed it as `archive`. `previous` is the seal unlocked from that staged
+/// vault before its rename, not the replacement's seal. No environment is opened.
+/// The mirror keeps its current carried wraps and names that incarnation alone.
+pub fn finish_restore_archive_mirror(archive: &Path, previous: &VaultPageSeal) -> Result<()> {
+    let root = custody_root(archive)?;
+    let _mirroring = MIRRORING.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut mirror = read_mirror(&root)?;
+    if mirror.vault_id != previous.vault_id()
+        || !mirror.incarnations.contains(&previous.incarnation())
+        || *mirror.carried.commitment() != previous.data_key().commitment(&previous.vault_id())
+    {
+        return Err(refused(
+            "the archive's page-seal mirror is not the previous vault's",
+        ));
+    }
+    mirror.incarnations = vec![previous.incarnation()];
+    write_mirror(&root, &mirror)
+}
 
 impl Vault {
     /// Step 1 of a restore over this vault ([`SealedSwap`]), before the
@@ -26,14 +47,15 @@ impl Vault {
             (Some(live), Some(next)) => (live, next),
             _ => return Err(refused("a restore over a vault keeps its tier")),
         };
-        let commitment = live.data_key.commitment(&live.vault_id);
-        if live.vault_id != next.vault_id || commitment != next.data_key.commitment(&next.vault_id)
+        let commitment = live.data_key().commitment(&live.vault_id());
+        if live.vault_id() != next.vault_id()
+            || commitment != next.data_key().commitment(&next.vault_id())
         {
             return Err(refused(
                 "the replacement is sealed under another vault's data key",
             ));
         }
-        if live.incarnation == next.incarnation {
+        if live.incarnation() == next.incarnation() {
             return Err(refused(
                 "the replacement is sealed under the live vault's own incarnation",
             ));
@@ -42,9 +64,9 @@ impl Vault {
             .resting_vault_key()?
             .ok_or_else(|| refused("the replacement's vault key has no wrap"))?;
         let swap = SealedSwap {
-            vault_id: live.vault_id,
-            live: live.incarnation,
-            replacement: next.incarnation,
+            vault_id: live.vault_id(),
+            live: live.incarnation(),
+            replacement: next.incarnation(),
             carried,
         };
         let _mirroring = MIRRORING.lock().unwrap_or_else(PoisonError::into_inner);

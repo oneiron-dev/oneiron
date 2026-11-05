@@ -232,19 +232,30 @@ pub(crate) async fn room_start(
     let room = parse_entity_id_param(&request.room, "room")?;
     // The stretch's memory, queued for on the retained line before anything
     // is made (FIX 5991). A caller gone while it waits starts nothing.
+    let credential = auth.verified_slip().cloned();
     let charge = RoomCharge::reserve(server, &request.session_ref).await;
     let server = Arc::clone(server);
     let view = blocking(move || {
-        let session = server
-            .vault()
-            .off_record_session_vault()
-            .enter_in_room_charged(
+        let rooms = server.vault().off_record_session_vault();
+        let session = match credential {
+            Some(credential) => rooms.enter_in_room_charged(
                 &request.session_ref,
                 request.backend,
                 (room, actor),
                 Box::new(charge),
-            )
-            .map_err(|error| engine_error(error, &request.session_ref))?;
+                &credential,
+            ),
+            None => owner_proof(server.vault(), actor).and_then(|person| {
+                rooms.enter_in_room_charged_as(
+                    &request.session_ref,
+                    request.backend,
+                    room,
+                    Box::new(charge),
+                    &person,
+                )
+            }),
+        }
+        .map_err(|error| engine_error(error, &request.session_ref))?;
         self::view(&session, &request.session_ref, actor)
     })
     .await?;
@@ -304,7 +315,7 @@ impl oneiron::off_record::RetainedCharge for RoomCharge {
 /// by its words.
 ///
 /// The text is the canonical projection — the visible, non-empty message
-/// contents in request order, one per line, the same text the engine joins
+/// contents in message order, one per line, the same text the engine joins
 /// (`tagging::shown_message_text` + `embed::joined_turn_text`) — with no new
 /// filtering rule.
 ///
@@ -320,10 +331,14 @@ pub(crate) fn pre_embed_turn(
     let Some(slot) = slot else {
         return None;
     };
-    let text = turn
+    let mut messages = turn
         .messages
         .iter()
         .filter(|message| message.is_visible && !message.content.is_empty())
+        .collect::<Vec<_>>();
+    messages.sort_by_key(|message| message.order);
+    let text = messages
+        .into_iter()
         .map(|message| message.content.as_str())
         .collect::<Vec<_>>()
         .join("\n");
@@ -360,7 +375,7 @@ pub(crate) async fn room_witness(
         let session = bind(vault, room, &request.session_ref, actor)?;
         // FIX 3817 (a): the turn's vector is embedded before the verb, on
         // this blocking thread, never under the witness writer.
-        let turn_vector = pre_embed_turn(server.embedder.as_ref(), &request.turn);
+        let turn_vector = pre_embed_turn(server.embedder_slot().as_ref(), &request.turn);
         vault
             .memory(actor, class)
             .at(locality)
@@ -443,12 +458,16 @@ pub(crate) async fn room_export(
     let credential = auth.verified_slip().cloned();
     let server = Arc::clone(server);
     let export = blocking(move || {
-        let talk = bind(server.vault(), room, &request.session_ref, actor)?
-            .export_talk_by(actor, credential.as_ref())
-            .map_err(|error| match error.kind() {
-                ErrorKind::OffRecordPromoteUnauthenticated => ApiError::unauthorized(),
-                _ => engine_error(error, &request.session_ref),
-            })?;
+        let session = bind(server.vault(), room, &request.session_ref, actor)?;
+        let talk = match credential {
+            Some(credential) => session.export_talk_by(actor, &credential),
+            None => owner_proof(server.vault(), actor)
+                .and_then(|person| session.export_talk_as(&person)),
+        }
+        .map_err(|error| match error.kind() {
+            ErrorKind::OffRecordPromoteUnauthenticated => ApiError::unauthorized(),
+            _ => engine_error(error, &request.session_ref),
+        })?;
         Ok(export_view(talk, &request.session_ref, unix_seconds_now())
             .with_refs(effective_copy_refs(request.travel.as_ref())))
     })
@@ -585,7 +604,8 @@ fn participant(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), ApiError> 
 
 /// Who starts a stretch in a room, on a credential that admits Write (FIX
 /// 4596): a person, or an agent acting within its Grant on a verified slip
-/// of its own. Either starts as itself: `enter_in_room` asks that it is on
+/// of its own and this vault's save grant. Either starts as itself:
+/// `enter_in_room` asks that it is on
 /// the room's roster now, so an agent that is no member starts none,
 /// whoever it acts for. REST and the pre-hook admission ask this alike.
 fn starter(auth: &CoreAuth) -> Result<EntityId, ApiError> {
@@ -599,17 +619,12 @@ fn starter(auth: &CoreAuth) -> Result<EntityId, ApiError> {
     }
 }
 
-/// Who exports a stretch: a person, or an agent acting within its Grant on a
-/// verified slip of its own (FIX 7854). Either takes only its own copy:
-/// `export_talk_by` asks that it is in the room and gathers only the turns
-/// its membership shows it, with the same live-credential check.
+/// Only a person takes an export copy. Core rechecks their human proof and
+/// current membership before releasing the talk.
 fn exporter(auth: &CoreAuth) -> Result<EntityId, ApiError> {
     match participant(auth)? {
         (actor, EdgeActorClass::Human) => Ok(actor),
-        (actor, EdgeActorClass::Agent) if auth.verified_slip().is_some() => Ok(actor),
-        _ => Err(forbidden(
-            "an agent exports an off-record stretch only on a slip of its own",
-        )),
+        _ => Err(forbidden("only a person exports an off-record stretch")),
     }
 }
 

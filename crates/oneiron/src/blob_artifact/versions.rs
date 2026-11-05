@@ -4,7 +4,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::edit_settle::{MadeByReader, NativeOutput, PendingProposalView};
+use crate::edit_settle::{MadeByReader, PendingProposalView};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
@@ -16,7 +16,8 @@ use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProv
 
 use super::body::{BlobArtifactBody, decode_blob_artifact_body, encode_blob_artifact_body};
 use super::made_by::{
-    births_row, default_version_made_by, made_by_text, validate_version_made_by_in_txn,
+    bind_version_made_by, births_row, default_version_made_by, made_by_text,
+    validate_version_made_by_in_txn,
 };
 use super::provenance::{
     BLOB_VERSION_CLAIM_PREDICATE, BlobVersionProvenance, blob_version_claim_value,
@@ -33,6 +34,7 @@ use crate::write_envelope::provenance::made_by::MadeBy;
 
 // The version chain's reads: the head, the tree, one version's metadata
 // and its bytes, with the gate on a compaction step's response (FIX 5977).
+mod checked;
 mod reads;
 pub use reads::BlobBytes;
 
@@ -243,103 +245,54 @@ impl Vault {
     /// before. A later AgentRun append without settlement waits as the same
     /// native-output proposal any organ result uses, with the caller's live
     /// content-write authority checked beside it; HEAD stays untouched until
-    /// Keep takes the existing authorized settlement path (FIX 8208).
+    /// Keep takes the existing authorized settlement path (FIX 8208). The read
+    /// lane is constructed only for a retained envelope naming sources beyond
+    /// its writer, never for a landed append (FIX 12562).
     #[expect(clippy::too_many_arguments)]
-    pub fn append_blob_artifact_version_checked(
+    pub fn append_blob_artifact_version_checked<'reader, E>(
         &self,
         artifact_id: &EntityId,
         fork_parent: Option<u64>,
         bytes: &[u8],
         provenance: &BlobVersionProvenance,
         made_by: Option<&MadeBy>,
-        reader: Option<MadeByReader<'_>>,
+        reader: impl FnOnce() -> std::result::Result<Option<MadeByReader<'reader>>, E>,
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> Result<BlobArtifactAppendOutcome> {
+    ) -> std::result::Result<BlobArtifactAppendOutcome, E>
+    where
+        E: From<Error>,
+    {
         let (version, fork_base) = self.with_write_txn_grouped(|wtxn| {
-            let later =
-                read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?.is_some();
-            let content_hash = blake3::hash(bytes);
-            let dedupe = fork_parent.is_none()
-                && read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
-                    .is_some_and(|head| head.content_hash == *content_hash.as_bytes());
-            if later && !dedupe && matches!(provenance, BlobVersionProvenance::AgentRun { .. }) {
-                if let Some(named) = made_by {
-                    validate_version_made_by_in_txn(self, wtxn, named)?;
-                }
-                let fork_base = match fork_parent {
-                    Some(parent) => {
-                        let record =
-                            match read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)? {
-                                Some(head) if parent > 0 && parent <= head.version => {
-                                    VERSIONS.get(&self.store, wtxn, &(*artifact_id, parent))?
-                                }
-                                _ => None,
-                            };
-                        let Some(record) = record else {
-                            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                                "fork parent version does not exist",
-                            )));
-                        };
-                        if record.version != parent {
-                            return Err(Error::CorruptedIndex("blob artifact fork parent"));
-                        }
-                        Some((parent, record.content_hash))
-                    }
-                    None => None,
-                };
-                return Ok((None, fork_base));
-            }
-            let version = match made_by {
-                Some(made_by) => self.append_blob_artifact_version_made_by_in_txn(
-                    wtxn,
-                    artifact_id,
-                    fork_parent,
-                    bytes,
-                    provenance,
-                    made_by,
-                    actor,
-                    occurred,
-                    learned_at,
-                )?,
-                None => self.append_blob_artifact_version_with_parent_in_txn(
-                    wtxn,
-                    artifact_id,
-                    bytes,
-                    provenance,
-                    actor,
-                    occurred,
-                    learned_at,
-                    fork_parent,
-                )?,
-            };
-            Ok((Some(version), None))
+            self.decide_blob_artifact_append_in_txn(
+                wtxn,
+                artifact_id,
+                fork_parent,
+                bytes,
+                provenance,
+                made_by,
+                actor,
+                occurred,
+                learned_at,
+            )
         })?;
         if let Some(version) = version {
             return Ok(BlobArtifactAppendOutcome::Landed(version));
         }
-        let BlobVersionProvenance::AgentRun { run_ref } = provenance else {
-            unreachable!("only a later AgentRun append takes the proposal path")
-        };
         let body = self
             .get_blob_artifact(artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        // A normal AgentRun append omitting made_by keeps the submitting
-        // actor's own default, so Keep records the submitter, not the keeper
-        // (blind review of #4387). No input rows: the envelope names only its
-        // writer, so retention admits nothing new and no door refuses more.
-        let output = NativeOutput {
-            run_ref: run_ref.clone(),
-            name: body.name,
-            media_type: body.media_type,
-            bytes: bytes.to_vec(),
-            report: serde_json::json!({}),
-            made_by: made_by.cloned().or_else(|| {
-                Some(default_version_made_by(
-                    &actor, provenance, None, learned_at,
-                ))
-            }),
+        let output =
+            checked::direct_append_output(body, bytes, provenance, made_by, actor, learned_at);
+        let reader = if made_by.is_some_and(|named| {
+            named.process.actor != actor.entity_ref()
+                || !named.inputs.is_empty()
+                || named.trigger.is_some()
+        }) {
+            reader()?
+        } else {
+            None
         };
         self.propose_native_output_with_write_grant(
             artifact_id,
@@ -350,6 +303,7 @@ impl Vault {
             fork_base,
         )
         .map(BlobArtifactAppendOutcome::Proposed)
+        .map_err(E::from)
     }
 
     /// Appends one version to the artifact's append-only chain.
@@ -472,6 +426,52 @@ impl Vault {
         )
     }
 
+    /// Binds a caller-supplied envelope to the authenticated producer once,
+    /// at proposal retention, so the trusted Keep path can preserve it
+    /// instead of rebinding it to the keeper (blind review of #4554). The
+    /// provenance matches what Keep settles under.
+    pub(crate) fn bind_retained_producer_envelope(
+        actor: &WriteActor,
+        provenance: &BlobVersionProvenance,
+        made_by: &MadeBy,
+        at: u64,
+    ) -> MadeBy {
+        bind_version_made_by(actor, provenance, made_by, at)
+    }
+
+    /// The trusted Keep path: the retained envelope was bound to its
+    /// producer when the proposal was authenticated, so it lands validated
+    /// but unchanged. The keeper's write authority stays out of the producer
+    /// receipt: no rebind to the approver (blind review of #4554).
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn append_blob_artifact_version_kept_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        fork_parent: Option<u64>,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        made_by: &MadeBy,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<BlobArtifactVersion> {
+        self.append_blob_artifact_version_body_in_txn(
+            wtxn,
+            artifact_id,
+            VersionBody::Bytes(bytes),
+            provenance,
+            actor,
+            occurred,
+            learned_at,
+            fork_parent,
+            None,
+            Some(made_by),
+            true,
+            false,
+        )
+    }
+
     /// Transaction-composable body of [`Vault::append_blob_artifact_version`].
     ///
     /// ARTL-4 settle-select needs the version append, its re-anchor sweep, and
@@ -546,6 +546,8 @@ impl Vault {
             None,
             None,
             None,
+            false,
+            true,
         )?;
         Ok((version, staged))
     }
@@ -566,10 +568,10 @@ impl Vault {
         fork_parent: Option<u64>,
         made_by: Option<&MadeBy>,
     ) -> Result<BlobArtifactVersion> {
-        self.append_blob_artifact_version_with_parent_and_engine_in_txn(
+        self.append_blob_artifact_version_body_in_txn(
             wtxn,
             artifact_id,
-            bytes,
+            VersionBody::Bytes(bytes),
             provenance,
             actor,
             occurred,
@@ -577,6 +579,8 @@ impl Vault {
             fork_parent,
             calc_engine,
             made_by,
+            false,
+            false,
         )
     }
 
@@ -631,11 +635,16 @@ impl Vault {
             fork_parent,
             calc_engine,
             made_by,
+            false,
+            true,
         )
     }
 
     /// The one version append every door takes, over a slice or a staged
-    /// body (FIX 12091).
+    /// body (FIX 12091). `preserve_made_by` is the trusted Keep path only:
+    /// the retained envelope lands validated but unbound, so the keeper is
+    /// never rebound as producer (blind review of #4554). Direct doors re-anchor
+    /// HTML here; Keep and settlement keep their existing behavior and results.
     #[expect(clippy::too_many_arguments)]
     fn append_blob_artifact_version_body_in_txn(
         &self,
@@ -649,6 +658,8 @@ impl Vault {
         fork_parent: Option<u64>,
         calc_engine: Option<&CalcEngineStamp>,
         made_by: Option<&MadeBy>,
+        preserve_made_by: bool,
+        reanchor_html: bool,
     ) -> Result<BlobArtifactVersion> {
         validate_provenance(provenance)?;
         if let Some(stamp) = calc_engine {
@@ -719,9 +730,11 @@ impl Vault {
         let made_by = match made_by {
             Some(named) => {
                 validate_version_made_by_in_txn(self, wtxn, named)?;
-                let mut named = named.clone();
-                named.at = learned_at;
-                named
+                if preserve_made_by {
+                    named.clone()
+                } else {
+                    bind_version_made_by(&actor, provenance, named, learned_at)
+                }
             }
             None => default_version_made_by(&actor, provenance, parent_claim, learned_at),
         };
@@ -820,7 +833,7 @@ impl Vault {
         // The first version is the artifact's birth: its envelope is the
         // artifact row's Rule A birth, read backwards by `rows_born_from`.
         if previous_version == 0 && births_row(&record.made_by) {
-            crate::provenance::birth::stamp_row_birth_in_txn(
+            crate::store::birth_record::stamp_row_birth_in_txn(
                 &self.store,
                 wtxn,
                 artifact_id,
@@ -836,6 +849,18 @@ impl Vault {
         }
 
         fingerprint.persist(&self.store, wtxn, artifact_id)?;
+        if reanchor_html && let Some(head) = head {
+            self.reanchor_html_append_in_txn(
+                wtxn,
+                artifact_id,
+                &record.export_media_type,
+                head.version,
+                record.version,
+                actor,
+                occurred,
+                learned_at,
+            )?;
+        }
         Ok(record)
     }
 }

@@ -1,5 +1,5 @@
 //! The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`,
-//! one entry each. The entries sit in seven included files (by database, then leading byte) so
+//! one entry each. The entries sit in eight included files (by database, then leading byte) so
 //! no file outgrows the size bar; they are one list in one module.
 //! `no_declared_prefix_is_a_byte_prefix_of_another` pins that no entry is a byte prefix of another
 //! in the same database, so two tables never read each other's rows.
@@ -93,7 +93,8 @@ include!("vault_meta_a_b.rs");
 include!("vault_meta_c.rs");
 include!("vault_meta_d_e.rs");
 include!("vault_meta_f_l.rs");
-include!("vault_meta_m_r.rs");
+include!("vault_meta_m.rs");
+include!("vault_meta_n_r.rs");
 include!("vault_meta_s.rs");
 include!("vault_meta_t_z.rs");
 
@@ -254,19 +255,45 @@ pub(crate) fn declared_overlaps(db: SideDb, prefix: &[u8]) -> bool {
 }
 
 /// The files in byte order of their prefixes: `sync_state`, then `vault_meta` by leading byte.
-static PARTS: [&[&SideTableDecl]; 8] = [
+static PARTS: [&[&SideTableDecl]; 9] = [
     SYNC_STATE,
     VAULT_META_A_B,
     VAULT_META_C,
     VAULT_META_D_E,
     VAULT_META_F_L,
-    VAULT_META_M_R,
+    VAULT_META_M,
+    VAULT_META_N_R,
     VAULT_META_S,
     VAULT_META_T_Z,
 ];
 
 // A declaration list with an overlap does not compile.
 const _: () = assert_disjoint(&PARTS);
+
+// The session overlay keeps these tables' rows outside a room's byte budget by
+// the prefixes in `oneiron_store::overlay_bookkeeping`. A lower prefix that
+// differs from its declaration does not compile.
+const _: () = {
+    use oneiron_store::overlay_bookkeeping as bookkeeping;
+    assert!(
+        same_bytes(SCOPE_RECORD.prefix, bookkeeping::SCOPE_RECORD_PREFIX),
+        "overlay bookkeeping prefix differs from SCOPE_RECORD"
+    );
+    assert!(
+        same_bytes(
+            PROVENANCE_ROW_BIRTH.prefix,
+            bookkeeping::PROVENANCE_ROW_BIRTH_PREFIX
+        ),
+        "overlay bookkeeping prefix differs from PROVENANCE_ROW_BIRTH"
+    );
+    assert!(
+        same_bytes(
+            PROVENANCE_BIRTH_BY_TRIGGER.prefix,
+            bookkeeping::PROVENANCE_BIRTH_BY_TRIGGER_PREFIX
+        ),
+        "overlay bookkeeping prefix differs from PROVENANCE_BIRTH_BY_TRIGGER"
+    );
+};
 
 /// Within one database, the declared prefixes in list order must be strictly ascending and no
 /// prefix may be a byte prefix of its successor. In a sorted list a prefix of any later entry is
@@ -310,6 +337,10 @@ const fn starts_with(bytes: &[u8], prefix: &[u8]) -> bool {
         index += 1;
     }
     true
+}
+
+const fn same_bytes(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len() && starts_with(left, right)
 }
 
 const fn ascending(before: &[u8], after: &[u8]) -> bool {

@@ -76,17 +76,23 @@ mod compaction;
 mod delivery;
 mod hook_ask;
 mod hooks;
+mod model_call;
+mod next_turn;
 mod recall;
 mod segments;
+pub(crate) use segments::ActionSession;
 mod sitting;
 mod sources;
+pub(crate) use sources::TurnSources;
 
-pub(crate) use answer::{begin_answer, chat_request};
+pub(crate) use answer::{begin_answer, begin_sourced_answer_with_fallback, chat_request};
 pub(crate) use assertions::ReplyAssertionCollector;
 pub(crate) use compaction::{
     AnswerBreakpoint, ChatReuse, live_fork_unavailable, reuse_chat_breakpoint,
 };
 pub(crate) use hooks::{after_turn, turn_generate_pre};
+pub(crate) use model_call::model_call_keeps_no_record;
+pub(crate) use recall::{turn_opener, turn_tail};
 
 use admission::start_turn;
 use answer::begin_sourced_answer;
@@ -506,17 +512,14 @@ pub(super) async fn chat_turn(
         }
         _ => None,
     };
-    // FIX 6794: the turn reads the vault's memory through the context board,
-    // before anything is written. FIX 8133: the reply's newcomer barrier is
-    // marked before that read, so an attendee who entered once the board was
-    // read stops the reply as one who entered later does.
+    // FIX 8133: the reply's newcomer barrier is marked before the turn's
+    // reads, so an attendee who entered once the board below was read stops
+    // the reply as one who entered later does. FIX 6794: the turn reads the
+    // vault's memory through the context board inside `start_turn`, after
+    // its funding/hook/keepalive refusals (FIX 6924), so those refusals
+    // consume no board.
     let mark = server.vault().container_output_mark();
-    let board = match &payload {
-        Ok(Json(request)) => recall::turn_board(&server, &auth, request).await,
-        Err(_) => Ok(None),
-    };
-    let read = recall::TurnRead { mark, board };
-    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, read) {
+    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, mark).await {
         Ok(started) if started.stream => return streamed(started, claim),
         Ok(started) => return whole(started, claim).await,
         Err(refused) => *refused,
@@ -617,6 +620,11 @@ pub(crate) struct Answer {
     pub(crate) funding: Option<PayerPerson>,
     pub(crate) budget_units: u64,
     pub(crate) credential: TurnCredential,
+    /// The actual admitted requester, independent of the answer's author and payer.
+    pub(crate) model_call_caller: EntityId,
+    /// The native room the request or queued action resolved before generation.
+    pub(crate) model_call_room: Option<EntityId>,
+    pub(crate) model_call_no_record_at_arrival: bool,
     pub(crate) keepalive: Duration,
     /// The newcomer barrier (OF-365 P5, FIX 1389): the container output mark
     /// the caller took before the first read its request was assembled from,
@@ -810,4 +818,5 @@ struct Producer {
     wakes: EntryWakes,
     /// The reply's host-side records, stamped on its terminal.
     assertions: ReplyAssertionCollector,
+    model_call: model_call::Capture,
 }

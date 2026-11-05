@@ -106,6 +106,36 @@
       "openapi": true
     },
     {
+      "name": "vault.commitments.reminder_route.get",
+      "description": "Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing.",
+      "input": "EmptyRequest",
+      "output": "crate::memory::commitment_doors::CommitmentReminderRouteReply",
+      "call": "memory.commitments_reminder_route_get_as(&memory.embedded_owner(\"vault.commitments.reminder_route.get\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.commitments.reminder_route.set",
+      "description": "Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged.",
+      "input": "crate::memory::commitment_doors::CommitmentReminderRouteSetRequest",
+      "output": "crate::memory::commitment_doors::CommitmentReminderRouteReply",
+      "call": "memory.commitments_reminder_route_set_as(&memory.embedded_owner(\"vault.commitments.reminder_route.set\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "fetch",
       "description": "Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links.",
       "input": "crate::web_fetch::WebFetchRequest",
@@ -3984,6 +4014,38 @@
       "openapi": true
     },
     {
+      "name": "vault.skills.fit.set",
+      "description": "The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert.",
+      "input": "SkillFitSetRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::skill_fit_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.fit.set\")?, &input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.advisory_ask.set",
+      "description": "The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way.",
+      "input": "SkillAdvisoryAskRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::skill_advisory_ask_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.advisory_ask.set\")?, &input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.skills.permissions.approve",
       "description": "The owner answers one imported skill permission ask at its exact hub source.",
       "input": "HubSkillPermissionRequest",
@@ -5018,6 +5080,7 @@
       "call": "crate::task_verb::sdk::mesh_path_receipts_as_owner(memory, &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -5093,6 +5156,7 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.dial\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "openapi": true,
       "scope": "Write",
       "admission": {
@@ -5682,6 +5746,7 @@
       "call": "crate::task_verb::sdk::federation_burst_baseline_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.baseline\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -5697,6 +5762,7 @@
       "call": "crate::task_verb::sdk::federation_burst_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.policy\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -5712,6 +5778,41 @@
       "call": "crate::task_verb::sdk::set_federation_burst_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.policy.set\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sync.quarantine.held_edits",
+      "description": "The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "Vec<(u64, crate::task_verb::sdk::SyncHeldEditEvidence)>",
+      "call": "crate::task_verb::sdk::sync_quarantine_held_edits_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sync.quarantine.held_edits\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "rust_feature": "sync",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sync.retained_work.wait.set",
+      "description": "The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait.",
+      "input": "crate::task_verb::sdk::RetainedWorkWaitSetRequest",
+      "output": "u64",
+      "call": "crate::task_verb::sdk::set_retained_work_wait_secs_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sync.retained_work.wait.set\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -5727,6 +5828,7 @@
       "call": "crate::task_verb::sdk::federation_burst_host_only(memory, \"vault.federation.burst.ingress\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -5742,6 +5844,7 @@
       "call": "crate::task_verb::sdk::federation_burst_host_only(memory, \"vault.federation.burst.disposition\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -5757,6 +5860,7 @@
       "call": "crate::task_verb::sdk::federation_burst_reviews_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.review\")?)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -5773,6 +5877,7 @@
       "call": "crate::task_verb::sdk::release_federation_burst_review_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.review.release\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -5788,6 +5893,7 @@
       "call": "crate::task_verb::sdk::reject_federation_burst_review_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.review.reject\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -5803,6 +5909,7 @@
       "call": "crate::task_verb::sdk::federation_burst_host_only(memory, \"vault.federation.burst.replay\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -6400,6 +6507,7 @@
       "call": "crate::task_verb::sdk::residence_directives(memory, &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "rust_feature": "sync",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
@@ -6490,7 +6598,7 @@
     },
     {
       "name": "vault.off_record.notes.create",
-      "description": "The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
+      "description": "A solo session's creator or the vault's owner, or a room stretch's current member, writes one NOTE into the off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
       "input": "crate::task_verb::sdk::OffRecordNoteRequest",
       "output": "crate::memory::EntityRefReceipt",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.notes.create\", &input)?",
@@ -6505,8 +6613,24 @@
       "openapi": true
     },
     {
+      "name": "vault.off_record.artifacts.save",
+      "description": "A holder of this vault's write grant explicitly saves one selected scratch NOTE/CLAIM and its full document, keeping original authorship and supplied evidence; after commit the room sees a typed notice naming the saver.",
+      "input": "crate::task_verb::sdk::OffRecordArtifactSaveRequest",
+      "output": "crate::task_verb::sdk::OffRecordArtifactSaved",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.artifacts.save\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.off_record.claims.upsert",
-      "description": "The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.",
+      "description": "A solo session's creator or the vault's owner, or a room stretch's current member, admits one claim into the off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.",
       "input": "crate::task_verb::sdk::OffRecordClaimRequest",
       "output": "crate::memory::CommitReceipt",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.claims.upsert\", &input)?",
@@ -6617,7 +6741,7 @@
     },
     {
       "name": "vault.off_record.rooms.start",
-      "description": "A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential.",
+      "description": "A person, or an agent holding this vault's write grant, starts an off-record stretch in a room they belong to, on their own credential.",
       "input": "crate::task_verb::sdk::OffRecordRoomStartRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomView",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.start\", &input)?",
@@ -6677,7 +6801,7 @@
     },
     {
       "name": "vault.off_record.rooms.export",
-      "description": "A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in.",
+      "description": "A person exports their visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in.",
       "input": "crate::task_verb::sdk::OffRecordRoomExportRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomExport",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.export\", &input)?",
@@ -6775,6 +6899,22 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.outbound_calls.request.erase",
+      "description": "The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting.",
+      "input": "OutboundCallRequestEraseRequest",
+      "output": "crate::task_verb::sdk::OutboundCallRequestErased",
+      "call": "crate::task_verb::sdk::erase_outbound_call_request_as_owner(memory.vault(), &memory.embedded_owner(\"vault.outbound_calls.request.erase\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -7161,7 +7301,7 @@
       "name": "vault.coach.training_offers.answer",
       "description": "Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice.",
       "input": "crate::skill_optimize::offer_doors::OfferAnswerRequest",
-      "output": "crate::skill_optimize::OfferAnswerRecord",
+      "output": "crate::skill_optimize::offer_doors::OfferAnswerReply",
       "call": "crate::skill_optimize::offer_doors::answer(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.answer\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
       "host_door_lists": true,
@@ -8726,6 +8866,21 @@
       "output": "crate::learning_setting_doors::LearningSettingsView",
       "call": "crate::learning_setting_doors::clear_learning_setting_as_owner(memory.vault(), &memory.embedded_owner(\"vault.settings.learning.clear\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.secrets.code_run_lifts",
+      "description": "The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged.",
+      "input": "crate::code_run::CodeRunSecretLiftRequest",
+      "output": "crate::code_run::CodeRunSecretLiftStatus",
+      "call": "memory.vault().code_run_secret_lifts_as_owner(&memory.embedded_owner(\"vault.secrets.code_run_lifts\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_precheck": true,
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
@@ -11498,10 +11653,11 @@
       "description": "The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing.",
       "input": "crate::task_verb::sdk::ConnectorWitnessReadGrantRequest",
       "output": "crate::task_verb::sdk::ConnectorWitnessReadGranted",
-      "call": "crate::task_verb::sdk::grant_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.grant\")?, input)?",
+      "call": "crate::task_verb::sdk::grant_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.grant\")?, crate::authority::ActSurface::ThisInstall, input)?",
       "host_door": true,
       "host_door_precheck": false,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -11514,10 +11670,11 @@
       "description": "The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing.",
       "input": "crate::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest",
       "output": "crate::task_verb::sdk::ConnectorWitnessReadGrantRevoked",
-      "call": "crate::task_verb::sdk::revoke_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.revoke\")?, input)?",
+      "call": "crate::task_verb::sdk::revoke_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.revoke\")?, crate::authority::ActSurface::ThisInstall, input)?",
       "host_door": true,
       "host_door_precheck": false,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -12252,7 +12409,7 @@
       "call": "memory.artifacts_proposals(&input)?",
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "section": false,
       "binding": {
@@ -12533,6 +12690,7 @@
       "name": "vault.artifacts.propose_output",
       "description": "Offers one native organ result to an artifact as its next version, held for Keep.",
       "refs": [
+        "/read_rows/*",
         "/made_by/inputs/*/row",
         "/made_by/trigger/task",
         "/made_by/trigger/ask",
@@ -17946,7 +18104,7 @@
     },
     {
       "name": "vault.artifacts.append",
-      "description": "Appends one version of bytes to a blob artifact's append-only chain.",
+      "description": "Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep.",
       "uniffi": {
         "args": {
           "artifact_ref": "String",
@@ -17955,10 +18113,10 @@
           "occurred_at": "Option<i64>",
           "learned_at": "Option<i64>"
         },
-        "output": "BlobVersionView"
+        "output": "BlobVersionAppendOutcome"
       },
       "input": "AppendBlobVersionRequest",
-      "output": "crate::memory::BlobVersionView",
+      "output": "crate::memory::BlobVersionAppendOutcome",
       "call": "memory_requests::append_blob(memory, input)?",
       "scope": "Write",
       "admission": {
@@ -19885,7 +20043,7 @@
       "host": {
         "host_door_precheck": false,
         "input": "crate::code_run::fold_api::FoldMarkRequest",
-        "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands.",
+        "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles.",
         "host_door_caller": true,
         "host_door_session": false,
         "host_door_lists": true
@@ -20537,6 +20695,197 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "section": false
+    },
+    {
+      "name": "vault.mail.pack.install",
+      "description": "The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing.",
+      "input": "EmptyRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "crate::mail_pack::install_mail_calendar_pack_embedded(memory)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.connect",
+      "description": "Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names.",
+      "input": "crate::mail_pack::MailSourceConnectRequest",
+      "output": "crate::mail_pack::MailSourceConnectReceipt",
+      "call": "memory.mail_sources_connect(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.list",
+      "description": "The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::mail_pack::MailSourceView>",
+      "call": "memory.mail_sources_list()?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.settings.set",
+      "description": "Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address.",
+      "input": "crate::mail_pack::MailSourceSettingsRequest",
+      "output": "crate::mail_pack::MailSourceView",
+      "call": "memory.mail_sources_settings_set(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.members.set",
+      "description": "Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on.",
+      "input": "crate::mail_pack::MailSourceMembersRequest",
+      "output": "crate::mail_pack::MailSourceView",
+      "call": "memory.mail_sources_members_set(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.audience_events",
+      "description": "Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins.",
+      "input": "crate::mail_pack::MailSourceRef",
+      "output": "Vec<crate::mail_pack::SourceAudienceEventView>",
+      "call": "memory.mail_sources_audience_events(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.threads.share",
+      "description": "Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox.",
+      "input": "crate::mail_pack::MailThreadShareRequest",
+      "output": "crate::mail_pack::MailThreadShareReceipt",
+      "call": "memory.mail_threads_share(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.threads.unshare",
+      "description": "Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving.",
+      "input": "crate::mail_pack::MailThreadShareRequest",
+      "output": "crate::mail_pack::MailThreadShareReceipt",
+      "call": "memory.mail_threads_unshare(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.setting",
+      "description": "Whether org compliance search across mailboxes is on; off by default.",
+      "input": "EmptyRequest",
+      "output": "crate::mail_pack::MailComplianceSettingView",
+      "call": "memory.mail_compliance_setting()?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.set",
+      "description": "Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log.",
+      "input": "crate::mail_pack::MailComplianceSetRequest",
+      "output": "crate::mail_pack::MailComplianceSettingView",
+      "call": "memory.mail_compliance_set(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.log",
+      "description": "The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::mail_pack::MailComplianceEventView>",
+      "call": "memory.mail_compliance_log()?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.sync_status",
+      "description": "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers.",
+      "input": "crate::mail_pack::MailSourceRef",
+      "output": "crate::mail_pack::MailSyncStatusView",
+      "call": "memory.mail_sources_sync_status(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.inbox",
+      "description": "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence.",
+      "input": "crate::mail_pack::MailInboxRequest",
+      "output": "crate::mail_pack::MailInboxPage",
+      "call": "memory.mail_inbox(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.threads.read",
+      "description": "One mail thread's messages, oldest first, to a reader of its source or someone it was shared with.",
+      "input": "crate::mail_pack::MailThreadRequest",
+      "output": "crate::mail_pack::MailThreadView",
+      "call": "memory.mail_thread(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.search",
+      "description": "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers.",
+      "input": "crate::mail_pack::MailComplianceSearchRequest",
+      "output": "crate::mail_pack::MailComplianceSearchReply",
+      "call": "memory.mail_compliance_search(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
       "section": false
     }
   ]

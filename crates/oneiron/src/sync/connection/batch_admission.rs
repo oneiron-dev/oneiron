@@ -233,10 +233,24 @@ impl SyncConnection {
         );
     }
 
-    /// Queues what the loop buffered as it exits, under the host's admission.
-    /// A paused host's exit waits for the thaw, then queues under its
-    /// admission: no buffered update is dropped, and none lands without one.
+    /// Queues a reconnecting loop's buffered updates under one admission.
+    /// A pause leaves them in the run's buffer for its next connection;
+    /// reconnecting never waits for a thaw or writes while frozen.
     pub(super) async fn queue_on_exit(
+        &self,
+        gate: &mut BatchGate<'_>,
+        buffer: &mut Vec<LocalUpdate>,
+    ) {
+        if !buffer.is_empty()
+            && let Some(_queued) = gate.admit().await
+        {
+            flush_to_queue(&self.queue, buffer);
+        }
+    }
+
+    /// Queues every buffered update before final shutdown or confirmed leave.
+    /// A paused host is waited out; the flush stays inside its admission.
+    pub(super) async fn queue_on_shutdown(
         &self,
         gate: &mut BatchGate<'_>,
         buffer: &mut Vec<LocalUpdate>,
@@ -310,13 +324,20 @@ impl SyncConnection {
                 if crate::sync::machine_history::take_landed(&client.vault) {
                     machine_history_due.store(true, Ordering::Relaxed);
                 }
+                let mut left_rx = self.left.subscribe();
                 // Judged per frame: a device-only flag may turn while an
                 // earlier frame waits on the socket.
                 for resp in responses
                     .into_iter()
                     .filter(|frame| !client.frame_withheld(frame))
                 {
-                    let send_result = write.send(Message::Binary(resp.into())).await;
+                    let send_result = tokio::select! {
+                        biased;
+                        () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
+                            return Err(LoopExit::Shutdown);
+                        }
+                        result = write.send(Message::Binary(resp.into())) => result,
+                    };
                     if let Err(e) = send_result {
                         return Err(LoopExit::Disconnected(format!("Send failed: {e}")));
                     }
@@ -383,8 +404,16 @@ impl SyncConnection {
         )
         .into_result()
         .map_err(|e| LoopExit::Disconnected(e.to_string()))?;
+        let mut left_rx = self.left.subscribe();
         for frame in [proof, vv] {
-            if let Err(e) = write.send(Message::Binary(frame.into())).await {
+            let send_result = tokio::select! {
+                biased;
+                () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
+                    return Err(LoopExit::Shutdown);
+                }
+                result = write.send(Message::Binary(frame.into())) => result,
+            };
+            if let Err(e) = send_result {
                 return Err(LoopExit::Disconnected(e.to_string()));
             }
         }

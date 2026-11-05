@@ -273,7 +273,9 @@ impl Vault {
         let posture = candidate.aggregate.posture;
         let view = self.authority_view_readonly_in_txn(txn)?;
         // A policy the roster cannot fix under that posture counts nothing.
-        let Ok(counted) = checkpoint_root_policy_of(&view, posture) else {
+        let Ok(counted) =
+            checkpoint_root_policy_of(&view, posture, self.checkpoint_policy_selection_available())
+        else {
             return Ok(Some(WAIT_NOT_COUNTED));
         };
         if !ROOT_CHECKPOINT_AUTHORITY.signs_under(&counted, &candidate.root_policy) {
@@ -313,13 +315,17 @@ impl Vault {
         let own = self.checkpoint_signer()?;
         let kept = {
             let txn = self.store.env.read_txn()?;
-            KEY_BINDINGS.get(&self.store, &txn, &root_row_key(root))?
+            decodable_or_absent(KEY_BINDINGS.get(&self.store, &txn, &root_row_key(root)))?
         };
+        let assurance = self
+            .device_keystore_assurance()
+            .map(|assurance| assurance.label().to_owned());
         if let Some(binding) = kept.filter(|binding| {
             binding.install == own.install
                 && binding.slhdsa == own.slhdsa
                 && binding.vault_id == vault_id
                 && binding.genesis == genesis
+                && Some(binding.assurance.as_str()) == assurance.as_deref()
         }) {
             binding.verify(root)?;
             return Ok(binding);

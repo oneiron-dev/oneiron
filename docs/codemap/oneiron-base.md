@@ -12,6 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/analyzer.rs` | src | s | 1 re-export | — | Multilingual analyzer subsystem |
+| `src/calendar_body_screen.rs` | src | s | 3 struct · 1 enum · 1 trait · 2 fn · 2 const | CalendarAdmissionRequest, CalendarBodyScreener, CalendarInboundBody, CalendarScreenVerdict, Screened | Optional inbound-body screen for imported calendar content (CAL-09) |
 | `src/config.rs` | src | m | 4 struct · 2 enum · 7 fn · 5 const · 2 mod · 1 re-export | HostingPrivacyPosture, TextAnalyzerConfig, TextIndexOptions, VaultDataKeyCustody, VaultPrivacyConfig, VectorEvidenceFloors | Portable runtime configuration moved down from the engine crate |
 | `src/config/failure_signals.rs` | src | s | 1 struct · 1 enum · 3 fn | DeploymentTier, FailureSignalConfig | The owner's "Help improve Oneiron" switch (`export_opt_in`, with [`default_exports`] when he has not chosen)… |
 | `src/config/ppr_community.rs` | src | s | 1 struct · 1 enum · 1 fn · 5 const | CommunityError, PprCommunityConfig | Portable PPR community prior: the config closure moved down from the engine crate |
@@ -24,16 +25,24 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error.rs` | src | s | 2 re-export | — | The engine error type: `Error` with its flat bag variants and per-domain enums, and the stable `ErrorKind` |
 | `src/extraction_eval.rs` | src | s | 1 re-export | — | OF-360 extraction-quality evaluation |
 | `src/fusion.rs` | src | s | 1 re-export | — | Score fusion kernels, defined in `oneiron-retrieval` |
-| `src/lib.rs` | src | s | 2 fn · 18 mod | — | The base layer of the oneiron engine: modules that name nothing above them |
+| `src/human_task_followup.rs` | src | s | 5 struct · 2 enum · 3 fn · 1 type · 10 const | HumanFollowupDispatch, HumanFollowupStage, HumanResponseSignal, HumanTaskError, HumanTaskFollowupRecord, HumanTaskWaitBinding, NativeHumanRoute | Human TASK follow-up shared types, stage machine and timing bounds |
+| `src/learning_estimate.rs` | src | m | 5 struct · 4 enum · 20 fn · 1 const | BetaView, Estimate, EstimateForm, EstimateLabels, EstimateValue, OwnTally, Prior, PriorOrigin +1 | The `estimate` value (ARCH-0003 #estimate): one measured answer, its own runs, the prior it started from and… |
+| `src/learning_ranking.rs` | src | s | 1 fn | — | The shared selector ranking (OF-184, OF-540; FIX 602): every arm's estimate mean plus its exploration bonus… |
+| `src/lib.rs` | src | s | 2 fn · 27 mod | — | The base layer of the oneiron engine: modules that name nothing above them |
 | `src/limits.rs` | src | s | 1 re-export | — | Traversal safety caps, defined in `oneiron-contracts` |
 | `src/live_rows.rs` | src | m | 5 struct · 1 enum · 1 trait · 7 fn · 1 type · 4 const | LiveLine, LivePermit, LiveRow, LiveRows, LiveRowsCell, LiveRowsHolder, LiveWaitedOut | Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044… |
 | `src/live_rows/tests.rs` | test | s | — | — | Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its… |
+| `src/machine_destination.rs` | src | s | 3 enum | Destination, EffectiveRead, PeerMachine | Machine destinations and folded read-location values |
+| `src/message_body_fields.rs` | src | s | 1 struct · 2 fn | MessageFields | An earlier MESSAGE's text, read from its stored MessagePack row as far as the live window keeps it and no… |
 | `src/msgpack_shape.rs` | src | s | 1 struct · 1 enum · 1 fn | OverBudget, ShapeBudget | A budget check of untrusted MessagePack before it is decoded |
 | `src/panic_report.rs` | src | s | 1 fn · 1 const | — | The content-free panic report a host installs before it opens a vault |
 | `src/posterior.rs` | src | s | 2 re-export | — | Shared Beta posterior bandit seam |
 | `src/registry.rs` | src | s | 1 mod · 10 re-export | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `src/registry/pack_namespaces.rs` | src | s | 3 const | — | Stable pack provenance and structural-kind short-id namespaces |
-| `src/request_limits.rs` | src | s | 14 fn · 14 const | — | Request boundary limits and pure validators |
+| `src/request_limits.rs` | src | s | 12 fn · 13 const | — | Request boundary limits and pure validators |
 | `src/retrieval_quality.rs` | src | s | 1 re-export | — | Retrieval quality report vocabulary |
-| `src/tokenizer.rs` | src | s | 1 enum · 1 trait · 3 fn · 2 const | ContextPackTokenizer, PackTokenizer | — |
+| `src/skill_invocations.rs` | src | s | 2 struct · 4 fn | InvocationGuard, SkillInvocations | The callable skill invocations running in this vault (FIX 600), each with the token that stops it, so an… |
+| `src/step_cancellation.rs` | src | s | 1 struct · 6 fn · 1 const | StepCancellation | The cancellation of one code step (FIX 600): a flag its owner sets and its runtime reads, linked one way to… |
+| `src/tokenizer.rs` | src | s | 1 enum · 1 trait · 4 fn · 2 const | ContextPackTokenizer, PackTokenizer | — |
+| `src/unsubscribe_headers.rs` | src | s | 1 struct · 4 fn · 5 const | ListUnsubscribeTarget | Deterministic unsubscribe headers and their frozen outbound payload representation |
 | `src/work_line.rs` | src | m | 4 struct · 2 trait · 19 fn · 2 const | LineCrossing, LineObserver, LinePermit, TaskWorkTurn, WaitTimedOut, WorkLine | A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work… |

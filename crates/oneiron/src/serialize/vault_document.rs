@@ -21,9 +21,10 @@ use super::export_value::{ExportBody, ExportBodyFile, ExportValue, attaches_as_f
 use crate::Vault;
 use crate::batch::export::{
     ArchiveRecordKind, ArchiveSecretCustody, ArchiveSideWithheld, ArchiveSideWithheldReason,
-    ExportAdapterDescriptor, ExportCut, ExportDerivationEnvelope, ExportDiaryHold, ExportDiaryRead,
-    ExportEdge, ExportEmbeddingSetup, ExportEntity, ExportEpochFloor, ExportManifest, ExportPack,
-    ExportPackSource, ExportReaderFold, ExportResultBody, ExportRun, ExportRunOutput,
+    ExportAdapterDescriptor, ExportCut, ExportDerivationEnvelope, ExportDeterminism,
+    ExportDiaryHold, ExportDiaryRead, ExportEdge, ExportEmbeddingSetup, ExportEntity,
+    ExportEpochFloor, ExportManifest, ExportPack, ExportPackSource, ExportReaderFold,
+    ExportResultBody, ExportRowBirth, ExportRun, ExportRunBinding, ExportRunOutput,
     ExportSkillBundle, ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotEntityBody,
     ExportSnapshotRun, ExportSourceVault, FileSpool, OmissionLedger, RecordSpool, SideRowBytes,
     VAULT_ARCHIVE_FORMAT, VAULT_OKF_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION,
@@ -31,6 +32,7 @@ use crate::batch::export::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::provenance::birth::{RowBirth, WithheldKey};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL,
 };
@@ -80,6 +82,11 @@ pub(crate) struct DocumentWriter<'v> {
     /// Each result body's row by digest, nulled and with its file detached.
     bodies: BTreeMap<String, Value>,
     side_withheld: Vec<ArchiveSideWithheld>,
+    /// Every entity id this writer carried, and each carried row's birth
+    /// (FIX 1178): a birth is masked against the carried set only at
+    /// `finish`, when that set and the unlogged diaries are final.
+    carried_ids: BTreeSet<EntityId>,
+    row_births: BTreeMap<EntityId, RowBirth>,
 }
 
 impl<'v> DocumentWriter<'v> {
@@ -94,7 +101,7 @@ impl<'v> DocumentWriter<'v> {
     ) -> Result<Self> {
         let birth_sources = agent_ids
             .iter()
-            .filter_map(|id| crate::agent_def::birth_source_id(id).ok())
+            .filter_map(|id| crate::store::agent_birth_identity::birth_source_id(id).ok())
             .collect();
         let mut writer = Self {
             vault,
@@ -111,6 +118,8 @@ impl<'v> DocumentWriter<'v> {
             birth_bodies: BTreeMap::new(),
             bodies: BTreeMap::new(),
             side_withheld: Vec::new(),
+            carried_ids: BTreeSet::new(),
+            row_births: BTreeMap::new(),
         };
         for adapter in adapters {
             writer.push_nulled(
@@ -125,6 +134,10 @@ impl<'v> DocumentWriter<'v> {
     /// One live entity: its row, and the derivation index, source package
     /// or pack source it carries.
     pub(crate) fn entity(&mut self, raw: ExportSnapshotEntity<'_>) -> Result<()> {
+        self.carried_ids.insert(raw.id);
+        if let Some(birth) = raw.birth {
+            self.row_births.insert(raw.id, birth);
+        }
         let entity_type = raw.header.entity_type;
         // OF-222: a stored file an ASSET body is goes beside the document
         // once, by digest, as it is stored; its row carries the descriptor
@@ -245,6 +258,20 @@ impl<'v> DocumentWriter<'v> {
     pub(crate) fn run(&mut self, run: ExportSnapshotRun) -> Result<()> {
         let hex = crate::entity_id::bytes_to_hex_lower;
         let row = ExportRun {
+            bindings: run
+                .bindings
+                .into_iter()
+                .map(|(binding, withheld)| ExportRunBinding {
+                    name: binding.name,
+                    path: binding.path,
+                    handle: withheld.is_none().then_some(binding.handle),
+                    withheld: withheld.map(str::to_owned),
+                })
+                .collect(),
+            determinism: run.determinism.map(|determinism| ExportDeterminism {
+                frozen_unix_ms: determinism.frozen_unix_ms,
+                rng_seed: hex(&determinism.rng_seed),
+            }),
             receipts: run
                 .receipts
                 .iter()
@@ -412,7 +439,7 @@ impl<'v> DocumentWriter<'v> {
             &self.skills,
             &self.knowledge,
             &tail.agent_fork_hashes,
-            crate::agent_def::KnowledgeFormat::CURRENT,
+            crate::batch::export::agent_knowledge_format::KnowledgeFormat::CURRENT,
         )?;
         for bundle in &bundles {
             self.ledger
@@ -466,6 +493,32 @@ impl<'v> DocumentWriter<'v> {
                     named(row, "source") || named(row, "target")
                 })?;
                 self.groups.insert(path.to_owned(), kept);
+            }
+        }
+        // FIX 1178: each carried row's birth leaves with the archive, naming
+        // only the rows this archive carries (an unlogged diary's birth
+        // leaves with its row above). One key per export, as the scoped
+        // export masks. A birth the credential pass would change stays
+        // home: its row ships birthless, as it did before, rather than
+        // under a nulled envelope no import could read back.
+        if self.cut == ExportCut::Archive {
+            let key = WithheldKey::for_export();
+            for (id, birth) in std::mem::take(&mut self.row_births) {
+                if tail.unlogged.contains(&id) {
+                    continue;
+                }
+                let birth = birth.masked(
+                    |row| self.carried_ids.contains(row) && !tail.unlogged.contains(row),
+                    &key,
+                );
+                let value = serde_json::to_value(ExportRowBirth {
+                    id: id.to_hex(),
+                    birth,
+                })
+                .map_err(|_| encode_failed())?;
+                if null_document_member("", &value, 2) == value {
+                    self.push(ArchiveRecordKind::RowBirth, &value)?;
+                }
             }
         }
         let (import_refusals, import_omissions, bundle_omissions) = self.ledger.finish();

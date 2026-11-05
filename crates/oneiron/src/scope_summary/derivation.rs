@@ -283,7 +283,7 @@ pub(super) fn register_in_txn(
             // own hash, as an unreadable scope does at the commit boundary,
             // so the first commit after the promotion that reads it
             // re-derives.
-            Err(error) if crate::dreamer_consolidation::waits_on_residency(&error) => {
+            Err(error) if crate::store::conversation_residency::waits_on_residency(&error) => {
                 *blake3::hash(&encode(&current_input)?).as_bytes()
             }
             Err(error) => return Err(error),
@@ -321,7 +321,7 @@ pub(crate) fn roll_back_summary_in_txn(
     summary: EntityId,
 ) -> Result<(Option<EntityId>, Option<EntityId>)> {
     let meta = crate::entity_doc::summary_meta_in_txn(vault, txn, &summary)?;
-    let attempt = crate::attempt_queue::AttemptId::from_bytes(&meta.derivation.trigger)?;
+    let attempt = crate::store::attempt_id::AttemptId::from_bytes(&meta.derivation.trigger)?;
     let header = super::status::result_in_txn(vault, txn, attempt)?
         .and_then(|result| result.claim)
         .map(|claim| EntityId::from_hex(&claim))
@@ -408,7 +408,7 @@ pub(crate) fn rederive_changed_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) 
     let rows = PROJECTION
         .iter_from(&vault.store, txn, b"")?
         .collect::<Result<Vec<_>>>()?;
-    for (key, mut projection) in rows {
+    for (key, projection) in rows {
         // An Arc is marked here, never queued or read (FIX 7509 P8): its
         // gate and backstop decide when it is written, and its row stays
         // owed when its summary goes.
@@ -428,39 +428,82 @@ pub(crate) fn rederive_changed_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) 
             continue;
         }
         let normalized = decode(&projection.request)?;
-        // A sitting's summary is not re-derived at the commit boundary (FIX
-        // 7509): no later write can fail on it. Its drift waits for the
-        // stale and nightly backstop.
         if super::session::is_session_declaration(&normalized) {
+            // Re-derivation must not fail a write that used to skip this
+            // sitting. A failed savepoint leaves its drift for the backstop.
+            let queued = vault
+                .store
+                .env
+                .nested_write_txn(txn)
+                .map_err(Error::from)
+                .and_then(|mut savepoint| {
+                    let queued = rederive_projection_in_txn(
+                        vault,
+                        &mut savepoint,
+                        &key,
+                        projection,
+                        current,
+                        &normalized,
+                    )?;
+                    savepoint.commit().map_err(Error::from)?;
+                    Ok(queued)
+                });
+            match queued {
+                // The savepoint's queue marks belong to it; wake the runner
+                // from the parent transaction only when a job was queued.
+                Ok(true) => crate::batch::queue_proactivity_change(vault, txn),
+                Ok(false) => {}
+                Err(error) => tracing::warn!(
+                    summary = %current.to_hex(),
+                    kind = ?error.kind(),
+                    "session summary re-derivation not queued"
+                ),
+            }
             continue;
         }
-        let request = decode_request(vault, txn, &normalized)?;
-        let purpose = normalized
-            .as_map()
-            .and_then(|fields| {
-                fields
-                    .iter()
-                    .find(|(key, _)| key.as_str() == Some("purpose"))
-            })
-            .and_then(|(_, value)| value.as_str())
-            .ok_or_else(|| invalid("projection has no purpose"))?;
-        let input = declaration(&request, purpose, Some(current));
-        let observed = match observation(vault, txn, &input) {
-            Ok(observed) => observed,
-            // Source erasure, a lost grant or a deleted scope never blocks
-            // the write that caused it. The queued attempt reports the refusal.
-            Err(Error::EntityNotFound | Error::InvalidClaimBody(_) | Error::Record(_)) => {
-                *blake3::hash(&encode(&input)?).as_bytes()
-            }
-            Err(error) => return Err(error),
-        };
-        if observed != projection.observed {
-            enqueue_in_txn(vault, txn, input)?;
-            projection.observed = observed;
-            PROJECTION.put(&vault.store, txn, &key, &projection)?;
-        }
+        rederive_projection_in_txn(vault, txn, &key, projection, current, &normalized)?;
     }
     Ok(())
+}
+
+/// Queue one changed projection and advance its observation together. A
+/// session calls this in its best-effort savepoint; other scopes retain
+/// their existing commit-boundary error behavior.
+fn rederive_projection_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &[u8; 32],
+    mut projection: Projection,
+    current: EntityId,
+    normalized: &Value,
+) -> Result<bool> {
+    let request = decode_request(vault, txn, normalized)?;
+    let purpose = normalized
+        .as_map()
+        .and_then(|fields| {
+            fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("purpose"))
+        })
+        .and_then(|(_, value)| value.as_str())
+        .ok_or_else(|| invalid("projection has no purpose"))?;
+    let input = declaration(&request, purpose, Some(current));
+    let observed = match observation(vault, txn, &input) {
+        Ok(observed) => observed,
+        // Source erasure, a lost grant or a deleted scope never blocks
+        // the write that caused it. The queued attempt reports the refusal.
+        Err(Error::EntityNotFound | Error::InvalidClaimBody(_) | Error::Record(_)) => {
+            *blake3::hash(&encode(&input)?).as_bytes()
+        }
+        Err(error) => return Err(error),
+    };
+    if observed == projection.observed {
+        return Ok(false);
+    }
+    enqueue_in_txn(vault, txn, input)?;
+    projection.observed = observed;
+    PROJECTION.put(&vault.store, txn, key, &projection)?;
+    Ok(true)
 }
 
 impl Vault {

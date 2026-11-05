@@ -8,6 +8,10 @@
 //! [`crate::Error::DecodeAdmission`]; it never turns into a codec fallback, a
 //! skipped object or a parse error. Without an admission every decode runs
 //! exactly as upstream's.
+//!
+//! An admitted load also charges the objects it parses (FIX 8446): every
+//! name, string, array and dictionary the parser builds is charged its own
+//! allocation as it is built, and a refusal fails the parse for good.
 
 use std::mem::size_of;
 
@@ -16,14 +20,30 @@ use thiserror::Error;
 /// Asked before a decode allocates.
 pub trait DecodeAdmission: Send + Sync {
     /// Admit one allocation of `bytes` bytes, made right after this returns
-    /// `Ok`. Admissions are never released: an allocation that replaces a
-    /// smaller one is admitted at its full size while the old one is still
-    /// alive, and a codec's own working state is admitted before the codec is
-    /// built.
+    /// `Ok`. An allocation that replaces a smaller one is admitted at its full
+    /// size while the old one is still alive, and the old one's bytes come
+    /// back through [`DecodeAdmission::release`] once it is gone. A codec's
+    /// own working state is admitted before the codec is built.
     fn admit(&self, bytes: usize) -> Result<(), DecodeAdmissionError>;
+
+    /// Move `bytes` admitted here to `to`: admit them there first, so the
+    /// moment both owners hold them is admitted, then give them back here.
+    /// When the destination refuses, nothing is given back.
+    fn transfer(
+        &self, bytes: usize, to: &dyn DecodeAdmission,
+    ) -> Result<(), DecodeAdmissionError> {
+        to.admit(bytes)?;
+        self.release(bytes);
+        Ok(())
+    }
 
     /// Observe the length of a finished decode's output. Never refuses.
     fn decoded(&self, _bytes: usize) {}
+
+    /// Give back `bytes` an earlier admission covered and that are no longer
+    /// allocated: a buffer's old allocation once it has grown, or a decode's
+    /// buffer once it is dropped (FIX 8448). Never refuses.
+    fn release(&self, _bytes: usize) {}
 }
 
 /// Why a decode could not have the memory it asked for.
@@ -53,7 +73,8 @@ pub(crate) const CODEC_STATE_BYTES: usize = 64 * 1024;
 /// Make room in `buf` for `additional` more elements. When the capacity has
 /// to grow it doubles (or takes exactly what is needed, if that is more), the
 /// whole new allocation is admitted in bytes while the old one is still alive,
-/// and only then is it allocated, fallibly.
+/// and only then is it allocated, fallibly. Once it is, the old allocation's
+/// bytes go back (FIX 8448): `buf` must have grown only through this.
 pub(crate) fn reserve<T>(
     admission: &dyn DecodeAdmission, buf: &mut Vec<T>, additional: usize,
 ) -> Result<(), DecodeAdmissionError> {
@@ -65,9 +86,19 @@ pub(crate) fn reserve<T>(
     let doubled = buf.capacity().saturating_mul(2).max(needed);
     let target = if layout_bytes::<T>(doubled).is_some() { doubled } else { needed };
     let bytes = layout_bytes::<T>(target).ok_or_else(unaddressable)?;
+    let old = buf.capacity().saturating_mul(size_of::<T>());
     admission.admit(bytes)?;
     buf.try_reserve_exact(target - buf.len())
-        .map_err(|_| allocator_refused(bytes))
+        .map_err(|_| allocator_refused(bytes))?;
+    release(admission, old);
+    Ok(())
+}
+
+/// Give back `bytes` no longer allocated, if there are any.
+pub(crate) fn release(admission: &dyn DecodeAdmission, bytes: usize) {
+    if bytes > 0 {
+        admission.release(bytes);
+    }
 }
 
 /// Append `bytes` to `buf`, admitting any growth first.

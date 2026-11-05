@@ -32,6 +32,7 @@ mod resolution;
 mod scope_erase;
 mod sourced;
 mod subject;
+mod witness;
 pub(crate) use actor_erase::{erase_setting_actor_in_txn, names_no_actor};
 pub use fit::{SettingCheck, global_setting_subject, record_setting_check};
 pub(crate) use fit::{owner_seed_in_txn, record_setting_check_in_txn, setting_fit_key};
@@ -45,6 +46,24 @@ pub use crate::store::setting_seed::{
     GROUP_COMMIT_WINDOW_MS, LEARNING_BORROWED_PRIOR_RUNS, LEARNING_SHIPPED_PRIOR_RUNS,
     LEARNING_WINDOW_HALF_LIFE_DAYS, PLANNER_BIG_PLAN_WIDTH, PLANNER_SOLO_MARGIN,
     PLANNER_SOLO_SUCCESS_FLOOR, SettingSpec,
+};
+
+/// The fewest families an offer eval set needs (FIX 10446): the owner's
+/// floor for a measured card. Zero asks for none.
+pub const EVAL_FLOOR_MIN_FAMILIES: SettingSpec = SettingSpec {
+    key: "eval_floor_min_families",
+    min: 0.0,
+    max: 1_000_000.0,
+    seed: 0.0,
+};
+
+/// The fewest families each required floor slice needs (FIX 10446). Zero
+/// asks for none.
+pub const EVAL_FLOOR_MIN_FAMILIES_PER_SLICE: SettingSpec = SettingSpec {
+    key: "eval_floor_min_families_per_slice",
+    min: 0.0,
+    max: 1_000_000.0,
+    seed: 0.0,
 };
 
 /// Every learned knob the engine reads.
@@ -64,6 +83,8 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     PLANNER_SOLO_SUCCESS_FLOOR,
     PLANNER_SOLO_MARGIN,
     PLANNER_BIG_PLAN_WIDTH,
+    EVAL_FLOOR_MIN_FAMILIES,
+    EVAL_FLOOR_MIN_FAMILIES_PER_SLICE,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_REVIEW,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_LOOP_REPEATS,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_CHECK_FAILS,
@@ -153,7 +174,7 @@ pub enum SettingScope {
 const SETTING: SideTable<String, StoredSettingRow, Raw> =
     SideTable::new(&side_table::LEARNING_SETTING);
 
-const ROW_VERSION: u8 = 1;
+const ROW_VERSION: u8 = 2;
 const ROW_LABEL: &str = "learning setting row";
 
 /// Longest reason a row keeps, in bytes: a sentence for the record, not a
@@ -166,6 +187,7 @@ struct StoredSettingRow {
     value: f64,
     weight_runs: Option<f64>,
     by: String,
+    witness: Option<crate::entity_id::EntityId>,
     at: u64,
     why: String,
 }
@@ -293,16 +315,18 @@ pub fn put_scoped_setting_row(
             "a setting value must lie within its catalog bounds",
         ));
     }
-    let stored = StoredSettingRow {
-        v: ROW_VERSION,
-        value: row.value,
-        weight_runs: row.weight_runs,
-        by: owner.entity_ref().to_hex(),
-        at: row.at,
-        why: row.why.clone(),
-    };
     vault.with_write_txn_grouped(|wtxn| {
         vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
+        let witness = witness::put_in_txn(vault, wtxn, owner, scope, row)?;
+        let stored = StoredSettingRow {
+            v: ROW_VERSION,
+            value: row.value,
+            weight_runs: row.weight_runs,
+            by: owner.entity_ref().to_hex(),
+            witness: Some(witness),
+            at: row.at,
+            why: row.why.clone(),
+        };
         SETTING.put(
             &vault.store,
             wtxn,
@@ -376,6 +400,22 @@ pub(crate) fn setting_value_in_txn(
     spec: &SettingSpec,
 ) -> Result<f64> {
     setting_value_scoped_in_txn(store, txn, spec, None, None)
+}
+
+/// The vault override for `spec`, when an owner row or fitted value decided
+/// the same resolution as [`setting_value_in_txn`]. A catalog seed is not an
+/// override, so a caller may retain its own shipped fallback.
+pub(crate) fn setting_override_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+) -> Result<Option<f64>> {
+    let (value, decided) =
+        resolution::resolve_in_txn(store, txn, spec, &[SettingScope::Vault], None)?;
+    Ok(match decided {
+        resolution::Decided::Catalog => None,
+        resolution::Decided::Owner { .. } | resolution::Decided::Fit { .. } => Some(value),
+    })
 }
 
 /// The value in force for `spec` where `project` and `type_ref` apply: the
@@ -515,10 +555,19 @@ fn scoped_row_value(
     mode: SettingMode,
     scope: &SettingScope,
 ) -> Result<Option<f64>> {
+    Ok(scoped_row(store, txn, spec, mode, scope)?.map(|row| row.value))
+}
+
+fn scoped_row(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+    mode: SettingMode,
+    scope: &SettingScope,
+) -> Result<Option<StoredSettingRow>> {
     Ok(SETTING
         .get(store, txn, &scoped_row_key(spec.key, mode, scope))?
         // A row written under wider bounds than today's catalog is not a
         // value this reader can stand behind; the next row down is.
-        .filter(|row| (spec.min..=spec.max).contains(&row.value))
-        .map(|row| row.value))
+        .filter(|row| (spec.min..=spec.max).contains(&row.value)))
 }

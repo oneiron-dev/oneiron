@@ -371,18 +371,15 @@ impl OrganProcess {
         ours.set_nonblocking(true)?;
         let reader = ours.try_clone()?;
         let shutdown = ours.try_clone()?;
-        let mut command =
-            oneiron_spawn::command_with_fds(&spec.program, &[(theirs.as_raw_fd(), 3)]);
-        command.args(&spec.args);
-        let confined = sandbox::confine(&mut command, spec)?;
+        let (mut command, confined) = sandbox::command(spec, theirs.as_raw_fd())?;
         let child = command.spawn()?;
         drop(theirs);
-        let (isolation, cell) = confined.started();
+        let (isolation, cell, scratch) = confined.started();
         // A first-party organ's soft limits follow what its own buffers are
         // granted (FIX 6194); only Linux can move another process's.
         let reconciled = (spec.tier == OrganTier::FirstParty && cfg!(target_os = "linux"))
             .then_some(spec.memory_bytes);
-        let lifeline = Lifeline::new(child, shutdown, cell, reconciled);
+        let lifeline = Lifeline::new(child, shutdown, cell, scratch, reconciled);
         let pid = lifeline.pid;
         let mut guard = EndOnDrop(Some(Arc::clone(&lifeline)));
         let (hello, hello_lease) = handshake(
@@ -590,22 +587,23 @@ impl OrganProcess {
     /// Room for a call or an answer this process is about to be sent, made
     /// before it takes the writer (FIX 6195): the encoding the host makes
     /// first, counted with nothing allocated, then the organ's own read of
-    /// it, held in `room` until the call ends ([`reserve_read`]), under the
-    /// deadline sampled after that wait, so room waits (which move the
-    /// clock) are never charged as lateness. The deadline-bound read comes
-    /// last, so a pair that does not jointly fit ends instead of stalling
-    /// past the deadline. Waits on the call's clock until the deadline;
-    /// [`FrameError::Withdrawn`] once `stopped` says the frame is not
-    /// wanted.
+    /// it with its descriptors' room, held in `room` until the call ends
+    /// ([`reserve_read`]), under the deadline sampled after that wait, so
+    /// room waits (which move the clock) are never charged as lateness. The
+    /// deadline-bound read comes last, so a pair that does not jointly fit
+    /// ends instead of stalling past the deadline. Waits on the call's
+    /// clock until the deadline; [`FrameError::Withdrawn`] once `stopped`
+    /// says the frame is not wanted.
     fn book(
         &self,
         msg: &ToOrgan,
+        fds: &[BorrowedFd<'_>],
         room: &CallRoom,
         clock: Clock<'_>,
         stopped: &dyn Fn() -> bool,
     ) -> Result<Lease, FrameError> {
         let frame = book_send(&self.frames, room.waits(), frame_body_len(msg)?, stopped)?;
-        reserve_read(room, msg, clock.deadline(), stopped)?;
+        reserve_read(room, msg, fds, clock.deadline(), stopped)?;
         Ok(frame)
     }
 
@@ -644,7 +642,7 @@ impl OrganProcess {
     ) -> Result<Option<u64>, FrameError> {
         let dropped = || grant.revoked() || self.inbox.holding_answerable(id).is_none();
         // Room for the frame first, before it waits for the writer.
-        let _frame = match self.book(answer, room, clock, &dropped) {
+        let _frame = match self.book(answer, fds, room, clock, &dropped) {
             Ok(frame) => frame,
             Err(FrameError::Withdrawn) => return Ok(None),
             Err(err) => return Err(err),
@@ -794,7 +792,7 @@ impl OrganProcess {
         let call = ToOrgan::Call(call);
         let unwanted = || grant.revoked() || !self.is_alive();
         let sent = self
-            .book(&call, room, clock, &unwanted)
+            .book(&call, fds, room, clock, &unwanted)
             .and_then(|_frame| self.send(&call, fds, self.max_call_frame, clock.deadline()));
         match sent {
             Ok(len) => asks.frame_sent(len),

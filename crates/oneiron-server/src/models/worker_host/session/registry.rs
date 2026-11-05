@@ -63,6 +63,8 @@ pub(super) struct Ops {
     /// `session.export` and `session.import`, in the snapshot format this
     /// side speaks.
     pub(super) snapshot: bool,
+    /// `session.prepare` (I1 = C).
+    pub(super) prepare: bool,
 }
 
 /// One worker incarnation's sessions.
@@ -495,7 +497,26 @@ pub(super) struct HostCopy<T> {
 impl<T> HostCopy<T> {
     /// Counts `copy` with its `bytes` against `vault` from now until it drops.
     pub(super) fn hold(vault: VaultRef, copy: T, bytes: u64) -> Self {
-        let mut live = copies().live.lock().unwrap_or_else(PoisonError::into_inner);
+        Self::hold_reserved(vault, copy, bytes, None)
+    }
+
+    fn hold_reserved(
+        vault: VaultRef,
+        copy: T,
+        bytes: u64,
+        reservation: Option<&mut HostReservation>,
+    ) -> Self {
+        let copies = copies();
+        let mut live = copies.live.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(reservation) = reservation {
+            let mut reserved = copies
+                .reserved
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let covered = bytes.min(reservation.bytes);
+            reservation.bytes -= covered;
+            *reserved = reserved.saturating_sub(covered);
+        }
         let entry = live.entry(vault).or_insert((0, 0));
         entry.0 += 1;
         entry.1 = entry.1.saturating_add(bytes);
@@ -559,11 +580,42 @@ pub(super) fn host_committed_bytes() -> u64 {
 }
 
 /// A host-memory reservation for snapshot bytes not yet held as a copy:
-/// admitted atomically with the headroom screen, released on drop. The
-/// guard lives through every copy it covers, so the screen and the first
-/// registration cannot admit twice.
+/// admitted atomically with the headroom screen. Covered registrations
+/// transfer reserved bytes to live bytes; unused credit is released on drop.
+/// The guard keeps credit for copies that have not been allocated yet.
 pub(super) struct HostReservation {
     bytes: u64,
+}
+
+impl HostReservation {
+    /// Keeps at least `bytes` reserved for the copies still to be allocated.
+    pub(super) async fn ensure(&mut self, bytes: u64) -> Option<()> {
+        if self.bytes < bytes {
+            let mut extra = reserve_host(bytes - self.bytes).await?;
+            self.bytes = bytes;
+            extra.bytes = 0;
+        }
+        Some(())
+    }
+
+    /// Releases credit no longer needed by the remaining allocation phase.
+    pub(super) fn release_excess(&mut self, keep: u64) {
+        let excess = self.bytes.saturating_sub(keep);
+        if excess == 0 {
+            return;
+        }
+        let mut reserved = copies()
+            .reserved
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *reserved = reserved.saturating_sub(excess);
+        self.bytes -= excess;
+    }
+
+    /// Registers a covered copy without charging its reserved bytes twice.
+    pub(super) fn hold<T>(&mut self, vault: VaultRef, copy: T, bytes: u64) -> HostCopy<T> {
+        HostCopy::hold_reserved(vault, copy, bytes, Some(self))
+    }
 }
 
 impl Drop for HostReservation {

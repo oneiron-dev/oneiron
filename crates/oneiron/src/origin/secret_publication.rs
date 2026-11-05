@@ -19,8 +19,10 @@
 //! `marked_live_secret` while any of its marks blocks (C2: a live key and a
 //! key of unknown liveness block; only the owner's not-a-secret or the
 //! provider's revocation clears one, and a local rotation proves nothing).
-//! Until those dispositions land (slice 8), nothing proves a key dead, so
-//! every mark blocks. Marks are read per blob (CALL S4FIX-UNKNOWN-MARK): a
+//! An explicit native owner not-a-secret clears via the span's exact
+//! custody; unknown, `Opaque` and provider-unproven marks still block, a
+//! local rotation proves nothing, and history/masking are unchanged. Marks
+//! are read per blob (CALL S4FIX-UNKNOWN-MARK): a
 //! mark that does not decode but names its blob holds, as marked, only the
 //! tips whose history carries a blob of those bytes; one that names no
 //! blob, or a store failure in the mark walk, holds every tip
@@ -29,15 +31,25 @@
 //! Clean tips, private destinations and a vault with no marks send exactly
 //! as before, and the gate never rewrites history (slice 10).
 //!
+//! A history is walked once per store and mark join, not once per send
+//! (FIX 10970): a commit proven clean, and a tip met marked, are kept for
+//! that store under a digest of exactly the join they were judged against,
+//! across batches, same-plan resends and runs. A commit's history never
+//! changes, so a later send reuses them while the join is the same, and its
+//! walk stops at every kept clean commit; a new, settled or erased mark is
+//! another join, judged afresh.
+//!
 //! The hold is value-free: it names its reason and its ways out, never a
 //! key, a mark, a path, an object or a count.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::{LazyLock, Mutex, PoisonError};
 
+use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
 use super::mirror::{OriginMirrorTarget, TARGETS};
-use super::secret_marks::{RepoMarkFacts, RepoSecretMark};
+use super::secret_marks::{RepoMarkFacts, RepoSecretMark, RepoSecretPlacement};
 use super::secret_projection::index::UNATTRIBUTABLE_MARK_FAILS_CLOSED;
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -154,11 +166,31 @@ impl RepoSecretLiveness {
     }
 }
 
-/// One mark's liveness: the one hook slice 8's dispositions answer. Until
-/// they land nothing proves a key dead, a local rotation included (C2), so
-/// every mark is `Unknown` and blocks.
-pub(crate) const fn repo_secret_liveness(_mark: &RepoSecretMark) -> RepoSecretLiveness {
-    RepoSecretLiveness::Unknown
+/// One mark's liveness: an explicit native owner not-a-secret clears via
+/// the span's exact custody; unknown, `Opaque` and provider-unproven marks
+/// still block, a local rotation proves nothing, and history/masking are
+/// unchanged. A `Span` custody ruled not-a-secret reads `NotASecret`, any
+/// other `Span` reads `Unknown`, and a read that fails holds `Unknown`.
+pub(crate) fn repo_secret_liveness(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    mark: &RepoSecretMark,
+) -> RepoSecretLiveness {
+    let custody = match &mark.placement {
+        RepoSecretPlacement::Span { custody, .. } => custody,
+        RepoSecretPlacement::Opaque => return RepoSecretLiveness::Unknown,
+    };
+    match crate::secret_custody::ruled_no_secret_in_txn(&vault.store, txn, custody) {
+        Ok(true) => RepoSecretLiveness::NotASecret,
+        Ok(false) => RepoSecretLiveness::Unknown,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "owner not-a-secret could not be read; its mark stays blocking"
+            );
+            RepoSecretLiveness::Unknown
+        }
+    }
 }
 
 /// Why the gate held a tip (A1).
@@ -217,6 +249,79 @@ struct MarkJoin {
     hashed: BTreeSet<GitOid>,
 }
 
+/// The domain of a mark join's digest.
+const MARK_JOIN_DIGEST_CONTEXT: &str = "oneiron.secret-publication.mark-join.v1";
+
+impl MarkJoin {
+    /// Exactly what the join holds, as one digest: the key a judged tip is
+    /// kept under.
+    fn digest(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new_derive_key(MARK_JOIN_DIGEST_CONTEXT);
+        hasher.update(&(self.blocking.len() as u64).to_be_bytes());
+        for oid in &self.blocking {
+            hasher.update(oid.as_str().as_bytes());
+        }
+        for hash in &self.unread {
+            hasher.update(hash);
+        }
+        *hasher.finalize().as_bytes()
+    }
+}
+
+/// Clean commits kept per store and join, newest last: a mirror's tips move
+/// forward, so the newest cover most of the rest, and each is one exclusion
+/// on a later walk's command line. A memory floor, never a refusal.
+const JUDGED_CLEAN_KEPT: usize = 64;
+
+/// Marked tips kept per store and join; past it they start over. A memory
+/// floor, never a refusal.
+const JUDGED_MARKED_KEPT: usize = 4096;
+
+/// Stores and joins kept at once; past it every one starts over. A memory
+/// floor, never a refusal.
+const JUDGED_JOINS_KEPT: usize = 64;
+
+/// What one store's tips came to under one mark join (FIX 10970).
+#[derive(Debug, Clone, Default)]
+struct JudgedTips {
+    /// Commits proven clean, newest last.
+    clean: Vec<GitOid>,
+    /// Tips held `marked_live_secret`.
+    marked: BTreeSet<GitOid>,
+}
+
+/// Every store's judged tips, by its identity and its join's digest.
+static JUDGED_TIPS: LazyLock<Mutex<HashMap<(String, [u8; 32]), JudgedTips>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The tips `key` already judged, or none.
+fn judged_tips(key: &(String, [u8; 32])) -> JudgedTips {
+    JUDGED_TIPS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(key)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Keeps what one send judged under `key`: its clean commits, newest last,
+/// and the tips it met marked.
+fn keep_judged_tips(key: (String, [u8; 32]), mut clean: Vec<GitOid>, marked: Vec<GitOid>) {
+    let mut kept = JUDGED_TIPS.lock().unwrap_or_else(PoisonError::into_inner);
+    if !kept.contains_key(&key) && kept.len() >= JUDGED_JOINS_KEPT {
+        kept.clear();
+    }
+    let judged = kept.entry(key).or_default();
+    if clean.len() > JUDGED_CLEAN_KEPT {
+        clean.drain(..clean.len() - JUDGED_CLEAN_KEPT);
+    }
+    judged.clean = clean;
+    if judged.marked.len() + marked.len() > JUDGED_MARKED_KEPT {
+        judged.marked.clear();
+    }
+    judged.marked.extend(marked);
+}
+
 impl Vault {
     /// Each of `tips`' hold at `repo_id`'s mirror, in order: `None` sends as
     /// before (module docs). It reads the mirror's audience as its row
@@ -243,18 +348,56 @@ impl Vault {
                 return vec![Some(SecretPublicationHold::SecretHistoryUnknown); tips.len()];
             }
         };
-        let mut clean: Vec<GitOid> = Vec::new();
-        tips.iter()
+        let key = (handle.identity().as_hex(), join.digest());
+        let judged = judged_tips(&key);
+        let mut clean = judged.clean;
+        let mut marked = Vec::new();
+        let holds = tips
+            .iter()
             .map(|tip| {
+                if judged.marked.contains(tip) {
+                    return Some(SecretPublicationHold::MarkedLiveSecret);
+                }
+                if clean.contains(tip) {
+                    return None;
+                }
                 let (hold, commit) = tip_hold(wire, handle, tip, &clean, &mut join);
-                if hold.is_none()
-                    && let Some(commit) = commit
-                {
-                    clean.push(commit);
+                match (hold, commit) {
+                    (None, Some(commit)) => {
+                        clean.retain(|kept| *kept != commit);
+                        clean.push(commit);
+                    }
+                    (Some(SecretPublicationHold::MarkedLiveSecret), _) => marked.push(tip.clone()),
+                    _ => {}
                 }
                 hold
             })
-            .collect()
+            .collect();
+        keep_judged_tips(key, clean, marked);
+        holds
+    }
+
+    /// Every object a blocking mark marks, in any store: what an exact
+    /// publish review's freeze-time advisory names a history by (FIX
+    /// 10969). `None`, with a warning, when the marks cannot be read whole;
+    /// the send-time gate reads them again either way.
+    pub(crate) fn publication_blocking_objects(&self) -> Option<BTreeSet<GitOid>> {
+        let read = || -> Result<BTreeSet<GitOid>> {
+            let txn = self.store.env.read_txn()?;
+            let (facts, _) =
+                RepoMarkFacts::read_scoped_in_txn(self, &txn, UNATTRIBUTABLE_MARK_FAILS_CLOSED)?;
+            Ok(facts.blob_oids(|mark: &RepoSecretMark| {
+                repo_secret_liveness(self, &txn, mark).blocks_public()
+            }))
+        };
+        read()
+            .inspect_err(|error| {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "secret marks could not be read whole; a publish review carries no advisory"
+                );
+            })
+            .ok()
     }
 
     /// What a public send's history is joined against, read once through
@@ -274,8 +417,9 @@ impl Vault {
         }
         let (facts, unread) =
             RepoMarkFacts::read_scoped_in_txn(self, &txn, UNATTRIBUTABLE_MARK_FAILS_CLOSED)?;
-        let blocking =
-            facts.blob_oids(|mark: &RepoSecretMark| repo_secret_liveness(mark).blocks_public());
+        let blocking = facts.blob_oids(|mark: &RepoSecretMark| {
+            repo_secret_liveness(self, &txn, mark).blocks_public()
+        });
         Ok(
             (!blocking.is_empty() || !unread.is_empty()).then(|| MarkJoin {
                 blocking,

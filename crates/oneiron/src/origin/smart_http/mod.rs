@@ -81,13 +81,13 @@
 //! `credential_door.rs` are consumed read-only; this module owns neither.
 
 mod advertise;
-mod bounds;
+use oneiron_store::origin::smart_http::bounds;
 mod cgi_finish;
 mod door;
 mod door_window;
 mod evidence;
 mod exchange_idle;
-mod held;
+use oneiron_store::origin::smart_http::held;
 mod hooks;
 mod intent;
 mod intent_erase;
@@ -102,7 +102,7 @@ mod push_paths;
 pub(crate) mod push_projection;
 mod read_projection;
 mod recipient_serve;
-mod retained_reasons;
+use oneiron_store::origin::smart_http::retained_reasons;
 pub(in crate::origin) mod secret_marks;
 mod serve;
 mod serve_cmd;
@@ -180,8 +180,6 @@ use crate::Vault;
 #[cfg(test)]
 use crate::claim::{ClaimLifecycleStatus, encode_claim_body};
 #[cfg(test)]
-use crate::codebase::RepoRef;
-#[cfg(test)]
 use crate::credential_door::{CredentialDoorService, DoorCredential};
 #[cfg(test)]
 use crate::entity_id::EntityId;
@@ -193,6 +191,8 @@ use crate::git_wire::{GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefName, GitWire};
 use crate::origin::lfs::{LfsOid, LfsPushedPointer, lfs_repo_id};
 #[cfg(test)]
 use crate::origin::publication::{OriginPublicationRequest, OriginPublicationStatus};
+#[cfg(test)]
+use crate::store::code_snapshot::RepoRef;
 #[cfg(test)]
 use crate::temporal::TimeRange;
 #[cfg(test)]

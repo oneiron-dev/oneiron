@@ -197,6 +197,7 @@ fn put_claim_in_txn(
                     end: learned_at,
                 },
                 learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: true,
@@ -325,6 +326,7 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
     attach(&mut wtxn, &link)?;
     wtxn.commit()?;
     vault.store.notify_attempt_observers();
+    vault.wake_merge_queue();
     Ok(link)
 }
 
@@ -345,7 +347,24 @@ impl Vault {
         attach: impl FnOnce(&mut heed::RwTxn<'_>, &QueueConflictLink) -> Result<()>,
     ) -> Result<QueueConflictLink> {
         let mut wtxn = self.store.env.write_txn()?;
-        if link.task.is_some() || !admission.holds_in_txn(self, &wtxn, overlap)? {
+        if link.task.is_some() {
+            return Ok(link.clone());
+        }
+        if !admission.holds_in_txn(self, &wtxn, overlap)? {
+            if let Some((creator, _)) = admission.creator()
+                && !EntityStoreRead::port_entity_present(&self.store, &wtxn, &creator)?
+            {
+                const CREATOR_ERASED: &str = "queue.reconciliation.creator_erased";
+                if link.held.as_deref() == Some(CREATOR_ERASED) {
+                    return Ok(link.clone());
+                }
+                let mut moved = link.clone();
+                moved.held = Some(CREATOR_ERASED.to_owned());
+                attach(&mut wtxn, &moved)?;
+                wtxn.commit()?;
+                self.store.notify_attempt_observers();
+                return Ok(moved);
+            }
             return Ok(link.clone());
         }
         let Some(claim) = self.get_claim_in_txn(&wtxn, &link.conflict)? else {
@@ -391,6 +410,7 @@ impl Vault {
         attach(&mut wtxn, &retried)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
+        self.wake_merge_queue();
         Ok(retried)
     }
 }

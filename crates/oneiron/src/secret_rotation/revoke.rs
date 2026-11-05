@@ -10,8 +10,8 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{
-    drop_revoked_copies_in_txn, put_stored_custody_in_txn, read_stored_custody_in_txn,
-    resolve_secret_ref_in_txn,
+    CustodyWrite, drop_revoked_copies_for_store_in_txn, put_stored_custody_with_context_in_txn,
+    read_stored_custody_in_txn,
 };
 use crate::secret_lease::{
     SecretLeaseStatus, teardown_local_registration_in_txn, write_secret_lease_in_txn,
@@ -20,6 +20,7 @@ use crate::secret_record::StoredValue;
 use crate::secret_record::{SecretCustodyRecord, SecretCustodyStatus};
 use crate::side_table::HexId;
 use crate::store::Store;
+use crate::store::secret_name_index::resolve_secret_ref_in_txn;
 
 /// What a revoke erases at rest (CALLS CUSTODY_REVOKE_ERASE).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,12 +108,22 @@ pub(crate) fn revoke_custody_in_txn(
     cause: RevokeCause,
     at: u64,
 ) -> Result<SecretCustodyRecord> {
+    revoke_custody_with_context_in_txn(&CustodyWrite::of(vault), wtxn, id, cause, at)
+}
+
+pub(crate) fn revoke_custody_with_context_in_txn(
+    write: &CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    cause: RevokeCause,
+    at: u64,
+) -> Result<SecretCustodyRecord> {
     // The value stays as stored, never opened (KS-6): a revoke needs no
     // custody key, so it lands whatever custody holds.
-    let mut stored = read_stored_custody_in_txn(&vault.store, wtxn, id)?
+    let mut stored = read_stored_custody_in_txn(write.store, wtxn, id)?
         .ok_or(Error::CorruptedIndex("secret custody record for live name"))?;
     let residual =
-        erases(cause) && holds_erasable_value_in_txn(&vault.store, wtxn, id, &stored.record)?;
+        erases(cause) && holds_erasable_value_in_txn(write.store, wtxn, id, &stored.record)?;
     if stored.record.status != SecretCustodyStatus::Revoked || residual {
         stored.record.status = SecretCustodyStatus::Revoked;
         if erases(cause) {
@@ -122,16 +133,16 @@ pub(crate) fn revoke_custody_in_txn(
                 bytes: Vec::new(),
             };
         }
-        put_stored_custody_in_txn(vault, wtxn, id, &stored, at)?;
+        put_stored_custody_with_context_in_txn(write, wtxn, id, &stored, at)?;
     }
     let mut rec = stored.record;
     rec.value_bytes.zeroize();
-    drop_revoked_copies_in_txn(vault, wtxn, id)?;
+    drop_revoked_copies_for_store_in_txn(write.store, wtxn, id)?;
 
     // The prefix sweep, collected before mutating: a cursor is not held
     // across the writes that follow it.
     let mut doomed = Vec::new();
-    for entry in LEASES.scan(&vault.store, wtxn)? {
+    for entry in LEASES.scan(write.store, wtxn)? {
         let (_, lease) = entry;
         if lease.secret_ref == rec.name && lease.status != SecretLeaseStatus::Revoked {
             doomed.push(lease);
@@ -139,10 +150,42 @@ pub(crate) fn revoke_custody_in_txn(
     }
     for mut lease in doomed {
         lease.status = SecretLeaseStatus::Revoked;
-        write_secret_lease_in_txn(&vault.store, wtxn, &lease)?;
-        teardown_local_registration_in_txn(&vault.store, wtxn, &lease.lease_id, at)?;
+        write_secret_lease_in_txn(write.store, wtxn, &lease)?;
+        teardown_local_registration_in_txn(write.store, wtxn, &lease.lease_id, at)?;
     }
     Ok(rec)
+}
+
+pub(crate) fn revoke_secret_with_context_in_txn(
+    write: &CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    secret_ref: &str,
+    cause: RevokeCause,
+    at: u64,
+) -> Result<RotationReceipt> {
+    let id = resolve_secret_ref_in_txn(write.store, wtxn, secret_ref)?.ok_or_else(|| {
+        Error::Secret(SecretError::SecretRefNotFound {
+            name: secret_ref.to_owned(),
+        })
+    })?;
+    let rec = revoke_custody_with_context_in_txn(write, wtxn, &id, cause, at)?;
+    let generation = rec.rotation_generation;
+
+    let receipt = RotationReceipt {
+        receipt_id: write.store.clock.entity_id()?,
+        secret_ref: rec.name.clone(),
+        from_generation: generation,
+        to_generation: generation,
+        rotated_at: at,
+        kind: RotationKind::Revoked,
+    };
+    RECEIPTS.put(
+        write.store,
+        wtxn,
+        &HexId(receipt.receipt_id),
+        &encode_rotation_receipt_body(&receipt)?,
+    )?;
+    Ok(receipt)
 }
 
 impl Vault {
@@ -185,28 +228,6 @@ impl Vault {
         cause: RevokeCause,
         at: u64,
     ) -> Result<RotationReceipt> {
-        let id = resolve_secret_ref_in_txn(&self.store, wtxn, secret_ref)?.ok_or_else(|| {
-            Error::Secret(SecretError::SecretRefNotFound {
-                name: secret_ref.to_owned(),
-            })
-        })?;
-        let rec = revoke_custody_in_txn(self, wtxn, &id, cause, at)?;
-        let generation = rec.rotation_generation;
-
-        let receipt = RotationReceipt {
-            receipt_id: self.store.clock.entity_id()?,
-            secret_ref: rec.name.clone(),
-            from_generation: generation,
-            to_generation: generation,
-            rotated_at: at,
-            kind: RotationKind::Revoked,
-        };
-        RECEIPTS.put(
-            &self.store,
-            wtxn,
-            &HexId(receipt.receipt_id),
-            &encode_rotation_receipt_body(&receipt)?,
-        )?;
-        Ok(receipt)
+        revoke_secret_with_context_in_txn(&CustodyWrite::of(self), wtxn, secret_ref, cause, at)
     }
 }

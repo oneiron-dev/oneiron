@@ -91,15 +91,26 @@
 //!   whole-run revert lifts only the marks that run wrote, one finding per
 //!   entry, and never undoes a delete or an erase. What the owner brings
 //!   back, by a revert or his own restore, he keeps at its revision.
+//!
+//! # Attempt sources (FIX 10494)
+//!
+//! A completed attempt's candidate id is the queue row's 16-byte alias, not
+//! a stored entity. Each owner verb has a sourced variant beside its plain
+//! one (`surface::run_sourced_as_owner`,
+//! [`review_cleanup_proposal_sourced_as`],
+//! [`Vault::decide_cleanup_proposal_sourced_as`]): the same view plus the
+//! union of genuine known gated source rows from the same transaction's
+//! decoded records. Unknown contributes nothing; the vector is additive
+//! named release evidence only, never a whole-response completeness claim.
 
 use rmpv::Value;
 
 use crate::Vault;
-use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::attempt_id::AttemptId;
 
-mod cleanup_types;
+use oneiron_store::vault_cleanup::cleanup_types;
 mod codec_receipts;
 mod erase;
 mod marks;
@@ -138,7 +149,7 @@ pub use self::review_types::{
     CleanupReviewContent, CleanupReviewCounts, CleanupReviewEvidence, CleanupReviewItem,
     CleanupReviewRequest, CleanupReviewView,
 };
-pub use self::review_view::review_cleanup_proposal_as;
+pub use self::review_view::{review_cleanup_proposal_as, review_cleanup_proposal_sourced_as};
 pub use self::run_revert::{
     CleanupRevertEntry, CleanupRevertOutcome, CleanupRevertReason, CleanupRunRevert,
     CleanupRunRevertAnswer,

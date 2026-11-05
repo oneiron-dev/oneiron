@@ -14,6 +14,9 @@
 //! through it again from the start each `CATCH_UP_RESCAN` after a pass ends,
 //! so a pair kept for want of the Coach's Grant runs once that Grant is
 //! minted (FIX 7031).
+mod wake;
+pub(super) use wake::{WakeExecutor, WakeHost};
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -89,6 +92,10 @@ pub(crate) fn spawn(
     publisher: Arc<[PublisherCandidate]>,
     admit: crate::server::HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
+    let _ = server
+        .ai
+        .coach_heal_wake
+        .set(WakeHost::new(Arc::clone(&publisher)));
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
@@ -145,11 +152,7 @@ fn catch_up_step(
 ) -> Option<Option<EntityId>> {
     let after = step?;
     let vault = server.vault();
-    let pinned: Vec<&str> = publisher
-        .iter()
-        .map(|candidate| candidate.id.as_str())
-        .collect();
-    match vault.queue_code_fix_top_ups(after, &pinned, vault.now_recorded_at()) {
+    match vault.queue_code_fix_top_ups(after, publisher, vault.now_recorded_at()) {
         Ok(next) => next.map(Some),
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), "past code-fix work waits for the next round");
@@ -180,7 +183,7 @@ fn round(server: &Arc<SyncServer>, publisher: &[PublisherCandidate]) -> oneiron:
     Ok(())
 }
 
-fn run_one(
+pub(super) fn run_one(
     server: &Arc<SyncServer>,
     admitted: &DreamerAdmittedAttempt,
     publisher: &[PublisherCandidate],

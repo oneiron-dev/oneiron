@@ -1,4 +1,4 @@
-//! Canonical typed Component Model execution with six non-write imports and
+//! Canonical typed Component Model execution with seven non-write imports and
 //! the three that stream a proposed file to the host.
 
 use crate::{
@@ -115,11 +115,17 @@ impl<T: Read + Write> State<T> {
             .bytes
             .checked_add(frame.len())
             .ok_or_else(|| wasmtime::Error::msg("file proposal length overflow"))?;
-        if self.session.write_chunk(frame).is_err() {
-            self.poisoned = true;
-            return Ok(Err("file proposal transport failed".into()));
+        match self.session.write_chunk(frame) {
+            Ok(Ok(())) => Ok(Ok(frame.len() as u64)),
+            Ok(Err(reason)) => {
+                self.poisoned = true;
+                Ok(Err(reason))
+            }
+            Err(_) => {
+                self.poisoned = true;
+                Ok(Err("file proposal transport failed".into()))
+            }
         }
-        Ok(Ok(frame.len() as u64))
     }
 
     fn close_file(&mut self, id: u64) -> wasmtime::Result<Reply> {
@@ -381,6 +387,12 @@ fn link_imports<T: Read + Write + 'static>(linker: &mut Linker<State<T>>) -> was
     linker.root().func_wrap(
         "output-bytes",
         |_: StoreContextMut<'_, State<T>>, (_, frame): (String, Vec<u8>)| {
+            Ok((Ok::<u64, String>(frame.len() as u64),))
+        },
+    )?;
+    linker.root().func_wrap(
+        "store-bytes",
+        |_: StoreContextMut<'_, State<T>>, (_, frame): (bool, Vec<u8>)| {
             Ok((Ok::<u64, String>(frame.len() as u64),))
         },
     )?;

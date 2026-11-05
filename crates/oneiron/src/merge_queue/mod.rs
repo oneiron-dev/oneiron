@@ -3,6 +3,7 @@
 //! Checks never mutate the live repository. Landing needs a host gate adapter and
 //! a queue-issued permit under the existing repository single-writer lock. The
 //! queue verifies the durable mutation receipt and the complete landed tree.
+mod batch_index;
 mod candidate_intake;
 mod check_execute;
 mod check_inputs;
@@ -19,6 +20,7 @@ mod initialize;
 mod landing;
 mod mirror_green;
 mod plan;
+mod receipt_index;
 mod received_enqueue;
 mod review_policy;
 mod reviewed;
@@ -65,8 +67,8 @@ pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
 // The vault's opt-in review policy (FIX 8268).
 pub(crate) use review_policy::{
     ActiveQueueReviewPolicy, DEFAULT_QUEUE_REVIEW_CRITICS, DEFAULT_QUEUE_REVIEW_VOTES,
-    QueueReviewRequirement, StoredQueueReviewPolicy, queue_review_requirement_in_txn,
-    review_policy_unreadable_hold,
+    QueueReviewRequirement, StoredQueueReviewPolicy, erase_review_policy_actor_in_txn,
+    queue_review_requirement_in_txn, review_policy_unreadable_hold,
 };
 pub use review_policy::{
     QueueReviewDefault, QueueReviewPolicy, QueueReviewThresholds, REVIEW_POLICY_DEFAULT,
@@ -88,7 +90,8 @@ pub use tested_types::{
 };
 pub use types::{
     BatchState, CheckInvocation, CheckPhase, CheckReport, LandingPermit, MergeBatch, MergeFile,
-    MergeLanding, MergeProposal, MergeQueuePointers, Quarantine, SpeculativePath, TestedBatch,
+    MergeFileExpected, MergeLanding, MergeProposal, MergeQueuePointers, Quarantine,
+    SpeculativePath, TestedBatch,
 };
 
 pub struct MergeQueue<'a> {
@@ -97,11 +100,21 @@ pub struct MergeQueue<'a> {
 }
 
 impl<'a> MergeQueue<'a> {
+    /// The proven repository this queue opened, including a served source.
+    pub(crate) fn repository(&self) -> &GitWireRepo {
+        &self.repo
+    }
+
+    /// Take the proven repository for a pinned proposal's snapshot read.
+    pub(crate) fn into_repository(self) -> GitWireRepo {
+        self.repo
+    }
+
     /// Bind to one proven local object store. `initialize` records its initial
     /// green baseline; reopening never overwrites existing pointers.
     pub fn open(vault: &'a Vault, repo_ref: RepoRef) -> Result<Self> {
         let RepoRef::LocalFolder { path, .. } = &repo_ref else {
-            return Err(crate::contract_oracle::invalid(
+            return Err(crate::store::contract_oracle::invalid(
                 "merge queue needs a local repository",
             ));
         };

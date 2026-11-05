@@ -94,6 +94,8 @@ impl ManagedArgs {
             derivation_owner: DerivationOwner(owner),
             organization_owner,
             member_vault: args.member_vault,
+            privacy_posture: args.privacy_posture.unwrap_or_default(),
+            allow_host_checkpoint_opt_out: args.managed_checkpoint_host_opt_out,
             // `--vault-path` stays the alias for the same directory.
             data_dir: require(
                 args.data_dir.clone().or_else(|| args.vault_path.clone()),
@@ -108,12 +110,20 @@ impl ManagedArgs {
             vm_anchor,
             start_mode,
             vsock_guest: args.vsock_guest,
+            vm_outbox_companion_admitted: args.vm_outbox_companion_admitted,
             keystore_dir: args.keystore_dir.clone(),
             escrow_recipient: args.escrow_recipient_file.clone(),
             break_glass_recipient: args.break_glass_recipient_file.clone(),
             escrow_outbox: args.escrow_outbox_dir.clone(),
             maximum_tier: args.maximum_tier.unwrap_or(MANAGED_MAXIMUM_TIER_DEFAULT),
             artifact_socket: args.artifact_http_socket.clone(),
+            preview_socket: args.preview_socket.clone(),
+            broker: crate::config::models::BrokerConfig::from_args(args).map_err(|error| {
+                ManagedError::InvalidBrokerConfig {
+                    reason: error.to_string(),
+                }
+            })?,
+            host_limits: crate::embedded::host_limits(args.host_memory_bytes, args.host_cpu_millis),
             settings_file: args.settings_file.clone(),
             voice_socket: args.voice_socket.clone(),
             seal_key: args.seal_key_file.clone(),
@@ -162,6 +172,7 @@ impl ManagedArgs {
             return Err(ManagedError::RelativeKeystoreDir);
         }
         for (flag, path) in [
+            ("preview-socket", &managed.preview_socket),
             ("escrow-recipient-file", &managed.escrow_recipient),
             ("break-glass-recipient-file", &managed.break_glass_recipient),
             ("escrow-outbox-dir", &managed.escrow_outbox),
@@ -321,6 +332,8 @@ impl ManagedArgs {
             vault_path: self.data_dir.clone(),
             auth_secret: None,
             allow_unauthenticated: false,
+            privacy_posture: self.privacy_posture,
+            allow_host_checkpoint_opt_out: self.allow_host_checkpoint_opt_out,
             // Browser origins are argv policy too, for the external shared UI.
             allowed_origins: args.allowed_origins.clone().unwrap_or_default(),
             // The host's public https origin and the URLs a kit dials, as
@@ -328,6 +341,9 @@ impl ManagedArgs {
             // auth layer: the OAuth relay also needs the issuer and JWKS
             // flags, which managed mode refuses.
             oauth_resource_indicator: nonempty(args.oauth_resource_indicator.as_deref()),
+            // The host's Git door a run's checkout bind names (FIX 7181),
+            // checked by the flag's own parser.
+            git_door_base: nonempty(args.git_door_base.as_deref()),
             kit_bundle_public_urls: crate::config::normalize_list(
                 args.kit_bundle_public_urls.clone().unwrap_or_default(),
             ),

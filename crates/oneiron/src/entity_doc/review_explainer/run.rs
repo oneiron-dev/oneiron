@@ -6,14 +6,16 @@ use super::{
     ReviewBundleExplanation, ReviewBundleInput, ReviewComplexity, ReviewExplainerCallReceipt,
     ReviewExplainerEscalation, ReviewExplainerOutput, ReviewExplainerReceipt,
 };
-use crate::attempt_queue::{AttemptId, AttemptRecord, ReadSetProducer};
-use crate::inference_context::HostInferenceContext;
+use crate::attempt_queue::AttemptRecord;
+use crate::store::attempt_id::AttemptId;
+use crate::store::attempt_read_producer::ReadSetProducer;
 use crate::{EntityId, Error, Vault};
 use oneiron_model::llm::{
     BudgetDenied, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     FinishReason, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole, LlmRequest,
     ModelId, ModelLocality, ReasoningEffort, ResponseFormat, Scope, TierPrecedence,
 };
+use oneiron_store::inference_context::HostInferenceContext;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReviewExplainerError {
@@ -248,7 +250,13 @@ async fn generate(
         .guard
         .admit_for_request(&request)
         .inspect_err(|denied| {
-            vault.budget_denied_hooks(denied, execution.guard, request.model.as_str(), None);
+            vault.budget_denied_hooks(
+                denied,
+                execution.guard,
+                request.model.as_str(),
+                None,
+                crate::runtime_hooks::VerbCallScope::from_model_scope(&request.envelope.scope),
+            );
         })?
         .lease;
     let mut charge = CallCharge {

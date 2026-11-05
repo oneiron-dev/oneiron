@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::io::{Result, Write};
 
+use crate::decode_admission::{self, DecodeAdmission, DecodeAdmissionError};
+
 #[derive(Debug, Clone)]
 pub struct Xref {
     /// Type of Cross-Reference used in the last incremental version.
@@ -62,6 +64,7 @@ impl Xref {
             self.entries.entry(id).or_insert(entry);
         }
     }
+
 
     pub fn clear(&mut self) {
         self.entries.clear()

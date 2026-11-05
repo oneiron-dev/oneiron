@@ -15,8 +15,8 @@
 //! `[models.training.connectors]` names. It trains a question run on its one
 //! recipe and nothing else; a role run, another recipe or an unnamed
 //! connector holds with `training.no_connector`, as with no connector at
-//! all. No seat evaluator ships yet, so a returned run holds with
-//! `training.no_evaluator`: Returned is where a trained run stops here.
+//! all. A returned question head is scored locally on its held-out rows;
+//! unsupported role recipes still hold with `training.no_evaluator`.
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
@@ -31,10 +31,12 @@ use oneiron::{EntityId, Error, Vault};
 use crate::server::SyncServer;
 
 mod parity;
+mod question_evaluation;
 mod trainer;
 mod wire;
 
 use trainer::QuestionHeadTrainer;
+pub(crate) use trainer::{TrainingInputCleanup, cleanup_training_job_inputs};
 
 /// An authorized run waits: no trainer adapter serves its connector here.
 const HOLD_NO_CONNECTOR: &str = "training.no_connector";
@@ -43,14 +45,15 @@ const HOLD_NO_ADMISSION: &str = "training.no_admission";
 /// An authorized run waits: the dispatch refused it before sending (a
 /// changed connector, declaration or custody rung).
 const HOLD_REFUSED: &str = "training.refused";
-/// A returned run waits: no seat evaluator or trained-weight loader here.
+/// A returned run waits: no evaluator serves its target and recipe here.
 const HOLD_NO_EVALUATOR: &str = "training.no_evaluator";
 /// A returned question head stops: its receipt did not reproduce on this
 /// host's stack (FIX 7568), so it never serves.
 const HOLD_PARITY_FAILED: &str = "training.parity_failed";
 
 /// A seat evaluator: it scores the held-out bytes `open_training_held_out`
-/// served against the returned checkpoint, and records nothing itself.
+/// served against the returned checkpoint. It may retain run-bound verifier
+/// logs; the caller alone records the evaluation and advances its state.
 type TrainingEvaluator = Box<dyn Fn(&TrainingEvalInput) -> oneiron::Result<HeldOutResult>>;
 
 /// Trains, recovers or scores the run one leased `coach.training_run`
@@ -126,11 +129,17 @@ fn training_connector(
     )))
 }
 
-/// The evaluator for a returned run's seat. No seat evaluator or
-/// trained-weight loader ships yet: one registers here, and until then every
-/// returned run holds with `training.no_evaluator`.
-fn training_evaluator(_server: &SyncServer, _run: &TrainingRun) -> Option<TrainingEvaluator> {
-    None
+/// The local held-out evaluator for the question worker's recipe. Role
+/// recipes remain unavailable until their own adapters are implemented.
+fn training_evaluator(server: &SyncServer, run: &TrainingRun) -> Option<TrainingEvaluator> {
+    if !QuestionHeadTrainer::serves(&run.plan) {
+        return None;
+    }
+    let vault = Arc::clone(server.vault());
+    let run = run.clone();
+    Some(Box::new(move |input| {
+        question_evaluation::evaluate(&vault, &run, input)
+    }))
 }
 
 /// Hands an authorized run to its own thread, or holds it with the reason

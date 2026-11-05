@@ -1,6 +1,7 @@
 //! Amendment taxonomy: classes, causes, evidence and judgment types.
 
 use super::origin::UNKNOWN_EXECUTOR;
+use crate::edit_distance::OpSpan;
 use crate::edit_distance::myers::myers_line_diff;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -269,15 +270,52 @@ pub struct AmendmentJudgment {
     pub rejected: bool,
 }
 
+/// A substitution's position in one amendment's retained source: a recorded
+/// op span, or a reconstructed endpoint line (FIX 11344, 12715). The receipt's
+/// immutable delta source separates these namespaces; neither is an authority
+/// proof. Endpoint lines use the final artifact, zero peer and length one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct HunkRange {
+    pub artifact: EntityId,
+    pub peer_id: u64,
+    pub counter: i32,
+    pub len: u32,
+}
+
+impl HunkRange {
+    /// The range naming `span` of `artifact`'s retained window.
+    #[must_use]
+    pub fn from_span(artifact: EntityId, span: &OpSpan) -> Self {
+        Self {
+            artifact,
+            peer_id: span.peer_id,
+            counter: span.counter,
+            len: span.len,
+        }
+    }
+
+    /// A zero-based line in a reconstructed amendment's final endpoint.
+    /// Returns `None` when the position does not fit the stored counter.
+    #[must_use]
+    pub fn from_endpoint_line(artifact: EntityId, line: usize) -> Option<Self> {
+        Some(Self {
+            artifact,
+            peer_id: 0,
+            counter: i32::try_from(line).ok()?,
+            len: 1,
+        })
+    }
+}
+
 /// One changed hunk as judged: the label it stands at after the floor, and
-/// the identities of the substitutions it made.
+/// the recorded changes or reconstructed lines its substitutions were located at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HunkLabel {
     pub class: AmendmentClass,
-    /// The miner's digests of the hunk's normalized substitutions, at the
-    /// miner's own extraction granularity; empty when the hunk makes none.
-    /// Identities, never the hunk's text.
-    pub substitution_refs: Vec<String>,
+    /// The miner's ranges for the hunk's substitutions, at the miner's own
+    /// extraction granularity; empty when the hunk makes none or its retained
+    /// source does not read. Ranges, never the hunk's text.
+    pub ranges: Vec<HunkRange>,
 }
 
 impl AmendmentJudgment {

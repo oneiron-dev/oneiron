@@ -3,10 +3,10 @@
 //! The engine owns the seat contract (`oneiron::dispatch_byoa::official_seats`);
 //! this module is the host half: owner settings in, a sign-in surface out, a
 //! local executor for the official signed-in CLIs, and the Dreamer executor
-//! that dispatches admitted work onto a seat. No type here can hold a vendor
-//! token either: settings carry labels and custody handles, the surface
-//! carries an argv or a browser URL the PERSON runs, and the control plane
-//! holds nothing.
+//! that dispatches admitted work onto a seat. Public settings carry labels
+//! and custody handles, and the surface carries an argv or a browser URL
+//! the PERSON runs. The private SIWC module keeps verified credentials only
+//! in a protected runtime-local file; the control plane holds nothing.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::checkout::{CheckoutId, CheckoutLeaseAct};
+use oneiron::code_sandbox::ProposalSpoolFloor;
 use oneiron::code_sandbox::SandboxBoundaryContract;
 use oneiron::code_sandbox::SandboxCredentialHandle;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
@@ -28,7 +29,6 @@ use oneiron::dispatch_byoa::{
     check_seat_placement, hosted_seat_bound, register_official_dreamer_providers,
     skipped_seats_note,
 };
-use oneiron::origin::smart_http::SpillFloor;
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor, DreamerParkCause,
     HostingPrivacyPosture, WakeAttemptContext,
@@ -40,6 +40,7 @@ use super::secret_destinations::RunSecretDestinations;
 
 mod drain;
 mod runner_work;
+pub(crate) mod siwc;
 mod surface;
 
 use drain::{Drain, drain_spooled};
@@ -82,7 +83,7 @@ pub struct OfficialCliSeatExecutor {
     /// The free disk the host keeps under the output this executor spools
     /// past memory (the server's `DiskFloor`): a write that would go below it
     /// stops the run with [`ByoaError::SpoolAtDiskFloor`]. `None` keeps none.
-    pub floor: Option<Arc<dyn SpillFloor>>,
+    pub floor: Option<Arc<dyn ProposalSpoolFloor>>,
     /// Raised by the host when the run's claim is lost under it (FIX 9320):
     /// the run's process is to stop. `None` watches nothing.
     pub stop: Option<Arc<std::sync::atomic::AtomicBool>>,

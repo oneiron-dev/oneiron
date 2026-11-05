@@ -10,11 +10,13 @@ use crate::sync::selector::admit_staged_window_update;
 use crate::window_key::WindowKey;
 
 use super::super::export_authority::{VaultImportClassification, VaultImportReceipt};
+use super::content::{StagedWindowPart, decode_staged_import_parts, encode_staged_import_parts};
 use super::export_foreign_receipt::{
     CONTENT, ForeignVaultImportSource, Hex64, RECEIPT, REMOTE_ENTITY_METADATA_CORRUPT, STAMPS,
     StagedVaultImport, VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus,
     content_key, encode_vault_import_receipt, receipt_id, source_bytes, vault_import_stage_receipt,
 };
+use super::payload::encode_staged_window_parts;
 use crate::error::{RecordError, RegistryError, SyncError};
 
 /// One-shot hook fired inside the staged-content read window, i.e. AFTER a
@@ -179,8 +181,12 @@ fn staged_from_pending(
     // receipt before judging and believe the durable state.
     let observed = vault_import_staged_content(vault, &receipt.receipt_id)?;
     let matches_receipt = |admitted: &[u8]| {
-        admitted.len() <= MAX_DECODED_PAYLOAD_BYTES
-            && receipt.admitted_update_digest == Some(*blake3::hash(admitted).as_bytes())
+        receipt.admitted_update_digest == Some(*blake3::hash(admitted).as_bytes())
+            && decode_staged_import_parts(admitted).is_ok_and(|parts| {
+                parts
+                    .iter()
+                    .all(|part| part.update.len() <= MAX_DECODED_PAYLOAD_BYTES)
+            })
     };
     let admitted = match observed {
         Some(admitted) if matches_receipt(&admitted) => admitted,
@@ -283,11 +289,27 @@ pub fn stage_foreign_vault_import(
         remote,
         FederationAdmissionRole::Guest,
         &id,
+        classification.exported_vault_id.as_ref(),
     ) {
-        Ok(a) if a.bytes().len() <= MAX_DECODED_PAYLOAD_BYTES => {
-            a.hold_staged(vault, key)?;
-            let stamps = a.staged_stamps();
-            (a.into_bytes(), stamps)
+        Ok(a)
+            if a.parts()
+                .all(|part| part.bytes().len() <= MAX_DECODED_PAYLOAD_BYTES) =>
+        {
+            let mut parts = Vec::new();
+            let mut records = Vec::new();
+            for part in a.parts() {
+                part.hold_staged(vault, part.key())?;
+                parts.push(StagedWindowPart {
+                    key: part.key().clone(),
+                    update: part.bytes().to_vec(),
+                    born_with: part.born_with().to_vec(),
+                });
+                records.push((part.key().clone(), part.staged_stamps()));
+            }
+            (
+                encode_staged_import_parts(&parts)?,
+                encode_staged_window_parts(&records)?,
+            )
         }
         Ok(_) => {
             let failed = VaultImportStageReceipt {

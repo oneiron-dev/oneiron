@@ -182,19 +182,27 @@ impl Vault {
     }
 
     pub fn renew_symbols(&self, task: EntityId, holder: EntityId, now: u64) -> Result<SymbolLease> {
-        self.with_write_txn_grouped(|txn| {
-            let mut lease = load(&self.store, txn, task)?.ok_or(Error::EntityNotFound)?;
-            if lease.holder_ref != holder.to_hex() || !lease.held || lease.expires_at <= now {
-                return Err(Error::InvalidConfig(
-                    "symbol lease is not live for holder".to_owned(),
-                ));
-            }
-            lease.expires_at = now
-                .checked_add(lease.ttl_seconds)
-                .ok_or(Error::ArithmeticOverflow("symbol lease expiry"))?;
-            save(&self.store, txn, task, &lease)?;
-            Ok(lease)
-        })
+        self.with_write_txn_grouped(|txn| self.renew_symbols_in_txn(txn, task, holder, now))
+    }
+
+    pub(crate) fn renew_symbols_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        task: EntityId,
+        holder: EntityId,
+        now: u64,
+    ) -> Result<SymbolLease> {
+        let mut lease = load(&self.store, txn, task)?.ok_or(Error::EntityNotFound)?;
+        if lease.holder_ref != holder.to_hex() || !lease.held || lease.expires_at <= now {
+            return Err(Error::InvalidConfig(
+                "symbol lease is not live for holder".to_owned(),
+            ));
+        }
+        lease.expires_at = now
+            .checked_add(lease.ttl_seconds)
+            .ok_or(Error::ArithmeticOverflow("symbol lease expiry"))?;
+        save(&self.store, txn, task, &lease)?;
+        Ok(lease)
     }
 
     pub fn release_symbols(&self, task: EntityId, holder: EntityId) -> Result<bool> {
@@ -238,7 +246,16 @@ pub(crate) fn symbols_ready(
     let Some(lease) = load(store, txn, task)? else {
         return Ok(true);
     };
+    if run_declaration_over(&lease, now) {
+        return Ok(true);
+    }
     Ok(blockers(store, txn, task, &lease.symbols, now)?.is_empty())
+}
+
+/// Whether `lease` is a leased run's declaration that expired: that run's
+/// alone, which the TASK's next try never takes over (FIX 7068).
+fn run_declaration_over(lease: &SymbolLease, now: u64) -> bool {
+    lease.run.is_some() && lease.expires_at <= now
 }
 
 pub(crate) fn acquire_symbols(
@@ -248,6 +265,12 @@ pub(crate) fn acquire_symbols(
     now: u64,
 ) -> Result<()> {
     if let Some(mut lease) = load(store, txn, task)? {
+        // The next try declares its own: an expired run's declaration goes,
+        // never reacquired under a fence no run of this try names.
+        if run_declaration_over(&lease, now) {
+            LEASES.delete(store, txn, &task)?;
+            return Ok(());
+        }
         if !blockers(store, txn, task, &lease.symbols, now)?.is_empty() {
             return Err(Error::ConcurrentWrite("overlapping symbol lease"));
         }

@@ -18,7 +18,7 @@ use crate::error::Result;
 use crate::sync::EphemeralStore;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use crate::write_envelope::WriteEnvelope;
-use oneiron_model::llm::BudgetGuard;
+use oneiron_model::llm::{BudgetGuard, WorkCancel};
 
 use super::deadline::{WakeCancellation, WakePassDeadline};
 
@@ -216,6 +216,10 @@ pub struct WakeAttemptContext<'a> {
     /// running attempt polls it at its boundaries and parks, resumable,
     /// when raised. `None` outside a driven pass: nothing is ever asked.
     pub cancel: Option<&'a WakeCancellation>,
+    /// The pass's device-work cancellation (FIX 11963): an attempt admits
+    /// its device work under a clone, so tripping it aborts in-flight
+    /// device work with the pass. `None` admits unlinked, as before.
+    pub device_cancel: Option<WorkCancel>,
     pub budget_id: &'a str,
     pub now_ms: u64,
     /// One frozen LMDB ledger revision for this entire wake, if the driver
@@ -429,15 +433,17 @@ pub trait DreamerAttemptExecutor {
         ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution>;
 
-    /// Runs one window of plain Micro consolidation partitions the driver
+    /// Runs one window of plain Micro or Meso consolidation partitions the driver
     /// admitted back to back (FIX 12487): their extractions may overlap,
-    /// but outcomes come back in window order and every commit lands
-    /// serially in that order, so the committed rows equal serial
+    /// but outcomes come back in window order and every partition commit
+    /// lands serially in that order, so the committed rows equal serial
     /// `execute` calls over the same attempts. The window holds only
-    /// plain partition attempts (Micro kind, the scope's own attempt
-    /// type, a Ready prepared plan, no thing branch); a wrapper that
-    /// intercepts other shapes never sees its own shape here and may
-    /// forward the window whole. The default runs the window serially.
+    /// plain partition attempts (a Micro or Meso kind, the scope's own attempt
+    /// type, a Ready prepared plan, no thing branch) and sieve rung jobs
+    /// the wake's preparation holds, which run whole side by side (each
+    /// commits only its own span's reading); a wrapper that intercepts
+    /// other shapes never sees its own shape here and may forward the
+    /// window whole. The default runs the window serially.
     async fn execute_partition_window<'w>(
         &mut self,
         window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
@@ -468,6 +474,19 @@ pub trait DreamerAttemptExecutor {
     /// admits program attempts only to one that does, so a pass whose host
     /// binds no program runtime admits none and changes nothing else.
     fn runs_turn_programs(&self) -> bool {
+        false
+    }
+
+    /// Whether this executor runs host-model Coach jobs (`coach.host`).
+    /// Opt in only when `execute` handles that queue's jobs; otherwise the
+    /// pass leaves them to the host's separate Coach consumer.
+    fn runs_coach_host_jobs(&self) -> bool {
+        false
+    }
+
+    /// Whether this executor runs Coach heals (`coach.heal`). Independent
+    /// of host-job support: `execute` must handle heals before opting in.
+    fn runs_coach_heals(&self) -> bool {
         false
     }
 }

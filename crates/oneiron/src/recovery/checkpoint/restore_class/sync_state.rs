@@ -24,6 +24,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::AUTHORITY_SLIP_PROOF_NOT_BEFORE, LIVE),
     (&t::AUTHORITY_SLIP_REPLAY_NONCE, LIVE),
     (&t::AUTHORITY_WITHDRAWN_GRANT, LIVE),
+    (&t::CRITIC_UNREADABLE_REPORTED, LIVE),
     (&t::DOCUMENT_SNAPSHOT, CONTENT),
     (&t::SYNC_D_ROOT, LIVE),
     (&t::WINDOW_SNAPSHOT, CONTENT),
@@ -115,6 +116,15 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_RESIDENCE_BUNDLE_ATTEMPT, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_SWEPT, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_CURSOR, LIVE),
+    // The home's queue of sealed world updates and this machine's place in
+    // it and its outbox follow the live vault, as the sealed bundle's
+    // custody and cursor do (DEC-0005 fix 8, FIX 12586).
+    (&t::SYNC_SEALED_UPDATE_CURSOR, LIVE),
+    (&t::SYNC_SEALED_UPDATE_ENTRY, LIVE),
+    (&t::SYNC_SEALED_UPDATE_ID, LIVE),
+    (&t::SYNC_SEALED_UPDATE_QUEUE, LIVE),
+    (&t::SYNC_SEALED_UPDATE_OUTBOX, LIVE),
+    (&t::SYNC_SEALED_UPDATE_OUTBOX_ID, LIVE),
     (&t::SYNC_RETAINED_WORK_CARRIER, CONTENT),
     (&t::SYNC_RETAINED_WORK_CURSOR, CONTENT),
     (&t::SYNC_MAINTENANCE_RETAINED_WORK, CONTENT),
@@ -142,6 +152,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_U_ROOT, LIVE),
     (&t::SYNC_U_W, CONTENT),
     (&t::USAGE_EVENT, LIVE),
+    (&t::USAGE_SETTLEMENT_PENDING, LIVE),
     (&t::USAGE_METER_ROLLUP, LIVE),
     (&t::USAGE_METER, LIVE),
     (&t::USAGE_REPAIR_RECEIPT, LIVE),

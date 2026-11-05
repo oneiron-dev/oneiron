@@ -35,17 +35,20 @@ pub(super) use transport::next_request_id;
 // restore paths.
 pub(super) use buffer::SnapshotRegion;
 pub(super) use session_ops::{export as session_export, import as session_import};
+// The launch tie, shared with the HTTP routes (FIX 9296).
+pub(super) use super::exl3_evidence::Tie;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::BudgetLease;
 use oneiron::llm::run_admission::{WorkContext, WorkPhysical};
 use oneiron::llm::{
     INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId, SchedulingReceipt,
-    SegmentManifest, WorkerBuildEvidence, WorkerFailure,
+    SegmentManifest, WorkerFailure,
 };
 use oneiron_driver::{WorkEnvelope, WorkerActivity};
 use oneiron_llm_openai::{
@@ -53,16 +56,11 @@ use oneiron_llm_openai::{
     OpenAiCompatProviderStream, OpenAiCompatStreamFrame, OpenAiCompatTransport,
     OpenAiCompatTransportError,
 };
-use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use super::openai::{OpenAiHttp, carry_reply_evidence, send_format};
 use super::worker_host::{self, NativeRoute};
 use transport::{Call, Channel, Cut, Event, Start};
-
-/// The usage key a worker's answer echoes its launch manifest's digest
-/// under, as the worker probe reads it.
-const LAUNCH_MANIFEST_KEY: &str = "launch_manifest";
 
 /// What a worker's `resident_mib` must say it measures to be its resident
 /// memory: this process's CUDA allocator reservations.
@@ -103,6 +101,14 @@ impl NativeExl3Transport {
         worker_host::native_route(&self.provider, wire_model)
     }
 
+    /// The HTTP fallback's tie (FIX 9296): the managed launch evidence for
+    /// this call's wire model now, before its HTTP send.
+    fn http_tie(&self, body: &JsonValue) -> Option<Tie> {
+        let wire_model = body.get("model").and_then(JsonValue::as_str)?;
+        let evidence = worker_host::managed_http_evidence(&self.provider, wire_model)?;
+        Some(Tie::new(evidence.manifest_sha256, evidence.backend_epoch))
+    }
+
     /// The body as HTTP would send it: its output cap and response format.
     fn shaped(&self, mut body: JsonValue) -> JsonValue {
         self.http.cap.apply(&mut body);
@@ -122,7 +128,8 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         lease: &'a BudgetLease,
     ) -> OpenAiCompatFuture<'a> {
         let Some(route) = self.route(&request.body) else {
-            return self.http.execute(request, lease);
+            let tie = self.http_tie(&request.body);
+            return self.http.execute_with_tie(request, lease, tie);
         };
         let segments = request.host_segments;
         let body = self.shaped(request.body);
@@ -141,7 +148,8 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         lease: &'a BudgetLease,
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
         let Some(route) = self.route(&request.body) else {
-            return self.http.stream(request, lease);
+            let tie = self.http_tie(&request.body);
+            return self.http.stream_with_tie(request, lease, tie);
         };
         let segments = request.host_segments;
         let body = self.shaped(request.body);
@@ -162,47 +170,6 @@ impl OpenAiCompatTransport for NativeExl3Transport {
             },
             Streaming::step,
         )))
-    }
-}
-
-/// What a sent call answers to: its manifest and epoch check (FIX 9195).
-struct Tie {
-    manifest_sha256: String,
-    epoch: String,
-}
-
-impl Tie {
-    /// Keeps each receipt's verified-artifacts claim only when the answer
-    /// echoes this launch's manifest and the receipt names this epoch;
-    /// otherwise the receipt's build is unknown.
-    fn apply(&self, body: &mut JsonValue) {
-        let Some(usage) = body.get_mut("usage").and_then(JsonValue::as_object_mut) else {
-            return;
-        };
-        let echoed = usage.get(LAUNCH_MANIFEST_KEY).and_then(JsonValue::as_str)
-            == Some(self.manifest_sha256.as_str());
-        let Some(JsonValue::Array(calls)) = usage.get_mut(INFERENCE_CALLS_KEY) else {
-            return;
-        };
-        for call in calls {
-            let Some(worker) = call.get_mut("worker").and_then(JsonValue::as_object_mut) else {
-                continue;
-            };
-            let claimed = worker
-                .get("build_evidence")
-                .and_then(|evidence| WorkerBuildEvidence::deserialize(evidence).ok())
-                == Some(WorkerBuildEvidence::VerifiedArtifacts);
-            let epoch = worker
-                .get("identity")
-                .and_then(|identity| identity.get("backend_epoch"))
-                .and_then(JsonValue::as_str);
-            if claimed
-                && !(echoed && epoch == Some(self.epoch.as_str()))
-                && let Ok(unknown) = serde_json::to_value(WorkerBuildEvidence::Unknown)
-            {
-                worker.insert("build_evidence".to_owned(), unknown);
-            }
-        }
     }
 }
 
@@ -322,7 +289,7 @@ async fn begin(
         Some(lease),
         session,
         Some(&schedule),
-        Some(route.worker.spec().worker_id.as_str()),
+        Some(&route.worker),
     )
     .await;
     let refused = matches!(
@@ -344,7 +311,7 @@ async fn begin(
             Some(lease),
             None,
             Some(&schedule),
-            Some(route.worker.spec().worker_id.as_str()),
+            Some(&route.worker),
         )
         .await;
     }
@@ -373,10 +340,7 @@ async fn begin(
             };
             Ok(Begun::Sent(Sent {
                 call,
-                tie: Tie {
-                    manifest_sha256,
-                    epoch,
-                },
+                tie: Tie::new(Some(manifest_sha256), Some(epoch)),
                 physical,
                 registration,
                 _foreground: foreground,
@@ -409,6 +373,13 @@ async fn execute(
         .get("model")
         .and_then(JsonValue::as_str)
         .map(str::to_owned);
+    // FIX 11961: the child's stop may land while its call runs. The
+    // context's cancellation is retained beside the call: a raised flag
+    // aborts the wait, and the dropped call sends the worker-side cancel
+    // and releases the grant's custody. A trip between the flag check and
+    // the wait below surfaces at the next wire event.
+    let device_cancel = context.cancel.shared();
+    let device_cancel_wake = context.cancel.shared_notify();
     let mut sent = match begin(&route, &body, false, segments.as_deref(), context).await? {
         Begun::Sent(sent) => sent,
         Begun::Answered(reply) => return Ok(reply),
@@ -416,15 +387,38 @@ async fn execute(
     // One physical request, observed from its send (FIX 9297, FIX 9417 pattern).
     let publisher = InferencePublisher::begin(lease);
     let mut last = loop {
-        match sent.call.next().await {
-            Ok(Event::Final(last)) => break last,
-            Ok(Event::Admitted(mark)) => report(&route, &mark),
-            Ok(Event::Scheduled(ack)) => report_stats(&route, ack.stats.as_ref()),
-            Ok(Event::FirstToken | Event::Token { .. }) => {}
-            Err(Cut(error)) => {
-                refresh_after_cut(&route);
-                return Err(error);
+        // Arm the wait before reading the flag (FIX 11961): a stop landing
+        // between the two still trips the flag read, so no trip waits on
+        // the next wire event to be seen.
+        let wake = device_cancel_wake.notified();
+        tokio::pin!(wake);
+        if device_cancel.load(Ordering::Acquire) {
+            // The pre-grant cancel maps here too (FIX 11961): a stop is a
+            // cut stream for the caller's own retry authority, never a
+            // contradiction of a pin.
+            return Err(OpenAiCompatTransportError::Connection);
+        }
+        tokio::select! {
+            () = &mut wake => {
+                return Err(OpenAiCompatTransportError::Connection);
             }
+            next = sent.call.next() => match next {
+                Ok(Event::Final(last)) => {
+                    // A stop that landed with the last frame aborts the
+                    // answer instead of returning success after stop.
+                    if device_cancel.load(Ordering::Acquire) {
+                        return Err(OpenAiCompatTransportError::Connection);
+                    }
+                    break last;
+                }
+                Ok(Event::Admitted(mark)) => report(&route, &mark),
+                Ok(Event::Scheduled(ack)) => report_stats(&route, ack.stats.as_ref()),
+                Ok(Event::FirstToken | Event::Token { .. }) => {}
+                Err(Cut(error)) => {
+                    refresh_after_cut(&route);
+                    return Err(error);
+                }
+            },
         }
     };
     report(&route, &last);
@@ -567,11 +561,9 @@ fn record_receipt(
     if let Some(mut receipt) = receipt {
         receipt.scheduling = scheduling;
         receipt.physical = Some(sent.physical);
-        worker_host::report_receipt(
-            &route.worker.spec().worker_id,
-            &sent.tie.epoch,
-            receipt.clone(),
-        );
+        if let Some(epoch) = sent.tie.epoch() {
+            worker_host::report_receipt(&route.worker.spec().worker_id, epoch, receipt.clone());
+        }
         Some(receipt)
     } else {
         None
@@ -629,7 +621,7 @@ fn report(route: &NativeRoute, last: &JsonValue) {
 /// polls.
 fn report_stats(route: &NativeRoute, stats: Option<&JsonValue>) {
     if let Some(stats) = stats {
-        worker_host::report_device_stats(&route.worker.spec().worker_id, stats);
+        worker_host::report_device_stats(&route.worker, stats);
     }
     if let Some(activity) = stats.and_then(activity_of) {
         worker_host::report_device_activity(&route.worker, activity);

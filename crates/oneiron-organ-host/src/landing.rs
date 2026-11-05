@@ -4,7 +4,7 @@
 //! call receipt: the organ and its version are the process, the args digest
 //! the replay key, the vault versions it read the inputs.
 
-use oneiron::edit_settle::{MadeByReader, NativeOutput, PendingProposalView};
+use oneiron::edit_settle::{NativeOutput, PendingProposalView};
 use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
@@ -47,6 +47,12 @@ impl OrganOutcome {
     /// Each export file this call made, as a native output for its artifact.
     /// The organ's report and the host's call receipt travel with each; a
     /// call that made several files names them `<run_ref>/<n>`.
+    ///
+    /// A report the JSON writer cannot represent (a map key that is not a
+    /// string, boolean, integer or finite float) keeps the baseline
+    /// whole-report null, as the previous reader did when its conversion
+    /// failed; only the depth of representable reports is fixed here
+    /// (FIX 12431).
     #[must_use]
     pub fn native_outputs(&self, run_ref: &str, made_by: Option<&MadeBy>) -> Vec<NativeOutput> {
         let receipt = to_value(&self.receipt).unwrap_or_default();
@@ -54,9 +60,7 @@ impl OrganOutcome {
             (Value::from("report"), self.report.clone()),
             (Value::from("receipt"), receipt),
         ]);
-        let msgpack = rmpv_of(&both);
-        let report = NativeOutput::report_from_msgpack(&msgpack);
-        dismantle(msgpack);
+        let report = report_json_text(&both).unwrap_or_else(|| "null".to_owned());
         let several = self.outputs.len() > 1;
         self.outputs
             .iter()
@@ -77,91 +81,215 @@ impl OrganOutcome {
     }
 }
 
-/// `value` as the engine's report reader takes it, built bottom-up with a
-/// stack of its own, so a deep report costs no thread stack here.
-fn rmpv_of(value: &Value) -> rmpv::Value {
-    enum Step<'a> {
-        Enter(&'a Value),
-        Array(usize),
-        Map(usize),
+/// `value` as JSON text, written iteratively with a heap stack so a deep
+/// report costs no thread stack (FIX 12431). Map entries keep insertion
+/// order with the last value winning a repeated key, as the previous
+/// reader did; a key that is not a string, boolean, integer or finite
+/// float yields `None` so the caller keeps the baseline whole-report null.
+/// Float values that are not finite become null leaves, as before.
+fn report_json_text(report: &Value) -> Option<String> {
+    fn key_text(key: &Value) -> Option<String> {
+        match key {
+            Value::String(text) => Some(text.clone()),
+            Value::Boolean(flag) => Some(flag.to_string()),
+            Value::Integer(n) => Some(n.to_string()),
+            Value::F32(f) => NativeOutput::json_f32_text(*f),
+            Value::F64(f) => NativeOutput::json_f64_text(*f),
+            _ => None,
+        }
     }
-    let mut built: Vec<rmpv::Value> = Vec::new();
-    let mut steps = vec![Step::Enter(value)];
-    while let Some(step) = steps.pop() {
-        match step {
-            Step::Enter(Value::Array(items)) => {
-                steps.push(Step::Array(items.len()));
-                steps.extend(items.iter().rev().map(Step::Enter));
-            }
-            Step::Enter(Value::Map(entries)) => {
-                steps.push(Step::Map(entries.len()));
-                for (key, item) in entries.iter().rev() {
-                    steps.push(Step::Enter(item));
-                    steps.push(Step::Enter(key));
+
+    fn push_escaped(out: &mut String, text: &str) {
+        out.push('"');
+        for c in text.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                '\x08' => out.push_str("\\b"),
+                '\x0C' => out.push_str("\\f"),
+                c if (c as u32) < 0x20 => {
+                    const HEX: &[u8; 16] = b"0123456789abcdef";
+                    let n = c as u32;
+                    out.push_str("\\u00");
+                    out.push(HEX[(n >> 4) as usize] as char);
+                    out.push(HEX[(n & 0xF) as usize] as char);
                 }
+                c => out.push(c),
             }
-            Step::Enter(leaf) => built.push(rmpv_leaf(leaf)),
-            Step::Array(len) => {
-                let items = built.split_off(built.len().saturating_sub(len));
-                built.push(rmpv::Value::Array(items));
+        }
+        out.push('"');
+    }
+
+    fn push_byte_array(out: &mut String, bytes: &[u8]) {
+        out.push('[');
+        for (n, byte) in bytes.iter().enumerate() {
+            if n > 0 {
+                out.push(',');
             }
-            Step::Map(len) => {
-                let flat = built.split_off(built.len().saturating_sub(len * 2));
-                let mut flat = flat.into_iter();
-                let mut entries = Vec::with_capacity(len);
-                while let (Some(key), Some(item)) = (flat.next(), flat.next()) {
-                    entries.push((key, item));
-                }
-                built.push(rmpv::Value::Map(entries));
+            out.push_str(&byte.to_string());
+        }
+        out.push(']');
+    }
+
+    fn push_flat(out: &mut String, value: &Value) {
+        match value {
+            Value::Nil => out.push_str("null"),
+            Value::Boolean(flag) => out.push_str(if *flag { "true" } else { "false" }),
+            Value::Integer(n) => out.push_str(&n.to_string()),
+            // A 32-bit float travels as the 64-bit value the JSON reader
+            // holds it in; a float that is not finite is a null leaf.
+            Value::F32(f) => out.push_str(
+                &NativeOutput::json_f64_text(f64::from(*f)).unwrap_or_else(|| "null".to_owned()),
+            ),
+            Value::F64(f) => {
+                out.push_str(&NativeOutput::json_f64_text(*f).unwrap_or_else(|| "null".to_owned()))
+            }
+            Value::String(text) => push_escaped(out, text),
+            Value::Binary(bytes) => push_byte_array(out, bytes),
+            Value::Ext(kind, bytes) => {
+                out.push('[');
+                out.push_str(&kind.to_string());
+                out.push(',');
+                push_byte_array(out, bytes);
+                out.push(']');
+            }
+            Value::Array(_) | Value::Map(_) => {
+                unreachable!("containers take the frame path")
             }
         }
     }
-    built.pop().unwrap_or(rmpv::Value::Nil)
-}
 
-fn rmpv_leaf(value: &Value) -> rmpv::Value {
-    match value {
-        Value::Nil | Value::Array(_) | Value::Map(_) => rmpv::Value::Nil,
-        Value::Boolean(flag) => rmpv::Value::Boolean(*flag),
-        Value::Integer(integer) => match (integer.as_u64(), integer.as_i64()) {
-            (Some(unsigned), _) => rmpv::Value::from(unsigned),
-            (None, Some(signed)) => rmpv::Value::from(signed),
-            (None, None) => rmpv::Value::Nil,
+    fn ordered_entries<'a>(entries: &'a [(Value, Value)]) -> Option<Vec<(String, &'a Value)>> {
+        let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut ordered: Vec<(String, &'a Value)> = Vec::new();
+        for (key, value) in entries {
+            let text = key_text(key)?;
+            if let Some(&at) = index.get(&text) {
+                ordered[at].1 = value;
+            } else {
+                index.insert(text.clone(), ordered.len());
+                ordered.push((text, value));
+            }
+        }
+        Some(ordered)
+    }
+
+    enum Frame<'a> {
+        Array {
+            items: &'a [Value],
+            idx: usize,
         },
-        Value::F32(float) => rmpv::Value::F32(*float),
-        Value::F64(float) => rmpv::Value::F64(*float),
-        Value::String(text) => rmpv::Value::from(text.as_str()),
-        Value::Binary(bytes) => rmpv::Value::Binary(bytes.clone()),
-        Value::Ext(kind, bytes) => rmpv::Value::Ext(*kind, bytes.clone()),
+        Map {
+            entries: Vec<(String, &'a Value)>,
+            idx: usize,
+        },
     }
-}
 
-/// Drops an [`rmpv::Value`] child by child, as [`Value`] drops itself.
-fn dismantle(value: rmpv::Value) {
-    let mut stack = vec![value];
-    while let Some(mut value) = stack.pop() {
-        match &mut value {
-            rmpv::Value::Array(items) => stack.append(items),
-            rmpv::Value::Map(entries) => {
-                for (key, item) in std::mem::take(entries) {
-                    stack.push(key);
-                    stack.push(item);
-                }
-            }
-            _ => {}
+    let mut out = String::new();
+    let mut stack: Vec<Frame<'_>> = Vec::new();
+    match report {
+        Value::Array(items) => {
+            out.push('[');
+            stack.push(Frame::Array { items, idx: 0 });
+        }
+        Value::Map(entries) => {
+            out.push('{');
+            stack.push(Frame::Map {
+                entries: ordered_entries(entries)?,
+                idx: 0,
+            });
+        }
+        leaf => {
+            push_flat(&mut out, leaf);
+            return Some(out);
         }
     }
+    while let Some(frame) = stack.last_mut() {
+        match frame {
+            Frame::Array { items, idx } => {
+                if *idx >= items.len() {
+                    out.push(']');
+                    stack.pop();
+                    continue;
+                }
+                if *idx > 0 {
+                    out.push(',');
+                }
+                let child = &items[*idx];
+                *idx += 1;
+                match child {
+                    Value::Array(nested) => {
+                        out.push('[');
+                        stack.push(Frame::Array {
+                            items: nested,
+                            idx: 0,
+                        });
+                    }
+                    Value::Map(nested) => {
+                        out.push('{');
+                        stack.push(Frame::Map {
+                            entries: ordered_entries(nested)?,
+                            idx: 0,
+                        });
+                    }
+                    leaf => push_flat(&mut out, leaf),
+                }
+            }
+            Frame::Map { entries, idx } => {
+                if *idx >= entries.len() {
+                    out.push('}');
+                    stack.pop();
+                    continue;
+                }
+                if *idx > 0 {
+                    out.push(',');
+                }
+                let at = *idx;
+                let (key, child) = {
+                    let (key, value) = &entries[at];
+                    (key.clone(), *value)
+                };
+                push_escaped(&mut out, &key);
+                out.push(':');
+                *idx += 1;
+                match child {
+                    Value::Array(nested) => {
+                        out.push('[');
+                        stack.push(Frame::Array {
+                            items: nested,
+                            idx: 0,
+                        });
+                    }
+                    Value::Map(nested) => {
+                        out.push('{');
+                        stack.push(Frame::Map {
+                            entries: ordered_entries(nested)?,
+                            idx: 0,
+                        });
+                    }
+                    leaf => push_flat(&mut out, leaf),
+                }
+            }
+        }
+    }
+    Some(out)
 }
 
 /// Offers every export file of one organ call to `artifact`, each a proposal
-/// waiting for Keep, with the call receipt as its made_by. No caller
-/// credential reaches this rail, so the envelope waits as the host built it
-/// ([`MadeByReader::OrganReceipt`], FIX 1229).
+/// waiting for Keep, with the call receipt as its made_by. A call a principal
+/// submitted has its envelope's trigger and receipt inputs admitted through
+/// that principal's own read as each proposal is retained (FIX 9310); a
+/// host's own call, with no submitter, keeps the envelope as the host built
+/// it ([`oneiron::edit_settle::MadeByReader::OrganReceipt`], FIX 1229).
 ///
 /// # Errors
 ///
 /// The vault's refusal of an output: another media type than the artifact's,
-/// an empty file, a ref already settled or waiting.
+/// an empty file, a ref already settled or waiting, or a source the
+/// submitter cannot read.
 pub fn propose_organ_outputs(
     vault: &Vault,
     artifact: &EntityId,
@@ -169,6 +297,7 @@ pub fn propose_organ_outputs(
     run_ref: &str,
     trigger: Option<MadeByTrigger>,
     actor: WriteActor,
+    submitter: Option<EntityId>,
 ) -> oneiron::Result<Vec<PendingProposalView>> {
     let now = vault.now_recorded_at();
     let made_by = outcome.made_by(actor.entity_ref(), trigger, now);
@@ -176,13 +305,8 @@ pub fn propose_organ_outputs(
         .native_outputs(run_ref, Some(&made_by))
         .iter()
         .map(|output| {
-            vault.propose_native_output(
-                artifact,
-                output,
-                Some(MadeByReader::OrganReceipt),
-                actor,
-                now,
-            )
+            let reader = vault.organ_landing_reader(submitter)?;
+            vault.propose_native_output(artifact, output, Some(reader), actor, now)
         })
         .collect()
 }

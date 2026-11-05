@@ -878,7 +878,8 @@ def mcp_input_dispatch(row):
         # A caller door keeps the invocation its call hands it in its own rows:
         # a call that keeps no record hands its hidden id (FIX 5381).
         caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
-        door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input)).await'
+        fold_hooks_arg = ', pre_hooked_fold' if name == 'self.fold' else ''
+        door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input{fold_hooks_arg})).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
         # A source door's failure keeps its program's feedback beside its
@@ -1106,7 +1107,8 @@ async fn execute_agent_verb_listing(
     } else {
         (memory, task_work_turn)
     };
-    let ran = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks).await;
+    let pre_hooked_fold = oneiron::code_run::actions::PreHookedFold::from_pre(&hooks);
+    let ran = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks, pre_hooked_fold).await;
     // A row that fails after its pre chain ran keeps a session-only call's
     // pre hook records and runs no post chain (FIX 5527).
     let (output, source, carrier, epoch) = match ran {
@@ -1136,9 +1138,10 @@ async fn execute_agent_verb_row(
         surface: McpRowSurface,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+        pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
-        let run_writes = surface.run.as_ref().and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
-        crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks)).await
+        let run_writes = surface.run.as_ref().and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
+        crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold)).await
     }
 
 /// [`execute_agent_verb_row`]'s row, inside the run's write envelope. Each
@@ -1152,6 +1155,7 @@ async fn execute_agent_verb_row_on(
         surface: McpRowSurface,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+        pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
     result += invalid + 'match tool {\n'
@@ -1533,7 +1537,9 @@ def facade_dispatch(facade_rows):
             # A caller door keeps the invocation its call hands it in its own
             # rows: a call that keeps no record hands its hidden id (FIX 5381).
             caller_arg = 'caller, Some(oneiron::task_verb::verb_hook_boundary::door_invocation(&server.vault, &hooks)), '
-            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}facade_door_input(&mut hooks)?).await'
+            # Only the public fold's Mark action repeats this same hook name.
+            fold_hooks_arg = ', oneiron::code_run::actions::PreHookedFold::from_pre(&hooks)' if name == 'self.fold' else ''
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}).await'
             # A door that fails after the pre chain ran (the door itself, its
             # input's decode or its answer's encoding) keeps a session-only
             # call's pre hook records and runs no post chain (FIX 5527).
@@ -1773,6 +1779,17 @@ def host_door_rows(facade_rows):
     out += '            _ => return None,\n        })\n    }\n}\n'
     return out
 
+# FIX 10471: `rust_feature` gates one CORE Rust typed emission behind a Cargo
+# feature, so a featureless build keeps no reference to the gated
+# implementation. The field is the one source: every CORE emitter in
+# `outputs()` reads it through this helper, and every other surface (SERVER
+# MCP input/args, routes/dispatch, remote/native, TS/HTTP/catalog) stays
+# unconditional.
+def core_cfg(row):
+    'The cfg attribute gating one CORE Rust typed emission of this row, or empty.'
+    feature = row.get('rust_feature')
+    return f'#[cfg(feature = "{feature}")] ' if feature else ''
+
 def outputs():
     facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"] + BOARD_HOST_ROWS
     core = HEADER
@@ -1789,7 +1806,7 @@ def outputs():
     core += "// GLOBAL STATE: compiled verb schemas are immutable, vault-independent metadata; share one table across callers.\n"
     core += "static SCHEMAS: std::sync::LazyLock<std::collections::HashMap<&'static str, serde_json::Value>> = std::sync::LazyLock::new(|| std::collections::HashMap::from([\n"
     for r in SCHEMA_ROWS:
-        core += f'({json.dumps(r["name"])}, crate::code_run::vault_read::request_schema::<{r["input"]}>()),\n'
+        core += f'{core_cfg(r)}({json.dumps(r["name"])}, crate::code_run::vault_read::request_schema::<{r["input"]}>()),\n'
     core += "])); SCHEMAS.get(verb) }\n"
     # DOOR-115: the rows the OpenAPI document publishes, and each one's answer
     # schema, read from its `output` type as `input_schema` reads its input.
@@ -1799,7 +1816,7 @@ def outputs():
     core += "/// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.\n"
     core += "pub fn output_schema(verb: &str) -> Option<serde_json::Value> { Some(match verb {\n"
     for r in openapi_rows:
-        core += f'{json.dumps(r["name"])} => crate::code_run::vault_read::request_schema::<{r["output"]}>(),\n'
+        core += f'{core_cfg(r)}{json.dumps(r["name"])} => crate::code_run::vault_read::request_schema::<{r["output"]}>(),\n'
     core += "_ => return None, }) }\n"
     # A board row's facade door takes its host projection, not the board
     # shape `input_schema` states for MCP and code mode: the OpenAPI
@@ -1815,7 +1832,7 @@ def outputs():
     core += "pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> { mcp_arguments_schema_from_input(verb, input_schema(verb)?) }\n"
     core += "pub fn mcp_arguments_schema_from_input(verb: &str, schema: &serde_json::Value) -> Option<serde_json::Value> { let mut properties = serde_json::Map::new(); let required: &[&str] = match verb {\n"
     for r in mcp_rows():
-        core += f'{json.dumps(r["name"])} => {{\n'
+        core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{\n'
         for field, path in r['mcp_fields'].items():
             pointer = '' if path == '$' else ''.join('/properties/' + part for part in path.removeprefix('=').split('.'))
             if path == '$':
@@ -1832,9 +1849,9 @@ def outputs():
             # One verb, two served shapes: the board/MCP shape and the
             # facade's host projection. Either admits; each door decodes
             # its own shape after this check.
-            core += f'{json.dumps(r["name"])} => {{ if decode::<{r["input"]}>(value.clone()).is_err() {{ let _host: {board_host_input[r["name"]]} = decode(value.clone())?; }} }},\n'
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{ if decode::<{r["input"]}>(value.clone()).is_err() {{ let _host: {board_host_input[r["name"]]} = decode(value.clone())?; }} }},\n'
         else:
-            core += f'{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
     core += '_ => return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), } Ok(()) }\n'
     # Code mode binds its own guest, so a rewrite there validates the original
     # browser input, never the public live-run attachment wrapper.
@@ -1856,9 +1873,9 @@ def outputs():
         if r.get('board_host'):
             # No memory fn of this name: it is the board fn's. An embedded
             # handle answers the host-only refusal, as other host rows do.
-            core += f'{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
         else:
-            core += f'{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
     core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n})\n}\n'
     # A browser row's one door: code mode hands its whole input to the run's
     # browser session and takes the verb's whole output back.
@@ -1877,11 +1894,11 @@ def outputs():
         result = record_refs_check(r) + result
         result = prose_links_check(r) + result
         if r.get('context') == 'browser':
-            core += f"pub fn {method}(driver: &mut dyn oneiron_browser::BrowserDriver, {binding}: {r['input']}) -> Result<{r['output']}, oneiron_browser::BrowserError> {{ {result} }}\n"
+            core += f"{core_cfg(r)}pub fn {method}(driver: &mut dyn oneiron_browser::BrowserDriver, {binding}: {r['input']}) -> Result<{r['output']}, oneiron_browser::BrowserError> {{ {result} }}\n"
         elif r.get('context') == 'board':
-            core += f"pub fn {method}<S: crate::board_verb::LiveBoardSource>(context: &mut crate::board_verb::BoardVerbContext<'_, S>, {binding}: {r['input']}) -> Result<{r['output']}, crate::board_verb::BoardVerbError> {{ {result} }}\n"
+            core += f"{core_cfg(r)}pub fn {method}<S: crate::board_verb::LiveBoardSource>(context: &mut crate::board_verb::BoardVerbContext<'_, S>, {binding}: {r['input']}) -> Result<{r['output']}, crate::board_verb::BoardVerbError> {{ {result} }}\n"
         else:
-            core += f"pub fn {method}(memory: &Memory<'_>, {binding}: {r['input']}) -> MemoryResult<{r['output']}> {{ {checks} {result} }}\n"
+            core += f"{core_cfg(r)}pub fn {method}(memory: &Memory<'_>, {binding}: {r['input']}) -> MemoryResult<{r['output']}> {{ {checks} {result} }}\n"
     # FIX 1210: the record-ref check a row's engine fn runs before its call,
     # alone, for a door that refuses a ref its caller cannot read before that
     # fn runs: the refusal is receipted as the fn's would be, and no call runs.
@@ -2310,7 +2327,7 @@ def main():
         print('\n'.join(INVENTORY.census(FACADE_ROWS)))
         for where, text in INVENTORY.opaques: print(f'  opaque: {where} ({text})')
         for where, text, reason in INVENTORY.fallbacks: print(f'  unread: {where} ({text}): {reason}')
-        # FIX 11534: docs/agent-sdk mirrors the generated facade types, so it follows every regeneration.
-        docs=subprocess.run([sys.executable,str(ROOT/'packages/oneiron/scripts/agent-docs.py')])
-        if docs.returncode: print(f'  agent-docs.py exited {docs.returncode}: run it by hand')
+    # The mirror follows the generated SDK files and checks its authored text too.
+    docs_args = ['--check'] if args.check else []
+    subprocess.run([sys.executable, str(ROOT/'packages/oneiron/scripts/agent-docs.py'), *docs_args], check=True)
 if __name__=='__main__': main()

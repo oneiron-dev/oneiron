@@ -19,7 +19,7 @@
 //! A stretch in a room keeps its members' own bounded acts: status reads it
 //! as their membership shows it, witness speaks in it as one of them, and
 //! the room's routes (`/v1/core/off-record/*`) save and export. Recalling
-//! everyone's overlay at once, writing or running in it, and discarding it
+//! everyone's overlay at once, running in it, and discarding it
 //! for the room answer `OFF_RECORD_ROOM_MANAGEMENT_CONSENT_UNAVAILABLE` to a
 //! caller on its roster ([`room_management`]), and a stranger the same 404
 //! as none.
@@ -33,7 +33,7 @@
 //!   caller's own credential handle (`Memory::recall_in_session`).
 //! - `vault.off_record.notes.create` and `.claims.upsert` write through the
 //!   session's handle into it (`Memory::create_note_in_session`,
-//!   `Memory::claim_upsert_in_session`).
+//!   `Memory::claim_upsert_in_session`), including a room's current members.
 //! - `self.off_record.execute` runs one entry of a durable code-mode run
 //!   bound to the session, on the server's code-mode host.
 //! - `self.off_record.results.list`, `.results.read`, `.waits.get` and
@@ -236,7 +236,7 @@ fn session_refusal(error: oneiron::Error, session_ref: &str) -> MemoryError {
 }
 
 /// A session row that would manage a room's stretch whole: read everyone's
-/// overlay at once, write or run in it, or discard it for the room (Engine
+/// overlay at once, run in it, or discard it for the room (Engine
 /// ruling 2026-10-19). The caller is on the room's roster, so the refusal
 /// names itself rather than reading as none. This is a missing consent
 /// record, not a location refusal: no record holds the room audience's
@@ -269,17 +269,31 @@ fn in_room(vault: &Vault, session_ref: &str) -> MemoryResult<bool> {
 }
 
 /// The stretch `session_ref`, bound for `caller` to manage with `verb`: one
-/// entered alone, the owner's to manage or its creator's. A room's stretch
-/// is [`room_management`] to a caller on its roster, checked before the
-/// name, and the same 404 as none to anyone else.
+/// entered alone, the owner's to manage or its creator's. Room members may
+/// instead take only the bounded scratch-write doors through [`bound_session`].
 fn managed_session<'vault>(
     vault: &'vault Vault,
     caller: &Caller,
     verb: &str,
     session_ref: &str,
 ) -> MemoryResult<OffRecordSession<'vault>> {
+    let session = bound_session(vault, caller, verb, session_ref)?;
+    if session.room()?.is_some() {
+        return Err(room_management(verb));
+    }
+    Ok(session)
+}
+
+/// Binds a solo stretch for its creator or owner, or a room stretch for a
+/// current member. This does not admit whole-room management.
+fn bound_session<'vault>(
+    vault: &'vault Vault,
+    caller: &Caller,
+    verb: &str,
+    session_ref: &str,
+) -> MemoryResult<OffRecordSession<'vault>> {
     let rooms = vault.off_record_session_vault();
-    let session = match caller {
+    match caller {
         Caller::Owner(owner) => rooms.bind_for(session_ref, owner.revalidate(vault)?),
         Caller::Principal { who, credential } => {
             live(vault, credential, verb)?;
@@ -290,11 +304,7 @@ fn managed_session<'vault>(
             }
         }
     }
-    .map_err(|error| session_refusal(error, session_ref))?;
-    if session.room()?.is_some() {
-        return Err(room_management(verb));
-    }
-    Ok(session)
+    .map_err(|error| session_refusal(error, session_ref))
 }
 
 fn view(session: owner_off_record::Session) -> OffRecordSessionView {
@@ -411,8 +421,13 @@ pub(crate) async fn vault_off_record_witness(
                     turn: input.turn,
                     summary: input.summary,
                 };
-                return owner_off_record::witness(vault, owner, &request, server.embedder.as_ref())
-                    .map_err(|error| refusal(VERB, error));
+                return owner_off_record::witness(
+                    vault,
+                    owner,
+                    &request,
+                    server.embedder_slot().as_ref(),
+                )
+                .map_err(|error| refusal(VERB, error));
             }
             Caller::Principal { who, credential } => (*who, credential),
         };
@@ -428,7 +443,7 @@ pub(crate) async fn vault_off_record_witness(
                 .map_err(|error| session_refusal(error, session_ref))?;
             // FIX 3817 (a): the turn's vector is embedded after bind, before
             // the verb, never under the witness writer.
-            let turn_vector = pre_embed_turn(server.embedder.as_ref(), &input.turn);
+            let turn_vector = pre_embed_turn(server.embedder_slot().as_ref(), &input.turn);
             return memory.witness_into_session_as_member(
                 &session,
                 &input.turn,
@@ -442,7 +457,7 @@ pub(crate) async fn vault_off_record_witness(
             .map_err(|error| session_refusal(error, session_ref))?;
         // FIX 3817 (a): the turn's vector is embedded after bind, before the
         // verb, never under the witness writer.
-        let turn_vector = pre_embed_turn(server.embedder.as_ref(), &input.turn);
+        let turn_vector = pre_embed_turn(server.embedder_slot().as_ref(), &input.turn);
         session.witness_as_creator(&memory, &input.turn, summary, credential, turn_vector)
     })
     .await
@@ -520,7 +535,7 @@ pub(crate) async fn vault_off_record_notes_create(
     };
     let held = auth.clone();
     as_caller_unlisted(server, auth, VERB, move |server, caller| {
-        let session = managed_session(server.vault(), caller, VERB, &input.session_ref)?;
+        let session = bound_session(server.vault(), caller, VERB, &input.session_ref)?;
         crate::api::credential_memory(&server.vault, Some(&held), actor, class)
             .at(held.locality())
             .create_note_in_session(
@@ -547,10 +562,33 @@ pub(crate) async fn vault_off_record_claims_upsert(
     };
     let held = auth.clone();
     as_caller_unlisted(server, auth, VERB, move |server, caller| {
-        let session = managed_session(server.vault(), caller, VERB, &input.session_ref)?;
+        let session = bound_session(server.vault(), caller, VERB, &input.session_ref)?;
         crate::api::credential_memory(&server.vault, Some(&held), actor, class)
             .at(held.locality())
             .claim_upsert_in_session(&session, &input.claim)
+    })
+    .await
+}
+
+/// Preserve one selected artifact, not the room's whole talk. Binding a room
+/// as one member is not whole-room management; the native save rechecks the
+/// real write grant and current membership in its committing writer.
+pub(crate) async fn vault_off_record_artifacts_save(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::OffRecordArtifactSaveRequest,
+) -> Listed<oneiron::task_verb::sdk::OffRecordArtifactSaved> {
+    const VERB: &str = "vault.off_record.artifacts.save";
+    as_caller_unlisted(server, auth, VERB, move |server, caller| {
+        let session = bound_session(server.vault(), caller, VERB, &input.session_ref)?;
+        let outcome = match caller {
+            Caller::Owner(owner) => session.save_artifact_as(owner, &input.artifact_ref),
+            Caller::Principal { who, credential } => {
+                session.save_artifact_by(who.actor, credential, &input.artifact_ref)
+            }
+        }
+        .map_err(|error| session_refusal(error, &input.session_ref))?;
+        Ok(outcome.into())
     })
     .await
 }

@@ -35,6 +35,16 @@ export_facade! {
     let output = client.vault_commitments_supersede(&input)?;
     crate::codec::lift_record("vault.commitments.supersede", &output)
 };
+"vault.commitments.reminder_route.get" => fn vault_commitments_reminder_route_get(&self) -> CommitmentReminderRouteReply = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.commitments.reminder_route.get")?;
+    let output = client.vault_commitments_reminder_route_get(&input)?;
+    crate::codec::lift_record("vault.commitments.reminder_route.get", &output)
+};
+"vault.commitments.reminder_route.set" => fn vault_commitments_reminder_route_set(&self, input: CommitmentReminderRouteSetRequest) -> CommitmentReminderRouteReply = |client| {
+    let input: oneiron::memory::commitment_doors::CommitmentReminderRouteSetRequest = crate::codec::lower_record("vault.commitments.reminder_route.set", input)?;
+    let output = client.vault_commitments_reminder_route_set(&input)?;
+    crate::codec::lift_record("vault.commitments.reminder_route.set", &output)
+};
 "fetch" => fn fetch(&self, input: WebFetchRequest) -> FetchResult = |client| {
     let input: oneiron::web_fetch::WebFetchRequest = crate::codec::lower_record("fetch", input)?;
     let output = client.fetch(&input)?;
@@ -1221,6 +1231,16 @@ export_facade! {
     let output = client.vault_skills_code_auto_install_set(&input)?;
     crate::codec::lift_record("vault.skills.code_auto_install.set", &output)
 };
+"vault.skills.fit.set" => fn vault_skills_fit_set(&self, input: SkillFitSetRequest) -> HubConsentReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillFitSetRequest = crate::codec::lower_record("vault.skills.fit.set", input)?;
+    let output = client.vault_skills_fit_set(&input)?;
+    crate::codec::lift_record("vault.skills.fit.set", &output)
+};
+"vault.skills.advisory_ask.set" => fn vault_skills_advisory_ask_set(&self, input: SkillAdvisoryAskRequest) -> HubConsentReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillAdvisoryAskRequest = crate::codec::lower_record("vault.skills.advisory_ask.set", input)?;
+    let output = client.vault_skills_advisory_ask_set(&input)?;
+    crate::codec::lift_record("vault.skills.advisory_ask.set", &output)
+};
 "vault.skills.permissions.approve" => fn vault_skills_permissions_approve(&self, input: HubSkillPermissionRequest) -> HubConsentReceipt = |client| {
     let input: oneiron::task_verb::sdk::HubSkillPermissionRequest = crate::codec::lower_record("vault.skills.permissions.approve", input)?;
     let output = client.vault_skills_permissions_approve(&input)?;
@@ -1806,6 +1826,16 @@ export_facade! {
     let output = client.vault_federation_burst_policy_set(&input)?;
     crate::codec::lift_record("vault.federation.burst.policy.set", &output)
 };
+"vault.sync.quarantine.held_edits" => fn vault_sync_quarantine_held_edits(&self) -> Vec<TupleU64SyncHeldEditEvidence> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.sync.quarantine.held_edits")?;
+    let output = client.vault_sync_quarantine_held_edits(&input)?;
+    crate::codec::lift_record("vault.sync.quarantine.held_edits", &output)
+};
+"vault.sync.retained_work.wait.set" => fn vault_sync_retained_work_wait_set(&self, input: RetainedWorkWaitSetRequest) -> u64 = |client| {
+    let input: oneiron::task_verb::sdk::RetainedWorkWaitSetRequest = crate::codec::lower_record("vault.sync.retained_work.wait.set", input)?;
+    let output = client.vault_sync_retained_work_wait_set(&input)?;
+    crate::codec::lift_record("vault.sync.retained_work.wait.set", &output)
+};
 "vault.federation.burst.ingress" => fn vault_federation_burst_ingress(&self, input: ConnectDelivery) -> FederationBurstReceipt = |client| {
     let input: oneiron::task_verb::sdk::ConnectDelivery = crate::codec::lower_record("vault.federation.burst.ingress", input)?;
     let output = client.vault_federation_burst_ingress(&input)?;
@@ -2066,6 +2096,11 @@ export_facade! {
     let output = client.vault_off_record_notes_create(&input)?;
     Lift::lift(output)
 };
+"vault.off_record.artifacts.save" => fn vault_off_record_artifacts_save(&self, input: OffRecordArtifactSaveRequest) -> OffRecordArtifactSaved = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordArtifactSaveRequest = crate::codec::lower_record("vault.off_record.artifacts.save", input)?;
+    let output = client.vault_off_record_artifacts_save(&input)?;
+    crate::codec::lift_record("vault.off_record.artifacts.save", &output)
+};
 "vault.off_record.claims.upsert" => fn vault_off_record_claims_upsert(&self, input: OffRecordClaimRequest) -> CommitReceipt = |client| {
     let input: oneiron::task_verb::sdk::OffRecordClaimRequest = crate::codec::lower_record("vault.off_record.claims.upsert", input)?;
     let output = client.vault_off_record_claims_upsert(&input)?;
@@ -2155,6 +2190,11 @@ export_facade! {
     let input: oneiron::memory::erase_sweep::RecordEraseSweepRequest = crate::codec::lower_record("vault.records.erase_sweep", input)?;
     let output = client.vault_records_erase_sweep(&input)?;
     crate::codec::lift_record("vault.records.erase_sweep", &output)
+};
+"vault.outbound_calls.request.erase" => fn vault_outbound_calls_request_erase(&self, input: OutboundCallRequestEraseRequest) -> OutboundCallRequestErased = |client| {
+    let input: oneiron::task_verb::sdk::OutboundCallRequestEraseRequest = crate::codec::lower_record("vault.outbound_calls.request.erase", input)?;
+    let output = client.vault_outbound_calls_request_erase(&input)?;
+    crate::codec::lift_record("vault.outbound_calls.request.erase", &output)
 };
 "vault.research.create_child" => fn vault_research_create_child(&self, input: ResearchChildWire) -> ResearchChildReceipt = |client| {
     let input: oneiron::task_verb::sdk::ResearchChildWire = crate::codec::lower_record("vault.research.create_child", input)?;
@@ -2286,7 +2326,7 @@ export_facade! {
     let output = client.vault_coach_training_offers_result(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.result", &output)
 };
-"vault.coach.training_offers.answer" => fn vault_coach_training_offers_answer(&self, input: OfferAnswerRequest) -> OfferAnswerRecord = |client| {
+"vault.coach.training_offers.answer" => fn vault_coach_training_offers_answer(&self, input: OfferAnswerRequest) -> OfferAnswerReply = |client| {
     let input: oneiron::skill_optimize::offer_doors::OfferAnswerRequest = crate::codec::lower_record("vault.coach.training_offers.answer", input)?;
     let output = client.vault_coach_training_offers_answer(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.answer", &output)
@@ -2825,6 +2865,11 @@ export_facade! {
     let input: oneiron::learning_setting_doors::LearningSettingClear = crate::codec::lower_record("vault.settings.learning.clear", input)?;
     let output = client.vault_settings_learning_clear(&input)?;
     crate::codec::lift_record("vault.settings.learning.clear", &output)
+};
+"vault.secrets.code_run_lifts" => fn vault_secrets_code_run_lifts(&self, input: CodeRunSecretLiftRequest) -> CodeRunSecretLiftStatus = |client| {
+    let input: oneiron::code_run::CodeRunSecretLiftRequest = crate::codec::lower_record("vault.secrets.code_run_lifts", input)?;
+    let output = client.vault_secrets_code_run_lifts(&input)?;
+    crate::codec::lift_record("vault.secrets.code_run_lifts", &output)
 };
 "vault.secrets.lift_history" => fn vault_secrets_lift_history(&self, input: SecretLiftRequest) -> SecretLiftStatus = |client| {
     let input: oneiron::policy_model::SecretLiftRequest = crate::codec::lower_record("vault.secrets.lift_history", input)?;
@@ -5326,7 +5371,7 @@ export_facade! {
     let output = client.vault_artifacts_body_deck_preview(&input)?;
     crate::codec::lift_record("vault.artifacts.body.deck.preview", &output)
 };
-"vault.artifacts.append" => fn vault_artifacts_append(&self, artifact_ref: String, content: Vec<u8>, run_ref: Option<String>, occurred_at: Option<i64>, learned_at: Option<i64>) -> BlobVersionView = |client| {
+"vault.artifacts.append" => fn vault_artifacts_append(&self, artifact_ref: String, content: Vec<u8>, run_ref: Option<String>, occurred_at: Option<i64>, learned_at: Option<i64>) -> BlobVersionAppendOutcome = |client| {
     let input: oneiron::task_verb::sdk::AppendBlobVersionRequest = (artifact_ref, content, run_ref, occurred_at, learned_at).lower()?;
     let output = client.vault_artifacts_append(&input)?;
     Lift::lift(output)
@@ -5940,6 +5985,81 @@ export_facade! {
     let input: oneiron::task_verb::sdk::CustodyMemberReenrolRequest = crate::codec::lower_record("vault.custody.members.reenrol", input)?;
     let output = client.vault_custody_members_reenrol(&input)?;
     crate::codec::lift_record("vault.custody.members.reenrol", &output)
+};
+"vault.mail.pack.install" => fn vault_mail_pack_install(&self) -> PackPutReceipt = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.mail.pack.install")?;
+    let output = client.vault_mail_pack_install(&input)?;
+    crate::codec::lift_record("vault.mail.pack.install", &output)
+};
+"vault.mail.sources.connect" => fn vault_mail_sources_connect(&self, input: MailSourceConnectRequest) -> MailSourceConnectReceipt = |client| {
+    let input: oneiron::mail_pack::MailSourceConnectRequest = crate::codec::lower_record("vault.mail.sources.connect", input)?;
+    let output = client.vault_mail_sources_connect(&input)?;
+    crate::codec::lift_record("vault.mail.sources.connect", &output)
+};
+"vault.mail.sources.list" => fn vault_mail_sources_list(&self) -> Vec<MailSourceView> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.mail.sources.list")?;
+    let output = client.vault_mail_sources_list(&input)?;
+    crate::codec::lift_record("vault.mail.sources.list", &output)
+};
+"vault.mail.sources.settings.set" => fn vault_mail_sources_settings_set(&self, input: MailSourceSettingsRequest) -> MailSourceView = |client| {
+    let input: oneiron::mail_pack::MailSourceSettingsRequest = crate::codec::lower_record("vault.mail.sources.settings.set", input)?;
+    let output = client.vault_mail_sources_settings_set(&input)?;
+    crate::codec::lift_record("vault.mail.sources.settings.set", &output)
+};
+"vault.mail.sources.members.set" => fn vault_mail_sources_members_set(&self, input: MailSourceMembersRequest) -> MailSourceView = |client| {
+    let input: oneiron::mail_pack::MailSourceMembersRequest = crate::codec::lower_record("vault.mail.sources.members.set", input)?;
+    let output = client.vault_mail_sources_members_set(&input)?;
+    crate::codec::lift_record("vault.mail.sources.members.set", &output)
+};
+"vault.mail.sources.audience_events" => fn vault_mail_sources_audience_events(&self, input: MailSourceRef) -> Vec<SourceAudienceEventView> = |client| {
+    let input: oneiron::mail_pack::MailSourceRef = crate::codec::lower_record("vault.mail.sources.audience_events", input)?;
+    let output = client.vault_mail_sources_audience_events(&input)?;
+    crate::codec::lift_record("vault.mail.sources.audience_events", &output)
+};
+"vault.mail.threads.share" => fn vault_mail_threads_share(&self, input: MailThreadShareRequest) -> MailThreadShareReceipt = |client| {
+    let input: oneiron::mail_pack::MailThreadShareRequest = crate::codec::lower_record("vault.mail.threads.share", input)?;
+    let output = client.vault_mail_threads_share(&input)?;
+    crate::codec::lift_record("vault.mail.threads.share", &output)
+};
+"vault.mail.threads.unshare" => fn vault_mail_threads_unshare(&self, input: MailThreadShareRequest) -> MailThreadShareReceipt = |client| {
+    let input: oneiron::mail_pack::MailThreadShareRequest = crate::codec::lower_record("vault.mail.threads.unshare", input)?;
+    let output = client.vault_mail_threads_unshare(&input)?;
+    crate::codec::lift_record("vault.mail.threads.unshare", &output)
+};
+"vault.mail.compliance.setting" => fn vault_mail_compliance_setting(&self) -> MailComplianceSettingView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.mail.compliance.setting")?;
+    let output = client.vault_mail_compliance_setting(&input)?;
+    crate::codec::lift_record("vault.mail.compliance.setting", &output)
+};
+"vault.mail.compliance.set" => fn vault_mail_compliance_set(&self, input: MailComplianceSetRequest) -> MailComplianceSettingView = |client| {
+    let input: oneiron::mail_pack::MailComplianceSetRequest = crate::codec::lower_record("vault.mail.compliance.set", input)?;
+    let output = client.vault_mail_compliance_set(&input)?;
+    crate::codec::lift_record("vault.mail.compliance.set", &output)
+};
+"vault.mail.compliance.log" => fn vault_mail_compliance_log(&self) -> Vec<MailComplianceEventView> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.mail.compliance.log")?;
+    let output = client.vault_mail_compliance_log(&input)?;
+    crate::codec::lift_record("vault.mail.compliance.log", &output)
+};
+"vault.mail.sources.sync_status" => fn vault_mail_sources_sync_status(&self, input: MailSourceRef) -> MailSyncStatusView = |client| {
+    let input: oneiron::mail_pack::MailSourceRef = crate::codec::lower_record("vault.mail.sources.sync_status", input)?;
+    let output = client.vault_mail_sources_sync_status(&input)?;
+    crate::codec::lift_record("vault.mail.sources.sync_status", &output)
+};
+"vault.mail.inbox" => fn vault_mail_inbox(&self, input: MailInboxRequest) -> MailInboxPage = |client| {
+    let input: oneiron::mail_pack::MailInboxRequest = crate::codec::lower_record("vault.mail.inbox", input)?;
+    let output = client.vault_mail_inbox(&input)?;
+    crate::codec::lift_record("vault.mail.inbox", &output)
+};
+"vault.mail.threads.read" => fn vault_mail_threads_read(&self, input: MailThreadRequest) -> MailThreadView = |client| {
+    let input: oneiron::mail_pack::MailThreadRequest = crate::codec::lower_record("vault.mail.threads.read", input)?;
+    let output = client.vault_mail_threads_read(&input)?;
+    crate::codec::lift_record("vault.mail.threads.read", &output)
+};
+"vault.mail.compliance.search" => fn vault_mail_compliance_search(&self, input: MailComplianceSearchRequest) -> MailComplianceSearchReply = |client| {
+    let input: oneiron::mail_pack::MailComplianceSearchRequest = crate::codec::lower_record("vault.mail.compliance.search", input)?;
+    let output = client.vault_mail_compliance_search(&input)?;
+    crate::codec::lift_record("vault.mail.compliance.search", &output)
 };
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
