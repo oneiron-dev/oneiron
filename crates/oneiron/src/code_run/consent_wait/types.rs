@@ -11,7 +11,7 @@ use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument, VerbHookPreSnap
 use crate::store::GateDecisionId;
 
 /// The binding row's schema version.
-pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 2;
+pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 3;
 
 pub(crate) use crate::consent::code_wait_state::CodeConsentCallSite;
 pub use crate::consent::code_wait_state::{
@@ -244,6 +244,9 @@ pub(crate) struct CodeConsentSettlement {
     pub(crate) outcome: CodeConsentSettleOutcome,
     pub(crate) reason_codes: Vec<String>,
     pub(crate) reply_digest: [u8; 32],
+    /// The actual delivered connector reply carried a foreign result or
+    /// questions, after the side-row wall. Delivery without a result is false.
+    pub(crate) external_reply: bool,
     pub(crate) settled_at_ms: u64,
 }
 
