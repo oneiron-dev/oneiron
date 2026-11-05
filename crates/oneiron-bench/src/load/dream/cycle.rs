@@ -249,9 +249,11 @@ pub(super) fn await_still(
     deadline: Instant,
 ) -> StillWait {
     let started = Instant::now();
-    let mut changed = Instant::now();
     let mut seen_lines = scan.stages.len() + scan.passes.len();
     let mut now_status = status(agent, http, base).ok();
+    // The quiet starts after the first read: a slow read must not count
+    // as quiet time it did not watch.
+    let mut changed = Instant::now();
     let mut step = 0_u64;
     loop {
         let done = |reached: bool, status: Option<DreamerStatus>| StillWait {
@@ -267,12 +269,6 @@ pub(super) fn await_still(
         }
         std::thread::sleep(STEP.min(deadline.saturating_duration_since(Instant::now())));
         step += 1;
-        scan.read(tail, origin);
-        let lines = scan.stages.len() + scan.passes.len();
-        if lines != seen_lines {
-            seen_lines = lines;
-            changed = Instant::now();
-        }
         if step.is_multiple_of(4) {
             match status(agent, http, base) {
                 Ok(read) => {
@@ -288,6 +284,14 @@ pub(super) fn await_still(
                     now_status = None;
                 }
             }
+        }
+        // The log is read after the status, so a line written while a slow
+        // read waited counts before the quiet is judged.
+        scan.read(tail, origin);
+        let lines = scan.stages.len() + scan.passes.len();
+        if lines != seen_lines {
+            seen_lines = lines;
+            changed = Instant::now();
         }
     }
 }
