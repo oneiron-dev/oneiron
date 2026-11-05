@@ -464,8 +464,10 @@ fn admit(
         // revive a remote detector's local observations.
         return Ok(EntityStep::Skip);
     }
-    // Byte-identical replay is an idempotent skip. The immutable kinds decide it inside their
-    // own door instead: a REDACTION_AUDIT receipt beside its lease verification, a type-76
+    // Byte-identical replay skips unless this import selects its native record document:
+    // a sidecar can change while the physical pointer stays the same. It still runs every
+    // ordinary gate below. The immutable kinds decide inside their own door instead:
+    // a REDACTION_AUDIT receipt beside its lease verification, a type-76
     // event beside its divergence and seq-clock checks, and an AUTHORITY_LOG row (ONE-1604-D5)
     // because an exact match must still reach its `dt:` neutralization.
     if !matches!(
@@ -486,12 +488,15 @@ fn admit(
             // A pad row rests as a reference to custody, its pad beside it (KS-5).
             || crate::world_keys::pad_echo_equal(&vault.store, &local, blob)
         {
-            // FIX 5500: the replay stays a skip, but a row already here with these bytes still
-            // records the origin its window carries for them, as the write below does.
+            // Record the exact carried origin before selecting a native continuation, too:
+            // a relayed peer row must keep the original echo instead of taking that lane.
             if let Some(doc) = ctx.carrier_doc() {
                 super::carried_origin_in_txn(vault, wtxn, doc, ctx.window_key, &id, blob)?;
             }
-            return Ok(EntityStep::Skip);
+            if super::own_device::record_document::selected_in_txn(ctx, wtxn, &id, blob)?.is_none()
+            {
+                return Ok(EntityStep::Skip);
+            }
         }
         // SoftErase shell guard: `user_delete` truncates the local record to the 25 B header
         // shell and writes NO CRDT record (contracts.ts deleteReasons user_delete; cross-device
