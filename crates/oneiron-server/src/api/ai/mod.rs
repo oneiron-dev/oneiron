@@ -103,7 +103,7 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
         return error.into_response();
     }
     let mut models = server.ai.models_live_status();
-    models.tagger = server.tagger.as_ref().map(tagger_status);
+    models.tagger = server.tagger_slot().as_deref().map(tagger_status);
     point_tagger_seat(&mut models);
     Json(serde_json::json!({
         "ai": server.ai.status(),

@@ -918,6 +918,10 @@ impl Reader<'_> {
 
         let mut object_streams = Vec::new();
 
+        if let Some(admission) = self.decode_admission.as_deref() {
+            decode_admission::admit_btree::<ObjectId, Vec<u8>>(admission, 0)?;
+        }
+
         for (obj_num, entry) in entries {
             match entry {
                 XrefEntry::Normal { offset, .. } => match self.extract_raw_object(offset as usize) {
@@ -942,6 +946,10 @@ impl Reader<'_> {
                     // Skip free entries
                 }
             }
+        }
+
+        if let Some(admission) = self.decode_admission.as_deref() {
+            decode_admission::admit_btree::<ObjectId, Object>(admission, 0)?;
         }
 
         self.parse_encryption_dictionary()?;
@@ -1400,6 +1408,9 @@ impl Reader<'_> {
     }
 
     fn setup_encryption_for_metadata(&mut self) -> Result<()> {
+        if let Some(admission) = self.decode_admission.as_deref() {
+            decode_admission::admit_btree::<ObjectId, Object>(admission, 0)?;
+        }
         self.parse_encryption_dictionary()?;
         self.authenticate_and_setup_encryption(true)?;
         Ok(())
