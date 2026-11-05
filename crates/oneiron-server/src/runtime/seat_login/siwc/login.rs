@@ -26,6 +26,7 @@ pub(crate) struct LoginOptions {
     pub host_id_file: PathBuf,
     pub callback_uri: String,
     pub agent_name: String,
+    pub timeout: std::time::Duration,
 }
 
 #[derive(Deserialize)]
@@ -206,6 +207,7 @@ async fn attempt(options: LoginOptions) -> anyhow::Result<bool> {
     let http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .retry(reqwest::retry::never())
+        .timeout(options.timeout)
         .build()?;
     let response = http
         .post(super::TOKEN_ENDPOINT)
