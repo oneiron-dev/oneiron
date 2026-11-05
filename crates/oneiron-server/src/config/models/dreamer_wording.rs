@@ -9,6 +9,7 @@
 //!   parses the answer; a wording that asks for no `oneiron-confession` block
 //!   is answered with none, and none is recorded.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -29,6 +30,10 @@ const DEFAULT_CONFESSION_INSTRUCTION: &str = "When your result is complete, end 
 pub(super) struct DreamerWordingFile {
     confession_prompt: Option<String>,
     confession_prompt_file: Option<PathBuf>,
+    commitment_reminder_prompt: Option<String>,
+    commitment_reminder_prompt_file: Option<PathBuf>,
+    #[serde(default)]
+    commitment_reminder_personas: BTreeMap<String, String>,
 }
 
 impl DreamerWordingFile {
@@ -43,7 +48,18 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(|| DEFAULT_CONFESSION_INSTRUCTION.to_owned());
-        Ok(DreamerWording { confession })
+        let reminder_instruction = super::levels::prompt_text(
+            "models.dreamer.wording.commitment_reminder_prompt",
+            self.commitment_reminder_prompt,
+            self.commitment_reminder_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(default_reminder_instruction);
+        Ok(DreamerWording {
+            confession,
+            reminder_instruction,
+            reminder_personas: self.commitment_reminder_personas,
+        })
     }
 }
 
@@ -51,6 +67,8 @@ impl DreamerWordingFile {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DreamerWording {
     confession: String,
+    reminder_instruction: String,
+    reminder_personas: BTreeMap<String, String>,
 }
 
 impl DreamerWording {
@@ -60,6 +78,18 @@ impl DreamerWording {
     pub fn confession(&self) -> &str {
         &self.confession
     }
+
+    /// The instruction used to word commitment reminders, not to send them.
+    #[must_use]
+    pub fn commitment_reminder_instruction(&self) -> &str {
+        &self.reminder_instruction
+    }
+
+    /// The host's voice text for an opaque reminder persona reference.
+    #[must_use]
+    pub fn commitment_reminder_persona(&self, reference: &str) -> Option<&str> {
+        self.reminder_personas.get(reference).map(String::as_str)
+    }
 }
 
 impl Default for DreamerWording {
@@ -67,6 +97,18 @@ impl Default for DreamerWording {
     fn default() -> Self {
         Self {
             confession: DEFAULT_CONFESSION_INSTRUCTION.to_owned(),
+            reminder_instruction: default_reminder_instruction(),
+            reminder_personas: BTreeMap::new(),
         }
     }
+}
+
+fn default_reminder_instruction() -> String {
+    #[derive(Deserialize)]
+    struct Wording {
+        instruction: String,
+    }
+    serde_json::from_str::<Wording>(include_str!("commitment_reminder_wording.json"))
+        .expect("shipped commitment reminder wording decodes")
+        .instruction
 }
