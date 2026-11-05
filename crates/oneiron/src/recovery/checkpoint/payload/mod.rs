@@ -163,6 +163,8 @@ getters! {
     BlockedSourceOwner = 16 => crate::self_heal::blocked_reports::checkpoint;
     /// Media vectors and device provenance, by source document.
     EmbedMedia = 17 => crate::embed::checkpoint;
+    /// Workflow leaves' retained tool transcripts and settled meters.
+    WorkflowTool = 18 => crate::agent_dispatch::workflow_tool_checkpoint;
 }
 
 /// The mixed sync carriers KS7-3's port splits, with the tag a bundle's
