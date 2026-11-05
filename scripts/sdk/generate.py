@@ -2278,7 +2278,17 @@ def uniffi_export(row, types, census):
             if owned and owned != mirror:
                 raise ValueError(f'{row["name"]}: its owned result codec must keep the generated record {mirror}')
             output = mirror
-            result = 'Lift::lift(output)' if owned else f'crate::codec::lift_record({name}, &output)'
+            if owned:
+                result = 'Lift::lift(output)'
+            elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
+                # Other variants keep the existing whole-record conversion.
+                result = (
+                    f'match output {{ oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => '
+                    f'Ok({mirror}::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), '
+                    f'other => crate::codec::lift_record({name}, &other) }}'
+                )
+            else:
+                result = f'crate::codec::lift_record({name}, &output)'
             sides.append('generated')
         else:
             output, result = 'WireJson', f'crate::codec::encode({name}, &output)'

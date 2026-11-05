@@ -446,17 +446,17 @@ export_facade! {
 "vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> ActAnswerFanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume", input)?;
     let output = client.vault_fanout_resume(&input)?;
-    crate::codec::lift_record("vault.fanout.resume", &output)
+    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerFanoutLaunchView::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), other => crate::codec::lift_record("vault.fanout.resume", &other) }
 };
 "vault.fanout.resume_as" => fn vault_fanout_resume_as(&self, input: FanoutResumeRequest) -> ActAnswerFanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume_as", input)?;
     let output = client.vault_fanout_resume_as(&input)?;
-    crate::codec::lift_record("vault.fanout.resume_as", &output)
+    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerFanoutLaunchView::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), other => crate::codec::lift_record("vault.fanout.resume_as", &other) }
 };
 "vault.fanout.ack" => fn vault_fanout_ack(&self, input: FanoutAckRequest) -> ActAnswerFanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutAckRequest = crate::codec::lower_record("vault.fanout.ack", input)?;
     let output = client.vault_fanout_ack(&input)?;
-    crate::codec::lift_record("vault.fanout.ack", &output)
+    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerFanoutLaunchView::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), other => crate::codec::lift_record("vault.fanout.ack", &other) }
 };
 "tasks.update" => fn tasks_update(&self, input: TaskUpdateRequest) -> TaskUpdateReceipt = |client| {
     let input: oneiron::task_verb::sdk::TaskUpdateRequest = crate::codec::lower_record("tasks.update", input)?;
@@ -1634,7 +1634,7 @@ export_facade! {
 "vault.shared.execute" => fn vault_shared_execute(&self, input: SharedActRequest) -> ActAnswerSharedActExecuted = |client| {
     let input: oneiron::task_verb::sdk::SharedActRequest = crate::codec::lower_record("vault.shared.execute", input)?;
     let output = client.vault_shared_execute(&input)?;
-    crate::codec::lift_record("vault.shared.execute", &output)
+    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerSharedActExecuted::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), other => crate::codec::lift_record("vault.shared.execute", &other) }
 };
 "vault.shared.receipt" => fn vault_shared_receipt(&self, input: SharedReceiptRequest) -> SharedActExecutionReceipt = |client| {
     let input: oneiron::task_verb::sdk::SharedReceiptRequest = crate::codec::lower_record("vault.shared.receipt", input)?;
@@ -2169,7 +2169,7 @@ export_facade! {
 "vault.records.erase_confirm" => fn vault_records_erase_confirm(&self, input: RecordEraseConfirmRequest) -> ActAnswerRecordEraseOutcome = |client| {
     let input: oneiron::task_verb::sdk::RecordEraseConfirmRequest = crate::codec::lower_record("vault.records.erase_confirm", input)?;
     let output = client.vault_records_erase_confirm(&input)?;
-    crate::codec::lift_record("vault.records.erase_confirm", &output)
+    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerRecordEraseOutcome::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), other => crate::codec::lift_record("vault.records.erase_confirm", &other) }
 };
 "vault.records.erase_sweep" => fn vault_records_erase_sweep(&self, input: RecordEraseSweepRequest) -> Option<RecordEraseSweep> = |client| {
     let input: oneiron::memory::erase_sweep::RecordEraseSweepRequest = crate::codec::lower_record("vault.records.erase_sweep", input)?;
@@ -4559,7 +4559,7 @@ export_facade! {
 "ai.voice.tool" => fn ai_voice_tool(&self, input: LiveVoiceToolRequest) -> ActAnswerLiveVoiceToolReply = |client| {
     let input: oneiron::task_verb::sdk::LiveVoiceToolRequest = crate::codec::lower_record("ai.voice.tool", input)?;
     let output = client.ai_voice_tool(&input)?;
-    crate::codec::lift_record("ai.voice.tool", &output)
+    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerLiveVoiceToolReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), other => crate::codec::lift_record("ai.voice.tool", &other) }
 };
 "ai.voice.end" => fn ai_voice_end(&self, input: LiveVoiceSessionRequest) -> LiveVoiceProcessed = |client| {
     let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest = crate::codec::lower_record("ai.voice.end", input)?;
@@ -4839,7 +4839,7 @@ export_facade! {
 "connector.call" => fn connector_call(&self, input: ConnectorCallRequest) -> ActAnswerConnectorCallReply = |client| {
     let input: oneiron::outbound_consent::ConnectorCallRequest = crate::codec::lower_record("connector.call", input)?;
     let output = client.connector_call(&input)?;
-    crate::codec::lift_record("connector.call", &output)
+    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerConnectorCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), other => crate::codec::lift_record("connector.call", &other) }
 };
 "connector.schema" => fn connector_schema(&self, input: ConnectorSchemaRequest) -> ConnectorSchemaReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorSchemaRequest = crate::codec::lower_record("connector.schema", input)?;
