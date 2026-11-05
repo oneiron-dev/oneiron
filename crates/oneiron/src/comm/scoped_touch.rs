@@ -3,7 +3,7 @@
 use super::claims::{CommClaim, CommClaimValue};
 use super::records::{CommEventKind, CommRecord, decode_comm_record};
 use crate::claim::{ClaimBody, record_scope_at};
-use crate::entity_id::derived_domains::COMM_SCOPED_BORN_TOUCH_EVENT;
+use crate::entity_id::derived_domains::COMM_BORN_TOUCH_EVENT;
 use crate::federation::Scope;
 use crate::ports::{EdgeStoreRead, EntityStoreRead};
 use crate::provenance::birth::RowBirth;
@@ -36,14 +36,13 @@ impl ScopedTouchRecord {
         else {
             return Ok(None);
         };
-        if source.world == crate::claim::base_world_id()
-            || scoped_touch_event_id(
-                original_head,
-                &source,
-                party_ref,
-                &channel_class,
-                occurred_at,
-            )? != id
+        if scoped_touch_event_id(
+            original_head,
+            &source,
+            party_ref,
+            &channel_class,
+            occurred_at,
+        )? != id
         {
             return Err(Error::InvalidClaimBody(
                 "scoped comm source binding mismatch",
@@ -131,11 +130,6 @@ pub(super) fn capture_scoped_touch_source(
     birth: &RowBirth,
 ) -> Result<ScopedTouchSource> {
     let world = body.world.unwrap_or_else(crate::claim::base_world_id);
-    if world == crate::claim::base_world_id() {
-        return Err(Error::InvalidClaimBody(
-            "scoped comm source requires a non-base world",
-        ));
-    }
     let claim =
         CommClaim::from_claim_body(body).map_err(super::generic_put_routing::source_event_error)?;
     let canonical = claim
@@ -176,7 +170,7 @@ pub(super) fn scoped_touch_event_id(
 ) -> Result<EntityId> {
     let channel = crate::counterparty_contact::normalize_channel_class(channel_class);
     EntityId::derive(
-        COMM_SCOPED_BORN_TOUCH_EVENT,
+        COMM_BORN_TOUCH_EVENT,
         &[
             original_head.as_bytes(),
             &source.origin_digest,
@@ -222,8 +216,7 @@ pub(super) fn touch_slot_body(
 ) -> super::claims::CommResult<ClaimBody> {
     let mut body = value.claim_body()?;
     if let Some(source) = source {
-        if source.world == crate::claim::base_world_id()
-            || source.facet != body.scope_facet
+        if source.facet != body.scope_facet
             || source.project != body.scope_project
             || Some(source.sensitivity) != crate::claim::claim_sensitivity_band(&body)
         {

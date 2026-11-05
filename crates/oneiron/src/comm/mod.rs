@@ -441,6 +441,7 @@ struct ProjectedCommEvent<'a> {
     source_event_id: EntityId,
     original_head: Option<EntityId>,
     source_position: Option<&'a crate::write_envelope::communication_record::ScopedTouchSource>,
+    later_born_heads: Option<&'a BTreeSet<EntityId>>,
     party_ref: EntityId,
     channel_class: Option<&'a str>,
     thread_ref: Option<&'a str>,

@@ -42,12 +42,9 @@ pub const PROJECT_HOME_ROOM: &[u8] = b"project.home_room.v1/";
 pub const COMM_PROJECTED_CLAIM: &[u8] = b"oneiron.comm.projected_claim.v1\0";
 
 /// An explicitly born touch's source event (`comm::born_touch`). Parts: original
-/// claim id, the actual stored row, and its immutable base birth.
+/// id, admitted origin digest, frozen position, and normalized touch tuple.
+/// These identify data only, including for a canonical base-world touch.
 pub const COMM_BORN_TOUCH_EVENT: &[u8] = b"oneiron.comm.born_touch_event.v1\0";
-
-/// A scoped explicitly born touch. Parts: original id, admitted origin digest,
-/// frozen position, and the normalized touch tuple. These identify data only.
-pub const COMM_SCOPED_BORN_TOUCH_EVENT: &[u8] = b"oneiron.comm.scoped_born_touch_event.v1\0";
 
 /// The MACHINE assignee of one connector class (`outbound::connector_actor_id`).
 /// Parts: normalized connector class.

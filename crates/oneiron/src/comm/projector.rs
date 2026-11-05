@@ -188,6 +188,7 @@ impl RecordedEventProjection {
         event_id: EntityId,
         kind: CommEventKind,
         admission: &mut HeadAdmission<'_>,
+        later_born_heads: Option<&BTreeSet<EntityId>>,
     ) -> CommResult<()> {
         self.written.insert(event_id);
         let rows = if rule_reads_index(kind) {
@@ -195,12 +196,16 @@ impl RecordedEventProjection {
                 Some(index) => index,
                 None => projector_index_in_txn(vault, &*wtxn)?,
             };
-            let projected = project_in_savepoint(vault, wtxn, event_id, &mut index, admission);
+            let projected = project_in_savepoint(
+                vault, wtxn, event_id, &mut index, admission, later_born_heads,
+            );
             self.index = Some(index);
             projected?
         } else {
             let mut unread = CommProjectorIndex::default();
-            project_in_savepoint(vault, wtxn, event_id, &mut unread, admission)?
+            project_in_savepoint(
+                vault, wtxn, event_id, &mut unread, admission, later_born_heads,
+            )?
         };
         self.written.extend(rows);
         Ok(())
@@ -226,9 +231,12 @@ fn project_in_savepoint(
     event_id: EntityId,
     index: &mut CommProjectorIndex,
     admission: &mut HeadAdmission<'_>,
+    later_born_heads: Option<&BTreeSet<EntityId>>,
 ) -> CommResult<BTreeSet<EntityId>> {
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
-    match project_event_in_txn(vault, &mut savepoint, event_id, index, admission) {
+    match project_event_in_txn(
+        vault, &mut savepoint, event_id, index, admission, later_born_heads,
+    ) {
         Ok(delta) => {
             savepoint.commit()?;
             admission.projected(&delta.heads);
@@ -455,8 +463,9 @@ pub(super) fn project_event(
     // A write group of its own, so the index can tell its own commit from
     // any other writer's (`CommProjectorIndex::begin_event_txn`).
     vault.try_with_write_txn(|wtxn| {
-        let delta =
-            project_event_in_txn(vault, wtxn, event_id, index, &mut HeadAdmission::default())?;
+        let delta = project_event_in_txn(
+            vault, wtxn, event_id, index, &mut HeadAdmission::default(), None,
+        )?;
         #[cfg(feature = "sync")]
         crate::batch::queue_committed_rows(vault, wtxn, delta.written_rows(event_id));
         Ok(delta)
@@ -471,6 +480,7 @@ fn project_event_in_txn(
     event_id: EntityId,
     index: &CommProjectorIndex,
     admission: &mut HeadAdmission<'_>,
+    later_born_heads: Option<&BTreeSet<EntityId>>,
 ) -> CommResult<ProjectorIndexDelta> {
     index.begin_event_txn(vault);
     let Some(raw) = vault.store.port_entity_record(&*wtxn, &event_id)? else {
@@ -542,6 +552,7 @@ fn project_event_in_txn(
         source_event_id: event_id,
         original_head,
         source_position: source_position.as_ref(),
+        later_born_heads,
         party_ref,
         channel_class: recipient_class.as_deref(),
         thread_ref: thread_ref.as_deref(),
@@ -591,6 +602,7 @@ fn apply_projector_rule_in_txn(
         source_event_id,
         original_head,
         source_position,
+        later_born_heads,
         party_ref,
         channel_class,
         thread_ref: _,
@@ -605,12 +617,20 @@ fn apply_projector_rule_in_txn(
                 occurred_at,
             };
             let expected = super::scoped_touch::touch_slot_body(&value, source_position)?;
-            let active = super::scoped_touch::matching_touch_heads_in_txn(
+            let mut active = super::scoped_touch::matching_touch_heads_in_txn(
                 vault, &*wtxn, party_ref, channel, &expected,
             )?;
+            if let Some(later) = later_born_heads {
+                active.retain(|(id, _)| !later.contains(id));
+            }
             let new_id = if let Some(id) = original_head {
                 let Some(id) = super::born_touch::adopt_born_touch_head_in_txn(
-                    vault, wtxn, source_event_id, id, &value, source_position,
+                    vault,
+                    wtxn,
+                    source_event_id,
+                    id,
+                    &value,
+                    source_position.ok_or(CommError::InvalidRecord)?,
                 )? else {
                     return Ok(ProjectorIndexDelta::default());
                 };

@@ -260,9 +260,7 @@ pub fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {
             let source_position = source_position::decode_source_position(
                 required_value(entries, "source_position").map_err(|_| CommError::InvalidRecord)?,
             )?;
-            if source_position.is_some()
-                && (original_head.is_none() || event_kind != CommEventKind::TouchAsserted)
-            {
+            if source_position.is_some() != original_head.is_some() {
                 return Err(CommError::InvalidRecord);
             }
             Ok(CommRecord::Event {
