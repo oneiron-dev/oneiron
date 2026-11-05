@@ -355,7 +355,7 @@ async fn act(
         && board_rows.is_none()
         && let (Some(log), Some(messages)) = (action_log, action_messages)
     {
-        breakpoint = crate::api::ai::chat::compaction::action_breakpoint(
+        breakpoint = crate::api::ai::chat::action_breakpoint(
             ai,
             vault,
             &action,
