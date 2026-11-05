@@ -1,6 +1,8 @@
 //! The program kind's own lease and reservation (DOOR-141): the runner's one
 //! admission chain over program attempts alone, never another lane's work.
 
+use std::collections::HashSet;
+
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerAdmissionOutcome,
@@ -48,20 +50,24 @@ impl DreamerRunnerStore<'_> {
         now: u64,
         worker: &str,
     ) -> Result<Option<AttemptId>> {
-        let held: Vec<(AttemptId, DreamerParkCause, String)> = PARKED
-            .scan(&self.vault.store, &*txn)?
-            .into_iter()
-            .filter(|(_, park)| park.park_owner == PROGRAM_PARK_OWNER)
-            .map(|(attempt, park)| (attempt, park.cause, park.reason))
-            .collect();
-        for (attempt, cause, reason) in held {
-            if reason == PR1_PARK_REASON {
+        let held = PARKED.scan(&self.vault.store, &*txn)?;
+        let mut parked: HashSet<_> = held.iter().map(|(attempt, _)| *attempt).collect();
+        for (attempt, park) in held {
+            if park.park_owner != PROGRAM_PARK_OWNER {
+                continue;
+            }
+            if park.reason == PR1_PARK_REASON {
                 self.resume_parked_in_txn(txn, attempt, PROGRAM_PARK_OWNER, now)?;
-            } else if cause == DreamerParkCause::Other {
-                self.resume_ready_program_hold_in_txn(txn, attempt, &reason, now);
+            } else if park.cause == DreamerParkCause::Other {
+                self.resume_ready_program_hold_in_txn(txn, attempt, &park.reason, now);
+            } else {
+                continue;
+            }
+            // A best-effort resume may leave this park in place.
+            if PARKED.get(&self.vault.store, &*txn, &attempt)?.is_none() {
+                parked.remove(&attempt);
             }
         }
-        let parked = PARKED.scan_keys(&self.vault.store, &*txn, &[])?;
         self.attempts.ready_kind_matching_in_txn(
             txn,
             DREAMER_TURN_PROGRAM_ATTEMPT_KIND,

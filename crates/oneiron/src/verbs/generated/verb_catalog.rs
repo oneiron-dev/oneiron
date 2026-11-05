@@ -249,6 +249,7 @@ pub enum AgentVerb {
     VaultSkillsRulesSet,
     VaultSkillsCodeAutoInstallSet,
     VaultSkillsFitSet,
+    VaultSkillsAdvisoryAskSet,
     VaultSkillsPermissionsApprove,
     VaultSkillsOptimizeStart,
     VaultSkillsOptimizeResult,
@@ -366,6 +367,7 @@ pub enum AgentVerb {
     VaultFederationBurstBaseline,
     VaultFederationBurstPolicy,
     VaultFederationBurstPolicySet,
+    VaultSyncQuarantineHeldEdits,
     VaultSyncRetainedWorkWaitSet,
     VaultFederationBurstIngress,
     VaultFederationBurstDisposition,
@@ -1504,6 +1506,7 @@ impl AgentVerb {
         Self::VaultSkillsRulesSet,
         Self::VaultSkillsCodeAutoInstallSet,
         Self::VaultSkillsFitSet,
+        Self::VaultSkillsAdvisoryAskSet,
         Self::VaultSkillsPermissionsApprove,
         Self::VaultSkillsOptimizeStart,
         Self::VaultSkillsOptimizeResult,
@@ -1621,6 +1624,7 @@ impl AgentVerb {
         Self::VaultFederationBurstBaseline,
         Self::VaultFederationBurstPolicy,
         Self::VaultFederationBurstPolicySet,
+        Self::VaultSyncQuarantineHeldEdits,
         Self::VaultSyncRetainedWorkWaitSet,
         Self::VaultFederationBurstIngress,
         Self::VaultFederationBurstDisposition,
@@ -2762,6 +2766,7 @@ impl AgentVerb {
             Self::VaultSkillsRulesSet => "vault.skills.rules.set",
             Self::VaultSkillsCodeAutoInstallSet => "vault.skills.code_auto_install.set",
             Self::VaultSkillsFitSet => "vault.skills.fit.set",
+            Self::VaultSkillsAdvisoryAskSet => "vault.skills.advisory_ask.set",
             Self::VaultSkillsPermissionsApprove => "vault.skills.permissions.approve",
             Self::VaultSkillsOptimizeStart => "vault.skills.optimize.start",
             Self::VaultSkillsOptimizeResult => "vault.skills.optimize.result",
@@ -2883,6 +2888,7 @@ impl AgentVerb {
             Self::VaultFederationBurstBaseline => "vault.federation.burst.baseline",
             Self::VaultFederationBurstPolicy => "vault.federation.burst.policy",
             Self::VaultFederationBurstPolicySet => "vault.federation.burst.policy.set",
+            Self::VaultSyncQuarantineHeldEdits => "vault.sync.quarantine.held_edits",
             Self::VaultSyncRetainedWorkWaitSet => "vault.sync.retained_work.wait.set",
             Self::VaultFederationBurstIngress => "vault.federation.burst.ingress",
             Self::VaultFederationBurstDisposition => "vault.federation.burst.disposition",
@@ -4053,6 +4059,7 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsFitSet
+                | Self::VaultSkillsAdvisoryAskSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
@@ -4170,6 +4177,7 @@ impl AgentVerb {
                 | Self::VaultFederationBurstBaseline
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
+                | Self::VaultSyncQuarantineHeldEdits
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstDisposition
@@ -5337,6 +5345,7 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsFitSet
+                | Self::VaultSkillsAdvisoryAskSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
@@ -5454,6 +5463,7 @@ impl AgentVerb {
                 | Self::VaultFederationBurstBaseline
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
+                | Self::VaultSyncQuarantineHeldEdits
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstDisposition
@@ -6375,6 +6385,7 @@ impl AgentVerb {
                 | Self::VaultSharedMatured
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedPolicyChanges
+                | Self::VaultSyncQuarantineHeldEdits
                 | Self::VaultFederationBurstReview
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConcernAsks
@@ -6766,6 +6777,7 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsFitSet
+                | Self::VaultSkillsAdvisoryAskSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
@@ -6882,6 +6894,7 @@ impl AgentVerb {
                 | Self::VaultFederationBurstBaseline
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
+                | Self::VaultSyncQuarantineHeldEdits
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstDisposition
@@ -7833,6 +7846,7 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsFitSet
+                | Self::VaultSkillsAdvisoryAskSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultProjectsGoalIntakeComplete
@@ -8731,6 +8745,7 @@ impl AgentVerb {
             Self::VaultSkillsRulesSet => &["spec"],
             Self::VaultSkillsCodeAutoInstallSet => &["spec"],
             Self::VaultSkillsFitSet => &["spec"],
+            Self::VaultSkillsAdvisoryAskSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultSkillsOptimizeStart => &["spec"],
             Self::VaultSkillsOptimizeResult => &["spec"],
@@ -8848,6 +8863,7 @@ impl AgentVerb {
             Self::VaultFederationBurstBaseline => &["spec"],
             Self::VaultFederationBurstPolicy => &["spec"],
             Self::VaultFederationBurstPolicySet => &["spec"],
+            Self::VaultSyncQuarantineHeldEdits => &["spec"],
             Self::VaultSyncRetainedWorkWaitSet => &["spec"],
             Self::VaultFederationBurstIngress => &["spec"],
             Self::VaultFederationBurstDisposition => &["spec"],
@@ -9987,6 +10003,7 @@ impl AgentVerb {
             Self::VaultSkillsRulesSet => &["spec"],
             Self::VaultSkillsCodeAutoInstallSet => &["spec"],
             Self::VaultSkillsFitSet => &["spec"],
+            Self::VaultSkillsAdvisoryAskSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultSkillsOptimizeStart => &["spec"],
             Self::VaultSkillsOptimizeResult => &["spec"],
@@ -10104,6 +10121,7 @@ impl AgentVerb {
             Self::VaultFederationBurstBaseline => &["spec"],
             Self::VaultFederationBurstPolicy => &["spec"],
             Self::VaultFederationBurstPolicySet => &["spec"],
+            Self::VaultSyncQuarantineHeldEdits => &["spec"],
             Self::VaultSyncRetainedWorkWaitSet => &["spec"],
             Self::VaultFederationBurstIngress => &["spec"],
             Self::VaultFederationBurstDisposition => &["spec"],
@@ -11726,6 +11744,9 @@ impl AgentVerb {
             Self::VaultSkillsFitSet => {
                 "The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert."
             }
+            Self::VaultSkillsAdvisoryAskSet => {
+                "The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way."
+            }
             Self::VaultSkillsPermissionsApprove => {
                 "The owner answers one imported skill permission ask at its exact hub source."
             }
@@ -12070,6 +12091,9 @@ impl AgentVerb {
             }
             Self::VaultFederationBurstPolicySet => {
                 "The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant."
+            }
+            Self::VaultSyncQuarantineHeldEdits => {
+                "The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."
             }
             Self::VaultSyncRetainedWorkWaitSet => {
                 "The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait."
