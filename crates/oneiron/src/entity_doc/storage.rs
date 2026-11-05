@@ -966,8 +966,10 @@ pub(crate) fn body_with_document(
                     fields.push((rmpv::Value::from(key), value));
                 }
             }
+            let mut body = rmpv::Value::Map(fields);
+            super::native_skill_state::project_state(doc, &mut body)?;
             let mut out = Vec::new();
-            rmpv::encode::write_value(&mut out, &rmpv::Value::Map(fields))
+            rmpv::encode::write_value(&mut out, &body)
                 .map_err(|_| invalid("document view encoding"))?;
             Ok(out)
         }
