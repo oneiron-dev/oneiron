@@ -16,6 +16,24 @@ oneiron serve --config ~/.config/oneiron/oneiron.toml
 `GET /api/health` reports `"ai": {"dreamer": "idle", "dreamer_reason": "no_model_configured", "compaction": "off", "compaction_reason": "no_model_configured"}`.
 Chat answers `503 no_model_configured`, and nothing that needs no model waits on one.
 
+### Configure first-run models without stopping the server
+
+With both the embedder and tagger slots still unconfigured, an authenticated owner can call
+`POST /v1/owner/settings/models/setup`. It takes the first-run model answers from
+`ModelSetupAnswers`: embedder provider, endpoint, locality, model and dimensions, and the
+`oneironer` tagger options. `embedder_api_key_env` is an environment variable's name, never the
+key itself. The request and reply schemas are published at `GET /api/openapi.json`.
+
+The route uses the vault the server already opened. It writes the config file the server
+started from, attaches the first model slots and starts their workers, without a vault reopen
+or a terminal prompt. Its reply is `ModelSetupOutcome`: `config` (the file path), `embedder`
+and `tagger`. It does not replace configured slots, reembed existing vectors or rewrite a
+managed server's settings. The native setup checks still apply: changed vault or sizing
+settings return `changed_since_review`, and a server without first-run setup state, a config
+file or the live setup runtime refuses the request. Invalid answers use the normal owner
+error response. The existing `GET` and `POST /v1/owner/settings/models` Responses `store`
+switch is separate and unchanged.
+
 An embedded binding that uses `embedded_serve_config` retains its explicit
 vault path and optional dimensions for first-run model setup on the open
 vault. Setup replays those inputs over the file and environment; dimensions
@@ -838,6 +856,16 @@ manifest the `[models]` ladder is the role's binding.
 `early_system` (the default) or `stable_history_then_turn_context`. It wins
 over `ONEIRON_PROMPT_LAYOUT` (DEPLOYMENT.md, "Prompt layout").
 
+A chat turn's context board rides in two parts (I1 = C): its state part
+(worlds, tasks, loaded skills, room, inbox and the changed line) right
+before the user's message, and its query part (the memories and the skills
+that message found) right after it. Both come from one read, under one
+board budget. `turn_opener` under `[models.chat]` closes a turn whose board
+rides: `clock` (the default) adds `<turn now="…"/>`, the vault clock's
+instant in UTC, after the query part; `off` adds nothing. A turn whose board
+is held or not read ends at the user's message, as before. `POST
+/v1/core/context-board` and `ai.reply` still render the one frame.
+
 ## 5. Saved workflows
 
 A dispatched saved workflow runs its steps on the `generative_reasoner` seat
@@ -1178,13 +1206,15 @@ Gate record with the handle, generation, effector, operation and send status.
 
 A served host also supplies `native_mail.jmap` against its installed native
 mail server and `broker.models` against a configured broker-backed
-OpenAI-compatible or Gemini provider. The latter takes
+OpenAI-compatible, Anthropic-compatible or Gemini provider. The latter takes
 `arguments: {"provider": "<configured provider name>"}` and returns one actual
-provider JSON response: `/v1/models` for OpenAI-compatible providers or
-`/v1beta/models` for Gemini. Any provider pagination token is returned as-is;
-this operation does not fetch later pages or claim a complete catalog. It
-presents the requested handle, not the provider's configured secret, under the
-existing `broker:model` binding.
+provider JSON response: `/v1/models` for OpenAI-compatible and Anthropic-compatible
+providers or `/v1beta/models` for Gemini. Any provider pagination token is returned
+as-is; this operation does not fetch later pages or claim a complete catalog.
+Anthropic requests carry the same native `anthropic-version` as brokered chat,
+which takes precedence over configured extra headers. It presents the requested
+handle, not the provider's configured secret, under the existing `broker:model`
+binding.
 The host uses one actual model rung only as the broker's bodyless-request
 binding; it does not filter the listing or claim that model is serving.
 The broker is connected before custody releases the value. Both result and

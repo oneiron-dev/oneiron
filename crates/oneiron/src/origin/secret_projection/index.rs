@@ -276,7 +276,7 @@ impl RepoIndexMarks {
         self.sources.get(entity).copied()
     }
 
-    fn carried_source(
+    pub(crate) fn carried_source(
         &self,
         entity: &EntityId,
         source: [u8; 32],

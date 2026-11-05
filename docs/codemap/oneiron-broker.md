@@ -21,7 +21,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deadline.rs` | src | s | 1 const · 6 crate-vis | — | One call's deadline (FIX 8559) |
 | `src/digest.rs` | src | s | 2 fn | — | The request digest (ARCH-0069 `#broker-digest`): blake3 over the method, the path, the sorted non-auth… |
 | `src/error.rs` | src | s | 3 enum | BrokerError, Failure, Refusal | Why a call stopped |
-| `src/form.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | FormData | `multipart/form-data` bodies, for the shapes that upload a file: the check the broker runs on one, which… |
+| `src/form.rs` | src | m | 1 struct · 4 fn · 1 crate-vis | FormData | `multipart/form-data` bodies, for the shapes that upload a file: the check the broker runs on one, which… |
 | `src/frame.rs` | src | m | 4 const · 15 crate-vis | — | The wire between the daemon and the broker, one connection per call |
 | `src/lib.rs` | src | s | 1 enum · 1 fn · 2 mod · 13 re-export | Isolation | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) |
 | `src/peer.rs` | src | s | 7 crate-vis | — | Who this process is, and closing its memory to processes of its own uid |

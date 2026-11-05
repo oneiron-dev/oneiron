@@ -43,7 +43,6 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryResult, SafeDeleteReason};
-use crate::task_verb::sdk::vault_delete;
 use crate::temporal::TimeRange;
 use serde::{Deserialize, Serialize};
 
@@ -158,14 +157,18 @@ impl Memory<'_> {
         if self.raw_delete_in_session(id)? {
             return Ok(true);
         }
-        vault_delete(
+        let request = SafeDeleteRequest {
+            entity_ref: id.to_hex(),
+            reason: SafeDeleteReason::UserDelete,
+        };
+        crate::gate::record_references::admit_row_references(
             self,
-            SafeDeleteRequest {
-                entity_ref: id.to_hex(),
-                reason: SafeDeleteReason::UserDelete,
-            },
-        )
-        .map(|receipt| receipt.existed)
+            "vault.delete",
+            &request,
+            &["/entity_ref"],
+        )?;
+        self.safe_delete(&request.entity_ref, request.reason)
+            .map(|receipt| receipt.existed)
     }
 
     /// Commits `batch`, which puts `puts`, below owner grade once its writer

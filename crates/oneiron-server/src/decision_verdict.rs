@@ -731,13 +731,10 @@ fn pull(lane: Option<&ScopedRead<'_>>, handle: &str) -> MemoryResult<DecisionIma
     };
     let mut pulled = oneiron::memory::pull_image(lane, &request, true)?.value;
     let image = pulled.image.take().ok_or_else(internal)?;
-    let asset = EntityId::from_hex(&pulled.asset_ref).map_err(|_| internal())?;
+    let evidence = pulled.evidence.take().ok_or_else(internal)?;
     readable(DecisionImage {
         name: IMAGE.to_owned(),
-        evidence: EvidenceVersion {
-            id: asset,
-            body_hash: *blake3::hash(&image.bytes).as_bytes(),
-        },
+        evidence,
         image,
         frame: None,
     })

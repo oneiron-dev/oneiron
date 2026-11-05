@@ -235,11 +235,6 @@ side_tables! {
     /// Durable cleanup-scan result for one attempt, closing the job-commit-to-queue-settlement crash
     /// gap. Key: id16 (AttemptId).
     VAULT_CLEANUP_RUN: VaultMeta b"vault_cleanup.run.v1:" Raw;
-    /// Rotating per-arm scan cursor (one row per CLEANUP_CHECKS entity type, plus one literal
-    /// "attempt" row for the completed-queue-record arm); both suffix shapes share this one prefix by
-    /// design and cannot collide (1 byte vs 7 ASCII bytes). Key: u8 (entity-type byte) OR literal
-    /// string "attempt".
-    VAULT_CLEANUP_SCAN_CURSOR: VaultMeta b"vault_cleanup.scan.v1:" Raw;
     /// Index of archived attempts under one TASK, used to restore them together when the task is
     /// touched. Key: BLAKE3 derive_key of the task reference (32) then id16 (AttemptId).
     VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE: VaultMeta b"vault_cleanup.task_attempt_archive.v1/" Raw;

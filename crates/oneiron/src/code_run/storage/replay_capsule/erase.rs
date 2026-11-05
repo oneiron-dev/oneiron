@@ -19,7 +19,7 @@
 use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::super::replay_capsule::{CapsuleContent, CapsuleRequest, StepReplayCapsule};
 use super::super::response_erase::erase_actor_responses_in_txn;
-use super::{CAPSULES, FORKS, ForkRow};
+use super::{CAPSULES, FORKS, ForkValue};
 use crate::compaction::output::OutputRef;
 use crate::ports::EntityStoreRead;
 use crate::provenance::body::release_body_in_txn;
@@ -150,7 +150,9 @@ fn fork_answers_in_txn(
     let mut answers = Vec::new();
     for row in FORKS.iter_raw_from(dbs, txn, &[])? {
         let (_, bytes) = row?;
-        if let Ok(ForkRow::Fork(receipt)) = FORKS.decode_value(&bytes) {
+        if let Ok(row) = FORKS.decode_value(&bytes)
+            && let ForkValue::Fork(receipt) = row.value
+        {
             let at = (
                 receipt.attempt,
                 u64::from(receipt.lease_generation),

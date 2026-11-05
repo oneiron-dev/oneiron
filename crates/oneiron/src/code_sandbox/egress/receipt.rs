@@ -149,6 +149,28 @@ impl Vault {
             receipt.content_hash,
         )
     }
+    /// One credential forwarding/resolution decision, as metadata only. The
+    /// digest hashes the metadata JSON itself, never a transport or content
+    /// claim.
+    pub fn append_credential_egress_receipt(
+        &self,
+        run_id: EntityId,
+        record: &oneiron_container::CredentialEgressRecord,
+    ) -> Result<String> {
+        let body = serde_json::to_string(&serde_json::json!({
+            "run_id": run_id.to_hex(),
+            "credential_egress": record,
+        }))
+        .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?;
+        let digest = *blake3::hash(body.as_bytes()).as_bytes();
+        self.append_sandbox_gate_receipt(
+            run_id,
+            "credential_egress",
+            record.status.as_str(),
+            body,
+            digest,
+        )
+    }
     fn append_sandbox_gate_receipt(
         &self,
         run_id: EntityId,

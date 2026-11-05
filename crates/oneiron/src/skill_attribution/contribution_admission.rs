@@ -350,3 +350,35 @@ pub(crate) fn erase_contribution_checks_in_txn(
     }
     Ok(())
 }
+
+/// Rebinds only exact fork references after the owning FORKS eraser moves
+/// them, in that same writer. Measurements and erased CHECK keys stay put.
+pub(crate) fn rebind_contribution_fork_receipts_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    rebound: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    if rebound.is_empty() {
+        return Ok(());
+    }
+    for (key, mut admission) in super::skill_erase::erase_scan_in_txn(vault, wtxn, CHECK)? {
+        let mut changed = false;
+        for pair in admission
+            .matched
+            .iter_mut()
+            .map(|record| &mut record.pair)
+            .chain(admission.unmatched.iter_mut().map(|kept| &mut kept.pair))
+        {
+            for fork in [&mut pair.with_skill, &mut pair.without_skill] {
+                if let Some(receipt) = rebound.get(&fork.receipt) {
+                    fork.receipt.clone_from(receipt);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            CHECK.put(&vault.store, wtxn, &key, &admission)?;
+        }
+    }
+    Ok(())
+}

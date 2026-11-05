@@ -314,8 +314,16 @@ impl SyncConnection {
                 .await;
             self.publish_leave_unqueued(&mut debounce_buffer);
         } else {
-            self.queue_on_shutdown(&mut self.batch_gate(), &mut debounce_buffer)
-                .await;
+            let mut final_gate = self.batch_gate();
+            let mut final_left = self.left.subscribe();
+            tokio::select! {
+                biased;
+                () = async { let _ = final_left.wait_for(|left| *left).await; } => {
+                    self.queue_on_exit(&mut final_gate, &mut debounce_buffer).await;
+                    self.publish_leave_unqueued(&mut debounce_buffer);
+                }
+                _ = self.queue_on_shutdown(&mut final_gate, &mut debounce_buffer) => {}
+            }
         }
         self.running.send_replace(false);
         Ok(())

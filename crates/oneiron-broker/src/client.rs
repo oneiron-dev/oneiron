@@ -196,7 +196,9 @@ impl BrokerConnection {
         loop {
             match reply.next().await? {
                 StreamPart::Chunk(chunk) if whole.is_empty() => whole = chunk,
-                StreamPart::Chunk(chunk) => push_wiped(&mut whole, &chunk),
+                StreamPart::Chunk(chunk) => {
+                    push_wiped(&mut whole, &chunk).map_err(|_| BrokerError::Lost)?;
+                }
                 StreamPart::End => break,
                 StreamPart::Cut(reason) => {
                     return Ok(BrokerReply {

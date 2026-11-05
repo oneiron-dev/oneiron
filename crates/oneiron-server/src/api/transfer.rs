@@ -547,13 +547,15 @@ pub(super) type BodyPiece = io::Result<Option<Bytes>>;
 ///
 /// Only the wait for the client is timed: a full channel is the worker's
 /// backpressure, and the worker bounds its own waits.
-pub(super) async fn feed_body(
+pub(super) fn feed_body(
     body: Body,
     pieces: mpsc::Sender<BodyPiece>,
     idle: Duration,
     max_piece: usize,
-) {
-    feed_pieces(body, pieces, Some(idle), max_piece).await;
+) -> impl std::future::Future<Output = ()> {
+    // Capture before a caller spawns this future on a different task.
+    let revocation = crate::http_listener::current_body_revocation();
+    feed_pieces(body, pieces, Some(idle), max_piece, revocation)
 }
 
 /// [`feed_body`] with no wait of its own on the client: only the listener's
@@ -564,7 +566,7 @@ pub(super) async fn feed_body_untimed(
     pieces: mpsc::Sender<BodyPiece>,
     max_piece: usize,
 ) {
-    feed_pieces(body, pieces, None, max_piece).await;
+    feed_pieces(body, pieces, None, max_piece, None).await;
 }
 
 async fn feed_pieces(
@@ -572,13 +574,20 @@ async fn feed_pieces(
     pieces: mpsc::Sender<BodyPiece>,
     idle: Option<Duration>,
     max_piece: usize,
+    revocation: Option<crate::http_listener::BodyRevocation>,
 ) {
     let mut stream = body.into_data_stream();
     loop {
         let next = match idle {
-            Some(idle) => match tokio::time::timeout(idle, stream.next()).await {
-                Ok(next) => next,
-                Err(_) => {
+            Some(idle) => match crate::http_listener::body_read_timeout(
+                revocation.as_ref(),
+                idle,
+                stream.next(),
+            )
+            .await
+            {
+                Some(next) => next,
+                None => {
                     let _ = pieces
                         .send(Err(io::Error::new(
                             io::ErrorKind::TimedOut,

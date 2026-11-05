@@ -30,7 +30,8 @@ pub(super) fn validate_native_output(
             "a native output needs a file name and non-empty bytes",
         )));
     }
-    let report = serde_json::to_string(&output.report).map_err(|_| {
+    let report = output.report.clone();
+    serde_json::from_str::<&serde_json::value::RawValue>(&report).map_err(|_| {
         Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "native output report does not encode",
         ))

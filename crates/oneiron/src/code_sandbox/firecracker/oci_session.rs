@@ -95,6 +95,8 @@ pub(super) fn start(
         ));
     }
     let image = resolve(spec.image.as_str(), "")?;
+    let selected_config = config.for_oci_image(spec.image.as_str())?;
+    let config = &selected_config;
     config.pins.verify(&image)?;
     let image_release = image_release::observe_bound_release(
         image_release::SelectedImage::Oci(&spec.image),

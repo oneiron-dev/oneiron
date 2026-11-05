@@ -53,12 +53,16 @@ pub(super) enum LfsAccess {
 /// Split from the handlers so the gate is testable as itself, exactly as the
 /// smart-HTTP gate is: the scope check and the registered-principal demand are
 /// one function with no transport around them.
-pub(super) fn authorize(
+pub(super) async fn authorize(
     headers: &HeaderMap,
     server: &SyncServer,
     access: LfsAccess,
 ) -> Result<CoreAuth, ApiError> {
-    let auth = CoreAuth::from_headers(headers, &server.config, server.vault().as_ref())?;
+    let auth = if server.managed_issuer.is_some() {
+        CoreAuth::from_headers(headers, &server.config, server.vault().as_ref())
+    } else {
+        CoreAuth::for_server_async(headers, server).await
+    }?;
     admit(auth, access)
 }
 
@@ -72,7 +76,7 @@ pub(super) fn authorize(
 /// ([`crate::auth::proved_peer`], FIX 4937): its objects are released as that
 /// machine may read them, and a request with no proof stays a destination
 /// nobody proved.
-pub(super) fn authorize_request(
+pub(super) async fn authorize_request(
     parts: &Parts,
     server: &SyncServer,
     access: LfsAccess,
@@ -85,6 +89,7 @@ pub(super) fn authorize_request(
     ) {
         Some(attested) => admit(attested?, access),
         None => authorize(&parts.headers, server, access)
+            .await
             .map(|auth| auth.toward(crate::auth::proved_peer(&parts.headers, &parts.extensions))),
     }
 }

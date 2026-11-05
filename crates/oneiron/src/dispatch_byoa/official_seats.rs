@@ -568,7 +568,11 @@ impl OfficialSeatAdapter for ClaudeCodeSeatAdapter {
         _seat: &OfficialSeatSpec,
         input: OfficialSeatInput,
     ) -> ByoaResult<ByoaConnectorSpec> {
-        cli_connector("claude", &["-p", "--output-format", "stream-json"], input)
+        cli_connector(
+            "claude",
+            &["-p", "--output-format", "stream-json", "--verbose"],
+            input,
+        )
     }
 }
 

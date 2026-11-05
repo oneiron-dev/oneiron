@@ -437,6 +437,8 @@ mod ceiling_wire {
 }
 mod build;
 mod execution;
+mod fold_hooks;
+pub use fold_hooks::PreHookedFold;
 mod replay_read;
 #[cfg(test)]
 mod tests;

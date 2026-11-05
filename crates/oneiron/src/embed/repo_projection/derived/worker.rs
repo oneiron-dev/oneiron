@@ -293,6 +293,7 @@ fn source_copies_in(
             None => row.body.as_slice(),
         };
         if let Some(blob) = marks.source_of(&source.id) {
+            let blob = marks.carried_source(&source.id, blob, body)?;
             let input = marks.source_input_in_txn(vault, txn, &blob, body.to_vec())?;
             copies.push(if input.opaque() {
                 SourceCopy::placeholder(source.id)

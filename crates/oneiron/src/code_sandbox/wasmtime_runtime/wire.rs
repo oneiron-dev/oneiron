@@ -588,6 +588,7 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "MODEL_UNAVAILABLE",
     "MODEL_PIN_UNAVAILABLE",
     "PENDING_ASK",
+    oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR,
 ];
 
 /// One dispatched call's reply body, before its budget envelope.
@@ -622,8 +623,17 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }
         SelfDispatchOutcome::Failed(value) => {
-            if GUEST_FAILURE_CODES.contains(&value.error.as_str()) {
-                json!({"failed": true, "error": value.error})
+            let error = value
+                .code
+                .as_deref()
+                .filter(|code| GUEST_FAILURE_CODES.contains(code))
+                .or_else(|| {
+                    GUEST_FAILURE_CODES
+                        .contains(&value.error.as_str())
+                        .then_some(value.error.as_str())
+                });
+            if let Some(error) = error {
+                json!({"failed": true, "error": error})
             } else {
                 json!({"failed": true})
             }

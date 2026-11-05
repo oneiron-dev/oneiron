@@ -31,7 +31,7 @@ impl<'vault> ScopedRead<'vault> {
             policy,
             filter,
             txn,
-            held: HeldAuthority::default(),
+            held: HeldAuthority::for_request(requested),
         })
     }
 
@@ -100,6 +100,7 @@ impl<'vault> ScopedRead<'vault> {
         authority: &HeldAuthority<'vault>,
     ) -> Result<bool> {
         let floor = self.actor_retrieval_floor(policy)?;
+        let floor_authority = authority.for_peer();
         let parts = match self.session_view {
             Some(view) => {
                 view.port_edges(txn, turn, EdgeDirection::In, Some(EdgeKind::PartOf), None)?
@@ -117,7 +118,7 @@ impl<'vault> ScopedRead<'vault> {
             if row.entity_type != crate::registry::ENTITY_TYPE_MESSAGE || row.body.is_empty() {
                 continue;
             }
-            if !self.is_entity_readable_held_in(txn, policy, &message, &floor, authority)? {
+            if !self.is_entity_readable_held_in(txn, policy, &message, &floor, &floor_authority)? {
                 return Ok(false);
             }
         }
