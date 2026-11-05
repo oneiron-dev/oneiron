@@ -10,7 +10,7 @@ use oneiron::settings::{ReadDestination, ReleaseHold};
 use oneiron::{EntityId, LlmRequest};
 use serde_json::Value;
 
-use super::super::read_rows::ReadRows;
+use super::super::read_rows::{ReadRequests, ReadRows};
 use super::{Backend, invalid};
 use crate::models::{SourceAdmission, SourceOffer};
 
@@ -78,7 +78,9 @@ pub(super) fn rerank_pins(
     }
     let scoped = crate::api::scoped_read_for_core_auth(&backend.server.vault, &backend.auth)
         .map_err(|_| invalid("memory reason pinned read failed"))?;
-    let read = scoped.read(&refs, None)?;
+    let refs = ReadRequests::new(&backend.server.memory, refs);
+    let read = scoped.read(refs.as_slice(), None)?;
+    drop(refs);
     let oneiron::claim::ScopedReadResult {
         value: rows,
         receipt,
@@ -168,7 +170,9 @@ pub(super) fn compose_pins(
         .collect();
     let scoped = crate::api::scoped_read_for_core_auth(&backend.server.vault, &backend.auth)
         .map_err(|_| invalid("memory reason pinned read failed"))?;
-    let read = scoped.read(&refs, None)?;
+    let refs = ReadRequests::new(&backend.server.memory, refs);
+    let read = scoped.read(refs.as_slice(), None)?;
+    drop(refs);
     let oneiron::claim::ScopedReadResult {
         value: rows,
         receipt,
@@ -261,9 +265,11 @@ impl<'a> Sources<'a> {
             .iter()
             .map(|pin| PointRead::id(pin.id).at(ReadMode::Pinned(pin.revision)))
             .collect();
+        let refs = ReadRequests::new(&self.backend.server.memory, refs);
         let read = reader
-            .read(&refs, None)
+            .read(refs.as_slice(), None)
             .map_err(|_| ReleaseHold::Placement.reason())?;
+        drop(refs);
         let oneiron::claim::ScopedReadResult {
             value: rows,
             receipt,

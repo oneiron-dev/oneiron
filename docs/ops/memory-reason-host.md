@@ -110,6 +110,27 @@ model-request copies, provider storage and allocator overhead remain outside
 these owners. This is not full working-set admission or Q, and it adds no
 memory growth wait, refusal, cap, default or timer.
 
+## Pinned read request storage
+
+Evidence collection and the production host's three source-read paths keep
+their already-collected native point-read vectors in a private owner. Its
+lease records each actual vector's backing capacity once on the same supplied
+memory line. These callers build id targets with pinned revisions; no owned
+reference text is included or estimated. Input vectors, raw output bodies and
+retained projected text are distinct allocations with separate owners.
+
+The native read borrows the same request slice, in the same order. The input
+owner stays alive throughout that read, including every evidence-frame
+callback, then drops before receipt handling and later citation, scope or
+model work. Its vector drops before its charge on errors and unwind. Rerank
+input construction still validates revisions before this owner is built.
+
+This is accounting after the request vector was built, not admission before
+its growth. Separate revision, id and hash vectors, maps, receipts, provider
+copies and allocator overhead are not covered by this owner. No growth wait,
+refusal, default or cap is added, and full working-set admission and Q remain
+open.
+
 ## Host raw read storage
 
 The production host's rerank pins, composition pins and per-destination source
