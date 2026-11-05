@@ -93,9 +93,13 @@ impl Vault {
             let Some(sender) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
                 return Ok(None);
             };
-            let Some(sender_key) = fold.machine_proof_key(sender) else {
+            let sender_key = self
+                .door_signing_key_in_txn(&txn, sender)?
+                .verifying_key()
+                .to_bytes();
+            if fold.machine_proof_key(sender) != Some(sender_key) {
                 return Ok(None);
-            };
+            }
             let Some(vault_id) = self.authority_view_readonly_in_txn(&txn)?.vault_id else {
                 return Ok(None);
             };
@@ -161,6 +165,22 @@ impl Vault {
                 || crate::identity::read_machine_id_in_txn(self, &txn)? != Some(secret.machine)
                 || !own_peer_in_txn(self, &txn, peer)?
             {
+                return Ok(None);
+            }
+            let local_key = self
+                .door_signing_key_in_txn(&txn, secret.machine)?
+                .verifying_key()
+                .to_bytes();
+            let fold = self.authority_fold_readonly_in_txn(&txn)?;
+            if fold.machine_proof_key(secret.machine) != Some(local_key) {
+                return Ok(None);
+            }
+            let Some(current_key) =
+                crate::secret_custody::linked_machine_encryption_key(&fold, secret.machine)
+            else {
+                return Ok(None);
+            };
+            if current_key.to_bytes() != secret.secret.public_key().to_bytes() {
                 return Ok(None);
             }
             let Some(vault_id) = self.authority_view_readonly_in_txn(&txn)?.vault_id else {
