@@ -8378,7 +8378,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -56115,7 +56115,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/budget/selection.rs",
@@ -83586,7 +83586,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault/transactions/write_door.rs",
@@ -110652,9 +110652,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/stewardship/draft.rs",
-     "purpose": "One follow-up draft: its call over every eligible source and, when that fails, its rescue over the newest…",
+     "purpose": "Follow-up drafting with destination-bound sources",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/stewardship/draft/fold.rs",
+     "purpose": "Provider-failure-driven evidence splitting and pairwise draft synthesis",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -110674,7 +110684,7 @@
      "path": "src/ai_host/stewardship/sources.rs",
      "purpose": "What each model a follow-up draft goes to may read of its sources (FIX 8714)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -123911,7 +123921,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CallDeadline"
@@ -123919,7 +123929,7 @@
      "path": "src/models/ladder/call_deadline.rs",
      "purpose": "One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 7
      }
@@ -127936,7 +127946,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 107,
+     "files": 108,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128456,7 +128466,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1545,
+   "source_files": 1546,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
