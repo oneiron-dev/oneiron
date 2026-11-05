@@ -293,7 +293,12 @@ impl BrokerMedia {
                 for file in files {
                     form = form.file(file.name, file.filename, file.media_type, file.bytes);
                 }
-                let (kind, body) = form.finish();
+                let (kind, body) = form.finish().map_err(|_| {
+                    RetryableLlmError::not_sent(
+                        "multipart_body",
+                        "multipart body allocation failed",
+                    )
+                })?;
                 (Some(kind), body)
             }
         };
