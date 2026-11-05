@@ -108,6 +108,7 @@ impl ManagedArgs {
             vm_anchor,
             start_mode,
             vsock_guest: args.vsock_guest,
+            vm_outbox_companion_admitted: args.vm_outbox_companion_admitted,
             keystore_dir: args.keystore_dir.clone(),
             escrow_recipient: args.escrow_recipient_file.clone(),
             break_glass_recipient: args.break_glass_recipient_file.clone(),

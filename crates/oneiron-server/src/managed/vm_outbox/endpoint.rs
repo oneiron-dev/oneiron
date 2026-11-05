@@ -341,26 +341,53 @@ pub(in crate::managed) fn register_backup(dir: &Path, label: &str) -> anyhow::Re
 }
 
 /// Parks the companion before the engine reports idle: it finishes a local
-/// commit in flight and starts none until [`resume_companion`].
+/// commit in flight and starts none until [`resume_companion`]. Delivery is
+/// retried until acknowledged, including across a companion replacement.
 pub(in crate::managed) async fn park_companion() {
-    lifecycle(Request::Park).await;
+    lifecycle(true).await;
 }
 
-/// Opens the companion again once the host resumed the vault.
+/// Opens the companion again once the host resumed the vault, retrying
+/// until the replacement acknowledges the request too.
 pub(in crate::managed) async fn resume_companion() {
-    lifecycle(Request::Resume).await;
+    lifecycle(false).await;
 }
 
-async fn lifecycle(request: Request) {
-    let answered = tokio::task::spawn_blocking(move || call(&request))
-        .await
-        .map_err(std::io::Error::other)
-        .and_then(|reply| reply);
-    if let Err(error) = answered {
-        tracing::warn!(
-            reason = "vm_outbox_companion_unreachable",
-            %error,
-            "the vault VM's outbox companion did not answer; its carrier keeps its work"
-        );
+async fn lifecycle(park: bool) {
+    loop {
+        match lifecycle_call(park).await {
+            Ok(Reply::Parked) if park => return,
+            Ok(Reply::Resumed) if !park => return,
+            Ok(_) => tracing::warn!(
+                reason = "vm_outbox_lifecycle_unacknowledged",
+                operation = if park { "park" } else { "resume" },
+                "the companion did not acknowledge the lifecycle request; retrying"
+            ),
+            Err(error) => tracing::warn!(
+                reason = "vm_outbox_companion_unreachable",
+                operation = if park { "park" } else { "resume" },
+                %error,
+                "the outbox companion did not answer the lifecycle request; retrying"
+            ),
+        }
+        tokio::time::sleep(super::RESCAN_EVERY).await;
     }
+}
+
+/// The socket stays owned by the future, so cancelling a park or resume
+/// drops its pending I/O instead of leaving a blocking worker behind.
+async fn lifecycle_call(park: bool) -> std::io::Result<Reply> {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+
+    let request = if park { Request::Park } else { Request::Resume };
+    let mut stream = tokio::net::UnixStream::connect(ENDPOINT).await?;
+    let mut line = serde_json::to_vec(&request).map_err(std::io::Error::other)?;
+    line.push(b'\n');
+    stream.write_all(&line).await?;
+    let mut reply = String::new();
+    tokio::io::BufReader::new(stream)
+        .take(MAX_LINE)
+        .read_line(&mut reply)
+        .await?;
+    serde_json::from_str(reply.trim_end()).map_err(std::io::Error::other)
 }

@@ -121,11 +121,15 @@ fn kill_and_wait(mut child: Child) {
     }
 }
 
-/// The engine's outbox flags, at the guest paths the companion laid out,
-/// with each escrow recipient the host has already sent.
+/// The engine's outbox flags: the companion's admission itself, then its
+/// flags at the guest paths it laid out, with each escrow recipient the
+/// host has already sent.
 pub(super) fn engine_flags() -> Vec<OsString> {
     let outbox = Path::new(VM_GUEST_OUTBOX_DIR);
     let mut flags: Vec<OsString> = Vec::new();
+    // The admission, not a path: only this constructor runs with a companion
+    // beside the engine, so presence records that initial admission.
+    flags.push("--vm-outbox-companion-admitted".into());
     for (flag, dir) in [
         ("--escrow-outbox-dir", "escrow"),
         ("--esign-delivery-outbox-dir", "esign"),

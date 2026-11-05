@@ -225,6 +225,11 @@ pub struct ManagedArgs {
     pub start_mode: ManagedStartMode,
     /// The process is a Firecracker vault VM's engine (`--vsock-guest`).
     pub vsock_guest: bool,
+    /// The bootstrap admitted this start's outbox companion beside the engine
+    /// (`--vm-outbox-companion-admitted`): only `oneiron-vm-init` passes it,
+    /// only with a companion it admitted, so presence is the proof. Hidden
+    /// bootstrap plumbing, never operator policy.
+    pub vm_outbox_companion_admitted: bool,
     /// Where this install keeps its this-device-only key slots, a place the
     /// supervisor chose. Without it managed mode installs no keystore, and
     /// serves on with that facility named missing in its readiness unless

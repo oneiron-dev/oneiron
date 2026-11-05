@@ -144,6 +144,17 @@ pub struct ServeArgs {
     #[arg(long = "vsock-guest")]
     pub vsock_guest: bool,
 
+    /// A vault VM's outbox companion admission, which only the image's
+    /// `oneiron-vm-init` passes, only beside a companion it admitted: presence
+    /// is the proof the engine parks around idle. Hidden bootstrap plumbing,
+    /// never operator policy.
+    #[arg(
+        long = "vm-outbox-companion-admitted",
+        hide = true,
+        requires_all = ["vsock_guest", "managed_by_hypnos"]
+    )]
+    pub vm_outbox_companion_admitted: bool,
+
     /// A vault VM's cold restore handoff (FIX 6584), which only the image's
     /// `oneiron-vm-init` passes: the revision of the restore channel its
     /// host answered on, beside `--restore` and the two pipes the bootstrap
