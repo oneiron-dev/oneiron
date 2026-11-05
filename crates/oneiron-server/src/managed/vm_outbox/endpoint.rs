@@ -8,7 +8,9 @@
 //! ([`super::diverged`], FIX 11074);
 //! `park` and `resume` bracket an idle report, so no commit is in flight when
 //! the host snapshots the VM; `register_backup` names the engine's actual
-//! backup plan, its directory and label.
+//! backup plan, its directory and label. Their authenticated park state and
+//! validated registration are recorded in this root-owned runtime directory
+//! before acknowledgement, and restored before a replacement carries work.
 //!
 //! None of them is a root operation on the engine's say-so but one: the
 //! owner's answer `remove` to a diverged copy, which removes only a copy the
@@ -19,6 +21,9 @@
 //! by part without following a link, owned by the vault's UID, with its
 //! label's handoff policy installed; the companion then writes there only the
 //! host's stage acks, as that UID's 0600 files.
+
+mod runtime;
+pub(super) use runtime::Runtime;
 
 use super::Gate;
 use super::diverged::{Board, DivergedOwnerAnswer, VmOutboxMemberStatus};
@@ -112,13 +117,14 @@ pub(super) fn serve(
     gate: Arc<Gate>,
     registry: Registry,
     board: Board,
+    mut runtime: Runtime,
 ) -> std::io::Result<()> {
     std::thread::Builder::new()
         .name("vm-outbox-endpoint".into())
         .spawn(move || {
             for stream in listener.incoming() {
-                let answered =
-                    stream.and_then(|stream| answer(stream, uid, &gate, &registry, &board));
+                let answered = stream
+                    .and_then(|stream| answer(stream, uid, &gate, &registry, &board, &mut runtime));
                 if let Err(error) = answered {
                     tracing::warn!(
                         reason = "vm_outbox_endpoint_failed",
@@ -137,6 +143,7 @@ fn answer(
     gate: &Gate,
     registry: &Registry,
     board: &Board,
+    runtime: &mut Runtime,
 ) -> std::io::Result<()> {
     let peer = peer_uid(&stream)?;
     let mut line = String::new();
@@ -153,15 +160,18 @@ fn answer(
                 revision: VM_OUTBOX_WIRE_REVISION,
             },
             Ok(Request::Park) => {
+                runtime.set_parked(true)?;
                 gate.park();
                 Reply::Parked
             }
             Ok(Request::Resume) => {
+                runtime.set_parked(false)?;
                 gate.resume();
                 Reply::Resumed
             }
             Ok(Request::RegisterBackup { dir, label }) => match register(&dir, &label, uid) {
                 Ok(plan) => {
+                    runtime.set_backup(&dir, &label)?;
                     *registry.lock().unwrap_or_else(PoisonError::into_inner) = Some(plan);
                     Reply::Registered
                 }
