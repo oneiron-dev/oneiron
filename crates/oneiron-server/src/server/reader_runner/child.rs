@@ -323,7 +323,7 @@ impl Child {
                                 Some(oneiron::llm::seat::SeatLearningContext {
                                     project: job.binding.project,
                                     agent: None,
-                                    type_ref: None,
+                                    type_ref: job.type_ref.clone(),
                                     call_model_choice: None,
                                 })
                             }

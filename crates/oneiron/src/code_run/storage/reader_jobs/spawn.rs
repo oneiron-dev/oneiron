@@ -1,10 +1,12 @@
 //! First-spawn parent freezing and reader job publication.
 
 use super::{
-    DUE_JOB, ExecutorStorage, NewReaderJob, ReaderJob, ReaderJobState, ReaderParent, Result,
-    SpawnAdmission, child_key, due_key, queued_key,
+    DUE_JOB, ExecutorStorage, NewReaderJob, ReaderJob, ReaderJobKind, ReaderJobState, ReaderParent,
+    Result, SpawnAdmission, child_key, due_key, queued_key,
 };
+use crate::agent_dispatch::load_team_type_tree_in_txn;
 use crate::code_run::{SpawnHostSeat, SpawnParentBinding, reader_job_cutoff};
+use crate::task_type::{PlacementRequest, place_task};
 
 impl ExecutorStorage<'_> {
     /// Queues one child of `new.parent_run`, its parent row made from `seat`
@@ -44,6 +46,25 @@ impl ExecutorStorage<'_> {
             {
                 return Ok(SpawnAdmission::Unmetered);
             }
+            let type_ref = match (tx.vault, &new.kind) {
+                (Some(vault), ReaderJobKind::Read | ReaderJobKind::Summarize { .. }) => {
+                    match load_team_type_tree_in_txn(vault, &*tx.txn, parent.project) {
+                        Ok(tree) => {
+                            let request = PlacementRequest {
+                                spec_text: Some(new.ask.clone()),
+                                project_ref: parent.project.map(|project| project.to_hex()),
+                                ..PlacementRequest::default()
+                            };
+                            Some(place_task(&tree, &request, None).type_ref)
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, task = %new.task.to_hex(), "reader task type was not read");
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            };
             let job = ReaderJob {
                 task: new.task,
                 attempt: new.attempt,
@@ -65,6 +86,7 @@ impl ExecutorStorage<'_> {
                 },
                 kind: new.kind,
                 ask: new.ask,
+                type_ref,
                 state: ReaderJobState::Queued,
                 generation: 0,
                 finding: None,
