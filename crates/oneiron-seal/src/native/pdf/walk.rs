@@ -11,7 +11,9 @@ use std::collections::BTreeSet;
 
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
-use crate::api::{Counter, note_current};
+use super::admitted;
+use crate::api::{Counter, SealResourceLimits, note_current};
+use crate::memory::SealMemoryRefusal;
 
 /// The object `object` names, with the id of its chain's last link: itself
 /// and `from` when it is not a reference. `None` for a dangling or cyclic
@@ -98,19 +100,25 @@ fn kids(doc: &Document, id: ObjectId) -> Option<&[Object]> {
 /// lopdf's `get_pages` lists them: every `/Page` a `/Kids` entry names by
 /// reference, however deep its `/Pages` node sits. A `/Pages` node met
 /// again is walked once, so a cycle ends; a page named twice is listed
-/// twice, as lopdf lists it.
-pub(crate) fn pages(doc: &Document) -> Vec<ObjectId> {
+/// twice, as lopdf lists it. The output, the open levels, and the walked
+/// set grow under the operation's ledger first (FIX 14203); a refusal ends
+/// the walk as itself, never as a shorter page list.
+pub(crate) fn pages(
+    doc: &Document,
+    limits: &SealResourceLimits,
+) -> Result<Vec<ObjectId>, SealMemoryRefusal> {
     let mut out = Vec::new();
     let Some(root) = catalog(doc)
         .and_then(|catalog| catalog.get(b"Pages").ok())
         .and_then(|pages| pages.as_reference().ok())
     else {
-        return out;
+        return Ok(out);
     };
-    let mut walked = BTreeSet::from([root]);
+    let mut walked = BTreeSet::new();
+    admitted::btree_insert(limits, &mut walked, root)?;
     let mut open: Vec<std::slice::Iter<'_, Object>> = Vec::new();
     if let Some(top) = kids(doc, root) {
-        open.push(top.iter());
+        admitted::push(limits, &mut open, top.iter())?;
     }
     while let Some(level) = open.last_mut() {
         let Some(kid) = level.next() else {
@@ -124,14 +132,16 @@ pub(crate) fn pages(doc: &Document) -> Vec<ObjectId> {
             continue;
         };
         match kind {
-            b"Page" => out.push(id),
-            b"Pages" if walked.insert(id) => {
-                if let Some(next) = kids(doc, id) {
-                    open.push(next.iter());
+            b"Page" => admitted::push(limits, &mut out, id)?,
+            b"Pages" => {
+                if admitted::btree_insert(limits, &mut walked, id)? {
+                    if let Some(next) = kids(doc, id) {
+                        admitted::push(limits, &mut open, next.iter())?;
+                    }
                 }
             }
             _ => {}
         }
     }
-    out
+    Ok(out)
 }

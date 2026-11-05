@@ -277,10 +277,17 @@ pub(crate) fn verify_document(
     let mut checks = Checks::new(limits);
     // The refuse-to-seal gate and output verifier share this object/security
     // scan. An output may have signatures; neither path accepts active content.
+    // A memory refusal is the verification's typed error, never a revision
+    // verdict (FIX 7654): only ordinary invalid input fails the check below.
+    let security_ok = match pdf::analyze_security(&doc, false, limits, SealStage::Verification) {
+        Ok(()) => true,
+        Err(SealError::InputInvalid { .. }) => false,
+        Err(refused) => return Err(refused),
+    };
     checks
         .record(
             VerifyCheckKind::PdfRevision,
-            pdf::analyze_security(&doc, false).is_ok(),
+            security_ok,
             VerifyFindingCode::InvalidPdfRevision,
         )
         .map_err(memory_refused)?;
