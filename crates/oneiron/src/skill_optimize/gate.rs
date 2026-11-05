@@ -360,3 +360,4 @@ const VERDICT_ROW_LABEL: &str = "skill edit verdict row";
 const SKILL_EDIT_RECEIPT_PREFIX: &str = "skill_edit:";
 
 pub(crate) use goal_axis::skill_edit_goal_in_txn;
+pub(crate) use goal_axis::{skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn};
