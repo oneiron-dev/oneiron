@@ -81,7 +81,7 @@ fn remark_pending_in_txn(
                 Some(text) => embeddable.push((id, text.into_bytes())),
                 None => retired.push(id),
             }
-        } else if is_embeddable_in_txn(vault, wtxn, row.entity_type, &row.body)? {
+        } else if is_embeddable_in_txn(vault, wtxn, &id, row.entity_type, &row.body)? {
             embeddable.push((id, row.body));
         } else if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM
             || row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY

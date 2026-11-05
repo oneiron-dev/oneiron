@@ -1,5 +1,7 @@
 //! Durable model-step claim vocabulary and progression values.
 
+use crate::side_table::codec::{CodecError, RawValue};
+use oneiron_base::error::Error;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_model::llm::{LlmResponse, ModelId};
 use serde::{Deserialize, Serialize};
@@ -254,4 +256,34 @@ pub enum CallerSettledStep {
     /// The terminal claim stands; it, or the artifact it pins, does not read
     /// on the caller's lane.
     Withheld { claim: EntityId },
+}
+
+/// A bound trap as its row spells it: anchor id, step hash, then the kind's
+/// stable name.
+impl RawValue for TrapRef {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut out = Vec::with_capacity(16 + 32 + 16);
+        out.extend_from_slice(self.trap_claim_id.as_bytes());
+        out.extend_from_slice(&self.step_hash);
+        out.extend_from_slice(self.kind.as_str().as_bytes());
+        Ok(out)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let undecodable = || CodecError::from(Error::CorruptedIndex("code-run wait trap"));
+        let (id, rest) = bytes.split_at_checked(16).ok_or_else(undecodable)?;
+        let (hash, kind) = rest.split_at_checked(32).ok_or_else(undecodable)?;
+        Ok(Self {
+            trap_claim_id: id
+                .try_into()
+                .ok()
+                .and_then(|raw| EntityId::from_bytes(raw).ok())
+                .ok_or_else(undecodable)?,
+            kind: std::str::from_utf8(kind)
+                .ok()
+                .and_then(DreamerTrapKind::parse)
+                .ok_or_else(undecodable)?,
+            step_hash: hash.try_into().map_err(|_| undecodable())?,
+        })
+    }
 }
