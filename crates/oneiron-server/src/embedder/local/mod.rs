@@ -112,13 +112,14 @@ pub(super) struct Embedded {
 /// One forward runs at a time, and a query goes first.
 ///
 /// A bulk forward takes its turn layer by layer and gives it up between layers
-/// whenever a query is waiting; a query holds its turn for its whole call. So a
-/// recall waits for at most one bulk layer, and the memory a forward's widest
-/// step needs (a full-length input's attention scores are a gibibyte) is
-/// needed by one forward at a time, as when the model sat behind one lock.
-/// After [`QUERY_STREAK`] queries in a row while a bulk forward waits, the
-/// bulk forward runs one layer: steady recall traffic slows a fill but never
-/// stops it.
+/// whenever a query is waiting; a query holds its turn for its whole call. The
+/// running bulk forward yields at the next layer boundary, and the memory a
+/// forward's widest step needs (a full-length input's attention scores are a
+/// gibibyte) is needed by one forward at a time, as when the model sat behind
+/// one lock. After [`QUERY_STREAK`] queries in a row while a bulk forward
+/// waits, the bulk forward runs one layer: steady recall traffic slows a fill
+/// but never stops it. Waiters take the turn in per-class mutex-enrollment
+/// FIFO order; a bulk forward re-enrolls at the tail at each layer.
 #[derive(Default)]
 struct Turns {
     state: Mutex<TurnState>,
@@ -131,8 +132,10 @@ const QUERY_STREAK: usize = 4;
 #[derive(Default)]
 struct TurnState {
     running: bool,
-    queries_waiting: usize,
-    bulk_waiting: usize,
+    query_head: u64,
+    query_next: u64,
+    bulk_head: u64,
+    bulk_next: u64,
     /// Queries that took a turn while a bulk forward waited, since a bulk
     /// forward last ran.
     query_streak: usize,
@@ -140,22 +143,35 @@ struct TurnState {
 
 impl TurnState {
     fn bulk_owed(&self) -> bool {
-        self.bulk_waiting > 0 && self.query_streak >= QUERY_STREAK
+        self.bulk_head != self.bulk_next && self.query_streak >= QUERY_STREAK
     }
 }
 
 impl Turns {
     fn take(&self, priority: Priority) -> Turn<'_> {
         let mut state = self.state();
-        match priority {
-            Priority::Query => state.queries_waiting += 1,
-            Priority::Bulk => state.bulk_waiting += 1,
-        }
+        let ticket = match priority {
+            Priority::Query => {
+                let ticket = state.query_next;
+                state.query_next = state.query_next.wrapping_add(1);
+                ticket
+            }
+            Priority::Bulk => {
+                let ticket = state.bulk_next;
+                state.bulk_next = state.bulk_next.wrapping_add(1);
+                ticket
+            }
+        };
         loop {
+            let own_turn = match priority {
+                Priority::Query => state.query_head == ticket,
+                Priority::Bulk => state.bulk_head == ticket,
+            };
             let blocked = state.running
+                || !own_turn
                 || match priority {
                     Priority::Query => state.bulk_owed(),
-                    Priority::Bulk => state.queries_waiting > 0 && !state.bulk_owed(),
+                    Priority::Bulk => state.query_head != state.query_next && !state.bulk_owed(),
                 };
             if !blocked {
                 break;
@@ -167,13 +183,13 @@ impl Turns {
         }
         match priority {
             Priority::Query => {
-                state.queries_waiting -= 1;
-                if state.bulk_waiting > 0 {
+                state.query_head = state.query_head.wrapping_add(1);
+                if state.bulk_head != state.bulk_next {
                     state.query_streak += 1;
                 }
             }
             Priority::Bulk => {
-                state.bulk_waiting -= 1;
+                state.bulk_head = state.bulk_head.wrapping_add(1);
                 state.query_streak = 0;
             }
         }
