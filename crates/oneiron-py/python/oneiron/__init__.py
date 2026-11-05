@@ -2174,6 +2174,9 @@ class Oneiron:
         def search(self, spec):
             """Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages."""
             return json.loads(_translate(lambda: self._client.vault_skill_hubs_clawhub_search(json.dumps(spec))))
+        def import_(self, spec):
+            """Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_clawhub_import(json.dumps(spec))))
     class _VaultSkillHubsPublishersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1249 facade rows, 4528 declarations.
-Inputs: 1180 of 1249 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1084 of 1249 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1250 facade rows, 4531 declarations.
+Inputs: 1181 of 1250 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1085 of 1250 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -5423,6 +5423,34 @@ class ClawHubSearchReplyProviderError(TypedDict):
     retry_after: NotRequired[str | None]
     body: str
 ClawHubSearchReply = ClawHubSearchReplyResults | ClawHubSearchReplyProviderError
+class ClawHubImportRequest(TypedDict):
+    hub: EntityId
+    slug: str
+    version: NotRequired[str | None]
+    tag: NotRequired[str | None]
+    publisher: str
+    expected_skill_id: NotRequired[str | None]
+    expected_skill_version: NotRequired[str | None]
+    expected_content_hash: NotRequired[str | None]
+    response_limit_bytes: NotRequired[int | None]
+class ClawHubGitHubHandoff(TypedDict):
+    sourceRef: str
+    repo: str
+    commit: str
+    path: str
+    contentHash: str
+    archiveUrl: str
+class ClawHubImportReplyImported(TypedDict):
+    outcome: Literal["imported"]
+    entity: EntityId
+    source: HubRef
+    github_handoff: NotRequired[ClawHubGitHubHandoff | None]
+class ClawHubImportReplyProviderError(TypedDict):
+    outcome: Literal["provider_error"]
+    status: int
+    retry_after: NotRequired[str | None]
+    body: str
+ClawHubImportReply = ClawHubImportReplyImported | ClawHubImportReplyProviderError
 class SkillPublisherRequest(TypedDict):
     hub: EntityId
     identity: str

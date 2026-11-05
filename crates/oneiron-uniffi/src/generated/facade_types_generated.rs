@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1249 facade rows, 4527 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1201.
+// UniFFI census: 1250 facade rows, 4530 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1202.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -16701,6 +16701,96 @@ pub enum ClawHubSearchReply {
     Results {
         #[serde(rename = "results", default, skip_serializing_if = "Option::is_none")]
         results: Option<Vec<ClawHubSearchHit>>,
+    },
+    #[serde(rename = "provider_error")]
+    ProviderError {
+        #[serde(rename = "status")]
+        status: u16,
+        #[serde(
+            rename = "retry_after",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        retry_after: Option<String>,
+        #[serde(rename = "body")]
+        body: String,
+    },
+}
+
+/// `oneiron::skill_hub::hub_owner::ClawHubImportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClawHubImportRequest {
+    #[serde(rename = "hub")]
+    pub hub: String,
+    #[serde(rename = "slug")]
+    pub slug: String,
+    #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(rename = "tag", default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(rename = "publisher")]
+    pub publisher: String,
+    #[serde(
+        rename = "expected_skill_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_skill_id: Option<String>,
+    #[serde(
+        rename = "expected_skill_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_skill_version: Option<String>,
+    #[serde(
+        rename = "expected_content_hash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_content_hash: Option<String>,
+    #[serde(
+        rename = "response_limit_bytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub response_limit_bytes: Option<u64>,
+}
+
+/// `oneiron::skill_hub::http_fetch::clawhub_download::ClawHubGitHubHandoff`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClawHubGitHubHandoff {
+    #[serde(rename = "sourceRef")]
+    pub source_ref: String,
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "commit")]
+    pub commit: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "contentHash")]
+    pub content_hash: String,
+    #[serde(rename = "archiveUrl")]
+    pub archive_url: String,
+}
+
+/// `oneiron::skill_hub::hub_owner::ClawHubImportReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "outcome")]
+pub enum ClawHubImportReply {
+    #[serde(rename = "imported")]
+    Imported {
+        #[serde(rename = "entity")]
+        entity: String,
+        #[serde(rename = "source")]
+        source: HubRef,
+        #[serde(
+            rename = "github_handoff",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        github_handoff: Option<ClawHubGitHubHandoff>,
     },
     #[serde(rename = "provider_error")]
     ProviderError {

@@ -554,3 +554,13 @@ pub fn skill_hub_clawhub_search_as_owner(
         input.response_limit_bytes,
     )?)
 }
+
+/// Explicit owner-selected import; the native door revalidates the proof before
+/// fetching and uses the normal publisher, fit, scan and import writer.
+pub fn skill_hub_clawhub_import_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &crate::skill_hub::ClawHubImportRequest,
+) -> MemoryResult<crate::skill_hub::ClawHubImportReply> {
+    Ok(vault.import_clawhub_skill(owner, input)?)
+}

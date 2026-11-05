@@ -375,6 +375,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.skill_hubs.put" => a.spec.clone().ok_or_else(invalid),
         "vault.skill_hubs.get" => a.spec.clone().ok_or_else(invalid),
         "vault.skill_hubs.clawhub.search" => a.spec.clone().ok_or_else(invalid),
+        "vault.skill_hubs.clawhub.import" => a.spec.clone().ok_or_else(invalid),
         "vault.skill_hubs.publishers.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.skill_hubs.publishers.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.skill_hubs.refs.get" => a.spec.clone().ok_or_else(invalid),
@@ -2272,6 +2273,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skill_hubs.clawhub.search" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.skill_hubs.clawhub.import" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skill_hubs.publishers.admit" => {
@@ -9263,6 +9267,26 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_skill_hubs_clawhub_search(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.skill_hubs.clawhub.import" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.skill_hubs.clawhub.import", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_hub::ClawHubImportRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skill_hubs_clawhub_import(
                     server, auth, input,
                 ),
             )

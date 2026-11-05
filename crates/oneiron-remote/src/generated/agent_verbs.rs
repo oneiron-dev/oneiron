@@ -732,6 +732,9 @@ impl OneironClient {
                 "vault.skill_hubs.clawhub.search" => remote_agent_verb_output::<
                     oneiron::skill_hub::ClawHubSearchReply,
                 >(client, verb, &input),
+                "vault.skill_hubs.clawhub.import" => remote_agent_verb_output::<
+                    oneiron::skill_hub::ClawHubImportReply,
+                >(client, verb, &input),
                 "vault.skill_hubs.publishers.admit" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::SkillPublisherAdmission,
                 >(client, verb, &input),
@@ -6772,6 +6775,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.skill_hubs.clawhub.search", value)
+    }
+    pub fn vault_skill_hubs_clawhub_import(
+        &self,
+        input: &oneiron::skill_hub::ClawHubImportRequest,
+    ) -> Result<oneiron::skill_hub::ClawHubImportReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skill_hubs.clawhub.import", value)
     }
     pub fn vault_skill_hubs_publishers_admit(
         &self,
