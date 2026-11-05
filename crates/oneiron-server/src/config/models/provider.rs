@@ -267,6 +267,8 @@ pub(super) struct ProviderFile {
     max_output_tokens: Option<u64>,
     output_limit_field: Option<OutputLimitField>,
     response_format: Option<ResponseFormatWire>,
+    chat_path: Option<String>,
+    prefill_wire: Option<String>,
     embed_shape: Option<EmbedShape>,
     capabilities: Option<Vec<LlmCapability>>,
     #[serde(default)]
@@ -309,6 +311,12 @@ pub struct ProviderConfig {
     pub output_limit_field: OutputLimitField,
     /// Whether an OpenAI-compatible endpoint is sent a JSON call's schema.
     pub response_format: ResponseFormatWire,
+    /// `unversioned` selects `/chat/completions` on the default chat path.
+    /// Other values leave the configured path unchanged.
+    pub chat_path: Option<String>,
+    /// `prefix` sends the trailing assistant's prefix flag when the selected
+    /// model declares `AssistantPrefill`. Other values have no effect.
+    pub prefill_wire: Option<String>,
     /// The shape the provider's embedding endpoint speaks (FIX 866):
     /// `vllm_chat`, `infinity`, `jina` or `cohere`. Unset, it is vLLM's
     /// chat form.
@@ -523,6 +531,8 @@ impl ProviderFile {
             max_output_tokens: self.max_output_tokens,
             output_limit_field: self.output_limit_field.unwrap_or_default(),
             response_format: self.response_format.unwrap_or_default(),
+            chat_path: self.chat_path,
+            prefill_wire: self.prefill_wire,
             embed_shape: self.embed_shape.unwrap_or_default(),
             capabilities,
             model_capabilities: self.model_capabilities,
