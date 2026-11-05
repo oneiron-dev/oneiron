@@ -32922,6 +32922,7 @@ pub fn vault_artifacts_propose_output(
         "vault.artifacts.propose_output",
         &input,
         &[
+            "/read_rows/*",
             "/made_by/inputs/*/row",
             "/made_by/trigger/task",
             "/made_by/trigger/ask",
