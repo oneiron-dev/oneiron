@@ -8404,6 +8404,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_questions_prepare(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.questions.prepare", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_questions_admit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.questions.admit", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_questions_backfill(
         &self,
         input: serde_json::Value,

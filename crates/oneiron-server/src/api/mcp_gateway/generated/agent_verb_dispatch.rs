@@ -1210,6 +1210,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.questions.create" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.edit" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.pause" => a.spec.clone().ok_or_else(invalid),
+        "vault.questions.prepare" => a.spec.clone().ok_or_else(invalid),
+        "vault.questions.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.backfill" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.read" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.outcome_windows" => a.spec.clone().ok_or_else(invalid),
@@ -4442,6 +4444,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.questions.pause" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.questions.prepare" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.questions.admit" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.questions.backfill" => {
@@ -21782,6 +21790,42 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::receipt::QuestionPauseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_questions_pause(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.questions.prepare" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.questions.prepare", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::receipt::QuestionPrepareRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_questions_prepare(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.questions.admit" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.questions.admit", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::receipt::QuestionAdmitRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_questions_admit(
                 server, auth, input,
             ))
             .await;

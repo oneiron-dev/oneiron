@@ -2949,6 +2949,12 @@ impl OneironClient {
                 "vault.questions.pause" => remote_agent_verb_output::<
                     oneiron::receipt::QuestionPaused,
                 >(client, verb, &input),
+                "vault.questions.prepare" => remote_agent_verb_output::<
+                    oneiron::receipt::QuestionPrepared,
+                >(client, verb, &input),
+                "vault.questions.admit" => remote_agent_verb_output::<
+                    oneiron::llm::decision::questions::AnswerRecord,
+                >(client, verb, &input),
                 "vault.questions.backfill" => remote_agent_verb_output::<
                     oneiron::llm::decision::questions::ScheduledBackfill,
                 >(client, verb, &input),
@@ -15485,6 +15491,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.questions.pause", value)
+    }
+    pub fn vault_questions_prepare(
+        &self,
+        input: &oneiron::receipt::QuestionPrepareRequest,
+    ) -> Result<oneiron::receipt::QuestionPrepared, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.questions.prepare", value)
+    }
+    pub fn vault_questions_admit(
+        &self,
+        input: &oneiron::receipt::QuestionAdmitRequest,
+    ) -> Result<oneiron::llm::decision::questions::AnswerRecord, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.questions.admit", value)
     }
     pub fn vault_questions_backfill(
         &self,

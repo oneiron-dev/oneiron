@@ -2810,6 +2810,8 @@ export class Oneiron {
       create: (input: Facade.QuestionCreateRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsCreate(input) as Facade.QuestionRecord),
       edit: (input: Facade.QuestionEditRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsEdit(input) as Facade.QuestionRecord),
       pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
+      prepare: (input: Facade.QuestionPrepareRequest): Facade.QuestionPrepared => this.#call(() => this.#client.vaultQuestionsPrepare(input) as Facade.QuestionPrepared),
+      admit: (input: Facade.QuestionAdmitRequest): Facade.AnswerRecord => this.#call(() => this.#client.vaultQuestionsAdmit(input) as Facade.AnswerRecord),
       backfill: (input: Facade.QuestionBackfillRequest): Facade.ScheduledBackfill => this.#call(() => this.#client.vaultQuestionsBackfill(input) as Facade.ScheduledBackfill),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
       /** Reads the caller's standing question closed outcome windows, across its versions, each naming its answer with how it closed. */

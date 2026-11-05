@@ -985,6 +985,8 @@ vaultGraphAdmit(input: unknown): unknown
 vaultQuestionsCreate(input: unknown): unknown
 vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
+vaultQuestionsPrepare(input: unknown): unknown
+vaultQuestionsAdmit(input: unknown): unknown
 vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsOutcomeWindows(input: unknown): unknown

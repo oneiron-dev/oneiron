@@ -5044,6 +5044,10 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_questions_edit(json.dumps(spec))))
         def pause(self, spec):
             return json.loads(_translate(lambda: self._client.vault_questions_pause(json.dumps(spec))))
+        def prepare(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_prepare(json.dumps(spec))))
+        def admit(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_admit(json.dumps(spec))))
         def backfill(self, spec):
             return json.loads(_translate(lambda: self._client.vault_questions_backfill(json.dumps(spec))))
         def read(self, spec):

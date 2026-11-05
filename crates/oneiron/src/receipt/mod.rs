@@ -98,12 +98,12 @@ pub use self::projection::{
 };
 pub use self::questions::{
     AI_VERDICT_DEADLINE_MS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined,
-    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage,
-    QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest,
-    QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
+    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAdmitRequest, QuestionAnswer,
+    QuestionAnswersPage, QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
     QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
-    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
-    QuestionScheduleRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionPrepareRequest, QuestionPrepared,
+    QuestionPreparedSource, QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
 };
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_creations_not_proven,

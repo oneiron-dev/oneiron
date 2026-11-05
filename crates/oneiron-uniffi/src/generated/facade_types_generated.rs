@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1232 facade rows, 4488 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1184.
+// UniFFI census: 1234 facade rows, 4492 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1186.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -55862,6 +55862,66 @@ pub struct GraphQuestionInput {
     pub unit: String,
     #[serde(rename = "evidence")]
     pub evidence: Vec<String>,
+}
+
+/// `oneiron::receipt::questions::standing_admit::QuestionPrepareRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionPrepareRequest {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "expected_version")]
+    pub expected_version: u32,
+    #[serde(rename = "input")]
+    pub input: GraphQuestionInput,
+}
+
+/// `oneiron::receipt::questions::standing_admit::QuestionPreparedSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionPreparedSource {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "entity_type")]
+    pub entity_type: u8,
+    #[serde(rename = "body")]
+    pub body: Vec<u8>,
+    #[serde(rename = "hash")]
+    pub hash: Vec<u8>,
+}
+
+/// `oneiron::receipt::questions::standing_admit::QuestionPrepared`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionPrepared {
+    #[serde(rename = "question")]
+    pub question: DecisionQuestion,
+    #[serde(rename = "dial")]
+    pub dial: DecisionDial,
+    #[serde(rename = "principal")]
+    pub principal: String,
+    #[serde(rename = "unit")]
+    pub unit: String,
+    #[serde(rename = "sources")]
+    pub sources: Vec<QuestionPreparedSource>,
+    #[serde(rename = "source_frontier")]
+    pub source_frontier: Vec<u8>,
+}
+
+/// `oneiron::receipt::questions::standing_admit::QuestionAdmitRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionAdmitRequest {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "expected_version")]
+    pub expected_version: u32,
+    #[serde(rename = "input")]
+    pub input: GraphQuestionInput,
+    #[serde(rename = "source_frontier")]
+    pub source_frontier: Vec<u8>,
+    #[serde(rename = "decision")]
+    pub decision: TypedDecision,
 }
 
 /// `oneiron::receipt::questions::QuestionBackfillRequest`.

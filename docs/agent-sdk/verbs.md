@@ -956,6 +956,8 @@ both bindings and their export-census tests in one change.
 - `vault.questions.create`
 - `vault.questions.edit`
 - `vault.questions.pause`
+- `vault.questions.prepare`
+- `vault.questions.admit`
 - `vault.questions.backfill`
 - `vault.questions.read`
 - `vault.questions.outcome_windows`

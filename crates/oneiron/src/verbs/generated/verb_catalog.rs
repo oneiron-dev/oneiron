@@ -954,6 +954,8 @@ pub enum AgentVerb {
     VaultQuestionsCreate,
     VaultQuestionsEdit,
     VaultQuestionsPause,
+    VaultQuestionsPrepare,
+    VaultQuestionsAdmit,
     VaultQuestionsBackfill,
     VaultQuestionsRead,
     VaultQuestionsOutcomeWindows,
@@ -2211,6 +2213,8 @@ impl AgentVerb {
         Self::VaultQuestionsCreate,
         Self::VaultQuestionsEdit,
         Self::VaultQuestionsPause,
+        Self::VaultQuestionsPrepare,
+        Self::VaultQuestionsAdmit,
         Self::VaultQuestionsBackfill,
         Self::VaultQuestionsRead,
         Self::VaultQuestionsOutcomeWindows,
@@ -3501,6 +3505,8 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => "vault.questions.create",
             Self::VaultQuestionsEdit => "vault.questions.edit",
             Self::VaultQuestionsPause => "vault.questions.pause",
+            Self::VaultQuestionsPrepare => "vault.questions.prepare",
+            Self::VaultQuestionsAdmit => "vault.questions.admit",
             Self::VaultQuestionsBackfill => "vault.questions.backfill",
             Self::VaultQuestionsRead => "vault.questions.read",
             Self::VaultQuestionsOutcomeWindows => "vault.questions.outcome_windows",
@@ -4764,6 +4770,8 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsPrepare
+                | Self::VaultQuestionsAdmit
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsOutcomeWindows
@@ -6050,6 +6058,8 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsPrepare
+                | Self::VaultQuestionsAdmit
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsOutcomeWindows
@@ -7448,6 +7458,8 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsPrepare
+                | Self::VaultQuestionsAdmit
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsOutcomeWindows
@@ -8279,6 +8291,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsAdmit
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRefresh
                 | Self::VaultQuestionsOutcomesProject
@@ -9450,6 +9463,8 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
             Self::VaultQuestionsPause => &["spec"],
+            Self::VaultQuestionsPrepare => &["spec"],
+            Self::VaultQuestionsAdmit => &["spec"],
             Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsOutcomeWindows => &["spec"],
@@ -10708,6 +10723,8 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
             Self::VaultQuestionsPause => &["spec"],
+            Self::VaultQuestionsPrepare => &["spec"],
+            Self::VaultQuestionsAdmit => &["spec"],
             Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsOutcomeWindows => &["spec"],
@@ -13811,6 +13828,8 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => "",
             Self::VaultQuestionsEdit => "",
             Self::VaultQuestionsPause => "",
+            Self::VaultQuestionsPrepare => "",
+            Self::VaultQuestionsAdmit => "",
             Self::VaultQuestionsBackfill => "",
             Self::VaultQuestionsRead => "",
             Self::VaultQuestionsOutcomeWindows => {
