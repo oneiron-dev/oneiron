@@ -527,6 +527,7 @@ pub(super) fn media_held_in(
 /// of `kinds`. `report` counts an ASSET holding no inline image or audio, and one of another
 /// kind; a gone one is `None` uncounted.
 pub(super) fn asset_document_in(
+    vault: &Vault,
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
@@ -541,7 +542,7 @@ pub(super) fn asset_document_in(
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
     // FIX 9949: an ASSET's bytes are the blob it holds by reference.
     let Some((media_type, bytes)) = crate::memory::asset_media_in(body, |blob| {
-        Ok(store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+        super::repo_projection::repo_blob_body_in(vault, store, txn, blob)
     })?
     else {
         report.no_media += 1;
