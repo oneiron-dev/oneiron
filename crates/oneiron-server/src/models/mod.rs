@@ -33,6 +33,7 @@ mod anthropic;
 mod broker;
 mod broker_context;
 mod broker_media;
+mod broker_responses;
 mod cache_usage;
 mod catalog;
 mod cooldown;
@@ -41,6 +42,7 @@ mod declared;
 #[cfg(feature = "mesh")]
 mod discovered;
 mod driven;
+mod exl3_evidence;
 #[cfg(test)]
 mod fallback_tests;
 mod family;
@@ -243,6 +245,24 @@ fn build_provider(
             .ok_or_else(|| anyhow::anyhow!("no credential broker was made"))?
             .as_ref()
             .map_err(|error| anyhow::anyhow!("{error}"))?;
+        if provider.kind == ProviderKind::OpenaiCompat && provider.responses_socket.is_some() {
+            let config = OpenAiCompatConfig::from_catalog(catalog.clone());
+            let original_catalog = catalog
+                .iter()
+                .map(|entry| (entry.model.clone(), entry.clone()))
+                .collect();
+            return Ok(Some(Arc::new(broker_responses::BrokerResponses::new(
+                broker::broker_backend(provider, catalog, output_cap(provider), solo, site, keys)?,
+                config,
+                original_catalog,
+                responses.clone(),
+                OutputCap {
+                    field: "max_output_tokens",
+                    ..output_cap(provider)
+                },
+                provider.response_format,
+            ))));
+        }
         return Ok(Some(Arc::new(broker::broker_backend(
             provider,
             catalog,
@@ -329,8 +349,10 @@ fn build_provider(
             ))
         }
         // A gemini provider's chat rungs send the Gemini API's own wire
-        // (FIX 1816); one that serves media seats only gets none.
-        ProviderKind::Gemini => return gemini_chat::chat_backend(provider, catalog),
+        // (FIX 1816); one with no chat rung gets none.
+        ProviderKind::Gemini => {
+            return gemini_chat::chat_backend(provider, catalog, output_cap(provider));
+        }
         // The tagger slot's worker is the consumer of this kind; it never
         // answers generate calls, so no LLM backend is built for it. A
         // media-only provider's only client is its media rung's.
@@ -372,6 +394,11 @@ fn output_cap(provider: &ProviderConfig) -> OutputCap {
             field: "max_tokens",
             ceiling: provider.max_output_tokens,
             fallback: Some(anthropic::DEFAULT_MAX_OUTPUT_TOKENS),
+        },
+        ProviderKind::Gemini => OutputCap {
+            field: "maxOutputTokens",
+            ceiling: provider.max_output_tokens,
+            fallback: None,
         },
         _ => OutputCap {
             field: provider.output_limit_field.key(),
