@@ -116,6 +116,7 @@ impl Vault {
                     end: core.at,
                 },
                 learned_at: core.at,
+                row_version: None,
                 data: super::encode_identity_topology_event_body(&row)?,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

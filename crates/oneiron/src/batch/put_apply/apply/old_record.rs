@@ -166,7 +166,7 @@ pub(super) fn apply_old_record(
             crate::store::text_index::deindex_text(store, wtxn, &fixed.id)?;
         }
 
-        let (stored_occurred, stored_learned_at, _) = fixed.storage_body_and_times(data)?;
+        let (stored_occurred, stored_learned_at, _, _) = fixed.storage_body_and_metadata(data)?;
         super::super::put_staging::remove_prior_temporal_index_rows(
             store,
             wtxn,

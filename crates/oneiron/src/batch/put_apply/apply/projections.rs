@@ -94,7 +94,7 @@ pub(super) fn stage_put_projections(
         dispatch.authority_entry_observation.as_ref(),
     )?;
 
-    let (stored_occurred, stored_learned_at, _) = fixed.storage_body_and_times(data)?;
+    let (stored_occurred, stored_learned_at, _, _) = fixed.storage_body_and_metadata(data)?;
     stage_entity_index_rows(
         store,
         wtxn,

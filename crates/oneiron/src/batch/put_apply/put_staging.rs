@@ -42,6 +42,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     entity_type: u8,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: u64,
     data: &[u8],
 ) -> Result<()> {
     stage_entity_body_row_with_storage(
@@ -50,6 +51,7 @@ pub(in crate::batch) fn stage_entity_body_row(
         id,
         entity_type,
         (occurred, learned_at, data),
+        row_version,
         data,
     )
 }
@@ -62,6 +64,7 @@ pub(super) fn stage_entity_body_row_with_storage(
     id: &EntityId,
     entity_type: u8,
     physical: (TimeRange, u64, &[u8]),
+    row_version: u64,
     data: &[u8],
 ) -> Result<()> {
     let (occurred, learned_at, physical_body) = physical;
@@ -82,6 +85,7 @@ pub(super) fn stage_entity_body_row_with_storage(
     payload.0.extend_from_slice(&occurred.start.to_be_bytes());
     payload.0.extend_from_slice(&occurred.end.to_be_bytes());
     payload.0.extend_from_slice(&learned_at.to_be_bytes());
+    payload.0.extend_from_slice(&row_version.to_be_bytes());
     payload.0.extend_from_slice(physical_body);
     crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
     store.port_stage_entity_row(wtxn, id, &payload.0)?;

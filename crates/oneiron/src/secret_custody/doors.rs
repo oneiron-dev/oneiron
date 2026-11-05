@@ -146,6 +146,7 @@ pub(super) fn apply_custody_body_in_txn(
             entity_type: ENTITY_TYPE_SECRET_CUSTODY,
             occurred,
             learned_at: occurred_at,
+            row_version: None,
             data,
             allow_maintenance: true,
             allow_reserved_predicate: false,

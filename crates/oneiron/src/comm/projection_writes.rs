@@ -265,6 +265,7 @@ fn put_comm_claim_with_id_in_txn_inner(
                     end: occurred_at,
                 },
                 learned_at: mutation_recorded_at,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: engine_owned,

@@ -558,6 +558,7 @@ fn coreference_claim_ops(
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
