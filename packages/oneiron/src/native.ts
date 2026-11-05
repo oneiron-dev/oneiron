@@ -41,6 +41,8 @@ vaultCommitmentsProposals(input: unknown): unknown
 vaultCommitmentsFulfill(input: unknown): unknown
 vaultCommitmentsRelease(input: unknown): unknown
 vaultCommitmentsSupersede(input: unknown): unknown
+vaultCommitmentsReminderRouteGet(input: unknown): unknown
+vaultCommitmentsReminderRouteSet(input: unknown): unknown
 fetch(input: unknown): unknown
 crawl(input: unknown): unknown
 report(input: unknown): unknown
