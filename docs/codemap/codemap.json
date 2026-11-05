@@ -17141,13 +17141,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/payload/request.rs",
      "purpose": "Canonical request values used by code-run replay",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -24558,7 +24558,7 @@
      "path": "src/critic/review/persistence.rs",
      "purpose": "Transactional review bundles",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -24568,7 +24568,7 @@
      "path": "src/critic/review/persistence/dissent_rows.rs",
      "purpose": "A review's dissent rows: the dissent each critique keeps so far, the claim one caller holds while it authors…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -34101,7 +34101,17 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 61
+      "crate-vis": 62
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/store/script_context.rs",
+     "purpose": "The model-only view of a stored program; execution always reads its original bytes",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -43658,7 +43668,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 16
      }
     },
@@ -43858,7 +43868,7 @@
      "path": "src/llm/decision/questions/store.rs",
      "purpose": "Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 7
      }
     },
@@ -47376,7 +47386,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 40,
       "re-export": 69
      }
@@ -48810,7 +48820,7 @@
      "path": "src/memory/structural/affiliated.rs",
      "purpose": "Attributed takes and imported-claim admission verbs",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5
      }
     },
@@ -48841,7 +48851,7 @@
      "path": "src/memory/structural/mod.rs",
      "purpose": "Structural puts (habit checkins, imported-claim admission, blob artifacts) and `author_take`",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 2
      }
     },
@@ -90868,7 +90878,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91864,7 +91874,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6408,
+   "source_files": 6409,
    "test_files": 895
   },
   "oneiron-android": {
@@ -102274,6 +102284,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/inference_worker/startup.rs",
+     "purpose": "A replacement's startup follows the retirement of every pending predecessor",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -102570,7 +102591,7 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102600,7 +102621,7 @@
    },
    "over_bar": 2,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 34,
+   "source_files": 35,
    "test_files": 10
   },
   "oneiron-ffi": {
@@ -111523,7 +111544,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_pack/response.rs",
@@ -123534,7 +123555,7 @@
      "path": "src/models/llama_identity.rs",
      "purpose": "What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -127929,7 +127950,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 47,
+   "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1534,
    "test_files": 182
