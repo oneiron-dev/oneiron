@@ -525,7 +525,31 @@ pub(crate) async fn assemble(
     operation_id: &str,
     target: PadesProfile,
 ) -> Result<AssemblyOutcome, SealError> {
-    let identity = ctx.backend.signing_identity().map_err(map_backend_error)?;
+    let identity = {
+        let identity = ctx.backend.signing_identity().map_err(map_backend_error)?;
+        let bytes = identity
+            .signer_certificate_der
+            .capacity()
+            .saturating_add(
+                identity
+                    .certificate_chain_der
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Vec<u8>>()),
+            )
+            .saturating_add(
+                identity
+                    .certificate_chain_der
+                    .iter()
+                    .map(Vec::capacity)
+                    .fold(0usize, usize::saturating_add),
+            );
+        let hold = ctx
+            .limits
+            .memory
+            .hold(bytes)
+            .map_err(|refusal| refusal.seal_error(SealStage::BackendSign))?;
+        crate::memory::Held::new(identity, hold)
+    };
     let cert_alg = cms::cert_signature_algorithm(&identity.signer_certificate_der)?;
     if cert_alg != identity.algorithm {
         return Err(SealError::Fatal {
