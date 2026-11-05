@@ -115,10 +115,11 @@ pub(super) fn retain_named_claim_decisions(wire: &mut WireDigest, named: &BTreeS
     }
 }
 
-/// The canonical ledger just redacted this claim-bound decision in `txn`.
-/// Its initially unnamed saved copies have no source-index entry (FIX 7692),
-/// so discover their periods directly. Only the copied reasons change;
-/// named-claim history and the current-policy saved-read checks stay intact.
+/// The canonical ledger redacted this claim-bound decision, or restore
+/// dropped its retired key generation, in `txn`. An initially unnamed saved
+/// copy may have no source-index entry (FIX 7692), so discover its period
+/// directly. Only the copied reasons change; named-claim history and the
+/// current-policy saved-read checks stay intact.
 pub(crate) fn scrub_saved_weave_loop_reasons_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,

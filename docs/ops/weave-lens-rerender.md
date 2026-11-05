@@ -38,8 +38,14 @@ reader's refused claim never entered. The private required `claim_was_named` fla
 survives later ref erasure, so rows that originally named their claim keep the
 existing named-ref history behavior. It is not a read grant or a public field.
 
-This callback runs only after the native ledger writes its redacted decision,
-in the same transaction. A stale mark alone does not trigger it. Held decisions
+The live-redaction callback runs only after the native ledger writes its
+redacted decision, in the same transaction. Checkpoint restore also invokes the
+same exact-decision scrub when it drops a singular-claim decision whose key
+generation was retired after the image was taken. The restored saved periods
+have already landed in that writer; policy-partition rows keep their existing
+skip. Thus dropping the retired decision before the native claim-scrub rerun
+does not leave its copied reason bytes behind. A stale mark alone does not
+trigger either callback. Held decisions
 wait for the existing native owed-scrub settlement; claim-free bundles are not
 part of this singular-claim copy scrub. Only reason-code bytes change in the
 saved row; its decision identity, saved outcome, refs and other history remain.
