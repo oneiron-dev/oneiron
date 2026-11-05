@@ -63,6 +63,8 @@ pub(super) struct Ops {
     /// `session.export` and `session.import`, in the snapshot format this
     /// side speaks.
     pub(super) snapshot: bool,
+    /// `session.prepare` (I1 = C).
+    pub(super) prepare: bool,
 }
 
 /// One worker incarnation's sessions.
