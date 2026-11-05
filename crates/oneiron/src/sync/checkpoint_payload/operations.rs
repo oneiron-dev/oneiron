@@ -581,7 +581,7 @@ fn prove(
             SlotKind::Key => {
                 key_fill(&plan.root, &split.no_one, &opened).map(|key| key.map(String::into_bytes))
             }
-            _ => root_fill(&plan.root, &plan.key, &split.no_one, &opened),
+            _ => root_fill(&plan.root, &plan.key, &split.no_one, &opened, &fields),
         };
         if !distinct || !matches!(filled, Ok(Some(filled)) if filled == stored) {
             return Err(not_proved());

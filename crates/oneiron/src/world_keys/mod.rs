@@ -65,6 +65,8 @@ pub use self::bundle::{
 #[cfg(feature = "sync")]
 pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant, SealedPublicationGrant};
 #[cfg(feature = "sync")]
+pub(crate) use self::content::purge_world_mirrors_in_txn;
+#[cfg(feature = "sync")]
 pub(crate) use self::content_landed::unland_window_in_txn;
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
