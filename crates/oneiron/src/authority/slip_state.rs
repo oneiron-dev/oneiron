@@ -221,13 +221,22 @@ impl SlipAuthorityState {
     /// Whether the slip or an ancestor carries a revocation or id collision.
     #[must_use]
     pub fn is_revoked(&self, id: &[u8; 32]) -> bool {
+        self.revoked_ancestor_in(id, &self.revoked)
+    }
+    /// A verified `SlipRevoke` on this slip or its signed delegation parents.
+    /// Renewal lineage alone is not a delegation parent.
+    #[must_use]
+    pub(crate) fn is_explicitly_revoked(&self, id: &[u8; 32]) -> bool {
+        self.revoked_ancestor_in(id, &self.explicit_revoked)
+    }
+    fn revoked_ancestor_in(&self, id: &[u8; 32], revoked: &BTreeSet<[u8; 32]>) -> bool {
         let mut current = Some(*id);
         let mut seen = BTreeSet::new();
         while let Some(id) = current {
             if !seen.insert(id) {
                 return false;
             }
-            if self.revoked.contains(&id) {
+            if revoked.contains(&id) {
                 return true;
             }
             current = self
