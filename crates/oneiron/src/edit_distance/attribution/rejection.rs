@@ -167,7 +167,7 @@ fn judge_rejection_cause_in_txn(
         reason = "a unit-interval setting narrowed to the judge's f32 confidence"
     )]
     let floor = setting_value_in_txn(&vault.store, &*wtxn, &ATTRIBUTION_UNCLEAR_FLOOR)? as f32;
-    let (split, trace) = classify_amendment_traced(&evidence, None, &[], floor)?;
+    let (split, trace) = classify_amendment_traced(Some(vault), &evidence, None, &[], floor)?;
     let Some(split) = split else {
         return Ok(None);
     };
