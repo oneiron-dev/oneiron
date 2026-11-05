@@ -411,8 +411,13 @@ pub(crate) async fn vault_off_record_witness(
                     turn: input.turn,
                     summary: input.summary,
                 };
-                return owner_off_record::witness(vault, owner, &request, server.embedder_slot().as_ref())
-                    .map_err(|error| refusal(VERB, error));
+                return owner_off_record::witness(
+                    vault,
+                    owner,
+                    &request,
+                    server.embedder_slot().as_ref(),
+                )
+                .map_err(|error| refusal(VERB, error));
             }
             Caller::Principal { who, credential } => (*who, credential),
         };

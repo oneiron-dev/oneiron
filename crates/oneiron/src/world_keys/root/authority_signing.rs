@@ -86,7 +86,11 @@ impl RecoveryAuthoritySigner {
     /// Pure proof of possession for the existing enrollment door. Its owner act,
     /// predecessor, carrying install and counted writer are still required there.
     /// This value is not an enrollment receipt or a successful material issue.
-    pub(crate) fn enrollment(&self, machine: EntityId, owner: EntityId) -> Result<OwnerKeyEnrollment> {
+    pub(crate) fn enrollment(
+        &self,
+        machine: EntityId,
+        owner: EntityId,
+    ) -> Result<OwnerKeyEnrollment> {
         let public_key = self.public_key();
         let challenge =
             owner_key_enrollment_challenge(&self.vault_id, machine, &public_key, owner)?;
