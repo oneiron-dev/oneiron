@@ -624,7 +624,10 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
         .len()
         .checked_sub(1)
         .ok_or(invalid("entity document history has no head"))?;
-    if texts[head] != row.text || history.versions[head].metadata != row.metadata {
+    if texts[head] != row.text
+        || history.versions[head].metadata != row.metadata
+        || history.versions[head].native_skill_state != row.native_skill_state
+    {
         return Err(invalid("entity document head version"));
     }
     let mut reached = vec![false; texts.len()];
@@ -701,6 +704,7 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
         }
         if fork.output_metadata.is_some() != pending
             || fork.output.is_some() != pending
+            || (!pending && fork.output_native_skill_state.is_some())
             || fork.proposal_index >= fork.proposal_len
         {
             return Err(invalid("entity document fork state"));
