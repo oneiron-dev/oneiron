@@ -124,6 +124,8 @@ side_tables! {
     /// A custody handle's owner-set display label and its Gate receipt. The custody name stays the
     /// identity; this label changes presentation only and holds no value. Key: id16 (custody record id).
     SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Custody;
+    /// Owner-authored purpose, admitted by the side-row wall. Key: custody id16.
+    SECRET_HANDLE_PURPOSE: VaultMeta b"secret_handle:purpose:v1:" Named Authored [accepts: crate::store::secret_handle_purpose::accepts_masked];
     /// Each custody record's committed known-value history (KS-3): the slot of each entry typed
     /// custody holds for it (`KnownValueEntry`, item = the record's id) with the record generation
     /// it was written at, never a value, length, tag or fingerprint. Canonical, so an image
