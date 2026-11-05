@@ -267,3 +267,24 @@ answer. Queued, running and failed jobs keep the original whole-record codec,
 including progress omission and every native error variant's custom serde
 fields. The existing job state, provider receipts, finite conversion errors,
 client call and native admission remain unchanged.
+
+
+`self.saved_query.create`, `self.saved_query.update`,
+`self.saved_query.archive` and `self.saved_query.read` consume the definition's
+filter and matcher JSON before converting finite record metadata. An explicit
+stack walks every filter term, including nested conjunctions, disjunctions,
+negations and claim values. Shallow native-node serde keeps the active JSON
+map order and finite fields; required claim null stays present. Hard matchers
+use the same walk, while a null judge rubric still reads as absent. The same
+finite codec keeps all scope axes, versions, lifecycle, clocks and optional
+read records without changing `found`.
+
+`self.saved_query.evaluate` consumes every generation's provider JSON across
+all outcomes before a conversion error can return. Provider null stays a
+present required `WireJson` value, unlike optional media-usage JSON. Outcome
+and generation order, optional judges and memos, counts, provider pins, costs,
+cursors and all finite usage counters retain the original record codec.
+`self.saved_query.members` has no opaque JSON or recursive output type and
+keeps its existing conversion. Native query reads, filters, evaluators,
+authority, public records, inputs, client calls and hooks are unchanged. These
+are selected output conversions, not end-to-end depth, heap or runtime proof.

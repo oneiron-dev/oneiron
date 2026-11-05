@@ -2344,6 +2344,12 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_ai_answer({name}, output)'
             elif row['output'] == 'crate::task_verb::sdk::AiVideoJob':
                 result = f'crate::codec::lift_ai_video_job({name}, output)'
+            elif row['output'] == 'crate::campaign::surface::SavedQueryRecordView':
+                result = f'crate::codec::lift_saved_query_record({name}, output)'
+            elif row['output'] == 'crate::campaign::surface::SavedQueryReadResult':
+                result = f'crate::codec::lift_saved_query_read({name}, output)'
+            elif row['output'] == 'crate::campaign::surface::SavedQueryEvaluationReceipt':
+                result = f'crate::codec::lift_saved_query_evaluation({name}, output)'
             elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
