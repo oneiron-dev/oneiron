@@ -32,7 +32,19 @@ pub(crate) fn lift_entity_text_in_txn(
 ) -> Result<CarrierText> {
     let h = head(&vault.store, txn, entity)?;
     let text = load(&vault.store, txn, &h)?.text();
-    mark_carrier_text_in_txn(vault, txn, *entity, PLACE, text.as_bytes())
+    let marked = mark_carrier_text_in_txn(vault, txn, *entity, PLACE, text.as_bytes())?;
+    if !super::storage::has_sequence_text(&h)? {
+        return Ok(marked);
+    }
+    let sequence = crate::note::storage::load(vault, txn, *entity)?;
+    let text = sequence.get_text(super::document::BODY).to_string();
+    Ok(marked.and(mark_carrier_text_in_txn(
+        vault,
+        txn,
+        *entity,
+        PLACE,
+        text.as_bytes(),
+    )?))
 }
 
 /// The keys the lifted text of the document `h` heads holds.

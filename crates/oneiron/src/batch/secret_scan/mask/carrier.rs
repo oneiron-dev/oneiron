@@ -227,7 +227,7 @@ fn mask_strings_at(value: &mut serde_json::Value, masked: &dyn Fn(usize) -> bool
 impl CarrierText {
     /// The two outcomes of one row's texts as one: a hit left unplaced
     /// first, then a key marked now, then one marked before.
-    const fn and(self, other: Self) -> Self {
+    pub(crate) const fn and(self, other: Self) -> Self {
         match (self, other) {
             (Self::Unplaceable(reason), _) | (_, Self::Unplaceable(reason)) => {
                 Self::Unplaceable(reason)
