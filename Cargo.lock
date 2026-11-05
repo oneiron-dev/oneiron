@@ -8221,6 +8221,7 @@ dependencies = [
  "proptest",
  "rand_core 0.10.1",
  "rmp-serde",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "sha2 0.11.0",
