@@ -8,8 +8,8 @@
 
 use crate::Result;
 use crate::llm::decision::{
-    CapturedDecision, DecisionCall, DecisionLadder, DecisionPack, DecisionProvider,
-    DecisionWireLabels,
+    CapturedDecision, DecisionCall, DecisionCallContext, DecisionLadder, DecisionPack,
+    DecisionProvider, DecisionWireLabels,
 };
 use crate::model_decision::HostRuleRef;
 use crate::model_decision::{
@@ -143,14 +143,21 @@ impl DecisionProvider for Shown<'_> {
         self.rung.leaves_host()
     }
 
-    fn decide_captured(&self, call: &DecisionCall<'_>) -> Option<CapturedDecision> {
+    fn decide_captured(
+        &self,
+        call: &DecisionCall<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
         let Some(shown) = self.shown(call.question) else {
-            return self.rung.decide_captured(call);
+            return self.rung.decide_captured(call, context);
         };
-        let mut captured = self.rung.decide_captured(&DecisionCall {
-            question: &shown,
-            ..*call
-        })?;
+        let mut captured = self.rung.decide_captured(
+            &DecisionCall {
+                question: &shown,
+                ..*call
+            },
+            context,
+        )?;
         captured.result = captured
             .result
             .map(|decision| canonical(call.question, &shown, decision));
