@@ -300,7 +300,12 @@ impl ChatBrain {
             let scope =
                 phone_scope.ok_or_else(|| refused("phone context has no captured scope"))?;
             phone
-                .prepare_generation(request.generation, scope.clone(), said_from.clone())
+                .prepare_generation(
+                    request.generation,
+                    scope.clone(),
+                    said_from.clone(),
+                    request.interlocutors.clone(),
+                )
                 .map_err(refused)?;
         }
         let admitted = ai
@@ -399,18 +404,24 @@ impl ChatBrain {
             Some(room) => room.live.merged_into(request.interlocutors.clone()),
             None => request.interlocutors.clone(),
         };
-        let read = crate::api::narrow_to_core_audience(
-            vault,
-            auth,
-            read,
-            members.as_deref(),
-            room.as_ref(),
-            Some(&set),
-        )
-        .map_err(|error| refused(format!("{error:?}")))?;
-        // With no room (or no proven reader) this is `resolve`'s context.
-        let reader = room.as_ref().is_some_and(|room| room.reader.is_some());
-        let disclosure = DisclosureContext::resolve_room(vault, set, reader)?;
+        let (read, disclosure) = if self.bindings.phone.is_some() && room.is_none() {
+            let disclosure = read.phone_line_disclosure(set)?;
+            (read, disclosure)
+        } else {
+            let read = crate::api::narrow_to_core_audience(
+                vault,
+                auth,
+                read,
+                members.as_deref(),
+                room.as_ref(),
+                Some(&set),
+            )
+            .map_err(|error| refused(format!("{error:?}")))?;
+            // With no room (or no proven reader) this is `resolve`'s context.
+            let reader = room.as_ref().is_some_and(|room| room.reader.is_some());
+            let disclosure = DisclosureContext::resolve_room(vault, set, reader)?;
+            (read, disclosure)
+        };
         let mut section = MemoriesSection::pins_only(Some(disclosure.assembly(0)));
         let receipts =
             section.include_pinned_ids_with_disclosure(&read, &ids, Some(&disclosure))?;

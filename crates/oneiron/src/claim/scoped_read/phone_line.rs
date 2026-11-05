@@ -1,6 +1,7 @@
 //! Current phone-call consent, conjoined with every entity row admission.
 
 use super::*;
+use crate::ports::EntityStoreRead;
 
 impl ScopedRead<'_> {
     /// The call's current consent ceiling, for invalidating prepared context
@@ -20,12 +21,25 @@ impl ScopedRead<'_> {
         self.phone_line_scope_in(&txn)
     }
 
-    /// Revalidates prepared output's source rows and current call consent in
-    /// one snapshot, without materializing any source body. `None` means no
-    /// phone call, never permission to send an anonymous answer.
+    /// The actual anonymous phone audience under this reader's current
+    /// line consent. Ordinary readers cannot supply a phone disclosure.
+    pub fn phone_line_disclosure(
+        &self,
+        interlocutors: crate::interlocutor::InterlocutorSet,
+    ) -> Result<crate::DisclosureContext> {
+        let scope = self
+            .phone_line_scope()?
+            .ok_or_else(crate::phone_line::invalid)?;
+        crate::DisclosureContext::phone_line(interlocutors, scope)
+    }
+
+    /// Revalidates prepared output's source rows, native disclosure closure
+    /// and current call consent in one snapshot. `None` means no phone call,
+    /// never permission to send an anonymous answer.
     pub fn phone_line_output_scope(
         &self,
         sources: &[EntityId],
+        interlocutors: &crate::interlocutor::InterlocutorSet,
     ) -> Result<Option<crate::federation::Scope>> {
         if self.actor_key.phone_lines.is_empty() {
             return Ok(None);
@@ -42,7 +56,18 @@ impl ScopedRead<'_> {
         {
             return Err(crate::phone_line::invalid());
         }
-        Ok(scope)
+        let scope = scope.ok_or_else(crate::phone_line::invalid)?;
+        let disclosure =
+            crate::DisclosureContext::phone_line(interlocutors.clone(), scope.clone())?;
+        for source in sources {
+            let Some(row) = self.vault.store.port_entity_record(&txn, source)? else {
+                return Err(crate::phone_line::invalid());
+            };
+            if !disclosure.admits(&self.vault.store, &txn, source, row.entity_type, None)? {
+                return Err(crate::phone_line::invalid());
+            }
+        }
+        Ok(Some(scope))
     }
 
     fn phone_line_scope_in(
