@@ -56,6 +56,12 @@ impl OneironClient {
                 "vault.commitments.supersede" => remote_agent_verb_output::<
                     oneiron::memory::commitment_doors::CommitmentView,
                 >(client, verb, &input),
+                "vault.commitments.reminder_route.get" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentReminderRouteReply,
+                >(client, verb, &input),
+                "vault.commitments.reminder_route.set" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentReminderRouteReply,
+                >(client, verb, &input),
                 "fetch" => remote_agent_verb_output::<oneiron::web_fetch::FetchResult>(
                     client, verb, &input,
                 ),
@@ -3918,6 +3924,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.commitments.supersede", value)
+    }
+    pub fn vault_commitments_reminder_route_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentReminderRouteReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.reminder_route.get", value)
+    }
+    pub fn vault_commitments_reminder_route_set(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentReminderRouteSetRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentReminderRouteReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.reminder_route.set", value)
     }
     pub fn fetch(
         &self,
