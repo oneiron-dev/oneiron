@@ -35,7 +35,7 @@
 //! its policy, or the vault it came from withheld it after it travelled)
 //! reads to no one, and neither does a row whose words came from it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::EdgeKind;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
