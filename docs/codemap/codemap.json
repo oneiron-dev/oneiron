@@ -99800,7 +99800,7 @@
      "purpose": "The process's physical-memory admission line for host and native work",
      "surface": {
       "enum": 1,
-      "fn": 14,
+      "fn": 15,
       "struct": 2
      }
     },
@@ -107899,23 +107899,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/lib/boundary.rs",
      "purpose": "Shared caps, parse/validate helpers and napi error mapping for the legacy surface",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 27
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/lib/codebase.rs",
      "purpose": "Codebase snapshot conversion and codebase-scoped query filters",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 21
      }
     },
     {
