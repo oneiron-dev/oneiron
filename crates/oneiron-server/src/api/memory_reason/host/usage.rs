@@ -49,28 +49,28 @@ pub(super) fn reported(rows: &[RunReceipt], answer: Option<&LlmResponse>) -> Usa
                 && inference_calls.iter().all(|call| {
                     call.logical_prompt_tokens.is_some() && call.output_tokens.is_some()
                 });
-            result.tokens = result.tokens.saturating_add(
-                answer
-                    .usage
-                    .input
-                    .total
-                    .saturating_add(answer.usage.output.total),
-            );
             let mut represented = answer.usage.inference_calls();
+            let mut physical = 0_u64;
             for receipt in inference_calls {
+                let tokens = receipt
+                    .logical_prompt_tokens
+                    .unwrap_or(0)
+                    .saturating_add(receipt.output_tokens.unwrap_or(0));
                 if let Some(at) = represented.iter().position(|reported| reported == receipt) {
                     represented.remove(at);
+                    physical = physical.saturating_add(tokens);
                     continue;
                 }
-                result.tokens = result.tokens.saturating_add(
-                    receipt
-                        .logical_prompt_tokens
-                        .unwrap_or(0)
-                        .saturating_add(receipt.output_tokens.unwrap_or(0)),
-                );
+                result.tokens = result.tokens.saturating_add(tokens);
                 result.complete &=
                     receipt.logical_prompt_tokens.is_some() && receipt.output_tokens.is_some();
             }
+            let aggregate = answer
+                .usage
+                .input
+                .total
+                .saturating_add(answer.usage.output.total);
+            result.tokens = result.tokens.saturating_add(aggregate.max(physical));
             result.complete &= represented.is_empty();
         } else {
             let mut physical = 0_u64;

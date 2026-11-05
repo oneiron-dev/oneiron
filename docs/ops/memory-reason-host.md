@@ -26,8 +26,10 @@ are not charged twice. Each native call's reservation is sized to the remaining
 request allowance and nonzero line headroom, not the original full reservation.
 An exhausted paid line still fails its native admission; it is not given a zero
 reservation to bypass the line. `tokensUsed` is derived from reported usage, never from
-reservations, billing-unit conversion or the paid meter's balance. When physical
-reports overlap, the host does not add them twice. When coverage is incomplete,
+reservations, billing-unit conversion or the paid meter's balance. The answer's
+aggregate is reconciled with its matched physical token reports before overlaps
+are removed, so absent aggregate counters cannot erase known token use.
+Additional physical observations are added once. When coverage is incomplete,
 `tokensUsageComplete` is false and `tokensUsed` is a lower bound from the reports.
 A usable answer is not discarded just because usage is incomplete.
 
