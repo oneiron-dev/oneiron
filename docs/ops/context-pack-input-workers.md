@@ -26,9 +26,14 @@ dropped receiver releases the work and its turn. An undelivered result drops
 before the turn that admitted its worker. No worker uses Tokio's shared blocking
 pool for this prefix.
 
-This change provides the worker boundary; it does not complete contact-read or
-pinned-reference memory admission. Canonical CLAIM decoding, history/projection
-scratch, retained collections, request/auth clone storage and response-byte
-custody still need their own physical-memory accounting. Future untimed memory
-waits must use this caller's stop condition. There is no full-Q, runtime or
-throughput claim here.
+The already-allocated interlocutor controls stay on the server's physical-memory
+line while queued, in the worker and through pack assembly. The retained request
+owns its third-party vector backing, every party string and the voice-session
+string before its lease drops. This records actual capacities after allocation;
+it neither pre-admits JSON decoding nor charges copies made by later resolution.
+
+This change does not complete contact-read or pinned-reference memory admission.
+Canonical CLAIM decoding, history/projection scratch, other retained collections,
+other request storage, auth clones and response-byte custody still need their own
+physical-memory accounting. Future untimed memory waits must use this caller's
+stop condition. There is no full-Q, runtime or throughput claim here.
