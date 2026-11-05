@@ -6,6 +6,7 @@ use super::{DocAuthorization, EntityDoc, TextField, storage};
 use crate::error::{Error, Result};
 use crate::ports::{EntityStoreMaintenance, EntityStoreRead, TombstoneStoreRead};
 use crate::scope_summary::ScopeSummaryMetadata;
+use crate::store::StoreRead;
 use crate::{EntityId, Vault, WriteActor};
 
 fn summary_doc(
@@ -13,19 +14,26 @@ fn summary_doc(
     txn: &heed::RoTxn<'_>,
     entity: &EntityId,
 ) -> Result<(storage::Head, EntityDoc)> {
-    let state = vault.store.port_deletion_state(txn, entity)?;
+    summary_doc_through_in(&vault.store.read(), txn, entity)
+}
+
+fn summary_doc_through_in(
+    dbs: &StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<(storage::Head, EntityDoc)> {
+    let state = dbs.port_deletion_state(txn, entity)?;
     if state.deleted
-        || vault
-            .store
+        || dbs
             .port_entity_record(txn, entity)?
             .is_none_or(|row| row.entity_type != crate::registry::ENTITY_TYPE_SUMMARY)
     {
         return Err(Error::EntityNotFound);
     }
     let head = storage::ENTITY_DOC_HEAD
-        .get(&vault.store, txn, &crate::side_table::HexId(*entity))?
+        .get(dbs, txn, &crate::side_table::HexId(*entity))?
         .ok_or(Error::EntityNotFound)?;
-    let doc = storage::load(&vault.store, txn, &head)?;
+    let doc = storage::load(dbs, txn, &head)?;
     Ok((head, doc))
 }
 
@@ -34,7 +42,15 @@ pub(crate) fn summary_meta_in_txn(
     txn: &heed::RoTxn<'_>,
     entity: &EntityId,
 ) -> Result<ScopeSummaryMetadata> {
-    let (_, doc) = summary_doc(vault, txn, entity)?;
+    summary_meta_through_in(&vault.store.read(), txn, entity)
+}
+
+pub(crate) fn summary_meta_through_in(
+    dbs: &StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<ScopeSummaryMetadata> {
+    let (_, doc) = summary_doc_through_in(dbs, txn, entity)?;
     let meta = doc.doc.get_map("meta");
     Ok(ScopeSummaryMetadata {
         purpose: storage::decode(

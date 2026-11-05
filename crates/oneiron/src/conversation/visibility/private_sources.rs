@@ -48,7 +48,8 @@ pub(crate) fn private_threads_readable_raw_in(
 /// TURN, or a TURN of a thread it opened, meets that thread's audience
 /// (FIX 3122). Both the row base holds now and the one the view composes
 /// are walked, so an overlay row never stands in for a base restriction.
-/// Task bindings, summary covers and the audience itself read base.
+/// Summary covers validate through the same content view; task bindings and
+/// the audience itself still read base.
 pub(crate) fn private_threads_readable_with_read_in(
     vault: &Vault,
     dbs: &crate::store::StoreRead<'_>,
@@ -281,8 +282,9 @@ fn thread_walk_seen_in(
             let next = counted_edge_ids(dbs, txn, &id, *kind, false)?;
             pending.extend(next.into_iter().map(|id| (id, None, source)));
         }
-        let mut covers = vec![crate::scope_summary::body_covers_in_txn(
+        let mut covers = vec![crate::scope_summary::body_covers_through_in(
             vault,
+            dbs,
             txn,
             &id,
             h.entity_type,
@@ -295,7 +297,7 @@ fn thread_walk_seen_in(
                 pending.push((*subject, None, source));
             }
             covers.extend([
-                crate::scope_summary::merge_word_sources_in_txn(vault, txn, &claim),
+                crate::scope_summary::merge_word_sources_through_in(vault, dbs, txn, &claim),
                 conversation_summary_covers(&claim),
                 reaction_covers(&claim),
             ]);
@@ -304,7 +306,7 @@ fn thread_walk_seen_in(
         // each walked as a scope summary's covers are; one whose sources do
         // not resolve names no root here, as a cover does not.
         if h.entity_type == ENTITY_TYPE_SUMMARY {
-            match crate::scope_summary::word_sources_in(vault, txn, &id, &bytes) {
+            match crate::scope_summary::word_sources_through_in(vault, dbs, txn, &id, &bytes) {
                 Ok(crate::scope_summary::WordSources::From(sources)) => {
                     pending.extend(sources.into_iter().map(|id| (id, None, source)));
                 }
