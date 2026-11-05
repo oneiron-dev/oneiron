@@ -14,6 +14,10 @@ mod delete;
 pub(crate) mod delete_bearing_update;
 mod derived_rows;
 mod erase;
+mod exhaust_erase;
+pub(crate) use exhaust_erase::{
+    erase_owned_byoa_exhausts_in_txn, erase_restored_byoa_exhausts_in_txn,
+};
 mod gate;
 mod identity_event_stamps;
 mod legal_hold;

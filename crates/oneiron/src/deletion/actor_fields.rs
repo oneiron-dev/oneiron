@@ -133,7 +133,9 @@ pub(super) fn erase_actor_fields_in_txn(
     }
     scrub_actor_fields_in_txn(&mut erase)?;
     if hard || erase.payload_scope == PayloadEraseScope::AcceptedHardPurge {
-        return crate::attempt_queue::ForceCancelAuthority::erase_actor_payloads_in_txn(&mut erase);
+        return crate::attempt_queue::ForceCancelAuthority::erase_actor_payloads_in_txn(
+            &mut erase, act,
+        );
     }
     Ok(Vec::new())
 }

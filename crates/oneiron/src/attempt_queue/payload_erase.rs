@@ -269,15 +269,25 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     erase_attempt_payload_actors_owned_in_txn(store, txn, actors).map(|_| ())
 }
 
+/// Original accepted source subsets from the one native payload pass.
+/// Queue construction only; these facts do not grant erase authority.
+pub(crate) struct ErasedByoaPayloads(BTreeMap<AttemptId, BTreeSet<EntityId>>);
+
+impl ErasedByoaPayloads {
+    pub(crate) fn sources(&self) -> &BTreeMap<AttemptId, BTreeSet<EntityId>> {
+        &self.0
+    }
+}
+
 /// The same payload pass, retaining every task-owned BYOA row for the sealed
 /// erase/restore continuation. Incidental staged-job pinners are not owners.
 pub(in crate::attempt_queue) fn erase_attempt_payload_actors_owned_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     actors: &BTreeSet<EntityId>,
-) -> Result<BTreeMap<AttemptId, BTreeSet<EntityId>>> {
+) -> Result<ErasedByoaPayloads> {
     if actors.is_empty() {
-        return Ok(BTreeMap::new());
+        return Ok(ErasedByoaPayloads(BTreeMap::new()));
     }
     let mut owners = BTreeSet::new();
     for actor in actors {
@@ -398,7 +408,7 @@ pub(in crate::attempt_queue) fn erase_attempt_payload_actors_owned_in_txn(
         }
     }
     flush_rewrites_in_txn(store, txn, rewrites)?;
-    Ok(owned)
+    Ok(ErasedByoaPayloads(owned))
 }
 
 fn flush_rewrites_in_txn(

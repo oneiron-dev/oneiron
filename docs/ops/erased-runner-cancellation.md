@@ -27,10 +27,38 @@ restore publishes them after its image commit, before fallible reopening or
 rebuilding. A Cancelled ledger row does not prove that an external process has
 stopped.
 
-This does not finish the separate canonical-exhaust artifact erasure work.
-Historical artifact versions, shared ASSET retention, statutory holds, custody
-retirement and durable owed completion still use their existing rules. An absent
-hard marker at a scrub-only seam is not upgraded into erase authority.
+## Canonical exhausts and completion
+
+A first native terminal capture records its actual artifact, version, claim and
+content hash in the same transaction as successful settlement. Generic result
+attachments and caller-supplied artifact metadata do not create this fact. The
+byte-free erased-input settlement creates no capture fact.
+
+After the one payload flush, the accepted actor or restore writer joins the exact
+owned source subsets to that capture. Before releasing references, it inventories
+all native chain and replicated-claim hashes, the actual ASSET descriptors, and
+current and remembered governed body instances. It stages source-attributed body
+erase notes, then marks the artifact hard-erased before one native full purge.
+Historical artifact versions, signed claims, shared ASSET retention, statutory
+holds and custody retirement retain their existing rules. A hold on an artifact,
+its ASSET or a retained version claim keeps the family whole and owed.
+
+The private continuation keeps original sources, independent instance coverage,
+actual retirement names and the native teardown state. The ordinary due pass
+settles it. Existing final receipts remain pending until both complete coverage
+and the native custody obligations prove retirement. A missing capture or
+malformed/missing descriptor is unknown, not destruction. An empty later binder
+cannot replace known names or establish coverage. Attempts without a positively
+recorded capture remain unknown; no never-captured proof is inferred from absence.
+An ordinary Store-only scrub does not gain artifact erase authority.
+
+Capture identities restore as CONTENT structural metadata. Accepted continuations
+restore as LIVE structural history, without a dependency that would prune them
+when their source or artifact has gone. An authenticated restore re-purges
+restored artifact metadata while retaining independent inventory and custody
+names. The custody finisher stays outside the writer. This is not a claim of
+end-to-end destruction proof or external process termination. An absent hard
+marker at a scrub-only seam is not upgraded into erase authority.
 
 No configuration or migration is needed. Deploy matching engine/server binaries
 through the normal authorized rollout.

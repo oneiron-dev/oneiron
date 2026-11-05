@@ -151,9 +151,17 @@ impl ForceCancelAuthority {
     /// rows. The authority is minted and consumed before this borrow ends.
     pub(crate) fn erase_actor_payloads_in_txn(
         erase: &mut crate::deletion::ActorErasureWriter<'_, '_>,
+        act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
     ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
         let (vault, wtxn, actor) = erase.parts();
-        Self::erase_owned_payloads_in_txn(vault, wtxn, &std::collections::BTreeSet::from([actor]))
+        let owned = crate::attempt_queue::payload_erase::erase_attempt_payload_actors_owned_in_txn(
+            &vault.store,
+            wtxn,
+            &std::collections::BTreeSet::from([actor]),
+        )?;
+        crate::deletion::erase_owned_byoa_exhausts_in_txn(erase, &owned, act)?;
+        let (vault, wtxn, _) = erase.parts();
+        Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)
     }
 
     /// Scrubs and cancels the authenticated image writer's owned BYOA
@@ -164,25 +172,27 @@ impl ForceCancelAuthority {
     ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
         let erased = crate::deletion::restore_erased_payload_targets_in_txn(restore)?;
         let (vault, wtxn, _) = restore.parts();
-        Self::erase_owned_payloads_in_txn(vault, wtxn, &erased)
-    }
-
-    fn erase_owned_payloads_in_txn(
-        vault: &crate::Vault,
-        wtxn: &mut heed::RwTxn<'_>,
-        actors: &std::collections::BTreeSet<crate::EntityId>,
-    ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
         let owned = crate::attempt_queue::payload_erase::erase_attempt_payload_actors_owned_in_txn(
             &vault.store,
             wtxn,
-            actors,
+            &erased,
         )?;
+        crate::deletion::erase_restored_byoa_exhausts_in_txn(restore, &owned)?;
+        let (vault, wtxn, _) = restore.parts();
+        Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)
+    }
+
+    fn cancel_erased_payloads_in_txn(
+        vault: &crate::Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+        owned: &crate::attempt_queue::ErasedByoaPayloads,
+    ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
         // Every stale payload, archive mark and run reference has been
-        // rewritten before native cancellation can replace a queue row.
+        // rewritten before artifact teardown and native cancellation.
         let queue = crate::attempt_queue::AttemptQueue::new(vault);
         let now = vault.store.clock.now_recorded_at();
         let mut cancelled = Vec::new();
-        for id in owned.into_keys() {
+        for id in owned.sources().keys().copied() {
             let authority = Self {
                 grounds: ForceCancelGrounds::ErasedPayload,
                 actor: ATTEMPT_RUNTIME_ACTOR.to_owned(),
