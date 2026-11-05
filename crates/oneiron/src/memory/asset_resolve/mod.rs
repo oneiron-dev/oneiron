@@ -43,7 +43,7 @@ use crate::retrieval_depth::RetrievalDeadline;
 use crate::temporal::TimeRange;
 use oneiron_model::llm::image::{ImageBytes, ImageCatalog, ImageIntent, ImageResponse};
 use oneiron_model::llm::media::{AiMediaDoor, AiOperation, MediaPart, MediaRequest};
-use oneiron_model::llm::{BudgetLease, CallPurpose, LlmCapability, ModelId};
+use oneiron_model::llm::{BudgetLease, BudgetRead, CallPurpose, LlmCapability, ModelId};
 
 mod blob;
 mod generation;
@@ -121,6 +121,8 @@ pub struct ImagePick<'a> {
     pub wording: String,
     pub task: String,
     pub budget: Duration,
+    /// The authenticated invoking run's monetary read, when it lends one.
+    pub run_budget: Option<BudgetRead>,
 }
 
 impl ImagePick<'_> {
@@ -140,14 +142,22 @@ impl ImagePick<'_> {
             return true;
         };
         let description = text.map_or("", |(_, text)| text.as_str());
+        let remaining = self
+            .run_budget
+            .as_ref()
+            .and_then(BudgetRead::capped_remaining_units);
         let state = fit_state(self.task.len().max(description.len()), |cut| {
-            json!({
+            let mut state = json!({
                 "question": question.id.to_hex(),
                 "asset_ref": asset.to_hex(),
                 "task": cut_text(&self.task, cut),
                 "description": cut_text(description, cut),
                 "cut_at_bytes": cut,
-            })
+            });
+            if let Some(remaining) = remaining {
+                state["budget_remaining_units"] = remaining.into();
+            }
+            state
         });
         let evidence: Vec<EntityId> = std::iter::once(asset)
             .chain(text.map(|(id, _)| *id))
