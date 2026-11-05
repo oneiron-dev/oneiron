@@ -16,7 +16,27 @@ This is not live parent-run ownership. It adds no owner row, body descriptor,
 independent hold, source index, or run-wide live erase. Unrelated live outputs,
 shared bytes, normal actor erasure, grants and loan admission stay unchanged.
 
-FIX9348 remains partial. Explicit source-TURN erasure still needs the native
-per-occurrence release path for live host-input bodies. This checkpoint-image
-slice does not claim that release, generic source closure, or runtime proof.
-There is no new format, default, cap, migration or old-format reader.
+## Live persisted occurrences
+
+A hard source erase now scans the native replay manifests in the erase's
+accepted writer. For each output whose stored `input_rows` names that exact
+source, it withdraws only the actual run/path occurrence, replaces only its
+preview text with the native erased preview, releases that occurrence's own
+marks and body descriptor, and stages the native body erasure with the actual
+digest captured before release. Another holder keeps shared bytes; native
+custody, hold, deferred retirement and receipt rules still apply. The parent
+response owner, its bridge replies and unrelated outputs are unchanged.
+
+The occurrence uses the existing stale status, not a new format or body-owner
+row. Owned result taint/secret projections and the explicit host/finding readers
+honour that exact occurrence status. Privileged raw shared-byte APIs do not gain
+an occurrence authority or a content-hash-wide withdrawal. Later replay writes
+of the same withdrawn occurrence cannot restore its preview or body hold.
+
+FIX9348 remains partial. This covers decodable, already-persisted manifests.
+`commit_host_inputs` still publishes a body before its final replay-record write
+in a separate transaction. An erase during that gap, a publication that never
+links its record, and a new late capture after the erase remain open; this slice
+does not claim a cohort that was never persisted. It also does not claim generic
+source closure or runtime proof. There is no new format, default, cap, migration
+or old-format reader.
