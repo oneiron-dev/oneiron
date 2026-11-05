@@ -1,4 +1,4 @@
-//! ONEIRON FORK: nonblocking admission for native dirty-page heap buffers.
+//! ONEIRON FORK: nonblocking admission for native heap buffers and sealed read copies.
 
 use std::ffi::c_void;
 use std::sync::Arc;
@@ -6,22 +6,23 @@ use std::sync::Arc;
 use crate::Result;
 use crate::mdb::{error::mdb_result, ffi};
 
-/// An account scoped to one root writer and retained by its native buffers.
+/// An account scoped to one root writer and retained by its accounted buffers.
 ///
 /// These callbacks must not wait, re-enter LMDB, or panic. Admission happens
 /// before entering the writer: `reserve` only consumes already admitted bytes.
 /// Cached page buffers retain their account after commit/abort until physically
-/// freed. This covers malloc requests, not disk allocation, mmap or control data.
+/// freed. This covers the native heap sites wired to these callbacks and sealed
+/// read-copy payloads, not disk allocation, mmap or unaccounted metadata.
 pub trait PageAccount: Send + Sync + 'static {
-    /// Reserves `bytes` for one malloc, including its native heap-only prefix.
+    /// Reserves `bytes` for one allocation, including any native heap-only prefix.
     /// False leaves the reservation unchanged; the writer then fails with ENOMEM.
     fn reserve(&self, bytes: usize) -> bool;
 
-    /// The admitted malloc succeeded and now holds exactly `bytes`.
+    /// The admitted allocation succeeded and now holds exactly `bytes`.
     fn materialized(&self, bytes: usize);
 
     /// Consumes one reservation: after physical free if `allocated`, otherwise
-    /// after malloc failed without allocating. Called once per successful reserve.
+    /// after allocation failed without allocating. Called once per successful reserve.
     fn release(&self, bytes: usize, allocated: bool);
 }
 

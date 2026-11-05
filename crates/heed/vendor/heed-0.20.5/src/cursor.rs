@@ -26,9 +26,9 @@ impl<'txn> RoCursor<'txn> {
 
     /// ONEIRON FORK (OF-570): what the cursor returned, made to last the whole
     /// transaction (copied when the env is sealed; see `Stash`).
-    unsafe fn stable(&self, bytes: &'txn [u8]) -> &'txn [u8] {
+    unsafe fn stable(&self, bytes: &'txn [u8]) -> Result<&'txn [u8]> {
         match self.stash {
-            None => bytes,
+            None => Ok(bytes),
             Some(stash) => unsafe { stash.keep(bytes) },
         }
     }
@@ -49,8 +49,8 @@ impl<'txn> RoCursor<'txn> {
 
         match result {
             Ok(()) => {
-                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) };
-                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) };
+                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) }?;
+                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) }?;
                 Ok(Some((key, data)))
             }
             Err(e) if e.not_found() => Ok(None),
@@ -93,8 +93,8 @@ impl<'txn> RoCursor<'txn> {
 
         match result {
             Ok(()) => {
-                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) };
-                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) };
+                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) }?;
+                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) }?;
                 Ok(Some((key, data)))
             }
             Err(e) if e.not_found() => Ok(None),
@@ -137,8 +137,8 @@ impl<'txn> RoCursor<'txn> {
 
         match result {
             Ok(()) => {
-                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) };
-                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) };
+                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) }?;
+                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) }?;
                 Ok(Some((key, data)))
             }
             Err(e) if e.not_found() => Ok(None),
@@ -188,8 +188,8 @@ impl<'txn> RoCursor<'txn> {
 
         match result {
             Ok(()) => {
-                let key = unsafe { self.stable(crate::from_val(key_val)) };
-                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) };
+                let key = unsafe { self.stable(crate::from_val(key_val)) }?;
+                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) }?;
                 Ok(Some((key, data)))
             }
             Err(e) if e.not_found() => Ok(None),
@@ -219,8 +219,8 @@ impl<'txn> RoCursor<'txn> {
 
         match result {
             Ok(()) => {
-                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) };
-                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) };
+                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) }?;
+                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) }?;
                 Ok(Some((key, data)))
             }
             Err(e) if e.not_found() => Ok(None),
@@ -250,8 +250,8 @@ impl<'txn> RoCursor<'txn> {
 
         match result {
             Ok(()) => {
-                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) };
-                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) };
+                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) }?;
+                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) }?;
                 Ok(Some((key, data)))
             }
             Err(e) if e.not_found() => Ok(None),
