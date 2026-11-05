@@ -137,7 +137,9 @@ pub use self::root::{
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
 pub use self::root_issue::PreparedRoot;
 pub use self::root_work::{RootMaterial, RootSecret, RootWorkDone};
-pub(crate) use self::sealed_update::{open_world_update, seal_world_update, sealed_update_id};
+pub(crate) use self::sealed_update::{
+    SealedUpdateKind, open_world_update, seal_world_update, sealed_update_id,
+};
 pub use self::session::WorldKeyFrontierCheck;
 pub(crate) use self::session::{CountersignStage, WorldKeySession};
 pub(crate) use self::side_row::{WorldSideRowBinding, open_side_row, seal_side_row};

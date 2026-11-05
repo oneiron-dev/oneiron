@@ -19,6 +19,7 @@ use futures_util::{Sink, SinkExt};
 use tokio_tungstenite::tungstenite::Message;
 
 use super::SyncClient;
+use crate::EntityId;
 use crate::authority::{EffectiveRead, EffectiveWorldPrivacy, PeerMachine, SealedCopies};
 use crate::sync::residence::{
     SealedUpdateEpoch, SealedUpdateId, drop_sealed_update_outbox, put_sealed_update_cursor,
@@ -29,7 +30,9 @@ use crate::sync::transport::{
     decode_sealed_update_frame, encode_sealed_update_frame,
 };
 use crate::sync::types::WindowKey;
-use crate::world_keys::{WorldKey, open_world_update, seal_world_update, sealed_update_id};
+use crate::world_keys::{
+    SealedUpdateKind, WorldKey, open_world_update, seal_world_update, sealed_update_id,
+};
 
 /// How long this connection reuses the world keys it opened for sealed
 /// updates before it opens them again.
@@ -57,6 +60,9 @@ pub(super) struct SealedUpdateSession {
     catching_up: Option<Instant>,
     last_since: Option<Instant>,
     keys: Option<(Instant, Vec<WorldKey>)>,
+    /// Windows whose snapshot this connection asked the world's other
+    /// readers for.
+    wanted: HashSet<String>,
 }
 
 /// Whether `privacy` sends a world's updates sealed through a home that may
@@ -92,9 +98,22 @@ impl SyncClient {
         let Some(world) = WindowKey::try_new(window_key).and_then(|key| key.world()) else {
             return Ok(());
         };
-        if sealed_update_cursor(&self.vault)?.is_none()
-            || !world_relays_sealed(&self.vault.world_privacy(world)?)
-        {
+        if sealed_update_cursor(&self.vault)?.is_none() {
+            return Ok(());
+        }
+        self.keep_sealed_message(world, SealedUpdateKind::Update, window_key, update)
+    }
+
+    /// Seals one message of `kind` for `window_key` of `world` into the
+    /// outbox, while the world relays sealed.
+    fn keep_sealed_message(
+        &self,
+        world: EntityId,
+        kind: SealedUpdateKind,
+        window_key: &str,
+        bytes: &[u8],
+    ) -> crate::error::Result<()> {
+        if !world_relays_sealed(&self.vault.world_privacy(world)?) {
             return Ok(());
         }
         let key = self.vault.world_key(world)?;
@@ -102,11 +121,12 @@ impl SyncClient {
         let sealed = seal_world_update(
             &vault_id,
             &key,
+            kind,
             window_key,
-            update,
+            bytes,
             MAX_DECODED_PAYLOAD_BYTES - FRAME_ROOM,
         )?;
-        let id = sealed_update_id(&vault_id, &key, window_key, update);
+        let id = sealed_update_id(&vault_id, &key, kind, window_key, bytes);
         put_sealed_update_outbox(&self.vault, &id, world, &sealed)
     }
 
@@ -243,19 +263,91 @@ impl SyncClient {
         let Some(opened) = opened else {
             return Ok(());
         };
-        if WindowKey::try_new(opened.window_key.as_str()).and_then(|key| key.world())
-            != Some(opened.world())
-        {
+        let world = opened.world();
+        let window_key = opened.window_key.as_str();
+        if WindowKey::try_new(window_key).and_then(|key| key.world()) != Some(world) {
             return Err("a sealed update's window is not its key's world".to_owned());
         }
-        // The relay proves the sealer held the world's key, not which machine
-        // it was: the bytes take the import a tier with no connection takes.
-        self.import_own_device_window_update(
-            &opened.window_key,
-            &opened.update,
-            PeerMachine::Unknown,
-        )
-        .map_err(|error| error.to_string())
+        match opened.kind {
+            SealedUpdateKind::Want => self.answer_sealed_want(world, window_key),
+            SealedUpdateKind::Snapshot => self.import_sealed_window(window_key, &opened.update),
+            SealedUpdateKind::Update => {
+                // An update whose history this machine lacks waits for a
+                // reader's snapshot instead: imported out of order it would
+                // stay pending and hold back the window's later updates.
+                if !self.sealed_update_ready(window_key, &opened.update)? {
+                    self.want_sealed_snapshot(world, window_key);
+                    return Ok(());
+                }
+                self.import_sealed_window(window_key, &opened.update)
+                    .inspect_err(|_| self.want_sealed_snapshot(world, window_key))
+            }
+        }
+    }
+
+    /// Imports one opened update or snapshot of `window_key`. The relay
+    /// proves the sealer held the world's key, not which machine it was: the
+    /// bytes take the import a tier with no connection takes. Bytes the
+    /// import refused stay nowhere, so no later world import on this
+    /// connection waits behind them.
+    fn import_sealed_window(&mut self, window_key: &str, bytes: &[u8]) -> Result<(), String> {
+        let imported =
+            self.import_own_device_window_update(window_key, bytes, PeerMachine::Unknown);
+        if imported.is_err() {
+            self.staged_world_updates.retain(|(key, staged, _)| {
+                key.as_str() != window_key || staged.as_slice() != bytes
+            });
+        }
+        imported.map_err(|error| error.to_string())
+    }
+
+    /// Whether this machine's copy of `window_key` holds every operation
+    /// `update` stands on. A snapshot stands on nothing.
+    fn sealed_update_ready(&mut self, window_key: &str, update: &[u8]) -> Result<bool, String> {
+        let Ok(meta) = loro::LoroDoc::decode_import_blob_meta(update, true) else {
+            return Ok(false);
+        };
+        if meta.mode != loro::EncodedBlobMode::Updates {
+            return Ok(true);
+        }
+        let window = self
+            .ensure_window(window_key)
+            .map_err(|error| error.to_string())?;
+        Ok(window.doc.oplog_vv().includes_vv(&meta.partial_start_vv))
+    }
+
+    /// Asks the world's other readers, once per connection, for
+    /// `window_key`'s snapshot: a sealed want, unique per ask so the home
+    /// stores and relays each one.
+    fn want_sealed_snapshot(&mut self, world: EntityId, window_key: &str) {
+        if !self.sealed_updates.wanted.insert(window_key.to_owned()) {
+            return;
+        }
+        let mut ask = [0u8; 16];
+        let kept = match crate::key_material::os_fill(&mut ask) {
+            Ok(()) => self.keep_sealed_message(world, SealedUpdateKind::Want, window_key, &ask),
+            Err(error) => Err(error.into()),
+        };
+        if let Err(error) = kept {
+            tracing::warn!(%error, "sealed snapshot want not kept");
+        }
+    }
+
+    /// Answers another reader's want with this machine's snapshot of
+    /// `window_key`, when it holds any of the window.
+    fn answer_sealed_want(&mut self, world: EntityId, window_key: &str) -> Result<(), String> {
+        let window = self
+            .ensure_window(window_key)
+            .map_err(|error| error.to_string())?;
+        if window.doc.oplog_vv().iter().next().is_none() {
+            return Ok(());
+        }
+        let snapshot = window
+            .doc
+            .export(loro::ExportMode::Snapshot)
+            .map_err(|error| error.to_string())?;
+        self.keep_sealed_message(world, SealedUpdateKind::Snapshot, window_key, &snapshot)
+            .map_err(|error| error.to_string())
     }
 
     /// The world keys this machine opens of the worlds it reads now, opened

@@ -474,9 +474,13 @@ side_tables! {
     /// The home's queue of sealed world updates: its epoch (16), minted on first use ‖ u64be the
     /// last number it gave. Key: ().
     SYNC_SEALED_UPDATE_QUEUE: SyncState b"swu:m" Raw;
-    /// One world update this machine sealed for its home, until the home says it is stored: the
-    /// world (16) ‖ u64be vault second it was sealed ‖ the sealed bytes. Key: hex32 (its id).
+    /// One world update this machine sealed for its home, until the home says it is stored: its
+    /// id (16) ‖ the world (16) ‖ u64be vault second it was sealed ‖ the sealed bytes. Key:
+    /// u64hex16 (its place in the order the updates were made).
     SYNC_SEALED_UPDATE_OUTBOX: SyncState b"swu:o:" Raw;
+    /// The place of one outbox update by its id, so one id is kept once: u64be. Key: hex32 (the
+    /// id).
+    SYNC_SEALED_UPDATE_OUTBOX_ID: SyncState b"swu:p:" Raw;
     /// Test-fixture row, never read or written by production code: a cached
     /// minted capability slip for one request-credential recipe id
     /// (`crates/oneiron-server/src/test_credentials.rs`, mounted only as

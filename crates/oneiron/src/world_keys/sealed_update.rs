@@ -41,9 +41,35 @@ pub(crate) const SEALED_UPDATE_ID_LEN: usize = 16;
 /// CLIP-SYNC relay padding, CALLS.md).
 pub(crate) const SEALED_UPDATE_PAD_FLOOR_BYTES: usize = 1024;
 
-/// One opened update: the key that opened it, its window and its bytes.
+/// What one sealed message carries for its window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SealedUpdateKind {
+    /// One update of the window, as its writer made it.
+    Update = 0,
+    /// The window's whole document, as its sender holds it: what a reader
+    /// that lacks the history an update stands on imports instead.
+    Snapshot = 1,
+    /// A reader asks the world's other readers for the window's snapshot:
+    /// no bytes.
+    Want = 2,
+}
+
+impl SealedUpdateKind {
+    fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Update),
+            1 => Some(Self::Snapshot),
+            2 => Some(Self::Want),
+            _ => None,
+        }
+    }
+}
+
+/// One opened message: the key that opened it, what it carries, its window
+/// and its bytes.
 pub(crate) struct OpenedWorldUpdate {
     pub key: WorldKeyId,
+    pub kind: SealedUpdateKind,
     pub window_key: String,
     pub update: Zeroizing<Vec<u8>>,
 }
@@ -80,6 +106,7 @@ fn kek_for(vault_id: &[u8; 32], key: &WorldKey) -> Kek {
 pub(crate) fn sealed_update_id(
     vault_id: &[u8; 32],
     key: &WorldKey,
+    kind: SealedUpdateKind,
     window_key: &str,
     update: &[u8],
 ) -> [u8; SEALED_UPDATE_ID_LEN] {
@@ -92,6 +119,7 @@ pub(crate) fn sealed_update_id(
             &vault_id[..],
             &key_id[..],
             &key.expose()[..],
+            &[kind as u8][..],
             &window_len[..],
             window_key.as_bytes(),
             &update_len[..],
@@ -119,6 +147,7 @@ fn padded_len(len: usize) -> Option<usize> {
 pub(crate) fn seal_world_update(
     vault_id: &[u8; 32],
     key: &WorldKey,
+    kind: SealedUpdateKind,
     window_key: &str,
     update: &[u8],
     max_bytes: usize,
@@ -126,7 +155,7 @@ pub(crate) fn seal_world_update(
     let window_len =
         u8::try_from(window_key.len()).map_err(|_| refused("a window key past 255 bytes"))?;
     let update_len = u32::try_from(update.len()).map_err(|_| refused("an update past 4 GiB"))?;
-    let content = BODY_LABEL.len() + 40 + 1 + window_key.len() + 4 + update.len();
+    let content = BODY_LABEL.len() + 1 + 40 + 1 + window_key.len() + 4 + update.len();
     let padded = padded_len(content).ok_or_else(|| refused("an update too large to pad"))?;
     if padded > max_bytes {
         return Err(refused(
@@ -135,6 +164,7 @@ pub(crate) fn seal_world_update(
     }
     let mut body = Zeroizing::new(Vec::with_capacity(padded));
     body.extend_from_slice(BODY_LABEL);
+    body.push(kind as u8);
     body.extend_from_slice(&key.id().envelope_key_id());
     body.push(window_len);
     body.extend_from_slice(window_key.as_bytes());
@@ -211,6 +241,8 @@ pub(crate) fn open_world_update(
         .map_err(|_| refused("a sealed world update does not open under the key its hint names"))?;
     let disagree = || refused("a sealed world update's body disagrees with its key");
     let rest = body.strip_prefix(BODY_LABEL).ok_or_else(disagree)?;
+    let (&kind, rest) = rest.split_first().ok_or_else(disagree)?;
+    let kind = SealedUpdateKind::from_byte(kind).ok_or_else(disagree)?;
     let (named, rest) = rest.split_at_checked(40).ok_or_else(disagree)?;
     if named != key.id().envelope_key_id() {
         return Err(disagree());
@@ -230,6 +262,7 @@ pub(crate) fn open_world_update(
     }
     Ok(Some(OpenedWorldUpdate {
         key: *key.id(),
+        kind,
         window_key,
         update: Zeroizing::new(update.to_vec()),
     }))

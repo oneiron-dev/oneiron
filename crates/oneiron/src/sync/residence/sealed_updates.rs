@@ -35,8 +35,9 @@ pub type SealedUpdateId = [u8; SEALED_UPDATE_FRAME_ID_LEN];
 
 /// u64be stored-at second ‖ id, before the sealed bytes of a home entry.
 const ENTRY_HEADER_LEN: usize = 8 + SEALED_UPDATE_FRAME_ID_LEN;
-/// world ‖ u64be sealed-at second, before the sealed bytes of an outbox row.
-const OUTBOX_HEADER_LEN: usize = 16 + 8;
+/// id ‖ world ‖ u64be sealed-at second, before the sealed bytes of an outbox
+/// row.
+const OUTBOX_HEADER_LEN: usize = SEALED_UPDATE_FRAME_ID_LEN + 16 + 8;
 
 const ENTRIES: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_SEALED_UPDATE_ENTRY);
@@ -45,6 +46,8 @@ const QUEUE: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_SEAL
 const CURSOR: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_SEALED_UPDATE_CURSOR);
 const OUTBOX: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_SEALED_UPDATE_OUTBOX);
+const OUTBOX_IDS: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SYNC_SEALED_UPDATE_OUTBOX_ID);
 
 fn seq_key(seq: u64) -> String {
     format!("{seq:016x}")
@@ -294,11 +297,13 @@ pub struct OutboxSealedUpdate {
     pub sealed: Vec<u8>,
 }
 
-/// Keeps `sealed`, of `world`, until the home stores it. The same id again
-/// rewrites the same row.
+/// Keeps `sealed`, of `world`, until the home stores it, after every row kept
+/// before it: the outbox goes in the order its updates were made, so an
+/// update never reaches a reader before one it stands on. An id kept already
+/// keeps its place.
 ///
 /// # Errors
-/// Store errors.
+/// Store errors; a malformed outbox row.
 pub fn put_sealed_update_outbox(
     vault: &Vault,
     id: &SealedUpdateId,
@@ -306,17 +311,34 @@ pub fn put_sealed_update_outbox(
     sealed: &[u8],
 ) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
+        if OUTBOX_IDS.contains(&vault.store, wtxn, &id_key(id))? {
+            return Ok(());
+        }
+        let last = match OUTBOX.iter_rev_from(&vault.store, wtxn, &[])?.next() {
+            Some(row) => {
+                let (key, _) = row?;
+                u64::from_str_radix(&key, 16)
+                    .map_err(|_| corrupt("a sealed outbox key is not a number"))?
+            }
+            None => 0,
+        };
+        let seq = last
+            .checked_add(1)
+            .ok_or(corrupt("the sealed outbox is full"))?;
         let now = vault.instant_in_txn(wtxn)?.secs();
         let mut row = Vec::with_capacity(OUTBOX_HEADER_LEN + sealed.len());
+        row.extend_from_slice(id);
         row.extend_from_slice(world.as_bytes());
         row.extend_from_slice(&now.to_be_bytes());
         row.extend_from_slice(sealed);
-        OUTBOX.put(&vault.store, wtxn, &id_key(id), &row)
+        OUTBOX.put(&vault.store, wtxn, &seq_key(seq), &row)?;
+        OUTBOX_IDS.put(&vault.store, wtxn, &id_key(id), &seq.to_be_bytes().to_vec())
     })
 }
 
-/// The first `limit` updates still to be stored, in id order. Rows kept past
-/// [`SEALED_UPDATE_KEEP_SECS`] go instead: the home would have retired them.
+/// The first `limit` updates still to be stored, in the order they were
+/// kept. Rows kept past [`SEALED_UPDATE_KEEP_SECS`] go instead: the home
+/// would have retired them.
 ///
 /// # Errors
 /// Store errors; a malformed outbox row.
@@ -339,20 +361,18 @@ pub fn sealed_update_outbox(vault: &Vault, limit: usize) -> Result<Vec<OutboxSea
     let mut aged = Vec::new();
     for (key, raw) in rows {
         let key = String::from_utf8(key).map_err(|_| corrupt("a sealed outbox key is not text"))?;
-        if raw.len() <= OUTBOX_HEADER_LEN || key.len() != SEALED_UPDATE_FRAME_ID_LEN * 2 {
+        if raw.len() <= OUTBOX_HEADER_LEN {
             return Err(corrupt("a sealed outbox row is malformed"));
         }
-        if be_u64(&raw[16..OUTBOX_HEADER_LEN])? < cutoff {
-            aged.push(key);
+        let mut id = [0u8; SEALED_UPDATE_FRAME_ID_LEN];
+        id.copy_from_slice(&raw[..SEALED_UPDATE_FRAME_ID_LEN]);
+        let world_at = SEALED_UPDATE_FRAME_ID_LEN + 16;
+        if be_u64(&raw[world_at..OUTBOX_HEADER_LEN])? < cutoff {
+            aged.push((key, id));
             continue;
         }
-        let mut id = [0u8; SEALED_UPDATE_FRAME_ID_LEN];
-        for (slot, pair) in id.iter_mut().zip(key.as_bytes().chunks_exact(2)) {
-            let pair = std::str::from_utf8(pair).map_err(|_| corrupt("a sealed outbox key"))?;
-            *slot = u8::from_str_radix(pair, 16).map_err(|_| corrupt("a sealed outbox key"))?;
-        }
         let world = EntityId::from_bytes(
-            raw[..16]
+            raw[SEALED_UPDATE_FRAME_ID_LEN..world_at]
                 .try_into()
                 .map_err(|_| corrupt("a sealed outbox row is malformed"))?,
         )?;
@@ -364,8 +384,9 @@ pub fn sealed_update_outbox(vault: &Vault, limit: usize) -> Result<Vec<OutboxSea
     }
     if !aged.is_empty() {
         vault.with_write_txn_grouped(|wtxn| {
-            for key in &aged {
+            for (key, id) in &aged {
                 OUTBOX.delete(&vault.store, wtxn, key)?;
+                OUTBOX_IDS.delete(&vault.store, wtxn, &id_key(id))?;
             }
             Ok(())
         })?;
@@ -377,7 +398,14 @@ pub fn sealed_update_outbox(vault: &Vault, limit: usize) -> Result<Vec<OutboxSea
 /// syncs sealed.
 ///
 /// # Errors
-/// Store errors.
+/// Store errors; a malformed outbox index row.
 pub fn drop_sealed_update_outbox(vault: &Vault, id: &SealedUpdateId) -> Result<()> {
-    vault.with_write_txn_grouped(|wtxn| OUTBOX.delete(&vault.store, wtxn, &id_key(id)).map(drop))
+    vault.with_write_txn_grouped(|wtxn| {
+        let Some(raw) = OUTBOX_IDS.get(&vault.store, wtxn, &id_key(id))? else {
+            return Ok(());
+        };
+        OUTBOX.delete(&vault.store, wtxn, &seq_key(be_u64(&raw)?))?;
+        OUTBOX_IDS.delete(&vault.store, wtxn, &id_key(id))?;
+        Ok(())
+    })
 }
