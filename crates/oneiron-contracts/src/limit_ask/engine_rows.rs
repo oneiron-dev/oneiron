@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 137] = [
+    pub const ALL: [Self; 141] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -66,9 +66,13 @@ impl EngineLimit {
         Self::EsignSweepDocuments,
         Self::EsignSigningPrincipals,
         Self::EsignSignatureInputBytes,
+        Self::EsignSignatureImageDimensionPx,
         Self::EsignSignaturePngBytes,
         Self::EsignSignatureDocumentBytes,
         Self::EsignSignatureRecipientImages,
+        Self::EsignRejectReasonBytes,
+        Self::EsignEmailFieldBytes,
+        Self::EsignNameFieldBytes,
         Self::EsignBodyBytes,
         Self::EsignGeometryBodyBytes,
         Self::SealOutputBytes,
@@ -208,9 +212,13 @@ impl EngineLimit {
             Self::EsignSweepDocuments => "limits.esign_sweep_documents",
             Self::EsignSigningPrincipals => "limits.esign_signing_principals",
             Self::EsignSignatureInputBytes => "limits.esign_signature_input_bytes",
+            Self::EsignSignatureImageDimensionPx => "limits.signature_image_dimension_px",
             Self::EsignSignaturePngBytes => "limits.esign_signature_png_bytes",
             Self::EsignSignatureDocumentBytes => "limits.esign_signature_document_bytes",
             Self::EsignSignatureRecipientImages => "limits.esign_signature_recipient_images",
+            Self::EsignRejectReasonBytes => "limits.sign_reject_reason_bytes",
+            Self::EsignEmailFieldBytes => "limits.sign_email_field_bytes",
+            Self::EsignNameFieldBytes => "limits.sign_name_field_bytes",
             Self::EsignBodyBytes => "limits.esign_body_bytes",
             Self::EsignGeometryBodyBytes => "limits.esign_geometry_body_bytes",
             Self::SealOutputBytes => "limits.seal_output_bytes",
@@ -374,9 +382,13 @@ impl EngineLimit {
             Self::EsignSweepDocuments => 100,
             Self::EsignSigningPrincipals => 256,
             Self::EsignSignatureInputBytes => 2 << 20,
+            Self::EsignSignatureImageDimensionPx => 16_384,
             Self::EsignSignaturePngBytes => 2 << 20,
             Self::EsignSignatureDocumentBytes => 64 << 20,
             Self::EsignSignatureRecipientImages => 16,
+            Self::EsignRejectReasonBytes
+            | Self::EsignEmailFieldBytes
+            | Self::EsignNameFieldBytes => 1 << 20,
             // The 3 MiB the public signing doors refused a body past before
             // token-first ingress (FIX 3808).
             Self::EsignBodyBytes => 3 << 20,
