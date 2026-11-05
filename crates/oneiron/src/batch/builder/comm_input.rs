@@ -7,7 +7,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::gate::ClaimGateWrite;
 use crate::store::GateWriteMode;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 pub(super) fn admit_routed_inputs(
     vault: &Vault,
@@ -32,11 +32,11 @@ pub(super) fn admit_routed_inputs(
         // id. Its FIFO slot must not reach the ordinary Put-apply tail.
         let preflight = gate_mode
             .preflight_gate_decision_ids
-            .remove(id)
-            .and_then(|mut ids| ids.pop_front())
+            .get_mut(id)
+            .and_then(VecDeque::pop_front)
             .flatten();
         let pending_prompt = super::super::base_apply::pending_prompt_for(&gate_mode.births, id);
-        crate::gate::check_claim_policy_for_write_with_preflight_decision(
+        let verdict = crate::gate::check_claim_policy_for_write_with_preflight_decision(
             &vault.store,
             txn,
             id,
@@ -51,7 +51,17 @@ pub(super) fn admit_routed_inputs(
                 include_source_in_gate_input: gate_mode.include_source_in_gate_input,
             },
             preflight,
-        )?;
+        );
+        match verdict {
+            Err(crate::error::Error::Gate(crate::error::GateError::GateWriteRejected {
+                outcome: "pending",
+                ..
+            })) if body.approval == crate::claim::ClaimApprovalStatus::Auto
+                && preflight
+                    .and_then(|decision| gate_mode.pending_auto_probes.get(&decision))
+                    .is_some_and(|probe| probe.matches(id, preflight)) => {}
+            verdict => verdict?,
+        }
     }
     Ok(())
 }

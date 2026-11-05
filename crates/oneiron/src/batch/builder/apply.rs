@@ -199,7 +199,14 @@ impl BatchBuilder<'_> {
         // Taken only now: until here a refusal leaves a promotion replay's
         // ops to the builder's drop, which wipes them (Sol on engine-prs-30).
         let ops = std::mem::take(&mut self.ops);
-        let derived = crate::embed::repo_derived_batch(&ops);
+        let put_roots: std::collections::BTreeSet<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                BatchOp::Put { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let mut derived = crate::embed::repo_derived_batch(&ops);
         if let Some(actor) = actor {
             apply_actor_ops(
                 vault,
@@ -227,6 +234,7 @@ impl BatchBuilder<'_> {
         if let (Some(actor), Some(original)) = (actor, original) {
             original.admit_routed_inputs(vault, wtxn, actor, &original_bodies)?;
         }
+        derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;
         crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
         // Queue only after admitted apply. The owner checks the final body and
         // redeemed consent after ALL of its batches, then commits before VAD.

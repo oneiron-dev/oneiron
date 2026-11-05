@@ -35,6 +35,8 @@ pub(super) fn fold_policy_manifest(
         None;
     let mut shipped_docx_limits = Vec::new();
     let mut owner_docx_limits = Vec::new();
+    let mut entity_resolution_bands =
+        crate::gate::entity_resolution_bands::EntityResolutionBandFold::default();
     let mut authored_confidence: Option<crate::gate::carry_forward_policy::CarryForwardPolicy> =
         None;
     let mut seeded_confidence: Option<crate::gate::carry_forward_policy::CarryForwardPolicy> = None;
@@ -543,6 +545,14 @@ pub(super) fn fold_policy_manifest(
                 if let Some(policy) = decoded.compilation_policy {
                     resolution.compilation_policies.push(policy);
                 }
+                if let Some(bands) = decoded.entity_resolution_bands {
+                    entity_resolution_bands.add(
+                        crate::gate::manifest_authenticity::policy_row_origin(
+                            store, txn, &id, body,
+                        )?,
+                        bands,
+                    );
+                }
                 if let Some(confidence) = decoded.carry_forward_confidence {
                     // Trust answers WHO may author; this body-bound local marker
                     // answers whether the bytes are still the untouched seed.
@@ -648,6 +658,7 @@ pub(super) fn fold_policy_manifest(
     } else {
         owner_docx_limits
     };
+    resolution.entity_resolution_bands = entity_resolution_bands.resolve();
     resolution.carry_forward_authored = authored_confidence.is_some();
     resolution.carry_forward_confidence = authored_confidence
         .or(seeded_confidence)
