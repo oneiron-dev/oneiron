@@ -88,12 +88,14 @@ fn settle_deferred_record(
 /// proving whether it delivered (FIX 11023): failed, cancelled, or no
 /// longer known to the provider. Its delivery is marked uncertain first,
 /// in the same writer, so it is abandoned as a failed remote task with its
-/// reserved budget kept, never released as certainly not sent.
+/// reserved budget kept, never released as certainly not sent. Returns the
+/// row's state after; its payload is not opened (FIX 10959: nothing opens
+/// before the write is durable).
 pub(crate) fn abandon_unconfirmed_remote_task(
     vault: &Vault,
     id: [u8; 32],
     now_ms: u64,
-) -> IntentLedgerResult<IntentLedgerRecord> {
+) -> IntentLedgerResult<IntentState> {
     let mut wtxn = vault.store.env.write_txn()?;
     let mut current = get_ledger_record(vault, &wtxn, &id)?.ok_or(
         IntentLedgerError::InvalidRecord("deferred outbound intent is missing"),
@@ -108,7 +110,7 @@ pub(crate) fn abandon_unconfirmed_remote_task(
         current.delivery_uncertain = true;
         put_ledger_record(vault, &mut wtxn, &current)?;
     }
-    let mut record = match transition_record_in_txn(
+    let state = match transition_record_in_txn(
         vault,
         &mut wtxn,
         id,
@@ -116,14 +118,13 @@ pub(crate) fn abandon_unconfirmed_remote_task(
         RecordedOutboundOutcome::Abandoned(IntentEscalationReason::RemoteTaskFailed),
         now_ms,
     )? {
-        Transitioned::Moved(record) | Transitioned::Replayed(record) => record,
+        Transitioned::Moved(record) | Transitioned::Replayed(record) => record.state,
     };
-    open_payload_in_txn(vault, &wtxn, &mut record)?;
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
     vault.wake_owner_shed();
     synced?;
-    Ok(record)
+    Ok(state)
 }
 
 impl Vault {
