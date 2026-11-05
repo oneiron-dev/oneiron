@@ -21,6 +21,7 @@ pub(crate) use run_self::describe_self_for_run;
 mod scratchpad;
 mod session;
 mod split;
+pub(crate) use split::next_state_part;
 mod standing;
 mod turn_actions;
 
@@ -35,7 +36,7 @@ pub(crate) use memories::*;
 pub(crate) use prefix::*;
 pub(crate) use scratchpad::*;
 pub(crate) use session::*;
-pub(crate) use turn_actions::action_board;
+pub(crate) use turn_actions::{action_board, requester_auth};
 
 use super::CoreContextPackRequest;
 use super::CoreContextPackResponse;

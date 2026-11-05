@@ -91,17 +91,26 @@ pub(super) fn provider_offer(
     let origin = reqwest::Url::parse(&provider.base_url)?
         .origin()
         .ascii_serialization();
-    let adapter = if rerank {
+    let adapter = if provider.siwc.is_some() && !rerank {
+        "sign-in-with-chatgpt-responses".to_owned()
+    } else if rerank {
         format!("{}-rerank", adapter(provider.kind))
     } else {
         adapter(provider.kind).to_owned()
     };
     let route = OfferRoute::new(adapter, origin)
         .map_err(|error| anyhow::anyhow!("model route: {error}"))?;
-    let (custody, credential_binding) = match (&provider.key_secret, &provider.key_env) {
-        (Some(secret), _) => (KeyCustody::T0, Some(format!("secret:{secret}"))),
-        (None, Some(env)) => (KeyCustody::T1, Some(format!("env:{env}"))),
-        (None, None) => (KeyCustody::Keyless, None),
+    let (custody, credential_binding) = if let Some(siwc) = &provider.siwc {
+        (
+            KeyCustody::T1,
+            Some(format!("siwc-file:{}", siwc.credential_file.display())),
+        )
+    } else {
+        match (&provider.key_secret, &provider.key_env) {
+            (Some(secret), _) => (KeyCustody::T0, Some(format!("secret:{secret}"))),
+            (None, Some(env)) => (KeyCustody::T1, Some(format!("env:{env}"))),
+            (None, None) => (KeyCustody::Keyless, None),
+        }
     };
     Ok(OfferBinding {
         offer: model.as_str().to_owned(),

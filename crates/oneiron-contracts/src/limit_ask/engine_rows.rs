@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 142] = [
+    pub const ALL: [Self; 143] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -143,6 +143,7 @@ impl EngineLimit {
         Self::CommunityCacheBytes,
         Self::ConnectorManifestEntries,
         Self::SharedMergeEvidenceRows,
+        Self::CodebaseManifestFiles,
         Self::RequestedResultRows,
         Self::TournamentLineageRows,
         Self::EmbeddingDimensions,
@@ -290,6 +291,7 @@ impl EngineLimit {
             Self::CommunityCacheBytes => "limits.community_cache_bytes",
             Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
+            Self::CodebaseManifestFiles => "limits.codebase_manifest_files",
             Self::RequestedResultRows => "limits.requested_result_rows",
             Self::TournamentLineageRows => "limits.tournament_lineage_rows",
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
@@ -505,6 +507,8 @@ impl EngineLimit {
             Self::ConnectorManifestEntries => 4_096,
             // The shared-merge reserve's old fixed refusal.
             Self::SharedMergeEvidenceRows => 4_096,
+            // The legacy codebase snapshot manifest's threshold (FIX 74).
+            Self::CodebaseManifestFiles => 10_000_000,
             // Two to the twentieth: far above any page a door serves in
             // ordinary use. Past it the row asks, and the whole requested
             // count is served.

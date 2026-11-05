@@ -10,7 +10,8 @@
 //! from them again as its slice. Every restored window is marked for a full
 //! resync, and one whose history lost a value or an actor is pinned
 //! history-free, as an actor's erase pins it. A missing leaf never refuses;
-//! an opened copy that does not read does.
+//! an opened copy that does not read does, and so does one whose bytes came
+//! from a home other than the one its capture placed it in (FIX 10283).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -199,6 +200,11 @@ fn open_slot(
         let OpenedAtom::Opened(value) = opened.atom(copy.atom) else {
             continue;
         };
+        // Opened bytes count only from the home the capture placed this copy
+        // in (FIX 10283): another holder's compartment never stands in.
+        if opened.opened_home(copy.atom) != Some(copy.home) {
+            return Err(bad_part());
+        }
         if slot.holes.is_empty() {
             check(root, key, value)?;
             return Ok(Some((value.to_vec(), true)));

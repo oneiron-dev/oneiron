@@ -15,7 +15,8 @@
 //!
 //! Declarations and bindings reach this vault's other devices as EMBEDDING_SETUP rows
 //! ([`EmbeddingSetup`]), which every writer here publishes in its own write; each device then
-//! embeds its own ASSETs with the pinned space's model. Vectors never travel.
+//! embeds its own ASSETs with the pinned space's model. An opened own device can reuse a home's
+//! body-contained text row with its exact current native input. Logical export stays setup-only.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,7 +43,13 @@ use crate::temporal::TimeRange;
 mod bindings;
 mod capabilities;
 pub(crate) mod checkpoint;
+#[cfg(feature = "sync")]
+mod replica;
 pub(super) mod repo_projection;
+#[cfg(feature = "sync")]
+pub use replica::MediaVectorReplica;
+#[cfg(feature = "sync")]
+pub(crate) use replica::reuse_home_text_media_vectors;
 
 pub use crate::store::embedding::{
     EMBEDDING_SETUP_LEARNED_AT, EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS,

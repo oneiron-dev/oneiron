@@ -26,17 +26,23 @@ fn occurrence_row(
     out: &mut Captured,
     owner: &EntityId,
     occurrence: &EntityId,
+    sources: &[EntityId],
     at: RowLocator,
     value: Vec<u8>,
 ) {
     let compartment = OwnerRef::occurrence(owner, occurrence);
     out.owner(compartment).occurrence_hint = Some(*occurrence.as_bytes());
     out.depends(compartment, &at, OwnerRef::entity(owner));
+    for source in sources {
+        out.depends(compartment, &at, OwnerRef::entity(source));
+    }
     out.exact(compartment, at, value);
 }
 
 /// Every body descriptor and digest holder row in `txn`, by occurrence.
 pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
+    let dependencies =
+        crate::agent_dispatch::workflow_tool_checkpoint::body_dependencies(dbs, txn)?;
     let mut out = Captured::default();
     for row in rows::typed_rows(dbs, txn, BODY, &mut out)? {
         let (owner, occurrence) = row.key;
@@ -44,12 +50,32 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             out.unclassified(row.at, None, Unresolved::NoOwner);
             continue;
         }
-        occurrence_row(&mut out, &owner, &occurrence, row.at, row.bytes);
+        occurrence_row(
+            &mut out,
+            &owner,
+            &occurrence,
+            dependencies
+                .get(&owner)
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+            row.at,
+            row.bytes,
+        );
     }
     // A holder row is keyed by the digest; its owner is its value.
     for row in rows::typed_rows(dbs, txn, BODY_DIGEST, &mut out)? {
         let occurrence = row.key.1;
-        occurrence_row(&mut out, &row.value, &occurrence, row.at, row.bytes);
+        occurrence_row(
+            &mut out,
+            &row.value,
+            &occurrence,
+            dependencies
+                .get(&row.value)
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+            row.at,
+            row.bytes,
+        );
     }
     Ok(out)
 }
