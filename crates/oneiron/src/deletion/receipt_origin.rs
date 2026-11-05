@@ -298,3 +298,58 @@ fn owed_again_in_txn(
         Ok(None)
     }
 }
+
+/// Whether the attesting pair `attested` (client id, device key) is this
+/// device's: its own cached pair `own`, or a predecessor whose succession in
+/// force, as this install counts the owner's acts, names this install's
+/// machine (FIX 11135). An install with no machine id succeeds no one.
+fn attesting_pair_is_this_device_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    own: (u64, [u8; 32]),
+    attested: (u64, &[u8; 32]),
+) -> Result<bool> {
+    let (client, key) = attested;
+    if (client, *key) == own {
+        return Ok(true);
+    }
+    let Some(machine) = crate::identity::read_machine_id_in_txn(vault, txn)? else {
+        return Ok(false);
+    };
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    Ok(fold.device_successor(client, key)? == Some(machine))
+}
+
+/// The client id a receipt's `att_client` spells: 16 lowercase hex digits,
+/// as the mint writes it; `None` for any other text.
+fn client_from_hex(hex: &str) -> Option<u64> {
+    if hex.len() != 16 || !is_lower_hex(hex) {
+        return None;
+    }
+    u64::from_str_radix(hex, 16).ok()
+}
+
+/// The device key a receipt's `att_pk` spells: 64 lowercase hex digits;
+/// `None` for any other text.
+fn key_from_hex(hex: &str) -> Option<[u8; 32]> {
+    let mut bytes = [0u8; 32];
+    if hex.len() != bytes.len() * 2 || !is_lower_hex(hex) {
+        return None;
+    }
+    for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(bytes)
+}
+
+/// The signature a lowercase-hex `att_sig` spells; `None` for any other text.
+fn signature_from_hex(hex: &str) -> Option<Signature> {
+    let mut bytes = [0u8; 64];
+    if hex.len() != bytes.len() * 2 || !is_lower_hex(hex) {
+        return None;
+    }
+    for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(Signature::from_bytes(&bytes))
+}
