@@ -979,6 +979,7 @@ impl Vault {
                     end: EMBEDDING_SETUP_LEARNED_AT,
                 },
                 learned_at: EMBEDDING_SETUP_LEARNED_AT,
+                row_version: None,
                 data: setup.encode()?,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

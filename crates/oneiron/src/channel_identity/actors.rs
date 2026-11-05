@@ -169,6 +169,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data: actor_bytes,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,

@@ -193,6 +193,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data: encode_federation_grant_body(&grant)?,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

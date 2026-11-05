@@ -205,6 +205,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_AUTHORITY_LOG,
                 occurred: *occurred,
                 learned_at: *learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

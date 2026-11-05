@@ -459,6 +459,7 @@ impl crate::Vault {
                     entity_type: ENTITY_TYPE_BLOB_ARTIFACT,
                     occurred,
                     learned_at: now,
+                    row_version: 0,
                     body,
                 },
             )?;

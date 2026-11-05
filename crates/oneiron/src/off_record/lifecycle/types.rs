@@ -103,6 +103,8 @@ pub enum OffRecordNoticeAct {
     SavedTalk,
     /// Saved one turn into their own vault.
     SavedTurn,
+    /// Saved a selected scratch artifact and its document into this vault.
+    SavedArtifact,
     /// Put the stretch on record: later turns are saved as they land.
     SavingFromHere,
     /// Saving stopped: the person who put the stretch on record left its
