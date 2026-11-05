@@ -49,7 +49,9 @@ still name a local login store or endpoint credential by handle; the control pla
 never receives vendor login tokens. Existing seat placement, hosted-plan approval
 and dry-seat policies are unchanged.
 
-The local code exchange, callback state/client checks, ID-token validation, token
-store, rotating refresh and sign-out remain unbuilt. An authorize plan alone must
-not be presented as any of them, or as a working authenticated inference session.
-No existing executor or dispatcher is replaced by this URL-only correction.
+The separate [`oneiron seat siwc-login` command](siwc-local-login.md) implements
+the local callback, code exchange, ID-token verification and protected record.
+That runbook also describes the configured Responses model consumer. Rotating
+refresh and sign-out remain unbuilt. An authorize plan alone must not be presented
+as any of those operations, or as a working authenticated inference session.
+No existing executor or dispatcher is replaced by the URL-plan command.

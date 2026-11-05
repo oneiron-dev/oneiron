@@ -255,6 +255,16 @@ impl ProviderHttp {
 
     /// The Responses consumer supplies its sensitive credential per send.
     pub(super) fn siwc(provider: &ProviderConfig) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            provider.siwc.is_some()
+                && provider.kind == crate::config::models::ProviderKind::OpenaiCompat
+                && provider.base_url == oneiron::dispatch_byoa::SIWC_RESPONSES_BASE_URL
+                && provider.key_env.is_none()
+                && provider.key_secret.is_none()
+                && provider.locality == oneiron::ModelLocality::ThirdParty
+                && provider.responses_socket.is_none(),
+            "SIWC credentials require the official Responses HTTP route and no other key source"
+        );
         Self::build(provider, KeyStyle::Bearer, false)
     }
 
