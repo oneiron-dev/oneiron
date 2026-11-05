@@ -1,4 +1,4 @@
-# Host-configured Firecracker guest ABI v1
+# Host-configured Firecracker guest ABI v2
 
 This is a real jailer launch path. It is not proof that a guest image boots.
 The repository includes the `oneiron-guest` PID-1 source, an artifact build recipe
@@ -40,12 +40,22 @@ The guest connects AF_VSOCK to host CID 2, port 52. Firecracker forwards this to
 `/vsock.sock_52` inside the jail. Each frame is a 4-byte big-endian JSON length,
 then that many UTF-8 bytes (maximum 8 MiB). Unknown fields are refused.
 
-1. Guest: `{"type":"hello","version":1}`.
+1. Guest: `{"type":"hello","version":2}`. The shared
+   `GUEST_PROTOCOL_VERSION` is used by both peers; a different version refuses.
 2. Host: `start` with version, vm_id, tier, pids, component_bytes, and source (at most 1 MiB).
    `GuestImage::with_source` supplies source; an empty string selects an embedded
    conformance entry program.
-3. Host: ordered `component` frames (offset, byte array), then `file` frames
-   (virtual workspace path, byte array), then `{"type":"ready"}`.
+3. Host: ordered `component` frames (offset, byte array), then one or more
+   `file_open` (virtual workspace path, `len` in bytes), `file_chunk` (byte array),
+   `file_close` sequences, then `{"type":"ready"}`. An empty snapshot sends no
+   file sequences. Only one file may be open. Each nonempty chunk is at most
+   1 MiB, and close must match the declared length exactly; an empty file opens
+   with length zero and closes without chunks. The host retains immutable
+   anonymous spools, not whole-file buffers or mutable source descriptors.
+   The guest writes chunks directly through checked workspace descriptors and
+   retains only source paths and lengths. Production seals the lower tree
+   read-only before untrusted execution; the container agent uses its private
+   fenced scratch tree. A file consumes one source request, not one per chunk.
 4. Guest: any bounded sequence of:
    - `credential_read` (handle, operation, scheme, host). Host checks its own
      allowlist before resolution and calls a host-installed read-only transport.
@@ -53,25 +63,37 @@ then that many UTF-8 bytes (maximum 8 MiB). Unknown fields are refused.
      errors, headers, reflected bodies, or arbitrary network response bytes.
      Unknown operations must be refused by the host transport. The host
      transport must validate destination/TLS, disallow redirects and bound I/O.
-   - `write` (path, bytes). A whole-file proposal for a workspace regular file.
+   - `write_open` (path), `write_chunk` (bytes), `write_close`. A proposed
+     workspace regular file streams to an anonymous host spool. Chunks spend
+     no request budget and receive no receipt; open and close each receive one.
    - `delete` (path). Deletes a file that exists in the seeded base tree.
    - `rename` (from, to). Moves a seeded base file to a distinct workspace path.
    - `finish` (status). Nonzero discards every proposal. Success seals deltas
      and kills/reaps the VM before exposing them to the adapter.
 
-   For `write`, `delete` and `rename`, every path must be in the workspace
-   mount and carries at most one effect (a rename occupies both its paths).
-   The host applies each accepted effect to its copy of the base tree's shape
-   and refuses a file/directory conflict or a result over the size or count
-   limits. Duplicates, traversal, other mounts and excess bytes/count fail
-   closed. Symlinks and special files are not representable and must refuse.
-   Each accepted proposal gets `receipt` (accepted true); any refused proposal
-   fails the whole run.
+   For streamed writes, `delete` and `rename`, every path must be in the
+   workspace mount and carries at most one effect (a rename occupies both its
+   paths). The host applies each accepted effect to its copy of the base tree's
+   shape under the shared contract's path/tree checks and checked byte
+   arithmetic. Duplicates, traversal, other mounts, symlinks and special files
+   refuse the run. Only the named open/close, delete and rename requests get
+   `receipt` (accepted true); any refused proposal fails the whole run.
 
-Per-file limit: 1 MiB; total source/proposals: 16 MiB each; files: 8192;
-requests: 16384. Source bytes are copied through the socket. Host source trees
-are never attached as writable devices. Proposed changes do not touch them.
+Frames stay bounded to 8 MiB. Snapshot and proposed files stream without a
+whole-file wire size cap; source text and step-result JSON retain their 1 MiB
+bounds. Guest whole-file reads still have a 1 MiB bound, and cumulative
+read/random output retains its 16 MiB step bound. Source and outbound request
+budgets remain 16384; file chunks and source file closes do not spend source
+requests. Source bytes are copied through the socket. Host source trees are
+never attached as writable devices. Proposed changes do not touch them.
 Collection is consume-once and only possible after successful completion.
+Only changed edit spans become owned strings when a proposal is lowered against
+its exact spooled base; an edit replacing the whole file still owns that span.
+
+Protocol v2 requires matching rebuilt guest executables/rootfs images (including
+the container agent) and updated artifact pins and release contract metadata.
+The existing pinned release recipe still describes its older engine revision;
+this source change does not publish or deploy replacement artifacts.
 
 ## Evidence status
 

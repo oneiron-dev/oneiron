@@ -114,6 +114,7 @@ impl ManagedArgs {
             escrow_outbox: args.escrow_outbox_dir.clone(),
             maximum_tier: args.maximum_tier.unwrap_or(MANAGED_MAXIMUM_TIER_DEFAULT),
             artifact_socket: args.artifact_http_socket.clone(),
+            preview_socket: args.preview_socket.clone(),
             settings_file: args.settings_file.clone(),
             voice_socket: args.voice_socket.clone(),
             seal_key: args.seal_key_file.clone(),
@@ -162,6 +163,7 @@ impl ManagedArgs {
             return Err(ManagedError::RelativeKeystoreDir);
         }
         for (flag, path) in [
+            ("preview-socket", &managed.preview_socket),
             ("escrow-recipient-file", &managed.escrow_recipient),
             ("break-glass-recipient-file", &managed.break_glass_recipient),
             ("escrow-outbox-dir", &managed.escrow_outbox),

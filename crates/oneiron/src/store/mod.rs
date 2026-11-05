@@ -121,7 +121,16 @@ pub mod ports {
 
 pub(crate) mod agent_birth_custody;
 pub(crate) mod agent_birth_identity;
+pub(crate) mod agent_definition;
+pub(crate) mod agent_definition_codec;
+pub(crate) mod agent_manifest;
+pub(crate) mod agent_memory_profile;
+pub(crate) mod agent_model;
+pub(crate) mod agent_optional_memory;
 pub mod agent_record;
+pub(crate) mod agent_refusal;
+pub(crate) mod agent_scope;
+pub(crate) mod attempt_archive_mark;
 pub mod attempt_cancel;
 pub mod attempt_cleanup;
 pub mod attempt_hold;
@@ -130,15 +139,28 @@ pub mod attempt_inputs;
 pub mod attempt_lease;
 pub mod attempt_manifest;
 pub mod attempt_outcomes;
+pub(crate) mod attempt_payload_response;
+pub(crate) mod attempt_payload_retire;
+pub(crate) mod attempt_payload_route;
 pub mod attempt_read_producer;
 pub mod attempt_record;
+pub(crate) mod attempt_record_codec;
+pub(crate) mod attempt_record_read;
 pub mod attempt_result;
 pub(crate) mod attempt_retention;
+pub(crate) mod attempt_run_root;
 pub mod attempt_run_signal;
 pub mod attempt_state;
+pub(crate) mod base_agent;
 pub mod canonical_document;
+pub(crate) mod centroid_evidence;
 pub mod checkout_task;
 pub mod claim_refinement_control;
+pub(crate) mod claim_vad_payment;
+pub mod consolidation_evidence;
+pub(crate) mod conversation_residency;
+pub(crate) mod housekeeping_wake;
+pub(crate) mod writer_hold;
 pub use oneiron_store::checkpoint_host_recipient;
 pub mod code_tree_blob;
 pub mod conversation_body;
@@ -154,8 +176,15 @@ mod project_writes;
 pub use project_writes::StoreProjectWrites;
 mod record_hooks;
 pub use record_hooks::StoreRecordHooks;
+pub(crate) mod attempt_operations;
+pub(crate) use attempt_operations::StoreAttemptOperations;
+pub(crate) mod core_write_operations;
+pub(crate) use core_write_operations::StoreCoreWriteOperations;
 pub(crate) mod actor_scrubs;
 pub use actor_scrubs::StoreActorScrubs;
+pub(crate) mod critical_confirm_record;
+pub(crate) mod gate_hooks;
+pub(crate) use gate_hooks::StoreGateHooks;
 #[cfg(feature = "sync")]
 mod sync_hooks;
 #[cfg(feature = "sync")]
@@ -175,8 +204,12 @@ pub mod model_score_diff;
 pub(crate) mod model_step_response_carriage;
 pub mod model_step_submission;
 pub(crate) mod model_stream_row;
+pub mod note_body;
+pub mod note_kind;
+pub mod outbound_actor;
 pub mod outbound_outcome;
 pub mod outbound_trigger;
+pub(crate) mod output_decay;
 pub mod pack_hook_actor_class;
 pub mod pack_hook_proposal;
 #[cfg(feature = "sync")]
@@ -201,8 +234,11 @@ pub mod window_protocol;
 pub(crate) mod window_rows;
 
 pub mod consolidation_scope;
+pub(crate) mod context_field_profile;
 pub(crate) mod conversation_span;
 pub mod dreamer_attempt_kind;
+pub(crate) mod dreamer_attempt_payload;
+pub mod dreamer_wake_policy;
 pub mod setting_seed;
 pub mod snapshot_key;
 pub mod snapshot_lock_result;
@@ -280,6 +316,7 @@ pub mod site_skill_exposure;
 pub mod skill_attribution_evidence;
 pub(crate) mod text_index;
 pub(crate) mod vector_index;
+mod vector_index_dbs;
 pub mod workflow_definition;
 
 pub use scan_checks::ScanCheck;
@@ -288,6 +325,7 @@ pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 mod group_commit;
 mod handle;
 pub(crate) mod replay_only_commits;
+pub mod world_authority;
 pub(crate) mod world_pad_rows;
 pub mod world_registration_keys;
 // FIX 7907, 7958: a federation grant's scope opening keys.
@@ -499,7 +537,7 @@ pub(crate) use sync_responses::{
 #[cfg(test)]
 pub(crate) use test_hooks::TestHooks;
 pub(crate) use training_link::TrainingLinkSlot;
-pub(crate) use usage_sources::erase_usage_source_in_txn;
+pub(crate) use usage_sources::{erase_pending_usage_source_in_txn, erase_usage_source_in_txn};
 pub(crate) use world_pad_custody::{PlannedPad, WorldPadCustody, plan_world_pad};
 pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
@@ -546,13 +584,41 @@ pub mod repo_proposal_record;
 
 pub mod repo_import_predicate;
 
+pub(crate) mod habit_streak;
+pub(crate) mod own_rate_rows;
+pub mod persona_snapshot_record;
+
+pub mod query_health;
+pub(crate) mod query_memo_lifetime;
+pub mod skill_source_index;
+pub mod snapshot_catalog;
+pub(crate) mod snapshot_ledger;
+pub(crate) mod snapshot_lifecycle;
+
 pub(crate) mod authority_rows;
+pub mod channel_class;
+pub mod claim_source_ranking;
+pub mod code_document_receipt;
+pub(crate) mod container_output;
+pub(crate) mod identity_redirect_rows;
+pub(crate) mod live_speaker_calls;
+pub mod record_ref;
+pub(crate) mod task_authority_guard;
+pub(crate) mod vad_annotation;
+pub(crate) use oneiron_store::vector_insert_plan;
 pub(crate) mod consent_bound;
+pub(crate) mod conversation_summary;
+pub(crate) mod gate_metrics;
 pub(crate) mod gate_reason;
+pub mod healer_oversight;
+pub(crate) mod pending_comm_stop;
+pub mod plugin_section_predicate;
 pub(crate) mod policy_record;
+pub(crate) mod ppr_cache_invalidation;
 pub(crate) mod record_links;
 pub(crate) mod record_references;
 pub(crate) mod scan_count;
+pub(crate) mod skill_resident;
 
 pub(crate) mod host_issuer_seed;
 pub(crate) mod principal_record;
