@@ -746,7 +746,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/deck_creation/operations.rs` | src | m | 8 fn | — | Credential-bound admission; every write rechecks its inputs in its writer |
 | `src/blob_artifact/deck_creation/outline.rs` | src | s | 9 struct · 7 enum | DeckOutline, OutlineAsset, OutlineAssetKind, OutlineBlock, OutlineCarrier, OutlineCell, OutlineColumn, OutlineColumnKind +8 | The closed outline wire grammar |
 | `src/blob_artifact/deck_creation/plan.rs` | src | m | 13 struct · 8 enum · 1 crate-vis | DeckAssetBinding, DeckAssetMedia, DeckDesignDecision, DeckDesignOption, DeckDesignShortfall, DeckDestination, DeckFallback, DeckFit +13 | An owned wire view of a validated plan |
-| `src/blob_artifact/deck_creation/record.rs` | src | s | 11 struct · 5 enum | ArtifactVersionRef, CitedClaimLifecycle, CreatedEstimate, CreatedSlide, DeckCreateError, DeckCreateOutcome, DeckCreateRequest, DeckCreationRecord +8 | Deck outline keeps, design records, emission inputs and outcomes |
+| `src/blob_artifact/deck_creation/record.rs` | src | s | 12 struct · 5 enum | ArtifactVersionRef, CitedClaimLifecycle, CreatedEstimate, CreatedInput, CreatedSlide, DeckCreateError, DeckCreateOutcome, DeckCreateRequest +9 | Deck outline keeps, design records, emission inputs and outcomes |
 | `src/blob_artifact/deck_doors.rs` | src | s | 5 struct · 1 enum · 1 fn | DeckCommentInspection, DeckInspectRequest, DeckInspectionView, DeckProposeRejection, DeckRejectionCheck, DeckRejectionReport | The native deck edit door's typed wire (DOOR-142 A, ARCH-0077 "Edit target choice")… |
 | `src/blob_artifact/deck_inspection.rs` | src | s | 1 enum · 1 crate-vis | DeckRejectionInspection | Package and native-identity inspection kept with a deck rejection |
 | `src/blob_artifact/erase.rs` | src | s | 3 crate-vis | — | Actor erasure for the made_by receipt a blob artifact version carries |
@@ -823,7 +823,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/version_rows.rs` | src | s | 1 fn · 4 crate-vis | — | The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those… |
 | `src/blob_artifact/versions.rs` | src | L | 2 struct · 1 enum · 9 fn · 1 const · 1 re-export · 26 crate-vis | BlobArtifactAppendOutcome, BlobArtifactVersion, CalcEngineStamp | Blob version chain: version record codec and the Vault version-chain API |
 | `src/blob_artifact/versions/checked.rs` | src | s | 3 crate-vis | — | Checked append decisions shared by direct and Memory transaction doors |
-| `src/blob_artifact/versions/reads.rs` | src | m | 1 struct · 9 fn · 7 crate-vis | BlobBytes | The version chain's reads: the head, the version tree, one version's metadata and its bytes |
+| `src/blob_artifact/versions/reads.rs` | src | m | 1 struct · 9 fn · 8 crate-vis | BlobBytes | The version chain's reads: the head, the version tree, one version's metadata and its bytes |
 | `src/bm25/codec.rs` | src | s | 1 crate-vis | — | — |
 | `src/bm25/config.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
 | `src/bm25/diagnostics.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
@@ -2656,7 +2656,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/deck.rs` | src | m | 2 struct · 1 enum · 4 fn · 2 re-export · 9 crate-vis | DeckEditOutcome, DeckEditRejection, DeckSettleEvidence | Native deck edits (ARCH-0077, "Edit in place with passthrough"): one docedit deck transaction over the exact… |
 | `src/edit_roundtrip/deck_create.rs` | src | m | 7 fn · 1 re-export · 11 crate-vis | — | Deck creation from an approved outline (ARCH-0077, "Create: an approved argument, then a design") |
 | `src/edit_roundtrip/deck_create/evidence_pins.rs` | src | s | 8 crate-vis | — | The evidence pins of an outline's JSON, as the keep and its freshness read them: each in document order, the… |
-| `src/edit_roundtrip/deck_create/store.rs` | src | s | 9 crate-vis | — | Transaction-bound outline and version inputs shared by the engine and public doors |
+| `src/edit_roundtrip/deck_create/store.rs` | src | s | 10 crate-vis | — | Transaction-bound outline and version inputs shared by the engine and public doors |
 | `src/edit_roundtrip/docx.rs` | src | s | 3 fn · 4 crate-vis | — | Native DOCX edit entry |
 | `src/edit_roundtrip/docx_tests.rs` | test | s | — | — | Native DOCX proposal proofs at the public edit door |
 | `src/edit_roundtrip/folder_review.rs` | src | m | 2 struct · 1 fn | FolderAsk, FolderItem | Typed questions over files in a folder (ARCH-0076 §2, "File in a folder"): each selected file is one unit… |
