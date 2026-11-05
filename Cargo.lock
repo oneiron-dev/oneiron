@@ -8581,6 +8581,7 @@ dependencies = [
  "libc",
  "oneiron",
  "oneiron-container",
+ "oneiron-docedit",
  "oneiron-mesh-transport",
  "oneiron-organ-protocol",
  "oneiron-sandbox-contract",
