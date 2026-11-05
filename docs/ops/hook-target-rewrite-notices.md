@@ -64,9 +64,12 @@ A core call reading a drained call's saved completion returns the original
 result and any notice metadata its source supplied. Non-room native drains
 keep the actual hook-chain bit. Credential facade drains keep a positive
 notice flag; an absent flag does not certify that no arguments changed.
-Credential MCP drains and core room-turn calls do not yet supply this metadata.
-These are separate from a saved HTTP reply, which already keeps the notice
-flag described above. Saved metadata never grants authority to run a call.
+Credential MCP and managed-owner MCP drains keep a positive flag from the
+same hook chain's existing notice. Missing metadata remains unknown, not a
+claim that the arguments stayed unchanged. Core room-turn calls do not yet
+supply this metadata. These are separate from a saved HTTP reply, which already
+keeps the notice flag described above. Saved metadata never grants authority
+to run a call.
 
 This HTTP slice does not cover those unsupported completion sources or room-turn
 paths, action-wrapper routes, custody-spool routes, non-facade calls, or HTTP errors
