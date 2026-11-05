@@ -96,6 +96,7 @@ impl Vault {
             verified_actor,
             &|_, _| Ok(true),
             admit,
+            false,
         )
     }
 
@@ -121,6 +122,7 @@ impl Vault {
             verified_actor,
             ceiling,
             &mut admit,
+            true,
         )
     }
 
@@ -132,6 +134,7 @@ impl Vault {
         verified_actor: Option<EntityId>,
         ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
         admit: &mut dyn FnMut(SignatureImagePlan, u64) -> std::result::Result<(), MemoryRefusal>,
+        reopen_after_admission: bool,
     ) -> Result<String> {
         let now = self.now_recorded_at();
         // Authenticate before attacker-controlled image decode. Count the
@@ -169,7 +172,13 @@ impl Vault {
             return Err(invalid("signature image format"));
         }
         admit(SignatureImagePlan::header(format), 0).map_err(memory::refused)?;
-        let decoded = self.decode_signature_image(bytes, format, admit, &mut crossings)?;
+        let decoded = self.decode_signature_image(
+            bytes,
+            format,
+            admit,
+            &mut crossings,
+            reopen_after_admission,
+        )?;
         if !decoded.to_rgba8().pixels().any(|p| p.0[3] != 0) {
             return Err(invalid("signature image has no visible pixels"));
         }
@@ -286,16 +295,20 @@ impl Vault {
         format: image::ImageFormat,
         admit: &mut dyn FnMut(SignatureImagePlan, u64) -> std::result::Result<(), MemoryRefusal>,
         crossings: &mut Vec<LimitCrossing>,
+        reopen_after_admission: bool,
     ) -> Result<image::DynamicImage> {
         use image::ImageDecoder;
 
         let row = EngineLimit::SignatureDecodeBytes;
         let bound = self.limit_watch().bound(row);
-        let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
         let mut limits = image::Limits::default();
         limits.max_alloc = Some(bound);
-        reader.limits(limits.clone());
-        let mut decoder = reader
+        let reader = || {
+            let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
+            reader.limits(limits.clone());
+            reader
+        };
+        let mut decoder = reader()
             .into_decoder()
             .map_err(|_| invalid("signature image decode"))?;
         let (width, height) = decoder.dimensions();
@@ -306,20 +319,31 @@ impl Vault {
             | image::ColorType::Rgba16 => WIDE_PIXEL_BYTES,
             _ => PIXEL_BYTES,
         };
-        admit(
-            SignatureImagePlan::decoded(
-                width,
-                height,
-                pixel_bytes,
-                format == image::ImageFormat::Jpeg,
-            ),
-            if format == image::ImageFormat::Jpeg {
-                bytes.len() as u64
-            } else {
-                0
-            },
-        )
-        .map_err(memory::refused)?;
+        let plan = SignatureImagePlan::decoded(
+            width,
+            height,
+            pixel_bytes,
+            format == image::ImageFormat::Jpeg,
+        );
+        let header_allocated = if format == image::ImageFormat::Jpeg {
+            bytes.len() as u64
+        } else {
+            0
+        };
+        if reopen_after_admission {
+            // A native full-plan wait must own neither the temporary decoder
+            // nor its partial reservation: an earlier waiter may need that room.
+            drop(decoder);
+            admit(plan, 0).map_err(memory::refused)?;
+            decoder = reader()
+                .into_decoder()
+                .map_err(|_| invalid("signature image decode"))?;
+            if header_allocated != 0 {
+                admit(plan, header_allocated).map_err(memory::refused)?;
+            }
+        } else {
+            admit(plan, header_allocated).map_err(memory::refused)?;
+        }
         crossings.extend(self.signature_crossing(
             EngineLimit::EsignSignatureImageDimensionPx,
             u64::from(width.max(height)),
