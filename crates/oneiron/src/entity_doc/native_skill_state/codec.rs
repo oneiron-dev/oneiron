@@ -16,6 +16,7 @@ use crate::provenance::ActorStamp;
 use crate::skill::{SkillLifecycle, SkillRecord};
 
 mod content_source;
+pub(super) mod recipient;
 use content_source::ContentSource;
 
 const FORMAT: u8 = 1;
