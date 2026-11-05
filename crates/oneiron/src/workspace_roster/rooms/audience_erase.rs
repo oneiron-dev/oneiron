@@ -100,12 +100,21 @@ fn erase_edit_as(
             .ok_or(Error::CorruptedIndex("thread audience edit body"))?;
         let erased = erased_here_in(vault, txn, binding.room, held.erased())?;
         rewrite_audience_edit_in_txn(vault, txn, id, &erased)?;
-        crate::deletion::settle_checkpoint_payloads_for_reason_in_txn(
-            &vault.store,
-            txn,
-            id,
-            Some(reason.into()),
-        )?;
+        if matches!(
+            reason,
+            crate::deletion::DeleteReason::OwnerErase | crate::deletion::DeleteReason::GdprDelete
+        ) {
+            vault
+                .store
+                .roll_checkpoint_payload_for_purge_in_txn(txn, id)?;
+        } else {
+            crate::deletion::settle_checkpoint_payloads_for_reason_in_txn(
+                &vault.store,
+                txn,
+                id,
+                Some(reason.into()),
+            )?;
+        }
         let outcome = if signs {
             let requested_at = vault.store.clock.now_recorded_at();
             vault.record_audience_edit_erase_in_txn(txn, id, principal, reason, requested_at)?

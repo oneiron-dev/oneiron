@@ -131,6 +131,19 @@ impl Store {
         }
         #[cfg(not(unix))]
         let _ = custody;
+        // A live rewritten owner's old generation retires after its reseal
+        // lands; bind that obligation even before its intent is staged.
+        for record in erased {
+            for (item, through) in
+                crate::store::checkpoint_payload::instance::purged_generations_in_txn(
+                    self, txn, record,
+                )?
+            {
+                let subject = item.subject(custody.binding())?;
+                let bound = owed.entry(subject).or_insert(through);
+                *bound = (*bound).max(through);
+            }
+        }
         for kind in ERASE_KINDS {
             for intent in retirements_in_txn(self, txn, kind)? {
                 let ours = match kind {
