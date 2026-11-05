@@ -39,6 +39,12 @@ media drops before its lease. Space and stored-kind fields move into returned
 vectors, so the input charge excludes them; the existing output charge records
 them.
 
+The synchronous run host also records its decoded request's original query
+string capacity through the native recall call, including early errors. The hook
+boundary deep-copies its arguments before decoding, so this allocation is
+separate from the outer arguments. Async-door request strings and home-query
+clones are not included in this charge.
+
 Other input copies, temporary seed vectors, the borrowed `media_seeds` view vector,
 model weights, GPU memory, provider scratch, other recall allocations and a full
 working-set bound remain outside this slice.
