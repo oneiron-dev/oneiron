@@ -146,6 +146,7 @@ impl Selection {
                 super::Getter::TypedBody,
                 super::Getter::OfficeBody,
                 super::Getter::BlobArtifact,
+                super::Getter::EmbedMedia,
             ] {
                 out.captured_rows(&getter.capture(&vault.store, txn)?, |at| {
                     [
@@ -156,6 +157,8 @@ impl Selection {
                         &crate::side_table::TYPED_BODY_DOC,
                         &crate::side_table::OFFICE_BODY_HEAD,
                         &crate::side_table::BLOB_ARTIFACT_HEAD,
+                        &crate::side_table::EMBEDDING_MEDIA_VECTOR,
+                        &crate::side_table::EMBEDDING_MEDIA_DEVICE,
                     ]
                     .into_iter()
                     .any(|decl| at.in_table(decl))
