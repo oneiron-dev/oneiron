@@ -112,7 +112,14 @@ impl ResponseCensus {
         {
             return Ok(noted);
         }
-        let Some((carriage, opaque)) = family.scan(store.attempt_operations, key, value).carriage()
+        let Some((carriage, opaque)) = family
+            .scan(
+                store.attempt_operations,
+                store.voice_bank_response,
+                key,
+                value,
+            )
+            .carriage()
         else {
             return Ok(Noted::Not);
         };
@@ -237,7 +244,12 @@ pub(super) fn bind_in_txn(
         return Ok(Vec::new());
     };
     let Some((carriage, opaque)) = family
-        .scan(store.attempt_operations, key, &value)
+        .scan(
+            store.attempt_operations,
+            store.voice_bank_response,
+            key,
+            &value,
+        )
         .carriage()
     else {
         return Ok(Vec::new());
@@ -305,7 +317,12 @@ pub(super) fn release_stale_in_txn(
                     ResponseFamily::of_row(db, key, &value)
                         .and_then(|family| {
                             family
-                                .scan(store.attempt_operations, key, &value)
+                                .scan(
+                                    store.attempt_operations,
+                                    store.voice_bank_response,
+                                    key,
+                                    &value,
+                                )
                                 .carriage()
                         })
                         .is_some()

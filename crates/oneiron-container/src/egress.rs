@@ -18,7 +18,24 @@ pub struct HttpResponse {
     pub url: String,
     pub status: u16,
     pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
+    #[serde(
+        serialize_with = "serialize_response_body",
+        deserialize_with = "deserialize_response_body"
+    )]
+    pub body: bytes::Bytes,
+}
+
+fn serialize_response_body<S: serde::Serializer>(
+    body: &bytes::Bytes,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(body.as_ref(), serializer)
+}
+
+fn deserialize_response_body<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<bytes::Bytes, D::Error> {
+    <Vec<u8> as serde::Deserialize<'de>>::deserialize(deserializer).map(Into::into)
 }
 
 /// The same engine proxy serves native sockets, DNS and browser HTTP reads.
