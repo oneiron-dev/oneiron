@@ -513,6 +513,14 @@ pub struct ServeArgs {
     #[arg(long)]
     pub oauth_resource_indicator: Option<String>,
 
+    /// The host's own Git door base, `https://<host>/git` (or `http` on
+    /// loopback), that a run's checkout bind names instead of the caller's
+    /// endpoint (`ONEIRON_GIT_DOOR_BASE`; FIX 7181). Unset: the caller's
+    /// explicit endpoint stands. In managed mode the supervisor passes it,
+    /// as it owns the vault's public addresses.
+    #[arg(long, value_parser = git_door_base)]
+    pub git_door_base: Option<String>,
+
     /// Comma-separated public URLs a recovery kit may dial and sign its
     /// fetches for, one per address the home answers on
     /// (`ONEIRON_KIT_BUNDLE_PUBLIC_URLS`). Empty: `--oauth-resource-indicator`.
@@ -717,6 +725,16 @@ fn parse_runtime_provider_kind(value: &str) -> Result<RuntimeProviderKind, Strin
 /// closed instead of resolving to a default.
 fn parse_privacy_posture(value: &str) -> Result<HostingPrivacyPosture, String> {
     value.parse()
+}
+
+/// Clap value parser for `--git-door-base` (FIX 7181): the same door
+/// grammar GitWire binds a checkout to, so a bad base stops the start.
+fn git_door_base(value: &str) -> Result<String, String> {
+    oneiron::git_wire::validate_checkout_door(value)
+        .map(|()| value.to_owned())
+        .map_err(|_| {
+            "expected the host's Git door: https://<host>/git, or http on loopback".to_owned()
+        })
 }
 
 /// Clap value parser for `--trusted-organ-build`: a blake3 digest, 64 hex,
