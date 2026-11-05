@@ -1221,6 +1221,21 @@ pub enum AgentVerb {
     VaultCustodyMembersDrainCommit,
     VaultCustodyMembersDrainFolder,
     VaultCustodyMembersReenrol,
+    VaultMailPackInstall,
+    VaultMailSourcesConnect,
+    VaultMailSourcesList,
+    VaultMailSourcesSettingsSet,
+    VaultMailSourcesMembersSet,
+    VaultMailSourcesAudienceEvents,
+    VaultMailThreadsShare,
+    VaultMailThreadsUnshare,
+    VaultMailComplianceSetting,
+    VaultMailComplianceSet,
+    VaultMailComplianceLog,
+    VaultMailSourcesSyncStatus,
+    VaultMailInbox,
+    VaultMailThreadsRead,
+    VaultMailComplianceSearch,
     VaultDreamerFollowerKeyframe,
     ConnectorAnswer,
     SelfBrowserOpen,
@@ -2480,6 +2495,21 @@ impl AgentVerb {
         Self::VaultCustodyMembersDrainCommit,
         Self::VaultCustodyMembersDrainFolder,
         Self::VaultCustodyMembersReenrol,
+        Self::VaultMailPackInstall,
+        Self::VaultMailSourcesConnect,
+        Self::VaultMailSourcesList,
+        Self::VaultMailSourcesSettingsSet,
+        Self::VaultMailSourcesMembersSet,
+        Self::VaultMailSourcesAudienceEvents,
+        Self::VaultMailThreadsShare,
+        Self::VaultMailThreadsUnshare,
+        Self::VaultMailComplianceSetting,
+        Self::VaultMailComplianceSet,
+        Self::VaultMailComplianceLog,
+        Self::VaultMailSourcesSyncStatus,
+        Self::VaultMailInbox,
+        Self::VaultMailThreadsRead,
+        Self::VaultMailComplianceSearch,
         Self::VaultDreamerFollowerKeyframe,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
@@ -3776,6 +3806,21 @@ impl AgentVerb {
             Self::VaultCustodyMembersDrainCommit => "vault.custody.members.drain.commit",
             Self::VaultCustodyMembersDrainFolder => "vault.custody.members.drain.folder",
             Self::VaultCustodyMembersReenrol => "vault.custody.members.reenrol",
+            Self::VaultMailPackInstall => "vault.mail.pack.install",
+            Self::VaultMailSourcesConnect => "vault.mail.sources.connect",
+            Self::VaultMailSourcesList => "vault.mail.sources.list",
+            Self::VaultMailSourcesSettingsSet => "vault.mail.sources.settings.set",
+            Self::VaultMailSourcesMembersSet => "vault.mail.sources.members.set",
+            Self::VaultMailSourcesAudienceEvents => "vault.mail.sources.audience_events",
+            Self::VaultMailThreadsShare => "vault.mail.threads.share",
+            Self::VaultMailThreadsUnshare => "vault.mail.threads.unshare",
+            Self::VaultMailComplianceSetting => "vault.mail.compliance.setting",
+            Self::VaultMailComplianceSet => "vault.mail.compliance.set",
+            Self::VaultMailComplianceLog => "vault.mail.compliance.log",
+            Self::VaultMailSourcesSyncStatus => "vault.mail.sources.sync_status",
+            Self::VaultMailInbox => "vault.mail.inbox",
+            Self::VaultMailThreadsRead => "vault.mail.threads.read",
+            Self::VaultMailComplianceSearch => "vault.mail.compliance.search",
             Self::VaultDreamerFollowerKeyframe => "vault.dreamer.follower.keyframe",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
@@ -5015,6 +5060,21 @@ impl AgentVerb {
                 | Self::VaultCustodyMembersDrainCommit
                 | Self::VaultCustodyMembersDrainFolder
                 | Self::VaultCustodyMembersReenrol
+                | Self::VaultMailPackInstall
+                | Self::VaultMailSourcesConnect
+                | Self::VaultMailSourcesList
+                | Self::VaultMailSourcesSettingsSet
+                | Self::VaultMailSourcesMembersSet
+                | Self::VaultMailSourcesAudienceEvents
+                | Self::VaultMailThreadsShare
+                | Self::VaultMailThreadsUnshare
+                | Self::VaultMailComplianceSetting
+                | Self::VaultMailComplianceSet
+                | Self::VaultMailComplianceLog
+                | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailInbox
+                | Self::VaultMailThreadsRead
+                | Self::VaultMailComplianceSearch
                 | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -6303,6 +6363,21 @@ impl AgentVerb {
                 | Self::VaultCustodyMembersDrainCommit
                 | Self::VaultCustodyMembersDrainFolder
                 | Self::VaultCustodyMembersReenrol
+                | Self::VaultMailPackInstall
+                | Self::VaultMailSourcesConnect
+                | Self::VaultMailSourcesList
+                | Self::VaultMailSourcesSettingsSet
+                | Self::VaultMailSourcesMembersSet
+                | Self::VaultMailSourcesAudienceEvents
+                | Self::VaultMailThreadsShare
+                | Self::VaultMailThreadsUnshare
+                | Self::VaultMailComplianceSetting
+                | Self::VaultMailComplianceSet
+                | Self::VaultMailComplianceLog
+                | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailInbox
+                | Self::VaultMailThreadsRead
+                | Self::VaultMailComplianceSearch
                 | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -6455,6 +6530,9 @@ impl AgentVerb {
                 | Self::VaultClaimsSeed
                 | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultTasksLinearProvenance
+                | Self::VaultMailSourcesList
+                | Self::VaultMailSourcesAudienceEvents
+                | Self::VaultMailComplianceLog
         )
     }
     pub const fn filtered_read(self) -> bool {
@@ -7680,6 +7758,21 @@ impl AgentVerb {
                 | Self::VaultCustodyMembersDrainCommit
                 | Self::VaultCustodyMembersDrainFolder
                 | Self::VaultCustodyMembersReenrol
+                | Self::VaultMailPackInstall
+                | Self::VaultMailSourcesConnect
+                | Self::VaultMailSourcesList
+                | Self::VaultMailSourcesSettingsSet
+                | Self::VaultMailSourcesMembersSet
+                | Self::VaultMailSourcesAudienceEvents
+                | Self::VaultMailThreadsShare
+                | Self::VaultMailThreadsUnshare
+                | Self::VaultMailComplianceSetting
+                | Self::VaultMailComplianceSet
+                | Self::VaultMailComplianceLog
+                | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailInbox
+                | Self::VaultMailThreadsRead
+                | Self::VaultMailComplianceSearch
                 | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -8432,6 +8525,14 @@ impl AgentVerb {
                 | Self::VaultCustodyMembersDrainCommit
                 | Self::VaultCustodyMembersDrainFolder
                 | Self::VaultCustodyMembersReenrol
+                | Self::VaultMailPackInstall
+                | Self::VaultMailSourcesConnect
+                | Self::VaultMailSourcesSettingsSet
+                | Self::VaultMailSourcesMembersSet
+                | Self::VaultMailThreadsShare
+                | Self::VaultMailThreadsUnshare
+                | Self::VaultMailComplianceSet
+                | Self::VaultMailComplianceSearch
                 | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -9731,6 +9832,21 @@ impl AgentVerb {
             Self::VaultCustodyMembersDrainCommit => &["spec"],
             Self::VaultCustodyMembersDrainFolder => &["spec"],
             Self::VaultCustodyMembersReenrol => &["spec"],
+            Self::VaultMailPackInstall => &["spec"],
+            Self::VaultMailSourcesConnect => &["spec"],
+            Self::VaultMailSourcesList => &["spec"],
+            Self::VaultMailSourcesSettingsSet => &["spec"],
+            Self::VaultMailSourcesMembersSet => &["spec"],
+            Self::VaultMailSourcesAudienceEvents => &["spec"],
+            Self::VaultMailThreadsShare => &["spec"],
+            Self::VaultMailThreadsUnshare => &["spec"],
+            Self::VaultMailComplianceSetting => &["spec"],
+            Self::VaultMailComplianceSet => &["spec"],
+            Self::VaultMailComplianceLog => &["spec"],
+            Self::VaultMailSourcesSyncStatus => &["spec"],
+            Self::VaultMailInbox => &["spec"],
+            Self::VaultMailThreadsRead => &["spec"],
+            Self::VaultMailComplianceSearch => &["spec"],
             Self::VaultDreamerFollowerKeyframe => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -10991,6 +11107,21 @@ impl AgentVerb {
             Self::VaultCustodyMembersDrainCommit => &["spec"],
             Self::VaultCustodyMembersDrainFolder => &["spec"],
             Self::VaultCustodyMembersReenrol => &["spec"],
+            Self::VaultMailPackInstall => &["spec"],
+            Self::VaultMailSourcesConnect => &["spec"],
+            Self::VaultMailSourcesList => &["spec"],
+            Self::VaultMailSourcesSettingsSet => &["spec"],
+            Self::VaultMailSourcesMembersSet => &["spec"],
+            Self::VaultMailSourcesAudienceEvents => &["spec"],
+            Self::VaultMailThreadsShare => &["spec"],
+            Self::VaultMailThreadsUnshare => &["spec"],
+            Self::VaultMailComplianceSetting => &["spec"],
+            Self::VaultMailComplianceSet => &["spec"],
+            Self::VaultMailComplianceLog => &["spec"],
+            Self::VaultMailSourcesSyncStatus => &["spec"],
+            Self::VaultMailInbox => &["spec"],
+            Self::VaultMailThreadsRead => &["spec"],
+            Self::VaultMailComplianceSearch => &["spec"],
             Self::VaultDreamerFollowerKeyframe => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -14601,6 +14732,51 @@ impl AgentVerb {
             }
             Self::VaultCustodyMembersReenrol => {
                 "The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision."
+            }
+            Self::VaultMailPackInstall => {
+                "The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."
+            }
+            Self::VaultMailSourcesConnect => {
+                "Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."
+            }
+            Self::VaultMailSourcesList => {
+                "The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted."
+            }
+            Self::VaultMailSourcesSettingsSet => {
+                "Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address."
+            }
+            Self::VaultMailSourcesMembersSet => {
+                "Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on."
+            }
+            Self::VaultMailSourcesAudienceEvents => {
+                "Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins."
+            }
+            Self::VaultMailThreadsShare => {
+                "Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox."
+            }
+            Self::VaultMailThreadsUnshare => {
+                "Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."
+            }
+            Self::VaultMailComplianceSetting => {
+                "Whether org compliance search across mailboxes is on; off by default."
+            }
+            Self::VaultMailComplianceSet => {
+                "Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log."
+            }
+            Self::VaultMailComplianceLog => {
+                "The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."
+            }
+            Self::VaultMailSourcesSyncStatus => {
+                "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."
+            }
+            Self::VaultMailInbox => {
+                "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."
+            }
+            Self::VaultMailThreadsRead => {
+                "One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."
+            }
+            Self::VaultMailComplianceSearch => {
+                "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."
             }
             Self::VaultDreamerFollowerKeyframe => {
                 "The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed."
