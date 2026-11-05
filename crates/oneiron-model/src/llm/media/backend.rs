@@ -46,6 +46,12 @@ impl ReferenceCompatibility {
 /// so a run's media gate may wrap it. A job's poll and cancel ride the
 /// permit its submit started.
 pub trait MediaBackend: Send + Sync {
+    /// Whether this offer sends an explicit image-edit mask. The ladder
+    /// passes an unsupported masked call unsent, before its permit starts.
+    fn supports_mask(&self) -> bool {
+        false
+    }
+
     /// Runs one call to its answer.
     fn run<'a>(
         &'a self,
@@ -157,12 +163,25 @@ pub trait MediaBackend: Send + Sync {
 pub struct ImageMedia(pub Arc<dyn ImageBackend>);
 
 impl MediaBackend for ImageMedia {
+    fn supports_mask(&self) -> bool {
+        self.0.supports_mask()
+    }
+
+    fn preflight(&self, request: &MediaRequest) -> LlmResult<()> {
+        request.validate_image_mask()?;
+        if request.mask.is_some() && !self.supports_mask() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        Ok(())
+    }
+
     fn run<'a>(
         &'a self,
         request: MediaRequest,
         lease: &'a BudgetLease,
     ) -> MediaFuture<'a, MediaResponse> {
         Box::pin(async move {
+            self.preflight(&request)?;
             if request.operation != AiOperation::Image {
                 return Err(FatalLlmError::InvalidRequest.into());
             }
@@ -173,7 +192,9 @@ impl MediaBackend for ImageMedia {
             let response = if references.is_empty() {
                 self.0.generate(intent, lease).await?
             } else {
-                self.0.reference_edit(intent, references, lease).await?
+                self.0
+                    .reference_edit(intent, references, request.mask, lease)
+                    .await?
             };
             Ok::<_, LlmError>(MediaResponse::from_image(response))
         })

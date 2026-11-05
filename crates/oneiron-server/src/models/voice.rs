@@ -98,6 +98,7 @@ impl ModelRuntime {
             operation,
             parts: Vec::new(),
             references: Vec::new(),
+            mask: None,
             params: BTreeMap::new(),
             voice: None,
         };

@@ -245,6 +245,7 @@ impl ServerProbeAuthor<'_> {
             operation: AiOperation::Transcribe,
             parts,
             references: Vec::new(),
+            mask: None,
             params: BTreeMap::new(),
             voice: None,
         }

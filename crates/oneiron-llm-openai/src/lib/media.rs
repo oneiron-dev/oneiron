@@ -21,7 +21,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::image::{
-    OpenAiImageHttpResponse, OpenAiImagePart, decode_response, form_fields, reference_part,
+    OpenAiImageHttpResponse, OpenAiImagePart, decode_response, form_fields, masked_edit_body,
+    reference_part,
 };
 
 // FIX 866: each provider's own embedding shape.
@@ -200,7 +201,22 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         let wire = self.wire_model(&request.model)?;
         let PreparedImage { model, fields } = prepare_image(&request, &wire)?;
         // Every reference goes, in order (FIX 8614): none is dropped or cut.
-        let (path, body) = if request.references.is_empty() {
+        let (path, body) = if let Some(mask) = request.mask {
+            let references = request
+                .references
+                .into_iter()
+                .map(|reference| {
+                    let MediaPart::Image { media_type, bytes } = reference else {
+                        return Err(FatalLlmError::InvalidRequest.into());
+                    };
+                    Ok(ImageBytes { bytes, media_type })
+                })
+                .collect::<LlmResult<Vec<_>>>()?;
+            (
+                "/v1/images/edits",
+                OpenAiMediaBody::Json(masked_edit_body(fields.clone(), references, mask)?),
+            )
+        } else if request.references.is_empty() {
             let body = Value::Object(fields.clone().into_iter().collect());
             ("/v1/images/generations", OpenAiMediaBody::Json(body))
         } else {
@@ -590,6 +606,10 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
 }
 
 impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
+    fn supports_mask(&self) -> bool {
+        true
+    }
+
     /// A video job carries one `input_reference`; an image call every
     /// reference.
     fn reference_compatibility(&self, request: &MediaRequest) -> ReferenceCompatibility {
@@ -607,6 +627,7 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
     /// document it cannot carry, FIX 8616), or its transport's refusal: all
     /// before the call's permit starts, so none of them is charged.
     fn preflight(&self, request: &MediaRequest) -> LlmResult<()> {
+        request.validate_image_mask()?;
         let wire = self.wire_model(&request.model)?;
         if request.voice.is_some() && request.operation != AiOperation::Speech {
             return Err(FatalLlmError::InvalidRequest.into());
@@ -644,6 +665,7 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
         lease: &'a BudgetLease,
     ) -> MediaFuture<'a, MediaResponse> {
         Box::pin(async move {
+            request.validate_image_mask()?;
             // A voice is a speech call's alone.
             if request.voice.is_some() && request.operation != AiOperation::Speech {
                 return Err(FatalLlmError::InvalidRequest.into());
