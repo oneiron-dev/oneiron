@@ -289,7 +289,7 @@ impl Vault {
             }
             vault_id
         };
-        let leaf = open_leaf(&vault_id, request, &answer.sealed, &secret)
+        let leaf = open_leaf(&vault_id, request, &answer.sealed, &secret)?
             .ok_or_else(|| authority_refused(REFUSED_NOT_BOUND))?;
         let mut session = self.custody_leaves();
         if session.asks.remove(&request.request_id).is_none() {
