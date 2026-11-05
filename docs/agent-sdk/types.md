@@ -1360,6 +1360,13 @@ class Oneiron:
             """Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction."""
         def supersede(self, spec: Facade.CommitmentCloseRequest) -> Facade.CommitmentView:
             """Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction."""
+        @property
+        def reminder_route(self) -> "Oneiron._VaultCommitmentsReminderRouteVerbs": ...
+    class _VaultCommitmentsReminderRouteVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.CommitmentReminderRouteReply:
+            """Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing."""
+        def set(self, spec: Facade.CommitmentReminderRouteSetRequest) -> Facade.CommitmentReminderRouteReply:
+            """Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged."""
     class _VaultReportsVerbs:
         def disclosure(self, spec: Facade.ReportDisclosureRequest) -> Facade.ReportIssue:
             """The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny."""
@@ -1932,6 +1939,8 @@ class Oneiron:
         @property
         def fit(self) -> "Oneiron._VaultSkillsFitVerbs": ...
         @property
+        def advisory_ask(self) -> "Oneiron._VaultSkillsAdvisoryAskVerbs": ...
+        @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs": ...
         @property
         def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
@@ -1954,6 +1963,9 @@ class Oneiron:
     class _VaultSkillsFitVerbs:
         def set(self, spec: Facade.SkillFitSetRequest) -> Facade.HubConsentReceipt:
             """The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert."""
+    class _VaultSkillsAdvisoryAskVerbs:
+        def set(self, spec: Facade.SkillAdvisoryAskRequest) -> Facade.HubConsentReceipt:
+            """The owner sets whether a dependency advisory hit asks once before a ready marketplace install lands; the hit stays named in the fit analysis either way."""
     class _VaultSkillsPermissionsVerbs:
         def approve(self, spec: Facade.HubSkillPermissionRequest) -> Facade.HubConsentReceipt:
             """The owner answers one imported skill permission ask at its exact hub source."""
@@ -2428,7 +2440,12 @@ class Oneiron:
             """The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers."""
     class _VaultSyncVerbs:
         @property
+        def quarantine(self) -> "Oneiron._VaultSyncQuarantineVerbs": ...
+        @property
         def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs": ...
+    class _VaultSyncQuarantineVerbs:
+        def held_edits(self, spec: Facade.EmptyRequest) -> list[tuple[int, Facade.SyncHeldEditEvidence]]:
+            """The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."""
     class _VaultSyncRetainedWorkVerbs:
         @property
         def wait(self) -> "Oneiron._VaultSyncRetainedWorkWaitVerbs": ...

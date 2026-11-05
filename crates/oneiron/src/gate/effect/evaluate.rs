@@ -577,6 +577,30 @@ pub(crate) fn evaluate_external_effect_policy(
         }
     }
 
+    let ask_consent = if decision.outcome() == GateOutcome::Pending
+        && approval_context == ApprovalContext::FirstAdmission
+        && matches!(
+            hydrated_effect.provenance.approval_target,
+            Some(ApprovalTarget::ScopedMcp(_))
+        ) {
+        composed.as_ref().and_then(|effect| {
+            effect.action_requirement().and_then(
+                |bound| match crate::llm::decision::AskConsent::of(effect, bound) {
+                    Ok(consent) => Some(consent),
+                    Err(error) => {
+                        tracing::warn!(
+                            reason = "connector_call_consent_attachment_unavailable",
+                            error = %error,
+                            "the held call keeps its generic owner question"
+                        );
+                        None
+                    }
+                },
+            )
+        })
+    } else {
+        None
+    };
     Ok(ExternalEffectGovernance {
         decision_id,
         decision,
@@ -586,6 +610,7 @@ pub(crate) fn evaluate_external_effect_policy(
         grant_ref,
         approve_once,
         approval_context,
+        ask_consent,
         matched_grant,
         envelope_reservation,
         envelope_wait,
