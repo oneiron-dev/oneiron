@@ -500,6 +500,7 @@ pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<
     let mut forks = BTreeSet::new();
     for row in &snapshot.entity_documents {
         validate_history(row)?;
+        crate::entity_doc::validate_canonical_skill_state(row)?;
         for fork in row.history.iter().flat_map(|history| &history.forks) {
             if !forks.insert(fork.fork) {
                 return Err(invalid("entity document fork duplicated"));
