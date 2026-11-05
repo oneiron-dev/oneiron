@@ -36,6 +36,7 @@ mod trainer;
 mod wire;
 
 use trainer::QuestionHeadTrainer;
+pub(crate) use trainer::{TrainingInputCleanup, cleanup_training_job_inputs};
 
 /// An authorized run waits: no trainer adapter serves its connector here.
 const HOLD_NO_CONNECTOR: &str = "training.no_connector";
