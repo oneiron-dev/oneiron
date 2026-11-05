@@ -109,6 +109,7 @@ pub struct ChatBrain {
     /// The room's live speakers `history` was heard under, for a call heard
     /// in a room.
     history_live: Option<RoomLiveSpeakerEntries>,
+    history_phone_scope: Option<oneiron::federation::Scope>,
     turn: Option<Running>,
     retiring: Vec<JoinHandle<()>>,
     /// Each tool context, beside the rows the connector call listed.
@@ -182,12 +183,18 @@ impl ChatBrain {
             .chat_seat()
             .cloned()
             .ok_or_else(|| refused("no [models] rung serves generative_reasoner"))?;
+        let history_phone_scope = bindings
+            .phone
+            .as_ref()
+            .map(|phone| phone.current_scope())
+            .transpose()?;
         Ok(Self {
             bindings,
             seat,
             history: Arc::new(Mutex::new(Vec::new())),
             history_revision: None,
             history_live: None,
+            history_phone_scope,
             turn: None,
             retiring: Vec::new(),
             foreign: Vec::new(),
@@ -233,6 +240,7 @@ impl ChatBrain {
         request: &BrainRequest,
         memories: Option<Memories>,
         heard: Option<TurnMemories>,
+        phone_scope: Option<&oneiron::federation::Scope>,
     ) -> oneiron::Result<OpenedTurn> {
         let ChatBrainBindings {
             ai,
@@ -287,6 +295,13 @@ impl ChatBrain {
             }
         } else {
             oneiron::prompt::place_context_for_layout(&mut messages, layout, context.as_slice());
+        }
+        if let Some(phone) = &self.bindings.phone {
+            let scope =
+                phone_scope.ok_or_else(|| refused("phone context has no captured scope"))?;
+            phone
+                .prepare_generation(request.generation, scope.clone(), said_from.clone())
+                .map_err(refused)?;
         }
         let admitted = ai
             .admit_role(vault, CHAT_ROLE, chat_request(&self.seat, messages))
@@ -541,10 +556,24 @@ fn room_audience<'a>(
 impl Brain for ChatBrain {
     fn start(&mut self, request: &BrainRequest) -> oneiron::Result<()> {
         self.abort();
+        let phone_scope = self
+            .bindings
+            .phone
+            .as_ref()
+            .map(|phone| phone.current_scope())
+            .transpose()
+            .map_err(refused)?;
+        if phone_scope.is_some() && phone_scope != self.history_phone_scope {
+            // An aborted task may still own the old Arc on another executor.
+            self.history = Arc::new(Mutex::new(Vec::new()));
+            self.foreign.clear();
+            self.said_by.clear();
+        }
         let (memories, heard, live) = self.memories(request)?;
         self.rebuild_history(request.audience_revision, live)?;
         let (stream, tainted, memories, said_from, capture) =
-            self.open(request, memories, heard)?;
+            self.open(request, memories, heard, phone_scope.as_ref())?;
+        self.history_phone_scope = phone_scope;
         let generation = request.generation;
         // The person's words: no stored row.
         self.history
@@ -618,6 +647,14 @@ impl Brain for ChatBrain {
         generation: GenerationEpoch,
         notice: &GateSystemNoticeRecord,
     ) -> oneiron::Result<()> {
+        if self
+            .bindings
+            .phone
+            .as_ref()
+            .is_some_and(|phone| !phone.accepts_output(generation))
+        {
+            return Ok(());
+        }
         let mut rows = self.said_by.get(&generation).cloned().unwrap_or_default();
         rows.extend(notice_rows(notice));
         self.history

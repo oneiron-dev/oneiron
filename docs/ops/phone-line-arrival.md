@@ -74,10 +74,16 @@ re-stamping an old response with the new scope does not make that response safe.
 
 The server has an optional call-bound reader and a weak PCM dequeue fence. Existing
 voice sessions set that reader to `None` and keep their owner-only behavior. No phone
-session factory or audio route activates the new reader yet. Prepared-generation
-registration, anonymous context/history handling, explicit no-recognition execution and
-the actual answering lifecycle remain open. These native read and output-check ports
-are not a claim that a phone call can be answered.
+session factory or audio route activates the new reader yet. The phone-bound brain
+captures consent before context assembly and registers that generation's sources before
+model admission. A changed scope replaces its history Arc, so an old asynchronous turn
+cannot append into the new scope's history. Old-generation notices and queued PCM are
+checked against the original prepared scope, not re-stamped with current consent.
+
+The speculative Memory carrier, anonymous disclosure handling, complete tool/notice
+source accounting, explicit no-recognition execution and the actual answering lifecycle
+remain open. These native read and output-check ports are not a claim that a phone call
+can be answered.
 
 ## HTTP doors
 
