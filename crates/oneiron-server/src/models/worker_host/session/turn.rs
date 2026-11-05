@@ -134,6 +134,7 @@ pub(in crate::models) async fn open_turn(
     // What the session's prepared tail gave this turn (I1 = C).
     super::prepare::forked(&binding, forked.prepared.as_ref());
     let stale = policy::stale_after_fork(opened.published.as_ref(), anchor.head, &forked);
+    let dispatch_lease = lease.has_dispatch_release().then(|| lease.clone());
     {
         let mut workers = registry::lock();
         // A lock since the admission keeps the fork unregistered: the lock
@@ -167,6 +168,7 @@ pub(in crate::models) async fn open_turn(
             newest: newest.clone(),
             tools,
             base: opened.published,
+            dispatch_lease,
         });
     }
     Ok(serde_json::to_value(SessionGenerate {
