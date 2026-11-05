@@ -39,13 +39,15 @@ impl OfferManifest {
     }
 
     fn valid(&mut self) -> bool {
+        // No size gate: only the writer's whole-row bound decides production,
+        // and a native header erase may shrink a live manifest's logical row
+        // below it while its wording parts are still missing.
         self.header
             .offer_what_mut()
             .is_some_and(|what| what.is_empty())
             && self.header.place().is_some()
             && self.header.well_formed()
             && self.what.well_formed()
-            && self.what.len > ROOM_FACT_MAX_ROW_BYTES as u64
     }
 
     fn encode(&self) -> Result<Vec<u8>> {
@@ -93,8 +95,9 @@ impl OfferManifest {
     }
 }
 
-/// Writes this representation only when the wording alone needs parts and
-/// the remaining header fits inline. Every other row keeps its ordinary split.
+/// Writes this representation when the whole row is past its bound and the
+/// empty-what header plus its Parts manifest fits inline; the wording alone
+/// may fit within the bound. Every other row keeps its ordinary split.
 pub(crate) fn write_row(map: &LoroMap, key: &str, row: &[u8], max: usize) -> Result<bool> {
     if max != ROOM_FACT_MAX_ROW_BYTES || row.len() <= max {
         return Ok(false);
@@ -110,9 +113,6 @@ pub(crate) fn write_row(map: &LoroMap, key: &str, row: &[u8], max: usize) -> Res
     };
     let what = std::mem::take(what);
     let bytes = serde_json::to_vec(&what).map_err(|_| refused("wording does not encode"))?;
-    if bytes.len() <= max {
-        return Ok(false);
-    }
     let (what, pieces) = split_parts(&bytes)?;
     let mut manifest = OfferManifest { header, what };
     if !manifest.valid() {
