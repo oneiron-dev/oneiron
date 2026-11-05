@@ -5,7 +5,9 @@
 //! This room is beside the room the socket's entry holds for its host end
 //! ([`super::lifetime::STREAM_ENTRY`]). A stream to a remote takes its room
 //! before the relay connects: the remote socket, the copies of it and of the
-//! host end, and the download and upload threads ([`REMOTE_STREAM`]). A
+//! host end, and the download and upload threads ([`REMOTE_STREAM`]). A gated
+//! stream also holds its name gate's DNS socket until the gate passes
+//! ([`NAME_GATE`]). A
 //! stream to DNS takes its one thread ([`DNS_RELAY`]). Each of its exchanges
 //! then takes the transport's one socket inside that thread
 //! ([`super::relay_workers::reserve`]).
@@ -44,6 +46,10 @@ const REMOTE_STREAM: (usize, usize) = (3, 2);
 /// What a stream to DNS holds of the host floor besides its entry: its one
 /// thread. Each exchange takes its transport's socket when it starts.
 const DNS_RELAY: (usize, usize) = (0, 1);
+/// What a gated stream holds besides [`REMOTE_STREAM`] while its name gate
+/// reads the opening: the transport socket the gate's DNS refresh may open
+/// (review P1 #5938).
+const NAME_GATE: (usize, usize) = (1, 0);
 /// How long a relay's read waits before it looks at the session again: a
 /// cadence, not a bound.
 const READ_POLL: Duration = Duration::from_millis(250);
@@ -106,12 +112,19 @@ pub(super) fn connect_remote(
         .as_ref()
         .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
     let (remote, gated) = state.relay.connect_stream(target)?;
+    // A gated stream's name gate may refresh its DNS binding before the
+    // opening reaches the remote: it takes that socket's room now, and holds
+    // it until the gate has passed.
+    let (gate_fds, gate_workers) = NAME_GATE;
+    let gate = gated
+        .then(|| state.relay.host_net_floor().acquire(gate_fds, gate_workers))
+        .transpose()?;
     let incoming = remote.try_clone()?;
     let outgoing = host.try_clone()?;
     incoming.set_read_timeout(Some(READ_POLL))?;
     let (alive, relay) = (Arc::clone(&state.alive), Arc::clone(&state.relay));
     let upload = park(move |(guest, remote): (UnixStream, TcpStream)| {
-        relay_upload(guest, remote, target, gated, &*relay, &alive);
+        relay_upload(guest, remote, target, gate, &*relay, &alive);
     })?;
     let download = park(RemoteStream::download)?;
     let guest = peer
@@ -192,23 +205,25 @@ impl RemoteStream {
     }
 }
 
-/// Relays the guest's bytes to the remote. A `gated` stream's opening bytes
+/// Relays the guest's bytes to the remote. A gated stream's opening bytes
 /// pass the relay's name gate after the guest's connect was answered and
 /// before any reaches the remote; a refused one ends with nothing sent
-/// (FIX 7652).
+/// (FIX 7652). `gate` is the room the gate's DNS refresh takes
+/// ([`NAME_GATE`]); it goes back once the gate has passed.
 fn relay_upload(
     mut guest: UnixStream,
     mut remote: TcpStream,
     target: SocketAddr,
-    gated: bool,
+    gate: Option<HostNetPermit>,
     relay: &dyn EgressRelay,
     alive: &AtomicBool,
 ) {
     // The host end takes its read timeout only here, once it has left its
     // entry: a connect that failed leaves the end as the guest made it.
     let _ = guest.set_read_timeout(Some(READ_POLL));
-    if gated {
+    if let Some(gate) = gate {
         let opening = relay.open_upload(target, &mut guest, alive);
+        drop(gate);
         if opening.and_then(|bytes| remote.write_all(&bytes)).is_err() {
             let _ = remote.shutdown(Shutdown::Both);
             return;
