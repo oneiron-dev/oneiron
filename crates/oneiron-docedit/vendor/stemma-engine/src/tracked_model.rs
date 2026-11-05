@@ -1356,6 +1356,47 @@ pub(crate) fn mark_whole_block_deleted(
         BlockNode::OpaqueBlock(_) => {}
     }
 }
+/// Paragraph deletion that can keep earlier inline revisions without a
+/// block-level deletion flattening their authors. Final marks are checked by
+/// the delete verb, before this shape is admitted.
+pub(crate) fn can_preserve_paragraph_delete(block: &TrackedBlock) -> bool {
+    let BlockNode::Paragraph(paragraph) = &block.block else {
+        return false;
+    };
+    matches!(block.status, TrackingStatus::Normal)
+        && block.move_id.is_none()
+        && matches!(
+            paragraph.para_mark_status,
+            None | Some(TrackingStatus::Normal)
+        )
+        && paragraph.section_properties.is_none()
+        && paragraph.numbering.is_none()
+        && paragraph.literal_prefix.is_none()
+        && paragraph
+            .segments
+            .iter()
+            .any(|segment| !segment.inlines.is_empty())
+        && paragraph
+            .segments
+            .iter()
+            .any(|segment| segment.status != TrackingStatus::Normal)
+}
+
+pub(crate) fn mark_paragraph_deleted_preserving_revisions(
+    block: &mut TrackedBlock,
+    revision: &RevisionInfo,
+    rev_counter: &mut u32,
+) {
+    let BlockNode::Paragraph(paragraph) = &mut block.block else {
+        unreachable!("validated paragraph deletion");
+    };
+    mark_final_paragraph_runs_deleted(paragraph, revision, rev_counter);
+    paragraph.para_mark_status = Some(TrackingStatus::Deleted(next_revision(
+        revision,
+        rev_counter,
+    )));
+}
+
 fn effective_text_prefix(p: &ParagraphNode) -> Option<&str> {
     if let Some(n) = &p.numbering
         && !n.synthesized_text.is_empty()
