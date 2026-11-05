@@ -755,6 +755,7 @@ fn restore_claim_in_txn(
             end: header.occurred_end,
         },
         learned_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
+        row_version: None,
         data: crate::claim::encode_claim_body(&next)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,
