@@ -17,6 +17,8 @@ pub(crate) enum GateContentKind {
     Claim,
     EdgeProvenanceClaim,
     PolicyManifest,
+    /// Creating a reusable agent definition through a credential-bound setup door.
+    AgentDefinitionSetup,
     ExternalEffect,
     /// ONE-1395: an unexecuted repair intent, evaluated with engine-stamped authority.
     Repair,
@@ -33,6 +35,7 @@ impl GateContentKind {
             Self::Claim => "claim",
             Self::EdgeProvenanceClaim => "edge_provenance_claim",
             Self::PolicyManifest => "policy_manifest",
+            Self::AgentDefinitionSetup => "agent_definition_setup",
             Self::ExternalEffect => "external_effect",
             Self::Repair => "repair",
             Self::WitnessMessage => "witness_message",

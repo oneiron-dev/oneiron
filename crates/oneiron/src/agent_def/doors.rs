@@ -135,6 +135,8 @@ impl Vault {
         )
     }
 
+    /// Keeps an admitted child's requested ceiling; the live author's bound
+    /// decides whether it is active or an inert proposal.
     #[expect(
         clippy::too_many_arguments,
         reason = "the authoring door binds author, target, request, scope, lease generation and time in one transaction"
@@ -168,58 +170,13 @@ impl Vault {
                 )));
             }
         }
-        let author_def = self.read_agent_definition_in_txn(&wtxn, author)?;
-        if author_def.lifecycle_status != ClaimLifecycleStatus::Active
-            || !author_def.enabled
-            || !matches!(
-                author_def.approval_status,
-                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-            )
-        {
-            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
-                "author definition is not active and approved",
-            )));
-        }
-        if self.store.port_entity_record(&wtxn, id)?.is_some() {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "agents.put creates a new definition; use the update door for an existing row",
-            )));
-        }
-        if requested.forked_from.is_some() || requested.logical_id.is_some() {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "agent-authored definitions cannot assert fork lineage or a reserved logical id",
-            )));
-        }
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
-        let effective = match policy.actor_ceiling("agent", Some(&author.to_hex())) {
-            crate::gate::PolicyApprovalCeiling::Auto => author_def.ceiling,
-            crate::gate::PolicyApprovalCeiling::Proposed => super::types::AgentCeiling::Proposed,
-        };
-        let mut bounded_author = author_def.clone();
-        bounded_author.ceiling = effective;
-        let mut definition = inherit_model_choices(requested, &bounded_author);
-        let within = !scope_widens && within_author_slice(&definition, &bounded_author);
-        definition.source = crate::claim::ClaimSource::Generated;
-        definition.generated = true;
-        definition.human_authored = false;
-        definition.provenance = rmpv::Value::Map(vec![
-            (
-                rmpv::Value::from("author"),
-                rmpv::Value::from(author.to_hex()),
-            ),
-            (
-                rmpv::Value::from("definedVia"),
-                rmpv::Value::from("vault.agents.put"),
-            ),
-        ]);
-        definition.lifecycle_status = ClaimLifecycleStatus::Active;
-        let disposition = if within {
-            definition.approval_status = author_def.approval_status;
-            AgentDefinitionPutDisposition::Active
-        } else {
-            definition.approval_status = ClaimApprovalStatus::Proposed;
-            AgentDefinitionPutDisposition::Proposed
-        };
+        let (definition, disposition) = self.prepare_agent_definition_for_author_in_txn(
+            &wtxn,
+            author,
+            id,
+            requested,
+            scope_widens,
+        )?;
         let data = encode_agent_definition(&definition)?;
         self.apply_agent_definition_body(&mut wtxn, id, occurred, learned_at, data)?;
         wtxn.commit()?;
@@ -570,6 +527,70 @@ impl Vault {
             )));
         }
         decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..])
+    }
+
+    /// Prepares the same author-bounded definition for a door that owns its writer.
+    fn prepare_agent_definition_for_author_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        author: &EntityId,
+        id: &EntityId,
+        requested: &AgentDefinition,
+        scope_widens: bool,
+    ) -> Result<(AgentDefinition, AgentDefinitionPutDisposition)> {
+        let author_def = self.read_agent_definition_in_txn(txn, author)?;
+        if author_def.lifecycle_status != ClaimLifecycleStatus::Active
+            || !author_def.enabled
+            || !matches!(
+                author_def.approval_status,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+            )
+        {
+            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
+                "author definition is not active and approved",
+            )));
+        }
+        if self.store.port_entity_record(txn, id)?.is_some() {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "agents.put creates a new definition; use the update door for an existing row",
+            )));
+        }
+        if requested.forked_from.is_some() || requested.logical_id.is_some() {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "agent-authored definitions cannot assert fork lineage or a reserved logical id",
+            )));
+        }
+        let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+        let effective = match policy.actor_ceiling("agent", Some(&author.to_hex())) {
+            crate::gate::PolicyApprovalCeiling::Auto => author_def.ceiling,
+            crate::gate::PolicyApprovalCeiling::Proposed => super::types::AgentCeiling::Proposed,
+        };
+        let mut bounded_author = author_def.clone();
+        bounded_author.ceiling = effective;
+        let mut definition = inherit_model_choices(requested, &bounded_author);
+        let within = !scope_widens && within_author_slice(&definition, &bounded_author);
+        definition.source = crate::claim::ClaimSource::Generated;
+        definition.generated = true;
+        definition.human_authored = false;
+        definition.provenance = rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("author"),
+                rmpv::Value::from(author.to_hex()),
+            ),
+            (
+                rmpv::Value::from("definedVia"),
+                rmpv::Value::from("vault.agents.put"),
+            ),
+        ]);
+        definition.lifecycle_status = ClaimLifecycleStatus::Active;
+        let disposition = if within {
+            definition.approval_status = author_def.approval_status;
+            AgentDefinitionPutDisposition::Active
+        } else {
+            definition.approval_status = ClaimApprovalStatus::Proposed;
+            AgentDefinitionPutDisposition::Proposed
+        };
+        Ok((definition, disposition))
     }
 
     fn apply_agent_definition_body(

@@ -3,6 +3,7 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
+mod agent_definition_setup;
 mod ask_policy;
 mod auto_signals;
 mod bundle;
@@ -104,6 +105,7 @@ pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::agent_definition_setup::record_agent_definition_setup_in_txn;
 pub(crate) use self::ask_policy::{AskOperationalPolicy, AskPolicySurface};
 pub(crate) use self::bundle::append_reviewed_run_decision_in_txn;
 pub use self::bundle::{
