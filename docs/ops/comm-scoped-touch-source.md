@@ -1,7 +1,8 @@
 # Scoped, explicitly born touch sources
 
 The bound batch router can project an explicitly born LastTouch with a
-noncanonical world, facet, project or native sensitivity band from 0 through 3.
+noncanonical world, facet, project, native sensitivity band from 0 through 3, or
+native relationship scope.
 The original Put, ClaimOf edge and native
 birth still land through their existing gates before its source is created in
 the same writer. The source freezes the actual admitted native position; it
@@ -12,20 +13,22 @@ native spelling `public`, `private`, `internal`, `sensitive` or `restricted`, an
 absent scope, or an empty map. Missing and empty scopes retain the existing
 unstamped band of 2. Each form stays distinct for exact-context matching;
 `private` and `internal` share band 1 but do not share a slot. Duplicate stamps,
-additional opaque keys, noncanonical relationship or session contexts and other
-unsupported births keep their full native raw path. No-birth inputs still
+additional opaque keys, noncanonical session contexts and other unsupported
+births keep their full native raw path. No-birth inputs still
 require the canonical position before routing. The public claim constructor
 still uses numeric sensitivity 2; rebuilding a frozen source comparison body
 does not change the original row or its stamp.
 
 `COMM_RECORD` has a required `source_position` key. Ordinary events without an
 original head, gates and receipts encode `nil`. Every explicitly born
-`TouchAsserted`, canonical base-world touches included, carries the six-element
+`TouchAsserted`, canonical base-world touches included, carries the seven-element
 tuple: world id, facet id, project id, native sensitivity band, a 32-byte
-admitted-origin digest, and a scope-form code. Codes 0 through 7 mean numeric,
+admitted-origin digest, a scope-form code, and the frozen native relationship
+scope (`all`, an empty set, or a set of relationship ids). Codes 0 through 7 mean numeric,
 public, private, internal, sensitive, restricted, absent, and empty-map scope,
 respectively. The strict decoder checks the native band against that form.
-The scope form is also bound into the source id. `original_head` and
+The scope form and the native relationship-scope transcript are also bound into
+the source id. `original_head` and
 `source_position` must be present together. There is no old-format reader or migration. All born source ids use
 `COMM_BORN_TOUCH_EVENT` with the same typed position and origin binding.
 
@@ -42,8 +45,13 @@ frozen position and the current original CLAIM's effective position. Missing,
 erased or retyped originals provide no source disclosure. Required value sets
 are combined as record requirements, not as capability intersections. The
 higher sensitivity classification remains required. Capability `Scope::meet`
-is unchanged. The relationship reader also uses the actual current original
-CLAIM's native relationship and private-scope fields.
+is unchanged. The relationship reader uses the actual current original CLAIM's
+native relationship and private-scope fields, and separately checks the frozen
+relationship scope through the same current credential and serving transaction.
+Each nonempty set admits through any one member, but both sets must admit. A
+reader can hold different members of the two sets; no common id is required.
+An explicit empty set admits none. Existing named-row support-disclosure grants
+retain their live Scope check. Frozen ids are requirements, not authority.
 
 Reader-side source code now carries the actual current original CLAIM's full
 row from the same content view and transaction into the existing audience

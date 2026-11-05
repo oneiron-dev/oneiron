@@ -246,13 +246,18 @@ impl<'v> ScopedRead<'v> {
         if claims.delegation.is_none() || !claims.records.contains(&id.to_hex()) {
             return Ok(false);
         }
-        let RelationshipRead::Gated {
-            private: false,
-            record,
-            ..
-        } = read
-        else {
-            return Ok(false);
+        let record = match read {
+            RelationshipRead::Gated {
+                private: false,
+                record,
+                ..
+            }
+            | RelationshipRead::ScopedClaim {
+                private: false,
+                record,
+                ..
+            } => record,
+            _ => return Ok(false),
         };
         let in_scope = self
             .actor_key
@@ -373,6 +378,14 @@ pub(crate) enum RelationshipRead {
         private: bool,
         record: Scope,
     },
+    /// A scoped touch keeps both its born and current original relationship
+    /// requirements. Each set may admit through any one of its members.
+    ScopedClaim {
+        space: RelationshipScope,
+        frozen_space: RelationshipScope,
+        private: bool,
+        record: Scope,
+    },
 }
 
 impl RelationshipRead {
@@ -390,23 +403,43 @@ impl RelationshipRead {
     pub(crate) fn allowed_by(&self, context: &AccessContext<'_>) -> bool {
         match self {
             Self::Decided(allowed) => *allowed,
-            // A scoped row reads through any one relationship of its set the
-            // reader may read; the explicit empty set names none.
             Self::Gated {
                 kind,
-                space: None,
+                space,
                 private,
                 record,
-            } => context.allows_at_snapshot(*kind, None, *private, record),
-            Self::Gated {
-                kind,
-                space: Some(ids),
+            } => relationship_scope_allowed(context, *kind, space, *private, record),
+            Self::ScopedClaim {
+                space,
+                frozen_space,
                 private,
                 record,
-            } => ids
-                .iter()
-                .any(|id| context.allows_at_snapshot(*kind, Some(*id), *private, record)),
+            } => {
+                relationship_scope_allowed(context, ENTITY_TYPE_CLAIM, space, *private, record)
+                    && relationship_scope_allowed(
+                        context,
+                        ENTITY_TYPE_CLAIM,
+                        frozen_space,
+                        false,
+                        record,
+                    )
+            }
         }
+    }
+}
+
+fn relationship_scope_allowed(
+    context: &AccessContext<'_>,
+    kind: u8,
+    space: &RelationshipScope,
+    private: bool,
+    record: &Scope,
+) -> bool {
+    match space {
+        None => context.allows_at_snapshot(kind, None, private, record),
+        Some(ids) => ids
+            .iter()
+            .any(|id| context.allows_at_snapshot(kind, Some(*id), private, record)),
     }
 }
 
@@ -448,11 +481,16 @@ where
         match read_scoped_comm_in_txn(store, txn, *id, bytes)? {
             ScopedCommRead::Ordinary => {}
             ScopedCommRead::Unavailable => return Ok(RelationshipRead::Decided(false)),
-            ScopedCommRead::Claim { body, record, .. } => {
+            ScopedCommRead::Claim {
+                body,
+                frozen_rel,
+                record,
+                ..
+            } => {
                 let (space, private) = claim_access_axes(&body);
-                return Ok(RelationshipRead::Gated {
-                    kind: ENTITY_TYPE_CLAIM,
+                return Ok(RelationshipRead::ScopedClaim {
                     space,
+                    frozen_space: frozen_rel,
                     private,
                     record,
                 });
