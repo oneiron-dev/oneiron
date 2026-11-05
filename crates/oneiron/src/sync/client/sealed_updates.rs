@@ -81,6 +81,8 @@ pub(super) struct SealedUpdateSession {
     catching_up: Option<Instant>,
     last_since: Option<Instant>,
     keys: Option<(Instant, Vec<WorldKey>)>,
+    /// A resource-failed entry that the current page must not pass.
+    retry_at: Option<(SealedUpdateEpoch, u64)>,
     /// Windows whose snapshot this machine asked the world's other readers
     /// for, and when.
     wanted: HashMap<String, Instant>,
@@ -110,6 +112,27 @@ struct PartAssembly {
     chunks: BTreeMap<u32, Zeroizing<Vec<u8>>>,
     bytes: usize,
     started: Instant,
+}
+
+enum SealedUpdateImportError {
+    Resource(crate::Error),
+    Message(String),
+}
+
+impl From<crate::Error> for SealedUpdateImportError {
+    fn from(error: crate::Error) -> Self {
+        if matches!(&error, crate::Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory) {
+            Self::Resource(error)
+        } else {
+            Self::Message(error.to_string())
+        }
+    }
+}
+
+impl From<String> for SealedUpdateImportError {
+    fn from(error: String) -> Self {
+        Self::Message(error)
+    }
 }
 
 /// One whole message the relay carried, joined from its parts.
@@ -195,7 +218,24 @@ impl SyncClient {
         }
         let storage = |error: crate::error::Error| TransportError::Storage(error.to_string());
         let cursor = sealed_update_cursor(&self.vault).map_err(storage)?;
-        match decode_sealed_update_frame(payload)? {
+        let decoded = decode_sealed_update_frame(payload)?;
+        if let Some((failed_epoch, failed_seq)) = self.sealed_updates.retry_at {
+            match &decoded {
+                SealedUpdateFrame::Entry { epoch, seq, .. }
+                | SealedUpdateFrame::PageEntry { epoch, seq, .. }
+                    if *epoch == failed_epoch && *seq > failed_seq =>
+                {
+                    return Ok(Vec::new());
+                }
+                SealedUpdateFrame::CaughtUp { epoch, .. } if *epoch == failed_epoch => {
+                    self.sealed_updates.retry_at = None;
+                    self.sealed_updates.catching_up = None;
+                    return Ok(Vec::new());
+                }
+                _ => {}
+            }
+        }
+        match decoded {
             SealedUpdateFrame::Offer { epoch, .. } => {
                 if cursor.is_none_or(|(held, _)| held != epoch) {
                     put_sealed_update_cursor(&self.vault, &epoch, 0).map_err(storage)?;
@@ -211,7 +251,7 @@ impl SyncClient {
                     return Ok(Vec::new());
                 };
                 if held == epoch && Some(seq) == last.checked_add(1) {
-                    self.take_sealed_update(sealed);
+                    self.take_sealed_update(epoch, seq, sealed)?;
                     put_sealed_update_cursor(&self.vault, &epoch, seq).map_err(storage)?;
                     return Ok(Vec::new());
                 }
@@ -236,7 +276,7 @@ impl SyncClient {
                     _ => 0,
                 };
                 if seq > last {
-                    self.take_sealed_update(sealed);
+                    self.take_sealed_update(epoch, seq, sealed)?;
                     put_sealed_update_cursor(&self.vault, &epoch, seq).map_err(storage)?;
                 }
                 Ok(Vec::new())
@@ -272,6 +312,12 @@ impl SyncClient {
                 if let Some((held, last)) = cursor
                     && held == epoch
                     && Some(seq) == last.checked_add(1)
+                    && self
+                        .sealed_updates
+                        .retry_at
+                        .is_none_or(|(failed_epoch, failed_seq)| {
+                            epoch != failed_epoch || seq < failed_seq
+                        })
                 {
                     put_sealed_update_cursor(&self.vault, &epoch, seq).map_err(storage)?;
                 }
@@ -285,28 +331,39 @@ impl SyncClient {
 
     /// Opens `sealed` under a key of a world this machine reads and takes
     /// its message once whole; a part of a world it does not read is passed
-    /// over. A fault is logged: the daily sealed bundle still carries the
-    /// world, and an update that still lacks its history asks again.
-    fn take_sealed_update(&mut self, sealed: &[u8]) {
-        if let Err(error) = self.import_sealed_update(sealed) {
-            tracing::warn!(%error, "sealed world update not taken");
+    /// over. An opening resource fault leaves the cursor before this entry;
+    /// other faults keep their logged pass-over and daily-bundle fallback.
+    fn take_sealed_update(
+        &mut self,
+        epoch: SealedUpdateEpoch,
+        seq: u64,
+        sealed: &[u8],
+    ) -> Result<(), TransportError> {
+        match self.import_sealed_update(sealed) {
+            Err(SealedUpdateImportError::Resource(error)) => {
+                self.sealed_updates.retry_at = Some((epoch, seq));
+                return Err(TransportError::Storage(error.to_string()));
+            }
+            Err(SealedUpdateImportError::Message(error)) => {
+                tracing::warn!(%error, "sealed world update not taken");
+            }
+            Ok(()) => {}
         }
+        if self.sealed_updates.retry_at == Some((epoch, seq)) {
+            self.sealed_updates.retry_at = None;
+        }
+        Ok(())
     }
 
-    fn import_sealed_update(&mut self, sealed: &[u8]) -> Result<(), String> {
-        let vault_id = self
-            .vault
-            .sealed_update_vault_id()
-            .map_err(|error| error.to_string())?;
-        let mut opened = open_world_update(&vault_id, self.sealed_update_keys(KEY_CACHE)?, sealed)
-            .map_err(|error| error.to_string())?;
+    fn import_sealed_update(&mut self, sealed: &[u8]) -> Result<(), SealedUpdateImportError> {
+        let vault_id = self.vault.sealed_update_vault_id()?;
+        let mut opened = open_world_update(&vault_id, self.sealed_update_keys(KEY_CACHE)?, sealed)?;
         if opened.is_none() {
             opened = open_world_update(
                 &vault_id,
                 self.sealed_update_keys(KEY_REFRESH_FLOOR)?,
                 sealed,
-            )
-            .map_err(|error| error.to_string())?;
+            )?;
         }
         let Some(opened) = opened else {
             return Ok(());
@@ -314,7 +371,9 @@ impl SyncClient {
         if WindowKey::try_new(&opened.window_key).and_then(|key| key.world())
             != Some(opened.world())
         {
-            return Err("a sealed update's window is not its key's world".to_owned());
+            return Err("a sealed update's window is not its key's world"
+                .to_owned()
+                .into());
         }
         let Some(message) = self.join_sealed_part(opened)? else {
             return Ok(());
@@ -344,6 +403,7 @@ impl SyncClient {
                     .inspect_err(|_| self.want_sealed_snapshot(world, window_key))
             }
         }
+        .map_err(SealedUpdateImportError::Message)
     }
 
     /// Joins `part` with the other parts of its message: the whole message
@@ -567,17 +627,14 @@ impl SyncClient {
 
     /// The world keys this machine opens of the worlds it reads now, opened
     /// again once older than `fresh`.
-    fn sealed_update_keys(&mut self, fresh: Duration) -> Result<&[WorldKey], String> {
+    fn sealed_update_keys(&mut self, fresh: Duration) -> crate::error::Result<&[WorldKey]> {
         let stale = self
             .sealed_updates
             .keys
             .as_ref()
             .is_none_or(|(at, _)| at.elapsed() >= fresh);
         if stale {
-            let keys = self
-                .vault
-                .bundle_reader_keys(None, false)
-                .map_err(|error| error.to_string())?;
+            let keys = self.vault.bundle_reader_keys(None, false)?;
             self.sealed_updates.keys = Some((Instant::now(), keys));
         }
         Ok(self
