@@ -69,13 +69,14 @@ impl ConnectorResumeState {
         txn: &mut heed::RwTxn<'_>,
         call_ref: &EntityId,
     ) -> Option<ConnectorInputResume> {
+        let sealed_at = custody_generation(self.generation)?;
         let seal = (|| {
             let mut savepoint = vault.store.env.nested_write_txn(txn)?;
             let resume = ConnectorInputResume::seal_in_txn(
                 vault,
                 &mut savepoint,
                 call_ref,
-                self.generation,
+                sealed_at,
                 self.protocol,
                 &self.state,
             )?;
@@ -83,7 +84,7 @@ impl ConnectorResumeState {
             Ok::<_, Error>(resume)
         })();
         match seal {
-            Ok(resume) => resume,
+            Ok(resume) => Some(resume),
             Err(error) => {
                 tracing::warn!(%error, "connector call resume state not kept");
                 None
@@ -97,19 +98,16 @@ impl ConnectorInputResume {
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
         call_ref: &EntityId,
-        generation: u64,
+        sealed_at: u32,
         protocol: ConnectorResumeProtocol,
         state: &[u8],
-    ) -> crate::Result<Option<Self>> {
-        let Some(sealed_at) = custody_generation(generation) else {
-            return Ok(None);
-        };
+    ) -> crate::Result<Self> {
         let sealed = seal_connector_resume_in_txn(&vault.store, txn, call_ref, sealed_at, state)?;
-        Ok(Some(Self {
+        Ok(Self {
             protocol,
             generation: sealed_at,
             sealed,
-        }))
+        })
     }
 }
 
@@ -161,6 +159,9 @@ impl Vault {
         protocol: ConnectorResumeProtocol,
         state: &[u8],
     ) -> Result<bool, IntentLedgerError> {
+        let Some(sealed_at) = custody_generation(generation) else {
+            return Ok(false);
+        };
         Ok(self.with_write_txn(|txn| {
             let Some(mut row) = PENDING_CALLS.get(&self.store, txn, call_ref)? else {
                 return Ok(false);
@@ -175,13 +176,9 @@ impl Vault {
             }) else {
                 return Ok(false);
             };
-            let Some(resume) = ConnectorInputResume::seal_in_txn(
-                self, txn, call_ref, generation, protocol, state,
-            )?
-            else {
-                return Ok(false);
-            };
-            input.resume = Some(resume);
+            input.resume = Some(ConnectorInputResume::seal_in_txn(
+                self, txn, call_ref, sealed_at, protocol, state,
+            )?);
             PENDING_CALLS.put(&self.store, txn, call_ref, &row)?;
             Ok(true)
         })?)
