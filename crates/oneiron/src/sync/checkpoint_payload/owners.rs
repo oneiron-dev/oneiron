@@ -23,7 +23,9 @@ use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::checkpoint_payload::rows::{OtherClient, OwnerRef, bad_part};
+use crate::ports::checkpoint::EntityRowPlacement;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
+use crate::store::checkpoint_payload::rows::{OtherClient, OwnerRef, Unresolved, bad_part};
 use crate::sync::bridge::{format_edge_key, parse_edge_key};
 use crate::sync::carrier_parts::is_part_key;
 use crate::sync::custody::CUSTODY_MAP;
@@ -156,16 +158,42 @@ pub(crate) fn root_entry(
     }
 }
 
-/// An entity's row bytes, placed by its kind as the registry places it.
+/// An entity's row bytes, placed by its kind as the registry places it. A
+/// CLAIM or a NOTE is placed from its own bytes, as its getter places the
+/// row (FIX 10279): an ordinary CLAIM and a NOTE that names no one are their
+/// tree's, a dreamer step's CLAIM is the response client's, and an origin
+/// CLAIM or a NOTE core with a live author stays whole, named.
 pub(super) fn entity_row(id: EntityId, value: &[u8], owners: &dyn SyncPayloadOwners) -> Placement {
     let owner = OwnerRef::entity(&id);
-    let kind =
-        EntityMetadataHeader::parse(value).map(|header| owners.entity_kind(header.entity_type));
+    let header = EntityMetadataHeader::parse(value);
+    if header
+        .as_ref()
+        .is_some_and(|header| [ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE].contains(&header.entity_type))
+    {
+        return match crate::ports::checkpoint::entity_row_placement(value) {
+            EntityRowPlacement::Owner => Placement::owned(owner, Vec::new()),
+            EntityRowPlacement::Other(client) => Placement::Dispatched(client),
+            EntityRowPlacement::Unclassified(reason) => {
+                Placement::unclassified(Some(owner), unclassified(reason))
+            }
+        };
+    }
+    let kind = header.map(|header| owners.entity_kind(header.entity_type));
     match kind {
         Some(KindPlacement::Owner) => Placement::owned(owner, Vec::new()),
         Some(KindPlacement::Other(client)) => Placement::Dispatched(client),
         Some(KindPlacement::Unclassified(reason)) => Placement::unclassified(Some(owner), reason),
         None => Placement::unclassified(Some(owner), SyncUnclassified::Undecodable),
+    }
+}
+
+/// The sync reason for a row the getter's rule leaves whole.
+fn unclassified(reason: Unresolved) -> SyncUnclassified {
+    match reason {
+        Unresolved::Undecodable => SyncUnclassified::Undecodable,
+        Unresolved::UnknownKind => SyncUnclassified::UnknownKind,
+        Unresolved::NoOwner | Unresolved::SharedOwners => SyncUnclassified::NoOwner,
+        Unresolved::ActorSplit(why) => SyncUnclassified::ActorSplit(why),
     }
 }
 
@@ -332,18 +360,21 @@ fn id_key(key: &str) -> KeyClass {
 
 /// The value `no_one`, a split of the value under `key` in `root`, with
 /// each of `opened` (a field and its actor) back: `None` when its family
-/// drops it for an actor that did not open. A field the family does not
-/// spell refuses.
+/// drops it for an actor that did not open. `holes` is every field the
+/// split took out, opened or not: a family that drops what did not open
+/// tells it from what the stored value already named no one in (FIX 10282).
+/// A field the family does not spell refuses.
 pub(super) fn root_fill(
     root: &str,
     key: &str,
     no_one: &[u8],
     opened: &[(&str, EntityId)],
+    holes: &std::collections::BTreeSet<&str>,
 ) -> Result<Option<Vec<u8>>> {
     match root {
         ROOM_TURNS_MAP => crate::sync::room_turns::checkpoint::fill(no_one, opened),
         "head_move_receipts" | "note_forks" | "note_proposals" => {
-            crate::sync::note::checkpoint::fill(root, no_one, opened)
+            crate::sync::note::checkpoint::fill(root, no_one, opened, holes)
         }
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::fill(no_one, opened),
         ROW_BIRTHS_MAP => crate::sync::row_birth::checkpoint::fill(key, no_one, opened),
