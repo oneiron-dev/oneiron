@@ -508,7 +508,7 @@ impl Vault {
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         let live = source.capture(&CopyGenerations::of_rows(&image.databases["sync_state"]))?;
         // What the source erased, those after the cut too (FIX 4753).
-        let erased = source.erased_ids();
+        let (erased, privacy_erased) = source.erasure_state();
         image.drop_machine_identity();
         // The copy holds the source's records, so its host orders hold them too.
         host_holds::carry(&mut image.databases, live.host_holds())?;
@@ -525,6 +525,7 @@ impl Vault {
             restored_at,
             Custody::Fork(Some((&live, &pads))),
             &erased,
+            &privacy_erased,
             budget,
         )?;
         // A pack source it erased halts the copy's routes too (FIX 6086).
@@ -752,7 +753,13 @@ impl Vault {
         current.store.refuse_archived()?;
         // Every id `current` has hard-erased, those after the checkpoint
         // too: the restored rows must not name those actors (FIX 3655).
-        let erased = crate::deletion::hard_erased_ids_in(current)?;
+        let (erased, privacy_erased) = {
+            let rtxn = current.store.env.read_txn()?;
+            (
+                crate::ports::hard_erased_ids_in_txn(&current.store, &rtxn)?,
+                crate::deletion::privacy_erasure_info_in_txn(&current.store, &rtxn)?,
+            )
+        };
         let installed = current.installed_pack_sources()?;
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         // The carried rows hold `current`'s custody binding and retirements,
@@ -778,6 +785,7 @@ impl Vault {
             restored_at,
             custody,
             &erased,
+            &privacy_erased,
             &write_budget::Unfloored,
         )?;
         // A home table whose live rows did not read came from the image.

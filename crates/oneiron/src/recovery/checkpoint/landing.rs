@@ -2,7 +2,7 @@
 //! behind every restore, wake and migrate (moved out of the checkpoint
 //! module whole).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use heed::types::Bytes;
@@ -23,9 +23,16 @@ pub(crate) struct RestoreActorScrubWriter<'write, 'env> {
     vault: &'write Vault,
     wtxn: &'write mut heed::RwTxn<'env>,
     erased: &'write BTreeSet<EntityId>,
+    privacy_erased: &'write BTreeMap<EntityId, crate::deletion::TombstoneValueV2>,
 }
 
-impl<'env> RestoreActorScrubWriter<'_, 'env> {
+impl<'write, 'env> RestoreActorScrubWriter<'write, 'env> {
+    pub(crate) fn privacy_erasure_info(
+        &self,
+    ) -> &'write BTreeMap<EntityId, crate::deletion::TombstoneValueV2> {
+        self.privacy_erased
+    }
+
     pub(crate) fn parts(&mut self) -> (&Vault, &mut heed::RwTxn<'env>, &BTreeSet<EntityId>) {
         (self.vault, &mut *self.wtxn, self.erased)
     }
@@ -51,6 +58,7 @@ impl Vault {
         restored_at: u64,
         custody: Custody<'_>,
         erased: &BTreeSet<EntityId>,
+        privacy_erased: &BTreeMap<EntityId, crate::deletion::TombstoneValueV2>,
         budget: &dyn RecoveryWriteBudget,
     ) -> std::result::Result<(MadeDestination, ForkedCustody, Self, RestoreReport), Rejected> {
         validate_image_rows_before_destination(&image)?;
@@ -272,6 +280,7 @@ impl Vault {
                         vault: &vault,
                         wtxn: txn,
                         erased: &erased,
+                        privacy_erased,
                     },
                     opened,
                 )?;
@@ -285,6 +294,7 @@ impl Vault {
                 vault: &vault,
                 wtxn: txn,
                 erased: &erased,
+                privacy_erased,
             })?;
             // And what those erases took that no obligation retired (FIX
             // 10461, 10533, 10631, 10436).

@@ -96,18 +96,33 @@ event kinds keep their pre-apply phase; without born touches all routed events
 keep that phase. Normal source and housekeeping passes carry no exclusion.
 No runtime or full privacy claim is made.
 
-Deleting the original also tears only its native-id-bound scoped touch rows
-in the same writer. Each source's own native legal hold keeps its row without
-blocking the original's delete. Checkpoint restore uses its actual erased
-original set to repeat that cleanup, and hold release repeats it for hard-erased
-originals once their sources are no longer held. Relationship ids are not actor
-ids; this does not add a relationship-to-actor erasure cascade.
+Ordinary deletes keep the existing touch history and checkpoint window. Only
+an actual native reason whose `erases_checkpoint_payloads()` is true tears the
+original's typed, native-id-bound source rows. The scan acts on source rows
+present in the COMM family; malformed or unrelated rows are not ownership
+proof. Each source's own native legal hold keeps its row without blocking the
+original's delete. Relationship ids are not actor ids; this adds no
+relationship-to-actor erasure cascade.
 
-The original's actual checkpoint-privacy reason settles these sources' own
-entity-owned compartments before their live rows go.
-Remote hard replay passes its decoded reason before the purge, not a fabricated
-reason from a missing topology reservation. Other delete reasons retain their
-checkpoint window. The native key finisher still defers keys a source's own hold
-keeps. No new child delete reason, tombstone, numeric policy or compatibility
-reader is introduced. This is the named scoped-source path, not a whole-vault
-privacy or runtime proof.
+The same writer settles each matching source's entity-owned compartments
+before its live row goes. Local deletion uses the actual request's reserved
+reason. Remote replay uses its actual decoded reason after the original's
+protection checks, before the absent-original branch. No missing reservation,
+unknown reason or candidate row is converted into a privacy reason or an
+actual deletion effect. The native key finisher defers keys a source's own
+hold keeps.
+
+The existing permanent marker remains presence-only for admission. Its
+informational value records a real privacy request's canonical reason, time
+and request id, without letting a later ordinary request forget that setting.
+Ordinary marker replacement and insert-only behavior is unchanged. Checkpoint
+landing carries this known current information from the same live snapshot as
+its existing hard-erased ids. The private authenticated landing writer retains
+that information for deferred hold release, without fabricating an owner act,
+clock or UUID. Existing actor, blob and body sweeps keep their complete hard-id
+sets; only this source cleanup selects privacy reasons. Historical image
+information remains data under that actual restore context, not a grant.
+No new child marker, delete reason, ledger, numeric policy or compatibility
+reader is introduced. This is source-only qualification of the named live-row,
+checkpoint-landing and hold-release paths, not a whole-vault, all-history or
+runtime privacy proof.

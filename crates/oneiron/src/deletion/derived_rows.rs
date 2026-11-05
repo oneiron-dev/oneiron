@@ -20,7 +20,6 @@ pub(crate) type EntitySideRowEraser =
 
 /// Every per-entity eraser, one line per module.
 const ERASERS: &[EntitySideRowEraser] = &[
-    crate::comm::erase_scoped_touch_sources_in_txn,
     |write, txn, id| crate::agent_dispatch::erase_workflow_tool_source_in_txn(write.store, txn, id),
     |write, txn, id| crate::typed_body::erase_in_txn(write.store, txn, id),
     |write, txn, id| crate::office_body::erase_in_txn(write.store, txn, id),

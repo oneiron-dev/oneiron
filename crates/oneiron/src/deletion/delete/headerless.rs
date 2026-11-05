@@ -15,8 +15,8 @@ use super::super::rendezvous::{
 };
 use super::super::sweep_queue::HardEraseSweepExtras;
 use super::super::tombstone::{
-    DeleteReason, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER, ROW_DELETION_FENCE,
-    TombstoneValueV2, window_label_from_timestamp,
+    DeleteReason, IDENTITY_SOFT_DELETE_MARKER, ROW_DELETION_FENCE, TombstoneValueV2,
+    window_label_from_timestamp,
 };
 use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
@@ -40,7 +40,14 @@ impl Vault {
         // a nonexistent entity must not mint tombstones or receipts.
         {
             let rtxn = self.store.env.read_txn()?;
-            if !self.active_delete_scope_exists_in_txn(&rtxn, id)? {
+            if !self.active_delete_scope_exists_in_txn(&rtxn, id)?
+                && !crate::comm::scoped_touch_source_scope_exists_in_txn(
+                    &self.store,
+                    &rtxn,
+                    id,
+                    Some(reason.into()),
+                )?
+            {
                 return Ok(DeleteEntityOutcome::missing());
             }
         }
@@ -158,7 +165,12 @@ impl Vault {
             requested_at,
             TopologyDeletePhase::Committed,
         )?;
-        let marker_key = HexId(*id);
+        let had_touch_sources = crate::comm::erase_scoped_touch_sources_for_reason_in_txn(
+            &crate::secret_custody::CustodyWrite::of(self),
+            &mut wtxn,
+            id,
+            Some(tombstone.reason),
+        )?;
         // ONE-1149 ownership claim: re-probe the FULL delete scope INSIDE
         // the erasing txn (race-free under LMDB's single writer). The read
         // probe above gated the tombstone publish; THIS probe gates the
@@ -169,18 +181,17 @@ impl Vault {
         // published), guarded exactly like the receiver-side
         // `apply_replayed_tombstone` nothing-local branch, and the actor
         // sweep, as there.
-        if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
+        if !self.active_delete_scope_exists_in_txn(&wtxn, id)? && !had_touch_sources {
             if reason.active_store_hard_purge_v1() {
                 crate::claim::invalidate_weave_digest_source_in_txn(&self.store, &mut wtxn, id)?;
             }
-            if reason.active_store_hard_purge_v1()
-                && !HARD_DELETE_MARKER.contains(&self.store, &wtxn, &marker_key)?
-            {
-                HARD_DELETE_MARKER.put(
+            if reason.active_store_hard_purge_v1() {
+                crate::deletion::tombstone::record_hard_delete_marker_in_txn(
                     &self.store,
                     &mut wtxn,
-                    &marker_key,
-                    &tombstone.encode().to_vec(),
+                    id,
+                    &tombstone.encode(),
+                    false,
                 )?;
             }
             // An erased actor with no residue left here may still be named
@@ -256,6 +267,7 @@ impl Vault {
             erase,
             owner_act,
         )?;
+        let existed = existed || had_touch_sources;
         affected.extend(citing);
         cancelled.extend(purged_cancelled);
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
@@ -282,11 +294,12 @@ impl Vault {
             // state; without the local marker a hostile tombstone removal
             // + re-put would resurrect this id through the
             // materialization gates.
-            HARD_DELETE_MARKER.put(
+            crate::deletion::tombstone::record_hard_delete_marker_in_txn(
                 &self.store,
                 &mut wtxn,
-                &marker_key,
-                &tombstone.encode().to_vec(),
+                id,
+                &tombstone.encode(),
+                true,
             )?;
             crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id)
                 .erase_planned_pack_revision()?;

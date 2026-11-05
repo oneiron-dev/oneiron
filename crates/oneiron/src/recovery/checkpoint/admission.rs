@@ -183,6 +183,7 @@ impl Vault {
             restored_at,
             custody,
             &BTreeSet::new(),
+            &std::collections::BTreeMap::new(),
             &write_budget::Unfloored,
         )
         .map_err(|rejected| rejected.at(P::RowsLanding))?;

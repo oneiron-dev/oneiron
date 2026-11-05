@@ -208,7 +208,23 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     mut restore: crate::recovery::checkpoint::RestoreActorScrubWriter<'_, '_>,
 ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
     let erased = restore_erased_payload_targets_in_txn(&mut restore)?;
+    let current_privacy = restore.privacy_erasure_info();
     let (vault, wtxn, _) = restore.parts();
+    for (id, info) in current_privacy {
+        super::tombstone::record_hard_delete_marker_in_txn(
+            &vault.store,
+            wtxn,
+            id,
+            &info.encode(),
+            false,
+        )?;
+    }
+    let privacy_info = super::tombstone::privacy_erasure_info_in_txn(&vault.store, wtxn)?;
+    let privacy_reasons = privacy_info
+        .iter()
+        .map(|(id, info)| (*id, info.reason))
+        .collect();
+    crate::comm::erase_scoped_touch_sources_for_erased_in_txn(vault, wtxn, &privacy_reasons)?;
     // The spawn asks the image brings back for any of them, actor or not,
     // leave its replay rows and step starts again (FIX 9180).
     crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
@@ -227,7 +243,6 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
         .store
         .rerun_gate_claim_scrubs_in_txn(wtxn, &erased, now)?;
     crate::outbound::erase_connector_reply_bodies_by_authors_in_txn(vault, wtxn, &erased)?;
-    crate::comm::erase_scoped_touch_sources_for_erased_in_txn(vault, wtxn, &erased)?;
     for actor in &erased {
         {
             let mut erase = ActorErasureWriter::new(vault, wtxn, *actor);
@@ -265,8 +280,13 @@ pub(super) fn rerun_birth_actor_scrubs_in_txn(
         return Ok(());
     }
     let erased = hard_erased_ids_in_txn(vault, wtxn)?;
+    let privacy_info = super::tombstone::privacy_erasure_info_in_txn(&vault.store, wtxn)?;
+    let privacy_reasons = privacy_info
+        .iter()
+        .map(|(id, info)| (*id, info.reason))
+        .collect();
+    crate::comm::erase_scoped_touch_sources_for_erased_in_txn(vault, wtxn, &privacy_reasons)?;
     crate::provenance::birth::release_held_births_in_txn(vault, wtxn, &erased)?;
-    crate::comm::erase_scoped_touch_sources_for_erased_in_txn(vault, wtxn, &erased)?;
     crate::provenance::release_held_actor_stamps_in_txn(vault, wtxn, &erased)
 }
 

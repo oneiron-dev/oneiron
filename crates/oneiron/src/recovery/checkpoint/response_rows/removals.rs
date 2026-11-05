@@ -81,26 +81,47 @@ pub(in crate::recovery::checkpoint) fn halt_erased_pack_routes(
 }
 
 impl SideRestoreSource<'_> {
-    /// Every id this source has hard-erased, read now, so a side copy's
-    /// sweep takes what it erased after the image's cut too (FIX 4753). A
-    /// source whose markers do not read gives none, warned: the copy lands
-    /// as it would without them.
     pub(in crate::recovery::checkpoint) fn erased_ids(&self) -> BTreeSet<EntityId> {
+        self.erasure_state().0
+    }
+
+    /// The source's hard IDs and known privacy information in the same read.
+    pub(in crate::recovery::checkpoint) fn erasure_state(
+        &self,
+    ) -> (
+        BTreeSet<EntityId>,
+        std::collections::BTreeMap<EntityId, crate::deletion::TombstoneValueV2>,
+    ) {
         let read = match &self.0 {
-            Source::Open(vault) => crate::deletion::hard_erased_ids_in(vault),
+            Source::Open(vault) => (|| {
+                let txn = vault.store.env.read_txn()?;
+                Ok::<_, crate::Error>((
+                    crate::ports::hard_erased_ids_in_txn(&vault.store, &txn)?,
+                    crate::deletion::privacy_erasure_info_in_txn(&vault.store, &txn)?,
+                ))
+            })(),
             Source::Disk { dir, page_seal, .. } => {
                 let prefix = crate::side_table::DELETION_HARD_DELETE_MARKER.prefix;
                 crate::world_keys::read_sealed(dir, page_seal.as_ref(), || {
                     crate::store::read_existing_sync_state_rows(dir, &[prefix])
                 })
                 .map(|rows| {
-                    // A key that spells no id names no erase.
-                    rows.iter()
-                        .filter_map(|(key, _)| {
-                            let hex = std::str::from_utf8(key.strip_prefix(prefix)?).ok()?;
-                            EntityId::from_hex(hex).ok()
-                        })
-                        .collect()
+                    let mut ids = BTreeSet::new();
+                    let mut privacy = std::collections::BTreeMap::new();
+                    for (key, value) in &rows {
+                        let Some(id) = key
+                            .strip_prefix(prefix)
+                            .and_then(|key| std::str::from_utf8(key).ok())
+                            .and_then(|hex| EntityId::from_hex(hex).ok())
+                        else {
+                            continue;
+                        };
+                        ids.insert(id);
+                        if let Some(info) = crate::deletion::privacy_erasure_info(value) {
+                            privacy.insert(id, info);
+                        }
+                    }
+                    (ids, privacy)
                 })
             }
         };
@@ -110,7 +131,7 @@ impl SideRestoreSource<'_> {
                 "a side restore's source erase markers did not read; the copy's sweep takes \
                  only those its image holds"
             );
-            BTreeSet::new()
+            (BTreeSet::new(), std::collections::BTreeMap::new())
         })
     }
 }

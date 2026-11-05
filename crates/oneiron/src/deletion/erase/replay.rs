@@ -129,7 +129,14 @@ impl Vault {
         // A peer erased a world: its keys go here too, whether or not this
         // replica holds the WORLD row (fix 7). A soft delete or an archive
         // keeps them: the world restores from old bundles.
+        let mut had_touch_sources = false;
         if decoded.is_hard() {
+            had_touch_sources = crate::comm::erase_scoped_touch_sources_for_reason_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+                decoded.reason,
+            )?;
             // Keep the positive body binding until its native disposition
             // settles; the source fence then covers absent entity rows too.
             crate::deletion::checkpoint_payload::settle_workflow_tool_payloads_for_reason_in_txn(
@@ -255,7 +262,6 @@ impl Vault {
         }
 
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
-        let marker_key = HexId(*id);
         let marker_value = decoded.local_hard_delete_marker_value();
         // Probe the FULL delete scope (entity row, vectors, text, phonetic,
         // short-ids, edges): orphan residue without an entities row still
@@ -291,9 +297,13 @@ impl Vault {
             // still gates a future re-put after hostile tombstone-map
             // manipulation. The guarded write keeps every-boot replay a
             // read-only no-op once the marker exists.
-            if !HARD_DELETE_MARKER.contains(&self.store, &*wtxn, &marker_key)? {
-                HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
-            }
+            crate::deletion::tombstone::record_hard_delete_marker_in_txn(
+                &self.store,
+                wtxn,
+                id,
+                &marker_value,
+                false,
+            )?;
             if let Some((request_id, tombstone_reason)) =
                 decoded.request_id.zip(raw_value.first().copied())
             {
@@ -341,7 +351,7 @@ impl Vault {
             )?);
             return Ok((
                 ReplayedTombstoneOutcome::HardPurged {
-                    erased: false,
+                    erased: had_touch_sources,
                     receipt_id: None,
                     sweep_key: None,
                 },
@@ -356,12 +366,6 @@ impl Vault {
         let (cascaded_shells, mut changed_documents, shell_cancelled) =
             self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id, None)?;
         cancelled.extend(shell_cancelled);
-        crate::comm::settle_scoped_touch_checkpoint_payloads_for_reason_in_txn(
-            &self.store,
-            wtxn,
-            id,
-            decoded.reason,
-        )?;
         let (_existed, citing, purged_cancelled) = self.purge_entity_active_store_in_txn(
             wtxn,
             id,
@@ -382,7 +386,13 @@ impl Vault {
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
-        HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
+        crate::deletion::tombstone::record_hard_delete_marker_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            &marker_value,
+            true,
+        )?;
         crate::deletion::ActorErasureWriter::new(self, wtxn, *id).erase_planned_pack_revision()?;
         let mut erase = crate::deletion::ActorErasureWriter::new(self, &mut *wtxn, *id);
         crate::feedback::erase_handoff_as_in_txn(&mut erase)?;
