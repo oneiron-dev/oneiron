@@ -1,7 +1,7 @@
 //! Core half of `store::retrieval_telemetry::types`: its store-layer items live in `oneiron_store::retrieval_telemetry::types` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::retrieval_telemetry::types::*;
+pub(crate) use oneiron_store::retrieval_telemetry::types::*;
 
 use super::run_store::RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT;
 use crate::entity_id::bytes_to_hex_lower;

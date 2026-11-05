@@ -44,7 +44,7 @@ const LOCAL_LEN: usize = 30;
 pub const OUTSIDE: MemberStep = MemberStep::Zip { entry: u32::MAX };
 
 /// One entry as the central directory declares it.
-struct Entry {
+pub struct Entry {
     name: String,
     method: CompressionMethod,
     modified: DateTime,
