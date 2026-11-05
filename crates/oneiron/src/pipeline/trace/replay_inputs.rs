@@ -37,10 +37,20 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         seed.as_ref()
             .map(|(ids, steps)| json!({"count": ids.len(), "steps": steps}))
     };
+    let mut string_memory = builder
+        .media_search
+        .memory()
+        .map(crate::host_memory::MachineMemory::empty_lease);
+    let mut account_string = |value: String| {
+        if let Some(memory) = string_memory.as_mut() {
+            memory.materialized(0, value.capacity() as u64);
+        }
+        value
+    };
     let corpus_scope = match &builder.corpus_scope {
         CorpusScope::All => json!({"kind": "all"}),
         CorpusScope::Unscoped => json!({"kind": "unscoped"}),
-        CorpusScope::Corpus(id) => json!({"kind": "corpus", "ids": [id.to_hex()]}),
+        CorpusScope::Corpus(id) => json!({"kind": "corpus", "ids": [account_string(id.to_hex())]}),
         CorpusScope::AnyOf(ids) => {
             let mut corpus_memory = builder
                 .media_search
@@ -92,7 +102,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         json!({
             "anchor_start": t.anchor_start, "anchor_end": t.anchor_end,
             "learned_start": t.learned_start, "learned_end": t.learned_end,
-            "sigma_secs": t.sigma_secs, "anchor_mode": format!("{:?}", t.anchor_mode),
+            "sigma_secs": t.sigma_secs, "anchor_mode": account_string(format!("{:?}", t.anchor_mode)),
             "adaptive": t.adaptive, "limit": t.limit,
             "query_occurred_range": t.query_occurred_range, "effort_anchor": t.effort_anchor,
         })
@@ -224,7 +234,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             "deadline_cut_short": builder.deadline.is_some_and(crate::retrieval_depth::RetrievalDeadline::was_cut_short),
             "candidate_filter_present": builder.candidate_filter.is_some(),
             "corpus_scope": corpus_scope,
-            "world_scope": format!("{:?}", builder.world_scope),
+            "world_scope": account_string(format!("{:?}", builder.world_scope)),
             "result_limit": builder.result_limit,
             "skill_executor": builder.skill_executor.as_deref(),
             "context_pack_budget": builder.context_pack_budget.map(|b| json!({
@@ -240,9 +250,9 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             "criticality": builder.criticality,
             "project_id": builder.project_id_filter,
             "repo_ref": builder.repo_ref_filter.as_ref().map(crate::codebase::RepoRef::canonical),
-            "facet_filter": builder.facet_filter.map(|f| format!("{f:?}")),
-            "relationship_filter": builder.relationship_filter.map(|f| format!("{f:?}")),
-            "made_by": format!("{:?}", builder.made_by),
+            "facet_filter": builder.facet_filter.map(|f| account_string(format!("{f:?}"))),
+            "relationship_filter": builder.relationship_filter.map(|f| account_string(format!("{f:?}"))),
+            "made_by": account_string(format!("{:?}", builder.made_by)),
             "recency_blend": builder.recency_blend_applies(),
             "salience": builder.apply_salience,
             "confidence": builder.apply_confidence,
@@ -324,8 +334,8 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     inputs.config["model_revisions"] = json!({
         "text_embedding_space": builder.vault.config.embedding_model.as_deref(),
         "text_embedding_transform": builder.vault.config.embedding_transform.as_deref(),
-        "analyzer_manifest_hash": replay_identity.analyzer_manifest_hash.as_deref().map(crate::entity_id::bytes_to_hex_lower),
-        "bm25_field_schema_hash": replay_identity.bm25_field_schema_hash.as_deref().map(crate::entity_id::bytes_to_hex_lower),
+        "analyzer_manifest_hash": replay_identity.analyzer_manifest_hash.as_deref().map(|hash| account_string(crate::entity_id::bytes_to_hex_lower(hash))),
+        "bm25_field_schema_hash": replay_identity.bm25_field_schema_hash.as_deref().map(|hash| account_string(crate::entity_id::bytes_to_hex_lower(hash))),
     });
     inputs.config["context_pack_world_share"] = json!(builder.context_pack_world_share);
     inputs.config["fusion"] = json!({
