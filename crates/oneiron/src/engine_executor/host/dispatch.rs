@@ -326,6 +326,20 @@ impl RecordingJsHost<'_, '_> {
             match injection.answer(&call) {
                 InjectedAnswer::Live => {}
                 InjectedAnswer::Settled { outcome, view } => {
+                    // The injected card replaces `store_reply`: consume its
+                    // exact occurrence before another same-byte store replays.
+                    if let SelfDispatchOutcome::StoredReply(reply) = &*outcome
+                        && let Some(reference) = reply
+                            .output
+                            .get("ref")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|reference| reference.starts_with("occurrence:"))
+                        && let Some((output, _)) =
+                            self.resolve_result(&JsResultRef::Handle(reference.to_owned()))
+                        && !self.replayed_stores.contains(&output.path)
+                    {
+                        self.replayed_stores.push(output.path);
+                    }
                     // A granted `reveal.wait` reads its value again under its
                     // own lease, for the guest's view only; the row keeps its
                     // value-free answer (FIX 2360). A failed replay leaves
