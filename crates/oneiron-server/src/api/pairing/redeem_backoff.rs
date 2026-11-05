@@ -12,17 +12,49 @@
 //! so attempts sent at once wait their turns as attempts sent one by one
 //! do. A success forgets the address, and so does
 //! `limits.pairing_redeem_quiet_ms` with no redemption from it. Every
-//! address counts alike, loopback and mesh peers too, and one caller with no
-//! address stands for every such caller; no address ever waits for another,
-//! so no stranger can block the owner's pairing. The record lives in this
-//! process only: a restart forgets it.
+//! address counts alike, loopback, in-process and mesh peers too; no address
+//! ever waits for another, so no stranger can block the owner's pairing. A
+//! request that reaches this server through a socket carrying many callers
+//! (the managed supervisor's socket, the relay) names no address of its
+//! own, and is not counted: one count for all of them would let any one
+//! block the rest. The managed edge in front bounds those. The record lives
+//! in this process only: a restart forgets it.
 
 use std::collections::HashMap;
-use std::net::IpAddr;
-use std::sync::{Mutex, PoisonError};
+use std::convert::Infallible;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use axum::extract::{ConnectInfo, FromRequestParts};
+use axum::http::request::Parts;
+
 use crate::config::LimitsConfig;
+use crate::server::SyncServer;
+
+/// The address a redemption is counted under: its connection's own peer,
+/// or the client a configured trusted proxy names behind it
+/// ([`crate::auth::client_address`]). `None` for a request no socket peer
+/// carries, which is not counted.
+pub(crate) struct RedeemSource(pub(crate) Option<IpAddr>);
+
+impl FromRequestParts<Arc<SyncServer>> for RedeemSource {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        server: &Arc<SyncServer>,
+    ) -> Result<Self, Self::Rejection> {
+        if parts.extensions.get::<ConnectInfo<SocketAddr>>().is_none() {
+            return Ok(Self(None));
+        }
+        Ok(Self(crate::auth::client_address(
+            &parts.headers,
+            &parts.extensions,
+            &server.config.trusted_proxies,
+        )))
+    }
+}
 
 /// The first wait past the free failures; each later one doubles.
 const FIRST_WAIT: Duration = Duration::from_secs(1);
@@ -81,7 +113,7 @@ impl AddressRedemptions {
 
 #[derive(Default)]
 struct Redemptions {
-    by_address: HashMap<Option<IpAddr>, AddressRedemptions>,
+    by_address: HashMap<IpAddr, AddressRedemptions>,
     /// How many addresses the last forgetting pass kept.
     kept_at_prune: usize,
 }
@@ -113,7 +145,7 @@ impl PairingRedeemBackoff {
     /// [`Self::succeeded`] forgets the address.
     pub(crate) fn admit(
         &self,
-        address: Option<IpAddr>,
+        address: IpAddr,
         rules: RedeemBackoffRules,
         now: Instant,
     ) -> Result<(), Duration> {
@@ -147,7 +179,7 @@ impl PairingRedeemBackoff {
 
     /// Forgets `address` once one of its redemptions succeeded: its next
     /// pairing starts over.
-    pub(crate) fn succeeded(&self, address: Option<IpAddr>) {
+    pub(crate) fn succeeded(&self, address: IpAddr) {
         self.redemptions
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

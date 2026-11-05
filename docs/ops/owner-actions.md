@@ -2203,7 +2203,9 @@ before its next code is read: one second, then twice as long after each try, up 
 While it waits the door answers `429 TOO_MANY_ATTEMPTS` with `Retry-After`. A success, or an
 hour with no redemption from the address, starts it over. Every address counts alike, loopback
 and paired mesh machines too, and no address ever waits for another, so a stranger cannot block
-your own pairing. A restart forgets the count. Change the rows in `[limits]`:
+your own pairing. Behind a managed host's supervisor or relay the server sees no caller's own
+address, so it counts nothing there; the managed edge bounds those callers. A restart forgets the
+count. Change the rows in `[limits]`:
 
 ```toml
 [limits]
