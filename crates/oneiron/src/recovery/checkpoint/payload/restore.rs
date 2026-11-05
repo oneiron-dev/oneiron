@@ -228,10 +228,10 @@ fn held_up(opened: &OpenedOwnerRows, at: &RowLocator) -> bool {
         .any(|dependency| dependency.at == *at && opened.unavailable.contains(&dependency.on))
 }
 
-/// Lands `opened` in `txn`, the restore's image write, once the image's rows
-/// are in: each content bundle through its getter's restore, each carrier
-/// bundle through KS7-3's port, and each unavailable call through the
-/// ledger's own sink (FIX 6260). How many parts an unopened owner held up.
+/// Lands every bundle once the image's rows are in. Only blob versions
+/// missing their actor part wait for the authenticated landing continuation:
+/// its native claim reads need all history/custody rows and the type index.
+/// Unavailable calls still land through the ledger's own sink (FIX 6260).
 ///
 /// # Errors
 ///
@@ -240,28 +240,47 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     opened: OpenedPayload,
-) -> Result<usize> {
+    retired_digests: &BTreeSet<[u8; 32]>,
+) -> Result<Vec<OpenedOwnerRows>> {
     #[cfg(feature = "sync")]
     let carriers = SyncCarriers::new(store);
     #[cfg(not(feature = "sync"))]
     let carriers = Deferred;
-    let mut dropped = 0;
+    let mut blob_artifacts = Vec::new();
     for (role, rows) in opened.bundles {
-        let restored = match role {
-            BundleRole::Content(getter) => getter.restore_in_txn(store, txn, rows)?,
-            BundleRole::Carrier(carrier) => carriers.restore_in_txn(txn, carrier, rows)?,
+        match role {
+            BundleRole::Content(Getter::ProvenanceBody) => {
+                crate::provenance::body::checkpoint::restore_pruned_in_txn(
+                    store,
+                    txn,
+                    rows,
+                    retired_digests,
+                )?;
+            }
+            BundleRole::Content(Getter::BlobArtifact) => {
+                if let Some(deferred) =
+                    crate::blob_artifact::checkpoint::restore_or_defer_in_txn(store, txn, rows)?
+                {
+                    blob_artifacts.push(deferred);
+                }
+            }
+            BundleRole::Content(getter) => {
+                getter.restore_in_txn(store, txn, rows)?;
+            }
+            BundleRole::Carrier(carrier) => {
+                carriers.restore_in_txn(txn, carrier, rows)?;
+            }
             BundleRole::Actors => {
                 return Err(Error::InvariantViolation(
                     "an actor bundle lands through its owners' content",
                 ));
             }
-        };
-        dropped += restored.dropped.len();
+        }
     }
     for (at, value) in &opened.unavailable_calls {
         crate::outbound_intent_ledger::checkpoint::restore_unavailable_in_txn(
             store, txn, at, value,
         )?;
     }
-    Ok(dropped)
+    Ok(blob_artifacts)
 }

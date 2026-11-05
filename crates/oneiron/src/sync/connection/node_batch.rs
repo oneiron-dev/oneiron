@@ -1,12 +1,14 @@
 //! One bounded node proposal batch per sync tick, its window updates and
 //! document frames taking turns (FIX 8870), then at most one owed artifact
-//! publication part as its own one-member batch (FIX 9575).
+//! publication part as its own one-member batch (FIX 9575). A window write
+//! larger than a batch keeps its buffered head and sends ordered parts over
+//! later ticks (FIX 786).
 
 use futures_util::SinkExt;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::session::WsSink;
-use super::{LocalUpdate, SyncConnection};
+use super::{LocalUpdate, LoopExit, SyncConnection};
 use crate::artifact_hosting::ArtifactPublicationPart;
 use crate::side_table::HexId;
 use crate::sync::client::{SyncClient, SyncResidenceMode};
@@ -35,6 +37,25 @@ pub(super) fn fits(frames: &[Vec<u8>], size: usize, next: &[u8]) -> Result<bool,
 #[derive(Debug, Default)]
 pub(super) struct NodeBatchTurn {
     documents_lead: bool,
+    // Only take_update removes the buffered head; these frames belong to it.
+    pending: Option<PendingWindowUpdate>,
+}
+
+#[derive(Debug)]
+struct PendingWindowUpdate {
+    frames: std::collections::VecDeque<Vec<u8>>,
+    binding: transport::WindowPadBinding,
+    first_id: Option<[u8; 32]>,
+}
+
+fn forget_pending(
+    client: &SyncClient,
+    window_key: &str,
+    pending: &mut Option<PendingWindowUpdate>,
+) {
+    if let Some(pending) = pending.take() {
+        client.forget_window_send(window_key, &pending.binding, pending.first_id);
+    }
 }
 
 impl SyncConnection {
@@ -46,7 +67,7 @@ impl SyncConnection {
         documents: &mut Vec<Vec<u8>>,
         publication: &mut Option<ArtifactPublicationPart>,
         turn: &mut NodeBatchTurn,
-    ) -> Result<Option<(ArtifactPublicationPart, bool)>, String> {
+    ) -> Result<Option<(ArtifactPublicationPart, bool)>, LoopExit> {
         let opened = client.config.residence_mode == SyncResidenceMode::Opened;
         let mut frames = Vec::new();
         let mut size = 1;
@@ -66,6 +87,7 @@ impl SyncConnection {
                         &mut frames,
                         &mut size,
                         &mut full_updates,
+                        &mut turn.pending,
                     )?;
                 }
                 documents_next = !documents_next;
@@ -77,10 +99,19 @@ impl SyncConnection {
             Ok(()) if frames.is_empty() => Ok(()),
             Ok(()) => match transport::encode_node_batch(&frames).into_result() {
                 Err(error) => Err(error.to_string()),
-                Ok(batch) => write
-                    .send(Message::Binary(batch.into()))
-                    .await
-                    .map_err(|error| error.to_string()),
+                Ok(batch) => {
+                    let mut left = self.left.subscribe();
+                    tokio::select! {
+                        biased;
+                        _ = left.wait_for(|left| *left) => {
+                            self.publish_leave_unqueued(&mut full_updates);
+                            return Err(LoopExit::Shutdown);
+                        }
+                        sent = write.send(Message::Binary(batch.into())) => {
+                            sent.map_err(|error| error.to_string())
+                        }
+                    }
+                }
             },
         };
         if sent.is_err() {
@@ -93,16 +124,14 @@ impl SyncConnection {
             }
             // Documents remain in their own durable journal until the home ACK.
         }
-        sent?;
-        send_publication_part(write, client, publication).await
+        sent.map_err(LoopExit::Disconnected)?;
+        send_publication_part(self, write, client, publication).await
     }
 }
 
 impl SyncConnection {
-    /// Moves the next window update `updates` holds into the batch `frames`
-    /// fills, queueing on the way each one no batch sends now. Returns
-    /// whether it took one: false once the buffer is empty, or once the next
-    /// update waits for the next tick's room.
+    /// Moves the next window update into the batch. An unfinished multipart
+    /// send stays at the head until all its frames have been selected.
     fn take_update(
         &self,
         client: &SyncClient,
@@ -111,9 +140,22 @@ impl SyncConnection {
         frames: &mut Vec<Vec<u8>>,
         size: &mut usize,
         full_updates: &mut Vec<LocalUpdate>,
+        pending: &mut Option<PendingWindowUpdate>,
     ) -> Result<bool, String> {
         while let Some(update) = updates.first() {
-            match client.update_verdict(&update.window_key, &update.update_bytes) {
+            let verdict = client.update_verdict(&update.window_key, &update.update_bytes);
+            let granted =
+                verdict == UpdateVerdict::Portable && client.residence_granted(&update.window_key);
+            if verdict != UpdateVerdict::Portable || !granted {
+                let interrupted = pending.is_some();
+                forget_pending(client, &update.window_key, pending);
+                if interrupted {
+                    // The home may hold a prefix. Ending this socket drops
+                    // its connection-local assembly instead of orphaning it.
+                    return Err("multipart window release changed".to_owned());
+                }
+            }
+            match verdict {
                 UpdateVerdict::Withheld => {
                     updates.remove(0);
                     continue;
@@ -127,73 +169,105 @@ impl SyncConnection {
                 }
                 UpdateVerdict::Portable => {}
             }
-            // A window the home refused to grant again: the write waits
-            // queued, as offline, until a grant or sync-all sends it.
-            if !client.residence_granted(&update.window_key) {
+            // A refused window keeps the same offline/regrant recovery path.
+            if !granted {
                 self.queue
                     .push(&update.window_key, &update.update_bytes)
                     .map_err(|error| error.to_string())?;
                 updates.remove(0);
                 continue;
             }
-            // The write goes in its window pad envelope for the home,
-            // projected and sealed once (FIX 7107). Check room before
-            // reserving a durable sequence. Excess work stays in the
-            // buffer for the next tick, never a per-op send; a write no
-            // batch holds waits queued for the replay, which sends it
-            // frame by frame.
-            let sub_tag = if opened {
-                window_sub_tags::RESIDENCE_UPDATE
-            } else {
-                window_sub_tags::UPDATE
-            };
-            let context = client.window(&update.window_key);
-            let ready = client
-                .prepare_window_send(
-                    &update.window_key,
-                    &update.update_bytes,
-                    context.as_ref().map(|window| &window.doc),
-                )
-                .map_err(|error| error.to_string())?;
-            let (candidate, _) = ready
-                .frames(&update.window_key, sub_tag, opened.then_some(1))
-                .map_err(|error| error.to_string())?;
-            if !candidate
-                .iter()
-                .all(|frame| super::session::fits_alone(frame))
-                || (frames.is_empty() && !super::session::fits_all(frames, *size, &candidate))
-            {
-                self.queue
-                    .push(&update.window_key, &update.update_bytes)
+            if pending.is_none() {
+                let sub_tag = if opened {
+                    window_sub_tags::RESIDENCE_UPDATE
+                } else {
+                    window_sub_tags::UPDATE
+                };
+                let context = client.window(&update.window_key);
+                let ready = client
+                    .prepare_window_send(
+                        &update.window_key,
+                        &update.update_bytes,
+                        context.as_ref().map(|window| &window.doc),
+                    )
                     .map_err(|error| error.to_string())?;
-                updates.remove(0);
-                continue;
+                let (candidate, _) = ready
+                    .frames(&update.window_key, sub_tag, opened.then_some(1))
+                    .map_err(|error| error.to_string())?;
+                let multipart = !super::session::fits_all(&[], 1, &candidate);
+                if !multipart && !super::session::fits_all(frames, *size, &candidate) {
+                    return Ok(false);
+                }
+                drop(candidate);
+                if multipart {
+                    let (candidate, _) = ready
+                        .frames_batched(&update.window_key, sub_tag, opened.then_some(1))
+                        .map_err(|error| error.to_string())?;
+                    if !fits(frames, *size, &candidate[0]).map_err(|error| error.to_string())? {
+                        return Ok(false);
+                    }
+                }
+                // The probe's sequence has the same fixed-size encoding.
+                // Only the actual send reserves and registers a sequence.
+                let seq = if opened {
+                    Some(
+                        self.queue
+                            .push(&update.window_key, &update.update_bytes)
+                            .map_err(|error| error.to_string())?,
+                    )
+                } else {
+                    None
+                };
+                if multipart {
+                    let (members, binding) = client
+                        .window_send_batch_frames(
+                            &ready,
+                            &update.window_key,
+                            sub_tag,
+                            seq,
+                            &update.update_bytes,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    let first_id = members.first().and_then(|first| {
+                        transport::decode_window_sync(&first[1..])
+                            .ok()
+                            .and_then(|(_, _, payload)| transport::window_pad_frame_id(payload))
+                    });
+                    *pending = Some(PendingWindowUpdate {
+                        frames: members.into(),
+                        binding,
+                        first_id,
+                    });
+                } else {
+                    let members = client
+                        .window_send_frames(
+                            &ready,
+                            &update.window_key,
+                            sub_tag,
+                            seq,
+                            &update.update_bytes,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    for frame in members {
+                        *size += 4 + frame.len();
+                        frames.push(frame);
+                    }
+                }
             }
-            if !super::session::fits_all(frames, *size, &candidate) {
-                return Ok(false);
+            if let Some(partial) = pending.as_mut() {
+                while let Some(frame) = partial.frames.front() {
+                    if !fits(frames, *size, frame).map_err(|error| error.to_string())? {
+                        return Ok(false);
+                    }
+                    let frame = partial
+                        .frames
+                        .pop_front()
+                        .expect("pending frame was just read");
+                    *size += 4 + frame.len();
+                    frames.push(frame);
+                }
             }
-            let seq = if opened {
-                Some(
-                    self.queue
-                        .push(&update.window_key, &update.update_bytes)
-                        .map_err(|error| error.to_string())?,
-                )
-            } else {
-                None
-            };
-            let members = client
-                .window_send_frames(
-                    &ready,
-                    &update.window_key,
-                    sub_tag,
-                    seq,
-                    &update.update_bytes,
-                )
-                .map_err(|error| error.to_string())?;
-            for frame in members {
-                *size += 4 + frame.len();
-                frames.push(frame);
-            }
+            *pending = None;
             let update = updates.remove(0);
             if !opened {
                 full_updates.push(update);
@@ -247,10 +321,11 @@ fn take_document(
 /// whether the socket took it. A part dropped unsent is a change since
 /// replaced or settled, whose debt stays in the outbox.
 async fn send_publication_part(
+    connection: &SyncConnection,
     write: &mut WsSink,
     client: &SyncClient,
     publication: &mut Option<ArtifactPublicationPart>,
-) -> Result<Option<(ArtifactPublicationPart, bool)>, String> {
+) -> Result<Option<(ArtifactPublicationPart, bool)>, LoopExit> {
     let Some(part) = publication.take() else {
         return Ok(None);
     };
@@ -259,10 +334,14 @@ async fn send_publication_part(
     }
     let batch = transport::encode_node_batch(std::slice::from_ref(&part.frame))
         .into_result()
-        .map_err(|error| error.to_string())?;
-    write
-        .send(Message::Binary(batch.into()))
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(Some((part, true)))
+        .map_err(|error| LoopExit::Disconnected(error.to_string()))?;
+    let mut left = connection.left.subscribe();
+    tokio::select! {
+        biased;
+        _ = left.wait_for(|left| *left) => Err(LoopExit::Shutdown),
+        sent = write.send(Message::Binary(batch.into())) => {
+            sent.map_err(|error| LoopExit::Disconnected(error.to_string()))?;
+            Ok(Some((part, true)))
+        }
+    }
 }
