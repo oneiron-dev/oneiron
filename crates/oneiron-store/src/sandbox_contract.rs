@@ -6,7 +6,7 @@ pub const SANDBOX_WIT_WORLD_NAME: &str = "oneiron:code-run/guest@1.0.0";
 
 pub const SANDBOX_JS_COMPONENT_NAME: &str = "oneiron.plain-js.quickjs-component";
 
-pub const PLAIN_JS_HOST_VERB_DTS: &str = include_str!("../../wit/generated/code-run.d.ts");
+pub const PLAIN_JS_HOST_VERB_DTS: &str = include_str!("../../oneiron/wit/generated/code-run.d.ts");
 
 /// Trust tier selected by the host before linking a guest program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
