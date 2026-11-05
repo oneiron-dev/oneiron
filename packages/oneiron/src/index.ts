@@ -3223,6 +3223,50 @@ export class Oneiron {
         reenrol: (input: Facade.CustodyMemberReenrolRequest): Facade.CustodySetRevision => this.#call(() => this.#client.vaultCustodyMembersReenrol(input) as Facade.CustodySetRevision),
       },
     },
+    mail: {
+      pack: {
+        /** The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing. */
+        install: (input: Facade.EmptyRequest = {}): Facade.PackPutReceipt => this.#call(() => this.#client.vaultMailPackInstall(input) as Facade.PackPutReceipt),
+      },
+      sources: {
+        /** Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names. */
+        connect: (input: Facade.MailSourceConnectRequest): Facade.MailSourceConnectReceipt => this.#call(() => this.#client.vaultMailSourcesConnect(input) as Facade.MailSourceConnectReceipt),
+        /** The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted. */
+        list: (input: Facade.EmptyRequest = {}): Facade.MailSourceView[] => this.#call(() => this.#client.vaultMailSourcesList(input) as Facade.MailSourceView[]),
+        settings: {
+          /** Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address. */
+          set: (input: Facade.MailSourceSettingsRequest): Facade.MailSourceView => this.#call(() => this.#client.vaultMailSourcesSettingsSet(input) as Facade.MailSourceView),
+        },
+        members: {
+          /** Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on. */
+          set: (input: Facade.MailSourceMembersRequest): Facade.MailSourceView => this.#call(() => this.#client.vaultMailSourcesMembersSet(input) as Facade.MailSourceView),
+        },
+        /** Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins. */
+        audience_events: (input: Facade.MailSourceRef): Facade.SourceAudienceEventView[] => this.#call(() => this.#client.vaultMailSourcesAudienceEvents(input) as Facade.SourceAudienceEventView[]),
+        /** Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers. */
+        sync_status: (input: Facade.MailSourceRef): Facade.MailSyncStatusView => this.#call(() => this.#client.vaultMailSourcesSyncStatus(input) as Facade.MailSyncStatusView),
+      },
+      threads: {
+        /** Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox. */
+        share: (input: Facade.MailThreadShareRequest): Facade.MailThreadShareReceipt => this.#call(() => this.#client.vaultMailThreadsShare(input) as Facade.MailThreadShareReceipt),
+        /** Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving. */
+        unshare: (input: Facade.MailThreadShareRequest): Facade.MailThreadShareReceipt => this.#call(() => this.#client.vaultMailThreadsUnshare(input) as Facade.MailThreadShareReceipt),
+        /** One mail thread's messages, oldest first, to a reader of its source or someone it was shared with. */
+        read: (input: Facade.MailThreadRequest): Facade.MailThreadView => this.#call(() => this.#client.vaultMailThreadsRead(input) as Facade.MailThreadView),
+      },
+      compliance: {
+        /** Whether org compliance search across mailboxes is on; off by default. */
+        setting: (input: Facade.EmptyRequest = {}): Facade.MailComplianceSettingView => this.#call(() => this.#client.vaultMailComplianceSetting(input) as Facade.MailComplianceSettingView),
+        /** Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log. */
+        set: (input: Facade.MailComplianceSetRequest): Facade.MailComplianceSettingView => this.#call(() => this.#client.vaultMailComplianceSet(input) as Facade.MailComplianceSettingView),
+        /** The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it. */
+        log: (input: Facade.EmptyRequest = {}): Facade.MailComplianceEventView[] => this.#call(() => this.#client.vaultMailComplianceLog(input) as Facade.MailComplianceEventView[]),
+        /** Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers. */
+        search: (input: Facade.MailComplianceSearchRequest): Facade.MailComplianceSearchReply => this.#call(() => this.#client.vaultMailComplianceSearch(input) as Facade.MailComplianceSearchReply),
+      },
+      /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
+      inbox: (input: Facade.MailInboxRequest): Facade.MailInboxPage => this.#call(() => this.#client.vaultMailInbox(input) as Facade.MailInboxPage),
+    },
   }
   /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
   fetch(input: Facade.WebFetchRequest): Facade.FetchResult { return this.#call(() => this.#client.fetch(input) as Facade.FetchResult) }

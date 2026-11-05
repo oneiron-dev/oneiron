@@ -168,7 +168,7 @@ pub use tasks::{
     render_tasks_section,
 };
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
-pub use turn_opener::turn_opener_line;
+pub use turn_opener::{is_turn_opener_line, turn_opener_line};
 
 /// Collapse control characters and the Unicode line and paragraph separators
 /// (which are not controls) so a rendered row is always one physical line,

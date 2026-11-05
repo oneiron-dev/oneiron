@@ -22,6 +22,7 @@ mod layout;
 mod scratchpad;
 mod session;
 mod split;
+pub(crate) use split::next_state_part;
 mod standing;
 mod tasks_budget;
 mod turn_actions;
