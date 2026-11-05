@@ -60,6 +60,7 @@ pub(super) mod connector_subscription_routes;
 pub(super) mod conversation_learning_routes;
 pub(super) mod courtesy_delete_routes;
 pub(super) mod craft_candidate_routes;
+mod curator_rubric_routes;
 pub(super) mod decision_ask_routes;
 pub(super) mod desktop_takeover_routes;
 pub(super) mod diary_routes;
@@ -74,6 +75,7 @@ mod folder_source_routes;
 mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
+mod harness_evaluation_routes;
 pub(super) mod history_routes;
 pub(super) mod house_routes;
 mod hub_table;
@@ -138,6 +140,7 @@ fn owner_tables() -> OwnerTable {
         checkpoint_policy_routes::owner_table(),
         claim_refinement_routes::owner_table(),
         commitment_routes::owner_table(),
+        curator_rubric_routes::owner_table(),
         conflict_routes::owner_table(),
         connector_admission_routes::owner_table(),
         connector_consent_routes::owner_table(),
@@ -146,6 +149,7 @@ fn owner_tables() -> OwnerTable {
         diary_routes::owner_table(),
         disclosure_routes::owner_table(),
         dreamer_maintenance_routes::owner_table(),
+        harness_evaluation_routes::owner_table(),
         dreamer_routes::owner_table(),
         free_time_routes::owner_table(),
         embedding_space_routes::owner_table(),

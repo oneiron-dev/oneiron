@@ -203,7 +203,11 @@ pub(crate) fn validate_claim_body_and_decode_in_txn(
                     },
                 ))
         },
-        |body| crate::comm::check_claim_against_descriptor_in_txn(store, txn, body),
+        |body| {
+            store
+                .record_hooks
+                .check_claim_against_descriptor_in_txn(store, txn, body)
+        },
     )
 }
 

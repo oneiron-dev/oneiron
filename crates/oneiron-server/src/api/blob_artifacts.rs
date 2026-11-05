@@ -413,6 +413,14 @@ pub(super) async fn view(
     Ok(Json(json!(view)))
 }
 
+struct AppendError(ApiError);
+
+impl From<oneiron::Error> for AppendError {
+    fn from(error: oneiron::Error) -> Self {
+        Self(core_engine_error("artifact version append failed", error))
+    }
+}
+
 /// Append a version, on the head or forked from an earlier version.
 #[utoipa::path(
     post,
@@ -444,7 +452,6 @@ pub(super) async fn append(
     let outcome = blocking_read(move || {
         let vault = server.vault();
         let (occurred, now) = moment(&server);
-        let reader = made_by_reader(&vault, &auth, request.made_by.as_ref())?;
         vault
             .append_blob_artifact_version_checked(
                 &id,
@@ -452,12 +459,12 @@ pub(super) async fn append(
                 &bytes,
                 &provenance,
                 request.made_by.as_ref(),
-                reader,
+                || made_by_reader(vault, &auth, request.made_by.as_ref()).map_err(AppendError),
                 actor,
                 occurred,
                 now,
             )
-            .map_err(|error| core_engine_error("artifact version append failed", error))
+            .map_err(|AppendError(error)| error)
     })
     .await?;
     Ok(Json(match outcome {
@@ -864,7 +871,7 @@ pub(super) async fn propose_output(
         run_ref: request.run_ref,
         name: request.name,
         media_type: request.media_type,
-        report: request.report,
+        report: request.report.to_string(),
         made_by: request.made_by,
     };
     let pending = blocking_read(move || {
