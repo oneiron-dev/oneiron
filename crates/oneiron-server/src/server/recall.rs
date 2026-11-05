@@ -129,15 +129,12 @@ impl SyncServer {
         let embed = self.recall_embed(effort, payer);
         move |query| {
             let mut vectors = embed(query);
-            if let Some(vector) = vectors.text_index.as_ref() {
-                query_memory.materialized(
-                    0,
-                    (vector.capacity() as u64).saturating_mul(std::mem::size_of::<f32>() as u64),
-                );
-            }
+            let retained = query_vector_bytes(&vectors);
+            query_memory.materialized(0, retained);
             if let Some(media) = media {
                 let seeds = self.recall_media_vectors(media, payer)?;
                 vectors.media.extend(seeds);
+                query_memory.materialized(0, query_vector_bytes(&vectors).saturating_sub(retained));
             }
             Ok(vectors)
         }
@@ -528,6 +525,32 @@ impl SyncServer {
             }
         }
     }
+}
+
+fn query_vector_bytes(vectors: &RecallQueryVectors) -> u64 {
+    let text = vectors.text_index.as_ref().map_or(0, |vector| {
+        (vector.capacity() as u64).saturating_mul(std::mem::size_of::<f32>() as u64)
+    });
+    let backing = (vectors.media.capacity() as u64).saturating_mul(std::mem::size_of::<(
+        String,
+        InputKind,
+        Vec<f32>,
+        Vec<InputKind>,
+    )>() as u64);
+    vectors.media.iter().fold(
+        text.saturating_add(backing),
+        |bytes, (space, _, vector, kinds)| {
+            bytes
+                .saturating_add(space.capacity() as u64)
+                .saturating_add(
+                    (vector.capacity() as u64).saturating_mul(std::mem::size_of::<f32>() as u64),
+                )
+                .saturating_add(
+                    (kinds.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<InputKind>() as u64),
+                )
+        },
+    )
 }
 
 /// The snake_case name of the effort a recall asked for, for its retrieval
