@@ -61,7 +61,11 @@ impl NativeMapMutationView<'_> {
                 {
                     return Err(invalid());
                 }
-                retained_state(document, &frontier)?
+                let source = retained_state(document, &frontier)?;
+                if let Some(source) = &source {
+                    require_source_chain(fact, source)?;
+                }
+                source
             }
             NativeMapWriteView::Delete => None,
         };
@@ -70,6 +74,28 @@ impl NativeMapMutationView<'_> {
             source,
         })
     }
+}
+
+fn require_source_chain(
+    fact: &super::super::codec::recipient::SkillStateFactView<'_>,
+    source: &EntityDoc,
+) -> Result<()> {
+    let operation = fact.operation()?;
+    let previous = super::super::register::read_fact(source)?;
+    match previous {
+        Some(previous) => {
+            let prior = previous.view().operation()?;
+            if operation.previous != Some(&previous.token()?)
+                || prior.ordinal.checked_add(1) != Some(operation.ordinal)
+                || prior.state != operation.prior
+            {
+                return Err(invalid());
+            }
+        }
+        None if operation.previous.is_none() && operation.ordinal == 1 => {}
+        None => return Err(invalid()),
+    }
+    Ok(())
 }
 
 fn retained_state(document: &EntityDoc, frontier: &Frontiers) -> Result<Option<EntityDoc>> {
