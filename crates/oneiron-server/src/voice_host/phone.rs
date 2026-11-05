@@ -12,7 +12,7 @@ use crate::auth::{CoreAuth, CoreScope};
 
 /// Created only from the receiving agent's actual authenticated credential.
 /// The bridge's credential and caller metadata never enter this type.
-pub(crate) struct PhoneCallRead {
+pub struct PhoneCallRead {
     vault: Arc<Vault>,
     key: ScopedReadActorKey,
     agent: EntityId,

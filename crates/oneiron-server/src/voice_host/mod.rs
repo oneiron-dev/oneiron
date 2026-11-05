@@ -38,6 +38,7 @@ pub(crate) use boot::VoiceBoot;
 pub use brain::{ChatBrain, ChatBrainBindings};
 pub(crate) use entry_barrier::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
+pub use phone::PhoneCallRead;
 pub(crate) use public::{LiveVoiceSessions, start_public};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 pub use speech::{PlayoutFrame, TurnSources, VoiceBrainOut, VoicePlayout};
@@ -82,7 +83,7 @@ pub struct VoiceHostBindings {
     /// trusted pass attachment supplies None, never a fabricated credential.
     pub speculative_auth: Option<CoreAuth>,
     /// The receiving agent's call-bound reader, never a bridge credential.
-    pub(crate) phone: Option<Arc<phone::PhoneCallRead>>,
+    pub phone: Option<Arc<PhoneCallRead>>,
     /// The host's owner-plane policy config each sentence's safeguard
     /// enforces under (FIX 5043): its notice wording and dial.
     pub owner_policy: PolicyModelConfig,
