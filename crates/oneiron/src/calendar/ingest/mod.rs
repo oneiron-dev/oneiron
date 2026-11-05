@@ -49,6 +49,7 @@ pub mod door;
 pub(crate) use admission::ensure_ics_import_actor;
 pub(crate) use calendar_source::{
     CalendarSourceChange, apply_calendar_source_change, apply_calendar_source_feed,
+    apply_calendar_source_omissions,
 };
 pub(in crate::calendar) use admission::{
     ConnectorAdmissionSource, admit_connector_event, connector_event_ref,

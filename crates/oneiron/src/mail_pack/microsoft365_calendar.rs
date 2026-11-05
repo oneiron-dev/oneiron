@@ -218,6 +218,10 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
                     .map_err(|_| refused("graph_calendar_cursor_unencodable"))?,
             ),
             complete: complete || !cursor.listing,
+            covers: Some(crate::TimeRange {
+                start: cursor.opened_at.saturating_sub(VIEW_BEFORE_SECS),
+                end: cursor.opened_at.saturating_add(VIEW_AFTER_SECS),
+            }),
         }))
     }
 }

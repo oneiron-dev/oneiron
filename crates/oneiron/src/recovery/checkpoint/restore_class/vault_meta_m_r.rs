@@ -15,6 +15,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // landed, as the image holds them (FIX 12559).
     (&t::MAIL_PACK_ATTACHMENT, CONTENT),
     (&t::MAIL_PACK_BODY_QUEUE, CONTENT),
+    (&t::MAIL_PACK_CALENDAR_RESOURCE, CONTENT),
     (&t::MAIL_PACK_CALENDAR_SYNC, CONTENT),
     (&t::MAIL_PACK_COMPLIANCE_EVENT, LIVE),
     (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
