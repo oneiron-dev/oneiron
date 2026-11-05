@@ -140,8 +140,8 @@ impl Vault {
     /// edit verb, and every path, the old and new name of a rename and the
     /// path of a delete among them, must match an editable glob. A Grant
     /// whose editable set is empty edits nothing. Every path must also be on
-    /// the registered repository's retained whitelist (FIX 4299), else
-    /// `PathOutsideScope`.
+    /// the admitted repository's own retained whitelist when its owner set
+    /// one (FIX 4299), else `PathOutsideScope`.
     ///
     /// # Errors
     /// A store, fold or clock failure; never a refusal.
@@ -164,9 +164,8 @@ impl Vault {
             Err(refused) => return Ok(Err(refused)),
         };
         let paths = target.paths.iter().map(String::as_str);
-        let locator = membership.repo_ref.locator();
         Ok(self
-            .admit_registered_edit_in_txn(txn, Some(repo), &locator, paths)?
+            .admit_registered_edit_in_txn(txn, repo, paths)?
             .map(|()| membership))
     }
 

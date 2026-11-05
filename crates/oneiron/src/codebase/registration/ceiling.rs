@@ -90,23 +90,33 @@ impl Vault {
         Ok(found)
     }
 
-    /// Whether every retained edit ceiling of the folder `locator` admits
-    /// every path of `paths`, in `txn` (FIX 4299): each registration of the
-    /// folder, and `anchor`'s own when it carries one. A folder with no
-    /// registration keeps no ceiling. `Ok(Err(PathOutsideScope))` names a
-    /// miss; no other refusal is answered here.
+    /// Whether the retained edit ceiling of the admitted repository `repo`
+    /// admits every path of `paths`, in `txn` (FIX 4299): a Grant edit is
+    /// judged by that repository's own registration only, never by a
+    /// ceiling found through its folder, its manifest or another anchor
+    /// (L02 07:57). An unregistered repository keeps no ceiling.
+    /// `Ok(Err(PathOutsideScope))` names a miss of that configured ceiling;
+    /// no other refusal is answered here.
     ///
     /// # Errors
-    /// A store failure.
+    /// A store failure, and a CODE body that does not decode.
     pub(crate) fn admit_registered_edit_in_txn<'p>(
         &self,
         txn: &heed::RoTxn<'_>,
-        anchor: Option<EntityId>,
-        locator: &str,
+        repo: EntityId,
         paths: impl IntoIterator<Item = &'p str>,
     ) -> Result<std::result::Result<(), RepoAccessRefusal>> {
+        let Some(registration) = self
+            .registered_repository_body_in_txn(txn, repo)?
+            .and_then(|body| body.registration)
+        else {
+            return Ok(Ok(()));
+        };
         Ok(
-            match self.first_outside_ceiling_in_txn(txn, anchor, locator, paths)? {
+            match paths
+                .into_iter()
+                .find(|path| !registration.admits_edit(path))
+            {
                 Some(_) => Err(RepoAccessRefusal::PathOutsideScope),
                 None => Ok(()),
             },
