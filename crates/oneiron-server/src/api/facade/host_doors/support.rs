@@ -72,7 +72,10 @@ pub(super) async fn rendered(
     sources: Option<Vec<EntityId>>,
     replay: Option<MediaReplayKey>,
 ) -> MemoryResult<AiAnswer> {
-    rendered_in_step(server, operation, request, voices, run, sources, replay, None).await
+    rendered_in_step(
+        server, operation, request, voices, run, sources, replay, None,
+    )
+    .await
 }
 
 pub(super) async fn rendered_in_step(
