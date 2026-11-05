@@ -159,6 +159,8 @@ pub struct SelfDeniedResult {
 pub struct SelfFailedResult {
     pub effect: SelfEffect,
     pub error: String,
+    /// The stable facade code recorded from a typed native failure, if any.
+    pub code: Option<String>,
 }
 
 /// Durable wait produced for effects that need human/external resolution.

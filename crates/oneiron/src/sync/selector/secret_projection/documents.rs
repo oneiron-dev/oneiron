@@ -370,6 +370,36 @@ pub(crate) fn document_copy_in_txn(
     }))
 }
 
+/// Owner settlement of a retained copy lineage (FIX12419, document-only).
+pub(crate) mod settlement;
+
+/// The shipped visible diff of `submitted`, a peer's text of `copy`, onto
+/// `text`: pure, no store read. Both the import writer and the
+/// owner-settlement review call it, same semantics.
+fn copy_diff_result(
+    text: &str,
+    copy: &TextCopy,
+    submitted: &str,
+) -> Result<RepoProjectionDiffResult> {
+    if submitted == copy.copy {
+        Ok(RepoProjectionDiffResult::Unchanged)
+    } else if copy.copy.is_empty() && text.is_empty() {
+        // An empty text holds nothing to mask: the peer's text is the text.
+        Ok(RepoProjectionDiffResult::Applied(
+            submitted.as_bytes().to_vec(),
+        ))
+    } else {
+        let projected = match &copy.places {
+            Some(places) => RepoProjectedFileCopy::Masked {
+                copy: copy.copy.as_bytes(),
+                places,
+            },
+            None => RepoProjectedFileCopy::Opaque,
+        };
+        apply_repo_projection_diff(text.as_bytes(), projected, submitted.as_bytes())
+    }
+}
+
 /// A peer's update `bytes` of the copy lineage of `source`'s document,
 /// landed in one writer: `admit` judges it first, the lineage takes the
 /// peer's operations, and its changed text lands on the source's durable
@@ -417,21 +447,7 @@ where
         bring_current(vault, txn, &lineage, &source, &copy.copy)?;
         storage::import_complete(&lineage, bytes)?;
         let submitted = lineage.get_text(BODY).to_string();
-        let result = if submitted == copy.copy {
-            RepoProjectionDiffResult::Unchanged
-        } else if copy.copy.is_empty() && text.is_empty() {
-            // An empty text holds nothing to mask: the peer's text is the text.
-            RepoProjectionDiffResult::Applied(submitted.as_bytes().to_vec())
-        } else {
-            let projected = match &copy.places {
-                Some(places) => RepoProjectedFileCopy::Masked {
-                    copy: copy.copy.as_bytes(),
-                    places,
-                },
-                None => RepoProjectedFileCopy::Opaque,
-            };
-            apply_repo_projection_diff(text.as_bytes(), projected, submitted.as_bytes())?
-        };
+        let result = copy_diff_result(&text, &copy, &submitted)?;
         let landed = match result {
             RepoProjectionDiffResult::Unchanged => None,
             RepoProjectionDiffResult::Applied(applied) => match String::from_utf8(applied) {
