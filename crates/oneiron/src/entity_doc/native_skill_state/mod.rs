@@ -2,6 +2,7 @@
 
 mod codec;
 mod prepare;
+mod project;
 mod request;
 
 pub(crate) use request::SkillStateSnapshot;

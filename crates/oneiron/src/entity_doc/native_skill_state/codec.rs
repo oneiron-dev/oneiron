@@ -238,6 +238,13 @@ impl SkillStateFact {
             && self.operation.birth_at == birth_at
     }
 
+    /// Pure projection can check the supplied birth, but has no Store/head
+    /// context. Full document-id/source admission belongs to its real caller.
+    pub(super) fn names_birth(&self, birth: &super::super::Birth) -> bool {
+        birth.entity == crate::entity_id::bytes_to_hex_lower(&self.operation.entity)
+            && birth.at == self.operation.birth_at
+    }
+
     pub(super) fn state(&self) -> Result<(SkillLifecycle, ClaimApprovalStatus)> {
         Ok((
             self.operation.state.lifecycle()?,
