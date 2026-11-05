@@ -27,7 +27,7 @@ pub(crate) mod checkout;
 pub(crate) mod checkout_recipient;
 pub(crate) mod claims;
 pub(crate) mod clearance;
-pub(crate) mod copy_id;
+pub(crate) use oneiron_store::origin::secret_projection::copy_id;
 pub(crate) mod disposal;
 pub(crate) mod edit;
 pub(crate) mod git;
@@ -55,6 +55,7 @@ use super::secret_marks::{
 };
 use crate::Vault;
 use crate::batch::secret_scan::project_marked_retained_repo_blob;
+use crate::code_document::CodeDocumentFrontier;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::git_wire::GitOid;
@@ -196,6 +197,47 @@ pub(crate) fn project_repo_bytes_in_txn(
     })
 }
 
+/// The placeholder a masked reader reads for `bytes`, a code document
+/// state's text, when that text grew from a marked repo blob it no longer is
+/// (FIX 8967): an edit of a marked file, or any later state of it. A mark
+/// is placed on the marked blob's own bytes and cannot be mapped onto edited
+/// text, so the text is opaque, never raw and never refused. `None` when
+/// `bytes` read by their own marks as before: they are a marked blob's, a
+/// stored repo blob's (its snapshot ASSET is held, so the receive read
+/// judged it), or grew from nothing marked. `sources` gives the BLAKE3 of
+/// each text the state grew from, proved from its own history; it is read
+/// only when the rest does not decide.
+///
+/// # Errors
+/// A store failure, or `sources`' own.
+pub(crate) fn sourced_opaque_in_txn<F>(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    facts: &RepoMarkFacts,
+    bytes: &[u8],
+    sources: F,
+) -> Result<Option<RepoOpaqueFile>>
+where
+    F: FnOnce() -> Result<Vec<[u8; 32]>>,
+{
+    let hash = *blake3::hash(bytes).as_bytes();
+    if facts.is_empty() || !facts.for_hash(&hash).is_empty() {
+        return Ok(None);
+    }
+    let asset = crate::codebase::snapshot_asset_entity_id(&hash)?;
+    if vault.get_entity_type_in_txn(txn, &asset)? == Some(crate::registry::ENTITY_TYPE_ASSET) {
+        return Ok(None);
+    }
+    for source in sources()? {
+        if let Some(source_blob) = facts.for_hash(&source).source_blob() {
+            return Ok(Some(RepoOpaqueFile {
+                source_blob: source_blob.clone(),
+            }));
+        }
+    }
+    Ok(None)
+}
+
 /// A tree's files as one audience reads them, path by path.
 #[derive(Debug)]
 pub(crate) struct RepoMaterializedCopy {
@@ -233,6 +275,23 @@ pub(crate) fn materialize_masked_repo(
     files: BTreeMap<String, Vec<u8>>,
     audience: &RepoSecretAudience<'_>,
 ) -> Result<RepoMaterializedCopy> {
+    materialize_masked_repo_sourced(vault, files, &BTreeMap::new(), audience)
+}
+
+/// [`materialize_masked_repo`] for a tree some of whose files are code
+/// document states (FIX 8967): a path `documents` names reads as
+/// [`sourced_opaque_in_txn`] reads it, by the history of that state, before
+/// its own bytes are joined to the marks.
+///
+/// # Errors
+/// As [`materialize_masked_repo`], or a stored document state that does
+/// not check.
+pub(crate) fn materialize_masked_repo_sourced(
+    vault: &Vault,
+    files: BTreeMap<String, Vec<u8>>,
+    documents: &BTreeMap<String, CodeDocumentFrontier>,
+    audience: &RepoSecretAudience<'_>,
+) -> Result<RepoMaterializedCopy> {
     let exact = |files: BTreeMap<String, Vec<u8>>| RepoMaterializedCopy {
         files: files
             .into_iter()
@@ -249,8 +308,20 @@ pub(crate) fn materialize_masked_repo(
     }
     let mut out = BTreeMap::new();
     for (path, bytes) in files {
-        let marks = facts.for_hash(blake3::hash(&bytes).as_bytes());
-        out.insert(path, project_repo_bytes_in_txn(vault, &txn, &marks, bytes)?);
+        let sourced = match documents.get(&path) {
+            Some(tested) => sourced_opaque_in_txn(vault, &txn, &facts, &bytes, || {
+                vault.code_document_source_hashes_in_txn(&txn, tested)
+            })?,
+            None => None,
+        };
+        let body = match sourced {
+            Some(opaque) => RepoBodyProjection::Opaque(opaque),
+            None => {
+                let marks = facts.for_hash(blake3::hash(&bytes).as_bytes());
+                project_repo_bytes_in_txn(vault, &txn, &marks, bytes)?
+            }
+        };
+        out.insert(path, body);
     }
     Ok(RepoMaterializedCopy { files: out })
 }
