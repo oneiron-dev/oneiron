@@ -46,6 +46,33 @@ pub(in crate::entity_doc) fn has_witness(row: &CanonicalEntityDocument) -> bool 
         })
 }
 
+/// Validate the carried values only; this grants no restore source standing.
+pub(in crate::entity_doc) fn validate_witnesses(row: &CanonicalEntityDocument) -> Result<()> {
+    let entity = EntityId::from_bytes(row.entity_id)?;
+    let validate = |bytes: Option<&[u8]>| -> Result<()> {
+        if let Some(bytes) = bytes {
+            let fact = SkillStateFact::decode(bytes)?;
+            if !fact.target_birth_is(entity, row.birth_at) {
+                return Err(invalid());
+            }
+        }
+        Ok(())
+    };
+    validate(row.native_skill_state.as_deref())?;
+    if let Some(history) = &row.history {
+        for version in &history.versions {
+            validate(version.native_skill_state.as_deref())?;
+        }
+        for fork in &history.forks {
+            if fork.output.is_none() && fork.output_native_skill_state.is_some() {
+                return Err(invalid());
+            }
+            validate(fork.output_native_skill_state.as_deref())?;
+        }
+    }
+    Ok(())
+}
+
 impl<'a> CanonicalSkillState<'a> {
     pub(in crate::entity_doc) fn from_source(
         row: &'a CanonicalEntityDocument,
@@ -55,28 +82,7 @@ impl<'a> CanonicalSkillState<'a> {
         // carried witness. A witness's own document id is historical: a
         // legitimate SWITCH keeps it while moving the storage slot.
         source.require_entity_document(row)?;
-        let entity = EntityId::from_bytes(row.entity_id)?;
-        let validate = |bytes: Option<&[u8]>| -> Result<()> {
-            if let Some(bytes) = bytes {
-                let fact = SkillStateFact::decode(bytes)?;
-                if !fact.target_birth_is(entity, row.birth_at) {
-                    return Err(invalid());
-                }
-            }
-            Ok(())
-        };
-        validate(row.native_skill_state.as_deref())?;
-        if let Some(history) = &row.history {
-            for version in &history.versions {
-                validate(version.native_skill_state.as_deref())?;
-            }
-            for fork in &history.forks {
-                if fork.output.is_none() && fork.output_native_skill_state.is_some() {
-                    return Err(invalid());
-                }
-                validate(fork.output_native_skill_state.as_deref())?;
-            }
-        }
+        validate_witnesses(row)?;
         Ok(Self { row })
     }
 
