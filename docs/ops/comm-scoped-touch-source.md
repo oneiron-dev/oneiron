@@ -95,3 +95,19 @@ later assertion wins a time tie, including mixed born/routed batches. Other
 event kinds keep their pre-apply phase; without born touches all routed events
 keep that phase. Normal source and housekeeping passes carry no exclusion.
 No runtime or full privacy claim is made.
+
+Deleting the original also tears only its native-id-bound scoped touch rows
+in the same writer. Each source's own native legal hold keeps its row without
+blocking the original's delete. Checkpoint restore uses its actual erased
+original set to repeat that cleanup, and hold release repeats it for hard-erased
+originals once their sources are no longer held. Relationship ids are not actor
+ids; this does not add a relationship-to-actor erasure cascade.
+
+The original's actual checkpoint-privacy reason settles these sources' own
+entity-owned compartments and known-value history before their live rows go.
+Remote hard replay passes its decoded reason before the purge, not a fabricated
+reason from a missing topology reservation. Other delete reasons retain their
+checkpoint window. The native key finisher still defers keys a source's own hold
+keeps. No new child delete reason, tombstone, numeric policy or compatibility
+reader is introduced. This is the named scoped-source path, not a whole-vault
+privacy or runtime proof.

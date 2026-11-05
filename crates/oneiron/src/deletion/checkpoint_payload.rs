@@ -58,6 +58,9 @@ pub(crate) fn settle_checkpoint_payloads_in_txn(
     let reason = topology_delete_reservation_in_txn(store, wtxn, id)?
         .filter(|reserved| request_id.is_none_or(|request| reserved.request_id == *request))
         .map(|reserved| reserved.reason);
+    crate::comm::settle_scoped_touch_checkpoint_payloads_for_reason_in_txn(
+        store, wtxn, id, reason,
+    )?;
     settle_checkpoint_payloads_for_reason_in_txn(store, wtxn, id, reason)
 }
 

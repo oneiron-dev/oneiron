@@ -227,6 +227,7 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
         .store
         .rerun_gate_claim_scrubs_in_txn(wtxn, &erased, now)?;
     crate::outbound::erase_connector_reply_bodies_by_authors_in_txn(vault, wtxn, &erased)?;
+    crate::comm::erase_scoped_touch_sources_for_erased_in_txn(vault, wtxn, &erased)?;
     for actor in &erased {
         {
             let mut erase = ActorErasureWriter::new(vault, wtxn, *actor);
@@ -265,6 +266,7 @@ pub(super) fn rerun_birth_actor_scrubs_in_txn(
     }
     let erased = hard_erased_ids_in_txn(vault, wtxn)?;
     crate::provenance::birth::release_held_births_in_txn(vault, wtxn, &erased)?;
+    crate::comm::erase_scoped_touch_sources_for_erased_in_txn(vault, wtxn, &erased)?;
     crate::provenance::release_held_actor_stamps_in_txn(vault, wtxn, &erased)
 }
 
