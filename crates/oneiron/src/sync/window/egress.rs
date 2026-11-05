@@ -859,10 +859,12 @@ pub(super) fn push_terminal_quarantine_marker(
 /// Takes out of `doc` each row it carries that the owner's full window would
 /// not pack now (Engine A; Sol AUD-2): a row whose binding no longer
 /// publishes, or one a later DerivedFrom edge made the words of a row bound
-/// otherwise. Its carrier, edges, birth and binding go; the row stays here.
-/// `pin` names the window pinned history-free before anything goes; the
-/// sweep passes `None`. A vault that holds no policy carries no such row.
-/// Whether anything went, committed.
+/// otherwise. Its carrier, edges, birth and binding go, and a withholding
+/// marker naming this machine takes their place, so a peer that already
+/// holds the row reads it to no one; the row stays here. `pin` names the
+/// window pinned history-free before anything goes; the sweep passes
+/// `None`. A vault that holds no policy carries no such row. Whether
+/// anything went, committed.
 ///
 /// # Errors
 ///
@@ -872,7 +874,7 @@ pub(in crate::sync) fn withhold_audience_carriers(
     doc: &LoroDoc,
     pin: Option<&WindowKey>,
 ) -> Result<bool> {
-    let withheld = {
+    let (withheld, by) = {
         let rtxn = vault.store.env.read_txn()?;
         if !crate::source_audience::any_policy_in(vault, &rtxn)? {
             return Ok(false);
@@ -885,9 +887,11 @@ pub(in crate::sync) fn withhold_audience_carriers(
                 carried.push(id);
             }
         });
+        // By this vault's own lineage, not its holds: a row held back here
+        // stays as its source carried it, and its holders are not told.
         let mut withheld = Vec::new();
         for id in carried {
-            if crate::source_audience::withheld_from_replication_in(
+            if crate::source_audience::withheld_by_lineage_in(
                 vault,
                 &rtxn,
                 &id,
@@ -896,7 +900,10 @@ pub(in crate::sync) fn withhold_audience_carriers(
                 withheld.push(id);
             }
         }
-        withheld
+        (
+            withheld,
+            crate::identity::read_machine_id_in_txn(vault, &rtxn)?,
+        )
     };
     if withheld.is_empty() {
         return Ok(false);
@@ -909,6 +916,10 @@ pub(in crate::sync) fn withhold_audience_carriers(
     for id in &withheld {
         remove_entity_crdt_carriers(&entities, &edges, id)?;
     }
+    // A peer that already holds one of these rows reads it to no one once
+    // it lands this marker (REVIEW-5911), rather than under the binding it
+    // travelled with.
+    crate::sync::source_audiences::mark_withheld(doc, &withheld, by.as_ref())?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(true)
 }
