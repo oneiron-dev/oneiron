@@ -56,7 +56,7 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
 | `docx.read` | `document` | `limits` (DOCX) | `docx_blocks`: body `blocks` (id, kind, role, text, runs, cells, lock) and scoped `stories` | none | `read_docx_body` |
 | `docx.revise` | `document` | `transaction` (stemma tracked-change grammar), `limits` | `docx_revised`: the transaction with its date pinned, notes | `document` | `prepare_revision_transaction`, `revise_with_notes` |
 | `docx.validate` | `document` | optional `transaction`, `limits` | `checked` | none | `validate_revision_transaction`, `validate_blocking_with_limits` |
-| `docx.project` | `source` | `changes` (set_text, set_runs, set_cell, move, insert, delete; set_story_text, set_story_runs and set_story_cell for header/footer/footnote/endnote/comment stories with an explicit scope; set_story_cell replaces only the addressed cell's first paragraph; a mark change on kept body text lands as a tracked formatting change, header/footer runs land as one whole-paragraph redline, note and comment runs land paragraph-scoped the same way, comments as Normal annotation text), `revision` (author, RFC 3339 date, group), `limits` | `written` | `document` | `project_docx` |
+| `docx.project` | `source` | `changes` (set_text, set_runs, set_cell, move, insert, delete; set_story_text, set_story_runs and set_story_cell for header/footer/footnote/endnote/comment stories with an explicit scope; set_story_cell replaces the addressed cell's first paragraph by default, or its exact in-cell paragraph id when `paragraph` is supplied; a mark change on kept body text lands as a tracked formatting change, header/footer runs land as one whole-paragraph redline, note and comment runs land paragraph-scoped the same way, comments as Normal annotation text), `revision` (author, RFC 3339 date, group), `limits` | `written` | `document` | `project_docx` |
 | `xlsx.read` | `workbook` | `limits` (package) | `xlsx_book`: sheets, cells, names, styles, locks | none | `read_xlsx_cells` |
 | `xlsx.project` | `source` | `changes` (cell, set_name, delete_name, conditional_formats: a range, a cell-value or formula rule, and the differential look written to `dxfs`), `limits`, optional `location` (directory, file_name: an external link naming it is the workbook's own and follows a sheet rename or deletion) | `written` | `workbook` | `project_xlsx` |
 | `xlsx.mark_full_calc` | `workbook` | `limits` | `written` | `workbook` | `mark_full_calc` |
@@ -73,7 +73,11 @@ Story paragraph ids such as `story_p1` are local to their story; table ids such 
 can also occur in the body and in other stories. Header/footer scopes include the source band
 (default, first or even). Synthetic render-time blank bands are not authored package parts
 and are not listed. Story roles are absent: body role tokens cannot be looked up by colliding
-story-local ids. The same text/run/cell/lock projection is used for both.
+story-local ids. The same text/run/cell/lock projection is used for both. Each cell also has a
+required ordered `paragraphs` list with native ids, guards, accepted inline text
+and exact target locks. Unlike the flat cell `text`, paragraph text excludes
+pending deleted tombstones. Nested table and opaque sibling blocks remain in
+the source package; their presence does not lock otherwise editable paragraphs.
 
 `docx.project` writes story text statelessly through the same native tracked
 transaction: `set_story_text` covers authored headers/footers plus footnote/endnote
@@ -98,7 +102,9 @@ Author/date, paragraph `para_id`, threading/resolve metadata, all other blocks,
 and body anchors stay intact; the edited comment's full content hash is recomputed.
 `set_story_cell` projects through the native `edit_story_cell` op, naming the
 actual story scope, its local table id and a logical row/column. Like the body
-cell writer, it replaces only the cell's first paragraph; later cell paragraphs,
+cell writer, absent `paragraph` it replaces only the cell's first paragraph.
+With `paragraph` it resolves that exact direct paragraph inside the selected
+cell, never another cell, nested table, story or body. Other cell paragraphs,
 table geometry and other cells stay intact. Header/footer and note cell text
 lands tracked; comment cell text lands as Normal annotation text in both outer
 modes, without accepting other cells' history. The native story table guard
@@ -108,10 +114,20 @@ story-to-body table-id fallback.
 Story move/insert/delete ops do not exist. Shared-Loro story paragraph import,
 scoped text/splice/mark ops, read, fork review and export (each changed paragraph
 as its full runs) are implemented on this chain and work once it integrates.
-Shared-Loro story tables remain unmodeled: their joined read text is not the
-first paragraph the native cell writer replaces. A faithful mutable table model
-needs independently addressed paragraphs, not a flat joined-cell import. Story
-structure and story ask pinning also remain unbuilt engineering scope. Filling an
+Shared-Loro story tables import each direct cell paragraph independently,
+never the joined redline cell text. `set_story_cell_paragraph` and
+`splice_story_cell_paragraph` carry scope, local table id, logical row/column
+and exact paragraph id; the model stores plain text, not rich marks. Every
+changed paragraph exports with the explicit native selector. Read, fork review
+and masked views include these cells; fork review uses the existing table-level
+Cells granularity. Scope, table/cell/paragraph membership, order and target locks
+must still match the imported source. Existing native restrictions on structural
+cell revisions, comment redlines, literal prefixes and inline anchors remain
+local to their actual targets. Header/footer and note cell text can layer tracked
+revisions through the native cell materializer; reading accepted text does not
+resolve their source history. Direct settlement touches only the edited
+paragraph, not other cells' pending changes. Story structure, rich cell marks
+and story ask pinning remain unbuilt engineering scope. Filling an
 empty header/footer paragraph supplies its actual semantic guard with an empty
 `expect`. Native expectations are substring matches; a blank expectation without
 a guard retains its prior refusal.

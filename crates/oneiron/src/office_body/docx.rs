@@ -10,9 +10,11 @@
 //! still name it. Imported blocks keep the package's block ids; a new paragraph
 //! gets a minted one. Beside the body, root `story_order` lists the imported
 //! stories in reader order and root `stories` maps each scope key to its
-//! paragraphs ([`stories`]).
+//! paragraphs and per-paragraph table cells ([`stories`], [`story_tables`]).
 
 mod stories;
+mod story_tables;
+pub use story_tables::{StoryCell, StoryCellParagraph, StoryTable};
 
 use super::invalid;
 use crate::entity_id::EntityId;
@@ -123,6 +125,25 @@ pub enum DocxBodyOp {
         len: usize,
         mark: DocxMark,
         on: bool,
+    },
+    /// Replace the plain text of one exact paragraph within a story table cell.
+    SetStoryCellParagraph {
+        scope: DocxStoryScope,
+        block: String,
+        row: usize,
+        col: usize,
+        paragraph: String,
+        text: String,
+    },
+    SpliceStoryCellParagraph {
+        scope: DocxStoryScope,
+        block: String,
+        row: usize,
+        col: usize,
+        paragraph: String,
+        at: usize,
+        delete: usize,
+        insert: String,
     },
     /// Replace one story paragraph's text by its shortest edit.
     SetStoryText {
@@ -416,6 +437,30 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
             } else {
                 body.unmark(*at..end, mark.key()).map_err(loro)?;
             }
+        }
+        DocxBodyOp::SetStoryCellParagraph {
+            scope,
+            block,
+            row,
+            col,
+            paragraph,
+            text,
+        } => {
+            story_tables::set_text(doc, scope, block, *row, *col, paragraph, text)?;
+        }
+        DocxBodyOp::SpliceStoryCellParagraph {
+            scope,
+            block,
+            row,
+            col,
+            paragraph,
+            at,
+            delete,
+            insert,
+        } => {
+            story_tables::splice(
+                doc, scope, block, *row, *col, paragraph, *at, *delete, insert,
+            )?;
         }
         DocxBodyOp::SetStoryText { scope, block, text } => {
             stories::set_text(doc, scope, block, text)?;

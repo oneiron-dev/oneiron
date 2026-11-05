@@ -220,7 +220,7 @@ fn cue_of(op: &str) -> &'static str {
         "set_doc_defaults" => "Change inherited document-default font settings once.",
         "table_op" => "Structural table edits; insert_row carries cell text in the same op.",
         "edit_story_cell" => {
-            "Edit one story table cell's first-paragraph text, addressed by story scope and table id."
+            "Edit one story table cell paragraph by scope and table id; paragraph selects an exact in-cell id, absent edits the first."
         }
         _ => GENERIC_CUE,
     }
@@ -290,6 +290,7 @@ fn shapes_of(op: &str) -> &'static [&'static str] {
         // id; the header shape shows the band the story must carry.
         "edit_story_cell" => &[
             r#"{"op":"edit_story_cell","scope":{"kind":"comment","id":"<comment_id>"},"target":"<table_id>","row_index":0,"col_index":0,"text":"<new text>"}"#,
+            r#"{"op":"edit_story_cell","scope":{"kind":"comment","id":"<comment_id>"},"target":"<table_id>","row_index":0,"col_index":0,"paragraph":"<cell_paragraph_id>","text":"<new text>"}"#,
             r#"{"op":"edit_story_cell","scope":{"kind":"header","part_name":"header1.xml","band":"default"},"target":"<table_id>","row_index":0,"col_index":0,"text":"<new text>"}"#,
         ],
         "set_format" => &[

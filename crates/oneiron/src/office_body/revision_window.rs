@@ -484,6 +484,7 @@ impl Vault {
                         block,
                         row,
                         col,
+                        paragraph,
                         text,
                     } => {
                         main.push(DocxChange::SetStoryCell {
@@ -491,6 +492,7 @@ impl Vault {
                             block: block.clone(),
                             row: *row,
                             col: *col,
+                            paragraph: paragraph.clone(),
                             text: text.clone(),
                         });
                     }

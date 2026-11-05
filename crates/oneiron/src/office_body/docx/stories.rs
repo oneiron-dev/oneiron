@@ -4,9 +4,9 @@
 //! `stories` maps each key to its story: the scope it serializes as, an
 //! `order` list of paragraph ids in reader order, and a `blocks` map of each
 //! id to its paragraph: its lock and one `text` with Loro text marks. A story
-//! key is its scope's canonical JSON, so no two scopes share one. Only
-//! top-level paragraphs import; a story's tables and opaque blocks stay in
-//! the package, which the export projects onto unchanged.
+//! key is its scope's canonical JSON, so no two scopes share one. Story tables
+//! model their direct cell paragraphs separately in [`super::story_tables`].
+//! Unmodeled opaque and nested blocks stay in the same source package.
 
 use super::super::invalid;
 use super::{LOCK, TEXT, child_map, lock_token, loro, loro_text, mark_styles, runs, string};
@@ -41,6 +41,7 @@ pub struct StoryParagraph {
 pub struct DocxStoryBody {
     pub scope: DocxStoryScope,
     pub paragraphs: Vec<StoryParagraph>,
+    pub tables: Vec<super::StoryTable>,
 }
 
 /// A story's key: its scope's canonical JSON.
@@ -67,11 +68,12 @@ pub(super) fn import(doc: &LoroDoc, stories: &[DocxStory]) -> Result<()> {
         let blocks = entry
             .insert_container(BLOCKS, LoroMap::new())
             .map_err(loro)?;
+        super::story_tables::import(&entry, story)?;
         let mut ids = HashSet::new();
         let mut at = 0;
         for block in &story.blocks {
-            // Paragraphs only: a story's tables and opaque blocks stay in
-            // the package, which the export projects onto unchanged.
+            // Tables have their own per-paragraph model; opaque blocks stay
+            // in the source package.
             if !matches!(
                 block.kind,
                 DocxBlockKind::Paragraph | DocxBlockKind::Heading(_)
@@ -142,7 +144,11 @@ pub(super) fn read(doc: &LoroDoc) -> Result<Vec<DocxStoryBody>> {
                 runs: runs(&body)?,
             });
         }
-        stories.push(DocxStoryBody { scope, paragraphs });
+        stories.push(DocxStoryBody {
+            scope,
+            paragraphs,
+            tables: super::story_tables::read(&entry)?,
+        });
     }
     Ok(stories)
 }
@@ -257,18 +263,32 @@ pub(super) fn changes(
                 });
             }
         }
+        changes.extend(super::story_tables::changes(
+            &after.scope,
+            &before.tables,
+            &after.tables,
+        )?);
     }
     Ok(changes)
 }
 
 /// One editable story paragraph's text.
-fn editable(doc: &LoroDoc, scope: &DocxStoryScope, block: &str) -> Result<LoroText> {
+pub(super) fn story_entry(doc: &LoroDoc, scope: &DocxStoryScope) -> Result<LoroMap> {
     let map = doc.get_map(STORIES);
     let key = scope_key(scope)?;
     let entry = child_map(&map, &key).ok_or_else(|| invalid("no such story in the body"))?;
     if string(&entry, SCOPE).as_deref() != Some(key.as_str()) {
         return Err(invalid("no such story in the body"));
     }
+    let order = order_ids(&doc.get_list(STORY_ORDER))?;
+    if !order.iter().any(|id| id == &key) {
+        return Err(invalid("no such story in the body"));
+    }
+    Ok(entry)
+}
+
+fn editable(doc: &LoroDoc, scope: &DocxStoryScope, block: &str) -> Result<LoroText> {
+    let entry = story_entry(doc, scope)?;
     let list = child_list(&entry, ORDER).ok_or_else(|| invalid("story order"))?;
     if !order_ids(&list)?.iter().any(|id| id == block) {
         return Err(invalid("no such story paragraph in the body"));
@@ -284,21 +304,21 @@ fn editable(doc: &LoroDoc, scope: &DocxStoryScope, block: &str) -> Result<LoroTe
 /// A story paragraph holds one line: a break would be a second paragraph.
 /// There is no byte ceiling; the body's per-block ceiling does not extend
 /// here.
-fn story_line(text: &str) -> Result<()> {
+pub(super) fn story_line(text: &str) -> Result<()> {
     if text.contains(['\n', '\r']) {
         return Err(invalid("a story paragraph's text holds no line breaks"));
     }
     Ok(())
 }
 
-fn child_list(map: &LoroMap, key: &str) -> Option<LoroList> {
+pub(super) fn child_list(map: &LoroMap, key: &str) -> Option<LoroList> {
     match map.get(key)? {
         ValueOrContainer::Container(Container::List(list)) => Some(list),
         _ => None,
     }
 }
 
-fn order_ids(list: &LoroList) -> Result<Vec<String>> {
+pub(super) fn order_ids(list: &LoroList) -> Result<Vec<String>> {
     (0..list.len())
         .map(|index| match list.get(index) {
             Some(ValueOrContainer::Value(LoroValue::String(id))) => Ok(id.to_string()),

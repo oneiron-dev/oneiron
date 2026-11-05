@@ -941,13 +941,14 @@ pub enum Op {
     /// `part_name` plus `band`, footnote/endnote/comment with `id`);
     /// `target` is the story-local table id (never a body id — story `tbl_n`
     /// ids collide with body `tbl_n` and cross-story); `row_index`/`col_index`
-    /// are the logical grid address; `text` is the plain replacement for the
-    /// cell's FIRST paragraph (any later cell paragraphs are untouched).
+    /// are the logical grid address; `paragraph` selects an exact paragraph
+    /// inside that cell (absent means FIRST); `text` replaces only that paragraph.
     EditStoryCell {
         scope: StoryCellScopeWire,
         target: NodeId,
         row_index: usize,
         col_index: usize,
+        paragraph: Option<NodeId>,
         text: String,
         #[serde(default)]
         semantic_hash: Option<String>,
@@ -2485,6 +2486,7 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
             "target",
             "row_index",
             "col_index",
+            "paragraph",
             "text",
             "semantic_hash",
             "rationale",
@@ -5253,6 +5255,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             target,
             row_index,
             col_index,
+            paragraph,
             text,
             semantic_hash,
             rationale,
@@ -5281,6 +5284,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
                 block_id: target,
                 row_index,
                 col_index,
+                paragraph,
                 text,
                 semantic_hash,
                 rationale,

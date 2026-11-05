@@ -280,9 +280,30 @@ pub struct DocxStoryParagraphView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocxStoryCellParagraphView {
+    pub id: String,
+    pub locked: bool,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocxStoryCellView {
+    pub row: usize,
+    pub col: usize,
+    pub paragraphs: Vec<DocxStoryCellParagraphView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocxStoryTableView {
+    pub id: String,
+    pub cells: Vec<DocxStoryCellView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocxStoryView {
     pub scope: DocxStoryScope,
     pub paragraphs: Vec<DocxStoryParagraphView>,
+    pub tables: Vec<DocxStoryTableView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,6 +391,30 @@ impl From<DocxBody> for DocxBodyView {
                             locked: paragraph.locked,
                             text: paragraph.text,
                             runs: paragraph.runs,
+                        })
+                        .collect(),
+                    tables: story
+                        .tables
+                        .into_iter()
+                        .map(|table| DocxStoryTableView {
+                            id: table.id,
+                            cells: table
+                                .cells
+                                .into_iter()
+                                .map(|cell| DocxStoryCellView {
+                                    row: cell.row,
+                                    col: cell.col,
+                                    paragraphs: cell
+                                        .paragraphs
+                                        .into_iter()
+                                        .map(|paragraph| DocxStoryCellParagraphView {
+                                            id: paragraph.id,
+                                            locked: paragraph.locked,
+                                            text: paragraph.text,
+                                        })
+                                        .collect(),
+                                })
+                                .collect(),
                         })
                         .collect(),
                 })

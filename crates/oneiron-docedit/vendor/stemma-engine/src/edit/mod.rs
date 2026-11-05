@@ -1431,9 +1431,10 @@ pub enum EditStep {
     /// `tbl_n` ids collide with body `tbl_n` and cross-story), addressed by
     /// the actual story (H/F part name plus exact band, note kind plus `w:id`,
     /// comment `w:id`). The cell at logical grid `{row_index, col_index}`
-    /// (the same gridSpan/gridBefore/gridAfter law as the body) has its FIRST
+    /// (the same gridSpan/gridBefore/gridAfter law as the body) has its selected
     /// paragraph rewritten through the SAME shared in-place core the body cell
-    /// path uses; any later paragraphs in the cell are untouched. H/F and note
+    /// path uses; absent a selector it edits the FIRST paragraph. Other cell
+    /// blocks are untouched. H/F and note
     /// cells land tracked (Direct honors the outer mode, as the body does);
     /// comment cells land as Normal annotation text in BOTH outer modes via a
     /// text-only settle of the target paragraph only, never a whole-table
@@ -1446,7 +1447,9 @@ pub enum EditStep {
         /// Logical grid row and column (the address the read view mints).
         row_index: usize,
         col_index: usize,
-        /// The replacement FIRST-paragraph text (plain, single run).
+        /// Exact paragraph within this cell; absent means its first paragraph.
+        paragraph: Option<NodeId>,
+        /// The replacement paragraph text (plain, single run).
         text: String,
         /// Optional full-block semantic-hash precondition (the story table
         /// view guard).
@@ -12226,6 +12229,7 @@ pub(crate) fn apply_transaction_with_notes(
                 block_id,
                 row_index,
                 col_index,
+                paragraph,
                 text,
                 semantic_hash,
                 rationale: _,
@@ -12259,6 +12263,7 @@ pub(crate) fn apply_transaction_with_notes(
                     block_id,
                     *row_index,
                     *col_index,
+                    paragraph.as_ref(),
                     text,
                     guard_for_current,
                     &transaction.revision,
@@ -13357,6 +13362,7 @@ pub(crate) fn apply_set_cell_text_in_place(
         block_id,
         row_index,
         col_index,
+        None,
         text,
         revision,
         rev_counter,
@@ -13377,6 +13383,7 @@ pub(crate) fn apply_set_cell_text_on_table_block(
     block_id: &NodeId,
     row_index: usize,
     col_index: usize,
+    paragraph: Option<&NodeId>,
     text: &str,
     revision: &RevisionInfo,
     rev_counter: &mut u32,
@@ -13506,18 +13513,26 @@ pub(crate) fn apply_set_cell_text_on_table_block(
         });
     }
 
-    // Locate the cell's editable paragraph. A cell normally holds exactly one
-    // paragraph; if it holds several, we edit the FIRST (the read view's
-    // `cell_text` joins them, but a one-run set targets the first paragraph,
-    // matching the previous SetCellText shape). A cell with no paragraph at all
-    // is degenerate (canonicalization rejects it upstream) — refuse loudly.
+    // Resolve only inside this cell. An absent selector retains the body's
+    // first-paragraph intent; a supplied id never falls back to that paragraph
+    // or searches a sibling cell, nested table, story or the document body.
     let para_pos = cell
         .blocks
         .iter()
-        .position(|b| matches!(b, BlockNode::Paragraph(_)))
+        .position(|block| match block {
+            BlockNode::Paragraph(p) => paragraph.is_none_or(|id| &p.id == id),
+            _ => false,
+        })
         .ok_or_else(|| EditError::TableCellNotEditable {
             block_id: block_id.clone(),
-            reason: format!("cell at row {row_index}, col {col_index} has no paragraph to edit"),
+            reason: match paragraph {
+                Some(id) => {
+                    format!("cell at row {row_index}, col {col_index} has no paragraph '{id}'")
+                }
+                None => {
+                    format!("cell at row {row_index}, col {col_index} has no paragraph to edit")
+                }
+            },
             step_index,
         })?;
     // DIRECT mode only: flatten pre-existing tracked ins/del in the cell paragraph
@@ -13568,10 +13583,12 @@ pub(crate) fn apply_set_cell_text_on_table_block(
     let anchors = collect_anchor_inventory(para);
     validate_preserved_inlines(para, block_id, &new_content, &anchors, step_index)?;
 
-    // Setting the cell to the text it already holds changes nothing; fail loud
-    // rather than reporting a no-op as a successful edit (CLAUDE.md "no silent
-    // fallbacks").
-    if is_identity_replacement(para, &new_content) {
+    // A joined redline can equal the requested text while the pending edit
+    // state differs (Deleted("x") + Inserted("y") reads "xy", but keeps "y").
+    // Do not mistake that genuine edit for an identity replacement.
+    if is_identity_replacement(para, &new_content)
+        && paragraph_visible_pending_text(para) == text
+    {
         return Err(EditError::NoOpEdit {
             block_id: block_id.clone(),
             step_index,
@@ -13622,9 +13639,9 @@ pub(crate) fn apply_set_cell_text_on_table_block(
         para.block_text_hash = None;
         para.rendered_text = None;
     } else if materialization_mode == MaterializationMode::Direct {
-        // Direct mode: immediately resolve the just-created tracked changes so
-        // the cell returns to all-Normal (matching the paragraph-text path).
-        project_block_for_accept_reject(block, true);
+        // Settle only the edited paragraph. Accepting the table would also
+        // accept unrelated pending changes in other paragraphs and cells.
+        project_block_for_accept_reject(&mut cell.blocks[para_pos], true);
     }
 
     Ok(())
