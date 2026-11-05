@@ -324,14 +324,17 @@ impl Vault {
                 "snapshot is not the one its head names",
             ));
         }
-        let slot = DocumentSlot::from_hex(&carried.document)?;
         match local {
             None => {
                 let mut head = Head {
                     entity: carried.entity.clone(),
                     incarnation: carried.incarnation.clone(),
                     document: carried.document.clone(),
-                    storage_document: None,
+                    storage_document: storage::free_document_storage(
+                        &self.store,
+                        txn,
+                        &carried.document,
+                    )?,
                     sequence_document: None,
                     field: content(),
                     generation: 0,
@@ -342,7 +345,7 @@ impl Vault {
                 if incoming.doc.is_shallow() {
                     self.store.port_document_shallow_since_put(
                         txn,
-                        slot,
+                        storage::document_slot(&head)?,
                         &incoming.doc.shallow_since_vv().encode(),
                     )?;
                 }

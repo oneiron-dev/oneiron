@@ -66,10 +66,35 @@ pub(super) fn has_sequence_text(head: &Head) -> Result<bool> {
     match head.sequence_document.as_deref() {
         None => Ok(false),
         Some(slot) if slot == head.entity => {
-            DocumentSlot::from_hex(slot)?;
+            if DocumentSlot::from_hex(slot)? == document_slot(head)? {
+                return Err(Error::CorruptedIndex(
+                    "independent document shares native slot",
+                ));
+            }
             Ok(true)
         }
         Some(_) => Err(Error::CorruptedIndex("independent document sequence slot")),
+    }
+}
+
+/// The physical basis of the current sync text route, with no authority or
+/// source admission implied by its location. A missing head keeps the
+/// original entity slot, including an unborn document's captured rows.
+pub(crate) fn sync_document_slot_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<DocumentSlot> {
+    let Some(head) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? else {
+        return Ok(DocumentSlot::of(*entity));
+    };
+    if head.entity != entity.to_hex() {
+        return Err(Error::CorruptedIndex("document head entity mismatch"));
+    }
+    if has_sequence_text(&head)? {
+        Ok(DocumentSlot::of(*entity))
+    } else {
+        document_slot(&head)
     }
 }
 
@@ -812,12 +837,7 @@ pub(super) fn move_pointer(
 /// Removes a document's snapshot, state vectors and pending updates.
 pub(super) fn drop_document(store: &Store, txn: &mut RwTxn<'_>, document: &str) -> Result<()> {
     let slot = DocumentSlot::from_hex(document)?;
-    let rows = [
-        DocumentRow::Snapshot,
-        DocumentRow::StateVector,
-        DocumentRow::ShallowSince,
-    ];
-    store.port_document_rows_delete(txn, slot, &rows)?;
+    store.port_document_rows_delete(txn, slot, &DocumentRow::ALL)?;
     store.port_document_updates_delete(txn, slot)
 }
 
