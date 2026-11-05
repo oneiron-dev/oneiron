@@ -487,7 +487,8 @@ impl SyncConnection {
                         }
                         result = async {
                             crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await?;
-                            crate::sync::client::send_leaf_key_requests(client, &mut write).await
+                            crate::sync::client::send_leaf_key_requests(client, &mut write).await?;
+                            crate::sync::client::send_sealed_updates(client, &mut write).await
                         } => result,
                     };
                     if let Err(e) = send_result {
