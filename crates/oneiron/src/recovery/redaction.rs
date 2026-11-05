@@ -93,7 +93,7 @@ impl CanonicalSnapshot {
                     pin_rows.get(key).copied()
                 })?
                 .ok_or(invalid("redaction citation unresolved"))?;
-            if pin.anchor.quote.contains(&span) {
+            if pin.anchor.quote().contains(&span) {
                 entity_copy = true;
                 break;
             }
