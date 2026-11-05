@@ -512,7 +512,12 @@ pub(super) fn open_sym(
         argon2_max: Argon2Cost::RFC9106_SECOND,
     };
     Envelope::parse(envelope)
-        .map_err(|_| log_corrupt())?
+        .map_err(|error| match error {
+            oneiron_crypto::Error::OutOfMemory => {
+                std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+            }
+            _ => log_corrupt(),
+        })?
         .open(OpenKey::SymmetricKek(kek), &policy)
         .map_err(|error| open_refused(&error))
 }

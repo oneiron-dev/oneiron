@@ -126,6 +126,9 @@ fn open_lineage_frame(control: &Control, frame: &[u8]) -> std::result::Result<Lo
         .map(|(_, entry)| entry)
         .map_err(|error| match error {
             Error::CorruptedIndex(_) => Rejected::new(R::CodecInvalid, error),
+            Error::Io(ref io) if io.kind() == std::io::ErrorKind::OutOfMemory => {
+                Rejected::from(error)
+            }
             error => Rejected::new(R::CustodyDiverged, error),
         })
 }
@@ -173,7 +176,10 @@ pub(crate) fn admit_recovery(
             refused("no custody head of this vault is beside the backup".into()),
         )
     })?;
-    let opened: OpenedHead = open_head(&head, opener).map_err(because(R::CustodyHeadInvalid))?;
+    let opened: OpenedHead = open_head(&head, opener).map_err(|error| match error {
+        Error::Io(ref io) if io.kind() == std::io::ErrorKind::OutOfMemory => Rejected::from(error),
+        error => Rejected::new(R::CustodyHeadInvalid, error),
+    })?;
     drop(head);
     if !opened.position.same_lineage(&wanted) {
         return Err(Rejected::new(

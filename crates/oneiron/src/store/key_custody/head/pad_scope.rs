@@ -101,10 +101,13 @@ fn unwrap_for(
     wraps: &[WrapWire],
     recipient: WrapRecipient,
     secret: &HybridSecretKey,
-) -> Option<Zeroizing<[u8; 32]>> {
-    let wrap = wraps
+) -> Result<Option<Zeroizing<[u8; 32]>>> {
+    let Some(wrap) = wraps
         .iter()
-        .find(|wrap| wrap_recipient(wrap) == Some(recipient))?;
+        .find(|wrap| wrap_recipient(wrap) == Some(recipient))
+    else {
+        return Ok(None);
+    };
     let tagged = recipient.envelope_recipient();
     let policy = wrap_policy(
         Purpose::CustodyCompartmentKey,
@@ -114,11 +117,17 @@ fn unwrap_for(
         &[WrapType::HybridCapsule],
         &[KEM],
     );
-    let opened = Envelope::parse(&wrap.envelope)
-        .ok()?
-        .open(OpenKey::Hybrid(secret), &policy)
-        .ok()?;
-    super::guarded_key(&opened)
+    let envelope = match Envelope::parse(&wrap.envelope) {
+        Ok(envelope) => envelope,
+        Err(oneiron_crypto::Error::OutOfMemory) => {
+            return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory).into());
+        }
+        Err(_) => return Ok(None),
+    };
+    let Ok(opened) = envelope.open(OpenKey::Hybrid(secret), &policy) else {
+        return Ok(None);
+    };
+    Ok(super::guarded_key(&opened))
 }
 
 /// A head's world compartment key for `machine`'s secret or `root`'s: the
@@ -129,25 +138,31 @@ pub(super) fn unwrap_world(
     wraps: &[WrapWire],
     machine: Option<(EntityId, &HybridSecretKey)>,
     root: Option<&HybridSecretKey>,
-) -> Option<Zeroizing<[u8; 32]>> {
-    machine
-        .and_then(|(machine, secret)| {
-            unwrap_for(
-                position,
-                key_id,
-                wraps,
-                WrapRecipient::Machine(machine),
-                secret,
-            )
-        })
-        .or_else(|| {
-            let secret = root?;
-            wraps
-                .iter()
-                .filter_map(wrap_recipient)
-                .filter(|recipient| matches!(recipient, WrapRecipient::RecoveryRoot(_)))
-                .find_map(|recipient| unwrap_for(position, key_id, wraps, recipient, secret))
-        })
+) -> Result<Option<Zeroizing<[u8; 32]>>> {
+    if let Some((machine, secret)) = machine {
+        if let Some(key) = unwrap_for(
+            position,
+            key_id,
+            wraps,
+            WrapRecipient::Machine(machine),
+            secret,
+        )? {
+            return Ok(Some(key));
+        }
+    }
+    let Some(secret) = root else {
+        return Ok(None);
+    };
+    for recipient in wraps
+        .iter()
+        .filter_map(wrap_recipient)
+        .filter(|recipient| matches!(recipient, WrapRecipient::RecoveryRoot(_)))
+    {
+        if let Some(key) = unwrap_for(position, key_id, wraps, recipient, secret)? {
+            return Ok(Some(key));
+        }
+    }
+    Ok(None)
 }
 
 /// One world's pads, sealed alone at a custody position for its admitted
@@ -390,7 +405,7 @@ pub(crate) fn open_world_pad_compartment(
         return Err(pads_corrupt());
     }
     let key_id = capsule_key_id(&position, &world, &wire.keys, &recipients);
-    let key = unwrap_for(&position, &key_id, &wire.wraps, recipient, secret).ok_or_else(|| {
+    let key = unwrap_for(&position, &key_id, &wire.wraps, recipient, secret)?.ok_or_else(|| {
         crate::key_material::refused("the world's pads do not open with this machine or root")
     })?;
     let plain = open_sym(
