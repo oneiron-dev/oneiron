@@ -44,9 +44,14 @@ pub(crate) fn held_svg_png(
     if count > limits.raster_pixels {
         return None;
     }
-    let hold = resources.reserve(count.checked_mul(4)?).ok()?;
-    let mut pixmap = Pixmap::new(pixels[0], pixels[1])?;
+    let size = tiny_skia::IntSize::from_wh(pixels[0], pixels[1])?;
+    let length = usize::try_from(count.checked_mul(4)?).ok()?;
+    let hold = resources.reserve(wide(length)).ok()?;
+    let mut rgba = Vec::new();
+    rgba.try_reserve_exact(length).ok()?;
+    rgba.resize(length, 0);
     drop(hold);
+    let mut pixmap = Pixmap::from_vec(rgba, size)?;
     let unit = EMU_PER_PX as f64;
     let scale = [
         f64::from(pixels[0]) * unit / drawing.child.cx as f64,
