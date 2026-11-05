@@ -14,6 +14,30 @@ settings. Only formula caches, their value types, calculate-always flags and Exc
 error tags change; the package keeps every other byte. This crate depends on
 `oneiron-docedit`, never on the core.
 
+The retained writer carries the caller's `Resources` through its cooperative cancellation
+token and polls it at formula AST and arena nodes, including reference evaluation, and at
+existing cancellation checkpoints. A deadline is only one the caller supplied; no deadline
+stays untimed. A checkpoint refusal returns the existing typed `FormulaError::Resource` to
+the direct `recalculate_xlsx` caller. The core's current no-deadline recalc and precision
+fallback are unchanged. A long builtin that does not poll can still run until its next
+checkpoint; this is not a time bound on every builtin.
+
+The matrix builtins MMULT, MDETERM, MINVERSE and MUNIT poll the same caller token
+through the existing `FunctionContext` port. Arithmetic order, existing singular/error
+results and the MUNIT 2000 cap are unchanged. Input materialization, individual inner
+loops and other long builtins still have unpolled work; this adds no hard time bound.
+
+RATE, IRR and XIRR also poll the same token between solver iterations; IRR additionally
+polls its bracket probes and initial Brent NPV phases. Cancellation propagates as a typed
+error, not a non-convergence result or another solver attempt. Existing guesses,
+iteration counts, tolerances and arithmetic order are unchanged. Cashflow intake and
+individual NPV scans remain unpolled; this does not bound every financial builtin.
+
+YIELD and ODDFYIELD poll the same token between Newton iterations and before their final
+valuations. Cancellation escapes as a typed error before numeric-result boxing. Original
+guesses, iteration counts, tolerances, arithmetic order and the YIELD single-coupon path
+are unchanged. Bond intake and individual coupon price/slope scans remain unpolled.
+
 The recalculation behaves like Excel recalculating at edit time. Its caller passes a
 `RecalcClock`: the instant NOW() and TODAY() read (sampled once, so every call agrees), the
 local UTC offset their date and time use, and the seed of RAND, RANDBETWEEN and RANDARRAY. The
@@ -207,12 +231,13 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.13): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.17): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
 stage 2's linked workbooks and caller-context functions, five commits picked from upstream's
 `main`, and stage 2 wave 2: linked workbooks, host information, parsing and precision as
-displayed). `docs/ops/forked-dependencies.md` records the fork branch, the rev and the patches.
+displayed), plus cooperative resource checkpoints, matrix builtin polls and financial solver polls, including YIELD and ODDFYIELD (FIX 186).
+`docs/ops/forked-dependencies.md` records the fork branch, the rev and the patches.
 Nothing of formualizer is vendored here.
 
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
@@ -257,7 +282,7 @@ The formula bounds admit every formula Excel saves (measured at fork `f01d8eff` 
 linked-workbook forms above, 2026-10-09): the 5 that fell back over the old token bound recalculate
 natively and match Excel on every scored cell.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.13`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.17`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 

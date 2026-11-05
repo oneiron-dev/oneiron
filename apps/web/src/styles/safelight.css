@@ -1,0 +1,724 @@
+@import './fonts.css';
+/* ─────────────────────────────────────────────────────────────────────────
+   oneiron-cloud mocks · shared tokens + atom kit
+   canon:
+     material/type/palette — Safelight DESIGN.md @1612b32 (oneiron-ui-exploration)
+     semantic layer + interaction grammar — DESIGN-APPS.md (oneiron-docs)
+   the app follows the system theme; html.light / html.dark force a room
+   (08-15). the light room = the reading room (docs/app light); the
+   landing lane overrides the light vars with the riso day paper.
+   {amber} is inherited from the DESIGN-APPS semantic layer (proposed-state
+   data mark) — data marks only, never chrome.
+   ───────────────────────────────────────────────────────────────────────── */
+
+@font-face {
+  font-family: "Departure Mono";
+  src: url("/fonts/DepartureMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Server Mono";
+  src: url("/fonts/ServerMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
+/* ── the material, both rooms in ONE token block ─────────────────
+   the theme follows the system by default (color-scheme: light dark +
+   light-dark()); html.light / html.dark force a room — three states,
+   the ratified ○ light · ◐ system · ● dark. the dark room is the film
+   black desk; the light room is the reading room (docs/app light, NOT
+   the riso landing day — the landing lane overrides these vars). the
+   contrast ladder is kept at parity between the two rooms: a rung
+   reads the same in either. */
+:root {
+  color-scheme: light dark;
+  --bg:          light-dark(#EBE7DF, #131110);   /* the desk · film black, never pure */
+  --bg-elevated: light-dark(#F3F0E9, #1B1815);   /* the sheet */
+  --bg-well:     light-dark(#E1DBCF, #211D18);   /* a tinted zone divides, not a line */
+  --silver-1:    light-dark(#26221E, #DDD6C9);   /* conf ≥ .9 · headings */
+  --silver-2:    light-dark(#3E3831, #C0B9AC);   /* body · conf .7–.89 */
+  --silver-3:    light-dark(#665F54, #8F887A);   /* meta · conf .4–.69 */
+  --silver-4:    light-dark(#948D7F, #565048);   /* faint · conf < .4 */
+  --rule:        light-dark(#D8D2C6, #322D27);
+  --rule-strong: light-dark(#C3BBAC, #443E35);
+  --safelight:   light-dark(#C13A20, #E0452B);   /* live + touch ONLY */
+  --dev-green:   light-dark(#47755A, #6BA87D);   /* verified data marks only */
+  --amber:       light-dark(#B07D10, #D9A53A);   /* proposed data marks only (DESIGN-APPS) */
+  --panel-bg:    light-dark(rgba(243,240,233,0.96), rgba(27,24,21,0.94));
+  --scrim:       light-dark(rgba(235,231,223,0.9), rgba(19,17,16,0.9));
+  --cta-bg:      light-dark(rgba(235,231,223,0.85), rgba(19,17,16,0.55));
+  --cta-fill:    light-dark(#D0432A, #DDD6C9);   /* light: the safelight glows · dark: brightest print tone */
+  --cta-ink:     light-dark(#FFFDF8, #131110);
+  /* elevation: the dark room lifts by surface, the light room by a
+     warm shadow — the same sheet, two rooms (never a black shadow on
+     paper) */
+  --shadow-sheet: 0 18px 52px light-dark(rgba(120,104,72,0.20), rgba(0,0,0,0.42));
+  --shadow-pop:   0 18px 52px light-dark(rgba(120,104,72,0.26), rgba(0,0,0,0.5));
+  --serif: "Source Serif 4", Georgia, serif;
+  --sans: "Barlow", "Helvetica Neue", sans-serif;
+  --bitmap: "Departure Mono", "JetBrains Mono", ui-monospace, monospace; /* furniture */
+  --mono: "Server Mono", "JetBrains Mono", ui-monospace, monospace;      /* system data */
+}
+html.light { color-scheme: light; }
+html.dark  { color-scheme: dark; }
+
+/* ── the art follows the room (08-15 eve): the riso plates are the house
+   imagery — sun by day, moon by night, the flock in both. images cannot
+   light-dark(), so the room picks them through these two vars. ── */
+:root { --art-day: block; --art-night: none;
+        --field-img: url("/art/field-day.png"); --plate-img: url("/art/plate-dayflock.webp"); }
+html.dark { --art-day: none; --art-night: block;
+            --field-img: url("/art/field-night.png"); --plate-img: url("/art/plate-oneiroi.webp"); }
+@media (prefers-color-scheme: dark) {
+  html:not(.light) { --art-day: none; --art-night: block;
+                     --field-img: url("/art/field-night.png"); --plate-img: url("/art/plate-oneiroi.webp"); }
+}
+.art-day { display: var(--art-day); }
+.art-night { display: var(--art-night); }
+.spot { user-select: none; pointer-events: none; image-rendering: auto; }
+
+/* the chassis measures, tunable (public/tune.js writes these inline
+   while the owner tunes; these are the shipped defaults) */
+:root {
+  --rail-w: 186px;
+  --sheet-top: 12px; --sheet-right: 18px; --sheet-bottom: 46px; --sheet-left: 26px;
+  --sheet-left-folded: 4px;          /* the folded rail sits nearly flush (owner 08-15 eve) */
+  --grain: 0.05;                     /* paper tooth · film grain, both rooms */
+  --plate: 0;                        /* the riso field behind the desk · off until dialed */
+  --sheet-radius: 8px;
+  --pane-pad-x: 22px; --pane-pad-y: 18px;
+  --ctx-w: 320px;
+  --ctx-bg: var(--bg-well);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: var(--bg); }
+body {
+  min-height: 100dvh;
+  color: var(--silver-2);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: var(--silver-1); color: var(--bg); }
+a { color: inherit; text-decoration: none; }
+a:focus-visible, button:focus-visible {
+  outline: 1.5px solid var(--silver-3);
+  outline-offset: 2px;
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+
+/* grain — the film never sits still */
+.grain {
+  position: fixed; inset: 0; z-index: 40; pointer-events: none;
+  opacity: var(--grain);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");
+}
+
+/* ── registers ─────────────────────────────────────────── */
+.mono { font-family: var(--mono); font-feature-settings: "tnum" 1; }
+.bitmap { font-family: var(--bitmap); font-feature-settings: "tnum" 1; }
+
+/* mono uppercase eyebrow — labels separate sections; NEVER underline one */
+.label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--silver-3);
+}
+
+/* MetaLine — block-level by construction; serif and mono never share a line */
+.meta-line {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--silver-3);
+  font-feature-settings: "tnum" 1;
+}
+
+/* bracket law — bare text actions only; reserved space, no layout shift */
+.act {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--silver-2);
+  white-space: nowrap;
+  transition: color 160ms ease;
+}
+/* doors (owner 09-08): a door is a place to go, a verb is a thing to do.
+   Verbs bracket on hover (above). Doors never bracket: they darken and
+   underline on hover, and the ones that leave the room carry a chevron
+   that nudges. [ setup › ] read wrong; setup › reads right. */
+.door {
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em;
+  color: var(--silver-3); white-space: nowrap; cursor: pointer;
+  text-decoration: none; text-underline-offset: 3px; text-decoration-color: var(--rule-strong);
+  transition: color 160ms ease;
+}
+.door:hover, .door:focus-visible { color: var(--silver-1); text-decoration: underline; }
+.door .chev { display: inline-block; color: var(--silver-4); transition: transform 160ms ease; text-decoration: none; }
+.door:hover .chev { transform: translateX(2px); }
+.door.back:hover .chev { transform: translateX(-2px); }
+.act::before { content: "[ "; opacity: 0; transition: opacity 160ms ease; }
+.act::after  { content: " ]"; opacity: 0; transition: opacity 160ms ease; }
+.act:hover, .act:focus-visible { color: var(--safelight); }
+.act:hover::before, .act:hover::after,
+.act:focus-visible::before, .act:focus-visible::after { opacity: 1; }
+
+/* boxed CTA — never carries brackets; the box already says button */
+.cta {
+  display: inline-block;
+  font-family: var(--bitmap); font-size: 12.5px; letter-spacing: 0.02em;
+  padding: 12px 20px;
+  color: var(--silver-1);
+  background: var(--cta-bg);
+  border: 1px solid var(--rule-strong);
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+.cta:hover { color: var(--safelight); border-color: var(--safelight); }
+.cta.primary {
+  background: var(--cta-fill); color: var(--cta-ink); border-color: var(--cta-fill);
+  transition: color 160ms ease, border-color 160ms ease, filter 160ms ease;
+}
+/* bright at rest, DIMS under the hand — a pressed print, not a glow */
+.cta.primary:hover { color: var(--cta-ink); border-color: var(--cta-fill); filter: brightness(0.88); }
+.cta.secondary { color: var(--silver-3); }
+.cta.secondary:hover { color: var(--silver-1); border-color: var(--silver-3); }
+.cta:active { transform: scale(0.98); }
+
+/* ── the semantic layer ────────────────────────────────── */
+
+/* confidence = ink (redundant channel: exact numeral on hover via title) */
+.conf-1 { color: var(--silver-1); }
+.conf-2 { color: var(--silver-2); }
+.conf-3 { color: var(--silver-3); }
+.conf-4 { color: var(--silver-4); }
+
+/* lifecycle = text treatment — never a second dot */
+.superseded { opacity: 0.45; }
+.retracted { text-decoration: line-through; text-decoration-color: var(--silver-3); }
+
+/* approval = the dot · 7px · always beside a mono label on hover surfaces */
+.dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  vertical-align: middle; flex: none;
+}
+.dot-approved { background: var(--dev-green); }
+.dot-auto     { border: 1.5px solid var(--dev-green); }
+.dot-proposed { border: 1.5px solid var(--amber); }
+.dot-rejected { background: var(--silver-4); }
+
+/* actors = square monogram seals · filled human / outline agent / dashed system.
+   a filled human seal is a dark mark in both worlds — never a glowing chip */
+.seal {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 3px; flex: none;
+  font-family: var(--mono); font-size: 9px; line-height: 1;
+  text-transform: uppercase;
+  cursor: default;
+}
+.seal-human  { background: var(--rule-strong); color: var(--silver-1); }
+.seal-agent  { border: 1px solid var(--silver-3); color: var(--silver-2); }
+.seal-system { border: 1px dashed var(--silver-3); color: var(--silver-3); }
+.seal-class  { font-style: italic; } /* class-only fallback: imports, erased actors */
+
+/* living marginalia */
+.live-dot {
+  width: 5px; height: 5px; background: var(--safelight); border-radius: 50%;
+  flex: none;
+  animation: breathe 2.6s ease-in-out infinite;
+}
+@keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+.throbber { font-family: var(--mono); color: var(--silver-3); }
+
+/* ── the ledger ────────────────────────────────────────── */
+/* flat: horizontal rules only, no outer box, no vertical lines, never a card */
+table.ledger { width: 100%; border-collapse: collapse; }
+table.ledger th {
+  font-family: var(--mono); font-weight: 400;
+  font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--silver-3); text-align: left;
+  padding: 6px 10px;
+}
+table.ledger td {
+  padding: 6px 10px;
+  height: 34px;
+  border-top: 1px solid var(--rule);
+  vertical-align: middle;
+}
+table.ledger .num { text-align: right; font-feature-settings: "tnum" 1; }
+table.ledger td.mono, table.ledger td .mono { font-size: 12.5px; }
+
+/* claim text — serif, what the memory says. one register per line */
+.claim {
+  font-family: var(--serif);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* instrument boundary — the two-tier law made visible.
+   chrome is hand-built shell; anything under an .instrument eyebrow is
+   an agent-rendered lens (closed atoms, OF-336 envelope). */
+.instrument-eyebrow {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 10px;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--silver-4);
+}
+
+/* wells, not stripes — tinted wells instead of left-edge accents */
+.well { background: var(--bg-well); padding: 14px 16px; }
+
+/* sheet — document-objects only (receipts, run bundles, briefs) */
+.sheet {
+  background: var(--bg-elevated);
+  border: 1px solid var(--rule-strong);
+}
+
+/* ── thread entries — channel-agnostic (OF-247/OF-373/OF-374) ──
+   ONE ThreadEntry for LINE / Slack / email / LinkedIn: date-rail + channel
+   tag + speaker seal + serif message. Send states: pending → verified →
+   receipted (verify-after-send law). */
+.thread { display: flex; flex-direction: column; }
+.t-entry { display: flex; gap: 12px; padding: 9px 0; border-top: 1px solid var(--rule); }
+.t-entry:first-child { border-top: 0; }
+.t-rail { width: 82px; flex: none; text-align: right; }
+.t-rail .meta-line { font-size: 10.5px; }
+.t-chan {
+  display: inline-block; font-family: var(--mono); font-size: 9.5px;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--silver-3); border: 1px solid var(--rule);
+  padding: 1px 5px; margin-top: 3px;
+}
+.t-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.t-line { display: flex; align-items: baseline; gap: 8px; }
+.t-msg { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; }
+.t-state { display: flex; align-items: center; gap: 6px; }
+.send-state { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+.send-pending { color: var(--silver-3); }
+.send-verified { color: var(--dev-green); }
+.send-receipted { color: var(--silver-3); }
+
+/* ── inbox item kinds (mono tags, never color-coded chrome) ── */
+.kind {
+  display: inline-block; font-family: var(--mono); font-size: 9.5px;
+  letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--silver-3); border: 1px solid var(--rule);
+  padding: 1px 6px; white-space: nowrap;
+}
+
+/* ── honest meter — numbers first, one hairline fraction, no game-energy bar ── */
+.meter { display: flex; flex-direction: column; gap: 6px; }
+.meter .m-nums { display: flex; align-items: baseline; gap: 10px; }
+.meter .m-big { font-family: var(--mono); font-size: 18px; color: var(--silver-1); font-feature-settings: "tnum" 1; }
+.meter .m-frac { position: relative; height: 3px; background: var(--rule); }
+.meter .m-frac .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--silver-3); }
+
+/* ── setup/step states (OF-378 onboarding ceremony) ── */
+.step { display: flex; align-items: baseline; gap: 12px; padding: 10px 0; border-top: 1px solid var(--rule); }
+.step:first-child { border-top: 0; }
+.step .s-mark { width: 16px; flex: none; text-align: center; }
+.step-done .s-mark { color: var(--dev-green); }
+.step-live .s-mark { color: var(--silver-2); }
+.step-wait { color: var(--silver-4); }
+.step-wait .s-mark { color: var(--silver-4); }
+
+/* ── switches & inputs — quiet instrument controls ── */
+.switch {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--silver-2);
+  cursor: pointer;
+}
+.switch .sw {
+  width: 26px; height: 14px; border: 1px solid var(--rule-strong);
+  position: relative; flex: none;
+}
+.switch .sw::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 8px; height: 8px; background: var(--silver-3);
+  transition: transform 160ms ease, background 160ms ease;
+}
+.switch.on .sw::after { transform: translateX(12px); background: var(--dev-green); }
+.field {
+  font-family: var(--mono); font-size: 12px; color: var(--silver-1);
+  background: var(--bg-well); border: 1px solid var(--rule);
+  padding: 6px 10px; min-width: 200px;
+}
+.field::placeholder { color: var(--silver-4); }
+
+/* ── centered sheet (modal — consent-grade interruptions only) ── */
+.sheet-scrim {
+  position: fixed; inset: 0; z-index: 50;
+  background: var(--scrim);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 12vh;
+}
+.sheet-modal {
+  background: var(--bg-elevated); border: 1px solid var(--rule-strong);
+  box-shadow: 0 24px 80px rgba(0,0,0,0.45);
+  width: min(440px, calc(100% - 48px));
+  padding: 20px 22px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+/* ── amark · DEAD (owner ruling 07-07, later same day) ──
+   the glyph-pair taxonomy was a misread ("ascii diagrams in chat", not
+   ascii in the UI). superseded by seals + the presence layer below.
+   kept ONLY because app-antevon-b.html (historical soul option) uses it;
+   no new surface may. */
+.amark {
+  font-family: var(--mono); font-size: 12.5px; line-height: 1;
+  color: var(--silver-2); white-space: nowrap; cursor: default;
+  display: inline-flex; align-items: baseline; flex: none;
+}
+.amark .g { color: var(--silver-3); margin-right: 1px; }
+
+/* ── now — every running agent, one centered sheet ──
+   presence is ambient chrome (the masthead whisper) + this sheet.
+   "chat" = interjection on a live run (Query/Signal), receipted. */
+.now-run { display: flex; flex-direction: column; padding: 11px 0; border-top: 1px solid var(--rule); }
+.now-run:first-of-type { border-top: 0; }
+.now-run .r-line { display: flex; align-items: baseline; gap: 10px; }
+.now-run .r-doing { font-family: var(--serif); font-size: 14px; color: var(--silver-1); flex: 1; }
+.now-run .r-meta { display: flex; gap: 12px; align-items: baseline; padding: 3px 0 0 24px; flex-wrap: wrap; }
+.now-run .r-verbs { display: flex; gap: 12px; margin-left: auto; }
+.interject { display: flex; flex-direction: column; gap: 8px; padding: 10px 0 2px 24px; }
+.interject .i-line { display: flex; gap: 9px; align-items: baseline; }
+.interject .i-msg { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-2); }
+.interject input.field { width: 100%; min-width: 0; }
+
+/* ── explain (OF-236) — the surface reads itself to you ──
+   every table/lens carries one: model-voiced, attributed, content-hash
+   keyed (re-renders only when its evidence changes). the summary is a
+   door: click opens what it was compiled from. */
+.explain { display: flex; align-items: baseline; gap: 9px; max-width: 68ch; }
+.explain .x-text {
+  font-family: var(--serif); font-style: italic;
+  font-size: 13.5px; line-height: 1.5; color: var(--silver-2);
+  cursor: pointer;
+}
+.explain .x-text:hover { color: var(--silver-1); }
+
+/* ── byline (owner ruling 07-07) · authorship on prose surfaces ──
+   the model's sentence ends; a mono byline names its author in the
+   agent's ink at 60% mix. identity reads at a glance, but LIVE marks
+   stay louder — full ink + breath belong to work in flight, so a page
+   of history never turns into an org chart. the byline is a door: the
+   agent panel (job history · pointers · new session). seals keep the
+   ledgers and thread entries; humans always stamp. */
+.byline {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--p-ink, var(--silver-3)) 60%, var(--silver-3));
+  white-space: nowrap; cursor: pointer; flex: none;
+  transition: color 160ms ease;
+}
+.byline:hover, .byline:focus-visible { color: var(--p-ink, var(--silver-2)); }
+
+/* ── sprite v1 · SUPERSEDED by the presence layer below (07-07) ──
+   the roaming seal-marker; kept only for app-antevon-b.html. new
+   surfaces use [data-work] wells + .px-sprite creatures instead. */
+.sprite {
+  position: absolute; top: 0; left: 0; z-index: 15;
+  display: flex; align-items: center; gap: 7px;
+  pointer-events: auto; cursor: pointer;
+  transition: transform 800ms cubic-bezier(0.3, 0.8, 0.3, 1);
+}
+.sprite .doing {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em;
+  color: var(--silver-3); white-space: nowrap;
+}
+.sprite .live-dot { width: 4px; height: 4px; }
+@media (prefers-reduced-motion: reduce) { .sprite { transition: none; } }
+
+/* ── the selection toolbar (SelTools, every page): portaled to body, fixed
+   above the words, radius 8, the pop shadow, mono verbs. flips under the
+   words when there is no room over the top edge. ── */
+.doc-seltools {
+  position: fixed; z-index: 60;
+  transform: translate(-50%, calc(-100% - 10px));
+  display: flex; align-items: baseline; gap: 14px;
+  padding: 7px 12px; border-radius: 8px;
+  background: var(--bg-elevated); box-shadow: var(--shadow-pop);
+  animation: seltools-in 160ms ease-out;
+  white-space: nowrap;
+}
+.doc-seltools .act { padding: 0; font-size: 11.5px; }
+@keyframes seltools-in { from { opacity: 0; transform: translate(-50%, calc(-100% - 6px)); } to { opacity: 1; transform: translate(-50%, calc(-100% - 10px)); } }
+.doc-seltools.below { transform: translate(-50%, 10px); animation-name: seltools-in-below; }
+@keyframes seltools-in-below { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 10px); } }
+@media (prefers-reduced-motion: reduce) {
+  .doc-seltools { animation: none; }
+  .doc-seltools.below { animation-name: none; }
+}
+
+/* ── select-anything → summon (OF-248/OF-371): mini-composer ──
+   pick the creature (companion preselected, routes it), say what, send.
+   the selection travels as an engine-issued handle, never a text blob;
+   the ask lands receipted. antevon-b's older single-verb form still
+   composes from the same base. */
+.summon {
+  position: absolute; z-index: 20; width: max-content;
+  background: var(--bg-elevated); border: 1px solid var(--rule-strong);
+  padding: 7px 10px; display: none; flex-direction: column; gap: 7px;
+}
+.summon.on { display: flex; }
+.summon .su-row { display: flex; gap: 8px; align-items: flex-end; }
+.summon .su-row canvas, .summon .su-row img {
+  image-rendering: pixelated; display: block;
+  padding: 2px 4px; opacity: 0.4; cursor: pointer;
+  transition: opacity 160ms ease;
+}
+.summon .su-row canvas { width: 28px; height: 20px; }
+.summon .su-row canvas:hover, .summon .su-row img:hover { opacity: 0.75; }
+.summon .su-row canvas.on, .summon .su-row img.on { opacity: 1; background: var(--bg-well); }
+.summon .su-line { display: flex; gap: 10px; align-items: center; }
+.summon .su-line .field { width: 230px; }
+
+/* ── presence (OF-371/OF-239) · the composed direction, ratified 07-07 ──
+   inks mark LIVE agents only — never chrome, status color, or text.
+   highlight = breathing tinted well in the agent's ink (a border would
+   double the row hairlines). creatures optional (settings): creature +
+   live wording IS the status, so no dot beside an animal; the corner
+   tab speaks only in marks-only mode. one body per agent; a batch is
+   ONE region wrap that cools to a single receipt line. every mark is a
+   door: click → the agent panel (jobs + pointer thread). */
+:root {
+  --p-herald:    light-dark(#2E6E96, #6FA3C7);
+  --p-scout:     light-dark(#8E3B4A, #BE687A);   /* night lifted 09-07: names in ink are text → 4.5:1 on the sheet (was #9A4255 = 2.76:1) */
+  --p-loom:      light-dark(#4E4488, #857BB8);
+  --p-companion: light-dark(#5E5680, #8E86A8);
+}
+[data-work] { position: relative; padding-right: 56px; }
+[data-work]::before {
+  content: ""; position: absolute; inset: -1px -8px; pointer-events: none;
+  background: color-mix(in srgb, var(--p-ink, var(--rule-strong)) 9%, transparent);
+  animation: breathe 2.6s ease-in-out infinite;
+}
+[data-agent="herald"] { --p-ink: var(--p-herald); }
+[data-agent="scout"] { --p-ink: var(--p-scout); }
+[data-agent="loom"] { --p-ink: var(--p-loom); }
+[data-agent="companion"] { --p-ink: var(--p-companion); }
+[data-work].queued-site::before { animation: none; opacity: 0.25; }
+.p-tab {
+  position: absolute; right: -8px; bottom: -8px; z-index: 5;
+  display: none; align-items: center; gap: 6px;
+  background: var(--bg); padding: 1px 6px; cursor: pointer;
+}
+body.marks-only .p-tab { display: flex; }
+.p-tab .pdot { width: 5px; height: 5px; border-radius: 50%; background: var(--p-ink); animation: breathe 2.6s ease-in-out infinite; }
+.queued-site .p-tab .pdot { animation: none; background: none; border: 1.5px solid var(--amber); }
+.p-tab .pname { font-family: var(--mono); font-size: 10px; color: var(--silver-3); display: none; }
+body.marks-only .p-tab .pname { display: inline; }
+.px-sprite {
+  /* perched ON the row's top hairline, left of the date column so the
+     creature never sits on the previous row's numerals */
+  position: absolute; right: 110px; top: 1px; transform: translateY(-100%);
+  display: flex; flex-direction: column; align-items: center;
+  cursor: pointer; z-index: 6;
+}
+body.marks-only .px-sprite { display: none; }
+.px-sprite canvas { width: 42px; height: 30px; image-rendering: pixelated; display: block; }
+.px-sprite.queued canvas { opacity: 0.45; }
+/* drawn creature set v1 (ai-creative, 07-07) lives in assets/creatures/;
+   imgs render at native pixel size, idle = a discrete 1px bob */
+.px-sprite img { display: block; image-rendering: pixelated; animation: px-bob 1.4s linear infinite; }
+.px-sprite.queued img { opacity: 0.45; animation: none; }
+@keyframes px-bob { 0%, 49.9% { transform: translateY(0); } 50%, 100% { transform: translateY(-1px); } }
+.px-sprite .whis {
+  font-family: var(--mono); font-size: 9px; color: var(--silver-3);
+  white-space: nowrap; background: var(--bg); padding: 0 4px; margin-top: 1px;
+  transition: opacity 300ms ease-out;
+}
+.px-sprite .whis.waiting { color: var(--amber); }
+/* seal → pixel avatar (animals mode): agents get faces, humans keep stamps */
+.seal-avatar { width: 21px; height: 15px; image-rendering: pixelated; vertical-align: middle; flex: none; }
+body.marks-only .seal-avatar { display: none; }
+body:not(.marks-only) .seal-agent.avatared { display: none; }
+/* batch wake: the word-chip on the region wrap + the receipt it cools to */
+.batch-word {
+  position: absolute; top: -13px; right: -6px; z-index: 6;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg); padding: 1px 6px;
+  font-family: var(--mono); font-size: 10px; color: var(--silver-3);
+}
+.batch-word canvas { width: 28px; height: 20px; image-rendering: pixelated; }
+.batch-word img { image-rendering: pixelated; display: block; }
+body.marks-only .batch-word canvas, body.marks-only .batch-word img { display: none; }
+.wake-receipt { display: flex; align-items: baseline; gap: 9px; padding-top: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  [data-work]::before, .p-tab .pdot { animation: none; }
+  .px-sprite img { animation: none; }
+}
+
+/* ── app chrome (shared shell: masthead + rail + pane) ── */
+body.app { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+.masthead {
+  display: flex; align-items: center; gap: 18px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--rule-strong);
+  flex: none;
+}
+.masthead .brand { display: flex; align-items: center; gap: 9px; color: var(--silver-1); }
+.masthead .brand svg { display: block; }
+.masthead .brand .word { font-family: var(--serif); font-size: 15.5px; font-weight: 500; }
+.vault-chip { display: flex; align-items: center; gap: 8px; }
+.vault-chip .name { font-family: var(--mono); font-size: 11.5px; color: var(--silver-2); }
+.whisper { font-family: var(--mono); font-size: 11px; color: var(--silver-3); }
+.mast-spacer { flex: 1; }
+.search {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 12px; color: var(--silver-3);
+  border: 1px solid var(--rule); padding: 5px 10px; min-width: 220px;
+  cursor: text;
+}
+.search kbd {
+  font-family: var(--bitmap); font-size: 10px; color: var(--silver-4);
+  border: 1px solid var(--rule); padding: 1px 5px; margin-left: auto;
+}
+.theme-btn { display: flex; align-items: center; font-family: var(--mono); font-size: 12.5px; color: var(--silver-2); transition: color 160ms ease; }
+.theme-btn:hover { color: var(--safelight); }
+.app-frame { display: flex; flex: 1; min-height: 0; }
+nav.rail {
+  width: var(--rail-w); flex: none;
+  padding: 18px 0 18px 18px;
+  display: flex; flex-direction: column; gap: 20px;
+  overflow-y: auto;
+}
+.rail .group { display: flex; flex-direction: column; gap: 2px; }
+.rail .group > .label { margin-bottom: 6px; }
+.rail a {
+  font-family: var(--mono); font-size: 12.5px;
+  color: var(--silver-3);
+  padding: 5px 10px 5px 8px;
+  display: flex; align-items: center; gap: 8px;
+  transition: color 160ms ease;
+}
+.rail a:hover { color: var(--silver-1); }
+.rail a.active { color: var(--silver-1); background: var(--bg-well); }
+.rail .count { margin-left: auto; font-size: 10.5px; color: var(--silver-3); }
+.rail .pack-mark { margin-left: auto; font-size: 9px; color: var(--silver-4); }
+main.pane {
+  flex: 1; min-width: 0;
+  padding: 18px 22px 40px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.pane-head { display: flex; align-items: baseline; gap: 14px; }
+.pane-head h1 {
+  font-family: var(--serif); font-size: 22px; font-weight: 550;
+  color: var(--silver-1); letter-spacing: -0.01em;
+}
+.pane-head .meta-line { margin-left: auto; }
+.anchor { border: 0; border-top: 1px solid var(--rule-strong); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+/* ── the lost page (not-found · error) · the one place the plate is the
+   whole page: sun-and-flock by day, moon-and-flock by night; the sheet is
+   a small card on it (08-15 eve) ── */
+.lost {
+  position: fixed; inset: 0;
+  background: var(--bg) var(--plate-img) center / cover no-repeat;
+  display: flex; align-items: center; justify-content: center;
+}
+.lost-card {
+  width: min(360px, calc(100vw - 32px));
+  padding: 18px 20px 16px;
+  background: var(--panel-bg); border-radius: 8px;
+  box-shadow: var(--shadow-sheet), inset 0 0 0 0.5px var(--rule);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.lost-card .label { margin-bottom: 2px; }
+.lost-title { font-family: var(--serif); font-size: 19px; font-weight: 550; color: var(--silver-1); line-height: 1.3; }
+.lost-line { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); line-height: 1.5; }
+.lost-acts { display: flex; gap: 14px; margin-top: 8px; }
+.lost-err { font-family: var(--mono); font-size: 11px; color: var(--silver-4); white-space: pre-wrap; max-height: 120px; overflow: auto; }
+
+/* ── the agent's FACE (owner 08-18: D + a simpler pictogram for the small
+   sizes). One mask per creature, filled with the agent's own ink, so the face
+   is room-aware for free; the room picks the PLATE (day stamp on paper, the
+   night plate on film — the same drawing, never a filter). `.face.mark` is
+   the small pictogram (the same stamp reduced to silhouette + a few cutouts).
+   Swap = a file under /art/faces. ── */
+.face {
+  display: inline-block; width: 32px; height: 32px; flex: none; vertical-align: middle;
+  background: var(--p-ink, var(--silver-2));
+  -webkit-mask: var(--face-day) center / contain no-repeat;
+  mask: var(--face-day) center / contain no-repeat;
+}
+.face.mark { width: 24px; height: 24px; -webkit-mask-image: var(--face-mark); mask-image: var(--face-mark); }
+html.dark .face:not(.mark) { -webkit-mask-image: var(--face-night); mask-image: var(--face-night); }
+@media (prefers-color-scheme: dark) {
+  html:not(.light) .face:not(.mark) { -webkit-mask-image: var(--face-night); mask-image: var(--face-night); }
+}
+/* A (owner 09-07): the gods. The portrait is the linocut (GC) as a mask in the
+   agent's ink, 72 on the sheet; rows carry the name in ink alone; the mark is a
+   traced SVG attribute glyph (batch 2) reserved for name-less spots at 24 and
+   up. Trial casting of the marks: wings 1c · helmet 1c · hearth 1c. */
+.face[data-agent="eiri"]    { --face-day: url("/art/faces/eiri-GC-mask-day.png");    --face-night: url("/art/faces/eiri-GC-mask-night.png");    --face-mark: url("/art/faces/svg/eiri-1c.svg"); }
+.face[data-agent="tory"]    { --face-day: url("/art/faces/tory-GC-mask-day.png");    --face-night: url("/art/faces/tory-GC-mask-night.png");    --face-mark: url("/art/faces/svg/tory-1c.svg"); }
+.face[data-agent="antevon"] { --face-day: url("/art/faces/antevon-GC-mask-day.png"); --face-night: url("/art/faces/antevon-GC-mask-night.png"); --face-mark: url("/art/faces/svg/antevon-1c.svg"); }
+/* the portrait style rides the tuner (base · trink · dream) so the pick is made in context */
+html[data-face-style="base"]  .face[data-agent="eiri"]    { --face-day: url("/art/faces/eiri-G-mask-day.png");     --face-night: url("/art/faces/eiri-G-mask-night.png"); }
+html[data-face-style="base"]  .face[data-agent="tory"]    { --face-day: url("/art/faces/tory-G-mask-day.png");     --face-night: url("/art/faces/tory-G-mask-night.png"); }
+html[data-face-style="base"]  .face[data-agent="antevon"] { --face-day: url("/art/faces/antevon-G-mask-day.png");  --face-night: url("/art/faces/antevon-G-mask-night.png"); }
+html[data-face-style="trink"] .face[data-agent="eiri"]    { --face-day: url("/art/faces/eiri-GT-mask-day.png");    --face-night: url("/art/faces/eiri-GT-mask-night.png"); }
+html[data-face-style="trink"] .face[data-agent="tory"]    { --face-day: url("/art/faces/tory-GT-mask-day.png");    --face-night: url("/art/faces/tory-GT-mask-night.png"); }
+html[data-face-style="trink"] .face[data-agent="antevon"] { --face-day: url("/art/faces/antevon-GT-mask-day.png"); --face-night: url("/art/faces/antevon-GT-mask-night.png"); }
+html[data-face-style="dream"] .face[data-agent="eiri"]    { --face-day: url("/art/faces/eiri-GD-mask-day.png");    --face-night: url("/art/faces/eiri-GD-mask-night.png"); }
+html[data-face-style="dream"] .face[data-agent="tory"]    { --face-day: url("/art/faces/tory-GD-mask-day.png");    --face-night: url("/art/faces/tory-GD-mask-night.png"); }
+html[data-face-style="dream"] .face[data-agent="antevon"] { --face-day: url("/art/faces/antevon-GD-mask-day.png"); --face-night: url("/art/faces/antevon-GD-mask-night.png"); }
+/* the VAULT's creature stays an animal — the mascot is the address (creature lane 07-13) */
+.face.vault[data-agent="antevon"] { --face-day: url("/art/faces/antevon-mask.png"); --face-night: url("/art/faces/antevon-mask-night2.png"); }
+
+/* the focus ring is silver (owner 08-19) — red returns only when an act is armed */
+.act.armed:focus-visible, [data-danger].armed:focus-visible { outline-color: var(--safelight); }
+
+/* ── the selected row's chrome rides the tuner (owner 09-07: "the selector is
+   nice but the rounded border thing is kinda ai slop") — three to feel, he
+   picks: rounded (as built) · square (the well, no radius) · gutter (no fill,
+   a hair of ink at the row's left edge). the vault ledger, the roster, the
+   thread transcript and the inbox rows follow it together. ── */
+html[data-select-chrome="square"] table.ledger tr.selected td:first-child,
+html[data-select-chrome="square"] table.ledger tr.selected td:last-child,
+html[data-select-chrome="square"] .rrow.on,
+html[data-select-chrome="square"] .tx.sel,
+html[data-select-chrome="square"] .brow.sel .brow-line,
+html[data-select-chrome="square"] .w-row.sel { border-radius: 0; }
+html[data-select-chrome="box"] table.ledger tr.selected td { background: transparent; border-radius: 0; }
+html[data-select-chrome="gutter"] table.ledger tr.selected td { background: transparent; }
+html[data-select-chrome="gutter"] table.ledger tr.selected td:first-child { box-shadow: inset 2px 0 0 var(--silver-2); border-radius: 0; }
+html[data-select-chrome="gutter"] table.ledger tr.selected td:last-child { border-radius: 0; }
+html[data-select-chrome="gutter"] .rrow.on,
+html[data-select-chrome="gutter"] .tx.sel,
+html[data-select-chrome="gutter"] .brow.sel .brow-line,
+html[data-select-chrome="gutter"] .w-row.sel { background: transparent; box-shadow: inset 2px 0 0 var(--silver-2); border-radius: 0; }
+
+/* Optional Recall scene preference: one small preview, not a gallery.
+   The authored pair uses the existing room display vars, not another theme. */
+.settings[data-page="appearance"] .recall-scene-control { min-width: 0; }
+.settings[data-page="appearance"] .recall-scene-control .acts { gap: 6px 12px; }
+.settings[data-page="appearance"] .recall-scene-control .act.on { text-decoration: underline; text-underline-offset: 4px; }
+.settings[data-page="appearance"] .recall-scene-control .act:hover,
+.settings[data-page="appearance"] .recall-scene-control .act:focus-visible { color: var(--silver-1); }
+.recall-scene-detail { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.recall-scene-preview { position: relative; width: 64px; height: 40px; flex: none; background: var(--bg-elevated); box-shadow: inset 0 0 0 1px var(--rule-strong); border-radius: 4px; overflow: hidden; }
+.recall-scene-preview > span { position: absolute; inset: 0; background: center / cover no-repeat; }
+.recall-scene-detail > #recall-scene-note,
+.recall-scene-status { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-2); text-wrap: pretty; }
+.recall-scene-status { display: block; margin-top: 6px; }
+.recall-scene-status:empty { display: none; }
+@media (max-width: 600px) {
+  .settings[data-page="appearance"] .recall-scene-row { flex-direction: column; gap: 8px; }
+  .recall-scene-detail { flex-wrap: wrap; }
+}
+@media (pointer: coarse) {
+  .settings[data-page="appearance"] .recall-scene-control .act { min-height: 44px; }
+}
