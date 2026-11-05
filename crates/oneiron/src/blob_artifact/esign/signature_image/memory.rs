@@ -1,0 +1,35 @@
+pub(super) fn native_admission(
+    input: u64,
+) -> impl FnMut(super::SignatureImagePlan) -> std::result::Result<(), crate::host_memory::MemoryRefusal>
+{
+    let mut lease = crate::host_memory::MachineMemory::process().empty_lease();
+    move |plan: super::SignatureImagePlan| {
+        let target = plan
+            .peak_bytes(input)
+            .unwrap_or(u64::MAX)
+            .saturating_sub(input);
+        let more = target.saturating_sub(lease.bytes());
+        if more > 0 {
+            lease.grow_pending_untimed(more, &|| false)?;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn refused(refusal: crate::host_memory::MemoryRefusal) -> crate::Error {
+    match refusal {
+        crate::host_memory::MemoryRefusal::Floor { needed, available } => {
+            crate::Error::Artifact(crate::error::ArtifactError::MemoryFloorRefused {
+                detail: format!(
+                    "signature image needs {needed} bytes, only {available} fit past the reserve"
+                ),
+            })
+        }
+        crate::host_memory::MemoryRefusal::WaitedOut { needed, waited } => {
+            crate::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("signature image waited {waited:?} for {needed} bytes"),
+            ))
+        }
+    }
+}
