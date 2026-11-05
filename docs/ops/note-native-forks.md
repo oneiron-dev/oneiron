@@ -42,7 +42,11 @@ same resulting value basis. Recovery does not guess the base from today's head.
 Citation erasure removes affected stored quotes before they can escape through
 retained heads. Before an affected stored snapshot becomes StateOnly, any native
 fork basis it needs is materialized in the same writer, together with its bundle
-copy. Unaffected snapshots keep their original bytes.
+copy. The same transaction also scrubs the original and registered retired
+canonical slots left by Switch. Each slot's snapshot and all its pending updates
+are replayed before the affected pin is removed. Its clean snapshot replaces the
+old snapshot and updates. Authored text and surviving pins stay intact.
+Unaffected snapshots keep their original bytes and history.
 
 Owner-selected history purge also applies the selected version-vector cut to
 each stored proposal or retained-head snapshot of that NOTE. It also covers the
