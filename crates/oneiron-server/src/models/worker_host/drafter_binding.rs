@@ -26,10 +26,14 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use oneiron::drafter::{DrafterTarget, DrafterUnservedReason};
-use oneiron::llm::{CacheIdentity, WorkerKind, WorkerMode, WorkerReadiness};
-use oneiron_driver::InferenceWorker;
+use oneiron::llm::run_admission::WorkContext;
+use oneiron::llm::{
+    CacheIdentity, ResourceClass, WorkCancel, WorkClass, WorkPhysical, WorkerKind, WorkerMode,
+    WorkerReadiness,
+};
+use oneiron_driver::{InferenceWorker, WorkEnvelope, WorkRequest};
 
-use super::{HOST, Hosted, LaunchSlot, is_current, stop_device_admission_if_unused};
+use super::{BoundWork, HOST, Hosted, LaunchSlot, is_current, stop_device_admission_if_unused};
 use crate::config::models::{ArtifactSource, WorkerArtifact};
 use crate::models::drafter_serving::{EXL3_DRAFTER_RUNTIME, VaultLoadSet};
 
@@ -181,6 +185,61 @@ pub(in crate::models) fn retrain_target() -> Option<DrafterTarget> {
             tokenizer: identity.tokenizer?.as_str().to_owned(),
             runtime: EXL3_DRAFTER_RUNTIME.to_owned(),
         })
+    })
+}
+
+/// The resource class a drafter training job queues under on its device:
+/// the chat target's, whose GPU it shares.
+const DRAFTER_TRAINING_RESOURCE: ResourceClass = ResourceClass::Chat;
+
+/// A drafter training job's ticket on the device work line of the managed
+/// EXL3 worker this process launches for `target` (FIX 14974): background
+/// work of `envelope`, held by `holder`, on the same line that worker's
+/// calls queue on, so the device admission decides when it runs beside
+/// serving and may unload an idle worker to make room. `None` where this
+/// process launches no such worker or its row names no device: the job then
+/// runs unmediated, as a call to such a row does.
+pub(in crate::models) fn drafter_training_work(
+    target: &DrafterTarget,
+    holder: &str,
+    envelope: WorkEnvelope,
+    cancel: &WorkCancel,
+) -> Option<BoundWork> {
+    let host = HOST.get()?;
+    if !host.launch_permitted.load(Ordering::SeqCst) {
+        return None;
+    }
+    let device = {
+        let workers = host.lock();
+        workers.iter().find_map(|(id, hosted)| {
+            let row = &hosted.row;
+            if row.mode != WorkerMode::Managed
+                || row.kind != WorkerKind::Exl3
+                || !names_target(&served_identity(id, hosted), target)
+            {
+                return None;
+            }
+            row.launch.as_ref()?.device.clone()
+        })?
+    };
+    let admission = host.admission(&device);
+    let mut request = WorkRequest::new(holder, DRAFTER_TRAINING_RESOURCE, holder);
+    request.class = WorkClass::Background;
+    request.physical = WorkPhysical::KeylessOwnServer;
+    request.deadline = None;
+    request.envelope = envelope;
+    request.cancel = cancel.shared();
+    request.cancel_changed = cancel.shared_notify();
+    let ticket = admission.enqueue(request);
+    Some(BoundWork {
+        ticket: Some(ticket),
+        context: WorkContext {
+            class: WorkClass::Background,
+            physical: WorkPhysical::KeylessOwnServer,
+            cancel: cancel.clone(),
+            ..WorkContext::default()
+        },
+        armed: true,
     })
 }
 
