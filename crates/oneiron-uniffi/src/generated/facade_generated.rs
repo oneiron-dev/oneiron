@@ -6026,6 +6026,11 @@ export_facade! {
     let output = client.vault_mail_compliance_log(&input)?;
     crate::codec::lift_record("vault.mail.compliance.log", &output)
 };
+"vault.mail.sources.sync_status" => fn vault_mail_sources_sync_status(&self, input: MailSourceRef) -> MailSyncStatusView = |client| {
+    let input: oneiron::mail_pack::MailSourceRef = crate::codec::lower_record("vault.mail.sources.sync_status", input)?;
+    let output = client.vault_mail_sources_sync_status(&input)?;
+    crate::codec::lift_record("vault.mail.sources.sync_status", &output)
+};
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
     let output = client.connector_answer(&input)?;

@@ -7,18 +7,28 @@ side_tables! {
     /// Conservative marker that a zero-head split has ever been recorded, gating an expensive ledger
     /// fold. Key: ().
     IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN: VaultMeta b"m:identity_topology_zero_head_seen" Raw;
+    /// The mail messages that landed with their headers only and wait for their bodies, newest
+    /// first (FIX 12559). Key: id16(source) + u64be (u64::MAX less the receive time) + blake3
+    /// (32) of the provider id.
+    MAIL_PACK_BODY_QUEUE: VaultMeta b"mail_pack:body_queue:v1:" Named;
     /// The org compliance search log (FIX 12560): each change to the setting and each search made
     /// under it, recorded before the search answers. Key: u64be sequence.
     MAIL_PACK_COMPLIANCE_EVENT: VaultMeta b"mail_pack:compliance_event:v1:" Named Authored
         => crate::mail_pack::erase_compliance_actor_in_txn;
     /// The org compliance search setting, off when absent (FIX 12560). Key: ().
     MAIL_PACK_COMPLIANCE_SETTING: VaultMeta b"mail_pack:compliance_setting:v1" Named;
+    /// One provider message of one mail source: its rows, revisions, stage and presence at the
+    /// provider (FIX 12559). Key: id16(source) + blake3 (32) of the provider id.
+    MAIL_PACK_OCCURRENCE: VaultMeta b"mail_pack:occurrence:v1:" Named;
     /// One connected mail or calendar source: provider, kind, address, custody name, owner,
     /// audience and what it keeps (FIX 12559). Key: id16(source).
     MAIL_PACK_SOURCE: VaultMeta b"mail_pack:source:v1:" Named
         => crate::mail_pack::erase_source_actor_in_txn;
     /// A source's id by its provider, kind, account and address (FIX 12559). Key: blake3 (32).
     MAIL_PACK_SOURCE_INDEX: VaultMeta b"mail_pack:source_index:v1:" Named;
+    /// Where one mail source's import stands: its change anchor, its newest-first copy and its
+    /// counts (FIX 12559). Key: id16(source).
+    MAIL_PACK_SYNC: VaultMeta b"mail_pack:sync:v1:" Named;
     /// Idle publication delay. Key: ().
     ENTITY_TEXT_INDEXED_IDLE_DELAY_MS: VaultMeta b"manifest:entity_text:indexed_idle_delay_ms" Raw;
     /// FIX 9970: a TURN whose landing could not record its program wake, and why, written in

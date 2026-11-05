@@ -1465,6 +1465,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.mail.compliance.setting" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.compliance.set" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.compliance.log" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.sources.sync_status" => a.spec.clone().ok_or_else(invalid),
         "connector.answer" => a.spec.clone().ok_or_else(invalid),
         "self.browser.open" => a.spec.clone().ok_or_else(invalid),
         "self.browser.observe" => a.spec.clone().ok_or_else(invalid),
@@ -5216,6 +5217,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.mail.compliance.log" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.sources.sync_status" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "connector.answer" => {
@@ -25638,6 +25642,14 @@ async fn execute_agent_verb_row_on(
             let output = oneiron::task_verb::sdk::vault_mail_compliance_log(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.sources.sync_status" => {
+            let input: oneiron::mail_pack::MailSourceRef =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_sources_sync_status(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "connector.answer" => {
