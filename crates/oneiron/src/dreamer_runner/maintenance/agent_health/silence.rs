@@ -274,6 +274,8 @@ pub(super) fn silent_findings(
             actual: 0,
             dial: 1,
             measured: quiet as i64,
+            exact_dial: None,
+            exact_measured: None,
             // Another session's call is shown, and never hides this one.
             counter: other_session
                 .map(|_| AgentHealthCounter::OtherSessionActive)
