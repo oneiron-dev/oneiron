@@ -5,6 +5,7 @@
 mod container;
 mod lift_history;
 mod mask;
+mod message_parts;
 mod provider_tokens;
 mod release_read;
 mod shapes;
@@ -51,7 +52,10 @@ pub(crate) use self::mask::spool::{
     BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
-pub(crate) use self::mask::{mask_origin_in_txn, seal_whole_part_in_txn};
+pub(crate) use self::mask::{
+    mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
+};
+pub(crate) use self::message_parts::seal_message_parts_in_txn;
 pub(crate) use self::provider_tokens::embedded_credential;
 use self::provider_tokens::{classify_token, provider_token_spans};
 pub(crate) use self::release_read::{scan_file_content_from, scan_file_content_reader};
