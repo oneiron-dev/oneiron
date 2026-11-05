@@ -314,6 +314,9 @@ pub fn run_ics_feed_poll_with_screener(
         read_cursor(vault, &cursor_digest)?.unwrap_or_else(|| IcsFeedCursor::new(config));
 
     let response = fetcher.fetch(&config.secret_ref, prior_cursor.etag.as_deref())?;
+    // FIX 4797: the diff, its writes and the cursor run in the vault's one
+    // calendar admission turn; the fetch above does not hold it.
+    let _turn = super::admission_turn(vault);
     match response {
         IcsFetchResponse::NotModified { .. } => {
             // True no-op: no blob, claim, EVENT, passport-presence, status,
