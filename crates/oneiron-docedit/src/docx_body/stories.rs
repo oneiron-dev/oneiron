@@ -156,9 +156,10 @@ fn story_blocks(document: &Document) -> Vec<(DocxStoryScope, &[stemma::domain::T
     stories
 }
 
-/// Native story paragraphs in their current accepted-inline reading, with
-/// actual `w14:paraId` identities. Deleted blocks and inline tombstones are
-/// not current anchor text. The body reader keeps its redline semantics.
+/// Native story paragraphs, including direct table-cell paragraphs, in their
+/// current accepted-inline reading with actual `w14:paraId` identities.
+/// Deleted blocks and inline tombstones are not current anchor text. The body
+/// reader keeps its redline semantics.
 #[must_use]
 pub fn story_anchor_blocks(
     document: &Document,
@@ -202,7 +203,7 @@ pub fn story_anchor_blocks(
             // Reuse the native label/text reader after filtering only the
             // local clone. Neither canonical content nor native ids move.
             let view = stemma::view::build_story_blocks_view(&current);
-            let blocks = view
+            let mut anchors: Vec<_> = view
                 .blocks
                 .into_iter()
                 .filter_map(|block| {
@@ -214,7 +215,8 @@ pub fn story_anchor_blocks(
                     })
                 })
                 .collect();
-            (scope, blocks)
+            anchors.extend(super::cells::anchor_blocks(blocks));
+            (scope, anchors)
         })
         .collect()
 }

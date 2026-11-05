@@ -1,15 +1,20 @@
 # DOCX story annotation locators
 
-`vault.artifacts.units` lists top-level paragraph units in authored headers,
-footers, footnotes, endnotes and comment bodies as `format: "docx_story"`.
+`vault.artifacts.units` lists top-level paragraphs and direct table-cell
+paragraphs in authored headers, footers, footnotes, endnotes and comment bodies
+as `format: "docx_story"`.
 Copy the returned locator when pinning or opening a thread. Its `scope` is the
 native `DocxStoryScope`; `para_path` is local to that scope. Never use a body
 paragraph id, infer a part name, or stringify a scope into an id.
 
 The new story locator's character offsets count Unicode scalar values in the
 current accepted-inline reading. Native deleted blocks and deleted inline text
-are excluded. Native paragraph labels use the existing native read rule.
-Existing body `format: "docx"` locators and native `DocxRead` keep their original
+are excluded. Top-level paragraph labels use the existing native read rule.
+A direct cell paragraph uses its native per-paragraph text, not the flat cell's
+joined redline text. Its native paragraph id and optional `w14:paraId` remain
+intact; the engine does not turn a table address into a paragraph id. Deleted
+tables, rows and cells and vertical-merge continuation cells are absent from
+the new native anchor inventory. Existing body `format: "docx"` locators and native `DocxRead` keep their original
 reading and coordinates. The new reader uses a local clone; it does not accept
 revisions or alter the stored file.
 
@@ -33,8 +38,9 @@ uses stored identity and evidence; the engine does not auto-attach a guess.
 
 ## Remaining scope
 
-This is a top-level paragraph slice. Cell-paragraph annotation locators and story
-paragraph-question judgments/hashes remain unbuilt. Story structure and tracked
+This covers top-level and direct story-table cell paragraphs. Body-cell and
+nested-table locators and story paragraph-question judgments/hashes remain
+unbuilt. Story structure and tracked
 paragraph-mark merge handling remain separate work. A locked imported story with
 pre-existing redlines can remain version-only when its stored live text differs
 from the new native accepted-inline reading. No body mapping is fabricated.

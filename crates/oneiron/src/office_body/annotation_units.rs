@@ -20,7 +20,8 @@ pub(crate) enum OfficeBodyUnits {
     Pptx(DeckUnits),
 }
 
-/// A document's body units and separately scoped top-level story paragraphs.
+/// A document's body units and separately scoped story paragraphs, including
+/// direct story-table cell paragraphs.
 pub(crate) struct DocxUnits {
     pub(crate) blocks: Vec<(String, String)>,
     pub(crate) stories: Vec<DocxStoryUnits>,
@@ -188,6 +189,14 @@ impl Vault {
                                 .paragraphs
                                 .into_iter()
                                 .map(|paragraph| (paragraph.id, paragraph.text))
+                                .chain(
+                                    story
+                                        .tables
+                                        .into_iter()
+                                        .flat_map(|table| table.cells)
+                                        .flat_map(|cell| cell.paragraphs)
+                                        .map(|paragraph| (paragraph.id, paragraph.text)),
+                                )
                                 .collect(),
                         })
                         .collect(),

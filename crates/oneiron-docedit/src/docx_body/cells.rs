@@ -53,21 +53,7 @@ pub(super) fn read(
                 .map(|paragraph| {
                     // The native cell materializer diffs against accept-all, not the
                     // joined redline read (which includes Deleted tombstones).
-                    let text = paragraph
-                        .segments
-                        .iter()
-                        .filter(|segment| {
-                            matches!(
-                                segment.status,
-                                TrackingStatus::Normal | TrackingStatus::Inserted(_)
-                            )
-                        })
-                        .flat_map(|segment| &segment.inlines)
-                        .filter_map(|inline| match inline {
-                            InlineNode::Text(text) => Some(text.text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<String>();
+                    let text = current_text(paragraph);
                     let locked = if structural
                         || paragraph
                             .para_mark_status
@@ -111,6 +97,65 @@ pub(super) fn read(
                 text: view_cell.text.clone(),
                 paragraphs,
             })
+        })
+        .collect()
+}
+
+/// Current direct cell paragraphs in native story-local identity space.
+pub(super) fn anchor_blocks(blocks: &[TrackedBlock]) -> Vec<crate::DocxAnchorBlock> {
+    let mut anchors = Vec::new();
+    for tracked in blocks {
+        if !current(&tracked.status) {
+            continue;
+        }
+        let BlockNode::Table(table) = &tracked.block else {
+            continue;
+        };
+        for row in &table.rows {
+            if row
+                .tracking_status
+                .as_ref()
+                .is_some_and(|status| !current(status))
+            {
+                continue;
+            }
+            for cell in &row.cells {
+                if cell.v_merge == VerticalMerge::Continue
+                    || cell
+                        .tracking_status
+                        .as_ref()
+                        .is_some_and(|status| !current(status))
+                {
+                    continue;
+                }
+                for block in &cell.blocks {
+                    if let BlockNode::Paragraph(paragraph) = block {
+                        anchors.push(crate::DocxAnchorBlock {
+                            block_id: paragraph.id.to_string(),
+                            para_id: paragraph.para_id.clone(),
+                            text: current_text(paragraph),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    anchors
+}
+
+fn current(status: &TrackingStatus) -> bool {
+    matches!(status, TrackingStatus::Normal | TrackingStatus::Inserted(_))
+}
+
+fn current_text(paragraph: &stemma::domain::ParagraphNode) -> String {
+    paragraph
+        .segments
+        .iter()
+        .filter(|segment| current(&segment.status))
+        .flat_map(|segment| &segment.inlines)
+        .filter_map(|inline| match inline {
+            InlineNode::Text(text) => Some(text.text.as_str()),
+            _ => None,
         })
         .collect()
 }
