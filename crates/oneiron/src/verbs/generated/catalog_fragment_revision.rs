@@ -2,4 +2,4 @@
 /// The code-mode catalog fragment's revision: `sha256:` and the hex
 /// digest of `catalog_fragment.d.ts`, so it changes exactly when that text does.
 pub const CATALOG_FRAGMENT_REVISION: &str =
-    "sha256:11cb3fba12c4dcf135fe3b85c1f6eefad28cf8ad3242643621dd1bd33f5dc013";
+    "sha256:bac4e40e09dbf058d795e4d8c50b705a518491f3df7dd0c7dda2f96a5d7e2f7d";
