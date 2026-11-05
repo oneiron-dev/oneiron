@@ -6,13 +6,14 @@
 //! ([`Vault::with_source_token_at_door`]), effector `connector:gmail`.
 //! HTTPS only, no redirects; the Bearer header exists only inside the door
 //! callback, marked sensitive. Refreshing the token is the host's custody
-//! job. Before a source's first read the wire checks that the credential
-//! reads the mailbox the source names (the Gmail profile's address), so a
-//! credential for one mailbox never fills another mailbox's source.
+//! job. Inside each door, before the credential presented there reads
+//! anything, the wire checks that it reads the mailbox the source names (the
+//! Gmail profile's address), once per credential: a credential for one
+//! mailbox never fills another mailbox's source, even one replaced at its
+//! door between two reads.
 //!
 //! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
 
-use std::cell::RefCell;
 use std::collections::BTreeSet;
 
 use base64::Engine as _;
@@ -21,18 +22,22 @@ use serde_json::Value;
 
 use super::credential::WireReads;
 use super::rest::{
-    self, RestAnswer, array, bearer_header, header_value, html_text, refused, text_of,
+    self, RestAnswer, VerifiedCredentials, array, bearer_header, header_value, html_text, refused,
+    text_of,
 };
 use super::source::MailProvider;
 use super::wire::{
     MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
     MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
 };
+use crate::Vault;
 use crate::channel_identity_provider::gmail::GMAIL_CONNECTOR_EFFECTOR;
 use crate::error::Result;
-use crate::{EntityId, Vault};
 
 const GMAIL_USER_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
+const GMAIL_PROFILE_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
+/// The longest Gmail attachment id read.
+const MAX_ATTACHMENT_ID_BYTES: usize = 1_024;
 const GMAIL_LIST_PAGE_SIZE: u32 = 100;
 const GMAIL_HISTORY_PAGE_SIZE: u32 = 500;
 /// The deepest MIME nesting read for a body.
@@ -54,8 +59,8 @@ const MESSAGE_HEADERS: [&str; 8] = [
 pub struct HttpGmailMailWire<'v> {
     vault: &'v Vault,
     client: reqwest::blocking::Client,
-    /// The sources whose credential this wire has seen read their mailbox.
-    verified: RefCell<BTreeSet<EntityId>>,
+    /// The credentials this wire has seen read their source's mailbox.
+    verified: VerifiedCredentials,
 }
 
 impl<'v> HttpGmailMailWire<'v> {
@@ -68,7 +73,7 @@ impl<'v> HttpGmailMailWire<'v> {
         Ok(Self {
             vault,
             client: rest::https_client()?,
-            verified: RefCell::new(BTreeSet::new()),
+            verified: VerifiedCredentials::new(),
         })
     }
 
@@ -90,7 +95,28 @@ impl<'v> HttpGmailMailWire<'v> {
             GMAIL_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
                 let auth = bearer_header(token)?;
-                let request = self.client.get(url).query(query).header(AUTHORIZATION, auth);
+                // The credential presented here is the one checked.
+                if !self.verified.holds(source.source_ref, token) {
+                    let request = self
+                        .client
+                        .get(GMAIL_PROFILE_URL)
+                        .header(AUTHORIZATION, auth.clone());
+                    let profile = rest::send(request)?
+                        .found_or_gone("gmail_mail")?
+                        .ok_or_else(|| refused("gmail_mail_profile_not_found"))?;
+                    reads_mailbox(&profile, source)?;
+                    self.verified.insert(source.source_ref, token);
+                    if url == GMAIL_PROFILE_URL && query.is_empty() {
+                        // The profile just read is the one asked for.
+                        answer = Some(RestAnswer::Found(profile));
+                        return Ok(());
+                    }
+                }
+                let request = self
+                    .client
+                    .get(url)
+                    .query(query)
+                    .header(AUTHORIZATION, auth);
                 answer = Some(rest::send(request)?);
                 Ok(())
             },
@@ -102,26 +128,8 @@ impl<'v> HttpGmailMailWire<'v> {
 
     /// The mailbox's Gmail profile: its address and current history id.
     fn profile(&self, source: &MailSyncSource) -> Result<Value> {
-        self.get(source, &format!("{GMAIL_USER_URL}/profile"), &[])?
+        self.get(source, GMAIL_PROFILE_URL, &[])?
             .ok_or_else(|| refused("gmail_mail_profile_not_found"))
-    }
-
-    /// Checks once per source that its credential reads the mailbox it
-    /// names; answers the profile when it read one.
-    fn verify(&self, source: &MailSyncSource) -> Result<Option<Value>> {
-        if self.verified.borrow().contains(&source.source_ref) {
-            return Ok(None);
-        }
-        let profile = self.profile(source)?;
-        let address = profile
-            .get("emailAddress")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !address.trim().eq_ignore_ascii_case(source.address.trim()) {
-            return Err(refused("gmail_mail_credential_reads_another_mailbox"));
-        }
-        self.verified.borrow_mut().insert(source.source_ref);
-        Ok(Some(profile))
     }
 
     fn message_url(provider_id: &str) -> Result<String> {
@@ -132,11 +140,7 @@ impl<'v> HttpGmailMailWire<'v> {
 
 impl MailProviderWire for HttpGmailMailWire<'_> {
     fn current_anchor(&self, source: &MailSyncSource) -> Result<String> {
-        let profile = match self.verify(source)? {
-            Some(profile) => profile,
-            None => self.profile(source)?,
-        };
-        profile
+        self.profile(source)?
             .get("historyId")
             .and_then(id_text)
             .ok_or_else(|| refused("gmail_mail_profile_without_history_id"))
@@ -148,7 +152,6 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         query: &MailListQuery,
         page: Option<&str>,
     ) -> Result<MailIdPage> {
-        self.verify(source)?;
         // Trash and spam are left out by Gmail's default; drafts by the query.
         let search = match query.newer_than {
             Some(newer_than) => format!("-in:drafts after:{newer_than}"),
@@ -178,7 +181,6 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
     }
 
     fn headers(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailHeaders>> {
-        self.verify(source)?;
         let mut params = vec![("format", "metadata".to_owned())];
         params.extend(
             MESSAGE_HEADERS
@@ -192,12 +194,38 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
     }
 
     fn full(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailFull>> {
-        self.verify(source)?;
         let params = [("format", "full".to_owned())];
-        match self.get(source, &Self::message_url(provider_id)?, &params)? {
-            Some(message) => full_of(&message).map(Some),
-            None => Ok(None),
+        let url = Self::message_url(provider_id)?;
+        let Some(message) = self.get(source, &url, &params)? else {
+            return Ok(None);
+        };
+        let headers = headers_of(&message)?;
+        let mut parts = MessageParts::default();
+        if let Some(payload) = message.get("payload") {
+            collect_parts(payload, 0, &mut parts);
         }
+        // A text part Gmail keeps apart is read by its attachment id, under
+        // the same door; a user's attachments are never read here.
+        for external in std::mem::take(&mut parts.external) {
+            require_attachment_id(&external.attachment_id)?;
+            let attachment = format!("{url}/attachments/{}", external.attachment_id);
+            let Some(body) = self.get(source, &attachment, &[])? else {
+                continue;
+            };
+            let Some(text) = body
+                .get("data")
+                .and_then(Value::as_str)
+                .and_then(|data| decode_text(external.content_type.as_deref(), data))
+            else {
+                continue;
+            };
+            if external.html {
+                parts.html.push(text);
+            } else {
+                parts.plain.push(text);
+            }
+        }
+        Ok(Some(full_from(headers, parts)))
     }
 
     fn history(
@@ -206,7 +234,6 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         anchor: &str,
         page: Option<&str>,
     ) -> Result<MailHistoryRead> {
-        self.verify(source)?;
         if anchor.is_empty() || !anchor.bytes().all(|byte| byte.is_ascii_digit()) {
             return Err(refused("gmail_mail_anchor_not_a_history_id"));
         }
@@ -214,7 +241,12 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             ("startHistoryId", anchor.to_owned()),
             ("maxResults", GMAIL_HISTORY_PAGE_SIZE.to_string()),
         ];
-        for kind in ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"] {
+        for kind in [
+            "messageAdded",
+            "messageDeleted",
+            "labelAdded",
+            "labelRemoved",
+        ] {
             params.push(("historyTypes", kind.to_owned()));
         }
         if let Some(page) = page {
@@ -225,6 +257,9 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             return Ok(MailHistoryRead::Expired);
         };
         let mut changes = Vec::new();
+        // A label record names the labels it changed, not where the message
+        // stands now: each such message is read again below.
+        let mut relabeled = BTreeSet::new();
         for record in array(&listed, "history") {
             for added in array(record, "messagesAdded") {
                 let Some(message) = added.get("message") else {
@@ -250,12 +285,22 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
                 let Some(message) = changed.get("message") else {
                     continue;
                 };
-                let labels = labels_of(message);
-                changes.push(MailHistoryChange::Labels {
-                    provider_id: plain_id(message.get("id"))?,
-                    trash_or_spam: trash_or_spam(&labels),
-                    labels,
-                });
+                relabeled.insert(plain_id(message.get("id"))?);
+            }
+        }
+        let minimal = [("format", "minimal".to_owned())];
+        for provider_id in relabeled {
+            match self.get(source, &Self::message_url(&provider_id)?, &minimal)? {
+                Some(message) => {
+                    let labels = labels_of(&message);
+                    changes.push(MailHistoryChange::Labels {
+                        provider_id,
+                        trash_or_spam: trash_or_spam(&labels),
+                        labels,
+                    });
+                }
+                // Gone since: deleted at the provider.
+                None => changes.push(MailHistoryChange::Deleted { provider_id }),
             }
         }
         let reached = listed
@@ -275,7 +320,6 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         provider_id: &str,
         attachment: &MailAttachmentRef,
     ) -> Result<Option<Vec<u8>>> {
-        self.verify(source)?;
         let message_url = Self::message_url(provider_id)?;
         // An attachment Gmail keeps apart is fetched by its id; a small one
         // rides inline in its part of the whole message.
@@ -327,7 +371,10 @@ fn part_bytes(part: &Value, part_id: &str, depth: usize) -> Option<Vec<u8>> {
 
 /// Whether the Gmail wire reads `provider`'s mailboxes.
 pub(super) const fn reads_google_mail(provider: MailProvider) -> bool {
-    matches!(provider, MailProvider::GoogleWorkspace | MailProvider::Google)
+    matches!(
+        provider,
+        MailProvider::GoogleWorkspace | MailProvider::Google
+    )
 }
 
 /// A message's headers from its Gmail `metadata` or `full` answer.
@@ -362,14 +409,9 @@ fn headers_of(message: &Value) -> Result<MailHeaders> {
     })
 }
 
-/// A message read whole from its Gmail `full` answer: its plain text (or
-/// its HTML's text), and its attachments described, never their bytes.
-fn full_of(message: &Value) -> Result<MailFull> {
-    let headers = headers_of(message)?;
-    let mut parts = MessageParts::default();
-    if let Some(payload) = message.get("payload") {
-        collect_parts(payload, 0, &mut parts);
-    }
+/// A message read whole: its plain text (or its HTML's text), and its
+/// attachments described, never their bytes.
+fn full_from(headers: MailHeaders, parts: MessageParts) -> MailFull {
     let body_text = if !parts.plain.is_empty() {
         Some(parts.plain.join("\n\n"))
     } else if !parts.html.is_empty() {
@@ -377,11 +419,24 @@ fn full_of(message: &Value) -> Result<MailFull> {
     } else {
         None
     };
-    Ok(MailFull {
+    MailFull {
         headers,
         body_text: body_text.filter(|text| !text.trim().is_empty()),
         attachments: parts.attachments,
-    })
+    }
+}
+
+/// The mailbox the Gmail profile `profile` names is the one `source` names.
+fn reads_mailbox(profile: &Value, source: &MailSyncSource) -> Result<()> {
+    let address = profile
+        .get("emailAddress")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if address.trim().eq_ignore_ascii_case(source.address.trim()) {
+        Ok(())
+    } else {
+        Err(refused("gmail_mail_credential_reads_another_mailbox"))
+    }
 }
 
 /// What a message's MIME parts hold.
@@ -390,6 +445,15 @@ struct MessageParts {
     plain: Vec<String>,
     html: Vec<String>,
     attachments: Vec<MailAttachmentRef>,
+    /// The text parts Gmail keeps apart, read by their attachment id.
+    external: Vec<ExternalText>,
+}
+
+/// A `text/plain` or `text/html` body part whose bytes Gmail keeps apart.
+struct ExternalText {
+    attachment_id: String,
+    content_type: Option<String>,
+    html: bool,
 }
 
 fn collect_parts(part: &Value, depth: usize, parts: &mut MessageParts) {
@@ -434,13 +498,25 @@ fn collect_parts(part: &Value, depth: usize, parts: &mut MessageParts) {
         }
         return;
     }
+    let content_type = header_value(part.get("headers"), "Content-Type");
+    // Text stored behind an attachment id comes with no data, or empty data.
     let Some(data) = body
         .and_then(|body| body.get("data"))
         .and_then(Value::as_str)
+        .filter(|data| !data.is_empty())
     else {
+        if let Some(attachment_id) = attachment_id
+            && (media_type == "text/plain" || media_type == "text/html")
+        {
+            parts.external.push(ExternalText {
+                attachment_id: attachment_id.to_owned(),
+                content_type: content_type.map(str::to_owned),
+                html: media_type == "text/html",
+            });
+        }
         return;
     };
-    let Some(text) = part_text(part, data) else {
+    let Some(text) = decode_text(content_type, data) else {
         return;
     };
     if media_type == "text/plain" {
@@ -452,11 +528,11 @@ fn collect_parts(part: &Value, depth: usize, parts: &mut MessageParts) {
 
 /// A text part's words: its base64url data in the charset its
 /// `Content-Type` names, UTF-8 when it names none or one unknown.
-fn part_text(part: &Value, data: &str) -> Option<String> {
+fn decode_text(content_type: Option<&str>, data: &str) -> Option<String> {
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(data.trim_end_matches('='))
         .ok()?;
-    let encoding = header_value(part.get("headers"), "Content-Type")
+    let encoding = content_type
         .and_then(charset_of)
         .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
         .unwrap_or(encoding_rs::UTF_8);
@@ -508,7 +584,10 @@ fn push_address(addresses: &mut Vec<String>, text: &str) {
 
 /// An RFC 5322 `Date` value as Unix seconds; a trailing comment is dropped.
 pub(super) fn rfc2822_seconds(value: &str) -> Option<u64> {
-    let bare = value.split_once(" (").map_or(value, |(head, _)| head).trim();
+    let bare = value
+        .split_once(" (")
+        .map_or(value, |(head, _)| head)
+        .trim();
     chrono::DateTime::parse_from_rfc2822(bare)
         .ok()
         .and_then(|date| u64::try_from(date.timestamp()).ok())
@@ -523,7 +602,9 @@ fn labels_of(message: &Value) -> Vec<String> {
 }
 
 fn trash_or_spam(labels: &[String]) -> bool {
-    labels.iter().any(|label| label == "TRASH" || label == "SPAM")
+    labels
+        .iter()
+        .any(|label| label == "TRASH" || label == "SPAM")
 }
 
 /// A Gmail id that is a string or a number (`historyId`, `internalDate`).
@@ -540,6 +621,19 @@ fn plain_id(value: Option<&Value>) -> Result<String> {
     let id = value.and_then(Value::as_str).unwrap_or_default();
     require_plain_id(id)?;
     Ok(id.to_owned())
+}
+
+/// A Gmail attachment id: base64url, so it is safe in a path.
+fn require_attachment_id(id: &str) -> Result<()> {
+    if id.is_empty()
+        || id.len() > MAX_ATTACHMENT_ID_BYTES
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(refused("gmail_mail_attachment_id_not_plain"));
+    }
+    Ok(())
 }
 
 fn require_plain_id(id: &str) -> Result<()> {

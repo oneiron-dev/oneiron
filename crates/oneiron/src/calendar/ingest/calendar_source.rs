@@ -18,8 +18,10 @@ use crate::vault::Vault;
 /// What one pulled change did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CalendarSourceChange {
-    /// The resource's series landed or moved.
-    Applied,
+    /// The resource's series landed or moved; `starts_at` is its master's
+    /// start, Unix seconds (an all-day or floating one's civil start read as
+    /// UTC).
+    Applied { starts_at: Option<u64> },
     /// The provider deleted it: the source's passport is absent, and the
     /// EVENT cancelled once no live source reports it.
     Deleted,
@@ -39,10 +41,9 @@ pub(crate) fn apply_calendar_source_change(
     now: u64,
 ) -> Result<CalendarSourceChange, CalendarError> {
     match change {
-        RemoteCalendarChange::Upsert(object) => {
-            apply_upsert(vault, system, object, now)?;
-            Ok(CalendarSourceChange::Applied)
-        }
+        RemoteCalendarChange::Upsert(object) => Ok(CalendarSourceChange::Applied {
+            starts_at: apply_upsert(vault, system, object, now)?,
+        }),
         RemoteCalendarChange::Delete { uid, .. } => {
             let record = format!("calendar-source:{system}:{uid}");
             super::delete_connector_resource(vault, system, &record, uid, now)?;
@@ -69,7 +70,7 @@ pub(crate) fn apply_calendar_source_feed(
     now: u64,
 ) -> Result<usize, CalendarError> {
     let feed = parse_ics_feed(ics)?;
-    let blob_ref = archive_source_resource(vault, system, FEED_ARCHIVE_KEY, ics, now)?;
+    let blob_ref = archive_source_resource(vault, system, FEED_ARCHIVE_KEY, ics, now)?.record;
     let mut admission = PollAdmission {
         vault,
         screener: None,
@@ -86,15 +87,52 @@ pub(crate) fn apply_calendar_source_feed(
     Ok(feed.events.len())
 }
 
+/// Marks every UID in `uids` absent for a pack calendar source whose full
+/// listing finished without them, under its calendar `system`: each
+/// passport of the source for that UID, master and instances, is absent,
+/// and the EVENT cancelled once no live source reports it. The claims cite
+/// the omitted UIDs, archived bound to the source.
+///
+/// # Errors
+///
+/// The source is not an Active calendar of an installed pack, or the
+/// admission refuses.
+pub(crate) fn apply_calendar_source_omissions(
+    vault: &Vault,
+    system: &str,
+    uids: &[String],
+    now: u64,
+) -> Result<(), CalendarError> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let mut omitted = String::from("listing finished without:\r\n");
+    for uid in uids {
+        omitted.push_str(uid);
+        omitted.push_str("\r\n");
+    }
+    let record =
+        archive_source_resource(vault, system, LISTING_ARCHIVE_KEY, omitted.as_bytes(), now)?
+            .record;
+    let none = ParsedIcsFeed { events: Vec::new() };
+    for uid in uids {
+        super::sweep_connector_resource(vault, system, &record, &none, uid, now)?;
+    }
+    Ok(())
+}
+
 /// The archive key of a whole feed, beside the per-UID resources.
 const FEED_ARCHIVE_KEY: &str = "#feed";
+/// The archive key of the UIDs a finished listing omitted.
+const LISTING_ARCHIVE_KEY: &str = "#listing";
 
+/// Lands one resource; answers its master's start.
 fn apply_upsert(
     vault: &Vault,
     system: &str,
     object: &RemoteCalendarObject,
     now: u64,
-) -> Result<(), CalendarError> {
+) -> Result<Option<u64>, CalendarError> {
     let feed = parse_resource(&object.ics)?;
     let uid = feed
         .events
@@ -103,23 +141,62 @@ fn apply_upsert(
         .ok_or_else(|| parse_error("calendar resource carries no VEVENT"))?;
     // Archived before any semantic write: the admitted claims cite exactly
     // these bytes.
-    let record = archive_source_resource(vault, system, &uid, &object.ics, now)?;
-    super::preflight_connector_feed(vault, system, &record, &feed, now)?;
+    let archived = archive_source_resource(vault, system, &uid, &object.ics, now)?;
+    let record = archived.record.as_str();
+    super::preflight_connector_feed(vault, system, record, &feed, now)?;
     for parsed in &feed.events {
-        super::admit_connector_event(vault, system, record.as_str(), parsed, now)?;
+        super::admit_connector_event(vault, system, record, parsed, now)?;
     }
-    // Only a series can have dropped an instance this resource no longer
-    // carries; a single event has nothing to sweep, and the sweep reads
-    // every EVENT.
-    let series = feed.events.len() > 1
+    // Only a series, now or in the resource's version before, can have
+    // dropped an instance this resource no longer carries; a single event
+    // that was single has nothing to sweep, and the sweep reads every EVENT.
+    if is_series(&feed) || earlier_was_series(vault, &archived)? {
+        super::sweep_connector_resource(vault, system, record, &feed, &uid, now)?;
+    }
+    Ok(feed.events.first().and_then(starts_at))
+}
+
+/// An event's start, Unix seconds: its UTC start, else its civil start read
+/// as UTC.
+fn starts_at(event: &crate::calendar::ics::ParsedVEvent) -> Option<u64> {
+    if let Some(start) = event.starts_at_utc {
+        return Some(start);
+    }
+    let wall = event.properties.wall_time.as_ref()?;
+    let at = chrono::NaiveDate::from_ymd_opt(wall.y, u32::from(wall.mo), u32::from(wall.d))?
+        .and_hms_opt(
+            u32::from(wall.h),
+            u32::from(wall.mi),
+            u32::from(wall.s.min(59)),
+        )?
+        .and_utc()
+        .timestamp();
+    u64::try_from(at).ok()
+}
+
+/// Whether a resource carries a series: a master with a rule, or detached
+/// instances.
+fn is_series(feed: &ParsedIcsFeed) -> bool {
+    feed.events.len() > 1
         || feed
             .events
             .first()
-            .is_some_and(|master| master.properties.rrule.is_some());
-    if series {
-        super::sweep_connector_resource(vault, system, &record, &feed, &uid, now)?;
-    }
-    Ok(())
+            .is_some_and(|master| master.properties.rrule.is_some())
+}
+
+/// Whether the version the archived one descends from carried a series. A
+/// version that no longer reads or parses counts as one.
+fn earlier_was_series(vault: &Vault, archived: &ArchivedResource) -> Result<bool, CalendarError> {
+    let Some(parent) = archived.parent_version else {
+        return Ok(false);
+    };
+    let Some(bytes) = vault.read_blob_artifact_version(&archived.artifact_id, parent)? else {
+        return Ok(true);
+    };
+    Ok(match parse_ics_feed(&bytes) {
+        Ok(feed) => is_series(&feed),
+        Err(_) => true,
+    })
 }
 
 /// One resource: one UID's master first, then its detached instances.
@@ -138,19 +215,29 @@ fn parse_resource(ics: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
     Ok(feed)
 }
 
+/// One pulled resource as archived.
+struct ArchivedResource {
+    /// The `hex#vN` reference the admitted claims cite.
+    record: String,
+    artifact_id: EntityId,
+    /// The version this one descends from, when it is not the first.
+    parent_version: Option<u64>,
+}
+
 /// Archives one pulled resource of `(system, uid)`: one artifact per
 /// resource, bound to the source's audience in its birth commit, then one
-/// version per body. Returns the `hex#vN` reference the admitted claims
-/// cite.
+/// version per body.
 fn archive_source_resource(
     vault: &Vault,
     system: &str,
     uid: &str,
     ics: &[u8],
     now: u64,
-) -> Result<String, CalendarError> {
-    let artifact_id =
-        EntityId::derive(MAIL_CALENDAR_SOURCE_BLOB, &[system.as_bytes(), uid.as_bytes()])?;
+) -> Result<ArchivedResource, CalendarError> {
+    let artifact_id = EntityId::derive(
+        MAIL_CALENDAR_SOURCE_BLOB,
+        &[system.as_bytes(), uid.as_bytes()],
+    )?;
     let at = crate::TimeRange {
         start: now,
         end: now,
@@ -181,7 +268,11 @@ fn archive_source_resource(
         at,
         now,
     )?;
-    Ok(format!("{}#v{}", artifact_id.to_hex(), version.version))
+    Ok(ArchivedResource {
+        record: format!("{}#v{}", artifact_id.to_hex(), version.version),
+        artifact_id,
+        parent_version: version.parent_version,
+    })
 }
 
 fn parse_error(reason: &str) -> CalendarError {

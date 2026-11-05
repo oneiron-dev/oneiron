@@ -2,8 +2,9 @@
 //! for its provider: Gmail for Google Workspace and Google mailboxes,
 //! Microsoft Graph for Microsoft 365 mailboxes and calendars, Google
 //! Calendar for Google calendars, HTTPS for ICS subscriptions. The owner runs
-//! it on this device through `vault.mail.sources.sync`; a server host runs
-//! it for every due source as the vault's local owner.
+//! it through `vault.mail.sources.sync`, on this device as its embedded owner
+//! or on a served vault under the owner's proof; a server host runs it for
+//! every due source as the vault's local owner.
 
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +34,22 @@ pub struct MailSourceSyncRequest {
     /// The bodies a mailbox step fills in; 50 when absent, at most 500.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bodies: Option<u32>,
+}
+
+impl MailSourceSyncRequest {
+    /// The source this request names and the step's budget.
+    ///
+    /// # Errors
+    ///
+    /// A source ref that is not 32-hex.
+    pub fn step(&self) -> MemoryResult<(EntityId, MailSyncBudget)> {
+        let source = EntityId::from_hex(&self.source_ref)?;
+        let mut budget = MailSyncBudget::default();
+        if let Some(bodies) = self.bodies {
+            budget.bodies = bodies.min(MAX_BODIES_PER_STEP);
+        }
+        Ok((source, budget))
+    }
 }
 
 impl Vault {
@@ -119,11 +136,7 @@ impl Memory<'_> {
     /// local SDKs do.
     pub fn mail_sources_sync(&self, input: &MailSourceSyncRequest) -> MemoryResult<MailSyncReport> {
         let owner = self.embedded_owner("vault.mail.sources.sync")?;
-        let source = EntityId::from_hex(&input.source_ref)?;
-        let mut budget = MailSyncBudget::default();
-        if let Some(bodies) = input.bodies {
-            budget.bodies = bodies.min(MAX_BODIES_PER_STEP);
-        }
+        let (source, budget) = input.step()?;
         self.vault().mail_source_sync_step(&owner, source, budget)
     }
 }

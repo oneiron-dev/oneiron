@@ -34,6 +34,40 @@ const MAX_REPORTED_REASONS: usize = 20;
 /// One calendar source's pull progress, by the source.
 const CALENDAR_SYNC: SideTable<EntityId, MailCalendarSyncState, Named> =
     SideTable::new(&side_table::MAIL_PACK_CALENDAR_SYNC);
+/// The resources a calendar source's pulls landed, by the source and the
+/// BLAKE3 of the provider's resource id.
+const CALENDAR_RESOURCES: SideTable<(EntityId, [u8; 32]), MailCalendarResource, Named> =
+    SideTable::new(&side_table::MAIL_PACK_CALENDAR_RESOURCE);
+
+/// One resource a calendar source's pulls landed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct MailCalendarResource {
+    /// The UID it carried.
+    uid: String,
+    /// The listing of the source that last saw it
+    /// ([`MailCalendarSyncState::listing`]).
+    listing: u64,
+    /// Its master's start, Unix seconds.
+    starts_at: Option<u64>,
+}
+
+fn resource_key(source: EntityId, href: &str) -> (EntityId, [u8; 32]) {
+    (source, *blake3::hash(href.as_bytes()).as_bytes())
+}
+
+/// The UID the calendar source `source` landed for the provider's resource
+/// `href`, if it landed one: how a wire names a deleted event the provider
+/// reports by its id alone.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn landed_uid(vault: &Vault, source: EntityId, href: &str) -> Result<Option<String>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(CALENDAR_RESOURCES
+        .get(&vault.store, &txn, &resource_key(source, href))?
+        .map(|resource| resource.uid))
+}
 
 /// Where one calendar source's pull stands.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -42,6 +76,9 @@ struct MailCalendarSyncState {
     cursor: Option<String>,
     /// Whether a full listing has finished, so changes arrive live.
     complete: bool,
+    /// The full listings started so far: the one in progress, or the last.
+    #[serde(default)]
+    listing: u64,
     landed: u64,
     deleted_at_provider: u64,
     last_step_at: Option<u64>,
@@ -58,6 +95,10 @@ pub struct MailCalendarPull {
     pub next_cursor: Option<String>,
     /// Whether this page ends a listing: the cursor now follows changes.
     pub complete: bool,
+    /// The span of start times a listing's pages cover; `None` for the whole
+    /// calendar. A resource landed before, starting in it and omitted by the
+    /// finished listing, is marked absent.
+    pub covers: Option<TimeRange>,
 }
 
 /// One whole calendar a feed wire read (an ICS file or subscription).
@@ -177,14 +218,16 @@ pub(crate) fn calendar_source_occupancy(
     let vault = memory.vault();
     let systems = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        if require_pack_active_in(vault, &txn).is_err() || memory.mail_caller_person_in(&txn).is_err()
+        if require_pack_active_in(vault, &txn).is_err()
+            || memory.mail_caller_person_in(&txn).is_err()
         {
             return Ok(Vec::new());
         }
         let mut systems = Vec::new();
         for row in SOURCES.iter_from(&vault.store, &txn, &[])? {
             let (source, row) = row?;
-            if row.kind != MailSourceKind::Calendar || row.status == MailSourceStatus::Disconnected {
+            if row.kind != MailSourceKind::Calendar || row.status == MailSourceStatus::Disconnected
+            {
                 continue;
             }
             let system = calendar_source_system(source);
@@ -333,6 +376,11 @@ impl Vault {
         report: &mut MailSyncReport,
     ) -> MemoryResult<()> {
         for _ in 0..pages {
+            // A pull from no cursor starts a full listing.
+            if state.cursor.is_none() {
+                state.listing += 1;
+            }
+            let listing = !state.complete;
             let pull = match wire.pull(source, state.cursor.as_deref())? {
                 MailCalendarRead::Pull(pull) => pull,
                 MailCalendarRead::Feed(feed) => {
@@ -362,9 +410,11 @@ impl Vault {
             };
             let at = crate::unix_seconds_now();
             for change in &pull.changes {
-                match crate::calendar::ingest::apply_calendar_source_change(self, system, change, at)
-                {
-                    Ok(crate::calendar::ingest::CalendarSourceChange::Applied) => {
+                let applied =
+                    crate::calendar::ingest::apply_calendar_source_change(self, system, change, at);
+                self.note_calendar_resource(source.source_ref, change, &applied, state.listing)?;
+                match applied {
+                    Ok(crate::calendar::ingest::CalendarSourceChange::Applied { .. }) => {
                         report.landed += 1;
                         state.landed += 1;
                     }
@@ -382,6 +432,17 @@ impl Vault {
                     }
                 }
             }
+            if listing && pull.complete {
+                let omitted =
+                    self.calendar_listing_omissions(source.source_ref, state.listing, pull.covers)?;
+                crate::calendar::ingest::apply_calendar_source_omissions(
+                    self, system, &omitted, at,
+                )
+                .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+                self.forget_calendar_resources(source.source_ref, &omitted)?;
+                report.kept_deleted += omitted.len() as u64;
+                state.deleted_at_provider += omitted.len() as u64;
+            }
             state.cursor = pull.next_cursor;
             if pull.complete {
                 state.complete = true;
@@ -391,6 +452,89 @@ impl Vault {
                 break;
             }
         }
+        Ok(())
+    }
+
+    /// Notes what one pulled change did to its resource: a landed one, or
+    /// one the admission refused (its earlier landing stands), is seen by
+    /// listing `listing`; a deleted one is forgotten.
+    fn note_calendar_resource(
+        &self,
+        source: EntityId,
+        change: &RemoteCalendarChange,
+        applied: &std::result::Result<
+            crate::calendar::ingest::CalendarSourceChange,
+            crate::calendar::CalendarError,
+        >,
+        listing: u64,
+    ) -> MemoryResult<()> {
+        self.with_write_txn_grouped(|txn| match change {
+            RemoteCalendarChange::Upsert(object) => {
+                let key = resource_key(source, &object.href);
+                let earlier = CALENDAR_RESOURCES.get(&self.store, txn, &key)?;
+                let starts_at = match applied {
+                    Ok(crate::calendar::ingest::CalendarSourceChange::Applied { starts_at }) => {
+                        *starts_at
+                    }
+                    _ => earlier.as_ref().and_then(|resource| resource.starts_at),
+                };
+                let resource = MailCalendarResource {
+                    uid: object.uid.clone(),
+                    listing,
+                    starts_at,
+                };
+                CALENDAR_RESOURCES.put(&self.store, txn, &key, &resource)
+            }
+            RemoteCalendarChange::Delete { href, .. } => {
+                CALENDAR_RESOURCES.delete(&self.store, txn, &resource_key(source, href))?;
+                Ok(())
+            }
+        })?;
+        Ok(())
+    }
+
+    /// The UIDs the source landed that its finished listing `listing` did
+    /// not see, among those starting in `covers` (all, when `None`).
+    fn calendar_listing_omissions(
+        &self,
+        source: EntityId,
+        listing: u64,
+        covers: Option<TimeRange>,
+    ) -> MemoryResult<Vec<String>> {
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        let mut omitted = std::collections::BTreeSet::new();
+        for row in CALENDAR_RESOURCES.iter_from(&self.store, &txn, source.as_bytes())? {
+            let (_, resource) = row?;
+            let covered = covers.is_none_or(|span| {
+                resource
+                    .starts_at
+                    .is_some_and(|start| start >= span.start && start < span.end)
+            });
+            if resource.listing < listing && covered {
+                omitted.insert(resource.uid);
+            }
+        }
+        Ok(omitted.into_iter().collect())
+    }
+
+    /// Forgets the source's resources carrying the UIDs `uids`.
+    fn forget_calendar_resources(&self, source: EntityId, uids: &[String]) -> MemoryResult<()> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+        self.with_write_txn_grouped(|txn| {
+            let mut gone = Vec::new();
+            for row in CALENDAR_RESOURCES.iter_from(&self.store, txn, source.as_bytes())? {
+                let (key, resource) = row?;
+                if uids.binary_search(&resource.uid).is_ok() {
+                    gone.push(key);
+                }
+            }
+            for key in gone {
+                CALENDAR_RESOURCES.delete(&self.store, txn, &key)?;
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 
