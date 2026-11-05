@@ -232,7 +232,8 @@ impl<'vault> WorkflowToolCheckpointWriter<'vault> {
         let bytes = serde_json::to_vec(transcript)
             .map_err(|error| invalid(&format!("workflow transcript: {error}")))?;
         validate_transcript(transcript, &progress)?;
-        let body = session.stage_checkpoint_body(route, super::BODY_PATH.to_owned(), &bytes)?;
+        let body: crate::code_run::SessionCheckpointBody =
+            session.stage_checkpoint_body(route, super::BODY_PATH.to_owned(), &bytes)?;
         let admitted: WorkflowToolTranscript =
             serde_json::from_slice(&body.admitted_bytes(session)?)
                 .map_err(|_| invalid("admitted workflow transcript does not decode"))?;
