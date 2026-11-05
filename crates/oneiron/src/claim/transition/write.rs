@@ -333,6 +333,7 @@ pub(crate) fn stage_machine_claim_transition(
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data: crate::claim::encode_claim_body(&control)?,
             allow_maintenance: false,
             allow_reserved_predicate: true,
