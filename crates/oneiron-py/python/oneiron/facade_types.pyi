@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1232 facade rows, 4492 declarations.
-Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1233 facade rows, 4494 declarations.
+Inputs: 1164 of 1233 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1068 of 1233 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -8074,6 +8074,15 @@ class OffRecordNoteRequest(TypedDict):
     session_ref: str
     note: CreateNoteRequest
     evidence_turn_refs: NotRequired[list[str]]
+class OffRecordArtifactSaveRequest(TypedDict):
+    session_ref: str
+    artifact_ref: str
+class OffRecordRoomShortIdPair(TypedDict):
+    room: str
+    vault: str
+class OffRecordArtifactSaved(TypedDict):
+    replayed: list[str]
+    short_ids: list[OffRecordRoomShortIdPair]
 class OffRecordClaimRequest(TypedDict):
     session_ref: str
     claim: ScopedClaimInput
@@ -8247,7 +8256,7 @@ class OffRecordWaitAnswered(TypedDict):
 class OffRecordRoomRequest(TypedDict):
     room: str
     session_ref: str
-OffRecordNoticeAct = Literal["saved_talk", "saved_turn", "saving_from_here", "saving_stopped", "exported", "save_suggested", "save_declined"]
+OffRecordNoticeAct = Literal["saved_talk", "saved_turn", "saved_artifact", "saving_from_here", "saving_stopped", "exported", "save_suggested", "save_declined"]
 class OffRecordRoomNotice(TypedDict):
     act: OffRecordNoticeAct
     by: str
@@ -8274,9 +8283,6 @@ class OffRecordRoomWitnessRequest(TypedDict):
     session_ref: str
     turn: WitnessTurn
     summary: NotRequired[str | None]
-class OffRecordRoomShortIdPair(TypedDict):
-    room: str
-    vault: str
 class OffRecordRoomSavedTurn(TypedDict):
     turn: str
     replayed: list[str]

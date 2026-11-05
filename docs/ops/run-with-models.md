@@ -670,6 +670,26 @@ cached-read count and lists none. A count a backend did not report stays
 absent and its pass is `unknown`, never a hit. The usage ledger records the
 standard cached-read count only; the records ride the receipt.
 
+On the house EXL3 server a chat conversation keeps a native session: the
+canonical history stays computed between turns. Once a reply's successor is
+published, the session also prepares the part of the next turn already known,
+the state-only board rendered for that turn's reader, as background work beside
+it (I1 = C). When the next turn arrives, the worker compares its own tokens with
+the prepared ones and reuses only their identical beginning; everything after
+the first token that differs, the fresh recall included, is computed as
+before, and a preparation still running stops. `[models.sessions]` holds the
+policy:
+
+```toml
+[models.sessions]
+prepare_tail = true   # the fixed policy, on by default
+planner = "off"       # "learned": skip a conversation's preparation once its tails gave too little
+```
+
+`GET /v1/ai/status` lists `prepared_tails`: prepares started, ready and
+stopped, publishes skipped by reason, forks that attached to a tail or missed
+it, and the tokens computed, reused and wasted.
+
 ### Managed native-worker accounting
 
 Device tickets and executor activity for a managed native worker use the actual
