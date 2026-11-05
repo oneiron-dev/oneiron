@@ -14,8 +14,8 @@ use getrandom::SysRng;
 use oneiron_crypto::legal_clone::{self, CaptureBinding, ContentBinding, SourceComponent};
 use oneiron_crypto::{Envelope, HybridPublicKey, MAX_PLAINTEXT_LEN};
 use oneiron_vault_contract::host_legal::{
-    CaptureAck, CaptureDescriptor, CaptureRequest, CaptureSummary, FrameHeader, FrameKind,
-    SourceHello,
+    CaptureAck, CaptureDescriptor, CaptureRequest, CaptureScope, CaptureSummary, FrameHeader,
+    FrameKind, SourceHello,
 };
 use zeroize::Zeroizing;
 
@@ -89,6 +89,7 @@ impl HostLegalConnection {
             .store
             .for_each_claim_free_gate_clone_component_in_txn(
                 &txn,
+                |decision| request.scope.includes(&decision.as_bytes()),
                 check,
                 |decision, component, key, value| {
                     check()?;
@@ -173,6 +174,15 @@ impl HostLegalConnection {
                 },
             )?;
         check()?;
+        if let CaptureScope::GateDecisions(ids) = &request.scope
+            && decisions as u128 != ids.len() as u128
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "legal capture selected decision unavailable",
+            )
+            .into());
+        }
         let summary = CaptureSummary {
             order: binding.order,
             capture: binding.capture,
