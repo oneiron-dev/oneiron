@@ -43,7 +43,7 @@ use crate::error::{Error, Result};
 
 /// The most image bytes one countersign part carries: inside the home's
 /// inbound frame once base64 and the RPC envelope are added. An image goes in
-/// as many parts as it takes, up to the image's own size cap.
+/// as many parts as it takes, with no total-image policy cap.
 pub const AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX: usize = 2 * 1024 * 1024;
 
 const WAIT_NOT_COUNTED: &str = "the image's root policy is not the one this vault counts now";
