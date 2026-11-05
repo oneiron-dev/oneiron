@@ -12,7 +12,19 @@ pub(super) const CURRENT: &str = "current";
 /// Read only the supplied document; malformed native state is not absence.
 /// This validates the codec, not its native source or carrier standing.
 pub(super) fn read_fact(doc: &EntityDoc) -> Result<Option<SkillStateFact>> {
-    let map = doc.doc.get_map(ROOT);
+    // get_map would create an empty root even on a read. Inspect the
+    // existing root id, as the canonical Layer-1 reader does.
+    let LoroValue::Map(containers) = doc.doc.get_value() else {
+        return Err(Error::CorruptedIndex("native SKILL state document root"));
+    };
+    let map = match containers.get(ROOT) {
+        None => return Ok(None),
+        Some(LoroValue::Container(id)) => doc
+            .doc
+            .try_get_map(id)
+            .ok_or(Error::CorruptedIndex("native SKILL state register type"))?,
+        Some(_) => return Err(Error::CorruptedIndex("native SKILL state register type")),
+    };
     let current = map.get(CURRENT);
     if map.len() != usize::from(current.is_some()) {
         return Err(Error::CorruptedIndex("native SKILL state register keys"));
