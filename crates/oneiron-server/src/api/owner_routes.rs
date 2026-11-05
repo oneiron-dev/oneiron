@@ -47,6 +47,7 @@ pub(super) mod backup_setting_routes;
 pub(super) mod browser_takeover_routes;
 pub(super) mod budget_hold_routes;
 pub(super) mod checkpoint_policy_routes;
+mod claim_refinement_routes;
 mod cleanup_decide;
 pub(super) mod code_run_secret_lift_routes;
 mod commitment_routes;
@@ -135,6 +136,7 @@ fn owner_tables() -> OwnerTable {
         authority_clock_routes::owner_table(),
         budget_hold_routes::owner_table(),
         checkpoint_policy_routes::owner_table(),
+        claim_refinement_routes::owner_table(),
         commitment_routes::owner_table(),
         conflict_routes::owner_table(),
         connector_admission_routes::owner_table(),
