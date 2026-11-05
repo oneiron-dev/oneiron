@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "icon": [
+      "icons/Assets.car",
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "infoPlist": "icons/Info.plist",
+      "files": {
+        "Resources/OneironLegacy.icns": "icons/icon.icns"
+      }
+    }
+  }
+}

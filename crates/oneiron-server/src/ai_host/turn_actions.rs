@@ -170,6 +170,8 @@ async fn act(
     let place = blocking(|| vault.turn_room_work(action.assistant_turn))
         .map_err(|error| error.to_string())?;
     let (room, branch) = place.map_or((action.conversation, None), |work| (work.room, work.branch));
+    let model_call_no_record_at_arrival =
+        crate::api::ai::chat::model_call_keeps_no_record(vault, actor, None, Some(room), None);
     let funding = blocking(|| room_launch_funding(vault, room, branch, context.agent, actor))
         .map_err(|fault| fault.to_string())?;
     let seat = ai
@@ -356,6 +358,9 @@ async fn act(
             payer: WriteActor::new(actor, class),
             funding,
             budget_units: settings.turn_budget_units,
+            model_call_caller: actor,
+            model_call_room: Some(room),
+            model_call_no_record_at_arrival,
             credential: TurnCredential::Action {
                 action: Box::new(action),
                 vault: Arc::clone(vault),

@@ -104,6 +104,32 @@ credential.
   its socket errs) clears the revision, as a VM without one reads; a
   question still unanswered leaves the last answer standing. Restarting a
   companion that ended is the bootstrap's part.
+- Whole sets (FIX 7543). A receiving end journals each set the other end
+  sent before it makes the set's first change: `set-<kind>.json` in its
+  carrier store names each change in the set's order and the record each
+  member gets, and the staged bodies it names are synced first. A set with
+  more than one change on disk also puts a hidden mark, `.vm-outbox-set`,
+  in the kind's root. Then the end makes the changes, writes the records,
+  removes the mark and deletes the journal, and only then answers the
+  set's transfers `durable`. When a step fails, or the end stops midway,
+  the set is unfinished: its transfers are deferred, the journal, the
+  mark and the staged temporaries stay, and the kind waits. The kind's next
+  turn, or the end's next start, puts the mark back and finishes the set
+  from its journal before anything else of the kind runs. Nothing is rolled
+  back or dropped. A put whose staged bytes are gone is logged as
+  `vm_outbox_set_put_lost` and waits in the journal, the mark standing,
+  until the other end sends it again; the kind takes sets meanwhile. A
+  reader of more than one member of a set waits while the mark stands and
+  never refuses for it: `vm_outbox_read_set` in
+  `oneiron_vault_contract::vm_outbox` reads several members as they stood
+  at one point between sets, or answers `None` for a later look, and
+  `vm_outbox_set_unfinished` tells whether the mark stands. In the guest,
+  the engine's escrow recipient look and the cold restore's recipient check
+  read both recipients through `vm_outbox_read_set`, and the publisher
+  training outbox's tick waits on the mark under the outbox's lock.
+  On the host, the node's shippers of a kind whose sets have more than one
+  member (backups with their checkpoint facts, custody batches, e-sign
+  deliveries, training offers) should wait on the mark in the same way.
 - Copies the carrier never agreed on (FIX 11074). When a member's origin
   retires the agreed version and the other end holds a different copy, that
   end takes the retirement for the agreed version and keeps its copy. It

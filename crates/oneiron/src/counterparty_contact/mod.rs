@@ -14,6 +14,7 @@ mod identity_index;
 mod lifecycle;
 mod storage;
 mod trusted_contact;
+mod trusted_contact_credential;
 mod trusted_contact_notice;
 mod types;
 
