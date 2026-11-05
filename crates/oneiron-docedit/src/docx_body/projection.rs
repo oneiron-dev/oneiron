@@ -88,7 +88,12 @@ pub(super) fn group_ops<'v>(
             }
             DocxChange::Delete { block } => {
                 let block = find(block)?;
-                ops.push(json!({"op": "delete", "target": block.id.to_string(), "guard": block.guard}));
+                ops.push(json!({
+                    "op": "delete",
+                    "target": block.id.to_string(),
+                    "guard": block.guard,
+                    "expect": block.text,
+                }));
             }
         }
     }

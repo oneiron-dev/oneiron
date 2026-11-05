@@ -88,6 +88,7 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // restore folds it again from the restored edges (OF-296).
                 b"conversation_dag:thread_meta:v1:",
                 b"conversation_dag:thread_meta_dirty:v1:",
+                b"office_body:export_token_index:v1:",
                 b"skill_hub/content_hash_index/v1\0",
                 b"skill_hub/content_hash_index_schema_version",
                 b"skill_convert/source_index/v1\0",
