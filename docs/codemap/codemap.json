@@ -18015,6 +18015,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/storage/records/bodies/context.rs",
+     "purpose": "One code-run output body for a heal's recorded cause (FIX 7275): the context-safe read of a raw output…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/storage/records/bodies/host_occurrence.rs",
      "purpose": "A host parent run's record and whose it is (FIX 9019)",
      "surface": {
@@ -65251,7 +65261,7 @@
      "path": "src/self_heal/heal_context/records.rs",
      "purpose": "How a heal's context renders what it read (OF-418 L2, L10): the source order of a walk's links, a code run's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -91618,7 +91628,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 176,
+     "files": 177,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92929,7 +92939,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6498,
+   "source_files": 6499,
    "test_files": 895
   },
   "oneiron-android": {
