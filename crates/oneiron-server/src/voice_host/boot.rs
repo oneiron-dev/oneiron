@@ -574,6 +574,7 @@ pub(super) fn prepare_call(
             extraction_prompt: settings.extraction_prompt.clone().unwrap_or_default(),
             session,
             shutdown: shutdown.clone(),
+            speculative_auth: Some(auth.clone()),
             // Each sentence's safeguard runs under the host's policy config,
             // its ladder's paired question lent (FIX 1201).
             owner_policy: server
