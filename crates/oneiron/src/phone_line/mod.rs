@@ -172,35 +172,41 @@ impl Vault {
         LINES.get(&self.store, &txn, &identity_ref)
     }
 
-    pub fn phone_line_arrival_as(
+    /// Reads by the opaque payload reference kept in the inbox, never by a caller URL.
+    pub fn phone_line_arrival_by_ref_as(
         &self,
         owner: &AuthenticatedOwner,
         identity_ref: EntityId,
-        call_id: &str,
+        payload_ref: &str,
     ) -> Result<Option<PhoneLineArrivalRecord>> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
         Ok(
-            match ARRIVALS.get(&self.store, &txn, &arrival_key(identity_ref, call_id))? {
-                Some(StoredArrival::Live { record, .. }) => Some(record),
-                Some(StoredArrival::Erased) | None => None,
+            match ARRIVALS.get(&self.store, &txn, &payload_key(payload_ref)?)? {
+                Some(StoredArrival::Live { record, .. })
+                    if record.identity_ref == identity_ref && record.payload_ref == payload_ref =>
+                {
+                    Some(record)
+                }
+                Some(StoredArrival::Live { .. } | StoredArrival::Erased) | None => None,
             },
         )
     }
 
     /// Removes the private call metadata. The queue retains only opaque refs, not caller text.
-    pub fn erase_phone_line_arrival_as(
+    pub fn erase_phone_line_arrival_by_ref_as(
         &self,
         owner: &AuthenticatedOwner,
         identity_ref: EntityId,
-        call_id: &str,
+        payload_ref: &str,
     ) -> Result<bool> {
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        let key = arrival_key(identity_ref, call_id);
+        let key = payload_key(payload_ref)?;
         let erased = matches!(
             ARRIVALS.get(&self.store, &txn, &key)?,
-            Some(StoredArrival::Live { .. })
+            Some(StoredArrival::Live { ref record, .. })
+                if record.identity_ref == identity_ref && record.payload_ref == payload_ref
         );
         if erased {
             ARRIVALS.put(&self.store, &mut txn, &key, &StoredArrival::Erased)?;
@@ -227,7 +233,10 @@ pub(crate) fn admitted_line_in_txn(
         || state.agent_ref != agent
         || state.bridge_actor != bridge
         || EntityId::from_hex(read.actor_key().actor_ref())? != bridge
-        || !matches!(identity.inbound(), InboundDisposition::Deliver)
+        || !matches!(
+            identity.inbound(),
+            InboundDisposition::Deliver | InboundDisposition::DeliverRetiring
+        )
     {
         return Err(invalid());
     }
@@ -241,6 +250,15 @@ pub(crate) fn arrival_key(identity_ref: EntityId, call_id: &str) -> [u8; 32] {
     hash.update(&(call_id.len() as u64).to_be_bytes());
     hash.update(call_id.as_bytes());
     *hash.finalize().as_bytes()
+}
+
+fn payload_key(payload_ref: &str) -> Result<[u8; 32]> {
+    let digest = payload_ref
+        .strip_prefix("phone-line:arrival:")
+        .ok_or_else(invalid)?;
+    blake3::Hash::from_hex(digest)
+        .map(|hash| *hash.as_bytes())
+        .map_err(|_| invalid())
 }
 
 pub(crate) fn input_digest(arrival: &PhoneLineArrival) -> Result<[u8; 32]> {
