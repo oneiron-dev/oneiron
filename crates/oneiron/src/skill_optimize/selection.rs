@@ -12,7 +12,7 @@ use crate::skill_reliability::{
     SkillReliabilityPosterior, skill_reliability_prior, skill_reliability_prior_sourced,
 };
 
-use super::dials::{SKILL_SCAN_PAGE, skill_optimize_min_outcomes};
+use super::dials::{SKILL_SCAN_PAGE, skill_optimize_min_outcomes_sourced};
 use super::gate::receipt_is_held_out;
 use super::tier::{tier_verdict, tier_verdict_sourced};
 
@@ -88,10 +88,10 @@ fn select_candidates(
     affirm: bool,
     resident: Option<EntityId>,
 ) -> Result<(Vec<SkillOptimizeCandidate>, Option<Vec<EntityId>>)> {
-    let min_outcomes = skill_optimize_min_outcomes(vault)?;
+    let (min_outcomes, dial_rows) = skill_optimize_min_outcomes_sourced(vault)?;
     let skills = all_skill_ids(vault)?;
-    let mut sources = Vec::new();
-    let mut sources_known = true;
+    let mut sources_known = dial_rows.is_some();
+    let mut sources = dial_rows.unwrap_or_default();
 
     // One pass to learn which `skillId`s already have an unanswered proposed
     // revision, so the second pass can skip asking again.
