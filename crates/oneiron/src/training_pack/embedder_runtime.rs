@@ -13,6 +13,38 @@ use super::{
     training_runs_in,
 };
 
+impl PinnedCheckpoint {
+    /// One spelling for runtime declaration and native training move matching.
+    pub(crate) fn embedding_space_id(&self) -> Result<String> {
+        Ok(format!(
+            "{}@training-{}",
+            self.model,
+            blake3::Hash::from(self.content_hash()?).to_hex(),
+        ))
+    }
+
+    /// Cached bytes remain usable only while every original immutable version
+    /// and its native body-readability state are live in this transaction.
+    pub(crate) fn custody_live_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        for file in &self.files {
+            let Some(version) = vault.blob_artifact_version_metadata_in_txn(
+                txn,
+                &file.content.artifact,
+                file.content.version,
+            )?
+            else {
+                return Ok(false);
+            };
+            if version.content_hash != file.content.blake3
+                || !vault.blob_artifact_bytes_readable_in_txn(txn, &file.content.artifact)?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
 /// One actual returned checkpoint and the setup its loader observed. Loading
 /// confers no approval: only `approved` or `bound` sources may fill a space.
 #[derive(Clone, Debug, PartialEq)]
@@ -31,11 +63,7 @@ pub struct TrainingEmbedderSource {
 impl TrainingEmbedderSource {
     /// A private custody load set, not a stock provider or a hub revision.
     pub fn space_id(&self) -> Result<String> {
-        Ok(format!(
-            "{}@training-{}",
-            self.binding.model,
-            blake3::Hash::from(self.checkpoint.content_hash()?).to_hex(),
-        ))
+        self.checkpoint.embedding_space_id()
     }
 
     /// The native pending receipt still authorizes filling over this manifest.
@@ -90,7 +118,9 @@ fn source_in(
     let Some(result) = run.result else {
         return Ok(None);
     };
-    if result.exported_checkpoint.model != binding.model {
+    if result.exported_checkpoint.model != binding.model
+        || !result.exported_checkpoint.custody_live_in_txn(vault, txn)?
+    {
         return Ok(None);
     }
     let mut source = TrainingEmbedderSource {

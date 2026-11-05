@@ -37,3 +37,9 @@ The cache belongs to one server. Evaluation entries are weak. Only actual staged
 A trained checkpoint reports `serving` only when its actual bound role receipt, current text-slot selection, matching declared width and live local runtime agree. Loaded bytes alone remain `unavailable`. Other trained roles still have no loader.
 
 The older viewed-swap response and automatic swap-ask exclusion for embedders are unchanged in this slice. The existing explicit training-role swap door can stage one. No model training, benchmark, test or deployment is part of this source change.
+
+## Custody erasure and undo
+
+Every runtime source check also reads each original immutable artifact-version metadata pin and native body-readability state in its transaction. Erased versions cannot keep serving from cached files; the next admitted refresh drops their strong retention.
+
+Training moves recognize the exact checkpoint-hash space, including the already-serving path. Two checkpoints sharing an output model id are not interchangeable. At bind time, `RoleSwapReceipt.previous_swap` records the exact replaced ROLES receipt id. Undo uses that exact receipt, the move's actual incumbent, and the still-live native Bound run/checkpoint; it never selects an unrelated recent history row or invents Bound state.

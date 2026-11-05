@@ -28635,6 +28635,12 @@ pub struct RoleSwapReceipt {
     pub role: ModelRole,
     #[serde(rename = "previous", default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<ModelBinding>,
+    #[serde(
+        rename = "previous_swap",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub previous_swap: Option<String>,
     #[serde(rename = "binding")]
     pub binding: ModelBinding,
     #[serde(rename = "checkpoint")]
