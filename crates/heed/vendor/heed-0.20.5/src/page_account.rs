@@ -12,7 +12,8 @@ use crate::mdb::{error::mdb_result, ffi};
 /// before entering the writer: `reserve` only consumes already admitted bytes.
 /// Cached page buffers retain their account after commit/abort until physically
 /// freed. This covers the native heap sites wired to these callbacks and sealed
-/// read-copy payloads, not disk allocation, mmap or unaccounted metadata.
+/// read-copy payloads and their stash index, not disk allocation, mmap or other
+/// unaccounted metadata.
 pub trait PageAccount: Send + Sync + 'static {
     /// Reserves `bytes` for one allocation, including any native heap-only prefix.
     /// False leaves the reservation unchanged; the writer then fails with ENOMEM.

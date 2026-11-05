@@ -320,10 +320,31 @@ release; the pre-copy guard cancels an unmaterialized successful reservation.
 Unaccounted sealed reads still copy and wipe; plain environments stay zero-copy.
 No earlier allocation is retroactively charged.
 
+The same stash owns a single Vec index and its inline allocation guard. For an
+accounted growth it requests the Rust 1.96 non-zero Vec push capacity through
+`try_reserve_exact`, admitting the entire requested replacement layout beside
+the old index before growth. Success materializes the new layout before releasing
+the old charge; failure preserves the old allocation and cancels only the new
+reservation. The Vec, all entries and their payloads drop before the index guard.
+Unaccounted stashes retain ordinary push behavior; earlier index allocations are
+not retroactively charged. Accounted index denial, allocation failure and layout
+overflow return typed ENOMEM through the existing fallible copy path.
+
+The capacity choice follows Rust 1.96.0 `RawVec::grow_amortized` at upstream
+`ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96`,
+`library/alloc/src/raw_vec/mod.rs` (blob
+`cabf6accf3b536bc4e13688bb701eadea7ccd872`). `StashedCopy` is non-zero and
+larger than one byte: this uses the native doubling and minimum-four-entry rule
+for entries up to 1 KiB, otherwise the native minimum of one. `grow_exact` records
+the requested capacity; `Global` returns its requested layout size. An upstream
+Rust allocator or growth-policy change needs this source seam rechecked, not a
+runtime claim that all public Vec implementations have exact capacity. Accounting
+covers requested layouts, not allocator bookkeeping or hidden malloc slack.
+
 This is not complete FIX8125, native disk accounting, whole-heap coverage or
-runtime proof. The stash's Vec index and inline guard metadata, other ID2/ID3
-control arrays, startup scratch, mmap and other metadata copies remain outside
-this allocation scope.
+runtime proof. Allocator bookkeeping and hidden slack, other ID2/ID3 control
+arrays, startup scratch, mmap and other metadata copies remain outside this
+allocation scope.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 
