@@ -350,44 +350,63 @@ fn unwrap_key(
     scope: Option<CompartmentScope>,
     wraps: &[WrapWire],
     opener: &CustodyOpener<'_>,
-) -> Option<Zeroizing<[u8; 32]>> {
+) -> Result<Option<Zeroizing<[u8; 32]>>> {
     // A world's pads open only with an admitted machine's or root's own
     // wrap, never the data key's or the generic root wrap (FIX 6706).
     if scope.and_then(CompartmentScope::world).is_some() {
         return pad_scope::unwrap_world(position, id, wraps, opener.machine, opener.root);
     }
     let vault = position.vault.as_bytes();
-    let opened = wraps.iter().find_map(|wrap| match (wrap.to, wrap.root) {
-        (TO_ROOT, Some(root)) => {
-            let secret = opener.root?;
-            let policy = wrap_policy(
-                Purpose::CustodyCompartmentKey,
-                vault,
-                &root,
-                id,
-                &[WrapType::HybridCapsule],
-                &[KEM],
-            );
-            Envelope::parse(&wrap.envelope)
-                .ok()?
-                .open(OpenKey::Hybrid(secret), &policy)
-                .ok()
+    for wrap in wraps {
+        let opened = match (wrap.to, wrap.root) {
+            (TO_ROOT, Some(root)) => {
+                let Some(secret) = opener.root else {
+                    continue;
+                };
+                let policy = wrap_policy(
+                    Purpose::CustodyCompartmentKey,
+                    vault,
+                    &root,
+                    id,
+                    &[WrapType::HybridCapsule],
+                    &[KEM],
+                );
+                let envelope = match Envelope::parse(&wrap.envelope) {
+                    Ok(envelope) => envelope,
+                    Err(oneiron_crypto::Error::OutOfMemory) => {
+                        return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory).into());
+                    }
+                    Err(_) => continue,
+                };
+                envelope.open(OpenKey::Hybrid(secret), &policy).ok()
+            }
+            (TO_DATA_KEY, None) if scope != Some(CompartmentScope::OwnerOnly) => {
+                let Some(data_key) = opener.data_key.as_ref() else {
+                    continue;
+                };
+                match open_sym(
+                    Purpose::CustodyCompartmentKey,
+                    position.vault,
+                    id,
+                    DATA_KEY_RECIPIENT,
+                    &Kek::from_bytes_ref(data_key),
+                    &wrap.envelope,
+                ) {
+                    Ok(opened) => Some(opened),
+                    Err(error) if matches!(&error, Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory) =>
+                    {
+                        return Err(error);
+                    }
+                    Err(_) => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(opened) = opened {
+            return Ok(guarded_key(&opened));
         }
-        (TO_DATA_KEY, None) if scope != Some(CompartmentScope::OwnerOnly) => {
-            let data_key = opener.data_key.as_ref()?;
-            open_sym(
-                Purpose::CustodyCompartmentKey,
-                position.vault,
-                id,
-                DATA_KEY_RECIPIENT,
-                &Kek::from_bytes_ref(data_key),
-                &wrap.envelope,
-            )
-            .ok()
-        }
-        _ => None,
-    })?;
-    guarded_key(&opened)
+    }
+    Ok(None)
 }
 
 /// A 32-byte key straight into guarded storage, never through a plain
@@ -432,7 +451,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
         return Err(head_corrupt());
     }
     let control_id = key_id(&pos, 0, None);
-    let key = unwrap_key(&position, &control_id, None, &first.wraps, opener).ok_or_else(|| {
+    let key = unwrap_key(&position, &control_id, None, &first.wraps, opener)?.ok_or_else(|| {
         crate::key_material::refused("the custody head does not open with this key or kit")
     })?;
     let control = open_body(&position, &control_id, &key, &first.sealed)?;
@@ -474,7 +493,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
         last = Some(scope);
         let index = u32::try_from(index + 1).map_err(|_| head_corrupt())?;
         let id = key_id(&pos, index, Some(scope));
-        let Some(key) = unwrap_key(&position, &id, Some(scope), &compartment.wraps, opener) else {
+        let Some(key) = unwrap_key(&position, &id, Some(scope), &compartment.wraps, opener)? else {
             opened.unopened.insert(scope);
             carried_pads::left_unopened(&mut opened, index, scope, compartment, provenance)?;
             continue;

@@ -254,7 +254,7 @@ pub(super) fn open_carried(
         }
         let origin = key_id(&pad.position.to_bytes(), pad.wire.index, Some(pad.scope));
         let wraps = &pad.wire.wraps;
-        let Some(key) = unwrap_key(&pad.position, &origin, Some(pad.scope), wraps, opener) else {
+        let Some(key) = unwrap_key(&pad.position, &origin, Some(pad.scope), wraps, opener)? else {
             if pad.wire.pad.retired {
                 opened.live.remove(&pad.id);
                 opened.retired.insert(pad.id);
