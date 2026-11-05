@@ -8,8 +8,8 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 use crate::codebase::{
-    CodebaseFileEntry, CodebaseSnapshot, RepoIngestConfig, RepoRef, snapshot_asset_entity_id,
-    validate_project_id,
+    CodebaseFileEntry, CodebaseSnapshot, CodebaseSnapshotMount, RepoIngestConfig, RepoRef,
+    snapshot_asset_entity_id, validate_project_id,
 };
 use crate::origin::secret_projection::reveal::RepoReadDoor;
 use crate::temporal::TimeRange;
@@ -47,7 +47,8 @@ impl Memory<'_> {
     }
 
     /// `vault.code.snapshots.get`: the manifest of exactly the pinned
-    /// snapshot. `None` when the artifact is absent or withheld.
+    /// snapshot, omitting files its custody report reads as absent. `None`
+    /// when the artifact is absent or withheld.
     pub fn code_snapshot_get_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -56,7 +57,7 @@ impl Memory<'_> {
         self.codebase_owner(owner)?;
         Ok(self
             .codebase_pinned(input.repo, &input.snapshot)?
-            .map(|mount| snapshot_view(mount.code_artifact_id(), mount.snapshot())))
+            .map(|mount| mounted_snapshot_view(&mount)))
     }
 
     /// `vault.code.snapshots.read`: one file of the pinned snapshot, read
@@ -109,8 +110,8 @@ impl Memory<'_> {
         let Some(mount) = self.codebase_pinned(input.repo, &input.snapshot)? else {
             return Ok(None);
         };
+        let mut view = mounted_snapshot_view(&mount);
         let mut views = mount.projected_file_views(|_| true)?;
-        let mut view = snapshot_view(mount.code_artifact_id(), mount.snapshot());
         for file in &mut view.files {
             file.projection = views.remove(&file.path);
         }
@@ -245,6 +246,12 @@ fn pinned_text(bytes: Vec<u8>) -> MemoryResult<(String, String)> {
     let content = String::from_utf8(bytes)
         .map_err(|_| MemoryError::bad_request("the pinned file is not UTF-8 text"))?;
     Ok((content, text_sha256))
+}
+
+fn mounted_snapshot_view(mount: &CodebaseSnapshotMount<'_>) -> CodeSnapshotView {
+    let mut view = snapshot_view(mount.code_artifact_id(), mount.snapshot());
+    view.files.retain(|file| !mount.is_withheld(&file.path));
+    view
 }
 
 fn snapshot_view(repo: EntityId, snapshot: &CodebaseSnapshot) -> CodeSnapshotView {
