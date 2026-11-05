@@ -23,7 +23,10 @@ use std::collections::HashSet;
 use self::validation::validate;
 
 mod result;
+mod room_wake;
 mod validation;
+
+pub use self::room_wake::resident_attempt_wakes_for_room;
 
 const PREDICATE: &str = "agent.resident";
 
@@ -195,7 +198,9 @@ impl AgentDispatcher<'_> {
     /// reuse dispatch dedupe. A private chat does not become project context:
     /// the dispatched definition resolves its normal scope; goal refs stay data.
     /// Each pending review of a read of its diary wakes it once, first: a
-    /// reader is waiting on the answer.
+    /// reader is waiting on the answer. Each room turn that addresses it, or
+    /// whose thread's open TASK it holds, wakes it once next, under its wake
+    /// mode (FIX 15647).
     pub fn dispatch_resident_inbox(
         &self,
         agent: EntityId,
@@ -274,6 +279,8 @@ impl AgentDispatcher<'_> {
                 }
             }
         }
+        // FIX 15647: its staged room wakes; Manual settles them unwoken.
+        self.dispatch_resident_room_wakes(&spec, &woken, limit, now, &mut outcomes)?;
         if spec.wake == ResidentWakeMode::Manual {
             return Ok(outcomes);
         }

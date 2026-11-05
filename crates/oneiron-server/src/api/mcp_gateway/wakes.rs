@@ -49,11 +49,12 @@ pub(super) async fn poll(
             &delivery.wakes,
             server.vault().now_recorded_ms(),
         );
-        // A review wake names no TASK row to release; it carries ids only.
+        // A review wake or a room wake names no TASK row to release; it
+        // carries ids only.
         let rows: Vec<_> = delivery
             .wakes
             .iter()
-            .filter(|wake| wake.review_ref.is_none())
+            .filter(|wake| wake.review_ref.is_none() && wake.room_ref.is_none())
             .filter_map(|wake| oneiron::EntityId::from_hex(&wake.task_ref).ok())
             .collect();
         super::device_release::mcp_release_result(&server, &actor, &rows, false, json!(delivery))

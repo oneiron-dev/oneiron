@@ -94,8 +94,8 @@ pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
     BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, CommittedTaskBoardState,
     DeliveryClass, DeliveryPolicy, DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind,
-    PendingDiaryReview, RouteObservation, StreamConnectionId, StreamConnectionState,
-    SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
+    PendingDiaryReview, PendingRoomWake, RoomWakeRead, RouteObservation, StreamConnectionId,
+    StreamConnectionState, SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
 };
 #[cfg(test)]
 mod surfaces_tests;

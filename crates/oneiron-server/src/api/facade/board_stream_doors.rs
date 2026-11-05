@@ -149,10 +149,14 @@ pub(crate) async fn self_focus_unsubscribe(
 
 /// The subscription scope one wake was minted under, from its envelope id
 /// (`<task id>:<arrived|failed>:<revision>`), as the MCP wake handoff reads it.
-/// A review wake names its review, not a TASK.
+/// A review wake names its review, and a room wake its room and turn (FIX
+/// 15647), not a TASK.
 fn wake_scope(wake: &WakeEnvelope) -> Option<SubscriptionScope> {
     if wake.review_ref.is_some() {
         return Some(SubscriptionScope::DiaryReviews);
+    }
+    if wake.room_ref.is_some() {
+        return Some(SubscriptionScope::RoomTurns);
     }
     let event = wake
         .event_ref
@@ -209,6 +213,18 @@ pub(crate) async fn self_focus_wakes(
             // never as a read of its diary or of the review's content.
             if wake.review_ref.is_some() {
                 if crate::wake_adapters::board_stream::review_wake_pending(
+                    server.vault(),
+                    writer.entity_ref(),
+                    &wake,
+                ) {
+                    kept.push(wake);
+                }
+                continue;
+            }
+            // A room wake reads again as this agent's own live room wake,
+            // never as a read of the turn (FIX 15647).
+            if wake.room_ref.is_some() {
+                if crate::wake_adapters::board_stream::room_wake_pending(
                     server.vault(),
                     writer.entity_ref(),
                     &wake,

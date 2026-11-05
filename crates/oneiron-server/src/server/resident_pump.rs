@@ -53,6 +53,7 @@ use oneiron::agent_dispatch::{
     AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, LeaderStarterSkills, PlannerSeat,
     PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
     agent_dispatch_actor, agent_dispatch_run_actor, resident_attempt_reviews_diary,
+    resident_attempt_wakes_for_room,
 };
 use oneiron::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, ReadSetProducer,
@@ -553,10 +554,16 @@ enum BoundRun {
 /// What a project conversation run's task puts before its skill's body.
 const SKILL_SEPARATOR: &str = "\n\n";
 
+/// What a resident's room wake says woke it (FIX 15647); its briefing
+/// names the room and the turn by ref.
+const ROOM_WAKE_CAUSE: &str =
+    "A turn in a room woke you: it addresses you, or its thread's open TASK is yours.";
+
 /// A resident run's task: its frozen definition's instructions, then what
 /// woke it, then the briefing its wake carries: an inbox wake's message as
-/// its sender wrote it (OF-519). It reads only the attempt and its binding,
-/// so each entry of the run binds the same text to the run's record.
+/// its sender wrote it (OF-519), a room wake's room and turn by ref. It
+/// reads only the attempt and its binding, so each entry of the run binds
+/// the same text to the run's record.
 fn resident_task(
     status: &AgentDispatchStatus,
     resident: &ResidentAgentSpec,
@@ -564,6 +571,9 @@ fn resident_task(
 ) -> String {
     let cause = match &status.attempt.task_ref {
         Some(task) => task_cause(task),
+        None if resident_attempt_wakes_for_room(&status.attempt, resident.agent_def_ref) => {
+            ROOM_WAKE_CAUSE.to_owned()
+        }
         None => format!(
             "A message reached your inbox (identity {}). Your home conversation is {}.",
             resident.inbox_identity_ref.to_hex(),
@@ -574,13 +584,15 @@ fn resident_task(
 }
 
 /// What started a resident's run, from its attempt's engine-minted refs and
-/// never its briefing: the TASK it realizes, a diary-read review, else a
-/// message in its inbox.
+/// never its briefing: the TASK it realizes, a diary-read review, a room
+/// turn (FIX 15647), else a message in its inbox.
 fn resident_wake(status: &AgentDispatchStatus, agent: EntityId) -> TurnWake {
     if status.attempt.task_ref.is_some() {
         TurnWake::Task
     } else if resident_attempt_reviews_diary(&status.attempt, agent) {
         TurnWake::Review
+    } else if resident_attempt_wakes_for_room(&status.attempt, agent) {
+        TurnWake::Room
     } else {
         TurnWake::Inbox
     }

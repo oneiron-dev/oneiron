@@ -27,6 +27,9 @@ pub enum TurnWake {
     Review,
     /// A TASK assigned to the agent, or a STREAM wake that names one.
     Task,
+    /// A room turn that addresses the agent, or whose thread's open TASK the
+    /// agent holds (FIX 15647).
+    Room,
     /// A subscribed Slack or LINE message the agent's reply worker answers.
     Channel,
 }
@@ -39,6 +42,7 @@ impl TurnWake {
             Self::Inbox => "inbox",
             Self::Review => "review",
             Self::Task => "task",
+            Self::Room => "room",
             Self::Channel => "channel",
         }
     }
@@ -48,8 +52,8 @@ impl TurnWake {
 /// model reads: the executor's system prompt, the reply worker's engine
 /// lines and the MCP setup instructions. The tag carries none of it.
 pub const TURN_WAKE_GRAMMAR: &str = "A turn that an event started closes with \
-<turn now=\"…\" wake=\"…\" response=\"optional\"/>; wake names the event: inbox, review, task or \
-channel. Read the live state first. To answer in a room, take the eligible claim first \
+<turn now=\"…\" wake=\"…\" response=\"optional\"/>; wake names the event: inbox, review, task, \
+room or channel. Read the live state first. To answer in a room, take the eligible claim first \
 (rooms.claim, or the turn an accepted offer binds). HeldBy or NotAddressed means no ordinary \
 room reply. response=\"optional\" is about speech only: no room output and an empty channel \
 reply are valid completions.";
@@ -75,15 +79,21 @@ pub fn turn_wake_line(now_ms: u64, wake: TurnWake) -> String {
 
 /// The wake opener for one delivered batch of STREAM wakes, rendered when
 /// the batch is handed over, never stored with its notices. A batch that
-/// names a TASK is a task wake; one of reviews only is a review wake; an
-/// empty batch has none.
+/// names a TASK is a task wake; else one that names a room turn is a room
+/// wake (FIX 15647); one of reviews only is a review wake; an empty batch
+/// has none.
 #[must_use]
 pub fn wake_batch_opener(wakes: &[WakeEnvelope], now_ms: u64) -> Option<String> {
     if wakes.is_empty() {
         return None;
     }
-    let wake = if wakes.iter().any(|wake| wake.review_ref.is_none()) {
+    let wake = if wakes
+        .iter()
+        .any(|wake| wake.review_ref.is_none() && wake.room_ref.is_none())
+    {
         TurnWake::Task
+    } else if wakes.iter().any(|wake| wake.room_ref.is_some()) {
+        TurnWake::Room
     } else {
         TurnWake::Review
     };
