@@ -188,6 +188,35 @@ fn take_unavailable_calls(image: &mut CheckpointImage) -> Vec<(RowLocator, Vec<u
 }
 
 impl OpenedPayload {
+    /// Marks opened MESSAGE results before their rewritten lengths are budgeted.
+    pub(in crate::recovery::checkpoint) fn retire_message_results(
+        &mut self,
+        digests: &BTreeSet<[u8; 32]>,
+    ) -> Result<()> {
+        if digests.is_empty() {
+            return Ok(());
+        }
+        for (role, opened) in &mut self.bundles {
+            if *role != BundleRole::Content(Getter::Entities) {
+                continue;
+            }
+            for part in &mut opened.rows {
+                let RowPart::Exact { at, value } = part else {
+                    continue;
+                };
+                if at.db != RowDb::Entities
+                    || opened.dependencies.iter().any(|dependency| {
+                        dependency.at == *at && opened.unavailable.contains(&dependency.on)
+                    })
+                {
+                    continue;
+                }
+                crate::memory::retire_message_result_in_row(value, digests)?;
+            }
+        }
+        Ok(())
+    }
+
     /// The entity rows the opened entity bundles land, in key order, that
     /// no unopened owner holds up: a restore checks each as it checks the
     /// image's, and stages its type index.
