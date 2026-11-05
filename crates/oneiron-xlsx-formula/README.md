@@ -270,13 +270,13 @@ iteration, individual materialization/read/clone/allocation work and volatile
 sort invocation remain outside this native-error intake slice.
 
 GROUPBY and PIVOTBY also borrow that same token through all five grid-intake
-calls. After the same range conversion, they poll before allocating the row
-collection and once per buffered row before its existing clone and push. These
-direct checkpoint errors enter the native channel; stored cells remain data
-and ordinary errors remain boxed. The original row reader, per-row clone,
-uncancelled argument and validation order, both sorts and numeric rules remain
-unchanged. One wide row's reads, an individual clone or allocation, and sort-path
-work still have unpolled spans.
+calls. After the same range conversion, their local buffered row walk polls
+before collection, at each row and cell, then before the existing row clone and
+push. It keeps the original row/cell order, buffer capacity/reuse and cell/row
+clone count. Direct checkpoint errors enter the native channel; stored cells
+remain data and ordinary errors remain boxed. Uncancelled argument and
+validation order, both sorts and numeric rules remain unchanged. An individual
+cell read, clone or allocation, and sort-path work still have unpolled spans.
 
 GROUPBY and PIVOTBY keep that borrowed token through filter-row selection,
 first-appearance key identity, non-comparator parent-position/rank construction,
@@ -286,11 +286,22 @@ filter cells, length/empty-filter errors and ordinary coercion errors retain
 the value channel. Uncancelled key order, filter/header/depth rules, labels,
 subtotal placement, numeric expressions and callable invocation order/count
 remain unchanged. Both standard key sorts and their lazy aggregate callbacks,
-and the pure row-index sort, keep their original bodies. Those sorts, a single
-parent-prefix scan, leaf key/string comparisons, filter flattening, atomic
-clones and allocations still have unpolled spans. Result collectors and manual
+and the pure row-index sort, keep their original bodies. Those sorts,
+individual leaf key/string operations, atomic clones and allocations still
+have unpolled spans. Result collectors and manual
 membership assembly need not keep the same capacities or specialization; this
 is not a heap-floor, work-budget or hard-time claim.
+
+Non-comparator parent-prefix scans now poll at each ordered candidate, and
+prefix equality polls each zipped key part while keeping its original
+short-circuit and left-to-right identity comparisons. Parent rank still uses
+the minimum matching position, or zero for no match. Filter-array flattening
+polls each input row and moved value in the original order; stored filter
+errors still use the value channel during selection. These loops use the same
+borrowed token and native checkpoint channel. Sort comparators and lazy
+aggregate calls remain untouched. Individual key/string operations, moved-value
+or row clones, and allocation are not made interruptible; no new heap floor,
+work-budget or hard-time guarantee is claimed.
 
 GCD and LCM poll the same full token through argument reduction and their
 Euclidean recursion. COMBIN, PERMUT, FACTDOUBLE and COMBINA poll their product
@@ -506,7 +517,7 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.44): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.45): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
 stage 2's linked workbooks and caller-context functions, five commits picked from upstream's
@@ -557,7 +568,7 @@ The formula bounds admit every formula Excel saves (measured at fork `f01d8eff` 
 linked-workbook forms above, 2026-10-09): the 5 that fell back over the old token bound recalculate
 natively and match Excel on every scored cell.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.44`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.45`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 
