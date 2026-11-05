@@ -528,6 +528,10 @@ impl PipelineBuilder<'_> {
             .with_quality(&retrieval_quality)
             .with_query_expander_id(query_expander_id);
             let mut run_record = run_record;
+            run_record.reranker_id = rerank_merged_components
+                .as_ref()
+                .and(self.rerank.as_ref())
+                .map(|(reranker, _)| reranker.id().to_owned());
             run_record.policy_trace = policy_trace;
             run_record.replay_inputs = replay_inputs;
             // ONE-1728 K10: a retrieval issued inside a room registers through the
