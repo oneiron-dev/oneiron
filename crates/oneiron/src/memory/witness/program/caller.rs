@@ -3,6 +3,9 @@
 use super::*;
 use crate::memory::support::verify_actor_binding_in_txn;
 
+mod binding;
+pub use binding::SessionWitnessBinding;
+
 /// An admitted caller's live session and its captured mode generation.
 ///
 /// Constructed only from the caller's bound [`Memory`]. It is not serializable,

@@ -125,7 +125,7 @@ impl Memory<'_> {
     /// The turn's shape and origin: messages present and distinctly ordered,
     /// no guest turn ref on a host-bound session, and generated code speaking
     /// only as the companion.
-    pub(super) fn admit_witness_request(
+    pub(in crate::memory::witness::program) fn admit_witness_request(
         &self,
         turn: &WitnessTurn,
         door: WitnessDoor,

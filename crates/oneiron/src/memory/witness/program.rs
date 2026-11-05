@@ -37,7 +37,7 @@ use crate::workspace_roster::RoomRegenerationPermit;
 
 mod caller;
 mod execute;
-pub use caller::{SessionWitnessContext, SessionWitnessOutcome};
+pub use caller::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
 mod planning;
 mod provenance;
 

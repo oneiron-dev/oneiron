@@ -378,7 +378,9 @@ pub use witness::{
     StreamCancelReason, StreamFinality, StreamFinalityReason, StreamRecoveryRefusal,
     StreamSyncVisibility,
 };
-pub use witness::{MessageReplyAssertions, SessionWitnessContext, SessionWitnessOutcome};
+pub use witness::{
+    MessageReplyAssertions, SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome,
+};
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
     message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,

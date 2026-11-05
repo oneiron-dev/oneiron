@@ -26,6 +26,26 @@ session must belong to the actual entering principal/creator, or, for an ordinar
 owner stretch, its caller must still satisfy the existing owner check. Anonymous
 sessions entered without a principal bind nobody.
 
+## Native asynchronous work
+
+`SessionWitnessContext::into_binding()` consumes the borrowed context and returns
+an opaque `SessionWitnessBinding` with no Vault or Memory borrow. Move the binding
+into the native task, then call `binding.witness(&author_memory, &turn)` there.
+The binding keeps the actual verified caller instrument, the resolved live
+session name and the original mode-generation route. It never mints a new route.
+
+Each use resolves the session in the author's Vault and requires the exact same
+in-process overlay instance as the captured route. A different Vault, or a closed
+and reopened session with the same name, cannot reuse it. Caller revocation,
+current membership and author admission are still checked in the owning witness
+transaction. A failed instrument never falls back to native-host authority.
+The binding holds no Vault reference, so keeping it beside a producer or runtime
+entry cannot create a Vault ownership cycle. It is not serializable or recoverable.
+
+This is a native lifetime bridge, not a routed message-stream implementation.
+The ordinary message-stream opener, ACTIVE rows, custody, partial publication,
+terminal receipts and HTTP delivery still do not consume this binding.
+
 ## Integration boundary
 
 This API does not route the HTTP chat user witness or assistant producer yet.
