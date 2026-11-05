@@ -399,9 +399,8 @@ impl ExecutorStorage<'_> {
     /// Retires `key`'s waiter, delivery and trap rows once the resumed record
     /// committed; idempotent. It is cleanup, never a consumer: a code
     /// consent wait's consumption was committed with the record, in its own
-    /// row, which this never touches. A room's rows stay until the room goes:
-    /// its route writes and never deletes, and the resumed record already
-    /// names the next generation, so nothing reads them again.
+    /// row, which this never touches. A room's rows retire along the run's
+    /// captured route. The resumed record already names the next generation.
     pub(crate) fn clear_wait(&self, key: &WaitKey) -> Result<()> {
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
@@ -412,7 +411,18 @@ impl ExecutorStorage<'_> {
                 TRAPS.delete(&vault.store, txn, &key.row())?;
                 Ok(())
             }),
-            Self::Session(_) => Ok(()),
+            Self::Session(binding) => binding.answered(|| {
+                binding
+                    .session
+                    .routed_side_txn(&binding.route, |txn, read, write| {
+                        if WAITERS.get(&read, txn, &key.waiter())? == Some(key.generation) {
+                            WAITERS.delete(&write, txn, &key.waiter())?;
+                        }
+                        DELIVERIES.delete(&write, txn, &key.row())?;
+                        TRAPS.delete(&write, txn, &key.row())?;
+                        Ok(())
+                    })
+            }),
         }
     }
 }
