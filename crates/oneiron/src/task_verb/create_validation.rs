@@ -1,3 +1,6 @@
+//! TASK admission checks: labels, assignees, terminal state, and bindings.
+//! Entry [`check_task_label`]; called by `create_facade` before any write.
+//! Owned by `task_verb`; consult bodies decode via `consult_payload`, never raw.
 use rmpv::Value;
 
 use crate::Vault;
