@@ -72,7 +72,7 @@ use crate::store::file_key_masks::{MASKED_FILE_BAND, MaskedFile};
 use crate::store::file_key_masks::{masked_file_in_txn, put_masked_file_in_txn};
 use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
-pub(in crate::batch) use batch_door::mask_batch_ops;
+pub(in crate::batch) use batch_door::{mask_batch_ops, mask_batch_ops_for_record_document};
 pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
 use text_spans::{file_spans, merged, occurrences, secret_spans};
 use wipe::{PlanOps, PlanValues, replace_wiped};

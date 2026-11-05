@@ -19,6 +19,111 @@ use crate::store::Store;
 use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
 
+/// The selected native prose takes its sync law; every other record field
+/// still takes the ordinary mask door. The scan copy never replaces either
+/// the logical operation or the original physical row.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the original mask inputs and the actual selected document"
+)]
+pub(in crate::batch) fn mask_batch_ops_for_record_document(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    ops: &mut [BatchOp],
+    text_index_trusted: bool,
+    masks: bool,
+    at: u64,
+    #[cfg(feature = "sync")] candidate: Option<&crate::entity_doc::RecordDocumentCandidate<'_, '_>>,
+) -> Result<(MaskedFiles, Vec<(EntityId, ClaimCandidate)>)> {
+    #[cfg(feature = "sync")]
+    let mut scan_ops;
+    #[cfg(feature = "sync")]
+    let ops = if let Some(candidate) = candidate {
+        let [
+            BatchOp::Put {
+                id,
+                entity_type,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: true,
+                hub_sync_imported: false,
+                ..
+            },
+        ] = &*ops
+        else {
+            return Err(crate::error::Error::InvariantViolation(
+                "record document text scan requires its replicated put",
+            ));
+        };
+        if *id != candidate.entity()?
+            || *entity_type != crate::registry::ENTITY_TYPE_SKILL
+            || data.as_slice() != candidate.logical_body()
+        {
+            return Err(crate::error::Error::InvariantViolation(
+                "record document text scan names another put",
+            ));
+        }
+        scan_ops = PlanOps::of(ops);
+        let BatchOp::Put { data, .. } = &mut scan_ops[0] else {
+            unreachable!("the scan copy keeps the checked operation kind")
+        };
+        let crate::entity_doc::TextField::MapField(field) = candidate.source().field() else {
+            return Err(crate::error::Error::InvariantViolation(
+                "record document text scan requires its map field",
+            ));
+        };
+        let mut cursor = data.as_slice();
+        let mut tree = super::wipe::PlanTree(
+            rmpv::decode::read_value(&mut cursor)
+                .map_err(|_| crate::error::Error::CorruptedIndex("record document scan body"))?,
+        );
+        let rmpv::Value::Map(fields) = &mut tree.0 else {
+            return Err(crate::error::Error::CorruptedIndex(
+                "record document scan body",
+            ));
+        };
+        let mut matches = 0;
+        for (key, value) in fields {
+            if key.as_str() == Some(field.as_str()) {
+                if value.as_str().is_none() {
+                    return Err(crate::error::Error::CorruptedIndex(
+                        "record document scan text",
+                    ));
+                }
+                matches += 1;
+                super::wipe::wipe_value(value);
+                *value = rmpv::Value::from("");
+            }
+        }
+        if !cursor.is_empty() || matches != 1 {
+            return Err(crate::error::Error::CorruptedIndex(
+                "record document scan field",
+            ));
+        }
+        let mut projected = zeroize::Zeroizing::new(Vec::new());
+        rmpv::encode::write_value(&mut *projected, &tree.0).map_err(|_| {
+            crate::error::Error::InvariantViolation("record document scan encoding")
+        })?;
+        super::wipe::replace_wiped(data, std::mem::take(&mut *projected));
+        candidate.scan_native_text_in_txn(store, wtxn)?;
+        &mut *scan_ops
+    } else {
+        ops
+    };
+    mask_batch_ops(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        text_index_trusted,
+        masks,
+        at,
+    )
+}
+
 /// The batch door with mask on write. `masks` is false for a replayed batch,
 /// which keeps the plain door: a hit refuses it, save in a file marked
 /// before. `at` stamps each custody record the batch mints. It also returns
