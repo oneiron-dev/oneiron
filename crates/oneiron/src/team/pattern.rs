@@ -268,6 +268,51 @@ pub(crate) fn bind_pattern_skill_in_txn(
     Ok(())
 }
 
+/// Typed metadata carried beside a hub skill's instructions.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HubPatternFile {
+    pattern: TeamPattern,
+    default_axis: TeamAxis,
+    works_well_for: String,
+    works_well_for_types: Vec<String>,
+}
+
+const HUB_PATTERN_FILE: &str = "pattern.json";
+
+/// Binds an imported package's optional pattern metadata in its writer.
+/// Existing bindings stay local. Invalid metadata leaves the skill unbound
+/// without refusing the import; no executor priors are written.
+pub(crate) fn bind_hub_pattern_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    skill: &EntityId,
+    files: &[crate::skill_hub::HubFile],
+    learned_at: u64,
+) -> Result<()> {
+    if pattern_skill_in_txn(vault, wtxn, skill)?.is_some() {
+        return Ok(());
+    }
+    let Some(file) = files.iter().find(|file| file.path == HUB_PATTERN_FILE) else {
+        return Ok(());
+    };
+    let Ok(parsed) = serde_json::from_slice::<HubPatternFile>(&file.content) else {
+        return Ok(());
+    };
+    let binding = PatternSkill {
+        skill: *skill,
+        pattern: parsed.pattern,
+        default_axis: parsed.default_axis,
+        works_well_for: parsed.works_well_for,
+        works_well_for_types: parsed.works_well_for_types,
+        at: learned_at,
+    };
+    match bind_pattern_skill_in_txn(vault, wtxn, &binding, crate::task_type::SEEDED_TREE_VERSION) {
+        Err(Error::InvalidClaimBody(_)) => Ok(()),
+        result => result,
+    }
+}
+
 /// The pattern binding of `skill`, if it teaches one.
 ///
 /// # Errors
