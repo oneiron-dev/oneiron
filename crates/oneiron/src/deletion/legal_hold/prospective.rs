@@ -13,6 +13,7 @@
 //! outbox. A seal that fails keeps the user's write and records the message
 //! as missed, never as captured.
 
+use std::cell::RefCell;
 use std::io::{self, Read};
 
 use heed::{RoTxn, RwTxn};
@@ -211,15 +212,66 @@ fn append_in_txn(
     Ok(())
 }
 
+thread_local! {
+    /// The base batches open on this thread, innermost last, by their
+    /// store's address. A nested apply of the same store, in the same
+    /// writer, is part of its outer batch.
+    static OPEN_BATCHES: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+}
+
+/// One base batch's op loop, open on this thread until dropped. Only the
+/// outermost batch of a store seals its new messages' edge rows, once every
+/// op of it applied: a nested apply (a project's revision companions) leaves
+/// them pending for its outer batch.
+pub(crate) struct ProspectiveBatch<'s> {
+    store: &'s Store,
+    outermost: bool,
+}
+
+impl<'s> ProspectiveBatch<'s> {
+    /// Opens the batch of `store` on this thread.
+    pub(crate) fn open(store: &'s Store) -> Self {
+        let key = std::ptr::from_ref(store).addr();
+        let outermost = OPEN_BATCHES.with(|open| {
+            let mut open = open.borrow_mut();
+            let outermost = !open.contains(&key);
+            open.push(key);
+            outermost
+        });
+        Self { store, outermost }
+    }
+
+    /// After every op of the batch applied, in its writer: the outermost
+    /// batch seals its new messages' edge rows; a nested one does nothing.
+    pub(crate) fn seal_edges_in_txn(&self, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        if !self.outermost {
+            return Ok(());
+        }
+        seal_prospective_edges_in_txn(self.store, wtxn)
+    }
+}
+
+impl Drop for ProspectiveBatch<'_> {
+    fn drop(&mut self) {
+        let key = std::ptr::from_ref(self.store).addr();
+        OPEN_BATCHES.with(|open| {
+            let mut open = open.borrow_mut();
+            if let Some(at) = open.iter().rposition(|of| *of == key) {
+                open.remove(at);
+            }
+        });
+    }
+}
+
 /// Seals the outgoing edge rows of each message this batch sealed into a
 /// standing order's outbox, as the batch left them, in the writer that wrote
-/// them: called once at the end of every base batch. Each row is its own
+/// them: called once at the end of every outermost base batch. Each row is its own
 /// entry after the message's, under the revision its row carried. A message
 /// whose row the same batch replaced or removed after it was sealed has no
 /// edges sealed as its own: it is recorded as missed. Edges a later batch
 /// adds are later edits, not captured. A seal that fails keeps the user's
 /// batch: the message is recorded as missed. Only a storage error fails.
-pub(crate) fn seal_prospective_edges_in_txn(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+fn seal_prospective_edges_in_txn(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
     if !prospective_standing_in_txn(store, wtxn)? {
         return Ok(());
     }
