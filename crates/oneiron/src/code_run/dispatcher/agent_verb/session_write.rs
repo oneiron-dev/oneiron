@@ -21,6 +21,14 @@
 //! - a write the room or the door refuses stages nothing and keeps no
 //!   receipt, as a write refused before its door ran keeps none.
 //!
+//! - it runs inside its row's verb hooks, in the room (FIX 5426), as a
+//!   forwarded read does: the pre chain on the call's own input before it is
+//!   prepared, the write prepared on the args every rewrite left, and the
+//!   post chain over the staged answer. A kept write answers its kept
+//!   receipt and runs no hook again. What each hook did rides the answer
+//!   (FIX 5425); the run's record keeps the staged answer, never a hook's
+//!   changed view, as for every hooked call.
+//!
 //! Its rows ride no turn of the room (`SESSION_WRITES_RIDE_NO_TURN`, CALLS-7,
 //! unchanged). Nothing here asks where the caller or the vault runs.
 
@@ -84,24 +92,34 @@ impl HostSelfDispatcher<'_> {
             HostWriteOrigin::new(self.agent_verb_envelope(call.verb, site.map(|site| site.seq))?)
                 .with_model_provider(self.model_provider())
                 .with_bound_run(self.bound_run);
-        let reader = admission
+        let key = admission
             .as_ref()
             .and_then(SessionWriteAdmission::key)
-            .map(|key| binding.session.read_context(&binding.route, key.clone()))
+            .cloned();
+        let reader = key
+            .clone()
+            .map(|key| binding.session.read_context(&binding.route, key))
             .transpose()?;
+        // The row's verb hooks, in the room, before the write is prepared: a
+        // stop is the answer, and a rewrite is what the write prepares.
+        let (pre, mut hooks) = self.session_write_pre(&call, key, site)?;
         let stage = match binding.session.prepare_session_write(
             &binding.route,
             self.actor,
             origin,
             call.verb,
-            &call.input,
+            &pre.args,
             reader.as_ref(),
         ) {
             Some(Ok(stage)) => stage,
             Some(Err(refused)) => {
+                self.session_write_keep(call.verb.as_str(), pre)?;
                 return Ok(answered(Err(AgentVerbRefusal { code: refused.code })));
             }
-            None => return Ok(session_bound()),
+            None => {
+                self.session_write_keep(call.verb.as_str(), pre)?;
+                return Ok(session_bound());
+            }
         };
         // The door's ceiling, checked again in the transaction that lands
         // the write: a caller whose credential stopped holding since it was
@@ -121,20 +139,40 @@ impl HostSelfDispatcher<'_> {
                         "the door's caller no longer holds this write",
                     ));
                 }
-                Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(
-                    stage(wtxn, apply)?,
-                    Some(Vec::new()),
-                )))
+                Ok(SelfDispatchOutcome::AgentVerb(
+                    AgentVerbAnswer::new(stage(wtxn, apply)?, Some(Vec::new()))
+                        .with_hooks(hooks.clone()),
+                ))
             },
         )?;
-        Ok(match written {
+        let outcome = match written {
             Ok(outcome) => outcome,
             // Nothing staged: the refusal reaches the guest as its code, the
-            // room's as its Memory code.
-            Err(refused) => answered(Err(ceiling.take().unwrap_or_else(|| AgentVerbRefusal {
-                code: MemoryError::from(refused).code,
-            }))),
-        })
+            // room's as its Memory code, and the pre chain's records are kept.
+            Err(refused) => {
+                self.session_write_keep(call.verb.as_str(), pre)?;
+                return Ok(answered(Err(ceiling.take().unwrap_or_else(|| {
+                    AgentVerbRefusal {
+                        code: MemoryError::from(refused).code,
+                    }
+                }))));
+            }
+        };
+        let SelfDispatchOutcome::AgentVerb(mut answer) = outcome else {
+            return Ok(outcome);
+        };
+        // The post chain over the staged answer, in the room: the caller
+        // reads its view, and the run's record keeps the staged answer.
+        let (view, post) =
+            self.session_write_post(call.verb.as_str(), pre, answer.output.clone())?;
+        hooks.extend(post);
+        answer.hooks = hooks;
+        if view != answer.output {
+            let mut shown = answer.clone();
+            shown.output = view;
+            *self.hook_view.borrow_mut() = Some(shown.guest_reply());
+        }
+        Ok(SelfDispatchOutcome::AgentVerb(answer))
     }
 
     /// CALLS-5 `session_write_identity`: a room write's receipt is the run's

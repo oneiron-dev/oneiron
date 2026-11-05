@@ -617,7 +617,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                 replay: value.replay,
             }
         }),
-        SelfDispatchOutcome::AgentVerb(answer) => json!({"output":answer.output}),
+        SelfDispatchOutcome::AgentVerb(answer) => answer.guest_reply(),
         SelfDispatchOutcome::SkillCall(value) => json!({"output":value.output}),
         SelfDispatchOutcome::Denied(value) => {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
