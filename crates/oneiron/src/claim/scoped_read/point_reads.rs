@@ -269,14 +269,39 @@ impl<'v> ScopedRead<'v> {
         &self,
         reads: &[PointRead<'_>],
         requested: Option<&RetrievalFilter>,
-        mut opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
+        opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
         // A file-plane ASSET's body file is read in the snapshot this read
         // opens, so the bodies are pinned before it opens (FIX 12149).
         let _bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
         let txn = self.grant_read_txn()?;
-        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        self.read_projected_opaque_in_txn(&txn, reads, requested, opaque, project)
+    }
+
+    /// The ordinary point read and projection in the caller's snapshot.
+    /// Prepare this lane's grant clock and body pins before opening `txn`.
+    pub(crate) fn read_projected_in_txn<T, E: From<Error>>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        self.read_projected_opaque_in_txn(txn, reads, requested, |_, _| Ok(false), project)
+    }
+
+    /// The opaque point read, receipt and projection in a caller-owned snapshot.
+    /// The old wrapper retains its body hold across this complete call.
+    pub(crate) fn read_projected_opaque_in_txn<T, E: From<Error>>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        mut opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
         // One serving txn, one held authority: the reader's relationship
         // context and its own Grants load once for every slot (FIX 7462).
         let authority = HeldAuthority::for_request(requested);
@@ -286,8 +311,8 @@ impl<'v> ScopedRead<'v> {
             let (row, withheld) = match read.target {
                 ReadTarget::Id(id) => {
                     let (row, withheld) =
-                        self.id_row_in(&txn, &policy, &filter, id, read.mode, &authority)?;
-                    if withheld > 0 && opaque(&txn, &id)? {
+                        self.id_row_in(txn, &policy, &filter, id, read.mode, &authority)?;
+                    if withheld > 0 && opaque(txn, &id)? {
                         (row, 0)
                     } else {
                         (row, withheld)
@@ -297,7 +322,7 @@ impl<'v> ScopedRead<'v> {
                     short_id,
                     content_hash,
                 } => self.short_ref_in(
-                    &txn,
+                    txn,
                     &policy,
                     &filter,
                     short_id,
@@ -311,7 +336,7 @@ impl<'v> ScopedRead<'v> {
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
         Ok(ScopedReadResult {
-            value: project(&txn, value)?,
+            value: project(txn, value)?,
             receipt,
         })
     }
