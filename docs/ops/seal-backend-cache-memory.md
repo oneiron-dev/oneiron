@@ -58,3 +58,27 @@ The codec's own `Value` measurement/encoding traversal stack, possible chain
 conversion allocation, allocator capacity slack, the original reply envelope and
 other backend replies remain outside this slice. In particular it adds no
 memory wait or refusal after `seal.sign` may have issued a signature.
+
+## Initial identity codec traversal scratch
+
+The initial identity path also supplies the protocol value serializer with the
+same call's `AskedMemory` service for its traversal stack. This covers the
+`read_cost` measurement pass and both count/write passes of the identity's
+`to_vec` conversion. The wrapper preserves the codec's existing bytes and shape
+count; decoding still uses `from_slice` on those bytes. That temporary encoded
+vector drops immediately after decoding, before the returned identity is built.
+
+The codec admits the full replacement stack capacity before each growth, while
+the old stack is still alive. Actual capacity above that request takes a further
+grant. If that grant fails, the adapter keeps the typed refusal and the value
+wrapper ends that serialization pass with an error, including a pass that had
+otherwise finished successfully. This prevents a failed measurement from
+starting the subsequent encoded-buffer allocation. Missing-service leniency
+and all other typed resource errors keep the initial identity path's semantics.
+
+The host still holds every grant until call end. Freed traversal stacks do not
+return grants through a nonexistent release API. Accounting is conservative
+across all three passes, not an exact peak or a guarantee that allocator excess
+was known before allocation. Chain conversion, the original reply envelope,
+other argument/reply/report paths and total heap use remain outside this slice.
+No signing request, signing retry, call clock, provider, ledger or limit changes.
