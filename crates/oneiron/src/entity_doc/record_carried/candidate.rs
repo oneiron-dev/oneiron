@@ -267,6 +267,7 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
             source,
             selected.raw(),
             selected.snapshot(),
+            selected.refinement_source(),
             prior_raw
                 .as_deref()
                 .zip(prior_head.as_deref())
@@ -329,6 +330,44 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
         }
         self.native_sources
             .recheck_in_txn(self.selected.vault(), txn)
+    }
+
+    /// Apply the sync text law to this joined candidate using only the
+    /// actual current local head's lift evidence. This scans and marks text;
+    /// it does not admit a native operation or install either record view.
+    pub(crate) fn scan_native_text_in_txn(
+        &self,
+        store: &crate::store::Store,
+        txn: &mut RwTxn<'_>,
+    ) -> Result<()> {
+        if store.env.path() != self.selected.vault().store.env.path()
+            || !self.recheck_in_txn(txn)?
+        {
+            return Err(Error::InvariantViolation(
+                "record document candidate changed before text scan",
+            ));
+        }
+        let prior = self
+            .prior_head
+            .as_deref()
+            .map(storage::decode::<Head>)
+            .transpose()?;
+        let text = zeroize::Zeroizing::new(self.document.text());
+        let vault = self.selected.vault();
+        let entity = self.entity()?;
+        if crate::entity_doc::sync::scan_synced_text_in_txn(
+            vault,
+            txn,
+            &entity,
+            prior.as_ref(),
+            &text,
+            None,
+        )? {
+            // The enclosing writer rolls this mark back with any refused
+            // record phase, as it does the sync scan's other custody writes.
+            crate::entity_doc::lift::remark_entity_text_in_txn(vault, txn, &entity, &text)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn entity(&self) -> Result<EntityId> {

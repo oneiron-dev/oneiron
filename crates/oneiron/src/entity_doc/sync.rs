@@ -668,21 +668,34 @@ fn synced(
     masked: Option<&str>,
 ) -> impl FnOnce(&Vault, &mut RwTxn<'_>, &EntityId, &Head, &str) -> Result<bool> + '_ {
     move |vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId, h: &Head, text: &str| {
-        let store = &vault.store;
-        let read = masked.unwrap_or(text);
-        if scan_content_in_txn(store, txn, read.as_bytes()).is_ok() {
-            return Ok(false);
-        }
-        if masked.is_none()
-            && super::lift::screened_in_txn(store, txn, h, text)?.is_some_and(|screened| {
-                scan_content_in_txn(store, txn, screened.as_bytes()).is_ok()
-            })
-        {
-            return Ok(true);
-        }
-        mark_hits_in_txn(vault, txn, entity, read)?;
-        Ok(false)
+        scan_synced_text_in_txn(vault, txn, entity, Some(h), text, masked)
     }
+}
+
+/// Read a sync candidate against its actual current local head, if one exists.
+/// A future Switch destination has no stored lift evidence for this read.
+pub(super) fn scan_synced_text_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    prior: Option<&Head>,
+    text: &str,
+    masked: Option<&str>,
+) -> Result<bool> {
+    let store = &vault.store;
+    let read = masked.unwrap_or(text);
+    if scan_content_in_txn(store, txn, read.as_bytes()).is_ok() {
+        return Ok(false);
+    }
+    if masked.is_none()
+        && let Some(h) = prior
+        && super::lift::screened_in_txn(store, txn, h, text)?
+            .is_some_and(|screened| scan_content_in_txn(store, txn, screened.as_bytes()).is_ok())
+    {
+        return Ok(true);
+    }
+    mark_hits_in_txn(vault, txn, entity, read)?;
+    Ok(false)
 }
 
 /// The sync scan of a text bound for a record's sequence rows: [`synced`]'s,

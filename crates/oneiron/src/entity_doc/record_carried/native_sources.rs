@@ -119,6 +119,7 @@ pub(super) fn review_in_txn(
     record: &CarriedRecordDocument,
     raw: &[u8],
     incoming_snapshot: &[u8],
+    first: Option<&super::RefinementOriginSource>,
     local: Option<(&[u8], &[u8], &[u8])>,
     (joined_head, joined): (&storage::Head, &EntityDoc),
 ) -> Result<NativeSourceReview> {
@@ -133,6 +134,12 @@ pub(super) fn review_in_txn(
     let mut physical = vec![raw];
     if let Some((local_raw, _, _)) = local {
         physical.push(local_raw);
+    }
+    // The transported FIRST is another exact historical CORE candidate,
+    // never the current receiver row or a local revision reference. A fact
+    // can use it only at its original full raw source_core hash below.
+    if let Some(first) = first {
+        physical.push(first.raw());
     }
     let mut review = Review {
         vault,
