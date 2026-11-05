@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use futures_util::Stream;
+use futures_util::{Stream, StreamExt, TryStreamExt};
 use oneiron::llm::DispatchRelease;
 use oneiron::{BudgetLease, LlmError};
 use serde_json::Value as JsonValue;
@@ -478,6 +478,70 @@ impl ProviderHttp {
         // reply is parsed.
         let (bytes, _held) = read_whole(response).await?;
         json_reply(status, headers, &bytes)
+    }
+
+    /// A JSON call whose lease is checked at each physical request send.
+    pub(super) async fn post_json_leased(
+        &self,
+        path: &str,
+        headers: &BTreeMap<String, String>,
+        body: &JsonValue,
+        lease: &BudgetLease,
+    ) -> Result<JsonReply, HttpReleaseError> {
+        if !lease.has_dispatch_release() {
+            return self
+                .post_json(path, headers, body)
+                .await
+                .map_err(HttpReleaseError::Transport);
+        }
+        let plain = serde_json::to_vec(body).unwrap_or_default();
+        let release = || lease.check_dispatch_release();
+        let response = self
+            .send_body_released(path, || self.request(path, headers), plain, &release, lease)
+            .await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let (bytes, _held) = read_whole(response)
+            .await
+            .map_err(HttpReleaseError::Transport)?;
+        json_reply(status, headers, &bytes).map_err(HttpReleaseError::Transport)
+    }
+
+    /// A streamed call whose lease is checked at each physical request send.
+    pub(super) fn post_sse_leased<'a>(
+        &'a self,
+        path: &str,
+        headers: &BTreeMap<String, String>,
+        body: &JsonValue,
+        lease: &'a BudgetLease,
+    ) -> Pin<Box<dyn Stream<Item = Result<SseItem, HttpReleaseError>> + Send + 'a>> {
+        if !lease.has_dispatch_release() {
+            return Box::pin(
+                self.post_sse(path, headers, body)
+                    .map(|item| item.map_err(HttpReleaseError::Transport)),
+            );
+        }
+        let path = path.to_owned();
+        let headers = headers.clone();
+        let plain = serde_json::to_vec(body).unwrap_or_default();
+        let opening = futures_util::stream::once(async move {
+            let release = || lease.check_dispatch_release();
+            let response = self
+                .send_body_released(
+                    &path,
+                    || self.request(&path, &headers),
+                    plain,
+                    &release,
+                    lease,
+                )
+                .await?;
+            let sending: Sending = Box::pin(std::future::ready(Ok(response)));
+            Ok::<_, HttpReleaseError>(
+                futures_util::stream::unfold(SseState::Start(sending), next_sse)
+                    .map(|item| item.map_err(HttpReleaseError::Transport)),
+            )
+        });
+        Box::pin(opening.try_flatten())
     }
 
     /// [`Self::post_json`], with a reply bound of the caller's own protocol.
