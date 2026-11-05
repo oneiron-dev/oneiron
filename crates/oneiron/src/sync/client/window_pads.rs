@@ -25,7 +25,7 @@ use super::base::{ResidenceReceipt, SyncClient};
 use crate::sync::loro_support::doc_version_vector;
 use crate::sync::transport::{
     self, TransportError, WindowPadArrival, WindowPadAssembly, WindowPadBinding, WindowPadForm,
-    WindowPadKind, WindowPadReadiness, WindowPadReceipt, window_sub_tags,
+    WindowPadKind, WindowPadPayload, WindowPadReadiness, WindowPadReceipt, window_sub_tags,
 };
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
@@ -326,7 +326,7 @@ impl SyncClient {
         key: &WindowKey,
         sub_tag: u8,
         payload: &'a [u8],
-    ) -> Result<ControlFlow<Vec<Vec<u8>>, (u8, Cow<'a, [u8]>)>, TransportError> {
+    ) -> Result<ControlFlow<Vec<Vec<u8>>, (u8, WindowPadPayload<'a>)>, TransportError> {
         if sub_tag == window_sub_tags::WINDOW_PAD_RECEIPT {
             return self
                 .accept_window_pad_receipt(key.as_str(), sub_tag, payload)
@@ -338,7 +338,10 @@ impl SyncClient {
             .accept(key.as_str(), sub_tag, payload)?;
         let (sub_tag, envelope) = match arrival {
             WindowPadArrival::Notice => {
-                return Ok(ControlFlow::Continue((sub_tag, Cow::Borrowed(payload))));
+                return Ok(ControlFlow::Continue((
+                    sub_tag,
+                    WindowPadPayload::borrowed(payload),
+                )));
             }
             WindowPadArrival::Streaming => return Ok(ControlFlow::Break(Vec::new())),
             WindowPadArrival::Broken => {
@@ -356,10 +359,15 @@ impl SyncClient {
         let receipt = admit_window_pads(&self.vault, key, &envelope);
         if receipt.readiness != WindowPadReadiness::NotReady {
             // FIX 7608 slice 4: a copy edit lands on its source; a held one imports nothing.
-            return Ok(match self.admitted_window_payload(key, envelope.payload)? {
-                Some(payload) => ControlFlow::Continue((sub_tag, Cow::Owned(payload))),
-                None => ControlFlow::Break(Vec::new()),
-            });
+            return Ok(
+                match envelope
+                    .into_payload()
+                    .try_map_owned(|payload| self.admitted_window_payload(key, payload))?
+                {
+                    Some(payload) => ControlFlow::Continue((sub_tag, payload)),
+                    None => ControlFlow::Break(Vec::new()),
+                },
+            );
         }
         // Nothing of it imports. The home is told, sends this window as the
         // carrier from now on, and is asked for it again.
