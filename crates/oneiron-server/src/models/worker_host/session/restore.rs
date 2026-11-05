@@ -337,7 +337,7 @@ impl Restore<'_> {
             handle: created.handle,
             binding: self.key.binding(),
         };
-        let session = Session {
+        let mut session = Session {
             key: self.key.clone(),
             handle: created.handle,
             generation: created.generation,
@@ -361,6 +361,8 @@ impl Restore<'_> {
                 worker.sessions.insert(self.key.binding(), session);
                 None
             } else {
+                // The cold path still owns this pin until a restore is admitted.
+                session.lease = None;
                 Some(worker.owe_session(session))
             }
         };
