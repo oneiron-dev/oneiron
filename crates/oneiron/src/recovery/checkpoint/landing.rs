@@ -60,6 +60,9 @@ impl Vault {
         // A bare restore has no live source to name what was erased since
         // the cut (FIX 4753).
         let bare = matches!(custody, Custody::Keep | Custody::Landed | Custody::NewHost);
+        // Only restore_with_current_authority produces these routes, after its
+        // LIVE-row merge. A beside copy's Fork(Some(..)) did not merge them.
+        let live_rows_merged = matches!(custody, Custody::Fork(None) | Custody::Replace(..));
         // Authenticate every ORCB row against LIVE exterior custody before
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
@@ -86,7 +89,8 @@ impl Vault {
         // holds is refused as the image's are, and the image's rows naming
         // an owner that did not open go (KS7-5, FIX 6376).
         let plan = gate_custody.plan_mut();
-        let opened = super::payload::open_image_payload(sealed_payload, plan, &mut image)?;
+        let opened =
+            super::payload::open_image_payload(sealed_payload, plan, &mut image, live_rows_merged)?;
         let opened_entities = opened
             .as_ref()
             .map(super::payload::OpenedPayload::entity_rows)
