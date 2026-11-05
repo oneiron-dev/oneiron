@@ -13,6 +13,19 @@ use super::host_doors::support::{Listed, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
+/// Lifecycle calls own their transition, so ingress must not wake the
+/// vault first or replace the state their completion receipt reports.
+pub(crate) fn is_slim_lifecycle_observation(method: &str) -> bool {
+    matches!(
+        method,
+        "vault.slim.policy"
+            | "vault.slim.state"
+            | "vault.slim.resume_step"
+            | "vault.slim.drop_heavy"
+            | "vault.slim.resume"
+    )
+}
+
 async fn owned<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

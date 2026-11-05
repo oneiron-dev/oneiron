@@ -39,6 +39,13 @@ newline), schema 1. Its `identity` holds the digests the engine reads:
   digest of every setting it ran with, given only when the binary's source
   commit is known, so its defaults are.
 
+The manifest's optional top-level `architecture` section carries the
+target's observed shape facts only: its `general.architecture` name and the
+scalar counts for exactly that architecture (`block_count`,
+`attention.head_count_kv`, `embedding_length`, `attention.head_count`). A
+mistyped, array, missing or undecodable fact is left out, and with a config
+file present the section stays absent, as `model` does.
+
 A llama.cpp config file (`/etc/llama.cpp/config.ini` or the user's) can set
 anything, so with one present `model`, `tokenizer` and `template` are left
 out and the file's SHA-256 is listed. The manifest attests the launch, never
@@ -96,6 +103,17 @@ TOKENIZER_PREFIX = "tokenizer."
 TEMPLATE_KEY = "tokenizer.chat_template"
 TOOL_USE_TEMPLATE_KEY = "tokenizer.chat_template.tool_use"
 SPLIT_COUNT_KEY = "split.count"
+GGUF_UINT32 = 4
+# The target's observed architecture facts (FIX 12383): the fixed arch id
+# key, read only as a string, and the per-architecture scalar counts, read
+# only as UINT32, as suffixes selected for the observed architecture.
+GENERAL_ARCHITECTURE_KEY = "general.architecture"
+ARCHITECTURE_FIELD_SUFFIXES = {
+    "block_count": "block_count",
+    "attention.head_count_kv": "head_count_kv",
+    "embedding_length": "embedding_length",
+    "attention.head_count": "head_count",
+}
 # llama.cpp's split naming (src/llama.cpp, llama_split_path).
 SPLIT_NAME = re.compile(r"^(?P<prefix>.+)-(?P<index>\d{5})-of-(?P<count>\d{5})\.gguf$")
 HEX40 = re.compile(r"[0-9a-f]{40}")
@@ -186,11 +204,15 @@ class GgufReader:
 def read_gguf_identity(path):
     """What llama.cpp reads of a GGUF before its tensors that names the model's
     tokenizer and templates: the tokenizer digest (None without tokenizer
-    metadata), the default and tool-use chat template bytes (None when absent)
-    and the file's split count."""
+    metadata), the default and tool-use chat template bytes (None when absent),
+    the file's split count, and the observed target architecture (None when
+    its name is missing, mistyped or undecodable; a mistyped, array or
+    missing count is left out of it, never guessed)."""
     tokenizer = []
     templates = {}
     split_count = 1
+    arch_name_raw = None
+    arch_values = {}
     with open(path, "rb", buffering=1 << 20) as stream:
         reader = GgufReader(stream)
         if reader.take(4) != GGUF_MAGIC:
@@ -204,8 +226,15 @@ def read_gguf_identity(path):
             key = key_bytes.decode("utf-8")
             kind = reader.u32()
             wanted = key.startswith(TOKENIZER_PREFIX) or key == SPLIT_COUNT_KEY
-            raw = bytearray() if wanted else None
+            arch_name = key == GENERAL_ARCHITECTURE_KEY and kind == GGUF_STRING
+            arch_field = kind == GGUF_UINT32 and any(
+                key.endswith("." + suffix) for suffix in ARCHITECTURE_FIELD_SUFFIXES)
+            raw = bytearray() if wanted or arch_name or arch_field else None
             reader.value(kind, raw)
+            if arch_name:
+                arch_name_raw = bytes(raw[8:])
+            elif arch_field:
+                arch_values[key] = int.from_bytes(raw, "little")
             if not wanted:
                 continue
             if key in (TEMPLATE_KEY, TOOL_USE_TEMPLATE_KEY):
@@ -220,11 +249,25 @@ def read_gguf_identity(path):
     for key_bytes, kind, raw in sorted(tokenizer):
         digest.update(struct.pack("<Q", len(key_bytes)) + key_bytes + struct.pack("<I", kind))
         digest.update(raw)
+    architecture = None
+    if arch_name_raw is not None:
+        try:
+            name = arch_name_raw.decode("utf-8")
+        except UnicodeDecodeError:
+            name = ""
+        if name:
+            observed = {"name": name}
+            for suffix, field in ARCHITECTURE_FIELD_SUFFIXES.items():
+                full = f"{name}.{suffix}"
+                if full in arch_values:
+                    observed[field] = arch_values[full]
+            architecture = observed
     return {
         "tokenizer": digest.hexdigest() if tokenizer else None,
         "default": templates.get(TEMPLATE_KEY),
         "tool_use": templates.get(TOOL_USE_TEMPLATE_KEY),
         "split_count": split_count,
+        "architecture": architecture,
     }
 
 
@@ -397,6 +440,7 @@ def prepare_manifest(server, manifest_dir, wire_id, argv, env):
         "cache": {"ctx_total": int(context), "ctx_per_slot": int(context) // int(slots),
                   "slots": int(slots), "defaults_source_sha": build["source_sha"],
                   "launch_sha256": section_digest(launch)},
+        "architecture": None if configs else target_meta["architecture"],
         "launch_execution": launch,
     }
     manifest["identity"] = identity_of(manifest)

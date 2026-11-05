@@ -25,9 +25,9 @@ use oneiron::limit_ask::EngineLimit;
 use oneiron::self_heal::HealEvidenceContext;
 use oneiron::skill_optimize::{
     RejectedSkillEditReason, SKILL_OPTIMIZE_CALL_PURPOSE_NAME, SkillEditDraft, SkillOptimizeAuthor,
-    SkillOptimizeBrief,
+    SkillOptimizeBrief, union_source_rows,
 };
-use oneiron::{Error, LlmMessageRole, Vault};
+use oneiron::{EntityId, Error, LlmMessageRole, Vault};
 use serde::Deserialize;
 
 use super::code_fix::{HostModels, message};
@@ -152,7 +152,13 @@ impl SkillOptimizeAuthor for CoachSkillAuthor {
             .upgrade()
             .ok_or_else(|| failed("the server stopped"))?;
         let models = self.models(&server, brief)?;
-        draft_with(server.vault(), &models, DRAFT_SYSTEM.to_owned(), brief)
+        draft_with(
+            server.vault(),
+            &models,
+            DRAFT_SYSTEM.to_owned(),
+            brief,
+            brief.source_rows.clone(),
+        )
     }
 
     fn draft_on(
@@ -172,7 +178,13 @@ impl SkillOptimizeAuthor for CoachSkillAuthor {
             .map(|seat| seat.model.as_str().to_owned())
         else {
             // No seat to pin: the Coach's own path answers, as it always did.
-            return draft_with(server.vault(), &models, DRAFT_SYSTEM.to_owned(), brief);
+            return draft_with(
+                server.vault(),
+                &models,
+                DRAFT_SYSTEM.to_owned(),
+                brief,
+                brief.source_rows.clone(),
+            );
         };
         // The workflow is the Coach's recipe. Its load pins its revision and
         // the Coach's model on the optimization attempt, where the edit's
@@ -180,7 +192,7 @@ impl SkillOptimizeAuthor for CoachSkillAuthor {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_secs());
-        let loaded = match server.vault().load_attempt_skill_pack(
+        let (loaded, pack_sources) = match server.vault().load_attempt_skill_pack_sourced(
             attempt.id,
             &coach_improver_skill_id()?,
             attempt.lease_owner.as_deref().unwrap_or_default(),
@@ -197,7 +209,13 @@ impl SkillOptimizeAuthor for CoachSkillAuthor {
                     %error,
                     "the improver workflow did not load; the Coach drafts on its own instruction"
                 );
-                return draft_with(server.vault(), &models, DRAFT_SYSTEM.to_owned(), brief);
+                return draft_with(
+                    server.vault(),
+                    &models,
+                    DRAFT_SYSTEM.to_owned(),
+                    brief,
+                    brief.source_rows.clone(),
+                );
             }
         };
         let workflow = loaded
@@ -207,7 +225,9 @@ impl SkillOptimizeAuthor for CoachSkillAuthor {
             .and_then(|file| std::str::from_utf8(&file.content).ok())
             .unwrap_or(loaded.record.desc.as_str());
         let system = format!("{workflow}\n\n{WORKFLOW_ANSWER}");
-        draft_with(server.vault(), &models, system, brief)
+        let sources =
+            union_source_rows([brief.source_rows.as_deref(), Some(pack_sources.as_slice())]);
+        draft_with(server.vault(), &models, system, brief, sources)
     }
 }
 
@@ -272,6 +292,7 @@ fn draft_with(
     models: &HostModels<'_>,
     system: String,
     brief: &SkillOptimizeBrief,
+    sources: Option<Vec<EntityId>>,
 ) -> oneiron::Result<SkillEditDraft> {
     let text = models
         .generate_sourced(
@@ -280,7 +301,7 @@ fn draft_with(
                 message(LlmMessageRole::System, system),
                 message(LlmMessageRole::User, brief_data(vault, brief).to_string()),
             ],
-            brief.source_rows.clone(),
+            sources,
         )?
         .ok_or_else(|| failed("no seat served the Coach"))?;
     parse_draft(&text).ok_or_else(|| failed("the answer is not a draft"))
