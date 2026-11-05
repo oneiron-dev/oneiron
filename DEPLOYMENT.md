@@ -219,8 +219,19 @@ else `{"state": "active", "check": ...}`, a
 check of kind `inspect_connection_pool_pressure` that names the episode, the
 `limits.max_connections` row and the episode's current bound, the credentials holding the most
 open request bodies, the pool's connections and the remedy. The check observes
-only: it pauses, revokes and refuses nothing, and it does not promise that a
-revocation releases a body already open.
+only: it pauses, revokes and refuses nothing.
+
+An explicit revoke does end the revoked credential's already-open counted TCP
+request body at its next read: a verified slip or its delegation parent must
+carry an explicit `SlipRevoke`, or the node must receive a punch for the accepted
+account key. The body fails with typed `credential_revoked`; its HTTP reply is
+401 with that error code and `connection: close`, even if a body parser would
+otherwise report a parse error. The node remembers a punch for each accepted
+body's lifetime, independently of the verdict lease and temporary punch record.
+Expiry, grant changes, cache misses and unreadable revocation state do not end
+an admitted body through this check. Slip reads run off-thread, one received
+frame at a time, and their wait does not consume the network-idle limit. Mesh
+and in-process bodies keep their existing behavior.
 
 ```toml
 [limits]
