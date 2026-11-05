@@ -378,7 +378,10 @@ fn capture_from(
 /// The whole pad object `entry` names, from `parts`: contiguous from offset
 /// 0, its length and digest, a sealed pad object of its generation. Else the
 /// first offset its bytes are not there from.
-fn whole(entry: &SealedBundleEntry, parts: &[(u64, Vec<u8>)]) -> std::result::Result<Vec<u8>, u64> {
+fn whole(
+    entry: &SealedBundleEntry,
+    parts: &[(u64, Vec<u8>)],
+) -> Result<std::result::Result<Vec<u8>, u64>> {
     let mut bytes = Vec::new();
     for (offset, part) in parts {
         if *offset != bytes.len() as u64 {
@@ -388,20 +391,28 @@ fn whole(entry: &SealedBundleEntry, parts: &[(u64, Vec<u8>)]) -> std::result::Re
     }
     let held = bytes.len() as u64;
     if held < entry.pads_len {
-        return Err(held);
+        return Ok(Err(held));
     }
-    if !is_object(entry, &bytes) {
-        return Err(0);
+    if !is_object(entry, &bytes)? {
+        return Ok(Err(0));
     }
-    Ok(bytes)
+    Ok(Ok(bytes))
 }
 
 /// Whether `bytes` are the pad object `entry` names: its length and digest,
 /// sealed for its generation.
-fn is_object(entry: &SealedBundleEntry, bytes: &[u8]) -> bool {
-    bytes.len() as u64 == entry.pads_len
-        && *blake3::hash(bytes).as_bytes() == entry.pads_digest
-        && SealedKeyPads::from_bytes(bytes).is_ok_and(|pads| pads.generation() == entry.generation)
+fn is_object(entry: &SealedBundleEntry, bytes: &[u8]) -> Result<bool> {
+    if bytes.len() as u64 != entry.pads_len || *blake3::hash(bytes).as_bytes() != entry.pads_digest
+    {
+        return Ok(false);
+    }
+    match SealedKeyPads::from_bytes(bytes) {
+        Ok(pads) => Ok(pads.generation() == entry.generation),
+        Err(error) if matches!(&error, Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory) => {
+            Err(error)
+        }
+        Err(_) => Ok(false),
+    }
 }
 
 /// Whether `held` and `brought` are one generation: its bundle, its kit
@@ -562,7 +573,7 @@ pub(crate) fn install_captured_pad_objects_in_txn(
         let bytes = match membership {
             PadObjectMembership::StoreOwnPutBack => None,
             PadObjectMembership::SourceKeepRuleProvesRetired => {
-                match whole(&meta.entry, &object.parts) {
+                match whole(&meta.entry, &object.parts)? {
                     Ok(bytes) => Some(bytes),
                     Err(offset) => {
                         return Ok(PadObjectInstall::Unavailable(PadObjectUnavailable {
@@ -576,7 +587,7 @@ pub(crate) fn install_captured_pad_objects_in_txn(
         };
         installs.push((here.entry, meta.entry.pads_digest, bytes, object));
     }
-    let change = membership::membership_change(&held, captured, membership);
+    let change = membership::membership_change(&held, captured, membership)?;
     membership::write_membership_change_in_txn(store, wtxn, captured, &change)?;
     for (entry, digest, bytes, object) in installs {
         let Some(bytes) = bytes else {
@@ -636,8 +647,8 @@ pub(crate) fn read_back_captured_in_txn(
         let parts = pad_parts(&meta.entry.generation, |family, prefix| {
             txn_rows(store, txn, family, prefix)
         })?;
-        let as_carried = if whole(&carried.entry, &object.parts).is_ok() {
-            whole(&meta.entry, &parts).is_ok()
+        let as_carried = if whole(&carried.entry, &object.parts)?.is_ok() {
+            whole(&meta.entry, &parts)?.is_ok()
         } else {
             parts == object.parts
         };
@@ -670,7 +681,7 @@ pub(crate) fn refill_pad_object(
             let Some((meta, object)) = captured.object(&generation) else {
                 return Ok(PadObjectInstall::CurrentChanged);
             };
-            match whole(&meta.entry, &object.parts) {
+            match whole(&meta.entry, &object.parts)? {
                 Ok(bytes) => (meta.entry.pads_digest, bytes),
                 Err(offset) => {
                     return Ok(PadObjectInstall::Unavailable(PadObjectUnavailable {
@@ -698,12 +709,13 @@ pub(crate) fn refill_pad_object(
             .find(|meta| meta.entry.generation == generation)
             .map(|meta| meta.entry);
         let Some(entry) = kept.filter(|entry| {
-            held.retained_revision == expected.retained_revision
-                && entry.pads_digest == digest
-                && is_object(entry, &bytes)
+            held.retained_revision == expected.retained_revision && entry.pads_digest == digest
         }) else {
             return Ok(PadObjectInstall::CurrentChanged);
         };
+        if !is_object(&entry, &bytes)? {
+            return Ok(PadObjectInstall::CurrentChanged);
+        }
         put_pads(&vault.store, wtxn, entry, digest, &bytes)?;
         Ok(PadObjectInstall::Installed(current_pad_objects_in_txn(
             &vault.store,

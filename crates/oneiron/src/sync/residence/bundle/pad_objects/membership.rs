@@ -37,29 +37,31 @@ pub(super) fn membership_change(
     held: &CurrentPadObjects,
     captured: &CapturedPadObjects,
     membership: PadObjectMembership,
-) -> MembershipChange {
+) -> Result<MembershipChange> {
     let kept_here = |generation: &SealedBundleGeneration| {
         held.entries
             .iter()
             .any(|meta| meta.entry.generation == *generation)
     };
-    let adopted = captured
+    let mut adopted = Vec::new();
+    for (index, (meta, object)) in captured
         .index
         .entries
         .iter()
         .zip(&captured.objects)
         .enumerate()
-        .filter(|(_, (meta, object))| {
-            !kept_here(&meta.entry.generation)
-                && match membership {
-                    PadObjectMembership::SourceKeepRuleProvesRetired => {
-                        carried_whole(&meta.entry, object)
-                    }
-                    PadObjectMembership::StoreOwnPutBack => true,
-                }
-        })
-        .map(|(index, _)| index)
-        .collect();
+    {
+        if kept_here(&meta.entry.generation) {
+            continue;
+        }
+        let adopt = match membership {
+            PadObjectMembership::SourceKeepRuleProvesRetired => carried_whole(&meta.entry, object)?,
+            PadObjectMembership::StoreOwnPutBack => true,
+        };
+        if adopt {
+            adopted.push(index);
+        }
+    }
     let retired = held
         .entries
         .iter()
@@ -72,7 +74,7 @@ pub(super) fn membership_change(
         })
         .map(|meta| meta.entry.generation)
         .collect();
-    MembershipChange { adopted, retired }
+    Ok(MembershipChange { adopted, retired })
 }
 
 /// The generations an install of `captured` under `membership` would retire
@@ -91,7 +93,7 @@ pub(crate) fn generations_an_install_retires_in_txn(
     membership: PadObjectMembership,
 ) -> Result<Vec<SealedBundleGeneration>> {
     let held = current_pad_objects_in_txn(store, txn, expected.vault_id, expected.home)?;
-    Ok(membership_change(&held, captured, membership).retired)
+    Ok(membership_change(&held, captured, membership)?.retired)
 }
 
 /// Writes `change` in `wtxn`: each retired generation goes, its entry, both
@@ -274,20 +276,20 @@ pub(crate) fn read_back_put_back_in_txn(
 /// Whether `object` carries both of `entry`'s objects whole: its pad object
 /// ([`whole`]), and its bundle contiguous from offset 0, its length and its
 /// digest.
-fn carried_whole(entry: &SealedBundleEntry, object: &CapturedObject) -> bool {
-    if whole(entry, &object.parts).is_err() {
-        return false;
+fn carried_whole(entry: &SealedBundleEntry, object: &CapturedObject) -> Result<bool> {
+    if whole(entry, &object.parts)?.is_err() {
+        return Ok(false);
     }
     let mut hasher = blake3::Hasher::new();
     let mut held = 0_u64;
     for (offset, part) in &object.bundle {
         if *offset != held {
-            return false;
+            return Ok(false);
         }
         hasher.update(part);
         held = held.saturating_add(part.len() as u64);
     }
-    held == entry.bundle_len && *hasher.finalize().as_bytes() == entry.bundle_digest
+    Ok(held == entry.bundle_len && *hasher.finalize().as_bytes() == entry.bundle_digest)
 }
 
 /// Whether the source's keep and age rule retires `held`, a generation the
