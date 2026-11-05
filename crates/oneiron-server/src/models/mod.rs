@@ -33,6 +33,7 @@ mod anthropic;
 mod broker;
 mod broker_context;
 mod broker_media;
+mod broker_responses;
 mod cache_usage;
 mod catalog;
 mod cooldown;
@@ -41,6 +42,7 @@ mod declared;
 #[cfg(feature = "mesh")]
 mod discovered;
 mod driven;
+mod exl3_evidence;
 #[cfg(test)]
 mod fallback_tests;
 mod family;
@@ -243,6 +245,24 @@ fn build_provider(
             .ok_or_else(|| anyhow::anyhow!("no credential broker was made"))?
             .as_ref()
             .map_err(|error| anyhow::anyhow!("{error}"))?;
+        if provider.kind == ProviderKind::OpenaiCompat && provider.responses_socket.is_some() {
+            let config = OpenAiCompatConfig::from_catalog(catalog.clone());
+            let original_catalog = catalog
+                .iter()
+                .map(|entry| (entry.model.clone(), entry.clone()))
+                .collect();
+            return Ok(Some(Arc::new(broker_responses::BrokerResponses::new(
+                broker::broker_backend(provider, catalog, output_cap(provider), solo, site, keys)?,
+                config,
+                original_catalog,
+                responses.clone(),
+                OutputCap {
+                    field: "max_output_tokens",
+                    ..output_cap(provider)
+                },
+                provider.response_format,
+            ))));
+        }
         return Ok(Some(Arc::new(broker::broker_backend(
             provider,
             catalog,
