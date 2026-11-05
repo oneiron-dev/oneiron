@@ -14,7 +14,7 @@ use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, ByteBuf, Value};
 
 use super::{ASK_IDENTITY, ASK_SIGN, HostedSealer};
 use crate::handlers::AskHandlers;
-use crate::host::{CallMeasure, CallSize};
+use crate::host::{CallMeasure, CallSize, OrganHost};
 use crate::outcome::OrganOutcome;
 use crate::receipt::AskReceipt;
 use crate::spec::{LentInput, OrganCall};
@@ -40,22 +40,27 @@ impl HostedSealer<'_> {
         handlers: &AskHandlers<'_>,
         measure: &mut CallMeasure,
     ) -> Result<(Value, OrganOutcome), EsignSealerError> {
-        let lent_bytes = lent.iter().map(|input| input.bytes.len() as u64).sum();
-        let called = self.host.call_sized_with(
-            self.vault,
-            call,
-            lent,
-            handlers,
-            call_size(lent_bytes),
-            measure,
-        );
-        measure_frames(self.vault, measure);
-        let mut outcome = called.map_err(super::host_failure)?;
-        let report = std::mem::replace(&mut outcome.report, Value::Nil);
-        let (reply, observed) = Observed::split(report);
-        observed.measure(self.vault);
-        Ok((reply, outcome))
+        sized_call(self.host, self.vault, call, lent, handlers, measure)
     }
+}
+
+/// The shared call path needs a host and a vault, not a signing identity.
+pub(super) fn sized_call(
+    host: &OrganHost,
+    vault: &Vault,
+    call: OrganCall,
+    lent: Vec<LentInput>,
+    handlers: &AskHandlers<'_>,
+    measure: &mut CallMeasure,
+) -> Result<(Value, OrganOutcome), EsignSealerError> {
+    let lent_bytes = lent.iter().map(|input| input.bytes.len() as u64).sum();
+    let called = host.call_sized_with(vault, call, lent, handlers, call_size(lent_bytes), measure);
+    measure_frames(vault, measure);
+    let mut outcome = called.map_err(super::host_failure)?;
+    let report = std::mem::replace(&mut outcome.report, Value::Nil);
+    let (reply, observed) = Observed::split(report);
+    observed.measure(vault);
+    Ok((reply, outcome))
 }
 
 /// What a seal or verification call books, and the memory grant of its
