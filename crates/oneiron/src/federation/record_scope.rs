@@ -19,6 +19,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 mod asset_body;
+#[cfg(feature = "sync")]
+mod connect_origin;
+#[cfg(feature = "sync")]
+pub(crate) use self::connect_origin::{import_connect_positions, witness_connect_positions};
 pub(crate) mod asset_text;
 mod delete;
 mod export;
@@ -247,6 +251,17 @@ fn derived_position(
     Ok(Some((scope, facet)))
 }
 
+fn foreign_base_position_kept(prior: &Scope, proposed: &Scope) -> bool {
+    proposed.worlds == crate::federation::base_world_axis()
+        && matches!(&prior.worlds, ScopeAxis::Some(worlds)
+            if !worlds.is_empty() && worlds.iter().all(|world|
+                crate::entity_id::is_foreign_world_id_range(world.0)))
+        && Scope {
+            worlds: proposed.worlds.clone(),
+            ..prior.clone()
+        } == *proposed
+}
+
 /// A TURN/MESSAGE body never proposes an audience: only
 /// `stamp_leader_project` settles a non-default one, at the record's birth.
 /// A BLOB_ARTIFACT's likewise: only `stamp_blob_project` settles one, in
@@ -259,12 +274,14 @@ fn derived_position(
 fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
     match kind {
         crate::registry::ENTITY_TYPE_ASSET => {
+            let kept = Scope {
+                sensitivity: proposed.sensitivity,
+                ..prior.clone()
+            };
             proposed.sensitivity.is_narrowing_of(prior.sensitivity)
-                && Scope {
-                    sensitivity: proposed.sensitivity,
-                    ..prior.clone()
-                } == *proposed
+                && (kept == *proposed || foreign_base_position_kept(&kept, proposed))
         }
+        crate::registry::ENTITY_TYPE_ASSET_TEXT => foreign_base_position_kept(prior, proposed),
         crate::registry::ENTITY_TYPE_TURN
         | crate::registry::ENTITY_TYPE_MESSAGE
         | crate::registry::ENTITY_TYPE_BLOB_ARTIFACT => {

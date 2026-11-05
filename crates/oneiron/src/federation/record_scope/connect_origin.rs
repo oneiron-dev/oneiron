@@ -1,0 +1,448 @@
+//! Origin positions covered by the existing peer-host Connect signature.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use loro::{ExportMode, LoroDoc};
+use serde::{Deserialize, Serialize};
+
+use super::{SCOPE_RECORD, Stamp, birth_facet, bump_scope_revision, singleton, stored_scope};
+use crate::authority::FederationPactStatus;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::edge::EdgeKind;
+use crate::error::{Error, Result, SyncEngineContext};
+use crate::federation::{FederationGrant, Scope, ScopeAxis, ScopeId};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+use crate::provenance::birth::{RowBirth, row_birth_in_txn};
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_FEDERATION_GRANT};
+use crate::store::asset_body::asset_file_in_txn;
+use crate::store::loro_document::{map_for_each_value_bytes, map_get_bytes, map_insert_bytes};
+use crate::sync::SyncSelector;
+use crate::sync::client::VerifiedConnectOrigin;
+use crate::{EntityId, Vault};
+
+const ORIGIN_POSITIONS: &str = "origin_positions";
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileFacts {
+    blake3: [u8; 32],
+    len: u64,
+    xxh32: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OriginPosition {
+    kind: u8,
+    carrier: [u8; 32],
+    incarnation: [u8; 32],
+    facet: EntityId,
+    scope: Scope,
+    sources: BTreeSet<EntityId>,
+    file: Option<FileFacts>,
+}
+
+fn incarnation(birth: &RowBirth) -> Result<[u8; 32]> {
+    // Copy masking changes refs, not who made the row, when, or its input hash.
+    let bytes = rmp_serde::to_vec_named(&(
+        &birth.made_by.process,
+        birth.made_by.at,
+        &birth.content_hash,
+    ))
+    .map_err(|_| Error::InvalidConfig("Connect birth does not encode".into()))?;
+    Ok(*blake3::hash(&bytes).as_bytes())
+}
+
+fn related_in_doc(doc: &LoroDoc, id: EntityId, kind: EdgeKind) -> BTreeSet<EntityId> {
+    let mut targets = BTreeSet::new();
+    map_for_each_value_bytes(&doc.get_map("edges"), |key, value| {
+        if value.is_some()
+            && let Some((source, edge_kind, target)) = crate::sync::bridge::parse_edge_key(key)
+            && source == id
+            && edge_kind == kind
+        {
+            targets.insert(target);
+        }
+    });
+    targets
+}
+
+fn related_in_store(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: EdgeKind,
+) -> Result<BTreeSet<EntityId>> {
+    vault
+        .store
+        .port_edges(txn, &id, EdgeDirection::Out, Some(kind), None)?
+        .map(|edge| edge.map(|edge| edge.target))
+        .collect()
+}
+
+fn file_facts(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<Option<Option<FileFacts>>> {
+    if raw.first() != Some(&ENTITY_TYPE_ASSET) {
+        return Ok(Some(None));
+    }
+    let Some(manifest) =
+        asset_file_in_txn(&vault.store, txn, &id, &raw[ENTITY_METADATA_HEADER_LEN..])?
+    else {
+        return Ok(Some(None));
+    };
+    if crate::sync::asset_body::references::bound_in(doc, &id, raw).is_none() {
+        return Ok(None);
+    }
+    match vault.with_admitted_asset_file_in_txn(txn, &manifest, |_| Ok(())) {
+        Ok(()) => Ok(Some(Some(FileFacts {
+            blake3: manifest.facts.blake3,
+            len: manifest.facts.len,
+            xxh32: manifest.facts.xxh32,
+        }))),
+        Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn current_row(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    id: EntityId,
+) -> Result<Option<(Vec<u8>, EntityId, [u8; 32])>> {
+    let key = id.to_hex();
+    let Some(raw) = map_get_bytes(&doc.get_map("entities"), &key) else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Ok(None);
+    };
+    if !matches!(
+        header.entity_type,
+        ENTITY_TYPE_ASSET | ENTITY_TYPE_ASSET_TEXT
+    ) || vault.store.port_entity_raw(txn, &id)?.as_deref() != Some(raw.as_slice())
+        || !crate::ports::raw_readable_in_txn(&vault.store, txn, &id, &raw)?
+    {
+        return Ok(None);
+    }
+    let Some(facet) = birth_facet(&vault.store, txn, id)? else {
+        return Ok(None);
+    };
+    let facets = BTreeSet::from([facet]);
+    if related_in_doc(doc, id, EdgeKind::FacetOf) != facets
+        || related_in_store(vault, txn, id, EdgeKind::FacetOf)? != facets
+    {
+        return Ok(None);
+    }
+    let Some(birth) = row_birth_in_txn(&vault.store, txn, &id)? else {
+        return Ok(None);
+    };
+    let Some(carried) = map_get_bytes(&doc.get_map("row_births"), &key) else {
+        return Ok(None);
+    };
+    let Ok(carried) = rmp_serde::from_slice::<RowBirth>(&carried) else {
+        return Ok(None);
+    };
+    let born = incarnation(&birth)?;
+    if incarnation(&carried)? != born {
+        return Ok(None);
+    }
+    Ok(Some((raw, facet, born)))
+}
+
+fn source_position(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    id: EntityId,
+    grant: &FederationGrant,
+) -> Result<Option<OriginPosition>> {
+    let Some((raw, facet, born)) = current_row(vault, txn, doc, id)? else {
+        return Ok(None);
+    };
+    let kind = raw[0];
+    let Some(scope) = stored_scope(&vault.store, txn, id, kind)? else {
+        return Ok(None);
+    };
+    // This slice carries the native base-born ASSET/TEXT positions, not a
+    // guessed representation of every world in another vault.
+    if scope.worlds != crate::federation::base_world_axis()
+        || scope.facets != singleton(ScopeId(facet))
+        || scope.bands != singleton(kind)
+        || scope.verbs != ScopeAxis::Bottom
+    {
+        return Ok(None);
+    }
+    let mut read = scope.clone();
+    read.verbs = singleton("read".to_owned());
+    if !read.is_narrowing_of(&grant.authority_scope) {
+        return Ok(None);
+    }
+    let sources = if kind == ENTITY_TYPE_ASSET_TEXT {
+        let sources = related_in_store(vault, txn, id, EdgeKind::DerivedFrom)?;
+        if sources.is_empty()
+            || sources != related_in_doc(doc, id, EdgeKind::DerivedFrom)
+            || super::asset_text::sources_birth_facet(
+                &vault.store,
+                txn,
+                &sources.iter().copied().collect::<Vec<_>>(),
+            )? != facet
+        {
+            return Ok(None);
+        }
+        sources
+    } else {
+        BTreeSet::new()
+    };
+    let Some(file) = file_facts(vault, txn, doc, id, &raw)? else {
+        return Ok(None);
+    };
+    Ok(Some(OriginPosition {
+        kind,
+        carrier: *blake3::hash(&raw).as_bytes(),
+        incarnation: born,
+        facet,
+        scope,
+        sources,
+        file,
+    }))
+}
+
+/// Attests only current rows the real guest export already selected.
+pub(crate) fn witness_connect_positions(
+    vault: &Vault,
+    update: &[u8],
+    grant: &FederationGrant,
+    selector: &SyncSelector,
+) -> Result<Option<Vec<u8>>> {
+    let doc = LoroDoc::new();
+    doc.import(&update)
+        .map_err(|_| Error::InvalidConfig("Connect window does not decode".into()))?;
+    let txn = vault.store.env.read_txn()?;
+    let crate::vault::LiveEntityRow::Live { entity_type, body } =
+        crate::vault::live_entity_row_in_txn(&vault.store, &txn, &selector.grant_id)?
+    else {
+        return Ok(None);
+    };
+    if entity_type != ENTITY_TYPE_FEDERATION_GRANT
+        || crate::federation::decode_federation_grant_body(&body)? != *grant
+    {
+        return Ok(None);
+    }
+    let mut captions = Vec::new();
+    map_for_each_value_bytes(&doc.get_map("entities"), |key, raw| {
+        if raw.is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_ASSET_TEXT))
+            && let Ok(id) = EntityId::from_hex(key)
+            && id.to_hex() == key
+        {
+            captions.push(id);
+        }
+    });
+    let mut positions = BTreeMap::new();
+    for id in captions {
+        let Some(caption) = source_position(vault, &txn, &doc, id, grant)? else {
+            continue;
+        };
+        let mut sources = Vec::new();
+        for source in &caption.sources {
+            match source_position(vault, &txn, &doc, *source, grant)? {
+                Some(position)
+                    if position.kind == ENTITY_TYPE_ASSET && position.facet == caption.facet =>
+                {
+                    sources.push((*source, position))
+                }
+                _ => break,
+            }
+        }
+        if sources.len() != caption.sources.len() {
+            continue;
+        }
+        positions.extend(sources);
+        positions.insert(id, caption);
+    }
+    if positions.is_empty() {
+        return Ok(None);
+    }
+    let map = doc.get_map(ORIGIN_POSITIONS);
+    for (id, position) in positions {
+        let bytes = rmp_serde::to_vec_named(&position)
+            .map_err(|_| Error::InvalidConfig("Connect position does not encode".into()))?;
+        map_insert_bytes(&map, &id.to_hex(), &bytes)?;
+    }
+    doc.commit();
+    let update = doc
+        .export(ExportMode::all_updates())
+        .map_err(|error| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, error))?;
+    // Optional proof bytes must not make a previously admitted raw update too large.
+    Ok((update.len() <= crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES).then_some(update))
+}
+
+fn recipient_position(
+    position: &OriginPosition,
+    source: &[u8; 32],
+    inbound: &crate::federation::FederationDirectionScope,
+    body: &crate::authority::ConnectWindow,
+) -> Result<Option<Scope>> {
+    let facets = if body.facets.is_empty() {
+        inbound.facets.clone()
+    } else {
+        body.facets.iter().copied().map(ScopeId).collect()
+    };
+    let bands = if body.bands.is_empty() {
+        inbound.bands.clone()
+    } else {
+        body.bands.iter().copied().collect()
+    };
+    let scope = &position.scope;
+    if scope.worlds != crate::federation::base_world_axis()
+        || scope.facets != singleton(ScopeId(position.facet))
+        || scope.bands != singleton(position.kind)
+        || scope.verbs != ScopeAxis::Bottom
+        || !scope.facets.is_narrowing_of(&facets)
+        || !crate::federation::selector_range_of(position.kind)
+            .is_some_and(|band| bands.contains(&band))
+    {
+        return Ok(None);
+    }
+    let foreign = crate::federation::foreign_world_for(source, crate::claim::base_world_id())?;
+    Ok(Some(Scope {
+        worlds: singleton(ScopeId(foreign.entity_id())),
+        ..scope.clone()
+    }))
+}
+
+/// Consumes a token only the already verified Connect caller can construct.
+pub(crate) fn import_connect_positions(
+    vault: &Vault,
+    verified: &VerifiedConnectOrigin<'_>,
+) -> Result<()> {
+    let body = verified.body();
+    let doc = LoroDoc::new();
+    doc.import(&body.update)
+        .map_err(|_| Error::InvalidConfig("Connect window does not decode".into()))?;
+    let mut positions = BTreeMap::new();
+    map_for_each_value_bytes(&doc.get_map(ORIGIN_POSITIONS), |key, bytes| {
+        if let (Ok(id), Some(bytes)) = (EntityId::from_hex(key), bytes)
+            && id.to_hex() == key
+            && let Ok(position) = rmp_serde::from_slice::<OriginPosition>(bytes)
+            && rmp_serde::to_vec_named(&position).ok().as_deref() == Some(bytes)
+            && matches!(position.kind, ENTITY_TYPE_ASSET | ENTITY_TYPE_ASSET_TEXT)
+        {
+            positions.insert(id, position);
+        }
+    });
+    if positions.is_empty() {
+        return Ok(());
+    }
+    vault.with_write_txn_grouped(|txn| {
+        let fold = vault.authority_fold_readonly_in_txn(txn)?;
+        let Some(state) = fold.federation_pacts.get(&verified.pact()) else {
+            return Ok(());
+        };
+        let crate::vault::LiveEntityRow::Live {
+            entity_type,
+            body: grant_body,
+        } = crate::vault::live_entity_row_in_txn(&vault.store, txn, &state.grant_ref)?
+        else {
+            return Ok(());
+        };
+        if entity_type != ENTITY_TYPE_FEDERATION_GRANT
+            || crate::federation::decode_federation_grant_body(&grant_body)? != *verified.grant()
+        {
+            return Ok(());
+        }
+        let signed = verified.state();
+        if fold.vault_id != Some(verified.local())
+            || state.status != FederationPactStatus::Active
+            || state.peer_vault_id != signed.peer_vault_id
+            || state.peer_owner_key != signed.peer_owner_key
+            || state.pact_epoch != signed.pact_epoch
+            || state.grant_ref != signed.grant_ref
+            || state.pact_scope != signed.pact_scope
+        {
+            return Ok(());
+        }
+        let Ok(delivery) = fold.active_pact_delivery(&state.grant_ref) else {
+            return Ok(());
+        };
+        if delivery.pact != verified.pact()
+            || delivery.epoch != body.epoch
+            || delivery.source_vault != state.peer_vault_id
+        {
+            return Ok(());
+        }
+        let inbound = if verified.local() <= state.peer_vault_id {
+            &state.pact_scope.hi_to_lo
+        } else {
+            &state.pact_scope.lo_to_hi
+        };
+        let mut admitted_sources = BTreeSet::new();
+        let mut changed = false;
+        for kind in [ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT] {
+            for (id, position) in positions
+                .iter()
+                .filter(|(_, position)| position.kind == kind)
+            {
+                let Some(scope) =
+                    recipient_position(position, &delivery.source_vault, inbound, body)?
+                else {
+                    continue;
+                };
+                let Some((raw, facet, born)) = current_row(vault, txn, &doc, *id)? else {
+                    continue;
+                };
+                if raw[0] != kind
+                    || facet != position.facet
+                    || born != position.incarnation
+                    || *blake3::hash(&raw).as_bytes() != position.carrier
+                    || file_facts(vault, txn, &doc, *id, &raw)? != Some(position.file.clone())
+                {
+                    continue;
+                }
+                if kind == ENTITY_TYPE_ASSET_TEXT
+                    && (position.sources.is_empty()
+                        || related_in_doc(&doc, *id, EdgeKind::DerivedFrom) != position.sources
+                        || related_in_store(vault, txn, *id, EdgeKind::DerivedFrom)?
+                            != position.sources
+                        || !position.sources.is_subset(&admitted_sources))
+                {
+                    continue;
+                }
+                if let Some(prior) = SCOPE_RECORD.get(&vault.store, txn, id)? {
+                    if prior.version != 2
+                        || prior.kind != kind
+                        || prior.birth_facet != *facet.as_bytes()
+                        || prior.scope != scope
+                    {
+                        continue;
+                    }
+                } else {
+                    SCOPE_RECORD.put(
+                        &vault.store,
+                        txn,
+                        id,
+                        &Stamp {
+                            version: 2,
+                            kind,
+                            birth_facet: *facet.as_bytes(),
+                            scope,
+                        },
+                    )?;
+                    changed = true;
+                }
+                if kind == ENTITY_TYPE_ASSET {
+                    admitted_sources.insert(*id);
+                }
+            }
+        }
+        if changed {
+            bump_scope_revision(&vault.store, txn)?;
+        }
+        Ok(())
+    })
+}
