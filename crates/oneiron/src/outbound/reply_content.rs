@@ -112,6 +112,7 @@ impl Vault {
                         entity_type: crate::registry::ENTITY_TYPE_BLOB_ARTIFACT,
                         occurred: at,
                         learned_at: now,
+                        row_version: 0,
                         body: crate::blob_artifact::encode_blob_artifact_body(
                             &BlobArtifactBody::new(
                                 format!("{REPLY_RUN_PREFIX}{}", event.event_id),
