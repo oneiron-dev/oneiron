@@ -1,3 +1,6 @@
+//! TASK lifecycle door: progress, results, cancellation, and settlement.
+//! Entry [`deliver_task_result_in_txn`]; dispatched from the `verbs` agent-verb surface.
+//! Owned by `task_verb`; terminal meaning is fixed in `terminal_state`, never here.
 use crate::Vault;
 use crate::code_run::{SelfDurableWait, peer_result_wait};
 use crate::entity_id::EntityId;
