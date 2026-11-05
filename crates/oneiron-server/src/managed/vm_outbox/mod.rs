@@ -61,7 +61,7 @@ pub(crate) use self::store::DivergedAnswer;
 use self::local::Owner;
 use self::store::{MemberRecord, Store};
 use oneiron_vault_contract::vm_outbox::{VmOutboxKind, VmOutboxOutcome, VmOutboxSide};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::File;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -129,6 +129,9 @@ struct Carrier {
     /// published whole, as journaled in its store; its kind waits on it
     /// until a turn finishes it ([`journal`], FIX 7543).
     unfinished: BTreeMap<VmOutboxKind, journal::SetJournal>,
+    /// Each kind whose set journal did not read: it waits, its set mark
+    /// standing, and each turn reads the journal again (FIX 7543).
+    unread_journals: BTreeSet<VmOutboxKind>,
 }
 
 /// Why a kind waits on this end's carrier records, and when its next scan
@@ -168,6 +171,7 @@ impl Carrier {
             board: None,
             aside_answers: Vec::new(),
             unfinished: BTreeMap::new(),
+            unread_journals: BTreeSet::new(),
         };
         carrier.load_unfinished_sets();
         carrier

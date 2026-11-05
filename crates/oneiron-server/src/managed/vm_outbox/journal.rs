@@ -248,6 +248,9 @@ impl Carrier {
     /// finishes none. A set left waiting only for puts the other end sends
     /// again does not hold the kind back.
     pub(super) fn finish_unfinished_set(&mut self, kind: VmOutboxKind) -> bool {
+        if self.unread_journals.contains(&kind) && !self.read_unread_journal(kind) {
+            return false;
+        }
         let Some(mut journal) = self.unfinished.remove(&kind) else {
             return true;
         };
@@ -329,51 +332,104 @@ impl Carrier {
     /// end's store, when the end starts: each kind with changes to make
     /// waits on it, and its first turn finishes it; one only waiting for
     /// puts the other end sends again keeps its mark and takes sets. A
-    /// journal that does not read is said and left on disk, and its kind's
-    /// set mark goes, so no reader waits on a set this end cannot finish;
-    /// the other end's transfers of it, never answered durable, come again
-    /// as a set of their own.
+    /// journal that does not read is said, and its kind waits, its mark
+    /// standing, while each turn reads the journal again: the set it names
+    /// may be published in part, so no reader is let in before it is
+    /// finished. One the owner moved aside lets the kind and its readers go.
     pub(super) fn load_unfinished_sets(&mut self) {
         for (kind, read) in self.store.read_set_journals() {
-            let journal = read.and_then(|bytes| {
-                serde_json::from_slice::<SetJournal>(&bytes).map_err(std::io::Error::other)
-            });
-            match journal {
-                Ok(journal) if journal.kind == kind => {
+            match read.and_then(|bytes| decode_journal(kind, &bytes)) {
+                Ok(journal) => {
                     if !journal.only_awaits() {
-                        let outcome = VmOutboxOutcome::deferred(
-                            VmOutboxDeferral::Io,
-                            &format!("this end's unfinished {kind} set"),
-                            "a set this end took is not published whole yet; the work is kept",
-                        );
-                        self.record_wait.insert(
-                            kind,
-                            RecordWait {
-                                outcome,
-                                at: Instant::now(),
-                                step: RESCAN_EVERY,
-                                retry: Default::default(),
-                            },
-                        );
+                        self.wait_on_journal(kind);
                     }
                     self.unfinished.insert(kind, journal);
                 }
-                read => {
-                    let error = read.err().map_or_else(
-                        || "it names another kind".to_owned(),
-                        |error| error.to_string(),
-                    );
+                Err(error) => {
                     tracing::warn!(
                         reason = "vm_outbox_set_journal_unreadable",
                         side = ?self.side,
                         %kind,
                         %error,
-                        "an outbox carrier set journal does not read; its set mark goes"
+                        "an outbox carrier set journal does not read; its kind waits, its set mark standing, and each turn reads it again. To let them go: move the journal aside"
                     );
-                    if let Ok(Some(root)) = self.roots.open(kind) {
-                        let _ = local::unmark_set(&root);
-                    }
+                    self.unread_journals.insert(kind);
+                    self.wait_on_journal(kind);
                 }
+            }
+        }
+    }
+
+    /// Makes `kind` wait at once on the set its journal names: its first
+    /// turn finishes the set, or reads the journal again.
+    fn wait_on_journal(&mut self, kind: VmOutboxKind) {
+        let outcome = VmOutboxOutcome::deferred(
+            VmOutboxDeferral::Io,
+            &format!("this end's unfinished {kind} set"),
+            "a set this end took is not published whole yet; the work is kept",
+        );
+        self.record_wait.insert(
+            kind,
+            RecordWait {
+                outcome,
+                at: Instant::now(),
+                step: RESCAN_EVERY,
+                retry: Default::default(),
+            },
+        );
+    }
+
+    /// Reads `kind`'s set journal again when it did not read: `true` once
+    /// it reads, the set then finished as any unfinished one, or once it is
+    /// gone, moved aside by the owner, its mark removed; `false` while it
+    /// still does not read, and the kind waits one more step.
+    fn read_unread_journal(&mut self, kind: VmOutboxKind) -> bool {
+        let read = self
+            .store
+            .read_set_journal(kind)
+            .and_then(|bytes| bytes.map(|bytes| decode_journal(kind, &bytes)).transpose());
+        let outcome = |error: &std::io::Error| {
+            VmOutboxOutcome::deferred(
+                VmOutboxDeferral::Io,
+                &format!("this end's {kind} set journal"),
+                &error.to_string(),
+            )
+        };
+        match read {
+            Ok(Some(journal)) => {
+                self.unread_journals.remove(&kind);
+                self.unfinished.insert(kind, journal);
+                true
+            }
+            Ok(None) => {
+                let gate = Arc::clone(&self.gate);
+                let held = gate.hold();
+                if *held == Mode::Draining {
+                    return false;
+                }
+                let unmarked = match self.roots.open(kind) {
+                    Ok(Some(root)) => local::unmark_set(&root),
+                    Ok(None) => Ok(()),
+                    Err(error) => Err(error),
+                };
+                drop(held);
+                if let Err(error) = unmarked {
+                    let outcome = outcome(&error);
+                    self.wait_on_set(kind, outcome);
+                    return false;
+                }
+                self.unread_journals.remove(&kind);
+                tracing::warn!(
+                    side = ?self.side,
+                    %kind,
+                    "an outbox carrier set journal that did not read is gone; its kind and its readers go on"
+                );
+                true
+            }
+            Err(error) => {
+                let outcome = outcome(&error);
+                self.wait_on_set(kind, outcome);
+                false
             }
         }
     }
@@ -626,4 +682,14 @@ fn fill_cache(record: &mut MemberRecord, stamp: Option<local::FileStamp>) {
     record.cached = stamp
         .zip(record.agreed.clone())
         .map(|(stamp, version)| Cached { stamp, version });
+}
+
+/// `bytes` as `kind`'s set journal: one that does not parse, or names
+/// another kind, does not read.
+fn decode_journal(kind: VmOutboxKind, bytes: &[u8]) -> std::io::Result<SetJournal> {
+    let journal = serde_json::from_slice::<SetJournal>(bytes).map_err(std::io::Error::other)?;
+    if journal.kind != kind {
+        return Err(std::io::Error::other("the set journal names another kind"));
+    }
+    Ok(journal)
 }

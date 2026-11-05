@@ -441,25 +441,30 @@ impl Store {
         }
     }
 
-    /// Each set journal the store holds, by kind, as it reads: whole, since
-    /// only this end writes it and a set is not capped.
+    /// `kind`'s set journal, read whole, since only this end writes it and
+    /// a set is not capped; `None` when there is none.
+    pub(super) fn read_set_journal(&self, kind: VmOutboxKind) -> std::io::Result<Option<Vec<u8>>> {
+        let name = set_journal_name(kind);
+        let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let file = match rustix::fs::openat(&self.dir, name.as_str(), flags, Mode::empty()) {
+            Ok(file) => file,
+            Err(Errno::NOENT) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let mut file = File::from(file);
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(Some(bytes))
+    }
+
+    /// Each set journal the store holds, by kind, as it reads.
     pub(super) fn read_set_journals(&self) -> Vec<(VmOutboxKind, std::io::Result<Vec<u8>>)> {
         VmOutboxKind::ALL
             .into_iter()
-            .filter_map(|kind| {
-                let name = set_journal_name(kind);
-                let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-                let read = rustix::fs::openat(&self.dir, name.as_str(), flags, Mode::empty())
-                    .map_err(std::io::Error::from)
-                    .and_then(|file| {
-                        let mut file = File::from(file);
-                        let mut bytes = Vec::new();
-                        file.read_to_end(&mut bytes).map(|_| bytes)
-                    });
-                match read {
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    read => Some((kind, read)),
-                }
+            .filter_map(|kind| match self.read_set_journal(kind) {
+                Ok(None) => None,
+                Ok(Some(bytes)) => Some((kind, Ok(bytes))),
+                Err(error) => Some((kind, Err(error))),
             })
             .collect()
     }
