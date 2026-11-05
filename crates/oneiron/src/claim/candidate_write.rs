@@ -153,7 +153,8 @@ fn same_candidate_semantics(prior: &ClaimBody, next: &ClaimBody) -> Result<bool>
         && prior.subject == next.subject
         && value_bytes(&prior.value)? == value_bytes(&next.value)?
         && prior.confidence.to_bits() == next.confidence.to_bits()
-        && prior.world == next.world
+        && prior.world.unwrap_or_else(crate::claim::base_world_id)
+            == next.world.unwrap_or_else(crate::claim::base_world_id)
         && prior.rel == next.rel
         && prior.scope.as_ref().map(value_bytes).transpose()?
             == next.scope.as_ref().map(value_bytes).transpose()?
