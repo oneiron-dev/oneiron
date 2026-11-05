@@ -121684,9 +121684,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/livequery/residence.rs",
-     "purpose": "Grant-scoped home-node reads for opened-item devices",
+     "purpose": "Home-node reads for opened-item devices and proved machines",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -121786,7 +121786,7 @@
      "path": "src/livequery/residence/pad_custody.rs",
      "purpose": "`residence.pad.fetch` (KS-5, FIX 6706): one page of a world's current pads, sealed for the machine this…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
