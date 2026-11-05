@@ -97,6 +97,7 @@ pub use self::ctl::{
     LegalHoldsWire, ManagedFacility, ManagedReadiness, PingDeletion, REAP_PAUSE_REFUSAL,
     ShedBlockerWire, ShedCause, ShedStatus, TRAINING_PURGE_RECEIPT_PENDING,
     TRAINING_PURGE_REJECTED, TRAINING_PURGE_UNSENT, TrainingPurgeState, TrainingPurgeStateWire,
+    VmOutboxCompanionState,
 };
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
 pub use self::ledger_pages::{
