@@ -1442,7 +1442,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/worker_host/session/lifecycle.rs` | src | m | 10 crate-vis | — | The host's side of each served vault's snapshot lifecycle (DESIGN-V2 §7 "On vault lock", V2-R3): the port a… |
 | `src/models/worker_host/session/park.rs` | src | m | 6 crate-vis | — | Parking (DESIGN-V2 §7 residency, V2-R3): an idle session's published checkpoint exported from its worker… |
 | `src/models/worker_host/session/policy.rs` | src | s | 13 crate-vis | — | The coordinator's calls, one fn or constant each: which workers get sessions, which calls may use one, what… |
-| `src/models/worker_host/session/registry.rs` | src | m | 35 crate-vis | — | The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that… |
+| `src/models/worker_host/session/registry.rs` | src | m | 36 crate-vis | — | The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that… |
 | `src/models/worker_host/session/restore.rs` | src | m | 2 crate-vis | — | Restore (DESIGN-V2 §7 residency, V2-R3): a kept snapshot imported into a fresh session for an admitted turn… |
 | `src/models/worker_host/session/turn.rs` | src | m | 1 crate-vis | — | A turn on a session: the session for its key reused or created, a working branch forked at the frontier the… |
 | `src/oauth_relay.rs` | src | L | 7 crate-vis | — | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
