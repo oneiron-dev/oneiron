@@ -164,7 +164,7 @@ export type SectionLayout = { share_pct?: number | null; fold?: SectionFold | nu
 /** `oneiron::context_board::layout::BoardLayout` */
 export type BoardLayout = { sections?: Record<string, SectionLayout> }
 /** `oneiron::context_board::layout_store::BoardLayoutState` */
-export type BoardLayoutState = { live: BoardLayout; pending?: BoardLayout | null }
+export type BoardLayoutState = { live: BoardLayout; pending?: BoardLayout | null; owner_override?: BoardLayout }
 /** `oneiron::verbs::board_layout::BoardFoldRequest` */
 export type BoardFoldRequest = { section: string; note?: string | null; keep?: EntityId[] }
 /** `oneiron::verbs::board_layout::BoardSectionRequest` */

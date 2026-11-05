@@ -53,7 +53,7 @@ pub(crate) async fn run_current_board(
     let scope_label =
         crate::mcp::mcp_effective_scope_label(&crate::mcp::McpConnectorScope::vault_wide());
     let cap_tok = oneiron::context_board::resolve_board_budget(
-        super::super::exec_board_verbs::run_board_budget_request(),
+        super::super::exec_board_verbs::run_board_budget_request(server),
     )
     .cap_tok;
     let laid_out = oneiron::context_board::apply_board_layout(&sections, &layout, cap_tok);
@@ -274,7 +274,7 @@ pub(super) fn run_board_sections(
             .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
     );
     let budget = oneiron::context_board::resolve_board_budget(
-        super::super::exec_board_verbs::run_board_budget_request(),
+        super::super::exec_board_verbs::run_board_budget_request(server),
     );
     // TASKS under the agent's layout: the fold line counts every admitted
     // row; the filter and the share narrow only what the section lists.

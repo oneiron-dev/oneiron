@@ -357,11 +357,10 @@ pub(crate) async fn context_board_hydrate(
     // explicit TASKS-row slice above its effective cap is refused before ANY
     // retrieval runs.
     let board_budget_request = oneiron::context_board::BoardBudgetRequest {
-        harness_default_tok: standing
-            .as_ref()
-            .map_or(crate::mcp::MCP_BOARD_BUDGET_TOK, |prefix| {
-                prefix.other_context_tokens
-            }),
+        harness_default_tok: standing.as_ref().map_or_else(
+            || layout::board_cap_tok(&server.vault, crate::mcp::MCP_BOARD_BUDGET_TOK),
+            |prefix| prefix.other_context_tokens,
+        ),
         caller_limit_tok: req.board_budget_tok,
         explicit_override_tok: None,
     };

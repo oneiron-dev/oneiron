@@ -71,13 +71,33 @@ the prompt cache breaks at most once (ARCH-0067 §2.2).
 - A fold that applies records the section's counts as its baseline, so the
   fold line counts changes from that turn.
 
+## The owner's settings
+
+`GET|POST /v1/owner/settings/board-layout` (the owner only) reads and sets
+three things, each absent until set:
+
+- `cap_tok`: the board cap every harness renders under in place of its own
+  default (the MCP and run boards' 1200 tokens; the HTTP board's, when no
+  standing block reserves its budget). A caller may still ask for less, and
+  an explicit override is still honoured and recorded. `null` clears it.
+- `default_layout`: the layout an agent's board renders under until the
+  agent lays out its own. An agent's first layout verb starts from it.
+- `override_layout`: sections whose layout the owner sets for every agent.
+  Each wins over the agent's own layout of that section; when the
+  override's shares and the agent's other shares pass the cap together,
+  the agent's shares give way. `self.board.layout` shows the override as
+  `owner_override`.
+
+Each change records the owner's act (`settings.board_layout`) with the
+settings it replaces, as the other owner policy settings do.
+
 ## Persistence and forks
 
 The layout persists across sessions. A new native attenuated fork copies its
 source actor's live and pending layout once, in its creation transaction,
 with a fresh row incarnation; the fork's later changes never reach the
-parent. An actor with no layout of its own renders under the default
-layout (the engine's own sizing of every section).
+parent. An actor with no layout of its own renders under the owner's
+default layout, else the engine's own sizing of every section.
 
 ## Sizes that follow a share
 
@@ -93,8 +113,8 @@ sections the layout folded or fitted.
 
 ## Not built yet
 
-- The owner's board cap and default layout as a vault setting, and the
-  owner's override of one agent's layout.
+- An owner override of one agent's layout alone (the override applies to
+  every agent).
 - Share-driven sizes for the ROOM invite hints, the TASKS fan-out rows and
   the PEOPLE prefix roster (the prefix re-lays out at the epoch boundary).
 - Filters beyond TASKS, and the connector board's TASKS share, filter and

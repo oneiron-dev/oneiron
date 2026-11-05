@@ -94,7 +94,7 @@ declare namespace Sdk {
   type SectionFilter = { who?: BoardWhoFilter | null; status?: string[] };
   type SectionLayout = { share_pct?: number | null; fold?: SectionFold | null; filter?: SectionFilter | null };
   type BoardLayout = { sections?: Record<string, SectionLayout> };
-  type BoardLayoutState = { live: BoardLayout; pending?: BoardLayout | null };
+  type BoardLayoutState = { live: BoardLayout; pending?: BoardLayout | null; owner_override?: BoardLayout };
   type BoardFoldRequest = { section: string; note?: string | null; keep?: EntityId[] };
   type BoardSectionRequest = { section: string };
   type BoardSizeRequest = { section: string; share_pct?: number | null };
