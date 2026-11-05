@@ -591,7 +591,8 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 }
             };
             // A move of the folder itself is reconciled when the round ends.
-            let now_skipped = self.tree_knowing(source, folder)?.skipped(folder)?;
+            let tree = self.tree_knowing(source, folder)?;
+            let now_skipped = tree.skipped(folder)?;
             if was_skipped && !now_skipped {
                 cursor.met_copied.insert(folder.clone());
             }
@@ -604,6 +605,13 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 if entry.get("@removed").is_some() {
                     changes.extend(self.removal(source, provider_id, from_skipped)?);
                 } else if !(was_skipped && now_skipped) && !older_than_kept(entry, source) {
+                    // A change to a message copied already (its categories)
+                    // reaches its labels; one not copied yet is filed.
+                    changes.push(MailHistoryChange::Labels {
+                        provider_id: provider_id.clone(),
+                        labels: folder_labels(entry, tree.names.get(folder).copied(), folder),
+                        trash_or_spam: tree.trash(folder)?,
+                    });
                     changes.push(MailHistoryChange::Added(MailMessageRef {
                         provider_id,
                         thread_id: text_of(entry.get("conversationId")),
@@ -842,7 +850,7 @@ fn delta_link(folder: &str) -> Result<String> {
     ))
     .map_err(|_| refused("graph_mail_folder_link_unreadable"))?;
     url.query_pairs_mut()
-        .append_pair("$select", "id,conversationId,receivedDateTime");
+        .append_pair("$select", "id,conversationId,receivedDateTime,categories");
     Ok(url.into())
 }
 
