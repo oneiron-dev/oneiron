@@ -431,7 +431,8 @@ pub(crate) use body_envelope::{
 // a shared one's final teardown settles.
 #[cfg(unix)]
 pub(crate) use body_envelope::{
-    erase_bodies_for_owner_in_txn, note_settled_inline_in_txn, settle_inline_asset_in_txn,
+    erase_bodies_for_owner_in_txn, governed_body_instances_in_txn, note_settled_inline_in_txn,
+    settle_inline_asset_in_txn,
 };
 // KS-2B1: row-held responses under body custody.
 #[cfg(unix)]

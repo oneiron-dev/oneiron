@@ -2417,7 +2417,7 @@
      "path": "src/attempt_queue/cancel/terminal.rs",
      "purpose": "Landing completion, the hard cancel rung, and the runtime's warning doors",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5
      }
     },
@@ -2431,7 +2431,7 @@
      "purpose": "Durable wire types of the ONE-1896 two-rung graceful-cancel protocol",
      "surface": {
       "const": 4,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 20,
       "re-export": 2,
       "struct": 1
@@ -2771,7 +2771,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 9,
       "re-export": 10
      }
@@ -2794,7 +2794,7 @@
      "path": "src/attempt_queue/payload_erase.rs",
      "purpose": "An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -9545,7 +9545,7 @@
      "path": "src/blob_artifact/holders.rs",
      "purpose": "Which records hold one record's bytes, read for a delete's impact preview",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -9632,7 +9632,7 @@
      "path": "src/blob_artifact/references.rs",
      "purpose": "Which artifacts hold which version bytes, on every vault (H125)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -23462,7 +23462,7 @@
      "path": "src/context_board/turn_opener.rs",
      "purpose": "The now-time turn opener (ARCH-0067 §2: the log closes with a now-time turn opener the model completes; I1 =…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -25079,7 +25079,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CarrierActorMerge",
@@ -25089,7 +25089,7 @@
      "purpose": "An erased actor's name, out of the rows that record it outside its own record (FIX 3520)",
      "surface": {
       "const": 2,
-      "crate-vis": 11,
+      "crate-vis": 13,
       "enum": 2
      }
     },
@@ -25501,6 +25501,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/deletion/exhaust_erase.rs",
+     "purpose": "Canonical BYOA exhausts reached by an accepted source erase (FIX 7617)",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/deletion/gate.rs",
      "purpose": "—",
      "surface": {
@@ -25600,7 +25610,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 42,
       "re-export": 14
      }
     },
@@ -26116,10 +26126,20 @@
      "path": "src/dispatch_byoa/dispatcher.rs",
      "purpose": "Dispatcher organ with dispatch, execute, authorize, and capture doors",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 10,
       "struct": 2,
       "trait": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/dispatcher/capture_fact.rs",
+     "purpose": "The native terminal landing's byte-free canonical capture identity",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -26212,7 +26232,7 @@
      "path": "src/dispatch_byoa/mod.rs",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 1,
       "re-export": 16
      }
@@ -61244,7 +61264,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/restore_class/vault_meta_a_c.rs",
@@ -71200,7 +71220,7 @@
      "path": "src/store/body_envelope/retention.rs",
      "purpose": "Body instance retirement (KS-2A, FIX 5683 part A; ARCH-0038 #erase-checkpoint-bodies): a delete keeps an…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -73317,13 +73337,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/erase_binding.rs",
      "purpose": "The custody retirements one erase owes, bound by name on its receipt (FIX 5844, C-ERASE-FINAL): read in the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -92166,7 +92186,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92187,7 +92207,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93274,7 +93294,7 @@
    },
    "over_bar": 150,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6529,
+   "source_files": 6531,
    "test_files": 895
   },
   "oneiron-android": {
@@ -112372,7 +112392,7 @@
      "path": "src/api/ai/chat.rs",
      "purpose": "`POST /v1/ai/chat`: one chat turn on the generative seat",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -112412,7 +112432,7 @@
      "path": "src/api/ai/chat/compaction.rs",
      "purpose": "A self agent's chat turn on its own live fork (FIX 4465 D)",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -112466,13 +112486,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/chat/recall.rs",
      "purpose": "The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -121034,7 +121054,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "BrokerConfig",
@@ -129729,7 +129749,7 @@
     "config": {
      "files": 66,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge"
     },
@@ -130154,7 +130174,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 46,
+   "over_bar": 47,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1573,
    "test_files": 182
