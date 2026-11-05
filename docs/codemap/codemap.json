@@ -69247,7 +69247,7 @@
      "path": "src/speculative/scoped.rs",
      "purpose": "Credential-bound candidate admission, inside every speculative pass",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -82036,9 +82036,9 @@
      "path": "src/team/spawn_intent.rs",
      "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 8
      }
     },
@@ -86391,7 +86391,7 @@
      "purpose": "One live utterance per connection; actual retrieval semantics stay in OF-108",
      "surface": {
       "crate-vis": 2,
-      "fn": 9,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -86426,7 +86426,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 23,
+      "fn": 24,
       "re-export": 1,
       "struct": 5
      }
@@ -123594,7 +123594,7 @@
      "path": "src/models/llama_identity.rs",
      "purpose": "What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -124107,6 +124107,7 @@
       "SnapshotReceipt",
       "SnapshotSkips",
       "SnapshotStatus",
+      "TaggerRuntimeStatus",
       "TaggerStatus"
      ],
      "path": "src/models/status.rs",
@@ -124115,7 +124116,7 @@
       "crate-vis": 8,
       "enum": 2,
       "fn": 1,
-      "struct": 16
+      "struct": 17
      }
     },
     {
@@ -126101,7 +126102,7 @@
       "RetrievalQueryCheck"
      ],
      "path": "src/server/read_shape.rs",
-     "purpose": "One retrieval request's shape (F21(a)): its query against `[limits].retrieval_query_bytes`, and the OF-520…",
+     "purpose": "One retrieval request's shape (F21(a)): its query against its byte row, and the OF-520 question a crossing…",
      "surface": {
       "const": 1,
       "crate-vis": 7,
