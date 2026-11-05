@@ -108,7 +108,7 @@ mod settle;
 mod stranded;
 mod undo;
 pub use carry::{ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit};
-pub use organ_wait::{ORGAN_WAIT_CALL_MAX_BYTES, OrganWait, OrganWaitView};
+pub use organ_wait::{OrganWait, OrganWaitRef, OrganWaitView};
 pub(crate) use pending::DeckExportHold;
 pub use pending::{
     MadeByReader, NATIVE_OUTPUT_REPORT_MAX_BYTES, NativeOutput, PendingProposalKind,
@@ -126,6 +126,25 @@ pub use self::records::{
     PptxReviewIdentity, SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleReceiptDoor,
     SettleSelectOutcome, SettledAnchor, SettledReview, SettlementRecord, SheetAnswerReceipt,
 };
+
+fn artifact_retention_deleted_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    artifact_id: &crate::entity_id::EntityId,
+) -> crate::error::Result<bool> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, artifact_id)?;
+    crate::deletion::row_deletion_marked(store, txn, artifact_id, raw.as_deref())
+}
+
+pub(crate) fn purge_artifact_retention_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    artifact_id: &crate::entity_id::EntityId,
+) -> crate::error::Result<()> {
+    pending::purge_artifact_in_txn(store, txn, artifact_id)?;
+    stranded::purge_artifact_in_txn(store, txn, artifact_id)?;
+    organ_wait::purge_artifact_in_txn(store, txn, artifact_id)
+}
 
 #[cfg(test)]
 mod tests;

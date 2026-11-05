@@ -151,6 +151,24 @@ impl OverlayDb {
         }
     }
 
+    /// Reads a row while its stored bytes remain borrowed. Single-valued
+    /// overlay rows are read directly from this accessor's immutable snapshot;
+    /// duplicate-key reads retain the ordinary `get` behavior.
+    pub fn with_value<T>(
+        &self,
+        txn: &RoTxn<'_>,
+        key: &[u8],
+        read: impl FnOnce(Option<&[u8]>) -> T,
+    ) -> Result<T> {
+        if let Some(overlay) = &self.overlay
+            && let Some(value) = overlay.snapshot.staged_value(overlay.keyspace, key)
+        {
+            return Ok(read(Some(value)));
+        }
+        let value = self.get(txn, key)?;
+        Ok(read(value.as_deref()))
+    }
+
     pub fn put(&self, txn: &mut RwTxn<'_>, key: &[u8], data: &[u8]) -> Result<()> {
         match &self.overlay {
             Some(overlay) => overlay.live.put(overlay.keyspace, key, data),

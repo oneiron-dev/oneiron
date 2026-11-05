@@ -24,7 +24,7 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::value::{Open, Value};
+use crate::value::{AllocationChildren, Open, Value};
 
 mod de;
 mod ser;
@@ -50,6 +50,30 @@ impl serde::de::Error for CodecError {
     fn custom<T: std::fmt::Display>(msg: T) -> Self {
         Self::Message(msg.to_string())
     }
+}
+
+/// Admission for the temporary heap stack used while encoding a value.
+/// The caller supplies its existing memory lease; this codec owns no floor.
+pub trait EncodeScratch {
+    /// Reserves additional stack bytes before allocation.
+    ///
+    /// # Errors
+    /// The caller's admission failed or was interrupted.
+    fn grow(&mut self, bytes: u64) -> Result<(), CodecError>;
+    /// Replaces pending bytes with the actual capacity just allocated.
+    fn materialized(&mut self, reserved: u64, actual: u64);
+    /// Releases bytes after their stack storage has been freed.
+    fn shrink(&mut self, bytes: u64);
+}
+
+impl EncodeScratch for () {
+    fn grow(&mut self, _: u64) -> Result<(), CodecError> {
+        Ok(())
+    }
+
+    fn materialized(&mut self, _: u64, _: u64) {}
+
+    fn shrink(&mut self, _: u64) {}
 }
 
 /// `value`'s encoding.
@@ -78,10 +102,7 @@ pub fn encoded_len<T: Serialize + ?Sized>(value: &T) -> Result<u64, CodecError> 
 ///
 /// # Errors
 /// As [`to_vec`].
-pub(crate) fn write_into<T: Serialize + ?Sized>(
-    out: &mut Vec<u8>,
-    value: &T,
-) -> Result<(), CodecError> {
+pub fn write_into<T: Serialize + ?Sized>(out: &mut Vec<u8>, value: &T) -> Result<(), CodecError> {
     value.serialize(&mut ser::Serializer::new(out))
 }
 
@@ -126,6 +147,22 @@ pub fn read_cost<T: Serialize + ?Sized>(value: &T) -> Result<u64, CodecError> {
     let mut measure = Measure::default();
     value.serialize(&mut ser::Serializer::new(&mut measure))?;
     Ok(measure.len.saturating_add(measure.shape.decoded()))
+}
+
+/// The allocation bound for decoding one already-encoded value, excluding
+/// its input bytes. Walks the encoding without allocating.
+///
+/// # Errors
+/// The bytes are not one encoded value.
+pub fn decode_cost(bytes: &[u8]) -> Result<u64, CodecError> {
+    let shape = shape(bytes)?;
+    // The retained-value capacity walk runs after decoding. Its depth-first
+    // stack holds at most one frame per nonempty container, with Vec slack.
+    let walk = shape
+        .containers
+        .saturating_mul(2)
+        .saturating_mul(std::mem::size_of::<AllocationChildren<'_>>() as u64);
+    Ok(shape.decoded().saturating_add(walk))
 }
 
 /// Where an encoder writes.
