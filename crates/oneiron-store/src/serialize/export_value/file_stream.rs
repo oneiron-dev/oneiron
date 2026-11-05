@@ -169,7 +169,7 @@ impl Utf8 {
     }
 
     /// Whether every byte fed was UTF-8, the last character whole.
-    const fn text(&self) -> bool {
+    pub const fn text(&self) -> bool {
         !self.broken && self.carry_len == 0
     }
 }

@@ -228,7 +228,7 @@ pub const FIELD_ENGINE_REGISTER: &str = "engine_register";
 pub const FIELD_CARE_REGISTER: &str = "care_register";
 pub const FIELD_AUDIT_REGISTER: &str = "audit_register";
 
-const fn default_receipt_query_limit() -> usize {
+pub const fn default_receipt_query_limit() -> usize {
     DEFAULT_RECEIPT_QUERY_LIMIT
 }
 
