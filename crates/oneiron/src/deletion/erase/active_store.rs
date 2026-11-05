@@ -79,6 +79,7 @@ impl Vault {
             .delete_guards
             .reject_audience_edit_delete(&self.store, wtxn, id)?;
         let outcome = (|| {
+            let mut had_touch_sources = false;
             if erase {
                 super::super::exhaust_erase::begin_native_purge_in_txn(self, wtxn, id)?;
             }
@@ -141,6 +142,10 @@ impl Vault {
                     id,
                     request_id,
                 )?;
+                had_touch_sources =
+                    crate::comm::erase_scoped_touch_sources_for_native_delete_in_txn(
+                        self, wtxn, id, request_id,
+                    )?;
             }
             // Capture before tear: a project's signed history outlives its row.
             self.capture_project_before_tear_in_txn(wtxn, *id)?;
@@ -256,6 +261,7 @@ impl Vault {
             }
             Ok((
                 existed
+                    || had_touch_sources
                     || note_removed
                     || had_refinement
                     || had_merge_receipt
@@ -295,6 +301,7 @@ impl Vault {
         self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
         // An erased custody record is fenced before its body is scrubbed (KS-6
         // part 2).
+        let mut had_touch_sources = false;
         if erase {
             self.fence_erased_credential_in_txn(wtxn, id)?;
             crate::runtime_hooks::scrub_hook_source_in_txn(
@@ -310,6 +317,9 @@ impl Vault {
                 wtxn,
                 id,
                 None,
+            )?;
+            had_touch_sources = crate::comm::erase_scoped_touch_sources_for_native_delete_in_txn(
+                self, wtxn, id, None,
             )?;
             // Erase-only: an erased MESSAGE's model-call rows go with the
             // custody they lifted, under this erase's act (first consume carries).
@@ -441,7 +451,7 @@ impl Vault {
                 crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
             }
             return Ok((
-                had_refinement || had_merge_receipt || had_tags || had_missing,
+                had_touch_sources || had_refinement || had_merge_receipt || had_tags || had_missing,
                 had_vector,
                 ledger_changed,
             ));

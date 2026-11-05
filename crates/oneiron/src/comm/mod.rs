@@ -31,8 +31,9 @@ mod records;
 mod scoped_touch;
 mod scoped_touch_erase;
 pub(crate) use scoped_touch_erase::{
-    erase_scoped_touch_sources_for_erased_in_txn, erase_scoped_touch_sources_in_txn,
-    settle_scoped_touch_checkpoint_payloads_for_reason_in_txn,
+    erase_scoped_touch_sources_for_erased_in_txn,
+    erase_scoped_touch_sources_for_native_delete_in_txn,
+    erase_scoped_touch_sources_for_reason_in_txn, scoped_touch_source_scope_exists_in_txn,
 };
 mod stop_hold;
 mod thread_membership;
@@ -40,6 +41,7 @@ mod thread_membership;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::born_touch::DeferredBornTouches;
 pub use self::claims::{
     COMM_CLAIM_PREDICATES, COMM_SCHEMA_VERSION, ClaimClassDescriptorRow, CommClaim, CommClaimValue,
     CommClearOptOutOutcome, CommError, CommResult, PREDICATE_COMM_LAST_TOUCH,
@@ -75,8 +77,6 @@ pub(crate) use self::generic_put_routing::{
     RoutedBatchPuts, route_projector_only_batch_puts_in_txn, take_projector_only_batch_puts_in_txn,
     take_projector_only_batch_puts_preserving_births_in_txn,
 };
-pub(crate) use self::born_touch::DeferredBornTouches;
-pub(crate) use self::scoped_touch::ScopedTouchRecord;
 pub(crate) use self::head_admission::ProjectedHeadAdmission;
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
@@ -95,6 +95,7 @@ pub(crate) use self::receipt_import::erase_skipped_send_receipt_in_txn;
 pub(crate) use self::records::{
     validate_comm_record_body_bytes, validate_key_string as validate_comm_party_key,
 };
+pub(crate) use self::scoped_touch::ScopedTouchRecord;
 pub(crate) use self::stop_hold::{
     clear_pending_stop_for_delete, maintain_pending_stop_put, send_stop_reason_in_txn,
 };

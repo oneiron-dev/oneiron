@@ -6,6 +6,7 @@ mod safe_delete_reason;
 pub use safe_delete_reason::SafeDeleteReason;
 mod checkpoint_payload;
 pub(crate) use checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn;
+pub(crate) use tombstone::{privacy_erasure_info, privacy_erasure_info_in_txn};
 mod coop_delivery;
 mod coop_reply;
 mod coop_request;

@@ -372,6 +372,63 @@ pub(crate) fn local_hard_delete_key(id: &EntityId) -> String {
 pub(crate) const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
+/// A known privacy setting in the current marker format, not delete authority.
+pub(crate) fn privacy_erasure_info(value: &[u8]) -> Option<TombstoneValueV2> {
+    if value.len() != TOMBSTONE_VALUE_V2_LEN {
+        return None;
+    }
+    let decoded = decode_tombstone_value(value);
+    Some(TombstoneValueV2 {
+        reason: decoded
+            .reason
+            .filter(|reason| reason.erases_checkpoint_payloads())?,
+        deleted_at: decoded.deleted_at,
+        request_id: decoded.request_id?,
+    })
+}
+
+/// Records the accepted delete's information without forgetting a privacy erase.
+/// Ordinary writes keep their existing insert-only or replacement behavior.
+pub(in crate::deletion) fn record_hard_delete_marker_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    value: &[u8; TOMBSTONE_VALUE_V2_LEN],
+    replace_existing: bool,
+) -> crate::error::Result<()> {
+    let marker = HexId(*id);
+    let previous = HARD_DELETE_MARKER.get_bytes(store, wtxn, &marker)?;
+    let was_privacy = previous.as_deref().and_then(privacy_erasure_info).is_some();
+    let is_privacy = privacy_erasure_info(value).is_some();
+    if was_privacy && !is_privacy {
+        return Ok(());
+    }
+    if previous.is_none() || replace_existing || (is_privacy && !was_privacy) {
+        HARD_DELETE_MARKER.put(store, wtxn, &marker, &value.to_vec())?;
+    }
+    Ok(())
+}
+
+/// Privacy-setting data read in the caller's actual snapshot. Presence remains
+/// the only marker test for admission; these reasons only select owned cleanup.
+pub(crate) fn privacy_erasure_info_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<std::collections::BTreeMap<EntityId, TombstoneValueV2>> {
+    let mut reasons = std::collections::BTreeMap::new();
+    for row in HARD_DELETE_MARKER.iter_raw_from(store, txn, &[])? {
+        let (key, value) = row?;
+        if let Some(id) = std::str::from_utf8(&key)
+            .ok()
+            .and_then(|hex| EntityId::from_hex(hex).ok())
+            && let Some(info) = privacy_erasure_info(&value)
+        {
+            reasons.insert(id, info);
+        }
+    }
+    Ok(reasons)
+}
+
 /// Stages the hard erasure of an engine row the caller purged in this
 /// transaction: its permanent `dt:` marker, and its `pt:` propagation intent
 /// in the window of `learned_at`, which the window's next load publishes.
@@ -403,10 +460,7 @@ pub(crate) fn stage_engine_row_hard_erasure_at_in_txn(
     window: String,
     value: &TombstoneValueV2,
 ) -> crate::error::Result<()> {
-    let marker = HexId(*id);
-    if !HARD_DELETE_MARKER.contains(store, wtxn, &marker)? {
-        HARD_DELETE_MARKER.put(store, wtxn, &marker, &value.encode().to_vec())?;
-    }
+    record_hard_delete_marker_in_txn(store, wtxn, id, &value.encode(), false)?;
     let key = PendingTombstoneKey { window, id: *id };
     PENDING_TOMBSTONE.put(store, wtxn, &key, &value.encode().to_vec())
 }

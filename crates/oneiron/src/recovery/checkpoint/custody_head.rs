@@ -558,6 +558,7 @@ impl Vault {
             restored_at,
             custody,
             &BTreeSet::new(),
+            &std::collections::BTreeMap::new(),
             &write_budget::Unfloored,
         )?;
         finish(&vault, artifact_holds.as_ref())?;

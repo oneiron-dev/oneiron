@@ -14,7 +14,7 @@ use super::super::gate::{
     revoke_guest_grants_in_txn,
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
-use super::super::tombstone::{DeleteReason, HARD_DELETE_MARKER, TombstoneValueV2};
+use super::super::tombstone::{DeleteReason, TombstoneValueV2};
 use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
@@ -91,7 +91,12 @@ impl Vault {
             header.learned_at,
             TopologyDeletePhase::Committed,
         )?;
-        let marker_key = HexId(*id);
+        let had_touch_sources = crate::comm::erase_scoped_touch_sources_for_reason_in_txn(
+            &crate::secret_custody::CustodyWrite::of(self),
+            &mut wtxn,
+            id,
+            Some(tombstone.reason),
+        )?;
         // ONE-1149 ownership claim: probe the FULL delete scope INSIDE the
         // erasing txn. LMDB's single writer makes this race-free — if the
         // probe sees state, this txn's purge erases it; if a concurrent
@@ -102,16 +107,15 @@ impl Vault {
         // CRDT tombstone above is already published, so the id IS
         // hard-deleted), guarded so an existing marker is never overwritten,
         // and the actor sweep runs, as there.
-        if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
+        if !self.active_delete_scope_exists_in_txn(&wtxn, id)? && !had_touch_sources {
             crate::claim::invalidate_weave_digest_source_in_txn(&self.store, &mut wtxn, id)?;
-            if !HARD_DELETE_MARKER.contains(&self.store, &wtxn, &marker_key)? {
-                HARD_DELETE_MARKER.put(
-                    &self.store,
-                    &mut wtxn,
-                    &marker_key,
-                    &tombstone.encode().to_vec(),
-                )?;
-            }
+            crate::deletion::tombstone::record_hard_delete_marker_in_txn(
+                &self.store,
+                &mut wtxn,
+                id,
+                &tombstone.encode(),
+                false,
+            )?;
             // An actor with no id-local state may still be named in the rows
             // that record it (its turn programs among them), so the purge's
             // actor sweep runs here too, marker or not (FIX 5737). Its code
@@ -175,11 +179,12 @@ impl Vault {
         // wire bytes) is informational. Un-cfg'd on every build: `sync_state`
         // is unconditional and the marker is local delete truth, not
         // sync-only state (ONE-1132 cfg-off durability).
-        HARD_DELETE_MARKER.put(
+        crate::deletion::tombstone::record_hard_delete_marker_in_txn(
             &self.store,
             &mut wtxn,
-            &marker_key,
-            &tombstone.encode().to_vec(),
+            id,
+            &tombstone.encode(),
+            true,
         )?;
         // ARCH-0055 §9 (r6): HardErase walks redirects. BEFORE the purge —
         // it deletes the head's incident shell edges, which are the walk's
@@ -217,6 +222,7 @@ impl Vault {
             true,
             owner_act,
         )?;
+        let existed = existed || had_touch_sources;
         affected.extend(citing);
         cancelled.extend(purged_cancelled);
 
