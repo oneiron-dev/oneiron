@@ -550,6 +550,35 @@ impl ScopedReadActorKey {
 
     /// Add a phone call's consent ceiling without dropping an earlier one.
     #[must_use]
+    /// Copies only a genuine call ceiling to a Memory handle holding this
+    /// exact credential. Neither an actor label nor a raw Scope can bind it.
+    pub(crate) fn phone_line_ceilings_for(
+        &self,
+        proof: &crate::authority::VerifiedSlip,
+        actor: EntityId,
+    ) -> crate::Result<&[crate::phone_line::PhoneLineReadCeiling]> {
+        if self.actor_ref != actor.to_hex()
+            || self.proof.as_ref() != Some(proof)
+            || self.phone_lines.is_empty()
+        {
+            return Err(crate::phone_line::invalid());
+        }
+        Ok(&self.phone_lines)
+    }
+
+    /// Keeps the original call credential beside a newly resolved identity
+    /// key, so a later proof or host-action binder cannot replace it.
+    pub(crate) fn within_phone_read(mut self, original: &Self) -> crate::Result<Self> {
+        let proof = self.proof.as_ref().ok_or_else(crate::phone_line::invalid)?;
+        let actor = EntityId::from_hex(&self.actor_ref)?;
+        let ceilings = original.phone_line_ceilings_for(proof, actor)?;
+        self = self.at(CallerLocality::OffDevice);
+        for ceiling in ceilings {
+            self = self.within_phone_line(ceiling.clone());
+        }
+        Ok(self)
+    }
+
     pub(crate) fn within_phone_line(
         mut self,
         ceiling: crate::phone_line::PhoneLineReadCeiling,

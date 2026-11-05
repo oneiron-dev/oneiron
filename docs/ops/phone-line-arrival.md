@@ -14,7 +14,7 @@ An authenticated owner can store a reversible `enabled` setting and an explicit
 six-axis `share_scope` for that exact identity. No row means off. Enabling does not mint a
 read grant. The scope is consent data, recorded with an arrival for review; a future live
 answering path still has to enforce the actual line ceiling on every read. This slice
-performs no agent-context reads. Turning the setting off is not identity release or
+performs no agent-context reads during metadata intake. Turning the setting off is not identity release or
 retirement, and an owner can disable an existing setting even if its old bridge is gone.
 
 The phone-specific transport accepts call-arrival metadata in a JSON body: a provider
@@ -80,10 +80,16 @@ model admission. A changed scope replaces its history Arc, so an old asynchronou
 cannot append into the new scope's history. Old-generation notices and queued PCM are
 checked against the original prepared scope, not re-stamped with current consent.
 
-The speculative Memory carrier, anonymous disclosure handling, complete tool/notice
-source accounting, explicit no-recognition execution and the actual answering lifecycle
-remain open. These native read and output-check ports are not a claim that a phone call
-can be answered.
+The speculative Memory carrier retains the original phone key and verified credential.
+Each reconstructed identity key must still carry that same proof, then conjoins every
+frozen call ceiling and the off-device bound. Changing the Memory proof or adding a host
+action cannot replace the captured phone credential. Clones and the room/thread
+rebinders retain it. Agent-class verification and the normal recall world defaults
+still use the existing Memory path; no actor label or new all-world default replaces it.
+
+Anonymous disclosure handling, complete tool/notice source accounting, explicit
+no-recognition execution and the actual answering lifecycle remain open. These native
+read and output-check ports are not a claim that a phone call can be answered.
 
 ## HTTP doors
 
