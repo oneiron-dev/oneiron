@@ -216,6 +216,7 @@ pub use oneiron_store::outbound_trigger;
 pub(crate) mod output_decay;
 pub use oneiron_store::pack_hook_actor_class;
 pub mod pack_hook_proposal;
+pub mod pack_predicate_rewrites;
 #[cfg(feature = "sync")]
 pub(crate) use oneiron_store::pad_object_membership;
 pub mod person_billing_account;
@@ -368,7 +369,7 @@ pub mod result_manifest;
 pub mod retrieval_policy;
 mod retrieval_telemetry;
 pub mod retrieval_values;
-pub mod revision_ref;
+pub use oneiron_store::revision_ref;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
@@ -463,8 +464,7 @@ pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;
 pub(crate) use group_commit::{
-    AfterCommit, Callback, DetachedWrite, GroupCommit, GroupCommitCounters, Rows,
-    release_vault_handle,
+    AfterCommit, Callback, DetachedWrite, GroupCommit, GroupCommitCounters, LeaderHolds, Rows,
 };
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
@@ -477,8 +477,9 @@ pub(crate) use key_custody::{
     CustodyPlan, CustodyRecipients, CustodyRequirement, CustodyRoute, CustodySourceAt,
     CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, PreparedTakeover,
     Publication, PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
-    TakeoverRefusal, TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
-    standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
+    TakeoverRefusal, TargetRecipients, admit_published_host_issuer_seeds, refuse_foreign_binding,
+    retirement_in_txn, route_custody, standing_retirements_in_txn,
+    unbind_in_txn as unbind_custody_in_txn,
 };
 pub(crate) use key_custody::{
     Requirement as CustodyForkRequirement, binding_in_txn as custody_binding_in_txn,
