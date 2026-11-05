@@ -451,6 +451,11 @@ impl Memory<'_> {
         sink: &OverlaySink<'_, '_>,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> MemoryResult<(TxnSegmentGuard, Vec<(String, u8)>)> {
+        if sink.session.read_view()?.read().base().open_nonce != self.vault.store.open_nonce {
+            return Err(MemoryError::bad_request(
+                "the off-record session belongs to another vault open",
+            ));
+        }
         let scope = JournalScope::new(plan.conversation_id, plan.turn_id);
         let entry = |role: JournalRole, op: BatchOp| JournalEntry {
             scope,
@@ -465,6 +470,7 @@ impl Memory<'_> {
             entity_type,
             occurred: plan.occurred,
             learned_at: plan.learned_at,
+            row_version: None,
             data: data.to_vec(),
             allow_maintenance: false,
             allow_reserved_predicate: false,
