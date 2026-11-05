@@ -180,6 +180,14 @@ pub(in crate::models::worker_host) fn set_policy(policy: &SnapshotPolicy) {
 /// The port every served vault attaches.
 struct HostPort;
 
+struct SnapshotReleaseTask(tokio::task::AbortHandle);
+
+impl Drop for SnapshotReleaseTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 impl SnapshotRuntime for HostPort {
     fn release_bound(&self, vault: VaultRef) -> Duration {
         policy().for_vault(&vault.0).lock_release_timeout
@@ -187,18 +195,34 @@ impl SnapshotRuntime for HostPort {
 
     fn release_vault(&self, vault: VaultRef, _closed: u64) -> SnapshotFuture<'_, SnapshotRelease> {
         let bound = self.release_bound(vault);
+        let started = Instant::now();
+        let runtime = Handle::try_current()
+            .ok()
+            .or_else(|| snapshots().runtime.get().cloned());
         Box::pin(async move {
-            let release = lock_vault(vault, bound).await;
-            *guard(&snapshots().last_lock) = Some(SnapshotReceipt {
-                bound_ms: u64::try_from(bound.as_millis()).unwrap_or(u64::MAX),
-                released: release.released,
-                aborted: release.aborted.clone(),
-                timed_out: release.timed_out,
-                elapsed_ms: release.elapsed_ms,
-                host_copies: release.host_copies,
-                host_copies_left: release.host_copies_left,
+            let timed_out = || SnapshotRelease {
+                timed_out: true,
+                elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                ..SnapshotRelease::default()
+            };
+            let Some(runtime) = runtime else {
+                return timed_out();
+            };
+            let task = runtime.spawn(async move {
+                let release = lock_vault(vault, bound).await;
+                *guard(&snapshots().last_lock) = Some(SnapshotReceipt {
+                    bound_ms: u64::try_from(bound.as_millis()).unwrap_or(u64::MAX),
+                    released: release.released,
+                    aborted: release.aborted.clone(),
+                    timed_out: release.timed_out,
+                    elapsed_ms: release.elapsed_ms,
+                    host_copies: release.host_copies,
+                    host_copies_left: release.host_copies_left,
+                });
+                release
             });
-            release
+            let _abort = SnapshotReleaseTask(task.abort_handle());
+            task.await.unwrap_or_else(|_| timed_out())
         })
     }
 
