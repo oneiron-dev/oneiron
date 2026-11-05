@@ -151,21 +151,21 @@ impl GitWire<'_> {
         if &observed != commit {
             return Err(invalid("created worktree has the wrong commit"));
         }
-        self.confirm_worktree_registration(repo, path, settings_hash)
+        let expected =
+            settings_hash.ok_or_else(|| invalid("worktree intent has no semantic proof"))?;
+        let git_file = fs::read_to_string(path.join(".git"))?;
+        self.confirm_worktree_registration(repo, &git_file, expected)
     }
 
-    /// The registration half of an add's confirmation: the worktree's `.git`
+    /// The registration half of an add's confirmation: the already-read `.git`
     /// names this repository's own worktree entry, and that entry keeps the
     /// settings the add admitted.
     fn confirm_worktree_registration(
         &self,
         repo: &GitWireRepo,
-        path: &Path,
-        settings_hash: Option<&[u8; 32]>,
+        git_file: &str,
+        expected: &[u8; 32],
     ) -> Result<()> {
-        let expected =
-            settings_hash.ok_or_else(|| invalid("worktree intent has no semantic proof"))?;
-        let git_file = fs::read_to_string(path.join(".git"))?;
         let prefix = format!("gitdir: {}/worktrees/", repo.common_dir.display());
         let name = git_file
             .strip_prefix(&prefix)
@@ -222,12 +222,18 @@ impl GitWire<'_> {
             }
             (GitWireOperation::WorktreeAdd, Some(path)) if self.is_queue_source(repo, &path)? => {
                 if path.symlink_metadata().is_ok() {
-                    self.confirm_worktree_registration(
-                        repo,
-                        &path,
-                        record.worktree_settings_hash.as_ref(),
-                    )?;
-                    true
+                    let expected = record
+                        .worktree_settings_hash
+                        .as_ref()
+                        .ok_or_else(|| invalid("worktree intent has no semantic proof"))?;
+                    match fs::read_to_string(path.join(".git")) {
+                        Ok(git_file) => {
+                            self.confirm_worktree_registration(repo, &git_file, expected)?;
+                            true
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                        Err(error) => return Err(error.into()),
+                    }
                 } else {
                     false
                 }

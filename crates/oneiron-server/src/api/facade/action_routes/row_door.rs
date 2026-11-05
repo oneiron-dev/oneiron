@@ -147,14 +147,21 @@ impl FacadeRowDoor {
     async fn answer(
         rows: Router,
         request: Request,
-    ) -> (CallStamp, Result<serde_json::Value, RowRefusal>) {
+    ) -> (CallStamp, Result<AgentVerbAnswer, RowRefusal>) {
         let response = match rows.oneshot(request).await {
             Ok(response) => response,
             Err(never) => match never {},
         };
         // Read before the body: success and refusal state it alike.
         let stamp = CallStamp::of_headers(response.headers());
-        (stamp, Self::body(response).await)
+        let rows = response
+            .extensions()
+            .get::<super::super::FacadeResultRows>()
+            .and_then(|rows| rows.0.clone());
+        let answer = Self::body(response)
+            .await
+            .map(|output| AgentVerbAnswer::new(output, rows));
+        (stamp, answer)
     }
 
     /// A row reply's JSON on success, else its refusal as answered, with
@@ -209,9 +216,9 @@ impl FacadeRowDoor {
     /// A row's answer as the run takes it: its output, a verb hook's stop
     /// as the typed stop (FIX 1450), or any other refusal as its code, its
     /// words kept for the action's record.
-    fn answered(&self, answer: Result<serde_json::Value, RowRefusal>) -> RowAnswer {
+    fn answered(&self, answer: Result<AgentVerbAnswer, RowRefusal>) -> RowAnswer {
         match answer {
-            Ok(output) => Ok(Ok(AgentVerbAnswer::new(output, None))),
+            Ok(output) => Ok(Ok(output)),
             Err(RowRefusal {
                 hook: Some(stop), ..
             }) => Err(oneiron::Error::from(*stop)),
@@ -271,7 +278,7 @@ impl FacadeRowDoor {
                     &answer,
                 );
                 let answer = answer
-                    .map(|answer| answer.value)
+                    .map(|answer| AgentVerbAnswer::new(answer.value, answer.rows))
                     .map_err(|error| RowRefusal {
                         words: AgentVerbRefusalWords {
                             code: error.body.error.code,

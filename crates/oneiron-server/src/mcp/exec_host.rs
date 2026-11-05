@@ -238,11 +238,14 @@ pub trait McpCodeModeProvider: Send + Sync {
     /// `meter` (its own child scope's guard, or [`Self::host_meter`]) and
     /// billed to `payer` when a room's scope pays (OF-531). `None`: the
     /// provider has no metered backend to give, and the child does not run.
+    /// `listed` is the reader child's frozen inherited model list; empty
+    /// leaves other callers' existing unconstrained routing unchanged.
     fn reader_backend(
         &self,
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
         _caller: Option<(EntityId, Option<String>)>,
+        _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -257,6 +260,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         _payer: Option<PayerPerson>,
         _lease: Option<LiveLeaseState>,
         _caller: Option<(EntityId, Option<String>)>,
+        _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -471,6 +475,7 @@ pub type ReaderMeter = Arc<
             Option<PayerPerson>,
             Option<LiveLeaseState>,
             Option<(EntityId, Option<String>)>,
+            Vec<AgentModel>,
         ) -> Arc<dyn LlmBackend>
         + Send
         + Sync,
@@ -992,6 +997,7 @@ pub(crate) fn enter_engine_native_run(
                 payer.clone(),
                 Some(scoped.clone()),
                 None,
+                Vec::new(),
             )
         });
     let per_rung = scoped_backend.is_some();
@@ -1001,7 +1007,7 @@ pub(crate) fn enter_engine_native_run(
         Some(backend) => Some(backend),
         None => planned
             .and_then(|planned| provider.planned_backend(guard.clone(), payer.clone(), planned))
-            .or_else(|| provider.reader_backend(guard.clone(), payer, None)),
+            .or_else(|| provider.reader_backend(guard.clone(), payer, None, Vec::new())),
     };
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
