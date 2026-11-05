@@ -1,5 +1,5 @@
 //! Pairing-only enrollment and unauthenticated liveness discovery.
-use crate::auth::{parse_signature, parse_slip_id};
+use crate::auth::{ClientAddress, parse_signature, parse_slip_id};
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 use axum::{Json, extract::State, http::HeaderMap, http::request::Parts};
@@ -11,7 +11,11 @@ use oneiron::federation::Scope;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+mod redeem_backoff;
 mod renewal_error;
+
+pub(crate) use redeem_backoff::PairingRedeemBackoff;
+use redeem_backoff::{RedeemBackoffRules, retry_after_secs};
 
 pub(super) async fn descriptor() -> Json<PairingDescriptor> {
     Json(PairingDescriptor::default())
@@ -272,8 +276,19 @@ fn paired_home(vault: &oneiron::Vault) -> Option<PairedHome> {
 }
 pub(super) async fn redeem(
     State(server): State<Arc<SyncServer>>,
+    ClientAddress(address): ClientAddress,
     Json(request): Json<RedeemLink>,
 ) -> Result<Json<Paired>, EnvelopedApiError> {
+    // Each redemption from one address counts as failed until one succeeds,
+    // and an address past its free failures waits before its next code is
+    // read (FIX 12477).
+    let rules = RedeemBackoffRules::of(&server.config.limits);
+    if let Err(wait) = server
+        .pairing_backoff
+        .admit(address, rules, std::time::Instant::now())
+    {
+        return Err(ApiError::too_many_attempts(retry_after_secs(wait)).into());
+    }
     // Pairing creates a capability for a named existing actor; it never enrolls
     // a roster authority key or manufactures a principal from an arbitrary label.
     let actor =
@@ -311,6 +326,7 @@ pub(super) async fn redeem(
             possession.as_ref(),
         )
     })?;
+    server.pairing_backoff.succeeded(address);
     let slip = &redeemed.slip;
     let token = slip.to_token().map_err(|_| ApiError::unauthorized())?;
     // The already redeemed/logged slip is the credential. MCP registration
