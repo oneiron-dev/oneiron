@@ -25,8 +25,8 @@ use loro::checkpoint::{Capture, Classify, Field, OwnerId, Parts, Payload, SlotKi
 use loro::{EncodedBlobMode, ExportMode, IdSpan, ImportBlobMetadata, LoroDoc, LoroValue};
 
 use super::owners::{
-    WINDOW_ROOTS, WithheldKey, key_fill, key_refusal, root_entry, root_fill, withheld_key,
-    withheld_part_key,
+    WINDOW_ROOTS, WithheldKey, key_fill, key_refusal, root_entry, root_fill, withheld_client_key,
+    withheld_key, withheld_part_key,
 };
 use super::parts::PartHolders;
 use super::{
@@ -317,7 +317,13 @@ impl Classify for Classifier<'_> {
         match key_refusal(root, key) {
             None => true,
             // A key its family withholds is asked for its holders next.
-            Some(_) if withheld_key(root, key).is_some() || withheld_part_key(root, key) => false,
+            Some(_)
+                if withheld_key(root, key).is_some()
+                    || withheld_part_key(root, key)
+                    || withheld_client_key(root, key).is_some() =>
+            {
+                false
+            }
             Some(reason) => {
                 self.refuse(None, reason);
                 false
@@ -330,6 +336,19 @@ impl Classify for Classifier<'_> {
     fn key_holders(&mut self, root: &str, key: &str) -> Option<Vec<OwnerId>> {
         if withheld_part_key(root, key) {
             return self.part_key_holders(root, key);
+        }
+        // A custody digest key goes whole with the client's copy of its
+        // value (FIX 10278).
+        if let Some(client) = withheld_client_key(root, key) {
+            let handle = self.handle(Home::Client(client));
+            self.plans.push(Plan {
+                root: root.to_owned(),
+                key: key.to_owned(),
+                kind: SlotKind::Key,
+                value: key.as_bytes().to_vec(),
+                split: None,
+            });
+            return Some(vec![handle]);
         }
         let Some(WithheldKey { holders, split }) = withheld_key(root, key) else {
             let reason = key_refusal(root, key).unwrap_or(SyncUnclassified::NoOwner);
@@ -581,7 +600,7 @@ fn prove(
             SlotKind::Key => {
                 key_fill(&plan.root, &split.no_one, &opened).map(|key| key.map(String::into_bytes))
             }
-            _ => root_fill(&plan.root, &plan.key, &split.no_one, &opened),
+            _ => root_fill(&plan.root, &plan.key, &split.no_one, &opened, &fields),
         };
         if !distinct || !matches!(filled, Ok(Some(filled)) if filled == stored) {
             return Err(not_proved());
