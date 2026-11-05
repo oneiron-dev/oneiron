@@ -248,6 +248,7 @@ impl Vault {
             share_ref: pending.share_ref.map(|id| id.to_hex()),
             delegation: None,
             comm: pending.principal.comm,
+            trusted_contact: None,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
         if let Some(facet) = write_facet {

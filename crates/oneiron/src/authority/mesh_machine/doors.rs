@@ -339,6 +339,7 @@ impl Vault {
                 share_ref: None,
                 delegation: None,
                 comm: None,
+                trusted_contact: None,
             };
             let slip = self.mint_slip_in_txn(&mut txn, issuer, grant)?;
             claims.alpns.insert(alpn.to_vec(), slip.claims.slip_id);
