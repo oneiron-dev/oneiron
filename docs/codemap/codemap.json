@@ -1089,7 +1089,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 2,
       "re-export": 25
      }
@@ -1647,7 +1647,7 @@
      "path": "src/agent_dispatch/widen_record.rs",
      "purpose": "Exact, durable widen intents",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "struct": 1
      }
     },
@@ -4170,7 +4170,7 @@
      "path": "src/authority/host_action.rs",
      "purpose": "Who a host credential acts as inside its vault (FIX 2222, owner ruling \"A + support\", 2026-10-18)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 4,
       "struct": 1
      }
@@ -14565,7 +14565,7 @@
      "path": "src/claim/put.rs",
      "purpose": "`Vault` claim write doors: the public `put_claim` family, the crate-private reserved-namespace door, the…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -24681,28 +24681,24 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "CooperativeDeletionAnswer",
       "CooperativeDeletionDelivery",
       "CooperativeDeletionDeliveryStatus",
-      "CooperativeDeletionDisposition",
-      "CooperativeDeletionDispositionKind",
       "CooperativeDeletionIngress",
       "CooperativeDeletionNotice",
-      "CooperativeDeletionTry",
-      "IncomingCooperativeDeletion"
+      "CooperativeDeletionTry"
      ],
      "path": "src/deletion/coop_delivery.rs",
      "purpose": "Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle)",
      "surface": {
       "const": 4,
       "crate-vis": 2,
-      "enum": 4,
-      "fn": 12,
+      "enum": 3,
+      "fn": 11,
       "re-export": 1,
-      "struct": 5
+      "struct": 2
      }
     },
     {
@@ -24712,7 +24708,18 @@
      "path": "src/deletion/coop_delivery/answer.rs",
      "purpose": "The owner's answer to a filed courtesy ask (OF-273, BIZ-LEGAL-0004 B2)",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/coop_delivery/redact.rs",
+     "purpose": "The selected local A9 slice of a courtesy Redact answer",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -24728,18 +24735,36 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/deletion/coop_delivery/restrict.rs",
+     "purpose": "User-selected Art18 restriction and truthful prior-external-notice attestation",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
+      "CooperativeClaimValueRedaction",
       "CooperativeDeleteOperation",
       "CooperativeDeleteRecord",
-      "CooperativeDeleteRecordState"
+      "CooperativeDeleteRecordState",
+      "CooperativeDeletionAnswer",
+      "CooperativeDeletionDisposition",
+      "CooperativeDeletionDispositionKind",
+      "CooperativeDeletionRetention",
+      "CooperativeLocalRedaction",
+      "CooperativeRestrictionLiftAttestation",
+      "IncomingCooperativeDeletion"
      ],
      "path": "src/deletion/coop_delivery/types.rs",
      "purpose": "What a courtesy delete answer keeps beside its choice: the customer holds it placed (FIX 2924), the records…",
      "surface": {
       "crate-vis": 5,
-      "enum": 1,
-      "fn": 2,
-      "struct": 2
+      "enum": 2,
+      "fn": 3,
+      "struct": 9
      }
     },
     {
@@ -25143,7 +25168,7 @@
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
       "crate-vis": 41,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -27185,13 +27210,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/scope_summary_attempt/arc_reduce.rs",
      "purpose": "The Arc assembled from its parts (FIX 7509 PR3): no model call, an ordered and lossless assembly; only the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -27241,7 +27266,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt/durable_labels.rs",
      "purpose": "Summary text in durable names (FIX 10359), as a nightly narrative's is (FIX 7576)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -34254,6 +34279,14 @@
      "surface": {
       "crate-vis": 10
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_store_hooks/record_hooks.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -41756,6 +41789,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/learning/frozen.rs",
+     "purpose": "Frozen numeric inputs behind a borrowed prior, without donor references",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SealAssessment"
      ],
@@ -41815,7 +41858,7 @@
      "path": "src/learning/prior.rs",
      "purpose": "Priors: everything that is not a cell's own evidence enters with an origin and a weight in runs (ARCH-0003…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -41828,13 +41871,13 @@
      "path": "src/learning/project.rs",
      "purpose": "The one projector: anchored evidence, a prior and a window in, one superseding `learning.*` head per cell out",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LearningRead"
@@ -41842,7 +41885,7 @@
      "path": "src/learning/read.rs",
      "purpose": "Reading measured state back, with the fixed backoff order (ARCH-0003 #learning-qualifiers)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 1
      }
@@ -57558,7 +57601,7 @@
      "path": "src/ports/lmdb_visibility.rs",
      "purpose": "Transaction-local visibility ledger for canonical and composed session views",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -58806,7 +58849,7 @@
      "path": "src/receipt/archive_source/codec.rs",
      "purpose": "Canonical claim-bound archived receipt data, never a native terminal stamp",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 17
      }
     },
     {
@@ -59113,7 +59156,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 5,
       "re-export": 19
      }
@@ -59142,7 +59185,7 @@
      "path": "src/receipt/pack_attribution.rs",
      "purpose": "Frozen execution and actual-use facts on an attempt's pack receipt",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 6
      }
@@ -69239,7 +69282,7 @@
      "path": "src/speculative/scoped.rs",
      "purpose": "Credential-bound candidate admission, inside every speculative pass",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -72670,13 +72713,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 35
      }
     },
     {
@@ -72705,6 +72748,16 @@
      "notable": [],
      "path": "src/store/legal_hold/settlement.rs",
      "purpose": "A door's own refusals, logged in the writer the door already holds (OF-470, FIX 2433, FIX 2435)",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/legal_hold/use_limit.rs",
+     "purpose": "Shared storage-only admission, with legal holds and a recipient's cooperative review restriction kept as…",
      "surface": {
       "crate-vis": 11
      }
@@ -73641,7 +73694,7 @@
       "StoreRecordHooks"
      ],
      "path": "src/store/record_hooks.rs",
-     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation, room and…",
+     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation, room…",
      "surface": {
       "trait": 1
      }
@@ -82028,9 +82081,9 @@
      "path": "src/team/spawn_intent.rs",
      "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 8
      }
     },
@@ -82895,8 +82948,8 @@
      "path": "src/vault/entity_revision/mod.rs",
      "purpose": "Per-entity Loro history, exact reads, and idle-only index publication",
      "surface": {
-      "crate-vis": 11,
-      "re-export": 1
+      "crate-vis": 12,
+      "re-export": 2
      }
     },
     {
@@ -82956,8 +83009,9 @@
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 29,
-      "fn": 2
+      "crate-vis": 30,
+      "fn": 2,
+      "re-export": 1
      }
     },
     {
@@ -82978,6 +83032,20 @@
      "purpose": "A revision document's actors (FIX 6072, part 3 of 3): each raw entity row a revision recorded, its NOTE…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimValueRedactionBinding",
+      "LocalClaimValueRedaction"
+     ],
+     "path": "src/vault/entity_revision/storage/redact.rs",
+     "purpose": "Exact-field transforms for CLAIM revision artifacts (BIZ-LEGAL-0004 A9)",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 2
      }
     },
     {
@@ -84330,9 +84398,15 @@
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
+      "CourtesyDeleteClaimValueRedaction",
       "CourtesyDeleteHold",
       "CourtesyDeleteIncoming",
+      "CourtesyDeleteLocalRedaction",
       "CourtesyDeleteRecordProgress",
+      "CourtesyDeleteRedactionRevision",
+      "CourtesyDeleteRestriction",
+      "CourtesyDeleteRestrictionLift",
+      "CourtesyDeleteRetention",
       "CourtesyDeleteSendRequest",
       "CourtesyDeleteSent"
      ],
@@ -84340,7 +84414,7 @@
      "purpose": "The inputs and answers of the owner's courtesy delete rows (OF-273, ARCH-0043 #relationship-lifecycle)…",
      "surface": {
       "fn": 7,
-      "struct": 8
+      "struct": 14
      }
     },
     {
@@ -86383,7 +86457,7 @@
      "purpose": "One live utterance per connection; actual retrieval semantics stay in OF-108",
      "surface": {
       "crate-vis": 2,
-      "fn": 9,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -86418,7 +86492,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 23,
+      "fn": 24,
       "re-export": 1,
       "struct": 5
      }
@@ -89137,7 +89211,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world erase that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 2,
       "re-export": 2,
       "struct": 1
@@ -90766,7 +90840,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 59,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90885,10 +90959,10 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "engine_store_hooks": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "L",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
     "entity_doc": {
@@ -91081,7 +91155,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "learning": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91634,7 +91708,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 486,
+     "files": 487,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91774,7 +91848,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91872,9 +91946,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 144,
+   "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6409,
+   "source_files": 6415,
    "test_files": 895
   },
   "oneiron-android": {
@@ -106050,7 +106124,7 @@
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 13,
+      "fn": 14,
       "struct": 4
      }
     },
@@ -108771,6 +108845,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AdmittedBytes",
+      "AdmittedStr"
+     ],
+     "path": "src/buffers.rs",
+     "purpose": "Shared output buffers; native accounting constructors are feature-gated",
+     "surface": {
+      "crate-vis": 12,
+      "fn": 6,
+      "struct": 2,
+      "type": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -108795,14 +108885,13 @@
      "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
      "surface": {
       "mod": 2,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "AdmittedBytes",
       "SealMemory",
       "SealMemoryProvider",
       "SealMemoryRefusal"
@@ -108810,12 +108899,11 @@
      "path": "src/memory.rs",
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 21,
       "enum": 1,
-      "fn": 4,
-      "struct": 2,
-      "trait": 1,
-      "type": 1
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -108939,6 +109027,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/native/pdf/admitted.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/native/pdf/decode.rs",
      "purpose": "Strict loads with every stream decoded whole (Rule 5), each decode's memory reserved before it is allocated…",
      "surface": {
@@ -108946,7 +109044,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/incremental.rs",
@@ -108972,7 +109070,7 @@
      "path": "src/native/pdf/mod.rs",
      "purpose": "Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -109040,7 +109138,7 @@
      "path": "src/native/profile/assembly.rs",
      "purpose": "B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -109363,6 +109461,13 @@
      "layout": "file+dir",
      "purpose": "Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5)"
     },
+    "buffers": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Shared output buffers; native accounting constructors are feature-gated"
+    },
     "error": {
      "files": 1,
      "impl_vault": false,
@@ -109378,7 +109483,7 @@
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)"
     },
     "native": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -109394,7 +109499,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 49,
+   "source_files": 51,
    "test_files": 12
   },
   "oneiron-server": {
@@ -120245,7 +120350,7 @@
      "path": "src/embedder/local/model_manager.rs",
      "purpose": "Where the local model's files live, and how they get there",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -123555,7 +123660,7 @@
      "path": "src/models/llama_identity.rs",
      "purpose": "What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -124068,6 +124173,7 @@
       "SnapshotReceipt",
       "SnapshotSkips",
       "SnapshotStatus",
+      "TaggerRuntimeStatus",
       "TaggerStatus"
      ],
      "path": "src/models/status.rs",
@@ -124076,7 +124182,7 @@
       "crate-vis": 8,
       "enum": 2,
       "fn": 1,
-      "struct": 16
+      "struct": 17
      }
     },
     {
@@ -126062,7 +126168,7 @@
       "RetrievalQueryCheck"
      ],
      "path": "src/server/read_shape.rs",
-     "purpose": "One retrieval request's shape (F21(a)): its query against `[limits].retrieval_query_bytes`, and the OF-520…",
+     "purpose": "One retrieval request's shape (F21(a)): its query against its byte row, and the OF-520 question a crossing…",
      "surface": {
       "const": 1,
       "crate-vis": 7,
@@ -131900,9 +132006,15 @@
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
+      "CourtesyDeleteClaimValueRedaction",
       "CourtesyDeleteHold",
       "CourtesyDeleteIncoming",
+      "CourtesyDeleteLocalRedaction",
       "CourtesyDeleteRecordProgress",
+      "CourtesyDeleteRedactionRevision",
+      "CourtesyDeleteRestriction",
+      "CourtesyDeleteRestrictionLift",
+      "CourtesyDeleteRetention",
       "CourtesyDeleteSendRequest",
       "CourtesyDeleteSent",
       "CoverageGap",
@@ -135315,7 +135427,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1107,
-      "struct": 3360
+      "struct": 3366
      }
     },
     {
@@ -135341,7 +135453,7 @@
      "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
      "surface": {
       "const": 1,
-      "fn": 11,
+      "fn": 12,
       "re-export": 7,
       "struct": 1
      }
