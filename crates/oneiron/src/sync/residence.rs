@@ -24,6 +24,7 @@ mod prune;
 mod recall_scope;
 mod sealed_updates;
 mod search;
+mod world_eviction;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_parts::{
     AUTHORITY_ENTRY_PART_MAX, AUTHORITY_PAGE_INLINE_BYTES, AuthorityAppendPart,
@@ -126,6 +127,8 @@ pub use search::{
     RESIDENCE_PAGE_REPLY_BYTES, ResidenceSearchCursor, home_search_page_candidates,
     residence_search_revision, with_forwarded_search_page,
 };
+pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
+pub(crate) use world_eviction::{put_home_window_vv, world_placed_elsewhere};
 
 #[cfg(test)]
 use loro::ExportMode;
