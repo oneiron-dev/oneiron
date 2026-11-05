@@ -1,7 +1,7 @@
 //! Owner capture of current folder bytes through the native snapshot writer.
 
 use std::convert::Infallible;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
 
@@ -14,6 +14,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, GateError, Result};
 use crate::host_memory::{MachineMemory, MemoryLease};
+use crate::repo_mutation::CaptureEntry;
 use crate::temporal::TimeRange;
 
 impl Vault {
@@ -46,30 +47,17 @@ impl Vault {
             blobs: Vec::new(),
             memory: MachineMemory::process().empty_lease(),
         };
-        crate::repo_mutation::visit_code_capture_files(self, &root, |path, relative, metadata| {
-            let (data, mode) = if metadata.file_type().is_symlink() {
-                let reserved = metadata.len();
-                grow_memory(&mut capture.memory, reserved)?;
-                let target = fs::read_link(path)?
-                    .into_os_string()
-                    .into_string()
-                    .map_err(|_| {
-                        Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-                            "capture symlink target must be UTF-8",
-                        ))
-                    })?;
-                let data = target.into_bytes();
-                capture
-                    .memory
-                    .materialized(reserved, data.capacity() as u64);
-                (data, 0o120_000)
-            } else if metadata.file_type().is_file() {
-                let data = read_file(path, metadata.len(), &mut capture.memory)?;
-                (data, file_mode(metadata))
-            } else {
-                return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-                    "capture supports only files, directories, and symlinks",
-                )));
+        crate::repo_mutation::visit_code_capture_files(self, &root, |relative, entry| {
+            let (data, mode) = match entry {
+                CaptureEntry::File(file) => {
+                    let metadata = file.metadata()?;
+                    let data = read_file(file, metadata.len(), &mut capture.memory)?;
+                    (data, file_mode(&metadata))
+                }
+                link @ CaptureEntry::Symlink { expected, .. } => (
+                    read_symlink(&link, expected, &mut capture.memory)?,
+                    0o120_000,
+                ),
             };
             capture.blobs.push(RepoIngestBlob {
                 path: relative,
@@ -130,15 +118,7 @@ fn grow_memory(memory: &mut MemoryLease, more: u64) -> Result<()> {
 }
 
 /// Reads a growing file without allocating its next buffer before admission.
-fn read_file(path: &Path, expected: u64, memory: &mut MemoryLease) -> Result<Vec<u8>> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    let mut file: File = options.open(path)?;
+fn read_file(mut file: File, expected: u64, memory: &mut MemoryLease) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let initial =
         usize::try_from(expected).map_err(|_| Error::ArithmeticOverflow("capture file length"))?;
@@ -168,6 +148,32 @@ fn read_file(path: &Path, expected: u64, memory: &mut MemoryLease) -> Result<Vec
     }
     bytes.truncate(filled);
     Ok(bytes)
+}
+
+fn read_symlink(
+    entry: &CaptureEntry<'_>,
+    expected: u64,
+    memory: &mut MemoryLease,
+) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let initial = usize::try_from(expected)
+        .map_err(|_| Error::ArithmeticOverflow("capture symlink length"))?
+        .max(1);
+    grow_buffer(&mut bytes, initial, memory)?;
+    loop {
+        let read = entry.read_link(&mut bytes)?;
+        if read < bytes.len() {
+            bytes.truncate(read);
+            std::str::from_utf8(&bytes).map_err(|_| {
+                Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                    "capture symlink target must be UTF-8",
+                ))
+            })?;
+            return Ok(bytes);
+        }
+        let more = bytes.len().max(1);
+        grow_buffer(&mut bytes, more, memory)?;
+    }
 }
 
 fn grow_buffer(bytes: &mut Vec<u8>, more: usize, memory: &mut MemoryLease) -> Result<()> {

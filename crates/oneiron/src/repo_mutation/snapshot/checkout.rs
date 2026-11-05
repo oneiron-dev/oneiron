@@ -1,4 +1,4 @@
-//! One filesystem traversal shared by recovery and public code capture.
+//! Recovery traversal and Git opacity inventory for current-folder capture.
 
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
@@ -12,6 +12,7 @@ use crate::scan_check::{EngineScan, ScanCount};
 
 use super::super::git::git_output_optional;
 use super::super::support::utf8_trimmed;
+use super::capture::{CaptureEntry, Directory, visit_capture_entries};
 use super::{nested_repository, repo_relative_path};
 
 pub(super) fn visit_checkout_entries(
@@ -51,8 +52,9 @@ pub(super) fn visit_checkout_entries(
 pub(crate) fn visit_code_capture_files(
     vault: &Vault,
     root: &Path,
-    mut visit: impl FnMut(&Path, String, &fs::Metadata) -> Result<()>,
+    mut visit: impl FnMut(String, CaptureEntry<'_>) -> Result<()>,
 ) -> Result<()> {
+    let directory = Directory::open_root(root)?;
     let mut git_root = None;
     for ancestor in root.ancestors() {
         match fs::symlink_metadata(ancestor.join(".git")) {
@@ -105,16 +107,10 @@ pub(crate) fn visit_code_capture_files(
         &scope.as_bytes()[..16],
         vault.scan_threshold(EngineScan::RepoSnapshotFiles)?,
     );
-    visit_checkout_entries(
-        root,
-        root,
-        &indexed,
-        &linked,
-        &mut |path, relative, metadata| {
-            count.row();
-            visit(path, relative, metadata)
-        },
-    )?;
+    visit_capture_entries(&directory, &indexed, &linked, &mut |relative, entry| {
+        count.row();
+        visit(relative, entry)
+    })?;
     count.finish(vault);
     Ok(())
 }
