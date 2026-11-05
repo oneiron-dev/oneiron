@@ -67,3 +67,9 @@ The non-body story read change (FIX 594, 2026-11-05) adds one public projection 
 `src/view.rs`. It reuses the existing block/segment/table/guard projection for a story's
 local blocks with no body-role lookup: story ids can collide with body ids, and the
 body vocabulary does not assign roles to story paragraphs. No writer or parser changes.
+The default comment-anchor boundary change (2026-11-05, FIX 4) touches
+`src/edit/verbs/comments.rs`. A default cross-segment anchor now opens on the
+text node holding its resolved quote's first character, after preceding breaks,
+bookmarks or comment markers, as the chosen-occurrence path already does. Quote
+selection, single-run placement, range ends and tracked-container widening are
+unchanged.

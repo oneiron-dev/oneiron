@@ -60,6 +60,7 @@ use crate::owner::stamp::now_unix_ms;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
+mod policy_requests;
 pub(crate) mod schema;
 mod training_runs;
 

@@ -38,13 +38,12 @@ use super::compaction::{CodeModeCompaction, LiveAdmission};
 use super::live_lease::{LiveLease, LiveLeaseState};
 use super::status::StatusCell;
 use crate::config::models::{CodeCheckSettings, ModelsConfig};
-use crate::embedder::EmbedderSlot;
 use crate::mcp::{
     McpQuickJsProvider, ModelCallBackend, PlannedMeter, PlannedModel, PlannedRoute,
     RunCompactionSeat,
 };
 use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
-use crate::server::SyncServer;
+use crate::server::{SharedModelSlots, SyncServer};
 
 /// Binds `execute_code` on `server` when `models` asks for it and the
 /// checked-in component passes its pin and readiness probe. Any failure
@@ -76,7 +75,11 @@ pub(super) async fn bind(
         );
         return server;
     }
-    let component = match tokio::task::spawn_blocking(crate::mcp::checked_in_quickjs_runtime).await
+    let step_wall = models.code_mode.step_wall;
+    let component = match tokio::task::spawn_blocking(move || {
+        crate::mcp::checked_in_quickjs_runtime_with_wall(step_wall)
+    })
+    .await
     {
         Ok(Ok(component)) => component,
         Ok(Err(error)) => {
@@ -254,7 +257,10 @@ pub(super) async fn bind(
     if let Some(backend) = compaction.host_backend() {
         let _ = server.ai.host_compaction.set(backend);
     }
-    let embedder = server.embedder.clone();
+    // The live slot pair, shared with late first-run setup: each seat birth
+    // reads the serving embedder, so runs created after attach compact with
+    // vectors instead of the startup None.
+    let slots = Arc::clone(&server.model_slots);
     // Engine C5: a pinned child's compaction reads its live rung through
     // the admission its calls take, on its pick.
     let pinned = Arc::new(LiveStepAdmission {
@@ -264,9 +270,9 @@ pub(super) async fn bind(
         browser,
     });
     let provider =
-        provider.with_pinned_compaction(pinned_compaction(&compaction, embedder.clone(), pinned));
+        provider.with_pinned_compaction(pinned_compaction(&compaction, Arc::clone(&slots), pinned));
     server.with_mcp_quickjs_provider(
-        compaction.attach(provider, status, embedder, live_admission),
+        compaction.attach(provider, status, slots, live_admission),
         runs,
     )
 }
@@ -276,17 +282,16 @@ pub(super) async fn bind(
 /// read through `live`, the admission its calls take on its pick.
 fn pinned_compaction(
     compaction: &CodeModeCompaction,
-    embedder: Option<Arc<EmbedderSlot>>,
+    slots: Arc<SharedModelSlots>,
     live: Arc<LiveStepAdmission>,
 ) -> RunCompactionSeat {
     let compaction = compaction.clone();
     let live: Arc<dyn LiveAdmission> = live;
-    let vectors = embedder.map(|slot| slot as Arc<dyn EpochEmbedder>);
     Arc::new(
         move |host: CompactionHostBinding, credential: &str, spend: Option<&SpendScopeId>| {
             let seat = compaction.for_run(host, credential, spend, &live);
-            match &vectors {
-                Some(vectors) => seat.with_room_vectors(Arc::clone(vectors)),
+            match slots.load().embedder.clone() {
+                Some(slot) => seat.with_room_vectors(slot as Arc<dyn EpochEmbedder>),
                 None => seat,
             }
         },
@@ -321,7 +326,7 @@ fn type_feedback(settings: &CodeCheckSettings, vault: Arc<Vault>) -> TypeFeedbac
         BackendKind::Microsoft => "microsoft",
         BackendKind::Tsrs => "tsrs",
     };
-    let feedback = TypeFeedback::loading(configured, Some(vault));
+    let feedback = TypeFeedback::loading(configured, vault);
     let (loading, settings) = (feedback.clone(), settings.clone());
     tokio::spawn(async move {
         // Compiling the checker's module takes seconds.
