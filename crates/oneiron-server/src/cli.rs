@@ -1074,3 +1074,10 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Registry => commands::registry(),
     }
 }
+
+/// Private bootstrap dispatch before the real CLI creates its Tokio runtime.
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub fn worker_bootstrap_entry() -> Option<anyhow::Result<()>> {
+    crate::mac_worker_bootstrap::enter()
+}
