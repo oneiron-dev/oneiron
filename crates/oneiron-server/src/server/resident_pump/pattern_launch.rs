@@ -40,6 +40,7 @@ use oneiron::{
 
 use super::SKILL_SEPARATOR;
 use crate::ai_host::AiHandle;
+use crate::ai_host::live_lease::LiveLeaseState;
 use crate::mcp::McpCodeModeProvider;
 use crate::server::core::pattern_workflow::{
     decode_launch_spec, fault, launch_members, launch_request, launch_spec_schema, stop,
@@ -106,6 +107,7 @@ pub(super) fn agent_runner(
     actor: WriteActor,
     seat: Option<&ModelSeat>,
     line: Option<(BudgetGuard, Option<PayerPerson>)>,
+    lease: Option<LiveLeaseState>,
 ) -> Option<Arc<dyn PatternLaunchRunner>> {
     agent_runner_for_attempt(
         vault,
@@ -116,6 +118,7 @@ pub(super) fn agent_runner(
         actor,
         seat,
         line,
+        lease,
     )
 }
 
@@ -132,11 +135,21 @@ pub(in crate::server) fn agent_runner_for_attempt(
     actor: WriteActor,
     seat: Option<&ModelSeat>,
     line: Option<(BudgetGuard, Option<PayerPerson>)>,
+    lease: Option<LiveLeaseState>,
 ) -> Option<Arc<dyn PatternLaunchRunner>> {
     let seat = seat?.clone();
     let lease_owner = attempt.lease_owner.clone()?;
     let (guard, payer) = line?;
-    let backend = provider.reader_backend(guard, payer, definition.models.clone())?;
+    let backend = lease
+        .and_then(|lease| {
+            provider.reader_backend_with_lease(
+                guard.clone(),
+                payer.clone(),
+                Some(lease),
+                definition.models.clone(),
+            )
+        })
+        .or_else(|| provider.reader_backend(guard, payer, definition.models.clone()))?;
     Some(Arc::new(AgentPatternLaunchRunner {
         vault: Arc::clone(vault),
         agent: actor.entity_ref(),

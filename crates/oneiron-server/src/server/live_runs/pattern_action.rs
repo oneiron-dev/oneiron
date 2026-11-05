@@ -25,7 +25,7 @@ use oneiron::team::{PatternLaunchRunner, PatternLaunchSpec};
 use oneiron::{BudgetGuard, Result, Vault, WriteActor};
 
 use super::LiveRunEntry;
-use crate::ai_host::live_lease::LiveLease;
+use crate::ai_host::live_lease::{LiveLease, LiveLeaseState};
 use crate::mcp::{McpCodeModeProvider, ScopeMeter};
 use crate::server::SyncServer;
 use crate::server::core::pattern_workflow::stop;
@@ -122,7 +122,7 @@ impl PatternLaunchRunner for ActionPatternRunner {
         let Some(scope) = &self.spend else {
             let line = self.provider.host_meter().map(|guard| (guard, None));
             return self
-                .agent_runner(line)?
+                .agent_runner(line, None)?
                 .run(skill, asked, prompt, plan, caller);
         };
         // The open's own error can name the payer the scope bills, who may
@@ -143,13 +143,16 @@ impl PatternLaunchRunner for ActionPatternRunner {
             guard.clone(),
             guard.read().limit_units,
             0,
-        );
-        let started = self.agent_runner(Some((guard, payer))).and_then(|agent| {
-            // The start makes one model call, the capture: its look is
-            // taken here, just before it.
-            live.book_and_revise();
-            agent.run(skill, asked, prompt, plan, caller)
-        });
+        )
+        .with_owner_attempt(self.leased.id);
+        let started = self
+            .agent_runner(Some((guard, payer)), Some(live.state()))
+            .and_then(|agent| {
+                // The start makes one model call, the capture: its look is
+                // taken here, just before it.
+                live.book_and_revise();
+                agent.run(skill, asked, prompt, plan, caller)
+            });
         live.book_rest()?;
         started
     }
@@ -160,6 +163,7 @@ impl ActionPatternRunner {
     fn agent_runner(
         &self,
         line: Option<(BudgetGuard, Option<PayerPerson>)>,
+        lease: Option<LiveLeaseState>,
     ) -> Result<Arc<dyn PatternLaunchRunner>> {
         agent_runner_for_attempt(
             &self.vault,
@@ -170,6 +174,7 @@ impl ActionPatternRunner {
             self.actor,
             Some(&self.seat),
             line,
+            lease,
         )
         .ok_or_else(|| stop(NO_BACKEND))
     }
