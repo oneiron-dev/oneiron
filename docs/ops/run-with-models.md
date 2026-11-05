@@ -670,6 +670,18 @@ cached-read count and lists none. A count a backend did not report stays
 absent and its pass is `unknown`, never a hit. The usage ledger records the
 standard cached-read count only; the records ride the receipt.
 
+### Managed native-worker accounting
+
+Device tickets and executor activity for a managed native worker use the actual
+worker instance, not its reusable configured id. Reconfiguring that id onto
+another device never redirects an old instance's ticket or activity to the
+replacement's device. An unknown or replaced binding keeps the existing
+unmediated ticket path; the actual worker's status still updates. A call
+carries its origin worker into its released-body reports, and device capacity
+fills only from the hosted instance's own stats: an old report never fills a
+replacement's capacity. An unknown capacity stays unknown until a valid query
+or the actual instance's report; it is not reported as zero.
+
 ## 3. Let the Dreamer work
 
 The Dreamer consolidates witnessed turns into claims in the background. It
@@ -855,6 +867,16 @@ manifest the `[models]` ladder is the role's binding.
 `prompt_layout` under `[models]` places each turn's context in its request:
 `early_system` (the default) or `stable_history_then_turn_context`. It wins
 over `ONEIRON_PROMPT_LAYOUT` (DEPLOYMENT.md, "Prompt layout").
+
+A chat turn's context board rides in two parts (I1 = C): its state part
+(worlds, tasks, loaded skills, room, inbox and the changed line) right
+before the user's message, and its query part (the memories and the skills
+that message found) right after it. Both come from one read, under one
+board budget. `turn_opener` under `[models.chat]` closes a turn whose board
+rides: `clock` (the default) adds `<turn now="…"/>`, the vault clock's
+instant in UTC, after the query part; `off` adds nothing. A turn whose board
+is held or not read ends at the user's message, as before. `POST
+/v1/core/context-board` and `ai.reply` still render the one frame.
 
 ## 5. Saved workflows
 
@@ -1196,13 +1218,15 @@ Gate record with the handle, generation, effector, operation and send status.
 
 A served host also supplies `native_mail.jmap` against its installed native
 mail server and `broker.models` against a configured broker-backed
-OpenAI-compatible or Gemini provider. The latter takes
+OpenAI-compatible, Anthropic-compatible or Gemini provider. The latter takes
 `arguments: {"provider": "<configured provider name>"}` and returns one actual
-provider JSON response: `/v1/models` for OpenAI-compatible providers or
-`/v1beta/models` for Gemini. Any provider pagination token is returned as-is;
-this operation does not fetch later pages or claim a complete catalog. It
-presents the requested handle, not the provider's configured secret, under the
-existing `broker:model` binding.
+provider JSON response: `/v1/models` for OpenAI-compatible and Anthropic-compatible
+providers or `/v1beta/models` for Gemini. Any provider pagination token is returned
+as-is; this operation does not fetch later pages or claim a complete catalog.
+Anthropic requests carry the same native `anthropic-version` as brokered chat,
+which takes precedence over configured extra headers. It presents the requested
+handle, not the provider's configured secret, under the existing `broker:model`
+binding.
 The host uses one actual model rung only as the broker's bodyless-request
 binding; it does not filter the listing or claim that model is serving.
 The broker is connected before custody releases the value. Both result and
