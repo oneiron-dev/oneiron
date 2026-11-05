@@ -62,9 +62,9 @@ pub(super) fn leading_dictionary(bytes: &[u8], stage: &super::Stage) -> Result<(
                 }
                 cursor += 1;
                 if nesting.is_empty() {
-                    let object = super::operand_in(&bytes[..=cursor], stage)?;
-                    let dictionary = match object {
-                        super::Object::Dictionary(dictionary) => dictionary,
+                    let mut object = super::operand_in(&bytes[..=cursor], stage)?;
+                    let dictionary = match &mut object {
+                        super::Object::Dictionary(dictionary) => std::mem::take(dictionary),
                         _ => return Err(PdfPreparationError::MalformedPdf),
                     };
                     return Ok((dictionary, cursor + 1));
