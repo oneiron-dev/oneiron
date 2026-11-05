@@ -152,7 +152,7 @@ const SLIP_HEADERS: [&str; 2] = ["x-oneiron-binding", "x-oneiron-mcp-credential"
 /// sign-in itself, and strips when a caller brings one.
 const SUPERVISOR_HEADERS: [&str; 2] = [
     oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER,
-    "x-oneiron-managed-widen-action",
+    oneiron_vault_contract::MANAGED_WIDEN_ACTION_HEADER,
 ];
 
 /// The framing of a capability slip and of the paired one-string form: a
