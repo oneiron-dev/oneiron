@@ -318,7 +318,7 @@ pub(super) fn board_parts(
     };
     let room_section = room
         .as_ref()
-        .map(|room| room.board_section(people))
+        .map(|room| room.board_section_laid_out(people, layout, cap_tok))
         .transpose()
         .map_err(board_frame_error)?;
     let room_page = room.as_ref().map(|page| ContextBoardRoomPage {
@@ -443,7 +443,9 @@ pub(super) fn board_parts(
         let launches = memory
             .pending_task_fanout_launches()
             .map_err(|error| board_memory_error("board fan-outs failed", "tasks", error))?;
-        lead.extend(oneiron::context_board::fanout_action_rows(&launches));
+        lead.extend(oneiron::context_board::fanout_action_rows_for(
+            &launches, layout, cap_tok,
+        ));
     }
     let mut tasks_section =
         oneiron::context_board::assemble_tasks_section(&tasks, lead).map_err(board_frame_error)?;
