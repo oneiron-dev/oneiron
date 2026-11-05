@@ -1,7 +1,7 @@
 //! One immutable read path for committed head, recovery forks and codebase snapshots.
 use super::git::{
     canonical_repo_ref_for_root, git_common_dir, resolve_mutable_repo_root,
-    resolve_pinned_repo_root, validate_relative_repo_path,
+    validate_relative_repo_path,
 };
 use super::oplog::{repo_mutation_repo_key_hash, repo_mutation_snapshot_key};
 use super::snapshot::{StoredRepoSnapshotEntryKind, snapshot_recorded_for_repo};
@@ -61,11 +61,7 @@ impl Vault {
             }
             return Ok(RepoMount { files });
         }
-        let root = if matches!(reference, RepoMountRef::Fork(_)) {
-            resolve_pinned_repo_root(repo_ref)?
-        } else {
-            resolve_mutable_repo_root(repo_ref)?
-        };
+        let root = resolve_mutable_repo_root(repo_ref)?;
         let canonical = canonical_repo_ref_for_root(repo_ref, &root)?;
         let _guard = lock_repository(&git_common_dir(&root)?)?;
         match reference {

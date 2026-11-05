@@ -58,7 +58,7 @@ pub(crate) fn resolve_repo_queue_target<'v>(
     };
     let _coordinator = lock_repository(repo.common_dir())?;
     let queue = match vault.open_served_queue_for_artifact(anchor, repo_ref)? {
-        Some((queue, frozen_ref)) => {
+        Some((queue, _, frozen_ref)) => {
             if frozen_ref != git_ref {
                 return Ok(Err(RepoAccessRefusal::WrongRef));
             }

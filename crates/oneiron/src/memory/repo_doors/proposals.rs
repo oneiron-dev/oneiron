@@ -245,10 +245,24 @@ impl Memory<'_> {
             None => RepoProposalReview::VaultDefault,
         };
         let membership = &own.admitted.membership;
-        let RepoRef::LocalFolder { path: folder, .. } = &membership.repo_ref else {
-            return Err(refusal_error(RepoAccessRefusal::WrongRef));
+        let (repo_ref, repo) = match self
+            .vault
+            .open_served_queue_for_artifact(own.stamp.repo, &membership.repo_ref)?
+        {
+            Some((queue, source_repo, frozen_ref)) => {
+                if frozen_ref != own.stamp.git_ref {
+                    return Err(refusal_error(RepoAccessRefusal::WrongRef));
+                }
+                (source_repo, queue.into_repository())
+            }
+            None => {
+                let Some(repo) = open_local_repo(self.vault, &membership.repo_ref) else {
+                    return Err(refusal_error(RepoAccessRefusal::WrongRef));
+                };
+                (membership.repo_ref.clone(), repo)
+            }
         };
-        let Some(repo) = open_local_repo(self.vault, &membership.repo_ref) else {
+        let RepoRef::LocalFolder { path: folder, .. } = &repo_ref else {
             return Err(refusal_error(RepoAccessRefusal::WrongRef));
         };
         let green = GitOid::parse_hex(own.stamp.base_green.as_str())?;

@@ -177,13 +177,14 @@ impl Vault {
         repo_ref: &RepoRef,
     ) -> Result<MergeQueue<'_>> {
         match self.open_served_queue_for_artifact(repo, repo_ref)? {
-            Some((queue, _)) => Ok(queue),
+            Some((queue, _, _)) => Ok(queue),
             None => MergeQueue::open(self, repo_ref.clone()),
         }
     }
 
-    /// A served anchor's queue and its frozen import ref from the same
-    /// binding. `None` means a native pointer, not an unbound served queue.
+    /// A served anchor's queue, internal source pointer and frozen import
+    /// ref from the same binding. `None` means a native pointer, not an
+    /// unbound served queue.
     ///
     /// # Errors
     /// The same source-binding and root failures as `open_queue_for_artifact`.
@@ -191,7 +192,7 @@ impl Vault {
         &self,
         repo: EntityId,
         repo_ref: &RepoRef,
-    ) -> Result<Option<(MergeQueue<'_>, String)>> {
+    ) -> Result<Option<(MergeQueue<'_>, RepoRef, String)>> {
         let Some(folder) = served_store_folder(repo_ref) else {
             return Ok(None);
         };
@@ -204,7 +205,11 @@ impl Vault {
         let queue = self
             .open_bound_queue_source(&bound)?
             .map_err(Error::Refused)?;
-        Ok(Some((queue, bound.manifest.anchor.source_ref)))
+        Ok(Some((
+            queue,
+            bound.repo_ref,
+            bound.manifest.anchor.source_ref,
+        )))
     }
 
     /// The bound source's root opened as it stands (see

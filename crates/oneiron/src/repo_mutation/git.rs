@@ -32,22 +32,6 @@ pub(super) fn git_common_dir(repo_root: &Path) -> Result<PathBuf> {
 
 pub(super) use crate::git_wire::mutation_commands::resolve_mutable_repo_root;
 
-/// A stored fork or pinned proposal needs the object store, not a mutable
-/// checkout. A bare store's own directory is its canonical root.
-pub(super) fn resolve_pinned_repo_root(repo_ref: &RepoRef) -> Result<PathBuf> {
-    let RepoRef::LocalFolder { path, .. } = repo_ref else {
-        return resolve_mutable_repo_root(repo_ref);
-    };
-    let bare = run_git_at_path(
-        Path::new(path),
-        &["rev-parse".to_owned(), "--is-bare-repository".to_owned()],
-    )?;
-    if utf8_trimmed(bare, "git bare flag must be UTF-8")? == "true" {
-        return Ok(PathBuf::from(path).canonicalize()?);
-    }
-    resolve_mutable_repo_root(repo_ref)
-}
-
 /// The same canonical, commit-independent identity used by document ingress:
 /// a working tree's top level, or a bare repository's own directory, which
 /// is what a served repository is (FIX 12199).
