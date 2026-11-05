@@ -887,16 +887,19 @@ pub(in crate::sync) fn withhold_audience_carriers(
                 carried.push(id);
             }
         });
-        // By this vault's own lineage, not its holds: a row held back here
-        // stays as its source carried it, and its holders are not told.
+        // By this vault's own lineage, not its holds: a row held back here,
+        // or one whose words came from a held row, stays as its source
+        // carried it, and its holders are not told (Sol AUD-3).
         let mut withheld = Vec::new();
         for id in carried {
-            if crate::source_audience::withheld_by_lineage_in(
-                vault,
-                &rtxn,
-                &id,
-                crate::source_audience::ReplicationScope::FullOwnerWindow,
-            )? {
+            if !crate::source_audience::lineage_held_in(vault, &rtxn, &id)?
+                && crate::source_audience::withheld_by_lineage_in(
+                    vault,
+                    &rtxn,
+                    &id,
+                    crate::source_audience::ReplicationScope::FullOwnerWindow,
+                )?
+            {
                 withheld.push(id);
             }
         }

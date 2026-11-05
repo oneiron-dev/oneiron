@@ -775,6 +775,17 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
                 affected.push(*row);
             }
         }
+        // A withheld row whose carrier rides here again with no other
+        // machine's marker lifts, as its own savepoint would lift it.
+        for (row, why) in source_audience::held_rows_in(vault, txn)? {
+            if why == HeldBack::Withheld
+                && rows.contains(&row)
+                && !markers.iter().any(|(marked, by)| *marked == row && *by != me)
+                && source_audience::lift_hold_in_txn(vault, txn, &row, HeldBack::Withheld)?
+            {
+                affected.push(row);
+            }
+        }
         for (row, policy) in &records {
             if !rows.contains(row) {
                 continue;
