@@ -23,7 +23,12 @@ pub(super) struct PreparedSkillState {
 /// Read only the supplied document; malformed native state is not absence.
 /// This validates the codec, not its native source or carrier standing.
 pub(super) fn read_fact(doc: &EntityDoc) -> Result<Option<SkillStateFact>> {
-    match doc.doc.get_map(ROOT).get(CURRENT) {
+    let map = doc.doc.get_map(ROOT);
+    let current = map.get(CURRENT);
+    if map.len() != usize::from(current.is_some()) {
+        return Err(Error::CorruptedIndex("native SKILL state register keys"));
+    }
+    match current {
         None => Ok(None),
         Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => {
             SkillStateFact::decode(bytes.as_ref()).map(Some)

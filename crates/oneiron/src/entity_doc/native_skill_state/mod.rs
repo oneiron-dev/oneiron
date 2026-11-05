@@ -1,6 +1,7 @@
 //! Exact read bindings for activated SKILL state changes.
 
 mod codec;
+mod inspect;
 mod prepare;
 mod project;
 mod request;
