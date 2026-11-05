@@ -24,8 +24,8 @@
 //! (FIX 2951). A cycle adds no restriction of its own.
 //!
 //! A row a source landed carries its source in its own bytes: a mail
-//! CONVERSATION's or TURN's `import_source` (only the engine's importers
-//! stamp it), a MESSAGE through its TURN. Bindings and policies are this
+//! CONVERSATION's or TURN's `import_source` (one of the pack's own source
+//! names), a MESSAGE through its TURN. Bindings and policies are this
 //! vault's own rows and do not travel with a replica, so such a row read
 //! where its binding is absent reads to no one; and a bound row, or a row
 //! whose words came from one, does not leave this vault by window
@@ -42,11 +42,19 @@ use crate::registry::{
 use crate::{EntityId, Vault};
 
 /// The TURN and CONVERSATION body key naming an imported transcript's
-/// source. Only the engine's own importers stamp it (a compiled-in source
-/// name), so no caller can stamp a row with a source's name.
+/// source.
 const IMPORT_SOURCE_KEY: &str = "import_source";
-/// The import sources a source audience lands: the Mail & Calendar pack's.
-const SOURCE_IMPORT_PREFIXES: [&str; 2] = ["mail.", "calendar."];
+/// The import sources a source audience lands: the Mail & Calendar pack's
+/// own, exactly (`mail_pack::landing::import_source`). A caller that births
+/// a conversation stamped with one of these names only hides its own rows.
+const SOURCE_IMPORTS: [&str; 6] = [
+    "mail.google_workspace",
+    "mail.google",
+    "mail.microsoft365",
+    "mail.imap",
+    "calendar.caldav",
+    "calendar.ics",
+];
 
 /// The string value of `key` in a MessagePack map body.
 fn body_string<'b>(body: &'b [u8], key: &str) -> Option<&'b str> {
@@ -73,11 +81,7 @@ fn container_marked(raw: &[u8]) -> bool {
         return false;
     }
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-    body_string(body, IMPORT_SOURCE_KEY).is_some_and(|source| {
-        SOURCE_IMPORT_PREFIXES
-            .iter()
-            .any(|prefix| source.starts_with(prefix))
-    })
+    body_string(body, IMPORT_SOURCE_KEY).is_some_and(|source| SOURCE_IMPORTS.contains(&source))
 }
 
 /// Whether the row `id` (bytes `raw`) is one a source audience landed: a
