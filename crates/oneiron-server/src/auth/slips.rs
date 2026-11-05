@@ -215,6 +215,7 @@ impl CoreAuth {
                 }
                 let class = match scope {
                     CoreScope::Read => "read",
+                    CoreScope::Propose => "propose",
                     CoreScope::Write => "write",
                     _ => scope.as_str(),
                 };

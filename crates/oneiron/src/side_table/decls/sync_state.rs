@@ -503,6 +503,11 @@ side_tables! {
     /// (FIX 6476): the scope, the row's ref, hash and length, and who removed it, when and where.
     /// Key: hex32 (receipt id).
     USAGE_REPAIR_RECEIPT: SyncState b"usage:repair:receipt:" Named;
+    /// One frozen automatic settlement awaiting its final ledger write (FIX 737).
+    /// Same named envelope as USAGE_EVENT. Key: hex ":" hex ":" hex
+    /// (vault, billing owner, idempotency-key); vault-first covers room-paid owners.
+    USAGE_SETTLEMENT_PENDING: SyncState b"usage:retry:" Named
+        => crate::store::erase_pending_usage_source_in_txn;
     /// Aggregated usage-metering rollup totals (cost/units) for one owner/vault pair. Key: hex ":"
     /// hex (owner, vault).
     USAGE_VAULT_ROLLUP: SyncState b"usage:rollup:vault:" Named;
