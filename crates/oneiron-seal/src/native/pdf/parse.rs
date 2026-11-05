@@ -86,12 +86,19 @@ pub(super) fn name_is(obj: &Object, expected: &[u8]) -> bool {
 /// dictionaries and STREAM dictionaries: a security-slot name hidden in a
 /// stream object's dict must not bypass the prepared-input scan. A chain is
 /// followed whole.
-fn deref_dict<'d>(doc: &'d Document, obj: &'d Object) -> Option<&'d Dictionary> {
-    match walk::resolve(doc, obj)? {
-        Object::Dictionary(d) => Some(d),
-        Object::Stream(s) => Some(&s.dict),
-        _ => None,
-    }
+fn deref_dict<'d>(
+    doc: &'d Document,
+    obj: &'d Object,
+    limits: &SealResourceLimits,
+    stage: SealStage,
+) -> Result<Option<&'d Dictionary>, SealError> {
+    Ok(
+        match walk::resolve(doc, obj, limits).map_err(|refusal| refusal.seal_error(stage))? {
+            Some(Object::Dictionary(d)) => Some(d),
+            Some(Object::Stream(s)) => Some(&s.dict),
+            _ => None,
+        },
+    )
 }
 
 /// Resolve the indirection of security-critical name slots: `/Type`,
@@ -102,18 +109,28 @@ fn deref_dict<'d>(doc: &'d Document, obj: &'d Object) -> Option<&'d Dictionary> 
 /// security slot is a rejection in the matching violation class, never a
 /// silent non-match (a long `/S -> … -> /JavaScript` chain must not bypass
 /// the prepared-input rejection).
-fn resolved<'d>(doc: &'d Document, obj: &'d Object) -> Option<&'d Object> {
-    walk::resolve_security_name(doc, obj)
+fn resolved<'d>(
+    doc: &'d Document,
+    obj: &'d Object,
+    limits: &SealResourceLimits,
+    stage: SealStage,
+) -> Result<Option<&'d Object>, SealError> {
+    walk::resolve_security_name(doc, obj, limits).map_err(|refusal| refusal.seal_error(stage))
 }
 
 /// Scan every object for prepared-input contract violations (§7.1 rules 6-7).
-fn scan_objects_mode(doc: &Document, reject_signatures: bool) -> Result<(), SealError> {
+fn scan_objects_mode(
+    doc: &Document,
+    reject_signatures: bool,
+    limits: &SealResourceLimits,
+    stage: SealStage,
+) -> Result<(), SealError> {
     for obj in doc.objects.values() {
-        let Some(dict) = deref_dict(doc, obj) else {
+        let Some(dict) = deref_dict(doc, obj, limits, stage)? else {
             continue;
         };
         if let Ok(t) = dict.get(b"Type") {
-            let Some(t) = resolved(doc, t) else {
+            let Some(t) = resolved(doc, t, limits, stage)? else {
                 return Err(input_invalid(InputInvalidCode::ExistingSignature));
             };
             if reject_signatures && (name_is(t, b"Sig") || name_is(t, b"DocTimeStamp")) {
@@ -124,7 +141,7 @@ fn scan_objects_mode(doc: &Document, reject_signatures: bool) -> Result<(), Seal
             }
         }
         if let Ok(ft) = dict.get(b"FT") {
-            let Some(ft) = resolved(doc, ft) else {
+            let Some(ft) = resolved(doc, ft, limits, stage)? else {
                 return Err(input_invalid(InputInvalidCode::ExistingSignature));
             };
             if reject_signatures && name_is(ft, b"Sig") {
@@ -148,7 +165,7 @@ fn scan_objects_mode(doc: &Document, reject_signatures: bool) -> Result<(), Seal
             return Err(input_invalid(InputInvalidCode::ExistingSignature));
         }
         if let Ok(s) = dict.get(b"S") {
-            let Some(s) = resolved(doc, s) else {
+            let Some(s) = resolved(doc, s, limits, stage)? else {
                 return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
             };
             if name_is(s, b"JavaScript") || name_is(s, b"Launch") {
@@ -173,7 +190,7 @@ fn scan_catalog_mode(
         return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
     }
     if let Ok(names) = root.get(b"Names") {
-        let names_dict = deref_dict(doc, names)
+        let names_dict = deref_dict(doc, names, limits, stage)?
             .ok_or_else(|| input_invalid(InputInvalidCode::ActiveContentPresent))?;
         if names_dict.has(b"JavaScript") {
             return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
@@ -183,7 +200,7 @@ fn scan_catalog_mode(
         }
     }
     if let Ok(perms) = root.get(b"Perms") {
-        let pd = deref_dict(doc, perms)
+        let pd = deref_dict(doc, perms, limits, stage)?
             .ok_or_else(|| input_invalid(InputInvalidCode::ExistingSignature))?;
         if reject_signatures && (pd.has(b"DocMDP") || pd.has(b"FieldMDP") || pd.has(b"UR3")) {
             return Err(input_invalid(InputInvalidCode::ExistingSignature));
@@ -199,7 +216,8 @@ fn scan_catalog_mode(
         .iter()
         .copied()
     {
-        if let Some(page_dict) = walk::dictionary(doc, page_id)
+        if let Some(page_dict) =
+            walk::dictionary(doc, page_id, limits).map_err(|refusal| refusal.seal_error(stage))?
             && page_dict.has(b"AF")
         {
             return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
@@ -208,7 +226,7 @@ fn scan_catalog_mode(
     // An /AcroForm carrying /XFA is active form content (XML Forms
     // Architecture), never a static AcroForm: reject, never sign over it.
     if let Ok(af) = root.get(b"AcroForm") {
-        let af_dict = deref_dict(doc, af)
+        let af_dict = deref_dict(doc, af, limits, stage)?
             .ok_or_else(|| input_invalid(InputInvalidCode::ActiveContentPresent))?;
         if af_dict.has(b"XFA") {
             return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
@@ -226,8 +244,10 @@ pub(crate) fn analyze_security(
     limits: &SealResourceLimits,
     stage: SealStage,
 ) -> Result<(), SealError> {
-    scan_objects_mode(doc, reject_signatures)?;
-    let root = walk::catalog(doc).ok_or_else(|| input_invalid(InputInvalidCode::MalformedXref))?;
+    scan_objects_mode(doc, reject_signatures, limits, stage)?;
+    let root = walk::catalog(doc, limits)
+        .map_err(|refusal| refusal.seal_error(stage))?
+        .ok_or_else(|| input_invalid(InputInvalidCode::MalformedXref))?;
     scan_catalog_mode(doc, root, reject_signatures, limits, stage)
 }
 #[cfg(test)]
@@ -314,14 +334,15 @@ pub(super) fn revision_state(
         .first()
         .copied()
         .ok_or_else(|| input_invalid(InputInvalidCode::MissingPage))?;
-    let root_dict =
-        walk::dictionary(doc, root).ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?;
+    let root_dict = walk::dictionary(doc, root, limits)
+        .map_err(memory_error)?
+        .ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?;
     // /AcroForm may be an indirect reference OR a direct dictionary; both
     // shapes must survive signing with their fields intact (a direct dict
     // treated as absent would be clobbered by a fresh AcroForm).
     let (acroform, acroform_dict) = match root_dict.get(b"AcroForm") {
         Ok(Object::Reference(r)) => {
-            let dict = match walk::dictionary(doc, *r) {
+            let dict = match walk::dictionary(doc, *r, limits).map_err(memory_error)? {
                 Some(dict) => {
                     admitted::dictionary(limits, dict).map_err(memory_error)?;
                     Some(dict.clone())
@@ -343,7 +364,8 @@ pub(super) fn revision_state(
     // rewriting an unreadable list would silently orphan every field.
     let acroform_fields = match acroform_dict.as_ref().and_then(|d| d.get(b"Fields").ok()) {
         Some(f) => {
-            let fields = walk::resolve(doc, f)
+            let fields = walk::resolve(doc, f, limits)
+                .map_err(memory_error)?
                 .and_then(|o| o.as_array().ok())
                 .ok_or_else(|| input_invalid(InputInvalidCode::MalformedXref))?;
             admitted::objects(limits, fields).map_err(memory_error)?;
@@ -351,15 +373,18 @@ pub(super) fn revision_state(
         }
         None => Vec::new(),
     };
-    let first_page_dict = walk::dictionary(doc, first_page)
+    let first_page_dict = walk::dictionary(doc, first_page, limits)
+        .map_err(memory_error)?
         .ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?;
     admitted::dictionary(limits, first_page_dict).map_err(memory_error)?;
     let first_page_dict = first_page_dict.clone();
-    let first_page_annots = match first_page_dict
-        .get(b"Annots")
-        .ok()
-        .and_then(|a| walk::resolve(doc, a).and_then(|o| o.as_array().ok()))
-    {
+    let first_page_annots = match first_page_dict.get(b"Annots").ok() {
+        Some(annots) => walk::resolve(doc, annots, limits)
+            .map_err(memory_error)?
+            .and_then(|object| object.as_array().ok()),
+        None => None,
+    };
+    let first_page_annots = match first_page_annots {
         Some(annots) => {
             admitted::objects(limits, annots).map_err(memory_error)?;
             annots.clone()
@@ -519,7 +544,10 @@ pub(crate) fn admit_prior_revisions(
         let doc = load_strict(snapshot, limits)
             .map_err(|err| err.seal_error(SealStage::InputValidation, malformed))?;
         analyze_security(&doc, true, limits, SealStage::InputValidation)?;
-        if walk::catalog(&doc).is_none_or(|root| root.has(b"DSS")) {
+        if walk::catalog(&doc, limits)
+            .map_err(|refusal| refusal.seal_error(SealStage::InputValidation))?
+            .is_none_or(|root| root.has(b"DSS"))
+        {
             return Err(malformed());
         }
     }

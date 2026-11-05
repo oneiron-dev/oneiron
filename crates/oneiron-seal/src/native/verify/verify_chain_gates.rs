@@ -222,7 +222,7 @@ fn classify_missing_material_root(
         return Ok(());
     }
     let mut probe = Checks::new(limits);
-    verify_dss(doc, covered, covered, at, memory, &mut probe)?;
+    verify_dss(doc, covered, covered, at, memory, &mut probe, limits)?;
     if probe.passed(VerifyCheckKind::ValidationMaterial)
         && let Some(check) = checks
             .list
@@ -352,6 +352,7 @@ pub(crate) fn verify_document(
         material_validation_time(&envelopes, dss_end, ctx.clock_ms / 1000),
         &memory,
         &mut checks,
+        limits,
     )
     .map_err(memory_refused)?;
     limits.observed.note(Counter::DssDecodeBytes, decoded);
@@ -437,6 +438,7 @@ pub(crate) fn verify_document(
                 .map_or(ctx.clock_ms / 1000, |proof| proof.at),
             &memory,
             &mut material_checks,
+            limits,
         )
         .map_err(memory_refused)?;
         limits.observed.note(Counter::DssDecodeBytes, decoded);
