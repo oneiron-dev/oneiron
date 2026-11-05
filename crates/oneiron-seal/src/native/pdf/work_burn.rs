@@ -8,8 +8,8 @@
 //! clone, pixel buffer, dictionary entry, and fresh-document object is
 //! admitted against the call's operation ledger first (via [`WorkLimits`]),
 //! never the engine `Stage` (the row sources take no `Stage`; the ledger is
-//! added for the organ's buffers). The raster 2048px/alpha checks are
-//! verbatim decoder bounds ([`InputInvalidCode::InvalidSignatureImage`]).
+//! added for the organ's buffers). Raster dimensions must be nonzero, the
+//! RGBA length exact, and alpha nonblank ([`InputInvalidCode::InvalidSignatureImage`]).
 //! No per-stream codec bound exists here, so no refusal is dropped to an
 //! admission (contrast `work_streams`): value-shape refusals stay
 //! engine-side and their checked scalars are lent in, marked below.
@@ -124,13 +124,13 @@ pub(super) fn resource(resources: &mut Dictionary, kind: &[u8], id: ObjectId, li
 }
 
 /// The image XObjects for one raster, as the engine's `fields::raster`: a
-/// DeviceGray smask plus a DeviceRGB image. The 2048px, row-length, and
-/// non-blank-alpha checks are verbatim decoder bounds. Pixel buffers,
+/// DeviceGray smask plus a DeviceRGB image. Nonzero dimensions, exact RGBA
+/// length, and non-blank alpha remain required. Pixel buffers,
 /// dictionaries, and fresh objects are admitted first.
 fn raster(out: &mut Document, image: &WorkRaster<'_>, limits: &WorkLimits<'_>) -> Result<ObjectId, WorkError> {
     let pixels = u64::from(image.width) * u64::from(image.height);
-    if image.width == 0 || image.height == 0 || image.width > 2048 || image.height > 2048
-        || pixels * 4 != image.rgba.len() as u64 || image.rgba.chunks_exact(4).all(|p| p[3] == 0)
+    if image.width == 0 || image.height == 0
+        || pixels.checked_mul(4) != Some(image.rgba.len() as u64) || image.rgba.chunks_exact(4).all(|p| p[3] == 0)
     {
         return Err(WorkError::Invalid(InputInvalidCode::InvalidSignatureImage));
     }
