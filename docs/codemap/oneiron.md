@@ -4636,12 +4636,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/policy_model/notice.rs` | src | m | 23 crate-vis | — | The one notice a policy verdict emits — and the one audit row it files |
 | `src/policy_model/owner_rows/authority.rs` | src | m | 4 fn · 8 crate-vis | — | Live policy-power holders from shared membership and owner-stamped action grants |
 | `src/policy_model/owner_rows/ledger.rs` | src | m | 3 struct · 1 enum · 3 fn · 6 crate-vis | PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt | Append-only row change history and proposal inbox |
-| `src/policy_model/owner_rows/mod.rs` | src | s | 1 enum · 5 fn · 5 re-export · 3 crate-vis | PolicyRowSubmission | Holder-governed owner-policy row edits, proposals, events and change log |
+| `src/policy_model/owner_rows/mod.rs` | src | s | 1 enum · 5 fn · 6 re-export · 3 crate-vis | PolicyRowSubmission | Holder-governed owner-policy row edits, proposals, events and change log |
 | `src/policy_model/owner_rows/notification_receipt.rs` | src | s | 2 crate-vis | — | A queued policy-change notice, delivered as the change it records (FIX 10031) |
 | `src/policy_model/owner_rows/notifications.rs` | src | m | 2 struct · 3 enum · 6 fn · 3 crate-vis | PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule, PolicyNotificationTarget, PolicyQueuedNotification | Manifest-authored notification rules and recipient-owned delivery preferences |
 | `src/policy_model/owner_rows/secret_scan_switch.rs` | src | s | 1 struct · 3 fn | SecretScanReceipt | The owner's `secrets: on \| off` switch for the write-door secret scan |
 | `src/policy_model/owner_rows/secret_scan_switch/tests.rs` | test | s | — | — | — |
 | `src/policy_model/owner_rows/tests.rs` | test | m | — | — | — |
+| `src/policy_model/owner_rows/world_placement_switch.rs` | src | s | 1 struct · 3 fn | WorldMachinePlacement | "This Mac only": one switch over a world's two placement settings, for a surface that shows a single toggle… |
 | `src/policy_model/owner_rows/world_privacy_switch.rs` | src | m | 1 struct · 2 fn · 9 crate-vis | WorldPrivacyReceipt | The owner's settings for one world: where it may be read, where its sealed copies may rest, and its model… |
 | `src/policy_model/owner_rows/world_privacy_will/agent.rs` | src | s | 1 fn · 3 crate-vis | — | An agent's change of a world's settings (FIX 4480) |
 | `src/policy_model/owner_rows/world_privacy_will/answer.rs` | src | s | 1 enum · 1 fn | WorldPrivacyAnswer | A holder's answer to a world-privacy request (FIX 4480): accept or decline an agent's proposal, confirm or… |
