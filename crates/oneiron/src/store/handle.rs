@@ -275,6 +275,10 @@ pub struct StoreCore {
     /// The engine's attempt queue operations, supplied by the open door with
     /// the delete guards.
     pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
+    /// The engine's voice bank response operations, supplied by the open door with
+    /// the delete guards.
+    #[cfg(unix)]
+    pub(crate) voice_bank_response: &'static dyn crate::store::StoreVoiceBankResponse,
     /// The engine's core write operations, supplied by the open door with the
     /// delete guards.
     pub(crate) core_write_operations: &'static dyn crate::store::StoreCoreWriteOperations,
@@ -862,6 +866,7 @@ impl Drop for StoreOwner {
 
 pub(super) fn seed_default_policy_manifest_in_txn(
     gate_hooks: &dyn crate::store::StoreGateHooks,
+    clock: &crate::ports::StoreClock,
     entities: &OverlayDb,
     sync_state: &OverlayStrDb,
     type_index: &OverlayDb,
@@ -884,10 +889,13 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     payload.extend_from_slice(&timestamp.to_be_bytes());
     payload.extend_from_slice(&body);
     entities.put(wtxn, id.as_bytes(), &payload)?;
+    let hash = blake3::hash(&body);
+    let mut trusted_origin = hash.as_bytes().to_vec();
+    trusted_origin.extend_from_slice(&clock.peek_recorded_at().to_be_bytes());
     sync_state.put(
         wtxn,
         &oneiron_store::manifest_origin_keys::trusted_manifest_key(id),
-        blake3::hash(&body).as_bytes(),
+        &trusted_origin,
     )?;
     sync_state.put(
         wtxn,
