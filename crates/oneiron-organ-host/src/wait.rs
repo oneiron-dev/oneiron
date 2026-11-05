@@ -368,6 +368,15 @@ impl OrganRouter {
         if let Some(room) = &mut room {
             room.materialized(decoded, before);
         }
+        let replaced = (held.inputs.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<HeldInput>() as u64)
+            .saturating_add(held.inputs.iter().fold(0u64, |bytes, input| {
+                bytes.saturating_add(input.artifact.capacity() as u64)
+            }))
+            .saturating_add(
+                (held.lent.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<(String, ByteBuf)>() as u64),
+            );
         let extra = (held.inputs.len() as u64)
             .saturating_mul(std::mem::size_of::<SightedInput>() as u64)
             .saturating_add(
@@ -382,7 +391,16 @@ impl OrganRouter {
         })?;
         if let Some(room) = &mut room {
             room.materialized(extra, 0);
-            let after = call_allocated_bytes(&call, &lent);
+            let after = before
+                .saturating_sub(replaced)
+                .saturating_add(
+                    (call.inputs.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<SightedInput>() as u64),
+                )
+                .saturating_add(
+                    (lent.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<LentInput>() as u64),
+                );
             if after >= before {
                 room.materialized(0, after - before);
             } else {
@@ -448,31 +466,6 @@ impl OrganRouter {
             Err(err) => failed(err.to_string()),
         }
     }
-}
-
-fn call_allocated_bytes(call: &OrganCall, lent: &Vec<LentInput>) -> u64 {
-    let mut bytes =
-        call.organ.capacity() as u64 + call.verb.capacity() as u64 + call.grant.capacity() as u64;
-    bytes = bytes.saturating_add(call.args.allocated_bytes());
-    if let Some(body) = &call.body {
-        bytes = bytes
-            .saturating_add(body.kind.capacity() as u64)
-            .saturating_add(body.value.allocated_bytes());
-    }
-    bytes = bytes
-        .saturating_add(
-            (call.inputs.capacity() as u64)
-                .saturating_mul(std::mem::size_of::<SightedInput>() as u64),
-        )
-        .saturating_add(
-            (lent.capacity() as u64).saturating_mul(std::mem::size_of::<LentInput>() as u64),
-        );
-    for input in lent {
-        bytes = bytes
-            .saturating_add(input.media_type.capacity() as u64)
-            .saturating_add(input.bytes.capacity() as u64);
-    }
-    bytes
 }
 
 fn wait_floor_error(refused: crate::resource_memory::FloorRefusal) -> HostError {

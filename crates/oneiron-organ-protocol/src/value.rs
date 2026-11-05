@@ -169,34 +169,73 @@ impl From<Vec<(Value, Value)>> for Value {
     }
 }
 
+pub(crate) enum AllocationChildren<'value> {
+    Array(std::slice::Iter<'value, Value>),
+    Map {
+        entries: std::slice::Iter<'value, (Value, Value)>,
+        value: Option<&'value Value>,
+    },
+}
+
+impl<'value> AllocationChildren<'value> {
+    fn next(&mut self) -> Option<&'value Value> {
+        match self {
+            Self::Array(items) => items.next(),
+            Self::Map { entries, value } => {
+                if let Some(value) = value.take() {
+                    Some(value)
+                } else {
+                    entries.next().map(|(key, item)| {
+                        *value = Some(item);
+                        key
+                    })
+                }
+            }
+        }
+    }
+}
+
 impl Value {
     /// The capacities of the heap allocations this value owns, excluding
     /// the value itself and the temporary traversal stack.
     #[must_use]
     pub fn allocated_bytes(&self) -> u64 {
         let mut bytes = 0u64;
-        let mut stack = vec![self];
-        while let Some(value) = stack.pop() {
-            let capacity = match value {
-                Self::String(text) => text.capacity() as u64,
-                Self::Binary(data) | Self::Ext(_, data) => data.capacity() as u64,
-                Self::Array(items) => {
-                    stack.extend(items);
-                    (items.capacity() as u64).saturating_mul(std::mem::size_of::<Self>() as u64)
-                }
-                Self::Map(entries) => {
-                    for (key, item) in entries {
-                        stack.push(key);
-                        stack.push(item);
+        let mut stack = Vec::new();
+        let mut next = Some(self);
+        loop {
+            if let Some(value) = next.take() {
+                let (capacity, children) = match value {
+                    Self::String(text) => (text.capacity() as u64, None),
+                    Self::Binary(data) | Self::Ext(_, data) => (data.capacity() as u64, None),
+                    Self::Array(items) => (
+                        (items.capacity() as u64)
+                            .saturating_mul(std::mem::size_of::<Self>() as u64),
+                        (!items.is_empty()).then(|| AllocationChildren::Array(items.iter())),
+                    ),
+                    Self::Map(entries) => (
+                        (entries.capacity() as u64)
+                            .saturating_mul(std::mem::size_of::<(Self, Self)>() as u64),
+                        (!entries.is_empty()).then(|| AllocationChildren::Map {
+                            entries: entries.iter(),
+                            value: None,
+                        }),
+                    ),
+                    _ => (0, None),
+                };
+                bytes = bytes.saturating_add(capacity);
+                if let Some(children) = children {
+                    if stack.capacity() == 0 {
+                        stack.reserve_exact(1);
                     }
-                    (entries.capacity() as u64)
-                        .saturating_mul(std::mem::size_of::<(Self, Self)>() as u64)
+                    stack.push(children);
                 }
-                _ => 0,
-            };
-            bytes = bytes.saturating_add(capacity);
+            }
+            next = stack.last_mut().and_then(AllocationChildren::next);
+            if next.is_none() && stack.pop().is_none() {
+                return bytes;
+            }
         }
-        bytes
     }
 
     #[must_use]
