@@ -181,8 +181,8 @@ impl HostSelfDispatcher<'_> {
     /// Admits the entities a rewrite of `call` newly names, as the facade
     /// admits a row's rewritten refs: the run's door rules on the call once
     /// more, and each must be readable on the lane the call's hooks read,
-    /// the door's key or the run's actor's own. The reason refuses the
-    /// rewrite.
+    /// the door's key or the run's actor's own, within the waking slip's
+    /// target bounds when one woke the program. The reason refuses the rewrite.
     fn admit_rewritten_refs(
         &self,
         vault: &Vault,
@@ -202,6 +202,21 @@ impl HostSelfDispatcher<'_> {
             Ok(Err(refusal)) => return Err(refusal.code),
             Err(error) => return Err(error.to_string()),
         };
+        if let Some(proof) = self.program_proof() {
+            let Some(proof_key) = vault
+                .credential_target_key(proof)
+                .map_err(|error| error.to_string())?
+            else {
+                return Err("a rewrite names an entity this call cannot read".to_owned());
+            };
+            if !vault
+                .scoped_read(proof_key)
+                .all_refs_readable(&refs)
+                .map_err(|error| error.to_string())?
+            {
+                return Err("a rewrite names an entity this call cannot read".to_owned());
+            }
+        }
         let readable = vault
             .scoped_read(key)
             .all_refs_readable(&refs)
