@@ -160,6 +160,23 @@ server on the private network.
 
 Model work on the owner's own server with no API key is free work. It takes no lifetime units. Each step still keeps its own line: `models.chat.turn_budget_units`, `models.workflows.step_budget_units`, `models.dreamer.pass_budget_units` and `models.recall.rerank_budget_units` still bound each turn, step, pass and rerank.
 
+A provider row cannot say `on_device`: a server reached over HTTP is
+`own_server`, even on this machine, and that includes every endpoint you run
+and point a provider at yourself. On device is what the server derives for its
+own supervised runtime: a `managed` EXL3 worker this server launches, on Linux
+or macOS, reached over its native channel, which checks each connection
+against the child it supervises before any input goes. Such a worker's models
+get a second offer beside the provider's own: the on-device offer, which sends
+only over that channel and fails the call unsent when it cannot. A call takes
+it only when its route is on device (the vault's model manifest routes the
+role or model `on_device`); every other call keeps the provider's offer,
+native when the worker's socket is up and HTTP otherwise, as before, and stays
+`own_server`. An on-device call never falls back to HTTP, to another rung, or
+to an owner's fallback off the device, and an on-device extraction needs no
+`extraction_egress`. Only free work gets the on-device offer: a provider with
+a key or a payer other than `local` keeps its calls `own_server` and paid. The
+reranker and a raw `/v1/llm` call keep the provider's own offer.
+
 A `key_secret` names a vault secret instead of a variable: the key stays in
 the vault's custody (T0), and only the credential broker sends it. The broker is
 a separate process that runs as its own OS user, adds the key to one request,

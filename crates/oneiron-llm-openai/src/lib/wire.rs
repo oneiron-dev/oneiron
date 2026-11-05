@@ -78,9 +78,11 @@ pub fn build_openai_chat_request(
         }
         // An own server (llama.cpp, vLLM, an exllamav3 server) also reads the
         // level through its chat template, and llama.cpp reads the thinking
-        // budget per request. A hosted API takes the effort alone and refuses
-        // fields it does not know, so it is sent neither.
-        if request.envelope.locality == ModelLocality::OwnServer {
+        // budget per request, as does the same server reached on this device
+        // over its supervised native channel (I2-LOCAL). A hosted API takes
+        // the effort alone and refuses fields it does not know, so it is sent
+        // neither.
+        if request.envelope.locality != ModelLocality::ThirdParty {
             let mut kwargs = match body.remove("chat_template_kwargs") {
                 Some(JsonValue::Object(kwargs)) => kwargs,
                 Some(_) => return Err(FatalLlmError::InvalidRequest.into()),

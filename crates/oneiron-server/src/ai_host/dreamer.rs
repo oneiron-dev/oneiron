@@ -27,9 +27,7 @@ use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::llm::{
-    HostInferenceBinding, HostInferenceContext, WorkCancel, WorkClass, WorkContext,
-};
+use oneiron::llm::{HostInferenceContext, WorkCancel, WorkClass, WorkContext};
 use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
@@ -630,11 +628,11 @@ impl ObservedFactory {
                 RoleBackend {
                     backend: Arc::clone(&backend) as Arc<dyn LlmBackend>,
                     model: route.model.clone(),
-                    binding: HostInferenceBinding::Advertised {
-                        model: route.model.clone(),
-                        locality: route.locality,
-                        keyless: route.ladder.all_keyless_own_server(),
-                    },
+                    binding: route.ladder.host_binding(
+                        route.model.clone(),
+                        route.locality,
+                        route.ladder.all_keyless_own_server(),
+                    ),
                     sourced: Some(backend),
                 },
             );
@@ -1244,6 +1242,9 @@ impl ResidentLend<'_> {
                 WriteActor::new(resident, oneiron::EdgeActorClass::Agent),
             )?;
             let keyless = ladder.all_keyless_own_server();
+            // The host's binding for this ladder, before the run's backend
+            // takes it (I2-LOCAL: supervised native when it is on device).
+            let binding = ladder.host_binding(model.clone(), locality, keyless);
             let deadline =
                 Instant::now().checked_add(Duration::from_millis(ctx.deadline.remaining_ms()));
             let run = self
@@ -1281,13 +1282,9 @@ impl ResidentLend<'_> {
                 ResidentDreamModel {
                     backend: &backend,
                     guard: &step,
-                    model: model.clone(),
+                    model,
                     inference: HostInferenceContext {
-                        binding: HostInferenceBinding::Advertised {
-                            model,
-                            locality,
-                            keyless,
-                        },
+                        binding,
                         extraction_egress: egress.as_deref(),
                     },
                     role: None,

@@ -144,12 +144,57 @@ pub struct Seat {
     /// Each rung on its own, keyed by its engine model id, so a call the
     /// vault's manifest binds to one rung's model keeps that rung's prompt.
     rungs: BTreeMap<ModelId, Arc<OfferLadder>>,
+    /// The seat's on-device view (I2-LOCAL): each rung a managed worker this
+    /// server supervises serves over its native channel, as that on-device
+    /// offer alone, in ladder order, under an on-device ceiling no owner's
+    /// fallback passes. `None` when no rung has such an offer.
+    on_device: Option<Arc<OfferLadder>>,
+    /// Each rung of the on-device view on its own, keyed as `rungs` is.
+    on_device_rungs: BTreeMap<ModelId, Arc<OfferLadder>>,
 }
 
 impl Seat {
     /// The rung that serves `model`, alone and with its prompt.
     fn rung(&self, model: &ModelId) -> Option<Arc<OfferLadder>> {
         self.rungs.get(model).cloned()
+    }
+
+    /// The rung that serves `model` for a call routed at `route`, alone and
+    /// with its prompt: on device, only its on-device offer (I2-LOCAL).
+    fn rung_at(&self, model: &ModelId, route: ModelLocality) -> Option<Arc<OfferLadder>> {
+        if route == ModelLocality::OnDevice {
+            self.on_device_rungs.get(model).cloned()
+        } else {
+            self.rung(model)
+        }
+    }
+
+    /// This seat with its on-device view over `rungs`: the on-device offers
+    /// of those of its rungs that have one, in ladder order (I2-LOCAL).
+    fn with_on_device_view(
+        mut self,
+        rungs: Vec<LadderRung>,
+        rests: &Arc<OfferCooldowns>,
+        scope: SeatScope,
+    ) -> Self {
+        if rungs.is_empty() {
+            return self;
+        }
+        let scope = SeatScope {
+            locality_ceiling: Some(ModelLocality::OnDevice),
+            ..scope
+        };
+        for rung in &rungs {
+            self.on_device_rungs
+                .entry(rung.model.clone())
+                .or_insert_with(|| {
+                    Arc::new(OfferLadder::pinned(rung.clone(), Arc::clone(rests)).scoped(scope))
+                });
+        }
+        self.on_device = Some(Arc::new(
+            OfferLadder::seat(self.model.clone(), rungs, Arc::clone(rests)).scoped(scope),
+        ));
+        self
     }
 
     /// Each rung's engine model id and the prompt it prepends, in ladder
@@ -619,5 +664,7 @@ fn seat_for(
         locality,
         ladder: Arc::new(OfferLadder::seat(model, rungs, rests).scoped(scope)),
         rungs: alone,
+        on_device: None,
+        on_device_rungs: BTreeMap::new(),
     })
 }
