@@ -107219,7 +107219,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/seal/fetch.rs",
-     "purpose": "The seal's `net.fetch`: the host's guarded fetch, for a timestamp or a CRL only, each fetch inside the fetch…",
+     "purpose": "The seal's `net.fetch`: the host's guarded fetch, for a timestamp or a CRL/OCSP reply, each fetch inside the…",
      "surface": {
       "crate-vis": 1
      }
@@ -109392,9 +109392,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/native/profile/material.rs",
-     "purpose": "B-LT validation-material gather: CRL DP discovery, key-bound issuer resolution, fetch+validate CRLs",
+     "purpose": "B-LT validation material: working CRLs first, then OCSP for uncovered certificates",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/profile/material/ocsp.rs",
+     "purpose": "OCSP fallback for a certificate not covered by a working CRL",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -109480,7 +109490,7 @@
      "path": "src/native/verify/verify_dss_core.rs",
      "purpose": "DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -109719,7 +109729,7 @@
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)"
     },
     "native": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -109735,7 +109745,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 51,
+   "source_files": 52,
    "test_files": 12
   },
   "oneiron-server": {
