@@ -24,6 +24,14 @@ not because absence proves no work. Attribution still filters its prepared facts
 question's options. Placement still uses its already-prepared tree reading; capture does not
 read a new tree or turn that reading into authority.
 
+The native captured-request adapter keeps the ordinary singleton, packed, and
+person-appended request shapes. It transfers settlements before it checks the provider
+result, arity, or answers. A fully answered request uses the original person join and
+answer-clock handling. A mixed request keeps unstarted question ordinals unpinned; an
+answered target whose person question did not start stays an incomplete logical read,
+not an answer with a made-up person probability. A late answered target keeps only its
+attempted provider pin. This adapter is not yet a captured ladder consumer.
+
 The allowance is a granted start slot, not proof of provider bytes or token use. A
 native admission after that slot may still fail. Memo recovery starts no generation;
 a schema correction uses a new logical generation, while a transport retry reuses the

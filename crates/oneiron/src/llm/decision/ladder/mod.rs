@@ -13,6 +13,7 @@ use crate::{EntityId, Result};
 use serde_json::Value;
 
 mod ask_consent;
+mod capture;
 mod providers;
 mod roles;
 mod routing;
