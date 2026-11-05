@@ -113,8 +113,8 @@ pub use self::pads::PromotedWorldPad;
 pub(crate) use self::pads::reject_held_pad_carrier_in_txn;
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
 pub(crate) use self::pads::{
-    destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, note_world_deleted_in_txn,
-    pad_body_world, pad_world_in_body, reject_held_pad_world_as_in_txn,
+    destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, legal_hold_pad_world_in_txn,
+    note_world_deleted_in_txn, pad_body_world, pad_world_in_body, reject_held_pad_world_as_in_txn,
     reject_held_pad_world_in_txn, world_keys_destroyed_in_txn, world_pad_scope_exists_in_txn,
     world_pad_windows_in_txn,
 };

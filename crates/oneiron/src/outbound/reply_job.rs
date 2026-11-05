@@ -535,7 +535,7 @@ fn erase_connector_reply_result_artifact_in_txn(
         }
         tracing::warn!(
             artifact = %artifact.to_hex(),
-            "connector reply erase: a legal hold keeps the job's result"
+            "connector reply erase: a hold or selected storage-only restriction keeps the job's result"
         );
         return Ok(false);
     }
@@ -552,7 +552,7 @@ fn erase_connector_reply_result_artifact_in_txn(
         if crate::store::legal_hold::held_in_txn(store, txn, asset.as_bytes())? {
             tracing::warn!(
                 artifact = %artifact.to_hex(),
-                "connector reply erase: a legal hold keeps the job's result bytes"
+                "connector reply erase: a hold or selected storage-only restriction keeps the job's result bytes"
             );
             return Ok(false);
         }

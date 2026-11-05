@@ -10,7 +10,10 @@ use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
 pub(crate) mod checkpoint;
+mod redact;
 mod retained;
+pub use redact::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
+pub(crate) use redact::{ClaimValueRedactionRow, redact_claim_value_fields_in_txn};
 pub(super) use retained::{
     retained_rows_in_txn, row_aliases_in_txn, row_revisions_starting_with_in_txn,
 };

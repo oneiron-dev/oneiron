@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1228 facade rows, 4467 generated types.
+// UniFFI census: 1228 facade rows, 4473 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1180.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -30951,7 +30951,7 @@ pub struct CourtesyDeleteAskedWorld {
     pub stale_epoch: Option<u64>,
 }
 
-/// `oneiron::deletion::coop_delivery::CooperativeDeletionDispositionKind`.
+/// `oneiron::deletion::coop_delivery::types::CooperativeDeletionDispositionKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CooperativeDeletionDispositionKind {
     #[serde(rename = "delete")]
@@ -30990,6 +30990,48 @@ pub struct CourtesyDeleteRecordProgress {
     pub state: String,
 }
 
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteRetention`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CourtesyDeleteRetention {
+    #[serde(rename = "records")]
+    pub records: Vec<String>,
+    #[serde(rename = "basis_code")]
+    pub basis_code: String,
+    #[serde(rename = "retention_class")]
+    pub retention_class: String,
+}
+
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteRedactionRevision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CourtesyDeleteRedactionRevision {
+    #[serde(rename = "previous_revision")]
+    pub previous_revision: String,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "body_changed")]
+    pub body_changed: bool,
+    #[serde(rename = "short_hash_changed")]
+    pub short_hash_changed: bool,
+}
+
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteLocalRedaction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CourtesyDeleteLocalRedaction {
+    #[serde(rename = "record")]
+    pub record: String,
+    #[serde(rename = "value_fields")]
+    pub value_fields: Vec<String>,
+    #[serde(rename = "changed_history_rows")]
+    pub changed_history_rows: u64,
+    #[serde(rename = "revisions")]
+    pub revisions: Vec<CourtesyDeleteRedactionRevision>,
+    #[serde(rename = "applied_by")]
+    pub applied_by: String,
+    #[serde(rename = "applied")]
+    pub applied: String,
+}
+
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteChoice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CourtesyDeleteChoice {
@@ -31013,6 +31055,36 @@ pub struct CourtesyDeleteChoice {
     pub excluded: Vec<String>,
     #[serde(rename = "progress")]
     pub progress: Vec<CourtesyDeleteRecordProgress>,
+    #[serde(rename = "retention", default, skip_serializing_if = "Option::is_none")]
+    pub retention: Option<CourtesyDeleteRetention>,
+    #[serde(rename = "restricted")]
+    pub restricted: Vec<String>,
+    #[serde(rename = "local_redactions")]
+    pub local_redactions: Vec<CourtesyDeleteLocalRedaction>,
+}
+
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteRestriction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CourtesyDeleteRestriction {
+    #[serde(rename = "record")]
+    pub record: String,
+    #[serde(rename = "since")]
+    pub since: String,
+    #[serde(rename = "reason_code")]
+    pub reason_code: String,
+    #[serde(rename = "review")]
+    pub review: String,
+}
+
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteRestrictionLift`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CourtesyDeleteRestrictionLift {
+    #[serde(rename = "records")]
+    pub records: Vec<String>,
+    #[serde(rename = "attested_by")]
+    pub attested_by: String,
+    #[serde(rename = "attested")]
+    pub attested: String,
 }
 
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteIncoming`.
@@ -31050,6 +31122,22 @@ pub struct CourtesyDeleteIncoming {
     pub reply_status: Option<String>,
     #[serde(rename = "holds")]
     pub holds: Vec<CourtesyDeleteHold>,
+    #[serde(rename = "restrictions")]
+    pub restrictions: Vec<CourtesyDeleteRestriction>,
+    #[serde(rename = "restriction_lifts")]
+    pub restriction_lifts: Vec<CourtesyDeleteRestrictionLift>,
+    #[serde(rename = "local_redactions")]
+    pub local_redactions: Vec<CourtesyDeleteLocalRedaction>,
+}
+
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteClaimValueRedaction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CourtesyDeleteClaimValueRedaction {
+    #[serde(rename = "record")]
+    pub record: String,
+    #[serde(rename = "value_fields")]
+    pub value_fields: Vec<String>,
 }
 
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteAnswerRequest`.
@@ -31074,6 +31162,18 @@ pub struct CourtesyDeleteAnswerRequest {
     pub delete: Option<Vec<String>>,
     #[serde(rename = "hold", default, skip_serializing_if = "Option::is_none")]
     pub hold: Option<Vec<String>>,
+    #[serde(rename = "retention", default, skip_serializing_if = "Option::is_none")]
+    pub retention: Option<CourtesyDeleteRetention>,
+    #[serde(rename = "restrict", default, skip_serializing_if = "Option::is_none")]
+    pub restrict: Option<Vec<String>>,
+    #[serde(
+        rename = "restriction_notice_given",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub restriction_notice_given: Option<Vec<String>>,
+    #[serde(rename = "redact", default, skip_serializing_if = "Option::is_none")]
+    pub redact: Option<Vec<CourtesyDeleteClaimValueRedaction>>,
     #[serde(rename = "reply_to", default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
 }

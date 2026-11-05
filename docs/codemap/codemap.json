@@ -14565,7 +14565,7 @@
      "path": "src/claim/put.rs",
      "purpose": "`Vault` claim write doors: the public `put_claim` family, the crate-private reserved-namespace door, the…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -24681,28 +24681,24 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "CooperativeDeletionAnswer",
       "CooperativeDeletionDelivery",
       "CooperativeDeletionDeliveryStatus",
-      "CooperativeDeletionDisposition",
-      "CooperativeDeletionDispositionKind",
       "CooperativeDeletionIngress",
       "CooperativeDeletionNotice",
-      "CooperativeDeletionTry",
-      "IncomingCooperativeDeletion"
+      "CooperativeDeletionTry"
      ],
      "path": "src/deletion/coop_delivery.rs",
      "purpose": "Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle)",
      "surface": {
       "const": 4,
       "crate-vis": 2,
-      "enum": 4,
-      "fn": 12,
+      "enum": 3,
+      "fn": 11,
       "re-export": 1,
-      "struct": 5
+      "struct": 2
      }
     },
     {
@@ -24712,7 +24708,18 @@
      "path": "src/deletion/coop_delivery/answer.rs",
      "purpose": "The owner's answer to a filed courtesy ask (OF-273, BIZ-LEGAL-0004 B2)",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/coop_delivery/redact.rs",
+     "purpose": "The selected local A9 slice of a courtesy Redact answer",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -24728,18 +24735,36 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/deletion/coop_delivery/restrict.rs",
+     "purpose": "User-selected Art18 restriction and truthful prior-external-notice attestation",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
+      "CooperativeClaimValueRedaction",
       "CooperativeDeleteOperation",
       "CooperativeDeleteRecord",
-      "CooperativeDeleteRecordState"
+      "CooperativeDeleteRecordState",
+      "CooperativeDeletionAnswer",
+      "CooperativeDeletionDisposition",
+      "CooperativeDeletionDispositionKind",
+      "CooperativeDeletionRetention",
+      "CooperativeLocalRedaction",
+      "CooperativeRestrictionLiftAttestation",
+      "IncomingCooperativeDeletion"
      ],
      "path": "src/deletion/coop_delivery/types.rs",
      "purpose": "What a courtesy delete answer keeps beside its choice: the customer holds it placed (FIX 2924), the records…",
      "surface": {
       "crate-vis": 5,
-      "enum": 1,
-      "fn": 2,
-      "struct": 2
+      "enum": 2,
+      "fn": 3,
+      "struct": 9
      }
     },
     {
@@ -25143,7 +25168,7 @@
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
       "crate-vis": 41,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -72688,13 +72713,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 35
      }
     },
     {
@@ -72723,6 +72748,16 @@
      "notable": [],
      "path": "src/store/legal_hold/settlement.rs",
      "purpose": "A door's own refusals, logged in the writer the door already holds (OF-470, FIX 2433, FIX 2435)",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/legal_hold/use_limit.rs",
+     "purpose": "Shared storage-only admission, with legal holds and a recipient's cooperative review restriction kept as…",
      "surface": {
       "crate-vis": 11
      }
@@ -82913,8 +82948,8 @@
      "path": "src/vault/entity_revision/mod.rs",
      "purpose": "Per-entity Loro history, exact reads, and idle-only index publication",
      "surface": {
-      "crate-vis": 11,
-      "re-export": 1
+      "crate-vis": 12,
+      "re-export": 2
      }
     },
     {
@@ -82974,8 +83009,9 @@
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 29,
-      "fn": 2
+      "crate-vis": 30,
+      "fn": 2,
+      "re-export": 1
      }
     },
     {
@@ -82996,6 +83032,20 @@
      "purpose": "A revision document's actors (FIX 6072, part 3 of 3): each raw entity row a revision recorded, its NOTE…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimValueRedactionBinding",
+      "LocalClaimValueRedaction"
+     ],
+     "path": "src/vault/entity_revision/storage/redact.rs",
+     "purpose": "Exact-field transforms for CLAIM revision artifacts (BIZ-LEGAL-0004 A9)",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 2
      }
     },
     {
@@ -84348,9 +84398,15 @@
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
+      "CourtesyDeleteClaimValueRedaction",
       "CourtesyDeleteHold",
       "CourtesyDeleteIncoming",
+      "CourtesyDeleteLocalRedaction",
       "CourtesyDeleteRecordProgress",
+      "CourtesyDeleteRedactionRevision",
+      "CourtesyDeleteRestriction",
+      "CourtesyDeleteRestrictionLift",
+      "CourtesyDeleteRetention",
       "CourtesyDeleteSendRequest",
       "CourtesyDeleteSent"
      ],
@@ -84358,7 +84414,7 @@
      "purpose": "The inputs and answers of the owner's courtesy delete rows (OF-273, ARCH-0043 #relationship-lifecycle)…",
      "surface": {
       "fn": 7,
-      "struct": 8
+      "struct": 14
      }
     },
     {
@@ -89155,7 +89211,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world erase that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 2,
       "re-export": 2,
       "struct": 1
@@ -90784,7 +90840,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 59,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91652,7 +91708,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 486,
+     "files": 487,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91792,7 +91848,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91890,9 +91946,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 144,
+   "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6411,
+   "source_files": 6415,
    "test_files": 895
   },
   "oneiron-android": {
@@ -131950,9 +132006,15 @@
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
+      "CourtesyDeleteClaimValueRedaction",
       "CourtesyDeleteHold",
       "CourtesyDeleteIncoming",
+      "CourtesyDeleteLocalRedaction",
       "CourtesyDeleteRecordProgress",
+      "CourtesyDeleteRedactionRevision",
+      "CourtesyDeleteRestriction",
+      "CourtesyDeleteRestrictionLift",
+      "CourtesyDeleteRetention",
       "CourtesyDeleteSendRequest",
       "CourtesyDeleteSent",
       "CoverageGap",
@@ -135365,7 +135427,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1107,
-      "struct": 3360
+      "struct": 3366
      }
     },
     {
