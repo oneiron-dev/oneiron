@@ -526,7 +526,7 @@ impl Vault {
 
         let revisions = super::supersession_diff::capture_in_txn(self, &*wtxn, *old_id, *new_id)?;
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
-        old_body.valid_to = Some(now);
+        old_body.valid_to = Some(closed_end);
         let old_body = super::transition::close_machine_claim_in_txn(
             self,
             wtxn,

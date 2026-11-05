@@ -11,13 +11,16 @@ its native admission, the original's closure, the `Supersedes` edge and the diff
 commit together. A failure commits neither side. The successor retains the scope
 stamps the same candidate would have resolved at the original id; those stamps
 are data and grant no authority. All native source-trust, consent, criticality,
-read and write rules still apply. The close uses the supplied `learned_at` time
-and the existing lifecycle envelope clamp.
+read and write rules still apply. The supersession event keeps the supplied
+`learned_at` time. The native lifecycle clamp keeps both the old body's
+`valid_to` and its envelope end at or after its occurred and validity starts.
 
 Hook bindings and connector subscriptions share `agent.connector_subscription`.
-They and `affect.vad` annotations retain their stable ids because their readers
-and cursors use those ids. Identical semantic retries and lifecycle-only updates
-also retain their ids. Value comparison uses MessagePack bytes and confidence
+They and `affect.vad` annotations retain their stable ids when the existing
+target has the same stable predicate, because their readers and cursors use
+those ids. Changing an evidence claim to one of those predicates does not
+exempt it from retained supersession. Identical semantic retries and
+lifecycle-only updates also retain their ids. Value comparison uses MessagePack bytes and confidence
 uses its exact float bits; approval and envelope provenance are not value edits.
 
 ## Scope of this change
