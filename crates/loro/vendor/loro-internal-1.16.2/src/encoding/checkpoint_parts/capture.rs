@@ -166,12 +166,13 @@ fn sort_maps(maps: &mut [StoreMap]) {
 
 impl LoroDoc {
     /// Splits a checkpoint copy into a payload-free skeleton and one atom per
-    /// value or commit message.
+    /// value, commit message or withheld key.
     ///
     /// Only a quiescent document (attached, committed, nothing pending) whose
     /// containers are all root maps named in `fixed_roots` is classified, and
-    /// only when `classify` proves every key plain and gives every value and
-    /// message its holders. Anything else is [`Capture::Unclassified`].
+    /// only when `classify` proves every key plain or gives it holders, and
+    /// gives every value and message its holders. Anything else is
+    /// [`Capture::Unclassified`].
     pub fn export_root_map_checkpoint<C: Classify + ?Sized>(
         &self,
         fixed_roots: &[&str],
@@ -190,6 +191,8 @@ struct Builder<'f> {
     roots: Vec<String>,
     root_index: FxHashMap<String, u32>,
     plain: FxHashSet<(u32, String)>,
+    /// Each withheld key's placeholder, by root and key.
+    withheld: FxHashMap<(u32, String), String>,
     slots: Vec<Slot>,
     atoms: Vec<Atom>,
     /// Retained map ops by (peer, lamport): root, key and value atom.
@@ -203,6 +206,7 @@ impl<'f> Builder<'f> {
             roots: Vec::new(),
             root_index: FxHashMap::default(),
             plain: FxHashSet::default(),
+            withheld: FxHashMap::default(),
             slots: Vec::new(),
             atoms: Vec::new(),
             ops: FxHashMap::default(),
@@ -275,12 +279,33 @@ impl<'f> Builder<'f> {
             return Err(Unsupported::Shape);
         }
 
+        // Every key was read as it is; a withheld one is spelled as its
+        // placeholder only now, in every op and winner that names it.
         let Builder {
             roots,
+            withheld,
             slots,
             atoms,
             ..
         } = self;
+        let spell = |root: u32, key: &mut String| {
+            if let Some(placeholder) = withheld.get(&(root, key.clone())) {
+                key.clone_from(placeholder);
+            }
+        };
+        for change in &mut skeleton_changes {
+            for op in &mut change.ops {
+                spell(op.root, &mut op.key);
+            }
+        }
+        let mut shallow = shallow;
+        for winner in shallow.iter_mut().flat_map(|root| root.winners.iter_mut()) {
+            spell(winner.root, &mut winner.key);
+        }
+        let mut latest: Vec<Winner> = latest_winners.into_values().collect();
+        for winner in &mut latest {
+            spell(winner.root, &mut winner.key);
+        }
         Ok(Parts {
             skeleton: Skeleton {
                 roots,
@@ -288,7 +313,7 @@ impl<'f> Builder<'f> {
                 vv,
                 frontiers,
                 latest_maps,
-                latest: latest_winners.into_values().collect(),
+                latest,
                 changes: skeleton_changes,
                 slots,
             },
@@ -416,22 +441,36 @@ impl<'f> Builder<'f> {
         Ok(index)
     }
 
+    /// Proves `key` plain, or withholds it under the holders `c` gives it:
+    /// its atom is made once, at its first sight.
     fn key<C: Classify + ?Sized>(
         &mut self,
         c: &mut C,
         root: u32,
         key: &str,
     ) -> Result<(), Unsupported> {
+        // A key spelled as a placeholder would read back as another one.
+        if key.starts_with(KEY_PLACEHOLDER_PREFIX) {
+            return Err(Unsupported::Key);
+        }
         let entry = (root, key.to_string());
-        if self.plain.contains(&entry) {
+        if self.plain.contains(&entry) || self.withheld.contains_key(&entry) {
             return Ok(());
         }
 
-        if !c.plain_key(&self.roots[root as usize], key) {
-            return Err(Unsupported::Key);
+        if c.plain_key(&self.roots[root as usize], key) {
+            self.plain.insert(entry);
+            return Ok(());
         }
 
-        self.plain.insert(entry);
+        let holders = c
+            .key_holders(&self.roots[root as usize], key)
+            .ok_or(Unsupported::Key)?;
+        if holders.is_empty() {
+            return Err(Unsupported::Key);
+        }
+        let atom = self.push(Some(holders), SlotKind::Key, Payload::Key(key.to_string()))?;
+        self.withheld.insert(entry, key_placeholder(atom));
         Ok(())
     }
 
