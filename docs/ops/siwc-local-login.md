@@ -57,11 +57,60 @@ command reports whether the **returned** scopes include
 `chatgpt.tokens.use.direct`. It may save a valid identity grant without that scope.
 A file path, account label, client ID or host ID alone proves no such permission.
 
-This command does not yet connect the saved record to a served Responses backend,
-refresh credentials or revoke a registration. Those remain separate engineering
-work. Do not configure the saved token as an environment key or vault secret to
-work around that gap. Existing seat placement and plan-budget rules still apply
-when an inference consumer is connected.
+## Serve a configured Responses model
+
+The saved record can supply a normal `[models]` provider. Select the record, not
+its token. For example, replace `YOUR_MODEL` with a model your plan serves:
+
+```toml
+[models.providers.chatgpt]
+kind = "openai-compat"
+base_url = "https://api.openai.com/v1"
+
+[models.providers.chatgpt.siwc]
+credential_file = "/your/private/config/chatgpt-account.json"
+
+[models.roles.generative_reasoner]
+model = "chatgpt:YOUR_MODEL"
+```
+
+An absolute path makes the selection independent of the process's working
+directory. A relative path is resolved once against the runtime's working
+directory when the provider is built. The record must already exist. The backend
+binds the saved issuer, subject, issued client and host at construction. Each
+physical send reopens the protected record and checks that same registration,
+the returned direct-plan scope, access-token expiry and the selected token. A
+changed registration needs a model-runtime rebuild; a same-registration sign-in
+can supply later calls. Removing the file prevents later sends. Requests already
+sent are not revoked by removing the file.
+
+The actual startup vault supplies the hosting posture. Existing P4 rules apply:
+a hosted runtime requires actual OpenAI hosted-plan approval, represented by
+`openai_hosted_plan_approved = true` in the `siwc` table. It is absent/false until
+that approval exists. A local file does not prove self-hosted placement or vendor
+approval. Embedded callers of `ModelRuntime::build` and `build_with_keys` must
+supply their actual `HostingPrivacyPosture` explicitly.
+
+Calls use the existing model ladders, run admission and budget settlement. This
+new selection defaults to `customer_seat` funding and T1 credential custody, not
+local/keyless or broker-isolated T0 custody. An explicit provider payer setting
+still applies. The offer's `siwc-file:` binding is only a locator; it is not an
+account or authority proof. Tokens never enter provider config, public request
+headers, a vault, or the control plane.
+
+Both buffered and streaming calls send the full native Responses turn over HTTPS
+with `stream=true` and `store=false`. There is no WebSocket create frame, chained
+previous-response ID or chat fallback with the subscription token. The native
+codec retains tool calls/results, images, JSON controls, usage and supported
+reasoning replay. Audio this codec cannot represent is refused without sending;
+existing non-SIWC chat/audio providers are unchanged. Reranking, embedding and
+media ports do not consume this new credential selection.
+
+This command and backend do not yet refresh credentials or revoke a registration.
+Sign in again when the access token expires. Do not configure the saved token as
+an environment key or vault secret to work around that gap. The configured
+Responses model path is connected; full official-seat Dreamer execution remains
+separate engineering work.
 
 The vendor contract is documented at
 <https://developers.openai.com/siwc/token-sharing-open-source/sign-in>.
