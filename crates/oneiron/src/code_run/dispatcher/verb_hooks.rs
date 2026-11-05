@@ -132,7 +132,12 @@ impl HostSelfDispatcher<'_> {
             ExecutorStorage::Canonical(vault) => vault,
             ExecutorStorage::Session(_) => return self.enter_room_verb_hooks(call, site, read_as),
         };
-        if matches!(call, SelfCall::AgentVerb(_)) {
+        if matches!(call, SelfCall::AgentVerb(_))
+            || self
+                .pre_hooked_fold
+                .as_ref()
+                .is_some_and(|pre| pre.covers(self.actor, &call))
+        {
             return Ok(Ok((call, HookedCall(None, None))));
         }
         let effect = call.effect();
@@ -918,6 +923,8 @@ enum FoldArgs {
         from: u64,
         through: u64,
         note: Option<String>,
+        #[serde(default)]
+        kind: Option<crate::compaction::FoldKind>,
     },
     Compact {
         note: Option<String>,
@@ -1215,10 +1222,12 @@ fn fold_rewrite(fold: &SelfFoldCall, args: &Value) -> Rewritten<SelfFoldCall> {
             from,
             through,
             note,
+            kind,
         } => SelfFoldCall::Mark {
             from,
             through,
             note,
+            kind,
         },
         FoldArgs::Compact { note } => SelfFoldCall::Compact { note },
         FoldArgs::Unfold { fold } => SelfFoldCall::Unfold { fold },

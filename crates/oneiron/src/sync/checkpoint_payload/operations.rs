@@ -111,6 +111,11 @@ fn read<'a>(row: &CapturedSyncRow<'a>) -> Option<Option<(String, Place, &'a [u8]
     }
 }
 
+/// The window `row` names, when it is a window's Loro row that reads.
+pub(super) fn window_of(row: &CapturedSyncRow<'_>) -> Option<String> {
+    read(row).flatten().map(|(window, _, _)| window)
+}
+
 pub(super) fn project(
     rows: &[CapturedSyncRow<'_>],
     owners: &dyn SyncPayloadOwners,
@@ -560,11 +565,16 @@ impl Prepared {
                 let copy = SyncAtom {
                     at: at.clone(),
                     value: plan.value.clone(),
-                    dependencies,
+                    dependencies: dependencies.clone(),
                     actors,
                 };
                 let ordinal = emit(target, copy)?;
-                copies.push(SlotCopy { at, atom: ordinal });
+                copies.push(SlotCopy {
+                    at,
+                    atom: ordinal,
+                    home: target,
+                    dependencies,
+                });
             }
             let holes = plan
                 .split
