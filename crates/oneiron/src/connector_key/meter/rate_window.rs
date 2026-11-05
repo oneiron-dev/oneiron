@@ -148,7 +148,7 @@ pub(crate) const fn row_paces(
 /// live usage expires, oldest first (a rolling window), or when its next
 /// bucket starts (a calendar one). `None` when no window ever holds the
 /// amount alone.
-fn next_eligible(state: &BudgetRowState<'_>, now: u64) -> Option<u64> {
+pub(super) fn next_eligible(state: &BudgetRowState<'_>, now: u64) -> Option<u64> {
     let limit = state.budget.limit;
     if state.amount > limit {
         return None;

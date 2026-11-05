@@ -306,27 +306,38 @@ pub(super) fn release_non_delivery_reservation_in_txn(
     Ok(())
 }
 
-/// Restores a released reservation in the retry claim's writer. A dedupe
-/// takeover has abandoned the row and must not restore its debits.
+/// Restores a released reservation in the retry claim's writer after all
+/// still-live debits fit. A blocked claim retains its Released status; a
+/// dedupe takeover has abandoned the row and never restores its debits.
 pub(super) fn restore_retry_reservation_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: &IntentLedgerRecord,
-) -> IntentLedgerResult<()> {
+) -> IntentLedgerResult<crate::connector_key::BudgetBlock> {
+    use crate::connector_key::BudgetBlock;
+
     if record.state != IntentState::Pending {
-        return Ok(());
+        return Ok(BudgetBlock::Open);
     }
     let mut settlement = intent_settlement_in_txn(vault, wtxn, &record.id)?;
     let Some(reservation) = settlement.reservation.as_mut() else {
-        return Ok(());
+        return Ok(BudgetBlock::Open);
     };
     if reservation.status != ReservationStatus::Released {
-        return Ok(());
+        return Ok(BudgetBlock::Open);
     }
-    crate::connector_key::restore_effector_debits_in_txn(&vault.store, wtxn, &reservation.debits)?;
-    reservation.status = ReservationStatus::Reserved;
-    SETTLEMENT.put(&vault.store, wtxn, &record.id, &settlement)?;
-    Ok(())
+    let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    let block = crate::connector_key::restore_effector_debits_in_txn(
+        &vault.store,
+        wtxn,
+        &reservation.debits,
+        now,
+    )?;
+    if block == BudgetBlock::Open {
+        reservation.status = ReservationStatus::Reserved;
+        SETTLEMENT.put(&vault.store, wtxn, &record.id, &settlement)?;
+    }
+    Ok(block)
 }
 
 /// Settles `record`'s live reserved budget by its terminal state in the
