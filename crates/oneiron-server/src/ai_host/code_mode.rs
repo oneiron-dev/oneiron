@@ -549,6 +549,7 @@ impl CodeModeBackend {
                 )
             });
             let record_request = self.caller.as_ref().map(|_| call.request.clone());
+            let owner_attempt = self.lease.as_ref().and_then(LiveLeaseState::owner_attempt);
             let run = match self.lease.as_ref().and_then(LiveLeaseState::scope) {
                 Some(scope) => self.models.funded_run_on_scope(
                     CODE_MODE_RUN,
@@ -556,6 +557,7 @@ impl CodeModeBackend {
                     self.payer.clone(),
                     Arc::clone(&self.vault),
                     scope.clone(),
+                    owner_attempt,
                 ),
                 None => {
                     self.models
@@ -593,7 +595,7 @@ impl CodeModeBackend {
                     .await
             };
             if let Some(scope) = self.lease.as_ref().and_then(LiveLeaseState::scope) {
-                crate::models::record_scoped_model_return(&self.vault, scope, &run);
+                crate::models::record_scoped_model_return(&self.vault, scope, &run, owner_attempt);
             }
             if answered.is_ok() {
                 handoff.answered();

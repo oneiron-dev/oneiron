@@ -16,7 +16,7 @@
 use std::sync::{Arc, Mutex};
 
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
-use oneiron::{BudgetGuard, Vault};
+use oneiron::{AttemptId, BudgetGuard, Vault};
 
 /// One try's meter, bounded by its spend scope's live room.
 pub(crate) struct LiveLease<'a> {
@@ -24,6 +24,7 @@ pub(crate) struct LiveLease<'a> {
     /// The scope the try spends under; `None` when it spends unmetered,
     /// and then nothing is booked or bounded here.
     scope: Option<SpendScopeId>,
+    owner_attempt: Option<AttemptId>,
     meter: BudgetGuard,
     /// The try's own budget (a step's, shared by its tries): the meter's
     /// limit never rises past it.
@@ -40,6 +41,7 @@ pub(crate) struct LiveLease<'a> {
 #[derive(Clone)]
 pub struct LiveLeaseState {
     scope: Option<SpendScopeId>,
+    owner_attempt: Option<AttemptId>,
     meter: BudgetGuard,
     budget_units: u64,
     booked: Arc<Mutex<u64>>,
@@ -50,6 +52,11 @@ impl LiveLeaseState {
     pub(crate) fn scope(&self) -> Option<&SpendScopeId> {
         self.scope.as_ref()
     }
+
+    /// The executed caller's native identity, not a scope or usage total.
+    pub(crate) fn owner_attempt(&self) -> Option<AttemptId> {
+        self.owner_attempt
+    }
 }
 
 /// A lease without its vault, lent to the calls of one entry that run
@@ -59,6 +66,7 @@ impl LiveLeaseState {
 #[derive(Clone)]
 pub(crate) struct LeaseLine {
     scope: SpendScopeId,
+    owner_attempt: Option<AttemptId>,
     meter: BudgetGuard,
     budget_units: u64,
     booked: Arc<Mutex<u64>>,
@@ -71,9 +79,15 @@ impl LeaseLine {
         Self {
             budget_units: meter.read().limit_units,
             scope,
+            owner_attempt: None,
             meter,
             booked: Arc::default(),
         }
+    }
+
+    /// Binds the actual entry's identity before its lease is lent.
+    pub(crate) fn set_owner_attempt(&mut self, attempt: AttemptId) {
+        self.owner_attempt = Some(attempt);
     }
 
     /// The lease, on `vault`.
@@ -81,6 +95,7 @@ impl LeaseLine {
         LiveLease {
             vault,
             scope: Some(self.scope.clone()),
+            owner_attempt: self.owner_attempt,
             meter: self.meter.clone(),
             budget_units: self.budget_units,
             booked: Arc::clone(&self.booked),
@@ -100,16 +115,24 @@ impl<'a> LiveLease<'a> {
         Self {
             vault,
             scope,
+            owner_attempt: None,
             meter,
             budget_units,
             booked: Arc::new(Mutex::new(booked)),
         }
     }
 
+    /// The actual child running on this lease, never its parent attempt.
+    pub(crate) fn with_owner_attempt(mut self, attempt: AttemptId) -> Self {
+        self.owner_attempt = Some(attempt);
+        self
+    }
+
     /// What a scoped provider threads into its backend (FIX 11749).
     pub(crate) fn state(&self) -> LiveLeaseState {
         LiveLeaseState {
             scope: self.scope.clone(),
+            owner_attempt: self.owner_attempt,
             meter: self.meter.clone(),
             budget_units: self.budget_units,
             booked: Arc::clone(&self.booked),
@@ -121,6 +144,7 @@ impl<'a> LiveLease<'a> {
         Self {
             vault,
             scope: state.scope,
+            owner_attempt: state.owner_attempt,
             meter: state.meter,
             budget_units: state.budget_units,
             booked: state.booked,

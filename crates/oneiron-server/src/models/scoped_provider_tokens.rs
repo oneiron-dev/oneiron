@@ -6,13 +6,14 @@ use oneiron::agent_dispatch::{
     AgentDispatcher, ProviderLeaseTokenObservation, ProviderRunTokenObservation, SpendScopeId,
 };
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission, RunReceipt, RunReceiptSink};
-use oneiron::{BudgetGuard, Vault};
+use oneiron::{AttemptId, BudgetGuard, Vault};
 
 use super::ModelRuntime;
 
 struct ScopedProviderTokens {
     vault: Arc<Vault>,
     scope: SpendScopeId,
+    owner_attempt: Option<AttemptId>,
     guard: BudgetGuard,
     inner: Arc<dyn RunReceiptSink>,
 }
@@ -36,7 +37,7 @@ impl ScopedProviderTokens {
 
 impl RunReceiptSink for ScopedProviderTokens {
     fn record(&self, receipt: RunReceipt) {
-        let lease = ProviderLeaseTokenObservation::from_receipt(&receipt);
+        let lease = ProviderLeaseTokenObservation::from_receipt(&receipt, self.owner_attempt);
         self.inner.record(receipt);
         if let Some(lease) = lease {
             self.capture(&lease);
@@ -59,34 +60,43 @@ impl ModelRuntime {
         payer: Option<PayerPerson>,
         vault: Arc<Vault>,
         scope: SpendScopeId,
+        owner_attempt: Option<AttemptId>,
     ) -> RunAdmission {
         let receipts = Arc::new(ScopedProviderTokens {
             vault,
             scope,
+            owner_attempt,
             guard: meter.clone(),
             inner: Arc::clone(&self.receipts),
         });
         let run = super::raw::funded_run(run, meter, self.host.clone(), receipts.clone(), payer);
-        record_model_stage(&receipts.vault, &receipts.scope, &run, false);
+        record_model_stage(&receipts.vault, &receipts.scope, &run, owner_attempt, false);
         run
     }
 }
 
 /// The scoped code-mode ladder future returned. This is not a run seal or
 /// a promise that no clone can admit more work or that all requests reported.
-pub(crate) fn record_scoped_model_return(vault: &Vault, scope: &SpendScopeId, run: &RunAdmission) {
-    record_model_stage(vault, scope, run, true);
+pub(crate) fn record_scoped_model_return(
+    vault: &Vault,
+    scope: &SpendScopeId,
+    run: &RunAdmission,
+    owner_attempt: Option<AttemptId>,
+) {
+    record_model_stage(vault, scope, run, owner_attempt, true);
 }
 
 fn record_model_stage(
     vault: &Vault,
     scope: &SpendScopeId,
     run: &RunAdmission,
+    owner_attempt: Option<AttemptId>,
     model_future_returned: bool,
 ) {
     let snapshot = run.provider_token_snapshot();
     let observation = ProviderRunTokenObservation {
         instance: run.instance(),
+        owner_attempt,
         entry_recorded: !model_future_returned,
         model_future_returned,
     };

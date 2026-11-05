@@ -8,7 +8,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::run_admission::{RunEvent, RunReceipt};
 use crate::llm::{ObservedInferenceSlot, ProviderTokenMeasurement, ProviderTokenSnapshot};
 use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Result};
+use crate::{AttemptId, EntityId, Result};
 
 const OBSERVATION: SideTable<String, ProviderTokenCapture, Named> =
     SideTable::new(&side_table::AGENT_DISPATCH_SPEND_PROVIDER_OBSERVATION);
@@ -28,16 +28,20 @@ pub struct ProviderTokenCapture {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderRunTokenObservation {
     pub instance: EntityId,
+    /// The executed caller's identity, supplied by its native lease.
+    pub owner_attempt: Option<AttemptId>,
     pub entry_recorded: bool,
     pub model_future_returned: bool,
 }
 
 /// Content-free observations of one actual native permit. The instance and
 /// lease together identify it, even when another run reuses the lease string.
-/// Neither identifier assigns a shared scope's calls to one research attempt.
+/// The optional owner names only this permit's executed caller, not the
+/// scope's aggregate observations or every request it may have made.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderLeaseTokenObservation {
     pub instance: EntityId,
+    pub owner_attempt: Option<AttemptId>,
     pub lease: String,
     /// Whether its Admitted receipt was recorded here, not a full inventory.
     pub admitted_receipt: bool,
@@ -72,9 +76,10 @@ impl ProviderLeaseTokenObservation {
     /// Selects only actual native permit receipts and typed token reports.
     /// No prompt, credential, price or normalized token count is copied.
     #[must_use]
-    pub fn from_receipt(receipt: &RunReceipt) -> Option<Self> {
+    pub fn from_receipt(receipt: &RunReceipt, owner_attempt: Option<AttemptId>) -> Option<Self> {
         let mut observation = Self {
             instance: receipt.instance,
+            owner_attempt,
             lease: String::new(),
             admitted_receipt: false,
             dispatched_receipt: false,
@@ -189,6 +194,9 @@ impl AgentDispatcher<'_> {
             if let Some(previous) = capture.leases.iter_mut().find(|previous| {
                 previous.instance == lease.instance && previous.lease == lease.lease
             }) {
+                if previous.owner_attempt.is_none() {
+                    previous.owner_attempt = lease.owner_attempt;
+                }
                 previous.admitted_receipt |= lease.admitted_receipt;
                 previous.dispatched_receipt |= lease.dispatched_receipt;
                 if previous.answered.is_none() {
@@ -207,6 +215,9 @@ impl AgentDispatcher<'_> {
                 .iter_mut()
                 .find(|previous| previous.instance == run.instance)
             {
+                if previous.owner_attempt.is_none() {
+                    previous.owner_attempt = run.owner_attempt;
+                }
                 previous.entry_recorded |= run.entry_recorded;
                 previous.model_future_returned |= run.model_future_returned;
             } else {

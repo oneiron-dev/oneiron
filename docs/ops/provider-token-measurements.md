@@ -249,3 +249,25 @@ unsupported suppliers can have no slots; an empty list stays unknown coverage.
 Even all-final observed slots do not seal a run, close a guard or spend scope,
 join children or assign measured tokens to an RSI reservation. Existing failure
 reports, admission, answers, errors and financial settlement stay unchanged.
+
+## Executed caller attempt identity
+
+Scoped model entry, future-return and permit observations carry an optional
+`owner_attempt`. The resident pump supplies its executed `status.attempt.id`
+before it lends the entry's lease. A reader child supplies its own `job.attempt`,
+never the parent's id. The lease state copies that typed identity into the same
+model run's sink and both source-stage records. No scope string, run label,
+receipt instance, capture identifier or token count supplies an attempt id.
+
+`vault.research.budget` exposes the recorded owner in hex beside each native
+run or permit observation. An absent owner stays unknown. Unscoped calls keep
+their original path, and other native sources still need their actual supplier
+threaded before their records can name an owner.
+
+The outer read still groups recorded research attempts by their spend scope.
+Several attempts can share one scope. The new field names only the caller of
+that individual recorded run or permit; it does not assign the guard snapshot's
+aggregate counts or failed-call report list to that attempt. It does not cover
+unrecorded sources, join child usage, prove finality or produce an RSI total.
+The controller check, receipt forwarding, charges and reservation settlement
+remain unchanged.

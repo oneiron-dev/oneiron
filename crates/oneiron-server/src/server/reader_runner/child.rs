@@ -159,6 +159,7 @@ impl Child {
         let live = recorded.map(|scope| {
             let limit = guard.read().limit_units;
             crate::ai_host::live_lease::LiveLease::new(vault, Some(scope), guard.clone(), limit, 0)
+                .with_owner_attempt(job.attempt)
         });
         let scoped_backend = live.as_ref().and_then(|live| {
             self.provider.reader_backend_with_lease(

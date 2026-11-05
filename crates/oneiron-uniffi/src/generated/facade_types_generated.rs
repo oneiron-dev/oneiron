@@ -30298,6 +30298,12 @@ pub struct ResearchProviderLeaseTokenSettlementWire {
 pub struct ResearchProviderLeaseTokenObservationWire {
     #[serde(rename = "instance")]
     pub instance: String,
+    #[serde(
+        rename = "owner_attempt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub owner_attempt: Option<String>,
     #[serde(rename = "lease")]
     pub lease: String,
     #[serde(rename = "admitted_receipt")]
@@ -30319,6 +30325,12 @@ pub struct ResearchProviderLeaseTokenObservationWire {
 pub struct ResearchProviderRunTokenObservationWire {
     #[serde(rename = "instance")]
     pub instance: String,
+    #[serde(
+        rename = "owner_attempt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub owner_attempt: Option<String>,
     #[serde(rename = "entry_recorded")]
     pub entry_recorded: bool,
     #[serde(rename = "model_future_returned")]

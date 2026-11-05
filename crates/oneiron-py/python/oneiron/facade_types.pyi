@@ -9757,6 +9757,7 @@ class ResearchProviderLeaseTokenSettlementWire(TypedDict):
     observed_slots: list[ResearchObservedInferenceSlotWire]
 class ResearchProviderLeaseTokenObservationWire(TypedDict):
     instance: str
+    owner_attempt: NotRequired[str | None]
     lease: str
     admitted_receipt: bool
     dispatched_receipt: bool
@@ -9764,6 +9765,7 @@ class ResearchProviderLeaseTokenObservationWire(TypedDict):
     settlement: NotRequired[ResearchProviderLeaseTokenSettlementWire | None]
 class ResearchProviderRunTokenObservationWire(TypedDict):
     instance: str
+    owner_attempt: NotRequired[str | None]
     entry_recorded: bool
     model_future_returned: bool
 class ResearchProviderTokenSnapshotWire(TypedDict):

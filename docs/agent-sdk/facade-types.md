@@ -3836,9 +3836,9 @@ export type ResearchObservedInferenceSlotWire = { slot: number; observation?: Re
 /** `oneiron::verbs::research::provider_tokens::ResearchProviderLeaseTokenSettlementWire` */
 export type ResearchProviderLeaseTokenSettlementWire = { dispatched: boolean; answer?: ResearchProviderTokenMeasurementWire | null; reports: ResearchProviderTokenMeasurementWire[]; observed_slots: ResearchObservedInferenceSlotWire[] }
 /** `oneiron::verbs::research::provider_tokens::ResearchProviderLeaseTokenObservationWire` */
-export type ResearchProviderLeaseTokenObservationWire = { instance: string; lease: string; admitted_receipt: boolean; dispatched_receipt: boolean; answered?: boolean | null; settlement?: ResearchProviderLeaseTokenSettlementWire | null }
+export type ResearchProviderLeaseTokenObservationWire = { instance: string; owner_attempt?: string | null; lease: string; admitted_receipt: boolean; dispatched_receipt: boolean; answered?: boolean | null; settlement?: ResearchProviderLeaseTokenSettlementWire | null }
 /** `oneiron::verbs::research::provider_tokens::ResearchProviderRunTokenObservationWire` */
-export type ResearchProviderRunTokenObservationWire = { instance: string; entry_recorded: boolean; model_future_returned: boolean }
+export type ResearchProviderRunTokenObservationWire = { instance: string; owner_attempt?: string | null; entry_recorded: boolean; model_future_returned: boolean }
 /** `oneiron::verbs::research::provider_tokens::ResearchProviderTokenSnapshotWire` */
 export type ResearchProviderTokenSnapshotWire = { generation: string; observation_id: string; dispatched_calls: number; unsettled_calls: number; input?: number | null; output?: number | null; failed_call_reports: ResearchProviderTokenMeasurementWire[]; leases: ResearchProviderLeaseTokenObservationWire[]; run_observations: ResearchProviderRunTokenObservationWire[] }
 /** `oneiron::verbs::research::provider_tokens::ResearchScopeProviderTokensWire` */

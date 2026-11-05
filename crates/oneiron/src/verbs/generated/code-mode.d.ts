@@ -1935,8 +1935,8 @@ declare namespace Sdk {
   type ResearchObservedInferenceTokensWire = { final_observed: boolean; tokens: ResearchProviderTokenMeasurementWire };
   type ResearchObservedInferenceSlotWire = { slot: number; observation?: ResearchObservedInferenceTokensWire | null };
   type ResearchProviderLeaseTokenSettlementWire = { dispatched: boolean; answer?: ResearchProviderTokenMeasurementWire | null; reports: ResearchProviderTokenMeasurementWire[]; observed_slots: ResearchObservedInferenceSlotWire[] };
-  type ResearchProviderLeaseTokenObservationWire = { instance: string; lease: string; admitted_receipt: boolean; dispatched_receipt: boolean; answered?: boolean | null; settlement?: ResearchProviderLeaseTokenSettlementWire | null };
-  type ResearchProviderRunTokenObservationWire = { instance: string; entry_recorded: boolean; model_future_returned: boolean };
+  type ResearchProviderLeaseTokenObservationWire = { instance: string; owner_attempt?: string | null; lease: string; admitted_receipt: boolean; dispatched_receipt: boolean; answered?: boolean | null; settlement?: ResearchProviderLeaseTokenSettlementWire | null };
+  type ResearchProviderRunTokenObservationWire = { instance: string; owner_attempt?: string | null; entry_recorded: boolean; model_future_returned: boolean };
   type ResearchProviderTokenSnapshotWire = { generation: string; observation_id: string; dispatched_calls: number; unsettled_calls: number; input?: number | null; output?: number | null; failed_call_reports: ResearchProviderTokenMeasurementWire[]; leases: ResearchProviderLeaseTokenObservationWire[]; run_observations: ResearchProviderRunTokenObservationWire[] };
   type ResearchScopeProviderTokensWire = { scope?: SpendScopeId | null; runs: string[]; snapshots?: ResearchProviderTokenSnapshotWire[] | null };
   type ResearchBudgetView = { budget: ResearchBudgetRead; reservations: ResearchReservationWire[]; rsi_work?: RsiBudgetRead | null; rsi_exploration?: RsiExplorationRead | null; provider_token_observations?: ResearchScopeProviderTokensWire[] | null };
