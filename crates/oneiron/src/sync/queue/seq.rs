@@ -58,10 +58,16 @@ pub(crate) fn clear_embed_job_home_claim_copy_in_txn(
     let Some(existing) = store.sync_queue.get(wtxn, &key)? else {
         return Ok(false);
     };
+    let (priority, queued_at) = match decode_embed_job_value(&existing) {
+        Ok(metadata) => metadata,
+        // The queue already prunes undecodable derived jobs. An actor rewrite
+        // must not fail because one cannot supply even its pending metadata.
+        Err(Error::CorruptedIndex(_)) => return store.sync_queue.delete(wtxn, &key),
+        Err(error) => return Err(error),
+    };
     if embed_job_home_claim_copy(&existing)?.is_none() {
         return Ok(false);
     }
-    let (priority, queued_at) = decode_embed_job_value(&existing)?;
     let value = encode_embed_job_value(priority, queued_at);
     store.sync_queue.put(wtxn, &key, &value)?;
     Ok(true)
