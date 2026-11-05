@@ -32,12 +32,22 @@ Seven other top-level `ActAnswer` outputs (`connector.call`,
 native `QuestionsNarrowed` into the same generated `QuestionsNarrowed`
 via the existing `NarrowedQuestions` lift. `ai.voice.tool` also uses that lift
 for a nested `LiveVoiceToolCallReply::QuestionsNarrowed` inside `Done`, keeping
-its finite `processed` fields. Every other variant, including other whole
-`Done` replies and `DetailsOnDevice`, keeps the original whole-record
-`lift_record` fallback with unchanged ambiguity and error semantics. Native
-getters, the shared client and verb hooks are unchanged, and outside these
-selected conversions the general generated-record codec is unchanged. No
-outer-Vec, depth, heap, speed or runtime claim follows.
+its finite `processed` fields.
+
+`connector.call`'s `Done` reply, the whole connector reply nested inside
+`ai.voice.tool`'s `Done`, and bare `connector.answer` results use a shared owned
+`ConnectorCallReply` lift. Delivered content and non-null optional JSON leaves
+move into `WireJson`; whole connector questions keep their required message
+and schema, including a present null schema. Optional null JSON still reads
+as absent. Delivered and awaiting-input empty optional vectors still read
+as absent; held, refused and pending-delivery reasons remain required vectors.
+The top-level and nested narrowed-question arms stay first and distinct.
+
+Every remaining variant and row, including `DetailsOnDevice`, keeps the
+original whole-record `lift_record` fallback. Native getters, the shared
+client and verb hooks are unchanged, and outside these selected conversions
+the general generated-record codec is unchanged. No outer-Vec, depth, heap,
+speed or runtime claim follows.
 
 Input parsing, input canonicalization, hook masking, admission and receipts
 are unchanged. No end-to-end depth, memory, speed or runtime claim follows from
