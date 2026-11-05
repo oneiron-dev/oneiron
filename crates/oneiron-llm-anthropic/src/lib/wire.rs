@@ -207,6 +207,7 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                     call_id: call_id.to_owned(),
                     name: name.to_owned(),
                     input: block.get("input").cloned().unwrap_or(JsonValue::Null),
+                    signature: None,
                 });
             }
             Some("redacted_thinking") => {
@@ -322,6 +323,7 @@ fn anthropic_content_part(part: &ContentPart) -> Option<JsonValue> {
             call_id,
             name,
             input,
+            ..
         } => Some(json!({
             "type": "tool_use",
             "id": call_id,

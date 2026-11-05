@@ -163,7 +163,14 @@ fn encode_part(
             call_id,
             name,
             input,
-        } => Some(json!({"functionCall":{"id":call_id,"name":name,"args":input}})),
+            signature,
+        } => {
+            let mut v = json!({"functionCall":{"id":call_id,"name":name,"args":input}});
+            if let Some(s) = signature {
+                v["thoughtSignature"] = json!(s);
+            }
+            Some(v)
+        }
         ContentPart::ToolResult {
             call_id,
             output,

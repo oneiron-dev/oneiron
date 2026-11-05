@@ -171,6 +171,7 @@ impl<'a> StepSecretUse<'a> {
                         call_id,
                         name,
                         input,
+                        ..
                     } => Some((call_id.clone(), name.clone(), input.clone())),
                     _ => None,
                 })

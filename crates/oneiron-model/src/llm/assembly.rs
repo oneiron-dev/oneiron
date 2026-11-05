@@ -19,6 +19,7 @@ enum PendingPart {
         call_id: String,
         name: String,
         json: String,
+        signature: Option<String>,
     },
 }
 
@@ -123,6 +124,17 @@ impl StreamAssembly {
         name: &str,
         fragment: &str,
     ) -> LlmResult<Vec<LlmStreamEvent>> {
+        self.tool_with_signature(id, call_id, name, fragment, None)
+    }
+
+    pub fn tool_with_signature(
+        &mut self,
+        id: &str,
+        call_id: &str,
+        name: &str,
+        fragment: &str,
+        signature: Option<String>,
+    ) -> LlmResult<Vec<LlmStreamEvent>> {
         let mut events = Vec::new();
         if !self.pending.contains_key(id) {
             if call_id.is_empty() || name.is_empty() {
@@ -134,6 +146,7 @@ impl StreamAssembly {
                     call_id: call_id.into(),
                     name: name.into(),
                     json: String::new(),
+                    signature: signature.clone(),
                 },
             )?;
             events.push(LlmStreamEvent::ToolCallStart {
@@ -146,12 +159,16 @@ impl StreamAssembly {
             call_id: stored_id,
             name: stored_name,
             json,
+            signature: stored,
         }) = self.pending.get_mut(id)
         else {
             return Err(FatalLlmError::InvalidRequest.into());
         };
         if stored_id != call_id || stored_name != name {
             return Err(FatalLlmError::InvalidRequest.into());
+        }
+        if signature.is_some() {
+            *stored = signature;
         }
         if !fragment.is_empty() {
             json.push_str(fragment);
@@ -200,6 +217,7 @@ impl StreamAssembly {
                 call_id,
                 name,
                 json,
+                signature,
             } => {
                 let input: serde_json::Value =
                     serde_json::from_str(&json).map_err(|_| FatalLlmError::InvalidRequest)?;
@@ -211,12 +229,14 @@ impl StreamAssembly {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     input: input.clone(),
+                    signature: signature.clone(),
                 };
                 (
                     ContentPart::ToolCall {
                         call_id,
                         name,
                         input,
+                        signature,
                     },
                     event,
                 )
