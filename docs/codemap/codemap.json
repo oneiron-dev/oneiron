@@ -5171,7 +5171,7 @@
      "path": "src/authority/slip_pairing/re_pairing.rs",
      "purpose": "Credential-only re-pairing (FIX 8636): a machine the roster already holds live pairs again under its own…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -45975,7 +45975,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/campaign.rs",
-     "purpose": "Campaign + saved-query thin delegating wrappers over the domain surfaces (`crate::campaign::surface`…",
+     "purpose": "Campaign + saved-query wrappers over the store's native record hooks",
      "surface": {
       "fn": 20
      }
@@ -72962,7 +72962,7 @@
       "StoreRecordHooks"
      ],
      "path": "src/store/record_hooks.rs",
-     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation, room…",
+     "purpose": "Native record behavior supplied by the engine when a store opens: identity, federation, room, voice, secret…",
      "surface": {
       "trait": 1
      }
@@ -93754,7 +93754,7 @@
      "path": "src/load/dream/cycle.rs",
      "purpose": "The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -93784,7 +93784,7 @@
      "path": "src/load/dream/server_log.rs",
      "purpose": "The server log as `load dream` reads it: the lines written since the last read, the Dreamer's `dreamer…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -101754,7 +101754,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AttemptQueueDeadlines",
@@ -101828,7 +101828,7 @@
     "tick": {
      "files": 10,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Tick sources: what wakes the supervisor (ONE-1684)"
     },
@@ -101847,7 +101847,7 @@
      "purpose": "Bounded, per-item delivery of durable wave TASKs to a host dispatcher"
     }
    },
-   "over_bar": 2,
+   "over_bar": 3,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
    "source_files": 35,
    "test_files": 10
@@ -116932,11 +116932,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/calendar_host/feed_poll.rs",
-     "purpose": "The host's ICS feed poll worker (FIX 7846): it claims each due `calendar.ics.poll` row, polls the feed the…",
+     "purpose": "The host's calendar poll worker (FIX 7846): it claims each due `calendar.ics.poll` row, polls the feed the…",
      "surface": {
       "crate-vis": 1
      }
