@@ -2,7 +2,7 @@
 
 use super::{
     OpenAiCompatConfig, OpenAiCompatHttpRequest, OpenAiProviderOptions,
-    backend::validate_capabilities,
+    backend::{DEFAULT_CHAT_ENDPOINT_PATH, validate_capabilities},
 };
 use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, is_solo, limit};
 use oneiron::{
@@ -26,6 +26,12 @@ const PREFILL_WIRE_KEY: &str = "prefill_wire";
 /// assistant message only when it carries `"prefix": true` (DeepSeek,
 /// Mistral).
 const PREFILL_WIRE_PREFIX: &str = "prefix";
+/// The catalog row metadata key that selects the chat endpoint path (FIX
+/// 11467).
+const CHAT_PATH_KEY: &str = "chat_path";
+/// [`CHAT_PATH_KEY`]'s value for a row served under unversioned
+/// `/chat/completions`.
+const CHAT_PATH_UNVERSIONED: &str = "unversioned";
 
 pub fn build_openai_chat_request(
     config: &OpenAiCompatConfig,
@@ -160,9 +166,25 @@ pub fn build_openai_chat_request(
         );
     }
 
+    // A row that opts into the unversioned chat path sends
+    // `/chat/completions` while the host keeps the default path; any
+    // explicit non-default path wins, and any other row keeps the old
+    // default.
+    let path = if catalog
+        .metadata
+        .get(CHAT_PATH_KEY)
+        .and_then(JsonValue::as_str)
+        == Some(CHAT_PATH_UNVERSIONED)
+        && config.endpoint_path == DEFAULT_CHAT_ENDPOINT_PATH
+    {
+        "/chat/completions".to_owned()
+    } else {
+        config.endpoint_path.clone()
+    };
+
     Ok(OpenAiCompatHttpRequest {
         method: "POST",
-        path: config.endpoint_path.clone(),
+        path,
         headers: BTreeMap::from([("content-type".to_owned(), "application/json".to_owned())]),
         body: JsonValue::Object(body),
         host_segments: request.host_segments.clone(),
