@@ -354,6 +354,12 @@ impl Step<'_> {
     /// changed setting (search only included) or an expired anchor starts
     /// it over with a fresh cutoff.
     fn backfill(&mut self, pages: u32) -> MemoryResult<()> {
+        // A change-feed round mid-way may not yet have begun a folder the
+        // copy would reach (a Microsoft 365 folder's first round): what the
+        // copy lands there could be deleted before that round sees it.
+        if self.state()?.history_page.is_some() {
+            return Ok(());
+        }
         let copy = self.row.copy;
         if self.state()?.backfill_copy != Some(copy) {
             let cutoff = self.newer_than;
