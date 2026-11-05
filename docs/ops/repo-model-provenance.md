@@ -24,9 +24,14 @@ After a successful answer and final credential/lease check, the host keeps only
 the canonical request digest, model id and hash of sampling params plus provider
 options. The prompt is not retained by this attachment cache. The last
 successful witnessed request on that exact attachment supplies
-`vault.repo.proposal_submit` through the native gated provenance mint. The
-proposal still checks its own work, declaration, grant, review policy and final
-writer admission. Model output is not a grant or an approval.
+`vault.repo.proposal_submit` through the native gated provenance preparation.
+The proposal still checks its own work, declaration, grant, review policy and
+final writer admission. That writer stores the selected sitting, provenance
+claim and proposal together. A refused submit leaves none of those new rows.
+An already-open sitting is kept. If the sitting changed during preparation,
+the submit prepares again outside the writer. Session open pre-hooks stay
+outside the writer; post-hooks run only after a newly opened sitting commits.
+Model output is not a grant or an approval.
 
 A fresh attachment, credential rebind, new lease or server restart inherits no
 cached request. A rebind clears the old cache. A run with no witnessed request

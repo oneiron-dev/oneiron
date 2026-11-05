@@ -426,13 +426,13 @@ pub(crate) async fn vault_repo_proposal_submit(
                 binding,
                 spec,
                 Some(&policy as &dyn RepoReviewPolicy),
-                |stamp| match request {
+                |stamp| match request.as_ref() {
                     Some(request) => binding.sources_from_host(
                         memory.vault(),
                         stamp,
-                        path,
+                        path.clone(),
                         content_hash,
-                        &request,
+                        request,
                     ),
                     None => Err(repo_provenance_unwitnessed()),
                 },

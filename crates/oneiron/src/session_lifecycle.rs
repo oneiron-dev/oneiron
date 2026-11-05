@@ -59,8 +59,8 @@ mod expiry;
 mod prepared_open;
 mod speakers;
 
-pub(crate) use prepared_open::PreparedSessionOpen;
 pub use expiry::SessionExpiryPolicy;
+pub(crate) use prepared_open::PreparedSessionOpen;
 pub(crate) use speakers::erase_session_speaker_actor_in_txn;
 pub use speakers::{SessionParticipant, SessionSpeakers};
 
@@ -946,6 +946,5 @@ const fn end_reason_word(reason: SessionEndReason) -> &'static str {
         SessionEndReason::LifetimeCeiling => "lifetime_ceiling",
     }
 }
-
 #[cfg(test)]
 mod tests;
