@@ -48,8 +48,6 @@ pub(super) const KEY_OPT_OUT_RECORDED_AT: &str = OPT_OUT_KEYS[1];
 
 pub(super) const KEY_OPT_OUT_RECEIPT_REASON: &str = OPT_OUT_KEYS[2];
 
-pub(super) const MAX_COUNTERPARTY_BYTES: usize = 512;
-
 pub(super) const MAX_NOTE_BYTES: usize = 2_048;
 
 /// Pinned `counterparty_contact.*` claim predicates for owner-visible fields.

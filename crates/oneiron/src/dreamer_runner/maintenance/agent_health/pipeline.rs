@@ -305,7 +305,7 @@ fn detect(
     let extended = call_evidence::claim_bound_activities(vault, dispatched, attempts, since)?;
     let (silent, refreshes) = silent_findings(
         vault,
-        &SilenceCalls::Actors(&calls, unread_calls, &extended),
+        &SilenceCalls::Actors(&calls, &unread_calls, &extended),
         dispatched,
         attempts,
         traps,

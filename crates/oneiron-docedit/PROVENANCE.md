@@ -73,3 +73,14 @@ text node holding its resolved quote's first character, after preceding breaks,
 bookmarks or comment markers, as the chosen-occurrence path already does. Quote
 selection, single-run placement, range ends and tracked-container widening are
 unchanged.
+
+The non-final tracked-deletion change (2026-11-05) touches `src/edit/mod.rs` and
+`src/tracked_model.rs`. The tracked delete verb can preserve earlier inline
+revisions in an ordinary non-final, unmoved paragraph by lowering its runs
+individually instead of flattening them under one block deletion. Empty,
+numbered, section-bearing and tracked-final paragraphs keep the existing
+validation path, as do moves, replacements and direct edits. The wrapper
+recognizes only its own fully deleted paragraph marks in accepted order;
+imported revisions keep their existing visibility. A surviving physical final
+mark that fails the shared body's order comparison uses the existing
+whole-window default-author projection, not a relaxed order check.

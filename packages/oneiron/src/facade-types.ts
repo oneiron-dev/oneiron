@@ -6571,7 +6571,7 @@ export type UnsupportedCapability = { capability: LlmCapability; model?: ModelId
 /** `oneiron_model::llm::error::LabelReadFailure` */
 export type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed"
 /** `oneiron_model::llm::error::FatalLlmError` */
-export type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased" | "JobLost"
+export type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string; code?: string | null } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased" | "JobLost"
 /** `oneiron::store::model_step_submission::ModelStepFailureClass` */
 export type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine"
 /** `oneiron_model::llm::error::TransportFaultKind` */
@@ -6639,7 +6639,7 @@ export type ContextReceiptFields = { persona_compile_stamp: string; activated_me
 /** `oneiron::receipt::context_emit::ContextEmitReceipt` */
 export type ContextEmitReceipt = { receipt_ref: string; occurred_at: number; actor: string; conversation_id: string; request_digest: string; result_digest: string; context: ContextReceiptFields }
 /** `oneiron::store::attempt_manifest::ManifestKind` */
-export type ManifestKind = "skill_index" | "skill" | "actor_claim"
+export type ManifestKind = "skill_index" | "skill" | "actor_claim" | "workflow_context_row"
 /** `oneiron::store::revision_ref::RevisionRef` */
 export type RevisionRef = number[]
 /** `oneiron::store::attempt_manifest::ManifestEntry` */

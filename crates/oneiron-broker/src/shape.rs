@@ -42,6 +42,9 @@ pub enum Shape {
     /// OpenAI-compatible embeddings: `POST …/v1/embeddings`, JSON, top-level
     /// body `model`, Bearer.
     OpenAiEmbeddings,
+    /// Cohere's v2 embeddings: `POST …/v2/embed`, JSON, top-level body
+    /// `model`, Bearer.
+    CohereEmbed,
     /// An OpenAI-compatible video job's start: `POST …/v1/videos`, JSON or a
     /// multipart form (with a reference image), with one `model`, Bearer.
     OpenAiVideoStart,
@@ -232,6 +235,8 @@ const OPENAI_EMBEDDINGS: Row = openai(
     false,
 );
 
+const COHERE_EMBED: Row = openai("POST", &["v2", "embed"], Body::Json, Selector::Body, false);
+
 const OPENAI_VIDEO_START: Row = openai(
     "POST",
     &["v1", "videos"],
@@ -321,10 +326,7 @@ const OPENAI_MODELS: Row = openai(
 
 const HEALTH: Row = openai("GET", &["health"], Body::Empty, Selector::Binding, false);
 
-/// Top-level body keys, or form fields, that pick the model or the route by
-/// another way than the one selector: a fallback list, a route or a provider
-/// preference.
-pub(crate) const ROUTE_OVERRIDES: [&str; 3] = ["models", "route", "provider"];
+pub(crate) use crate::route_keys::ROUTE_OVERRIDES;
 
 /// The longest model name or provider id a path segment may hold.
 const MAX_NAME: usize = 256;
@@ -339,6 +341,7 @@ impl Shape {
             Self::OpenAiSpeech => &OPENAI_SPEECH,
             Self::OpenAiTranscriptions => &OPENAI_TRANSCRIPTIONS,
             Self::OpenAiEmbeddings => &OPENAI_EMBEDDINGS,
+            Self::CohereEmbed => &COHERE_EMBED,
             Self::OpenAiVideoStart => &OPENAI_VIDEO_START,
             Self::OpenAiVideoPoll => &OPENAI_VIDEO_POLL,
             Self::OpenAiVideoContent => &OPENAI_VIDEO_CONTENT,
