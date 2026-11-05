@@ -24,6 +24,7 @@ use crate::codebase::{DEFAULT_CODE_FILE_MODE, RepoRef, entity_id_from_hash_mater
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::merge_queue::{MergeFile, MergeFileExpected, MergeProposal};
+use crate::store::code_tree_blob::MODE_GITLINK;
 use crate::write_envelope::WriteActor;
 
 pub(crate) mod tree;
@@ -173,6 +174,11 @@ pub(in crate::repo_mutation) fn reviewed_bundle_files(
                         } else {
                             DEFAULT_CODE_FILE_MODE
                         }),
+                        Some(entry.content.clone()),
+                        None,
+                    ),
+                    StoredRepoSnapshotEntryKind::Gitlink => (
+                        CodeFilePresence::file(MODE_GITLINK),
                         Some(entry.content.clone()),
                         None,
                     ),
@@ -388,6 +394,15 @@ pub(in crate::repo_mutation) fn land_bundle_documents(
                     changed_state.then(|| state.clone()),
                 )
             }
+        };
+        let metadata_edit = if metadata_edit.is_none()
+            && state.expected.mode == Some(MODE_GITLINK)
+            && state.replacement.mode == Some(MODE_GITLINK)
+            && vault.code_document_frontier(&scope, &file.path)?.is_none()
+        {
+            Some(state.clone())
+        } else {
+            metadata_edit
         };
         let session = match held {
             Some(session) => session,

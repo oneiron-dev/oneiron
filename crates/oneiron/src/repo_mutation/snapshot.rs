@@ -21,6 +21,10 @@ use super::support::{path_arg, sha256_bytes, utf8_trimmed};
 use super::types::RepoForkHash;
 use super::worktree::{ensure_repo_parent_dirs_no_symlink, write_repo_file_no_symlink};
 use crate::error::CodeError;
+use crate::git_wire::bundle_tree::{
+    BundleTreeEdit, gitlink_index_entries, gitlink_paths_at, stage_bundle_tree_edits,
+};
+use crate::store::code_tree_blob::MODE_GITLINK;
 
 mod pinned;
 pub(super) use pinned::RepoPinnedBase;
@@ -52,6 +56,8 @@ pub(super) struct StoredRepoSnapshotEntry {
 pub(super) enum StoredRepoSnapshotEntryKind {
     File,
     Symlink,
+    /// An index gitlink: content is its OID, never the linked repository.
+    Gitlink,
     /// A file snapshot custody keeps out ([`SnapshotCustody`]): its path and
     /// mode, none of its bytes. A restore leaves the file the checkout holds
     /// there as it is.
@@ -105,6 +111,15 @@ impl SnapshotCustody {
         }
     }
 
+    /// A gitlink's OID under the same path and byte custody as a file.
+    pub(super) fn gitlink(&self, path: String, oid: Vec<u8>) -> StoredRepoSnapshotEntry {
+        let mut entry = self.file(path, false, oid);
+        if entry.kind == StoredRepoSnapshotEntryKind::File {
+            entry.kind = StoredRepoSnapshotEntryKind::Gitlink;
+        }
+        entry
+    }
+
     /// A symlink's entry as the policy keeps it: a target the policy
     /// withholds is kept out as a file's bytes are (FIX 8840).
     pub(super) fn symlink(&self, path: String, target: String) -> StoredRepoSnapshotEntry {
@@ -155,7 +170,24 @@ pub(super) fn capture_repo_snapshot(
         ),
         total_bytes: 0,
     };
-    collect_snapshot_entries(repo_root, repo_root, &custody, &mut entries, &mut stats)?;
+    let gitlinks = gitlink_index_entries(repo_root)?;
+    let mut linked_paths: BTreeSet<_> = gitlinks.keys().cloned().collect();
+    if let Some(head) = &head {
+        linked_paths.extend(gitlink_paths_at(repo_root, head)?);
+    }
+    for (path, oid) in &gitlinks {
+        validate_relative_repo_path(path)?;
+        record_snapshot_entry_size(&mut stats, oid.len() as u64)?;
+        entries.push(custody.gitlink(path.clone(), oid.clone()));
+    }
+    collect_snapshot_entries(
+        repo_root,
+        repo_root,
+        &custody,
+        &linked_paths,
+        &mut entries,
+        &mut stats,
+    )?;
     stats.files.finish(vault);
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     let snapshot = StoredRepoSnapshot {
@@ -172,6 +204,7 @@ fn collect_snapshot_entries(
     repo_root: &Path,
     dir: &Path,
     custody: &SnapshotCustody,
+    gitlinks: &BTreeSet<String>,
     entries: &mut Vec<StoredRepoSnapshotEntry>,
     stats: &mut SnapshotStats,
 ) -> Result<()> {
@@ -182,9 +215,17 @@ fn collect_snapshot_entries(
             continue;
         }
         let path = child.path();
+        if path
+            .strip_prefix(repo_root)
+            .ok()
+            .and_then(Path::to_str)
+            .is_some_and(|relative| gitlinks.contains(relative))
+        {
+            continue;
+        }
         let metadata = fs::symlink_metadata(&path)?;
         if metadata.file_type().is_dir() {
-            collect_snapshot_entries(repo_root, &path, custody, entries, stats)?;
+            collect_snapshot_entries(repo_root, &path, custody, gitlinks, entries, stats)?;
             continue;
         }
         let relative = repo_relative_path(repo_root, &path)?;
@@ -244,7 +285,30 @@ pub(super) fn restore_repo_snapshot(
         .collect();
     let mut current = BTreeSet::new();
     let mut dirs = Vec::new();
-    collect_restore_inventory(repo_root, repo_root, &mut current, &mut dirs)?;
+    let current_gitlinks = gitlink_index_entries(repo_root)?;
+    let mut linked_paths: BTreeSet<_> = current_gitlinks.keys().cloned().collect();
+    if let Some(head) = git_output_optional(
+        repo_root,
+        &[
+            "rev-parse".to_owned(),
+            "--verify".to_owned(),
+            "HEAD".to_owned(),
+        ],
+    )? {
+        linked_paths.extend(gitlink_paths_at(
+            repo_root,
+            &utf8_trimmed(head, "git HEAD must be UTF-8")?,
+        )?);
+    }
+    linked_paths.extend(
+        snapshot
+            .entries
+            .iter()
+            .filter(|entry| entry.kind == StoredRepoSnapshotEntryKind::Gitlink)
+            .map(|entry| entry.path.clone()),
+    );
+    let removed_links: Vec<_> = linked_paths.difference(&desired).cloned().collect();
+    collect_restore_inventory(repo_root, repo_root, &linked_paths, &mut current, &mut dirs)?;
 
     // The paths this restore changes: only their index entries are reset.
     let mut changed: BTreeSet<String> = current.difference(&desired).cloned().collect();
@@ -253,18 +317,76 @@ pub(super) fn restore_repo_snapshot(
     }
     remove_empty_dirs(dirs)?;
 
+    let mut index_edits = Vec::new();
     for entry in snapshot.entries {
         validate_relative_repo_path(&entry.path)?;
         if entry.kind == StoredRepoSnapshotEntryKind::Withheld || lifted.contains(&entry.path) {
             continue;
+        }
+        if entry.kind == StoredRepoSnapshotEntryKind::Gitlink {
+            changed.insert(entry.path.clone());
+            index_edits.push(BundleTreeEdit {
+                path: entry.path,
+                content: Some(entry.content),
+                mode: MODE_GITLINK,
+            });
+            continue;
+        }
+        if linked_paths.iter().any(|parent| {
+            entry
+                .path
+                .strip_prefix(parent.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        }) {
+            return Err(Error::InvalidClaimBody(
+                "a snapshot cannot enter a linked repository",
+            ));
+        }
+        if linked_paths.contains(&entry.path) {
+            let (content, mode) = match entry.kind {
+                StoredRepoSnapshotEntryKind::File => (
+                    entry.content.clone(),
+                    if entry.executable {
+                        0o100_755
+                    } else {
+                        0o100_644
+                    },
+                ),
+                StoredRepoSnapshotEntryKind::Symlink => (
+                    entry
+                        .symlink_target
+                        .as_ref()
+                        .ok_or(Error::CorruptedIndex("symlink target missing"))?
+                        .as_bytes()
+                        .to_vec(),
+                    0o120_000,
+                ),
+                _ => unreachable!("gitlinks and withheld entries handled above"),
+            };
+            index_edits.push(BundleTreeEdit {
+                path: entry.path.clone(),
+                content: Some(content),
+                mode,
+            });
         }
         let target = repo_root.join(&entry.path);
         if checkout_holds_entry(&target, &entry)? {
             continue;
         }
         changed.insert(entry.path.clone());
-        if fs::symlink_metadata(&target).is_ok() {
-            remove_existing_path(&target)?;
+        if let Ok(metadata) = fs::symlink_metadata(&target) {
+            let contains_gitlink = linked_paths.iter().any(|path| {
+                path == &entry.path
+                    || path
+                        .strip_prefix(entry.path.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+            });
+            if contains_gitlink && metadata.is_dir() {
+                // A populated linked checkout is not this snapshot's file tree.
+                fs::remove_dir(&target)?;
+            } else {
+                remove_existing_path(&target)?;
+            }
         }
         match entry.kind {
             StoredRepoSnapshotEntryKind::File => {
@@ -278,7 +400,7 @@ pub(super) fn restore_repo_snapshot(
                 let target = ensure_repo_parent_dirs_no_symlink(repo_root, &entry.path)?;
                 create_symlink(Path::new(&target_path), &target)?;
             }
-            StoredRepoSnapshotEntryKind::Withheld => {}
+            StoredRepoSnapshotEntryKind::Gitlink | StoredRepoSnapshotEntryKind::Withheld => {}
         }
     }
     if let Some(head) = snapshot_head {
@@ -298,6 +420,18 @@ pub(super) fn restore_repo_snapshot(
         )?;
         reset_restored_index(repo_root, moved_from.as_deref(), changed)?;
     }
+    for path in removed_links {
+        run_git(
+            repo_root,
+            &[
+                "update-index".to_owned(),
+                "--force-remove".to_owned(),
+                "--".to_owned(),
+                path,
+            ],
+        )?;
+    }
+    stage_bundle_tree_edits(repo_root, &index_edits, false)?;
     Ok(())
 }
 
@@ -319,7 +453,7 @@ fn checkout_holds_entry(target: &Path, entry: &StoredRepoSnapshotEntry) -> Resul
                 && entry.symlink_target.as_deref().map(Path::new)
                     == Some(fs::read_link(target)?.as_path())
         }
-        StoredRepoSnapshotEntryKind::Withheld => true,
+        StoredRepoSnapshotEntryKind::Gitlink | StoredRepoSnapshotEntryKind::Withheld => true,
     })
 }
 
@@ -409,6 +543,7 @@ pub(super) fn snapshot_recorded_for_repo(
 fn collect_restore_inventory(
     repo_root: &Path,
     dir: &Path,
+    gitlinks: &BTreeSet<String>,
     files: &mut BTreeSet<String>,
     dirs: &mut Vec<PathBuf>,
 ) -> Result<()> {
@@ -419,10 +554,18 @@ fn collect_restore_inventory(
             continue;
         }
         let path = child.path();
+        if path
+            .strip_prefix(repo_root)
+            .ok()
+            .and_then(Path::to_str)
+            .is_some_and(|relative| gitlinks.contains(relative))
+        {
+            continue;
+        }
         let metadata = fs::symlink_metadata(&path)?;
         if metadata.file_type().is_dir() {
             dirs.push(path.clone());
-            collect_restore_inventory(repo_root, &path, files, dirs)?;
+            collect_restore_inventory(repo_root, &path, gitlinks, files, dirs)?;
         } else if metadata.file_type().is_file() || metadata.file_type().is_symlink() {
             files.insert(repo_relative_path(repo_root, &path)?);
         } else {
