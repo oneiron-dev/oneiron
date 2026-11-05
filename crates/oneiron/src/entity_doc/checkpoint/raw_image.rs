@@ -11,7 +11,7 @@ use super::super::{EntityDoc, document, storage};
 use crate::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::DocumentSlot;
-use crate::side_table::{self, FixedSideKey, SideKey};
+use crate::side_table::{self, FixedSideKey, HexId, SideKey};
 
 type ImageRows = BTreeMap<String, Vec<(Vec<u8>, Vec<u8>)>>;
 
@@ -48,8 +48,9 @@ pub(crate) fn validate_native_image_rows(databases: &ImageRows) -> Result<()> {
             // admission for these opaque/pending bytes at a later ingress.
             continue;
         };
-        if validate_image_history(std::iter::once(snapshot).chain(group.updates))?.is_some() {
+        if let Some(doc) = validate_image_history(std::iter::once(snapshot).chain(group.updates))? {
             DocumentSlot::decode_key(slot).ok_or_else(invalid)?;
+            require_source_heads(databases, slot, &doc)?;
         }
     }
     for (key, snapshot) in rows {
@@ -68,6 +69,30 @@ pub(crate) fn validate_native_image_rows(databases: &ImageRows) -> Result<()> {
             .ok_or_else(invalid)?;
         let record: ForkRecord = storage::decode(value)?;
         require_fork_basis(&fork, &record, &doc)?;
+    }
+    Ok(())
+}
+
+/// A selected raw head binds its source entity to this source slot. Retained
+/// history may have no current head; a fact's own publication slot remains
+/// historical after SWITCH and is deliberately not compared here.
+fn require_source_heads(databases: &ImageRows, slot: &[u8], doc: &EntityDoc) -> Result<()> {
+    let rows = databases.get("vault_meta").ok_or_else(invalid)?;
+    for (key, value) in rows {
+        let Some(key) = key.strip_prefix(storage::ENTITY_DOC_HEAD.decl().prefix) else {
+            continue;
+        };
+        let Ok(head) = storage::decode::<storage::Head>(value) else {
+            // Opaque rows remain data, never a source admission.
+            continue;
+        };
+        if head.document.as_bytes() != slot {
+            continue;
+        }
+        let entity = HexId::decode_key(key).ok_or_else(invalid)?;
+        if head.entity != entity.0.to_hex() || head.entity != doc.birth().entity {
+            return Err(invalid());
+        }
     }
     Ok(())
 }
