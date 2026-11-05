@@ -80,7 +80,7 @@ the prompt cache breaks at most once (ARCH-0067 §2.2).
 ## The owner's settings
 
 `GET|POST /v1/owner/settings/board-layout` (the owner only) reads and sets
-three things, each absent until set:
+four things, each absent until set:
 
 - `cap_tok`: the board cap every harness renders under in place of its own
   default (the MCP and run boards' 1200 tokens; the HTTP board's, when no
@@ -93,6 +93,12 @@ three things, each absent until set:
   override's shares and the agent's other shares pass the cap together,
   the agent's shares give way. `self.board.layout` shows the override as
   `owner_override`.
+- `agent_override_layouts`: sections whose layout the owner sets for one
+  agent alone, at most 256 agents. A POST sets one agent at a time:
+  `{"agent_override": {"agent": "<id>", "layout": {...}}}`; a `null` or empty
+  `layout` clears that agent's override, and a layout set must name an
+  entity the vault holds. For that agent its sections win over its own
+  layout and over `override_layout`; its `owner_override` shows both.
 
 Each change records the owner's act (`settings.board_layout`) with the
 settings it replaces, as the other owner policy settings do.
@@ -127,9 +133,3 @@ sections the layout folded or fitted.
 An MCP connector's board lays TASKS out from the rows its scope admits
 (`mcp_scoped_task_rows`), so its fold line, filter, share and kept rows see
 exactly what the connector may see.
-
-## Not built yet
-
-- An owner override of one agent's layout alone (the override applies to
-  every agent).
-
