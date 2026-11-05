@@ -23,6 +23,9 @@ use oneiron_organ_protocol::{AskCode, AskRefusal, MemoryAnswer, MemoryAsk, Value
 use crate::budget::NativeRefusal;
 use crate::handlers::{Answered, AskHandler, AskRequest};
 
+mod shared;
+pub use shared::SharedFloorLease;
+
 /// One machine-floor lease, growable as the value it covers takes shape.
 pub trait FloorLease: Send {
     /// Grows this lease on its original line, waiting no later than
@@ -57,6 +60,10 @@ pub trait FloorLease: Send {
     /// # Errors
     /// As [`Self::grow`].
     fn grow_untimed(&mut self, more: u64, stopped: &dyn Fn() -> bool) -> Result<(), FloorRefusal>;
+
+    /// Transfers the same lease to one caller and its retained native buffers.
+    /// No new machine floor or independent per-buffer lease is created.
+    fn into_shared(self: Box<Self>) -> Arc<dyn SharedFloorLease>;
 }
 
 /// The machine's memory, as the host leases it to organs' own buffers. The

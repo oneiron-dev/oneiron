@@ -4,6 +4,8 @@ use std::time::Instant;
 
 use super::{MachineMemory, MemoryLease, MemoryRefusal};
 
+mod shared;
+
 #[cfg(unix)]
 struct OrganLease(MemoryLease);
 
@@ -32,6 +34,11 @@ impl oneiron_organ_host::FloorLease for OrganLease {
         stopped: &dyn Fn() -> bool,
     ) -> Result<(), oneiron_organ_host::FloorRefusal> {
         MemoryLease::grow_untimed(&mut self.0, more, stopped).map_err(organ_refusal)
+    }
+
+    fn into_shared(self: Box<Self>) -> std::sync::Arc<dyn oneiron_organ_host::SharedFloorLease> {
+        let Self(lease) = *self;
+        shared::share(lease)
     }
 }
 

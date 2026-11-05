@@ -8,6 +8,9 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
+mod shared_lease;
+pub use shared_lease::SharedMemoryLease;
+
 /// Physical memory, when the platform says.
 pub fn memory_bytes() -> Option<u64> {
     #[cfg(unix)]

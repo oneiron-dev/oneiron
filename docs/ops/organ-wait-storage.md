@@ -55,3 +55,27 @@ measurement. LMDB's configured map limit and actual filesystem I/O errors remain
 in force. Other row and overlay metadata copies and native transaction
 allocations still need their own admission; this document
 does not claim complete resource coverage or runtime proof.
+
+## Shared native allocation account
+
+`FloorLease::into_shared` transfers an existing job lease without creating a
+second machine-memory line. The server adapter uses `SharedMemoryLease` on the
+original line's mutex. Admission waits release that mutex, so a native buffer
+freed by another writer can return memory while the job waits.
+
+An in-flight malloc assigns part of the existing pending reservation before it
+allocates. Successful malloc moves that part to actual memory; failed malloc
+cancels only its assignment. Physical free can restore pending credit for a
+replay without dropping the cumulative admission. A cached buffer has not
+physically freed and keeps its actual charge.
+
+After the job's growth waits and writer have returned, `finish` releases unused
+pending credit. No new growth starts afterward. Later physical frees release
+actual charges instead of keeping retry credit until the environment closes.
+Caller buffers release allocated bytes separately, without consuming native
+pending reservations. All of these transitions use the original machine line.
+
+These are lower-level source APIs. The held writer does not yet attach a native
+page account or replay a denied write. Root commit phase, grouped-writer order,
+native write/disk costs and the excluded native allocations still need their
+own integration. Their presence is not complete FIX8125 or runtime proof.
