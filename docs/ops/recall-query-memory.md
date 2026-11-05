@@ -25,10 +25,10 @@ fallback. Light recalls and existing provider failures behave as before.
 
 The text-slot embedding call also records its original query-byte buffer. Its
 local lease starts before the copy, records the actual `Vec<u8>` capacity before
-embedding, and stays through the blocking runtime call. The bytes move into the
-provider request's text string without another allocation. The original buffer
-drops inside that call, including width retries, errors and unwinding. The
-provider receives deep copies; those copies are separate allocations, not part
+embedding, and stays through the blocking runtime call. The bytes become the
+embedding part's text string without copying its backing allocation. That
+original buffer drops inside the call, including width retries, errors and
+unwinding. The provider receives deep copies; those are separate allocations, not part
 of this input charge. The input buffer and returned vectors have separate leases.
 
 Decoded-media input storage, other input copies, temporary seed vectors, the
