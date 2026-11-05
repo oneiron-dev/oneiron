@@ -64,6 +64,32 @@ pub(super) fn check_source_custody(
             },
         ));
     }
+    check_source_custody_rows(store, txn, holder, hash)
+}
+
+/// Read a source only from the canonical store or the actual room that holds it.
+pub(super) fn check_source_custody_in_read(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    holder: &EntityId,
+    hash: &SkillContentHash,
+) -> Result<()> {
+    if read.base().off_record_sessions.contains_entity(holder)? && !read.room_holds(holder)? {
+        return Err(Error::OffRecord(
+            OffRecordError::OffRecordTaintedBaseWrite {
+                entity_ref: holder.to_hex(),
+            },
+        ));
+    }
+    check_source_custody_rows(read, txn, holder, hash)
+}
+
+fn check_source_custody_rows(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    holder: &EntityId,
+    hash: &SkillContentHash,
+) -> Result<()> {
     check_source_target(store, txn, holder)?;
     if INDEX
         .get(store, txn, &(*holder, *hash.as_bytes()))?
@@ -84,7 +110,7 @@ pub(super) fn check_source_custody(
 }
 
 pub(super) fn check_source_target(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {

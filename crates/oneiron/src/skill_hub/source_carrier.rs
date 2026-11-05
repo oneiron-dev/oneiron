@@ -58,16 +58,16 @@ pub(crate) fn validate_hub_source_carrier_put(
     Ok(())
 }
 
-pub(super) fn read_source_carrier_in_txn(
-    store: &crate::store::Store,
+pub(super) fn read_source_carrier_in_read(
+    read: &crate::store::StoreRead<'_>,
     txn: &heed::RoTxn<'_>,
     carrier: &EntityId,
 ) -> Result<Option<(EntityId, HubPackage)>> {
-    if store.off_record_sessions.contains_entity(carrier)? {
+    if read.base().off_record_sessions.contains_entity(carrier)? && !read.room_holds(carrier)? {
         return Ok(None);
     }
     let crate::vault::LiveEntityRow::Live { entity_type, body } =
-        crate::vault::live_entity_row_in_txn(store, txn, carrier)?
+        crate::vault::live_entity_row_in_txn(read, txn, carrier)?
     else {
         return Ok(None);
     };
@@ -80,6 +80,11 @@ pub(super) fn read_source_carrier_in_txn(
     if source_carrier_id(&holder, &package.content_hash()?)? != *carrier {
         return Err(invalid("stored source carrier identity drift"));
     }
-    super::source_custody::check_source_custody(store, txn, &holder, &package.content_hash()?)?;
+    super::source_custody::check_source_custody_in_read(
+        read,
+        txn,
+        &holder,
+        &package.content_hash()?,
+    )?;
     Ok(Some((holder, package)))
 }
