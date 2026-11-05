@@ -17,6 +17,10 @@ error and every native settlement in its paid prefix. `NotStarted` is not an abs
 a negative answer, or a zero person probability. In a sequential pack, it retains its
 question ordinal and leaves later questions unstarted.
 
+A captured rule read uses its original offline table and pack method. It starts no
+model generation and consumes no generation allowance; its settlement inventory is empty
+because those native methods admit and send nothing, not because absence proves no work.
+
 The allowance is a granted start slot, not proof of provider bytes or token use. A
 native admission after that slot may still fail. Memo recovery starts no generation;
 a schema correction uses a new logical generation, while a transport retry reuses the
