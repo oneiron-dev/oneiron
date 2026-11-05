@@ -156,6 +156,9 @@ pub(crate) struct RpcReply {
     frames: Vec<Vec<u8>>,
     /// `None` for a refusal, which carries no rows.
     rows: Option<Option<Vec<oneiron::EntityId>>>,
+    /// A forwarded caller off its carrier (FIX 11991): the release judges the
+    /// reply for an unknown destination too, as its search was judged.
+    off_carrier: bool,
 }
 
 impl RpcReply {
@@ -263,6 +266,7 @@ impl RpcReply {
             request_id,
             frames,
             rows,
+            off_carrier: attribution.is_some_and(|caller| caller.off_carrier),
         })
     }
 
@@ -312,6 +316,7 @@ impl RpcReply {
             request_id,
             frames,
             rows,
+            off_carrier: false,
         })
     }
 
@@ -323,7 +328,16 @@ impl RpcReply {
         };
         self.frames
             .into_iter()
-            .map(|frame| routing::wrap(conn, self.request_id, 0, rows.as_deref(), frame))
+            .map(|frame| {
+                routing::wrap_judged(
+                    conn,
+                    self.request_id,
+                    0,
+                    rows.as_deref(),
+                    self.off_carrier,
+                    frame,
+                )
+            })
             .collect()
     }
 }

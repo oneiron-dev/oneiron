@@ -422,6 +422,10 @@ pub(crate) struct ForwardedAttribution {
     pub(crate) actor_class: String,
     pub(crate) credential_ref: String,
     pub(crate) carrier_machine: String,
+    /// Whether the caller sits off the machine that carried it (FIX 11991):
+    /// its reply is then judged again at send for an unknown destination,
+    /// as its search was. Not part of the receipt.
+    pub(crate) off_carrier: bool,
 }
 
 impl ForwardedAttribution {
@@ -446,7 +450,14 @@ impl ForwardedAttribution {
                 .unwrap_or_else(|| "unbound".to_owned()),
             credential_ref: slip,
             carrier_machine: caller.machine().to_hex(),
+            off_carrier: false,
         }
+    }
+
+    /// This attribution for a caller at `locality` relative to its carrier.
+    pub(crate) fn at(mut self, locality: oneiron::claim::CallerLocality) -> Self {
+        self.off_carrier = locality == oneiron::claim::CallerLocality::OffDevice;
+        self
     }
 }
 

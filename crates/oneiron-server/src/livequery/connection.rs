@@ -655,7 +655,18 @@ impl Connection {
             }
             return None;
         }
-        if !self.withholds(locality, peer, routed.rows.as_deref(), routed.frame) {
+        // A forwarded caller off the carrier is judged again for an unknown
+        // destination, as its search was (FIX 11991): a world setting that
+        // changed between the search and this send withholds it too.
+        let withheld = self.withholds(locality, peer, routed.rows.as_deref(), routed.frame)
+            || (routed.off_carrier
+                && self.withholds(
+                    oneiron::claim::CallerLocality::OffDevice,
+                    oneiron::authority::PeerMachine::Unknown,
+                    routed.rows.as_deref(),
+                    routed.frame,
+                ));
+        if !withheld {
             return Some(routed.frame.to_vec());
         }
         if !last {

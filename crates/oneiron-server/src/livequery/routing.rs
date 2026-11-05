@@ -2,13 +2,17 @@
 //! socket's own reply queue. This is never a peer wire tag; every socket
 //! strips it only after recipient checks. Beside the recipient it carries
 //! what the socket's release judges again (DEC-0005): the incarnation of the
-//! subscription a frame belongs to, and the rows its body was derived from.
+//! subscription a frame belongs to, the rows its body was derived from, and
+//! whether its reply also goes to a forwarded caller off the connection's
+//! carrier (FIX 11991), whose destination nobody proved.
 use crate::protocol::{TAG_RPC, TAG_SUB};
 use oneiron::EntityId;
 
 const ROUTED_APP: u8 = 255;
-/// Marker, recipient, id, incarnation and row count.
-const HEADER: usize = 25;
+/// Marker, recipient, id, incarnation, row count and the off-carrier flag.
+const HEADER: usize = 26;
+/// Where the row count ends and the off-carrier flag sits.
+const COUNT_END: usize = 25;
 /// The row count of a body whose producer could not name its rows.
 const UNNAMED: u32 = u32::MAX;
 
@@ -21,6 +25,9 @@ pub(super) struct Routed<'a> {
     /// The rows its body was derived from; `None` when its producer could
     /// not name them.
     pub(super) rows: Option<Vec<EntityId>>,
+    /// A forwarded caller off the carrier (FIX 11991): the release judges
+    /// the body for an unknown destination too.
+    pub(super) off_carrier: bool,
     pub(super) frame: &'a [u8],
 }
 
@@ -35,6 +42,18 @@ pub(super) fn wrap(
     rows: Option<&[EntityId]>,
     frame: Vec<u8>,
 ) -> Vec<u8> {
+    wrap_judged(conn, id, incarnation, rows, false, frame)
+}
+
+/// [`wrap`], marking a reply whose caller sits off the connection's carrier.
+pub(super) fn wrap_judged(
+    conn: u32,
+    id: u64,
+    incarnation: u64,
+    rows: Option<&[EntityId]>,
+    off_carrier: bool,
+    frame: Vec<u8>,
+) -> Vec<u8> {
     let count = rows
         .and_then(|rows| u32::try_from(rows.len()).ok())
         .filter(|count| *count != UNNAMED);
@@ -46,6 +65,7 @@ pub(super) fn wrap(
     data.extend_from_slice(&id.to_be_bytes());
     data.extend_from_slice(&incarnation.to_be_bytes());
     data.extend_from_slice(&count.to_be_bytes());
+    data.push(u8::from(off_carrier));
     for row in rows {
         data.extend_from_slice(row.as_bytes());
     }
@@ -60,7 +80,8 @@ pub(super) fn addressed(data: &[u8], conn: u32) -> Option<Routed<'_>> {
     let recipient = u32::from_be_bytes(data[1..5].try_into().ok()?);
     let id = u64::from_be_bytes(data[5..13].try_into().ok()?);
     let incarnation = u64::from_be_bytes(data[13..21].try_into().ok()?);
-    let count = u32::from_be_bytes(data[21..HEADER].try_into().ok()?);
+    let count = u32::from_be_bytes(data[21..COUNT_END].try_into().ok()?);
+    let off_carrier = data[COUNT_END] != 0;
     let (rows, body) = if count == UNNAMED {
         (None, HEADER)
     } else {
@@ -80,6 +101,7 @@ pub(super) fn addressed(data: &[u8], conn: u32) -> Option<Routed<'_>> {
         id,
         incarnation,
         rows,
+        off_carrier,
         frame,
     })
 }
@@ -90,7 +112,7 @@ pub(super) fn unwrapped(data: &[u8]) -> &[u8] {
     if !is_routed(data) || data.len() < HEADER {
         return data;
     }
-    let count = u32::from_be_bytes(data[21..HEADER].try_into().unwrap_or_default());
+    let count = u32::from_be_bytes(data[21..COUNT_END].try_into().unwrap_or_default());
     let rows = if count == UNNAMED {
         0
     } else {
