@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1233 facade rows, 4493 declarations.
+Census: 1233 facade rows, 4495 declarations.
 Inputs: 1164 of 1233 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1068 of 1233 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -10766,6 +10766,15 @@ class SlideReviewPolicyRowHolderRoute(TypedDict):
     first: DecisionRung
     ceiling: DecisionRung
 SlideReviewPolicyRow = SlideReviewPolicyRowPrecedence | SlideReviewPolicyRowVault | SlideReviewPolicyRowRoute | SlideReviewPolicyRowHolder | SlideReviewPolicyRowHolderRoute
+class CodeConsentSettlementEligibilityAllPowerHolders(TypedDict):
+    mode: Literal["all_power_holders"]
+class CodeConsentSettlementEligibilityNamed(TypedDict):
+    mode: Literal["named"]
+    holders: list[str]
+CodeConsentSettlementEligibility = CodeConsentSettlementEligibilityAllPowerHolders | CodeConsentSettlementEligibilityNamed
+class CodeConsentSettlementRow(TypedDict):
+    version: int
+    eligible: CodeConsentSettlementEligibility
 class PolicyManifest(TypedDict):
     schema_version: str
     pack_id: str
@@ -10779,6 +10788,7 @@ class PolicyManifest(TypedDict):
     signatures: NotRequired[list[PolicySignature]]
     auto_checker: NotRequired[str | None]
     slide_review_policy: NotRequired[list[SlideReviewPolicyRow] | None]
+    code_consent_settlement: NotRequired[CodeConsentSettlementRow | None]
 class PolicyManifestView(TypedDict):
     manifest_ref: str
     body_hash: str
