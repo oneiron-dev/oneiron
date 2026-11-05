@@ -132,6 +132,16 @@ their existing funded runs, and filter the native ladder through that same froze
 Credential authority, source provenance and payer identity remain separate. Ordinary
 sessions keep their original callers, routes, policy admission and funding.
 
+The phone text run carries one owned check bound to the actual prepared generation,
+not a later generation label or scope. Run clones and fresh fallback permits retain
+that same check. After the native text gate proves and starts its actual permit, it
+conjoins the check onto the same lease before handing it to the provider. These
+runtime-only checks do not change lease identity, signatures, accounting or request
+hashes. They cannot replace an earlier condition, and their cell is unlocked before
+a check reads current credential, line and source state. This is a transport carrier,
+not yet a claim that every text provider, queued send or retry invokes it; those
+physical consumers must be connected before phone activation.
+
 The uncalled phone preparation factory consumes this original call-bound reader and
 requires the same authenticated instrument and projected agent on the same vault before
 allocating its configured call budget. It constructs one anonymous first-claim party
