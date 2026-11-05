@@ -561,8 +561,6 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultResultsSlice
         | Row::VaultCodeModelHealCount
         | Row::VaultCodeTypeDiagnostics
-        | Row::VaultCodeWaitsResolve
-        | Row::VaultCodeWaitsReceipt
         | Row::VaultCodeExport
         | Row::VaultCodeImport
         | Row::VaultCodeReposGet
@@ -683,7 +681,9 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultTrustedContactsConsent
         | Row::VaultTrustedContactsRevoke
         | Row::VaultSharedPolicyPropose
-        | Row::VaultSharedPolicyAnswer => {
+        | Row::VaultSharedPolicyAnswer
+        | Row::VaultCodeWaitsResolve
+        | Row::VaultCodeWaitsReceipt => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)
         }
         // The voice bank's rows (FIX 4393): a live person on their own proof,

@@ -119,6 +119,15 @@ alone cannot change a connector setting. The existing Owner three-choice
 route remains unchanged. The consumer adds no second consent-answer wake.
 The policy evidence reader and receipt projector are not approval doors.
 
+The served facade uses the existing request-bound native person proof. Its
+pre-hook check authenticates that person, not their settlement authority.
+The Memory door still requires the same human actor and vault-bound proof,
+refuses generated-code answers and reads the ask and word through the caller's
+credential. The engine's current policy and power checks remain the authority.
+Record-scope flags and managed-person and invitee allowlists stay unchanged.
+The embedded verb calls retain their constructor-owner and writer-lease proof;
+merely binding another human actor does not authenticate that person.
+
 No new runtime timeout, count cap or default duration is introduced. The
 shipped row's citation version is `1`. The binding schema is `6` (was `5`)
 and its hash domain is `oneiron:code-consent-binding:v3` (was `v2`) to cover

@@ -1,18 +1,20 @@
 //! Credential-bound host projections of the typed code consent wait doors
 //! (DOOR-079): answer one exact sealed wait, and read it with its answer,
 //! settlement and replay-consumption receipts. HTTP, SDK, MCP and code mode
-//! all take the owner's proof here, from whichever surface the owner is
-//! authenticated on, through the gate `door_admits` runs before any hook;
-//! the engine door revalidates it and acts as that caller. No effect,
+//! take the request's native Owner or person proof through `door_admits`
+//! before any hook. The engine requires current Owner authority or the wait's
+//! settlement policy and action power, and acts as that caller. No effect,
 //! reply, grant or table read is made here.
 use std::sync::Arc;
 
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::code_wait_doors::{
     CodeWaitReceiptRequest, CodeWaitReceiptView, CodeWaitResolveRequest,
 };
+use oneiron::memory::{Memory, MemoryError, MemoryResult};
 
-use super::host_doors::support::Listed;
-use super::host_doors::support::owner_listing::as_owner;
+use super::FacadeApiError;
+use super::host_doors::support::{Listed, credential_listing, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -27,7 +29,7 @@ pub(crate) async fn vault_code_waits_resolve(
     auth: &CoreAuth,
     input: CodeWaitResolveRequest,
 ) -> Listed<CodeWaitReceiptView> {
-    as_owner(server, auth, RESOLVE_VERB, move |memory, owner| {
+    as_person(server, auth, RESOLVE_VERB, move |memory, owner| {
         memory.code_wait_resolve_as(owner, input)
     })
     .await
@@ -38,8 +40,30 @@ pub(crate) async fn vault_code_waits_receipt(
     auth: &CoreAuth,
     input: CodeWaitReceiptRequest,
 ) -> Listed<Option<CodeWaitReceiptView>> {
-    as_owner(server, auth, RECEIPT_VERB, move |memory, owner| {
+    as_person(server, auth, RECEIPT_VERB, move |memory, owner| {
         memory.code_wait_receipt_as(owner, input)
+    })
+    .await
+}
+
+async fn as_person<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&Memory<'_>, &AuthenticatedOwner) -> MemoryResult<T> + Send + 'static,
+) -> Listed<T> {
+    let admitted = || {
+        let person = super::shared_act_doors::person(server, auth, verb)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        Ok::<_, MemoryError>((person, caller))
+    };
+    let (person, caller) = match admitted() {
+        Ok(admitted) => admitted,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, verb, move |_, _, memory| {
+        act(&memory, &person)
     })
     .await
 }
