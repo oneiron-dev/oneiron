@@ -10,7 +10,12 @@ use crate::{EntityId, Result};
 pub(crate) enum ScopedCommRead {
     Ordinary,
     Unavailable,
-    Claim { body: ClaimBody, record: Scope },
+    Claim {
+        original: EntityId,
+        raw: Vec<u8>,
+        body: ClaimBody,
+        record: Scope,
+    },
 }
 
 pub(super) fn birth_position_in_txn(
@@ -62,7 +67,12 @@ pub(crate) fn read_scoped_comm_in_txn(
     };
     frozen.verbs = super::singleton("read".to_owned());
     let record = required_positions(&frozen, &current);
-    Ok(ScopedCommRead::Claim { body, record })
+    Ok(ScopedCommRead::Claim {
+        original,
+        raw: row.encode(),
+        body,
+        record,
+    })
 }
 
 pub(super) fn disclosure_in_txn(
