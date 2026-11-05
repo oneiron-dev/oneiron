@@ -331,11 +331,13 @@ plan completion additionally requires all 242 IDs. Partial and optional-profile
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 
-Bun 1.3.4's JUnit is sent to `/dev/stdout` (a pipe), parsed in memory, and checked
-against registered IDs. The owned file process artifact retains redacted stdout/stderr,
-including the JUnit, up to the process reader's existing bounds. `fileDiagnostics` in the
-aggregate records JUnit presence, case/match/unknown/duplicate counts, file exit/signal,
-and registration errors. A harness error remains a FAIL but does not replace an existing
+Bun 1.3.4 writes JUnit to a real per-file `.junit.xml` outfile under the protected
+report directory. The runner reads that file and checks it against registered IDs;
+subprocess stdout is not a JUnit outfile. A separate `.junit.json` artifact carries a
+redacted XML copy for export. The original XML stays local to the fleet job. Owned file
+process artifacts retain bounded, redacted stdout/stderr separately. `fileDiagnostics`
+in the aggregate records JUnit presence, case/match/unknown/duplicate counts, file
+exit/signal, and registration errors. A harness error remains a FAIL but does not replace an existing
 per-file reason; it is recorded separately as `harnessError`. Wrapper cleanup errors are
 recorded separately as `cleanupError`, preserving an earlier reason.
 
