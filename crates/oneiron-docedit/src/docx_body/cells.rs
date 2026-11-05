@@ -69,7 +69,10 @@ pub(super) fn read(
                         })
                         .collect::<String>();
                     let locked = if structural
-                        || paragraph.para_mark_status != TrackingStatus::Normal
+                        || paragraph
+                            .para_mark_status
+                            .as_ref()
+                            .is_some_and(|status| status != &TrackingStatus::Normal)
                         || (comment
                             && paragraph
                                 .segments
