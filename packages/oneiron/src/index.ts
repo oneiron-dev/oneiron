@@ -502,7 +502,7 @@ export class Oneiron {
         /** Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer. */
         result: (input: Facade.OfferPassRef): Facade.OfferPassResult | null => this.#call(() => this.#client.vaultCoachTrainingOffersResult(input) as Facade.OfferPassResult | null),
         /** Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice. */
-        answer: (input: Facade.OfferAnswerRequest): Facade.OfferAnswerRecord => this.#call(() => this.#client.vaultCoachTrainingOffersAnswer(input) as Facade.OfferAnswerRecord),
+        answer: (input: Facade.OfferAnswerRequest): Facade.OfferAnswerReply => this.#call(() => this.#client.vaultCoachTrainingOffersAnswer(input) as Facade.OfferAnswerReply),
         /** Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding. */
         undo: (input: Facade.OfferRef): Facade.OfferUndoReceipt => this.#call(() => this.#client.vaultCoachTrainingOffersUndo(input) as Facade.OfferUndoReceipt),
         /** Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination. */
