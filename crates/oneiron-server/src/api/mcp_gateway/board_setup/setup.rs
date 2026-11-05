@@ -100,9 +100,13 @@ pub(crate) async fn execute_mcp_setup(
             epoch: board.epoch,
             scope: board.scope_label,
         };
-        let mut payload =
-            crate::mcp::mcp_setup_payload(&header, &board.laid_out, args.board_budget_request())
-                .map_err(mcp_setup_payload_error)?;
+        // The owner's board cap stands in for the harness default; the
+        // caller's limit and explicit override apply as before.
+        let mut budget = args.board_budget_request();
+        budget.harness_default_tok =
+            crate::api::context_board::board_cap_tok(&server.vault, budget.harness_default_tok);
+        let mut payload = crate::mcp::mcp_setup_payload(&header, &board.laid_out, budget)
+            .map_err(mcp_setup_payload_error)?;
         // The keyframe shows the connector actor's layout batch, so its
         // render activates it (BOARD-LAYOUT).
         if let Some(candidate) = &board.layout_candidate {

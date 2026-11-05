@@ -10,7 +10,9 @@
 //!
 //! A new native fork copies its source actor's live and pending layout once,
 //! then diverges: its changes never flow back to the parent. An actor with
-//! no row of its own renders under the owner's default layout.
+//! no row of its own renders under the owner's default layout, and the
+//! owner's override sections win over every actor's own
+//! ([`crate::settings::BoardLayoutSettings`]).
 
 use super::BoardHistoryError;
 use super::layout::{BoardLayout, BoardLayoutError, FoldBaseline};
@@ -88,11 +90,18 @@ impl BoardLayoutCandidate {
 /// applies.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BoardLayoutState {
-    /// The layout the actor's board renders under now.
+    /// The actor's own layout its board renders under now.
     pub live: BoardLayout,
     /// The batch the next turn applies; absent when none is staged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<BoardLayout>,
+    /// The owner's override sections, which win over the actor's own.
+    #[serde(default, skip_serializing_if = "is_empty_layout")]
+    pub owner_override: BoardLayout,
+}
+
+fn is_empty_layout(layout: &BoardLayout) -> bool {
+    layout.sections.is_empty()
 }
 
 /// An actor's erase removes its board layout row (FIX 3520).
@@ -184,16 +193,19 @@ impl Memory<'_> {
                 revision: next,
             });
             BOARD_LAYOUT.put(store, txn, &actor, &row)?;
-            Ok(row.state())
+            let settings =
+                crate::settings::board_layout::board_layout_settings_in_txn(vault, &*txn)?;
+            Ok(row.state(settings.override_layout))
         })
     }
 }
 
 impl BoardLayoutRow {
-    fn state(&self) -> BoardLayoutState {
+    fn state(&self, owner_override: BoardLayout) -> BoardLayoutState {
         BoardLayoutState {
             live: self.live.clone(),
             pending: self.pending.as_ref().map(|pending| pending.layout.clone()),
+            owner_override,
         }
     }
 
@@ -220,11 +232,13 @@ impl Vault {
     /// actor; the embedded door checks no credential.
     pub fn board_layout_state(&self, actor: EntityId) -> Result<BoardLayoutState> {
         let rtxn = self.store.env.read_txn()?;
+        let settings = crate::settings::board_layout::board_layout_settings_in_txn(self, &rtxn)?;
         Ok(match BOARD_LAYOUT.get(&self.store, &rtxn, &actor)? {
-            Some(row) => row.state(),
+            Some(row) => row.state(settings.override_layout),
             None => BoardLayoutState {
-                live: self.board_layout_default_in_txn(&rtxn)?,
+                live: settings.default_layout,
                 pending: None,
+                owner_override: settings.override_layout,
             },
         })
     }
@@ -236,32 +250,32 @@ impl Vault {
     /// run's board render. Then the pending batch projects when one is
     /// staged, with the exact candidate the activation must apply. Without a
     /// turn this selects live only and returns no candidate. An actor with
-    /// no row selects the owner's default.
+    /// no row selects the owner's default. The layout returned is the one
+    /// the board renders: the owner's override sections laid over the
+    /// actor's own; the candidate keeps the actor's own layout alone.
     pub fn select_board_layout(
         &self,
         actor: EntityId,
         has_turn: bool,
     ) -> Result<(BoardLayout, Option<BoardLayoutCandidate>)> {
         let rtxn = self.store.env.read_txn()?;
+        let settings = crate::settings::board_layout::board_layout_settings_in_txn(self, &rtxn)?;
         let Some(row) = BOARD_LAYOUT.get(&self.store, &rtxn, &actor)? else {
-            return Ok((self.board_layout_default_in_txn(&rtxn)?, None));
+            return Ok((settings.effective(&settings.default_layout), None));
         };
         if !has_turn {
-            return Ok((row.live, None));
+            return Ok((settings.effective(&row.live), None));
         }
         match row.candidate(actor)? {
-            Some(candidate) => Ok((candidate.layout.clone(), Some(candidate))),
-            None => Ok((row.live, None)),
+            Some(candidate) => Ok((settings.effective(&candidate.layout), Some(candidate))),
+            None => Ok((settings.effective(&row.live), None)),
         }
     }
 
     /// The layout an actor with no row of its own renders under: the
-    /// engine's own layout of every section.
-    pub(crate) fn board_layout_default_in_txn(
-        &self,
-        _txn: &heed::RoTxn<'_>,
-    ) -> Result<BoardLayout> {
-        Ok(BoardLayout::default())
+    /// owner's default layout, else the engine's own layout of every section.
+    pub(crate) fn board_layout_default_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<BoardLayout> {
+        Ok(crate::settings::board_layout::board_layout_settings_in_txn(self, txn)?.default_layout)
     }
 
     /// The actors a board filter's group names: a project's roster, its

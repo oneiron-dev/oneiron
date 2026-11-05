@@ -42,7 +42,7 @@ pub(in crate::api::mcp_gateway) async fn mcp_current_board(
     let laid_out = oneiron::context_board::apply_board_layout(
         &sections,
         &layout,
-        crate::mcp::MCP_BOARD_BUDGET_TOK,
+        crate::api::context_board::board_cap_tok(&server.vault, crate::mcp::MCP_BOARD_BUDGET_TOK),
     );
     let layout_candidate =
         layout_candidate.map(|candidate| candidate.with_fold_baselines(&laid_out.fold_counts));

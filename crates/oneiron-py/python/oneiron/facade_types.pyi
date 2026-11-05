@@ -358,6 +358,7 @@ class BoardLayout(TypedDict):
 class BoardLayoutState(TypedDict):
     live: BoardLayout
     pending: NotRequired[BoardLayout | None]
+    owner_override: NotRequired[BoardLayout]
 class BoardFoldRequest(TypedDict):
     section: str
     note: NotRequired[str | None]

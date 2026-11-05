@@ -471,6 +471,7 @@ fn mcp_board_world(actor: &McpResolvedActor) -> oneiron::EntityId {
 fn mcp_live_board(
     actor: &McpResolvedActor,
     board: &McpBoardState,
+    cap_tok: usize,
 ) -> Result<McpLiveBoard, McpGatewayError> {
     let header = oneiron::context_board::BoardBlockHeader {
         epoch: board.epoch,
@@ -480,7 +481,7 @@ fn mcp_live_board(
         &header,
         &board.laid_out,
         oneiron::context_board::BoardBudgetRequest {
-            harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
+            harness_default_tok: cap_tok,
             caller_limit_tok: None,
             explicit_override_tok: None,
         },
@@ -564,7 +565,9 @@ pub(super) async fn execute_mcp_board_verb(
     let board = mcp_current_board(server, actor).await?;
     served.extend_from_slice(&board.rows);
     let omissions = board.omissions();
-    let source = mcp_live_board(actor, &board)?;
+    let cap_tok =
+        crate::api::context_board::board_cap_tok(&server.vault, crate::mcp::MCP_BOARD_BUDGET_TOK);
+    let source = mcp_live_board(actor, &board, cap_tok)?;
     activate_board_layout(server, &board)?;
     let scope = oneiron::board_verb::BoardWorldScope::single(mcp_board_world(actor));
     let output = {
@@ -575,7 +578,7 @@ pub(super) async fn execute_mcp_board_verb(
             source: &source,
             streams: registry.streams_mut(),
             budget: oneiron::context_board::BoardBudgetRequest {
-                harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
+                harness_default_tok: cap_tok,
                 caller_limit_tok: None,
                 explicit_override_tok: None,
             },
@@ -766,7 +769,7 @@ pub(crate) async fn execute_run_board_verb_in_session(
     let world = actor.entity_ref();
     let source = McpLiveBoard {
         world,
-        view: live_board_view(&board).map_err(run_board_error)?,
+        view: live_board_view(server, &board).map_err(run_board_error)?,
     };
     activate_board_layout(server, &board).map_err(run_board_error)?;
     let scope = oneiron::board_verb::BoardWorldScope::single(world);
@@ -777,7 +780,7 @@ pub(crate) async fn execute_run_board_verb_in_session(
             scope: &scope,
             source: &source,
             streams: registry.streams_mut(),
-            budget: run_board_budget_request(),
+            budget: run_board_budget_request(server),
         };
         oneiron::board_verb::dispatch_board_verb(&mut context, call)
     }
@@ -869,10 +872,16 @@ fn activate_board_layout(
 }
 
 /// The native run board's harness cap, shared by section projection and its
-/// final keyframe. Run boards have no caller limit or explicit override.
-pub(super) fn run_board_budget_request() -> oneiron::context_board::BoardBudgetRequest {
+/// final keyframe: the owner's board cap, else the MCP harness default. Run
+/// boards have no caller limit or explicit override.
+pub(super) fn run_board_budget_request(
+    server: &SyncServer,
+) -> oneiron::context_board::BoardBudgetRequest {
     oneiron::context_board::BoardBudgetRequest {
-        harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
+        harness_default_tok: crate::api::context_board::board_cap_tok(
+            &server.vault,
+            crate::mcp::MCP_BOARD_BUDGET_TOK,
+        ),
         caller_limit_tok: None,
         explicit_override_tok: None,
     }
@@ -880,6 +889,7 @@ pub(super) fn run_board_budget_request() -> oneiron::context_board::BoardBudgetR
 
 /// [`mcp_live_board`]'s view of one rendered board.
 fn live_board_view(
+    server: &SyncServer,
     board: &McpBoardState,
 ) -> Result<oneiron::board_verb::LiveBoardView, McpGatewayError> {
     let header = oneiron::context_board::BoardBlockHeader {
@@ -889,7 +899,7 @@ fn live_board_view(
     let render = oneiron::board_verb::render_current_keyframe(
         &header,
         &board.laid_out,
-        run_board_budget_request(),
+        run_board_budget_request(server),
     )
     .map_err(mcp_board_frame_error)?;
     let mut rows = std::collections::BTreeMap::new();

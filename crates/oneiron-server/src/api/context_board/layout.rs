@@ -56,6 +56,19 @@ pub(crate) fn hydrate_layout_selection(
     })
 }
 
+/// The board cap a harness renders under: the owner's cap
+/// (`/v1/owner/settings/board-layout`), else `harness_tok`. Settings that
+/// fail to read keep the harness default.
+pub(crate) fn board_cap_tok(vault: &oneiron::Vault, harness_tok: usize) -> usize {
+    match vault.board_layout_settings() {
+        Ok(settings) => settings.cap_or(harness_tok),
+        Err(error) => {
+            tracing::warn!(%error, "board layout settings did not read; the harness cap applies");
+            harness_tok
+        }
+    }
+}
+
 /// The caller's entity principal as its layout owner: a declared actor
 /// class plus a hex principal.
 fn layout_actor(auth: &CoreAuth) -> Option<EntityId> {

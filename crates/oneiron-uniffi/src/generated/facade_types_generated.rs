@@ -1147,6 +1147,12 @@ pub struct BoardLayoutState {
     pub live: BoardLayout,
     #[serde(rename = "pending", default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<BoardLayout>,
+    #[serde(
+        rename = "owner_override",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub owner_override: Option<BoardLayout>,
 }
 
 /// `oneiron::verbs::board_layout::BoardFoldRequest`.
