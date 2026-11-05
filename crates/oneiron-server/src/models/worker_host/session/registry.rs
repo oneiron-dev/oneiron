@@ -466,6 +466,41 @@ pub(super) async fn send<B: serde::Serialize, R: serde::de::DeserializeOwned>(
     })
 }
 
+pub(super) enum ReleasedSessionFault {
+    Invalidation(SessionInvalidation),
+    Release(oneiron::LlmError),
+}
+
+pub(super) async fn send_released<B: serde::Serialize, R: serde::de::DeserializeOwned>(
+    place: &Place,
+    op: SessionOp,
+    body: &B,
+    conversation: &JsonValue,
+    lease: &oneiron::BudgetLease,
+) -> Result<R, ReleasedSessionFault> {
+    use crate::models::native_exl3::{ReleasedOpFault, session_send_released};
+
+    session_send_released(
+        &place.socket,
+        &place.epoch,
+        op,
+        body,
+        conversation,
+        &place.worker,
+        lease,
+    )
+    .await
+    .map_err(|fault| match fault {
+        ReleasedOpFault::Op(OpFault::Refused(code)) => {
+            ReleasedSessionFault::Invalidation(policy::refused(&code))
+        }
+        ReleasedOpFault::Op(OpFault::Cut) => {
+            ReleasedSessionFault::Invalidation(SessionInvalidation::Evicted)
+        }
+        ReleasedOpFault::Release(error) => ReleasedSessionFault::Release(error),
+    })
+}
+
 /// The host's plaintext copies of each vault's snapshots, counted with
 /// their bytes while they live, so a park or restore admits against what
 /// the process already holds (FIX 11289); plus the bytes admitted but not

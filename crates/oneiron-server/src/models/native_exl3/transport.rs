@@ -190,6 +190,7 @@ impl Channel {
         body: JsonValue,
         fd: BorrowedFd<'_>,
         lease: &oneiron::BudgetLease,
+        count_inference: bool,
     ) -> Result<(), DispatchWriteError> {
         let bytes =
             Self::frame(op, request_id, epoch, body).map_err(DispatchWriteError::Transport)?;
@@ -213,7 +214,7 @@ impl Channel {
                 .check_dispatch_release()
                 .map_err(DispatchWriteError::Release)?;
             match stream.try_io(Interest::WRITABLE, || {
-                if !attempted {
+                if count_inference && !attempted {
                     lease.begin_physical_attempt();
                     attempted = true;
                 }
@@ -512,6 +513,50 @@ impl Channel {
         }
     }
 
+    pub(super) async fn exchange_released(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        mut body: JsonValue,
+        input: Outbound<'_>,
+        lease: &oneiron::BudgetLease,
+    ) -> Result<Incoming, ReleasedExchangeError> {
+        if !lease.has_dispatch_release() {
+            return self
+                .exchange(op, epoch, body, Some(input))
+                .await
+                .map_err(ReleasedExchangeError::Transport);
+        }
+        let request_id = next_request_id();
+        if let Some(fields) = body.as_object_mut() {
+            fields.insert(
+                "input".to_owned(),
+                wire::region(request_id, input.len, input.encoding),
+            );
+        }
+        self.send_with_fd_released(op, request_id, epoch, body, input.fd, lease, false)
+            .await
+            .map_err(|error| match error {
+                DispatchWriteError::Transport(error) => ReleasedExchangeError::Transport(error),
+                DispatchWriteError::Release(error) => ReleasedExchangeError::Release(error),
+            })?;
+        loop {
+            match self
+                .next()
+                .await
+                .map_err(ReleasedExchangeError::Transport)?
+            {
+                Some(frame) if frame.request_id == request_id => return Ok(frame),
+                Some(_) => {}
+                None => {
+                    return Err(ReleasedExchangeError::Transport(
+                        io::ErrorKind::UnexpectedEof.into(),
+                    ));
+                }
+            }
+        }
+    }
+
     /// [`Self::exchange`] for an op whose answer passes a descriptor: the
     /// worker's frame of the same id, with every descriptor that rode on
     /// it. Those another frame brought are closed.
@@ -648,6 +693,11 @@ impl CallUpdates {
         )?;
         self.writer.lock().await.write_all(&bytes).await
     }
+}
+
+pub(super) enum ReleasedExchangeError {
+    Transport(io::Error),
+    Release(oneiron::LlmError),
 }
 
 enum DispatchWriteError {
@@ -825,7 +875,15 @@ impl Call {
         let sent = match dispatch_lease {
             Some(lease) if lease.has_dispatch_release() => {
                 channel
-                    .send_with_fd_released(op, request_id, Some(epoch), body, input.fd(), lease)
+                    .send_with_fd_released(
+                        op,
+                        request_id,
+                        Some(epoch),
+                        body,
+                        input.fd(),
+                        lease,
+                        true,
+                    )
                     .await
             }
             _ => channel

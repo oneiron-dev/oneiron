@@ -30,6 +30,7 @@ mod updates;
 mod wire;
 
 pub(super) use session_ops::{OpFault, capability as session_capability, send as session_send};
+pub(super) use session_ops::{ReleasedOpFault, send_released as session_send_released};
 pub(super) use transport::next_request_id;
 // Codec v1.2's snapshot ops (R3), for the session coordinator's park and
 // restore paths.
@@ -264,18 +265,18 @@ async fn begin(
     let schedule = work.schedule(grant.as_ref());
     let (conversation, params) = wire::split_request(body);
     let session = match segments {
-        Some(manifest) => {
-            worker_host::open_turn(
-                route,
-                &socket,
-                &epoch,
-                lease.observed(),
-                manifest,
-                &conversation,
-                &params,
-            )
-            .await
-        }
+        Some(manifest) => worker_host::open_turn(
+            route,
+            &socket,
+            &epoch,
+            lease.observed(),
+            manifest,
+            &conversation,
+            &params,
+            dispatch_lease,
+        )
+        .await
+        .map_err(OpenAiCompatTransportError::DispatchRelease)?,
         None => None,
     };
     let plain = session.is_some().then(|| params.clone());
