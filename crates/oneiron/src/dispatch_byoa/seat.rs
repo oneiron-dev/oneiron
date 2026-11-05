@@ -634,6 +634,9 @@ fn opencode_retry_reset(event: &JsonValue) -> Option<u64> {
         .get("retry-after")?
         .as_str()?
         .trim();
+    if header.len() != 29 {
+        return None;
+    }
     let format = "%a, %d %b %Y %H:%M:%S GMT";
     let reset = chrono::NaiveDateTime::parse_from_str(header, format).ok()?;
     if reset.format(format).to_string() != header {
