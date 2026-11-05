@@ -6,7 +6,7 @@
 use heed::RwTxn;
 
 use super::super::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::entity_doc::{DocumentMerge, RecordDocumentCandidate, RecordDocumentPreparation};
+use crate::entity_doc::{RecordDocumentCandidate, RecordDocumentPreparation, RecordDocumentStand};
 use crate::error::Result;
 use crate::sync::SelectedRecordDocument;
 
@@ -17,7 +17,7 @@ pub(super) enum RecordDocumentOp<'selected, 'carrier> {
     Prepared(PreparedRecordPut<'selected, 'carrier>),
     Stands {
         operation: BatchOp,
-        outcome: DocumentMerge,
+        outcome: RecordDocumentStand,
     },
 }
 
