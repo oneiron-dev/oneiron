@@ -202,6 +202,27 @@ unsigned mdb_mid3l_search( MDB_ID3L ids, MDB_ID id );
 int mdb_mid3l_insert( MDB_ID3L ids, MDB_ID3 *id );
 
 #endif /* MDB_RPAGE_CACHE */
+/* ONEIRON: borrowed current-transaction callbacks. Only ticket/release persist
+ * in a physical allocation; acquire/context never enter a cached IDL.
+ */
+typedef struct MDB_page_account {
+	MDB_page_acquire_func *acquire;
+	MDB_page_materialized_func *materialized;
+	MDB_page_release_func *release;
+	void *context;
+} MDB_page_account;
+
+MDB_IDL mdb_midl_alloc_accounted(int num, const MDB_page_account *account);
+void mdb_midl_shrink_accounted(MDB_IDL *idp, const MDB_page_account *account);
+int mdb_midl_need_accounted(MDB_IDL *idp, unsigned num,
+	const MDB_page_account *account);
+int mdb_midl_append_accounted(MDB_IDL *idp, MDB_ID id,
+	const MDB_page_account *account);
+int mdb_midl_append_list_accounted(MDB_IDL *idp, MDB_IDL app,
+	const MDB_page_account *account);
+int mdb_midl_append_range_accounted(MDB_IDL *idp, MDB_ID id, unsigned n,
+	const MDB_page_account *account);
+
 /** @} */
 /** @} */
 #ifdef __cplusplus

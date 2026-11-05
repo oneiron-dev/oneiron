@@ -109,8 +109,25 @@ through the replacement's retained-buffer chain. Removing cache entries and
 closing the environment release their references. Only the final reference
 zeros the buffer's actual allocation, frees it, and releases its charge.
 
-This covers dirty-page and encrypted read-cache malloc requests, including
-their actual heap-only prefixes. It does not cover IDL/control allocations,
-encryption stash, mmap, every metadata/overlay copy or native physical-disk/CoW
-costs. The disk claim above still covers encoded values only. This is not
-complete FIX8125, whole-heap coverage or runtime proof.
+The same account covers owned single-ID lists allocated or resized during the
+held transaction: spill lists, free-page lists and freelist scratch. Their
+heap-only prefix records the actual allocation size and its ticket. Growth and
+best-effort shrink admit a full replacement beside the old buffer, materialize
+it before copying, preserve every surviving payload byte, and free the old
+buffer before returning its charge. Failed replacements leave the old list
+unchanged. Capacity, count, ID ordering and native growth thresholds stay the
+same.
+
+A child inherits the current transaction account before allocating its lists.
+Parent merges and the root's final commit or abort use that current account
+too. A cached or transferred list retains only its physical ticket and release
+callback; it never retains a borrowed acquire context from an earlier job.
+Lists allocated before an account attaches are not retroactively charged.
+Unaccounted allocations use the same physical layout and ordinary IDL API.
+
+This covers dirty-page, encrypted read-cache and single-ID-list malloc requests
+during the accounted transaction, including their actual heap-only prefixes.
+It does not cover ID2/ID3 control arrays, encryption stash, mmap, every
+metadata/overlay copy or native physical-disk/CoW costs. The disk claim above
+still covers encoded values only. This is not complete FIX8125, whole-heap
+coverage or runtime proof.
