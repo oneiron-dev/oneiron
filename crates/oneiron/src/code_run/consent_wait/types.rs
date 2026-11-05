@@ -15,7 +15,7 @@ use crate::store::GateDecisionId;
 use super::rebind_types::{CodeConsentRebind, CodeConsentRebindProposal};
 
 /// The binding row's schema version.
-pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 4;
+pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 5;
 
 pub(crate) use crate::consent::code_wait_state::CodeConsentCallSite;
 pub use crate::consent::code_wait_state::{
@@ -41,6 +41,11 @@ pub struct CodeConsentSavedCredential {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CodeConsentPrincipal {
     pub(crate) actor_ref: EntityId,
+    /// The original caller's actor class, as its admitted surface bound it
+    /// (FIX 4520): a typed-ask retry rebinds this exact class, never a
+    /// guess. The class enum has no serde form, so the row keeps the
+    /// canonical byte.
+    pub(crate) actor_class: u8,
     pub(crate) credential: Option<CodeConsentSavedCredential>,
     /// The slip the opener's request was admitted on, read from the verified
     /// witness at the mint: an answer from that slip, or from one minted

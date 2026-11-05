@@ -258,6 +258,7 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
     }
     let original = &binding.original;
     field(original.actor_ref.as_bytes());
+    field(&[original.actor_class]);
     field(
         original
             .opener_slip
