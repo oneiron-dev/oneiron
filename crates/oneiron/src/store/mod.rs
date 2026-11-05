@@ -189,8 +189,8 @@ pub(crate) use gate_hooks::StoreGateHooks;
 mod sync_hooks;
 #[cfg(feature = "sync")]
 pub(crate) use sync_hooks::StoreSyncHooks;
-#[cfg(feature = "sync")]
 pub mod document_frame_tags;
+pub mod framing;
 pub mod housekeeping_report;
 pub mod housekeeping_schedule;
 #[cfg(feature = "sync")]
@@ -228,7 +228,6 @@ pub mod result_memory;
 pub use oneiron_store::retained_memory;
 pub mod sandbox_import;
 pub mod verb_invocation;
-#[cfg(feature = "sync")]
 pub mod window_protocol;
 #[cfg(feature = "sync")]
 pub(crate) mod window_rows;
@@ -463,6 +462,9 @@ pub(crate) use group_commit::{
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;
+pub(crate) use key_custody::{
+    Requirement as CustodyForkRequirement, binding_in_txn as custody_binding_in_txn,
+};
 pub use key_custody::custody_container_path;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;

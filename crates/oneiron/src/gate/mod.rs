@@ -23,6 +23,7 @@ mod confirm;
 mod connector_admission;
 mod consolidation_readers;
 mod constants;
+mod entity_resolution_bands;
 pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
 mod decode;
