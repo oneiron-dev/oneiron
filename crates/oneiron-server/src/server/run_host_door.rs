@@ -358,6 +358,7 @@ impl AgentVerbDoor for RunHostDoor {
                         input,
                         line.as_ref(),
                         attempt.as_deref(),
+                        media_step.as_ref(),
                     )
                 }
                 None => answer_as_agent_in_step(
@@ -653,7 +654,7 @@ pub(crate) fn answer_as_agent(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the agent's call"
 )]
-fn answer_as_agent_in_step(
+pub(super) fn answer_as_agent_in_step(
     server: &SyncServer,
     actor: WriteActor,
     origin: &HostWriteOrigin,

@@ -8,6 +8,9 @@ the same path. This does not create an image-specific budget or ledger.
 
 The resident dispatcher binds its actual vault, attempt, run reference, actor,
 and code-run id to the entry's host door. This entry has no wake-pass deadline.
+The owner-row dispatcher preserves this binding when a non-owner falls back to
+the agent door. A proven owner still uses the existing owner path.
+
 A per-call observation follows every rung and fallback. It becomes true as soon
 as any rung's existing `admit_media` succeeds, before that rung can enter a
 backend or gate.
