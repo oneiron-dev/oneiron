@@ -15,6 +15,7 @@ use crate::{EntityId, Result, Vault};
 
 /// The native response home of the actual source, not its claim id.
 pub(crate) enum HomeClaimResponseSource {
+    /// No native inline response; other owner and actor splits still apply.
     NotResponse,
     /// The native binding pass must bind this source and its obligations.
     Unbound {
