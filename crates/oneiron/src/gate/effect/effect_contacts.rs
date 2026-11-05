@@ -164,7 +164,7 @@ pub(crate) fn counterparty_send_override_in_txn(
     else {
         return Ok(None);
     };
-    comm_result(crate::comm::send_override_for_send_in_txn(
+    comm_result(store.record_hooks.send_override_for_send_in_txn(
         store,
         txn,
         &party,
@@ -234,7 +234,7 @@ fn fold_comm_stop(
     if hydrated.counterparty_opted_out && hydrated.counterparty_opt_out_receipt_reason.is_some() {
         return Ok(());
     }
-    let Some(reason) = comm_result(crate::comm::send_stop_reason_in_txn(
+    let Some(reason) = comm_result(store.record_hooks.send_stop_reason_in_txn(
         store,
         txn,
         persons,
