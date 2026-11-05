@@ -127,6 +127,7 @@ pub enum PolicyVerdictCategory {
         jurisdiction: String,
         policy_version: String,
         row_ref: String,
+        basis: super::planes::HostedLegalBasis,
     },
 }
 
