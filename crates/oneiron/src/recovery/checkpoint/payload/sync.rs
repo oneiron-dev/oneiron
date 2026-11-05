@@ -7,10 +7,12 @@
 //! update) waits until every row is read, then its window splits whole
 //! ([`MixedCarrierProjection::project_windows`], FIX 10277): each value copy
 //! into its holder's compartment, its history into a carrier the image keeps.
-//! A copy another custody client holds stays in the image as it stands, as
-//! that client's dispatched rows do (FIX 10278). A window any of whose copies
-//! the image does not take stays whole under the vault-wide seal, named by its
-//! family, as before; its rows are never half split. A restore joins each window from
+//! A copy the credential client holds stays in the image as it stands, as its
+//! dispatched rows do (FIX 10278). A window any of whose copies another
+//! custody client holds (a world pad, which the image carries only by
+//! reference in a whole window's snapshot; a body; a response), or the image
+//! does not take, stays whole under the vault-wide seal, named by its family,
+//! as before; its rows are never half split. A restore joins each window from
 //! its carrier and the copies that opened, each copy only from the home its
 //! capture placed it in ([`restore_window_carriers`], FIX 10283). A restore
 //! puts an opened carrier's rows back through
@@ -35,8 +37,8 @@ use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE, entity_type_registry_entry};
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
-    ActorPart, Captured, OpenedOwnerRows, OwnerRef, Restored, RowDb, RowLocator, RowPart,
-    Unresolved, bad_part, restore_row_in_txn,
+    ActorPart, Captured, OpenedOwnerRows, OtherClient, OwnerRef, Restored, RowDb, RowLocator,
+    RowPart, Unresolved, bad_part, restore_row_in_txn,
 };
 use crate::sync::checkpoint_payload::{
     AtomHome, AtomRef, CapturedSyncRow, CapturedSyncRows, KindPlacement, LoroCarrier, OpenedAtom,
@@ -297,14 +299,17 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
             .enumerate()
             .map(|(place, row)| (at_of(row), place))
             .collect();
-        // A window any of whose carriers holds a value the image does not
-        // take stays whole, named: its snapshot and its updates alike, so no
+        // A window any of whose carriers holds a copy of a custody client
+        // other than the credential client, or a value the image does not
+        // take, stays whole, named: its snapshot and its updates alike, so no
         // window is half split.
         let mut whole: BTreeSet<&str> = BTreeSet::new();
         for carrier in &projection.carriers {
             for copy in carrier.slots.iter().flat_map(|slot| &slot.copies) {
-                let (_, atom) = staged(&emitted, copy)?;
-                if !filter.takes_window_value(&carrier.window, &atom.at, &atom.value) {
+                let (home, atom) = staged(&emitted, copy)?;
+                if matches!(home, AtomHome::Client(client) if *client != OtherClient::Credential)
+                    || !filter.takes_window_value(&carrier.window, &atom.at, &atom.value)
+                {
                     whole.insert(carrier.window.as_str());
                 }
             }
@@ -351,12 +356,17 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
                         atom: copy.atom.0,
                         value: atom.value.clone(),
                     }),
-                    // Another custody client's copy stays as it stands, under
+                    // The credential client's copy stays as it stands, under
                     // the image's own seal, as its dispatched rows do (FIX 10278).
-                    AtomHome::Client(_) => clients.push(ClientCopy {
+                    AtomHome::Client(OtherClient::Credential) => clients.push(ClientCopy {
                         atom: copy.atom.0,
                         value: atom.value.clone(),
                     }),
+                    AtomHome::Client(_) => {
+                        return Err(Error::InvariantViolation(
+                            "a split window holds another client's copy",
+                        ));
+                    }
                 }
             }
             for row in &carrier.rows {
@@ -544,7 +554,7 @@ struct OpenedWindowCopies<'o> {
     owners: BTreeMap<OwnerRef, &'o OpenedOwnerRows>,
     /// Each structure copy the image keeps, by ordinal.
     structure: BTreeMap<u32, &'o [u8]>,
-    /// Each copy another custody client holds that the image keeps, by
+    /// Each copy the credential client holds that the image keeps, by
     /// ordinal (FIX 10278).
     clients: BTreeMap<u32, &'o [u8]>,
     /// The owners whose compartments the payload holds that did not open.
