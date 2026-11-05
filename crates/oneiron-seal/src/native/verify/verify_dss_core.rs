@@ -178,6 +178,7 @@ fn material_valid(
             if entries.is_empty() {
                 return Ok(false);
             }
+            memory.admit_len::<&EmbeddedCert>(entries.len())?;
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
                 let Some(issuer) =
@@ -206,6 +207,7 @@ fn material_valid(
                 else {
                     return Ok(false);
                 };
+                memory.admit_len::<&[u8]>(targets.len())?;
                 ocsp_targets.extend(targets);
             }
         }
