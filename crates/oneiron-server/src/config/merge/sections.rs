@@ -64,6 +64,7 @@ impl EnvConfig {
         values.oauth_issuer = lookup("ONEIRON_OAUTH_ISSUER");
         values.oauth_jwks_uri = lookup("ONEIRON_OAUTH_JWKS_URI");
         values.oauth_resource_indicator = lookup("ONEIRON_OAUTH_RESOURCE_INDICATOR");
+        values.git_door_base = lookup("ONEIRON_GIT_DOOR_BASE");
         values.kit_bundle_public_urls = lookup_list(&mut lookup, "ONEIRON_KIT_BUNDLE_PUBLIC_URLS");
         values.allow_unauthenticated =
             lookup_bool(&mut lookup, "ONEIRON_INSECURE_ALLOW_UNAUTHENTICATED")?;
@@ -166,6 +167,14 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.oauth_resource_indicator {
             resolved.oauth_resource_indicator = Some(value);
+        }
+        if let Some(value) = self.git_door_base {
+            if oneiron::git_wire::validate_checkout_door(&value).is_err() {
+                anyhow::bail!(
+                    "git_door_base must be the host's Git door: https://<host>/git, or http on loopback"
+                );
+            }
+            resolved.git_door_base = Some(value);
         }
         if let Some(value) = self.kit_bundle_public_urls {
             resolved.kit_bundle_public_urls = normalize_list(value);

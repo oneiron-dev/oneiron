@@ -146,6 +146,10 @@ pub enum OwnerActKind {
     /// receipt records it, not a signed authority op; its `seen` is zero.
     /// No agent Grant line names this act.
     AccessGrant,
+    /// The owner's cut of a repository's origin authority (`OriginCut`; FIX
+    /// 15740). Its `target` is the repository's portable id and its `seen`
+    /// is over that repository's live cuts. No Grant line names it.
+    OriginCut,
 }
 
 impl OwnerActKind {
@@ -172,6 +176,7 @@ impl OwnerActKind {
             Self::OwnerKeyEnrollment => "owner_key_enrollment",
             Self::FreeTimePolicy => "free_time_policy",
             Self::AccessGrant => "access_grant",
+            Self::OriginCut => "origin_cut",
         }
     }
 
@@ -198,6 +203,7 @@ impl OwnerActKind {
             "owner_key_enrollment" => Self::OwnerKeyEnrollment,
             "free_time_policy" => Self::FreeTimePolicy,
             "access_grant" => Self::AccessGrant,
+            "origin_cut" => Self::OriginCut,
             _ => return None,
         })
     }
