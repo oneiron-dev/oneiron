@@ -6,7 +6,10 @@
 //! down before it is stopped, and stopped by signals to that group alone.
 //! An abort kills that group at once and waits for its reaper, asking the
 //! worker nothing.
+use std::future::{Future, poll_fn};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::time::Duration;
 
 use oneiron_driver::{LauncherFuture, RunningWorker, WorkerActivity, WorkerExit};
@@ -19,10 +22,15 @@ use super::media_worker::StatsRoute;
 /// It only paces the next check; no worker is stopped for it.
 const LIVENESS_REQUEST: Duration = Duration::from_secs(5);
 
+/// The owned leader and every signal share the reaper's short poll lock.
+struct Custody {
+    group: i32,
+    child: tokio::process::Child,
+}
+
 /// A worker process the supervisor started.
 pub(super) struct ProcessWorker {
-    /// The process group: the worker's own pid.
-    group: i32,
+    state: Arc<Mutex<Custody>>,
     exit: watch::Receiver<Option<WorkerExit>>,
     health: String,
     client: reqwest::Client,
@@ -56,18 +64,32 @@ impl ProcessWorker {
                     .map_err(std::io::Error::from)
             });
         }
-        let mut child = command.spawn()?;
+        let child = command.spawn()?;
         let group = child
             .id()
             .and_then(|pid| i32::try_from(pid).ok())
             .ok_or_else(|| std::io::Error::other("the worker exited before it was named"))?;
         let (sender, exit) = watch::channel(None);
+        let state = Arc::new(Mutex::new(Custody { group, child }));
+        let reaper = Arc::clone(&state);
         tokio::spawn(async move {
-            let description = match child.wait().await {
-                Ok(status) => status.to_string(),
-                Err(error) => format!("its wait failed: {error}"),
-            };
-            sender.send_replace(Some(WorkerExit { description }));
+            poll_fn(|cx| {
+                let mut custody = reaper.lock().unwrap_or_else(|poison| poison.into_inner());
+                let status = {
+                    let mut wait = std::pin::pin!(custody.child.wait());
+                    match wait.as_mut().poll(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(status) => status,
+                    }
+                };
+                let description = match status {
+                    Ok(status) => status.to_string(),
+                    Err(error) => format!("its wait failed: {error}"),
+                };
+                sender.send_replace(Some(WorkerExit { description }));
+                Poll::Ready(())
+            })
+            .await;
         });
         let client = reqwest::Client::builder()
             .no_proxy()
@@ -77,7 +99,7 @@ impl ProcessWorker {
             .build()
             .map_err(std::io::Error::other)?;
         Ok(Self {
-            group,
+            state,
             exit,
             health,
             client,
@@ -98,7 +120,14 @@ impl ProcessWorker {
     }
 
     fn signal(&self, signal: Signal) {
-        if let Some(group) = Pid::from_raw(self.group) {
+        let custody = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if self.exit.borrow().is_some() {
+            return;
+        }
+        if let Some(group) = Pid::from_raw(custody.group) {
             let _ = kill_process_group(group, signal);
         }
     }
