@@ -5863,7 +5863,7 @@ export type UnitAbstention = { unit: unknown; decision?: TypedDecision | null; j
 /** `oneiron::blob_artifact::unit_refusal::UnitRefusal` */
 export type UnitRefusal = { unit: unknown; reason: string; judged_live?: LivePin | null }
 /** `oneiron::blob_artifact::verbs::ArtifactAskOutcome` */
-export type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] }
+export type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[]; next_sheet_row?: number | null }
 /** `oneiron::blob_artifact::verbs::ArtifactAdmitSubmit` */
 export type ArtifactAdmitSubmit = { ask: ArtifactAskSubmit; decisions: TypedDecision[] }
 /** `oneiron::critic::review::submit::CriticBinding` */
@@ -6965,7 +6965,7 @@ export type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" }
 /** `oneiron::llm::decision::questions::artifact_refresh::unit_receipts::ArtifactUnitReceipt` */
 export type ArtifactUnitReceipt = { status: "abstained"; unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null } | { status: "refused"; unit: unknown; reason: string; judged_live?: LivePin | null } | { status: "omitted" }
 /** `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskRecord` */
-export type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean; units?: ArtifactUnitReceipt[] }
+export type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean; units?: ArtifactUnitReceipt[]; next_sheet_row?: number | null }
 /** `oneiron::receipt::questions::QuestionAnswer` */
 export type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" })
 /** `oneiron::receipt::questions::QuestionAnswersPage` */
