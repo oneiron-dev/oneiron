@@ -8312,6 +8312,7 @@ class MessageResultAttachment(TypedDict):
     kind: str
     lines: int
     complete: bool
+    erased: bool
     preview: str
     preview_truncated: bool
     more: list[ResultFacet]

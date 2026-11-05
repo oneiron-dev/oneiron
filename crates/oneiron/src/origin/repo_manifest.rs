@@ -30,6 +30,8 @@ use std::cmp::Ordering;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::Vault;
+#[cfg(feature = "sync")]
+use crate::authority::OriginCutStanding;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 #[cfg(feature = "sync")]
@@ -140,7 +142,8 @@ pub struct RepoManifest {
     /// The LFS objects those refs carry, ascending: pointers, never bytes.
     #[serde(with = "lfs_oids")]
     pub lfs_pointers: Vec<LfsOid>,
-    /// The epoch of the origin authority the refs writer holds, else 0.
+    /// The epoch of the owner's origin cut in force that names the refs
+    /// writer (FIX 15740), else 0.
     pub epoch: u64,
     /// When the refs writer last changed the manifest.
     pub updated_at: u64,
@@ -500,6 +503,15 @@ impl Vault {
                 if !self.repo_manifest_writer_proven_in_txn(txn, carried, origin.as_ref())? {
                     return Ok(RepoManifestMerge::Unproven);
                 }
+            } else if self
+                .authority_view_readonly_in_txn(txn)?
+                .origin_cut_standing(carried.portable.as_bytes())?
+                != OriginCutStanding::NoCut
+                && !self.repo_manifest_writer_proven_in_txn(txn, carried, None)?
+            {
+                // Once the owner cut the repo, a first copy is proven as a
+                // replacement is (FIX 15740); before any cut it is adopted.
+                return Ok(RepoManifestMerge::Unproven);
             }
             MANIFESTS.put(&self.store, txn, &key, carried)?;
             let stands = match BY_CODE.get(&self.store, txn, &carried.code)? {
@@ -542,11 +554,15 @@ impl Vault {
     }
 
     /// Whether `manifest`'s writer is proven here (FIX 12765, Engine 02:54
-    /// A3): its signature verifies under the key of a machine this vault's
-    /// own authority fold trusts now, and, where this host serves the repo
-    /// (`origin`, its authority row in `txn`), that machine is the row's
-    /// writer at exactly the manifest's epoch. A foreign or unsigned writer
-    /// is not proven, and its copy waits.
+    /// A3; FIX 15740, A2): its signature verifies under the key of a machine
+    /// this vault's own authority fold trusts now, and that machine writes
+    /// the repo at exactly the manifest's epoch. Where the owner's cut of the
+    /// repo is in force, on every device, it names the machine and the epoch.
+    /// Where his cuts conflict or the newest does not count here, no writer
+    /// is proven. Before any cut only the bootstrap epoch 0 is proven, which
+    /// refresh then writes; where this host serves the repo (`origin`, its
+    /// authority row in `txn`), the row must also name the machine. A foreign
+    /// or unsigned writer is not proven, and its copy waits.
     #[cfg(feature = "sync")]
     fn repo_manifest_writer_proven_in_txn(
         &self,
@@ -560,7 +576,7 @@ impl Vault {
         let Ok(signature) = <[u8; 64]>::try_from(writer.signature.as_slice()) else {
             return Ok(false);
         };
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let Some(machine_key) = fold
             .trusted_machine(writer.machine)
             .map(|trusted| trusted.profile.machine_key)
@@ -580,8 +596,18 @@ impl Vault {
         {
             return Ok(false);
         }
-        Ok(origin
-            .is_none_or(|row| row.writer == writer.machine.to_hex() && row.epoch == manifest.epoch))
+        Ok(
+            match fold.origin_cut_standing(manifest.portable.as_bytes())? {
+                OriginCutStanding::InForce(cut) => {
+                    cut.writer == writer.machine && cut.epoch == manifest.epoch
+                }
+                OriginCutStanding::Unresolved => false,
+                OriginCutStanding::NoCut => {
+                    manifest.epoch == 0
+                        && origin.is_none_or(|row| row.writer == writer.machine.to_hex())
+                }
+            },
+        )
     }
 
     /// The raw manifest held under `portable` when it actually conflicts with
