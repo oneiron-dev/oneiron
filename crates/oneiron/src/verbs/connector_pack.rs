@@ -37,6 +37,10 @@ pub struct ConnectorPackQualifyRequest {
     pub kit: ConnectorQualificationKit,
     #[serde(default)]
     pub runtime: Option<PackRuntimeRecipe>,
+    /// Activate the original stored Candidate, preserving its hub and publisher.
+    /// False keeps the owner's existing put path.
+    #[serde(default)]
+    pub activate_candidate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

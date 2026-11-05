@@ -6066,6 +6066,7 @@ class ConnectorPackQualifyRequest(TypedDict):
     basis: ConnectorPackBasis
     kit: ConnectorQualificationKit
     runtime: NotRequired[PackRuntimeRecipe | None]
+    activate_candidate: NotRequired[bool]
 class ConnectorPackAcceptRequest(TypedDict):
     basis: ConnectorPackBasis
     rows: NotRequired[dict[str, SlateDisposition]]
