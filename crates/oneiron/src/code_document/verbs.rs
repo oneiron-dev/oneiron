@@ -14,6 +14,7 @@ use super::{CodeDocumentFrontier, CodeOpAttribution};
 use crate::blob_artifact::hash_hex;
 use crate::code_symbol::{
     CodeAttributedChange, CodeContentVersion, CodeUnitBlame, render_code_semantic_diff,
+    semantic_code_diff, whole_file_code_diff,
 };
 use crate::codebase::snapshot_asset_entity_id;
 use crate::entity_id::EntityId;
@@ -189,6 +190,29 @@ impl Memory<'_> {
         Ok(true)
     }
 
+    /// The texts of `states` as this caller reads them, when it reads any of
+    /// them as a projection (FIX 8967): an edited marked file, to a masked
+    /// reader. `None` when every state reads as stored, so the views keep
+    /// their attribution by operation.
+    fn projected_texts(
+        &self,
+        states: &[&CodeDocumentFrontier],
+    ) -> MemoryResult<Option<Vec<String>>> {
+        let masks = self.repo_read_masks()?;
+        if !masks.active() {
+            return Ok(None);
+        }
+        let vault = self.vault();
+        let mut projected = false;
+        let mut texts = Vec::with_capacity(states.len());
+        for state in states {
+            let served = masks.document(vault, state, vault.code_document_at(state)?)?;
+            projected |= served.projected;
+            texts.push(served.text);
+        }
+        Ok(projected.then_some(texts))
+    }
+
     /// `vault.code.diff`: the semantic changes between two tested states of
     /// one document, each with the operations that made it.
     pub fn code_diff(&self, input: &CodeDiffRequest) -> MemoryResult<Option<CodeDiffView>> {
@@ -204,7 +228,20 @@ impl Memory<'_> {
             ))
             .into());
         }
-        let changes = self.vault().code_document_semantic_diff(&before, &after)?;
+        let changes = match self.projected_texts(&[&before, &after])?.as_deref() {
+            // A masked reader of an edited marked file compares what it
+            // reads, and no unit names the operations that wrote the stored
+            // text (FIX 8967).
+            Some([old, new]) => whole_file_code_diff(&after.path, old, new)?
+                .into_iter()
+                .map(|change| CodeAttributedChange {
+                    change,
+                    inserted_by: Vec::new(),
+                    deleted_by: Vec::new(),
+                })
+                .collect(),
+            _ => self.vault().code_document_semantic_diff(&before, &after)?,
+        };
         let (changes, rendered) = OpRefs::new(self).changes(changes)?;
         let view = CodeDiffView {
             before: before_view,
@@ -225,7 +262,23 @@ impl Memory<'_> {
         let Some((at, view)) = self.code_state(input)? else {
             return Ok(None);
         };
-        let units = self.vault().code_document_symbol_blame(&at)?;
+        let units = match self.projected_texts(&[&at])?.as_deref() {
+            // The units a masked reader reads, with no run: no operation
+            // wrote the projection (FIX 8967).
+            Some([text]) => whole_file_code_diff(&at.path, "", text)?
+                .into_iter()
+                .filter_map(|change| {
+                    let version = change.after?;
+                    Some(CodeUnitBlame {
+                        path: change.path,
+                        symbol: change.symbol,
+                        version,
+                        spans: Vec::new(),
+                    })
+                })
+                .collect(),
+            _ => self.vault().code_document_symbol_blame(&at)?,
+        };
         let mut refs = OpRefs::new(self);
         let units = units
             .into_iter()
