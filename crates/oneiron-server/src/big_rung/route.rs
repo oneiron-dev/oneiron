@@ -111,6 +111,13 @@ impl BigModel {
     pub(super) fn admit_decision_route(
         &self,
         request: LlmRequest,
+    ) -> oneiron::Result<(Arc<OfferLadder>, LlmRequest)> {
+        self.admit_decision_route_with_egress(request, None)
+    }
+
+    pub(super) fn admit_decision_route_with_egress(
+        &self,
+        request: LlmRequest,
         extraction_egress: Option<&dyn ExtractionEgressPredicate>,
     ) -> oneiron::Result<(Arc<OfferLadder>, LlmRequest)> {
         let (ladder, request) = match &self.answerer {
