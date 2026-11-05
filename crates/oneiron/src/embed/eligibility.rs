@@ -3,7 +3,6 @@
 use super::PendingEmbeddingPayload;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 
 /// The payload the embedding worker sends for a stored record, or `None` when
@@ -55,10 +54,12 @@ pub(super) fn embeddable_payload_in(
             .collect();
         return Ok(Some((PendingEmbeddingPayload::TurnText(text), rows)));
     }
-    Ok(
+    let payload = if entity_type == crate::registry::ENTITY_TYPE_ASSET {
+        super::repo_projection::asset_payload_in(vault, store, txn, body)?
+    } else {
         super::repo_projection::pending_payload_in_txn(vault, txn, entity_type, body)?
-            .map(|payload| (payload, vec![*id])),
-    )
+    };
+    Ok(payload.map(|payload| (payload, vec![*id])))
 }
 
 /// A TURN's canonical text: its visible MESSAGE children's text in message
@@ -144,10 +145,7 @@ pub(super) fn is_embeddable_in_txn(
         return Ok(embeddable_payload(entity_type, body).is_some());
     }
     Ok(super::media::asset_text(body, |blob| {
-        Ok(vault
-            .store
-            .port_entity_record(txn, blob)?
-            .map(|blob| blob.body))
+        super::repo_projection::repo_blob_body_in_txn(vault, txn, blob)
     })?
     .is_some())
 }
