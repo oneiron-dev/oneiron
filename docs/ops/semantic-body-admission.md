@@ -47,15 +47,23 @@ a runtime no-hang result or a speed improvement.
 Beyond the decoded body above, the semantic handler owns its trimmed question
 `String` and the embedded `Vec<f32>` on one process-memory empty lease. The
 trimmed text is adopted after it allocates with `materialized(0, actual)` on
-its actual capacity. The known-ready non-deadline native embedding reserves
-its model-shaped logical minimum on that same lease before the model call,
-from the SAME snapshotted slot that then runs the query: the slot's configured
-`dimensions` times `size_of::<f32>()`, the physical unit width, not an
-allocator-capacity bound, tokenizer, tensor, GPU, input-copy, whole-question,
-or runtime count. The lease then reconciles the actual vector capacity after
-the call. Native physical-memory refusal logs privately and uses the existing
-generic query-failure response. Dropping the request stops the new wait at
-its native checkpoints, not an already-running native inference. No new cap,
+its actual capacity. The known-ready non-deadline native embedding
+opportunistically pre-grows its model-shaped logical minimum on that same
+lease before the model call, from the SAME snapshotted slot that then runs
+the query: the slot's configured `dimensions` times `size_of::<f32>()`, the
+physical unit width, not an allocator-capacity bound, tokenizer, tensor, GPU,
+input-copy, whole-question, or runtime count. The single attempt carries an
+already-due deadline, so the native line grants it only on an immediate fit
+and otherwise drops this attempt's own waiter before any Condvar wait; this
+adds no new memory-FIFO wait or hold-and-wait cycle while the question text
+is retained. A granted pre-growth is reconciled against the actual vector
+capacity after the call, while contention (`WaitedOut`) keeps the original
+adoption-only path with zero reservation and no retry, queue wait, or new
+busy refusal. Full cover before growth and queueing behavior stay open here.
+The native floor stays the real dynamic reserve check: physical-memory floor
+refusal logs privately and uses the existing generic query-failure response.
+Dropping the request is only a pre-call checkpoint here, not a new memory
+wait or an already-running native inference cancellation. No new cap,
 default, physical-floor constant, queue deadline, or timer is added. Deadline,
 space, and media
 adoption stays adoption-only via `finish`, with no dims, byte envelope, or
