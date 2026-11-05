@@ -22,6 +22,7 @@ pub async fn seat_siwc_login(args: crate::cli::SiwcLoginArgs) -> anyhow::Result<
             host_id_file: args.host_id_file,
             callback_uri: args.callback_uri,
             agent_name: args.agent_name,
+            timeout: std::time::Duration::from_secs(args.timeout_secs),
         })
         .await?;
     let stdout = io::stdout();
