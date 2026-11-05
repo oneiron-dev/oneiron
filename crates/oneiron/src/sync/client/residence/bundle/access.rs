@@ -227,7 +227,7 @@ async fn serve_generation(
     else {
         return Ok(0);
     };
-    let pads = SealedKeyPads::from_bytes(&bytes).map_err(|_| refused())?;
+    let pads = SealedKeyPads::from_bytes(&bytes).map_err(super::refill::object_parse_error)?;
     if pads.generation() != generation {
         return Err(refused());
     }
@@ -409,7 +409,7 @@ impl SyncClient {
                 report.pending.push(generation);
                 continue;
             };
-            let pads = SealedKeyPads::from_bytes(&bytes).map_err(|_| refused())?;
+            let pads = SealedKeyPads::from_bytes(&bytes).map_err(super::refill::object_parse_error)?;
             if pads.generation() != generation {
                 return Err(refused());
             }

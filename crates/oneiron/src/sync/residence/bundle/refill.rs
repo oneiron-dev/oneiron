@@ -131,7 +131,13 @@ pub fn sealed_bundle_refill(
     else {
         return Err(denied());
     };
-    let pads = SealedKeyPads::from_bytes(&bytes).map_err(|_| denied())?;
+    let pads = SealedKeyPads::from_bytes(&bytes).map_err(|error| {
+        if matches!(&error, crate::Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory) {
+            error
+        } else {
+            denied()
+        }
+    })?;
     drop(bytes);
     let expected = {
         let txn = vault.store.env.read_txn()?;
