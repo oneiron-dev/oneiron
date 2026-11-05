@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6458 | 895 | 146 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6459 | 895 | 146 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 58 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 33 | 2 | 0 |
@@ -212,7 +212,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `pipeline` | dir | 68 | L | — | — |
 | `policy_model` | dir | 60 | m | yes | Policy classification over two planes |
 | `policy_setting_doors` | file | 1 | m | yes | The app's policy actions as host verbs (OF-181) |
-| `ports` | dir | 51 | m | yes | Transaction-composable storage ports |
+| `ports` | dir | 52 | m | yes | Transaction-composable storage ports |
 | `ppr` | dir | 12 | m | — | — |
 | `ppr_community` | dir | 8 | m | — | Deterministic community projection, cache, and bounded retrieval prior |
 | `prompt` | file+dir | 2 | m | — | — |
