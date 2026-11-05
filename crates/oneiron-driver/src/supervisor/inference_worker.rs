@@ -28,7 +28,7 @@
 //! timed out, and no startup has a deadline.
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
 use oneiron::llm::{
@@ -42,6 +42,7 @@ use super::inference_admission::{DeviceAdmission, LoadGrant};
 use super::inference_device::{DeclaredEnvelope, DeviceLedger, ResidentReport, ResidentSource};
 
 mod drive;
+mod startup;
 
 use drive::drive;
 
@@ -268,6 +269,7 @@ struct Inner {
     policy: WorkerPolicy,
     device: Option<(Arc<DeviceLedger>, DeclaredEnvelope)>,
     admission: Mutex<Option<Arc<DeviceAdmission>>>,
+    predecessors: Mutex<Vec<Weak<Inner>>>,
     state: Mutex<State>,
     changed: watch::Sender<u64>,
     /// Serializes an external worker's probes: the initial probe and serving
@@ -454,6 +456,7 @@ impl InferenceWorker {
                 policy,
                 device,
                 admission: Mutex::new(None),
+                predecessors: Mutex::new(Vec::new()),
                 state: Mutex::new(state),
                 changed: watch::Sender::new(0),
                 probe_gate: Arc::new(tokio::sync::Mutex::new(())),
