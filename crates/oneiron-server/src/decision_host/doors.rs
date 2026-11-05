@@ -246,6 +246,7 @@ impl DecisionHost {
             wording: settings.wording.clone(),
             task,
             budget: settings.budget,
+            run_budget: None,
         })
     }
 
