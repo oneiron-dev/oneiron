@@ -25887,7 +25887,7 @@
      "path": "src/dispatch_byoa/official_seats.rs",
      "purpose": "Official subscription seats (OF-375): the owner's own vendor login, reached only through the vendor's…",
      "surface": {
-      "const": 5,
+      "const": 7,
       "enum": 5,
       "fn": 23,
       "struct": 14,
@@ -42728,7 +42728,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 204,
+      "mod": 206,
       "re-export": 103
      }
     },
@@ -45445,6 +45445,196 @@
      "purpose": "Machine destinations and folded read-location values",
      "surface": {
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MailComplianceEventKind",
+      "MailComplianceEventView",
+      "MailComplianceHit",
+      "MailComplianceSearchReply",
+      "MailComplianceSearchRequest",
+      "MailComplianceSetRequest",
+      "MailComplianceSettingView"
+     ],
+     "path": "src/mail_pack/compliance.rs",
+     "purpose": "Org compliance search over mail (owner MAIL-SHARE = A, 2026-11-03): an org admin setting, off by default…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 4,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MailSourceConnectReceipt",
+      "MailSourceConnectRequest",
+      "MailSourceMembersRequest",
+      "MailSourceRef",
+      "MailSourceSettingsRequest"
+     ],
+     "path": "src/mail_pack/doors.rs",
+     "purpose": "The source doors: connect, list, set what a source keeps, and set a group address's members",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MailSyncBudget",
+      "MailSyncReport"
+     ],
+     "path": "src/mail_pack/importer.rs",
+     "purpose": "The mail importer (FIX 12559 row 1; MAIL-GOOGLE = A, 2026-10-19): one bounded step of one source at a time…",
+     "surface": {
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MailInboxItem",
+      "MailInboxPage",
+      "MailInboxRequest",
+      "MailThreadRequest",
+      "MailThreadView"
+     ],
+     "path": "src/mail_pack/inbox.rs",
+     "purpose": "The pack's read projections (MAIL-VIEW = A: the inbox, thread and calendar screens are lenses shipped with…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mail_pack/landing.rs",
+     "purpose": "Landing one provider message as evidence (FIX 12559 row 1): one CONVERSATION per provider thread, one TURN…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mail_pack/mod.rs",
+     "purpose": "The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and…",
+     "surface": {
+      "crate-vis": 3,
+      "re-export": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mail_pack/pack.rs",
+     "purpose": "The pack's own folder, as the engine ships it, and the one check every source door makes: the pack is…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mail_pack/provider_delete.rs",
+     "purpose": "A message deleted at the provider (MAIL-DELETE = A, 2026-11-03): the source's own setting decides",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MailThreadShareReceipt",
+      "MailThreadShareRequest"
+     ],
+     "path": "src/mail_pack/share.rs",
+     "purpose": "Sharing one mail thread (owner ruling 2026-11-03, ARCH-0063 #thread-sharing): connecting a mailbox shares…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarDetailSetting",
+      "MailCopySetting",
+      "MailProvider",
+      "MailProviderDeleteSetting",
+      "MailSourceKind",
+      "MailSourceStatus",
+      "MailSourceView"
+     ],
+     "path": "src/mail_pack/source.rs",
+     "purpose": "One connected mail or calendar source: what it is, whose it is, what it keeps",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 6,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MailPresence",
+      "MailStage",
+      "MailSyncStatusView"
+     ],
+     "path": "src/mail_pack/state.rs",
+     "purpose": "What the importer keeps per source and per provider message: where its listing and its change feed stand…",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MailAttachmentRef",
+      "MailFull",
+      "MailHeaders",
+      "MailHistoryChange",
+      "MailHistoryPage",
+      "MailHistoryRead",
+      "MailIdPage",
+      "MailListQuery",
+      "MailMessageRef",
+      "MailProviderWire",
+      "MailSyncSource"
+     ],
+     "path": "src/mail_pack/wire.rs",
+     "purpose": "The provider seam of the mail importer: what a host's mail wire answers for one connected source",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "struct": 8,
+      "trait": 1
      }
     },
     {
@@ -65868,10 +66058,18 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/side_table/decls/vault_meta_m_r.rs",
+     "path": "src/side_table/decls/vault_meta_m.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/vault_meta_n_r.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -69372,6 +69570,31 @@
      "path": "src/slim/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SourceAudienceEventView",
+      "SourceAudienceOp"
+     ],
+     "path": "src/source_audience/mod.rs",
+     "purpose": "Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A…",
+     "surface": {
+      "crate-vis": 21,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/source_audience/walk.rs",
+     "purpose": "The source-audience conjunct every audience read meets: a row reads to its viewers only while each of them…",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -83407,7 +83630,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1265
+      "fn": 1280
      }
     },
     {
@@ -89993,6 +90216,13 @@
      "layout": "file",
      "purpose": "Machine destinations and folded read-location values"
     },
+    "mail_pack": {
+     "files": 12,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and…"
+    },
     "maintain": {
      "files": 6,
      "impl_vault": false,
@@ -90393,7 +90623,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
     "side_table": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90454,6 +90684,13 @@
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder"
+    },
+    "source_audience": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A…"
     },
     "speculative": {
      "files": 2,
@@ -90701,9 +90938,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 151,
+   "over_bar": 150,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6351,
+   "source_files": 6366,
    "test_files": 895
   },
   "oneiron-android": {
@@ -96984,7 +97221,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 69,
+      "const": 72,
       "crate-vis": 1
      }
     },
@@ -105138,7 +105375,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1233
+      "fn": 1248
      }
     },
     {
@@ -106916,7 +107153,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1234
+      "fn": 1249
      }
     },
     {
@@ -117061,14 +117298,17 @@
      "notable": [
       "SeatCommand",
       "SeatLoginPlanArgs",
-      "SeatRunnerPolicyArgs"
+      "SeatRunnerPolicyArgs",
+      "SiwcCredentialArgs",
+      "SiwcLoginArgs",
+      "SiwcRevokeArgs"
      ],
      "path": "src/cli/seat_args.rs",
      "purpose": "`oneiron seat …` arguments: the official-seat sign-in surface (OF-375)",
      "surface": {
       "enum": 1,
       "fn": 1,
-      "struct": 2
+      "struct": 5
      }
     },
     {
@@ -117865,7 +118105,7 @@
      "path": "src/commands/seat.rs",
      "purpose": "`oneiron seat …`: the owner's official-seat sign-in surface (OF-375)",
      "surface": {
-      "fn": 4
+      "fn": 7
      }
     },
     {
@@ -118534,7 +118774,8 @@
       "RequestCodec",
       "RequestCompression",
       "ResponseFormatWire",
-      "ResponsesSocket"
+      "ResponsesSocket",
+      "SiwcProvider"
      ],
      "path": "src/config/models/provider.rs",
      "purpose": "One provider entry: how to reach a model server, as data",
@@ -118542,7 +118783,7 @@
       "crate-vis": 5,
       "enum": 4,
       "fn": 7,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -122963,7 +123204,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 32
      }
     },
     {
@@ -123586,6 +123827,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/models/siwc_responses.rs",
+     "purpose": "Configured SIWC Responses calls through the normal model/run admission",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/soniox.rs",
      "purpose": "Soniox's real-time speech-to-text socket (OF-410): a live `[models.media.transcribe]` rung",
      "surface": {
@@ -123947,7 +124198,7 @@
      "path": "src/oauth_relay.rs",
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -125131,6 +125382,7 @@
      "path": "src/runtime/seat_login.rs",
      "purpose": "Host surface for official subscription seats (OF-375)",
      "surface": {
+      "crate-vis": 1,
       "fn": 6,
       "re-export": 1,
       "struct": 9
@@ -125154,6 +125406,76 @@
      "purpose": "The Dreamer executor's runner work (FIX 9238): each admitted attempt's step is bound to its runner seat…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/credential.rs",
+     "purpose": "One selected local registration, reopened before each physical send",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/identity.rs",
+     "purpose": "Verify the vendor's ID token, never an OAuth relay or cloud credential",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/login.rs",
+     "purpose": "One explicit local sign-in attempt",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/logout.rs",
+     "purpose": "Explicit local credential clearing and renewable-session revocation",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/mod.rs",
+     "purpose": "Runtime-local Sign in with ChatGPT",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/record.rs",
+     "purpose": "Protected, runtime-local credentials for one issued registration",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/siwc/refresh.rs",
+     "purpose": "Refresh one already-verified issued registration",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -127452,7 +127774,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 118,
+     "files": 119,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -127515,7 +127837,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 22,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -127608,7 +127930,7 @@
    },
    "over_bar": 47,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1574,
+   "source_files": 1582,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -136899,6 +137221,7 @@
       "CalendarConnectorSeatConfig",
       "CalendarConnectorSeatState",
       "CalendarConnectorWriteRequest",
+      "CalendarDetailSetting",
       "CalendarEventCreateRequest",
       "CalendarEventCreated",
       "CalendarEventOutcome",
@@ -138714,6 +139037,34 @@
       "MadeByInputRole",
       "MadeByProcess",
       "MadeByTrigger",
+      "MailComplianceEventKind",
+      "MailComplianceEventView",
+      "MailComplianceHit",
+      "MailComplianceSearchReply",
+      "MailComplianceSearchRequest",
+      "MailComplianceSetRequest",
+      "MailComplianceSettingView",
+      "MailCopySetting",
+      "MailInboxItem",
+      "MailInboxPage",
+      "MailInboxRequest",
+      "MailPresence",
+      "MailProvider",
+      "MailProviderDeleteSetting",
+      "MailSourceConnectReceipt",
+      "MailSourceConnectRequest",
+      "MailSourceKind",
+      "MailSourceMembersRequest",
+      "MailSourceRef",
+      "MailSourceSettingsRequest",
+      "MailSourceStatus",
+      "MailSourceView",
+      "MailStage",
+      "MailSyncStatusView",
+      "MailThreadRequest",
+      "MailThreadShareReceipt",
+      "MailThreadShareRequest",
+      "MailThreadView",
       "ManifestEntry",
       "ManifestKind",
       "MatchVerdict",
@@ -140391,6 +140742,8 @@
       "SmartArtNode",
       "SnapshotBounds",
       "SnapshotSecretLiftProposal",
+      "SourceAudienceEventView",
+      "SourceAudienceOp",
       "SourceConflict",
       "SourceFamily",
       "SourcePin",
@@ -140995,8 +141348,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1111,
-      "struct": 3381
+      "enum": 1121,
+      "struct": 3402
      }
     },
     {
