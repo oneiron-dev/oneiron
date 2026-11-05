@@ -62,6 +62,13 @@ impl AssetBlobRef {
     }
 }
 
+/// The native blob row named by an ASSET's metadata body.
+pub(crate) fn asset_blob_entity_id(body: &[u8]) -> crate::error::Result<Option<EntityId>> {
+    AssetBlobRef::of_body(body)
+        .map(|blob| crate::blob_artifact::blob_artifact_asset_entity_id(&blob.hash))
+        .transpose()
+}
+
 /// Lands `bytes` as the blob ASSET `asset` holds, in `txn`, the transaction
 /// the actor's write of `asset` itself is in, after that write: a supporting
 /// effect of the row, never a write of its own. The reference is the ASSET's

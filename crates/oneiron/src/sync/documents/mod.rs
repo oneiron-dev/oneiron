@@ -711,6 +711,10 @@ pub fn turn_member_documents_releasable(
         return Ok(true);
     }
     let txn = vault.store.env.read_txn()?;
+    // ASSET text reads its referenced blob body, not an entity document.
+    if vault.get_entity_type_in_txn(&txn, &turn)? == Some(crate::registry::ENTITY_TYPE_ASSET) {
+        return Ok(true);
+    }
     let marks =
         crate::origin::secret_projection::index::RepoIndexMarks::read_scoped_in_txn(vault, &txn)?;
     for (id, _) in sources {

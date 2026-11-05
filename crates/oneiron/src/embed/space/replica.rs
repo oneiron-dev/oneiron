@@ -11,7 +11,9 @@ use super::{
 use crate::embed::{EmbeddingProvenance, device, media, space_move};
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+};
 use crate::{EntityId, Vault};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -52,13 +54,10 @@ pub(crate) fn media_vector_replicas_in_txn(
     }
     let mut sources = Vec::with_capacity(source_ids.len());
     for source in source_ids {
-        let Some(raw) = vault
-            .get_raw_in(txn, &source)?
-            .and_then(|raw| crate::world_keys::live_route_row(&vault.store, raw))
-        else {
+        let Some(digest) = source_digest_in_txn(vault, txn, &source)? else {
             return Ok(Vec::new());
         };
-        sources.push((source, *blake3::hash(&raw).as_bytes()));
+        sources.push((source, digest));
     }
     Ok(vec![MediaVectorReplica {
         space: space.id,
@@ -98,13 +97,10 @@ pub(crate) fn install_media_vector_replica_in_txn(
         return Ok(false);
     }
     for (source, digest) in &replica.sources {
-        let Some(raw) = vault
-            .get_raw_in(txn, source)?
-            .and_then(|raw| crate::world_keys::live_route_row(&vault.store, raw))
-        else {
+        let Some(current) = source_digest_in_txn(vault, txn, source)? else {
             return Ok(false);
         };
-        if blake3::hash(&raw).as_bytes() != digest {
+        if &current != digest {
             return Ok(false);
         }
     }
@@ -206,11 +202,23 @@ pub(crate) async fn reuse_home_text_media_vectors(
     Ok(reused)
 }
 
+/// The full logical row a native whole-body residence read serves.
+fn source_digest_in_txn(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<[u8; 32]>> {
+    let Some(raw) = vault
+        .get_raw_in(txn, id)?
+        .and_then(|raw| crate::world_keys::live_route_row(&vault.store, raw))
+    else {
+        return Ok(None);
+    };
+    let raw = vault.materialized_row_in_txn(txn, id, raw)?;
+    Ok(Some(*blake3::hash(&raw).as_bytes()))
+}
+
 fn body_text_record(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     Ok(vault.store.port_entity_record(txn, id)?.is_some_and(|row| {
         matches!(
             row.entity_type,
-            ENTITY_TYPE_CLAIM | ENTITY_TYPE_SUMMARY | ENTITY_TYPE_TURN
+            ENTITY_TYPE_CLAIM | ENTITY_TYPE_SUMMARY | ENTITY_TYPE_TURN | ENTITY_TYPE_ASSET
         )
     }))
 }
