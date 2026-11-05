@@ -8133,6 +8133,8 @@ dependencies = [
  "rcgen",
  "reqwest 0.12.28",
  "rustix",
+ "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "tempfile",
@@ -8140,6 +8142,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite 0.26.2",
+ "webpki-roots 1.0.9",
  "zeroize",
 ]
 
