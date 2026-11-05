@@ -142,7 +142,8 @@ pub struct RepoManifest {
     /// The LFS objects those refs carry, ascending: pointers, never bytes.
     #[serde(with = "lfs_oids")]
     pub lfs_pointers: Vec<LfsOid>,
-    /// The epoch of the origin authority the refs writer holds, else 0.
+    /// The epoch of the owner's origin cut in force that names the refs
+    /// writer (FIX 15740), else 0.
     pub epoch: u64,
     /// When the refs writer last changed the manifest.
     pub updated_at: u64,
@@ -502,6 +503,15 @@ impl Vault {
                 if !self.repo_manifest_writer_proven_in_txn(txn, carried, origin.as_ref())? {
                     return Ok(RepoManifestMerge::Unproven);
                 }
+            } else if self
+                .authority_view_readonly_in_txn(txn)?
+                .origin_cut_standing(carried.portable.as_bytes())?
+                != OriginCutStanding::NoCut
+                && !self.repo_manifest_writer_proven_in_txn(txn, carried, None)?
+            {
+                // Once the owner cut the repo, a first copy is proven as a
+                // replacement is (FIX 15740); before any cut it is adopted.
+                return Ok(RepoManifestMerge::Unproven);
             }
             MANIFESTS.put(&self.store, txn, &key, carried)?;
             let stands = match BY_CODE.get(&self.store, txn, &carried.code)? {
@@ -549,10 +559,10 @@ impl Vault {
     /// the repo at exactly the manifest's epoch. Where the owner's cut of the
     /// repo is in force, on every device, it names the machine and the epoch.
     /// Where his cuts conflict or the newest does not count here, no writer
-    /// is proven. Before any cut: where this host serves the repo (`origin`,
-    /// its authority row in `txn`), the row names them; elsewhere only the
-    /// bootstrap epoch 0 is proven. A foreign or unsigned writer is not
-    /// proven, and its copy waits.
+    /// is proven. Before any cut only the bootstrap epoch 0 is proven, which
+    /// refresh then writes; where this host serves the repo (`origin`, its
+    /// authority row in `txn`), the row must also name the machine. A foreign
+    /// or unsigned writer is not proven, and its copy waits.
     #[cfg(feature = "sync")]
     fn repo_manifest_writer_proven_in_txn(
         &self,
@@ -592,9 +602,10 @@ impl Vault {
                     cut.writer == writer.machine && cut.epoch == manifest.epoch
                 }
                 OriginCutStanding::Unresolved => false,
-                OriginCutStanding::NoCut => origin.map_or(manifest.epoch == 0, |row| {
-                    row.writer == writer.machine.to_hex() && row.epoch == manifest.epoch
-                }),
+                OriginCutStanding::NoCut => {
+                    manifest.epoch == 0
+                        && origin.is_none_or(|row| row.writer == writer.machine.to_hex())
+                }
             },
         )
     }

@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 
 use super::{BY_CODE, MANIFESTS, MINTED, RepoPortableId};
 use crate::Vault;
+use crate::authority::OriginCutStanding;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitRefName, GitWire};
@@ -62,9 +63,31 @@ impl Vault {
         // The writer standing is read here and the write lands below: an
         // authority change in between lets one stale-epoch write through,
         // which the next mirror pass corrects.
-        let epoch = match self.origin_host_authority(&origin_name)? {
-            OriginHostAuthority::Held(lease) => lease.epoch(),
-            OriginHostAuthority::Unconfigured if minted => 0,
+        let held = match self.origin_host_authority(&origin_name)? {
+            OriginHostAuthority::Held(lease) => Some(lease.epoch()),
+            OriginHostAuthority::Unconfigured if minted => None,
+            _ => return Ok(()),
+        };
+        // The epoch every device can prove (FIX 15740): the owner's cut in
+        // force, where it names this machine and this host holds the repo at
+        // that very epoch; before any cut, the bootstrap 0. A host the cut
+        // does not name, or one whose cuts are unresolved here, leaves the
+        // manifest as it stands.
+        let (standing, machine) = {
+            let txn = self.store.env.read_txn()?;
+            (
+                self.authority_view_readonly_in_txn(&txn)?
+                    .origin_cut_standing(portable.as_bytes())?,
+                crate::store::install_identity::read_machine_id_in_txn(self, &txn)?,
+            )
+        };
+        let epoch = match standing {
+            OriginCutStanding::InForce(cut)
+                if held == Some(cut.epoch) && machine == Some(cut.writer) =>
+            {
+                cut.epoch
+            }
+            OriginCutStanding::NoCut => 0,
             _ => return Ok(()),
         };
         let wire = GitWire::new(self)?;

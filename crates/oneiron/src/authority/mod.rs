@@ -328,8 +328,7 @@ pub use mesh_machine::{
     MeshMachineBinding,
 };
 pub use observation_policy::*;
-// The origin cut a carried repo manifest is judged by (FIX 15740).
-#[cfg(feature = "sync")]
+// The origin cut a repo manifest is written and judged by (FIX 15740).
 pub(crate) use origin_cut::OriginCutStanding;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{

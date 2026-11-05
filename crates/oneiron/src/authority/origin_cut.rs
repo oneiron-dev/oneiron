@@ -53,7 +53,6 @@ pub(crate) struct FoldedOriginCuts {
 }
 
 /// A repository's origin authority as this install counts the owner's cuts.
-#[cfg(feature = "sync")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OriginCutStanding {
     /// No live cut names the repository: the owner never cut it.
@@ -105,7 +104,6 @@ impl FoldedOriginCuts {
     /// itself live and unconflicted: a newer cut this install does not count
     /// leaves the repository unresolved, so the writer it replaced never
     /// stands again.
-    #[cfg(feature = "sync")]
     pub(crate) fn standing(&self, repo: EntityId) -> OriginCutStanding {
         let Some(folded) = self
             .repos
@@ -190,16 +188,25 @@ pub(super) fn folded_origin_cuts(
     }
 }
 
-#[cfg(feature = "sync")]
 impl AuthorityFold {
     /// The origin authority the owner's cuts give the repository `repo`
     /// (portable id) in this fold, as this install counts them (FIX 15740).
-    /// Conflicting vault roots leave every repository unresolved.
+    /// Conflicting vault roots, or any live cut of the repo this install
+    /// holds back (a concurrent one among them), leave it unresolved.
     pub(crate) fn origin_cut_standing(&self, repo: &[u8; 32]) -> Result<OriginCutStanding> {
         if self.vault_root_is_conflicted() {
             return Ok(OriginCutStanding::Unresolved);
         }
-        Ok(self.origin_cuts.standing(origin_cut_target(repo)?))
+        let target = origin_cut_target(repo)?;
+        if self.origin_cuts.repos.get(&target).is_some_and(|folded| {
+            folded
+                .live
+                .keys()
+                .any(|act| self.install.held_back.contains(act))
+        }) {
+            return Ok(OriginCutStanding::Unresolved);
+        }
+        Ok(self.origin_cuts.standing(target))
     }
 }
 
