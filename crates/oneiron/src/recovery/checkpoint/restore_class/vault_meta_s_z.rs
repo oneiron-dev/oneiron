@@ -41,6 +41,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_FOUND_KEY, LIVE),
     (&t::SECRET_FOUND_KEY_DUE, LIVE),
     (&t::SECRET_HANDLE_LABEL, LIVE),
+    (&t::SECRET_HANDLE_PURPOSE, LIVE),
     // Known-value history references (KS-3) stand with the custody they name.
     (&t::SECRET_KNOWN_HISTORY, LIVE),
     (&t::SECRET_KNOWN_INDEX, LIVE),
