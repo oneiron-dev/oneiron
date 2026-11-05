@@ -8009,6 +8009,7 @@ dependencies = [
  "oneiron",
  "oneiron-server",
  "oneiron-vault-contract",
+ "serde_json",
  "tempfile",
  "zeroize",
 ]
