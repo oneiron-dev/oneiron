@@ -18,7 +18,7 @@ use serde_json::json;
 use super::super::CampaignDatasetRef;
 use super::super::beam_promotion::SealedRefereeMeasurement;
 use super::super::general::Measurement;
-use super::budget::{is_budget_refusal, settle_research_run_in_txn};
+use super::budget::{is_budget_refusal, reserve_research_work_in_txn, settle_research_run_in_txn};
 use super::estimator::{self, ENGINE_ESTIMATOR_VERSION};
 use super::{
     BINDING, CandidateRef, ConfirmationOutcome, ExperimentNode, ForkInput, ForkKind, HeldOutCall,
@@ -27,7 +27,7 @@ use super::{
     invalid, nodes_in_txn, promote_measured, promotion_basis, record_fork,
     record_held_out_measurement, record_invalid_experiment, record_search_measurement,
     refund_research_work, research_binding, research_incumbent, research_promotions,
-    research_reservations, reserve_confirmation, reserve_research_work,
+    research_reservations, reserve_confirmation,
 };
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, AgentSpawnContext, DispatchAgent,

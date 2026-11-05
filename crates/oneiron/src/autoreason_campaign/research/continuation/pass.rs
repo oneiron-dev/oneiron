@@ -39,17 +39,31 @@ impl Pass<'_> {
 
     /// Store `next` over `row` in one write, unless another pass moved the
     /// row since it was read.
-    fn save(&self, row: &ResearchContinuation, mut next: ResearchContinuation) -> Result<()> {
-        next.updated_at = self.now;
-        let key = (*row.root.as_bytes(), row.work.key());
+    fn save(&self, row: &ResearchContinuation, next: ResearchContinuation) -> Result<()> {
         self.vault.with_write_txn_grouped(|txn| {
-            if CONTINUATION.get(&self.vault.store, txn, &key)?.as_ref() != Some(row) {
-                return Err(Error::ConcurrentWrite(
-                    "another pass advanced this research continuation",
-                ));
-            }
-            CONTINUATION.put(&self.vault.store, txn, &key, &next)
+            self.check_current_in_txn(txn, row)?;
+            self.save_in_txn(txn, next)
         })
+    }
+
+    fn check_current_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        row: &ResearchContinuation,
+    ) -> Result<()> {
+        let key = (*row.root.as_bytes(), row.work.key());
+        if CONTINUATION.get(&self.vault.store, txn, &key)?.as_ref() != Some(row) {
+            return Err(Error::ConcurrentWrite(
+                "another pass advanced this research continuation",
+            ));
+        }
+        Ok(())
+    }
+
+    fn save_in_txn(&self, txn: &mut heed::RwTxn<'_>, mut next: ResearchContinuation) -> Result<()> {
+        next.updated_at = self.now;
+        let key = (*next.root.as_bytes(), next.work.key());
+        CONTINUATION.put(&self.vault.store, txn, &key, &next)
     }
 
     /// End a continuation on a refusal. A reservation nothing was dispatched
@@ -106,35 +120,40 @@ impl Pass<'_> {
                 (RsiSpendPurpose::HeldOut, execution.confirm_units, candidate)
             }
         };
-        match reserve_research_work(
-            self.vault,
-            self.root(),
-            purpose,
-            units,
-            Some(attempt),
-            self.now,
-        ) {
-            Ok(reservation) => {
-                next.running = Some(ResearchRunning {
-                    task,
-                    reservation,
-                    run: None,
-                    release: None,
-                });
-                self.save(row, next)?;
-                Ok(Flow::Next)
-            }
-            // No room: the task waits at the front, as a round pauses.
-            Err(error) if is_budget_refusal(&error) => {
-                next.pending.insert(0, task);
-                next.state = ResearchContinuationState::Held {
-                    reason: BUDGET_HELD.to_owned(),
-                };
-                self.save(row, next)?;
-                Ok(Flow::Stop)
-            }
-            Err(error) => Err(error),
-        }
+        self.vault.with_write_txn_grouped(|txn| {
+            // The winning continuation owns the hold in this same commit.
+            self.check_current_in_txn(txn, row)?;
+            let flow = match reserve_research_work_in_txn(
+                self.vault,
+                txn,
+                self.root(),
+                purpose,
+                units,
+                Some(attempt),
+                self.now,
+            ) {
+                Ok(reservation) => {
+                    next.running = Some(ResearchRunning {
+                        task,
+                        reservation,
+                        run: None,
+                        release: None,
+                    });
+                    Flow::Next
+                }
+                // No room: keep the task and RSI's existing suspension.
+                Err(error) if is_budget_refusal(&error) => {
+                    next.pending.insert(0, task);
+                    next.state = ResearchContinuationState::Held {
+                        reason: BUDGET_HELD.to_owned(),
+                    };
+                    Flow::Stop
+                }
+                Err(error) => return Err(error),
+            };
+            self.save_in_txn(txn, next)?;
+            Ok(flow)
+        })
     }
 
     /// The held-out basis needs no run. Only a Promote goes on, and only to
@@ -317,16 +336,10 @@ impl Pass<'_> {
                 return Err(invalid("a held-out basis dispatches no run"));
             }
         }
-        next.updated_at = self.now;
-        let key = (*row.root.as_bytes(), row.work.key());
         self.vault.with_write_txn_grouped(|txn| {
-            if CONTINUATION.get(&self.vault.store, txn, &key)?.as_ref() != Some(row) {
-                return Err(Error::ConcurrentWrite(
-                    "another pass advanced this research continuation",
-                ));
-            }
+            self.check_current_in_txn(txn, row)?;
             settle_research_run_in_txn(self.vault, txn, self.root(), running.reservation, run)?;
-            CONTINUATION.put(&self.vault.store, txn, &key, &next)
+            self.save_in_txn(txn, next)
         })?;
         Ok(Flow::Next)
     }
