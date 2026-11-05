@@ -36,7 +36,7 @@ mod run;
 pub use run::run_transaction;
 
 /// The grammar version a transaction and its report carry.
-pub const DECK_TRANSACTION_SCHEMA: u32 = 1;
+pub const DECK_TRANSACTION_SCHEMA: u32 = 2;
 const MAX_SEED_BYTES: usize = 256;
 const HANDOFF_CONTEXT: &str = "oneiron docedit deck candidate handoff v1";
 
@@ -201,13 +201,14 @@ pub enum StepPreset {
     RightArrow,
 }
 
-/// A series sequence: its name, categories (or `c:xVal`), or values.
+/// A series sequence: its name, categories (or `c:xVal`), values, or bubble sizes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StepSequence {
     Name,
     Categories,
     Values,
+    Size,
 }
 
 /// One chart cell. A missing cell is not zero.
