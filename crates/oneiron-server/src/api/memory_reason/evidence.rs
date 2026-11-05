@@ -203,7 +203,7 @@ fn string_field(fields: &Map<String, Value>, key: &str) -> Option<String> {
 /// The row's text, preferring the claim value, then the common content keys,
 /// then the projection's own label. Non-string values are rendered as compact
 /// JSON so a structured value is still shown rather than silently dropped.
-fn evidence_text(fields: &Map<String, Value>) -> String {
+pub(super) fn evidence_text(fields: &Map<String, Value>) -> String {
     for key in ["val", "content", "text", "txt", "body"] {
         match fields.get(key) {
             Some(Value::String(text)) if !text.trim().is_empty() => return text.clone(),
