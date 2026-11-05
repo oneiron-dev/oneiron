@@ -129,14 +129,16 @@ pub(crate) fn signer_path_status(
     chain_ders: &[Vec<u8>],
     anchors: &[pkix_chain::TrustAnchor],
     at_unix: u64,
-) -> VerifyCheckStatus {
+    memory: &MemoryLedger,
+) -> Result<VerifyCheckStatus, SealMemoryRefusal> {
     use der::Decode;
+    memory.admit_len::<x509_cert::Certificate>(chain_ders.len())?;
     let Ok(chain) = chain_ders
         .iter()
         .map(|d| x509_cert::Certificate::from_der(d))
         .collect::<Result<Vec<_>, _>>()
     else {
-        return VerifyCheckStatus::Fail;
+        return Ok(VerifyCheckStatus::Fail);
     };
     // This violation is provable without a root. Check it before path
     // construction so an absent CMS root cannot turn bad KeyUsage into unknown.
@@ -144,41 +146,51 @@ pub(crate) fn signer_path_status(
         .first()
         .is_none_or(|leaf| enforce_signer_leaf_key_usage(leaf).is_err())
     {
-        return VerifyCheckStatus::Fail;
+        return Ok(VerifyCheckStatus::Fail);
     }
-    match pkix_chain::verify_chain(
-        &chain,
-        anchors,
-        &pkix_chain::ValidationPolicy::new(at_unix),
-        &pkix_chain::DefaultVerifier,
-        &pkix_chain::NoRevocation,
-        &pkix_chain::NoAiaFetcher,
-    ) {
-        Ok(_) => VerifyCheckStatus::Pass,
-        Err(error) => pkix_path_status(&error),
-    }
+    Ok(
+        match pkix_chain::verify_chain(
+            &chain,
+            anchors,
+            &pkix_chain::ValidationPolicy::new(at_unix),
+            &pkix_chain::DefaultVerifier,
+            &pkix_chain::NoRevocation,
+            &pkix_chain::NoAiaFetcher,
+        ) {
+            Ok(_) => VerifyCheckStatus::Pass,
+            Err(error) => pkix_path_status(&error),
+        },
+    )
 }
 
 pub(crate) fn validate_chain(
     chain_ders: &[Vec<u8>],
     anchors: &[pkix_chain::TrustAnchor],
     at_unix: u64,
+    memory: &MemoryLedger,
 ) -> Result<(), SealError> {
-    if signer_path_status(chain_ders, anchors, at_unix) == VerifyCheckStatus::Pass {
+    if signer_path_status(chain_ders, anchors, at_unix, memory).map_err(memory_refused)?
+        == VerifyCheckStatus::Pass
+    {
         Ok(())
     } else {
         Err(cert_path_err())
     }
 }
 
-pub(super) fn anchors(config: &SealConfig) -> Vec<pkix_chain::TrustAnchor> {
+pub(super) fn anchors(
+    config: &SealConfig,
+    limits: &SealResourceLimits,
+) -> Result<Vec<pkix_chain::TrustAnchor>, SealMemoryRefusal> {
     use der::Decode;
-    config
-        .trust_anchors_der
-        .iter()
-        .filter_map(|d| x509_cert::Certificate::from_der(d).ok())
-        .map(pkix_chain::TrustAnchor::from_cert)
-        .collect()
+    let mut anchors = Vec::new();
+    for der in &config.trust_anchors_der {
+        if let Ok(cert) = x509_cert::Certificate::from_der(der) {
+            pdf::admitted::reserve(limits, &mut anchors, 1)?;
+            anchors.push(pkix_chain::TrustAnchor::from_cert(cert));
+        }
+    }
+    Ok(anchors)
 }
 
 /// Retry only the reason for a failed DSS check: if fully parsed material
@@ -283,7 +295,7 @@ pub(crate) fn verify_document(
             VerifyFindingCode::InvalidPdfRevision,
         )
         .map_err(memory_refused)?;
-    let anchors = anchors(ctx.config);
+    let anchors = anchors(ctx.config, limits).map_err(memory_refused)?;
     // Every certificate copy below is held on the verification's ledger
     // until it drops (FIX 12260).
     let mut anchor_certs = Vec::new();
@@ -297,6 +309,9 @@ pub(crate) fn verify_document(
     // validate its CMS/TSP integrity. No signer path or profile is decided
     // until all trusted time proofs are available.
     let sigs = collect_signatures(&doc, limits)?;
+    memory
+        .admit_len::<super::verify_evidence::EnvelopeEvidence>(sigs.len())
+        .map_err(memory_refused)?;
     let envelopes: Vec<_> = sigs
         .iter()
         .enumerate()
@@ -359,6 +374,9 @@ pub(crate) fn verify_document(
     // earliest eligible proof fixes signer validation time; a possibly newer
     // document timestamp can separately attest the effective DSS.
     let mut envelopes = envelopes;
+    memory
+        .admit_len::<Option<crate::api::PadesProfile>>(envelopes.len())
+        .map_err(memory_refused)?;
     let mut profiles = Vec::with_capacity(envelopes.len());
     for index in 0..envelopes.len() {
         if envelopes[index].kind != crate::api::SignatureKind::Signature {
@@ -369,10 +387,12 @@ pub(crate) fn verify_document(
             signer_validation_time(&envelopes[index], &envelopes, ctx.clock_ms / 1000);
         let archival = archival_coverage(&envelopes[index], &envelopes, dss_end);
         if let Some(chain) = &envelopes[index].signer_chain {
+            let status = signer_path_status(chain, &anchors, validation_time.at, &memory)
+                .map_err(memory_refused)?;
             let mut path = Checks::new(limits);
             path.record_status(
                 VerifyCheckKind::CertificatePath,
-                signer_path_status(chain, &anchors, validation_time.at),
+                status,
                 VerifyFindingCode::CertificatePathInvalid,
             )
             .map_err(memory_refused)?;
@@ -484,6 +504,9 @@ pub(crate) fn verify_document(
         ),
     }
     .map_err(memory_refused)?;
+    memory
+        .admit_len::<crate::api::SignatureReport>(envelopes.len())
+        .map_err(memory_refused)?;
     let signatures = envelopes
         .into_iter()
         .zip(profiles)

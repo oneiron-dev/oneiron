@@ -28,6 +28,8 @@ impl HostSelfDispatcher<'_> {
             SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::TasksWaitSet,
                 error: code.to_owned(),
+                code: None,
+                disk_floor: None,
             })
         };
         let alone = call.tasks.is_empty()

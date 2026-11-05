@@ -162,10 +162,9 @@ pub(super) fn untried(
     pinned
         .iter()
         .filter(|candidate| {
-            !settled
-                .candidates
-                .iter()
-                .any(|run| run.candidate_id == candidate.id && run.tried(read_granted))
+            !settled.candidates.iter().any(|run| {
+                !run.coach_own && run.candidate_id == candidate.id && run.tried(read_granted)
+            })
         })
         .map(|candidate| (candidate.id.clone(), candidate.kind.clone()))
         .collect()
@@ -181,6 +180,7 @@ pub(super) fn not_run(
         .map(|(candidate_id, _)| {
             let run = CandidateRun {
                 candidate_id: candidate_id.clone(),
+                coach_own: false,
                 outcome: None,
                 export: CodeFixVerdict::Withheld { reason },
                 replay: None,

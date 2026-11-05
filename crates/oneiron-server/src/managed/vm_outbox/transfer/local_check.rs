@@ -92,7 +92,7 @@ impl Carrier {
     /// The answer `transfer`, taken and recorded as `record`, gets, the
     /// first time or as a replay: the copy this end kept as it took its
     /// origin's retirement, or durable.
-    pub(super) fn taken_answer(
+    pub(in crate::managed::vm_outbox) fn taken_answer(
         &self,
         transfer: &VmOutboxDescriptor,
         record: &MemberRecord,

@@ -21,6 +21,7 @@ use super::types::{
 };
 use super::vet::vet_gate_decision_record;
 
+mod actor_append;
 mod custody;
 mod erasure_scan;
 mod held_scrubs;
@@ -194,7 +195,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &GateDecisionRecord,
     ) -> Result<()> {
-        crate::ports::recorded_at_in_txn(self, wtxn)?;
+        let at = crate::ports::recorded_at_in_txn(self, wtxn)?;
         if record.claim_id.is_some() {
             // The first claim-bound append pins the binding to LIVE exterior
             // custody in the same LMDB transaction as the value. A restore in
@@ -202,7 +203,7 @@ impl Store {
             // (checkpoint_custody).
             self.core.key_custody.pin_in_txn(self, wtxn)?;
         }
-        append_gate_decision_row_in_txn(self, wtxn, record, false)
+        append_gate_decision_row_in_txn(self, wtxn, record, false, at)
     }
 
     /// [`Self::append_gate_decision_in_txn`] for a policy verdict's row (FIX
@@ -218,11 +219,11 @@ impl Store {
         if record.claim_id.is_some() || !custody::policy_seal_available(self) {
             return self.append_gate_decision_in_txn(wtxn, record);
         }
-        crate::ports::recorded_at_in_txn(self, wtxn)?;
+        let at = crate::ports::recorded_at_in_txn(self, wtxn)?;
         // The first sealed append pins the binding to live exterior custody,
         // as a claim-bound one does.
         self.core.key_custody.pin_in_txn(self, wtxn)?;
-        append_gate_decision_row_in_txn(self, wtxn, record, true)
+        append_gate_decision_row_in_txn(self, wtxn, record, true, at)
     }
 
     /// Appends a collision-checked logical UUIDv7 successor. A fixed clock can
@@ -679,6 +680,7 @@ fn append_gate_decision_row_in_txn(
     wtxn: &mut RwTxn<'_>,
     record: &GateDecisionRecord,
     policy_sealed: bool,
+    at: u64,
 ) -> Result<()> {
     // Decode accepts the redacted skeleton (ONE-1637); APPEND never mints
     // one. Redaction is an in-place rewrite owned by the erase coupling.
@@ -689,6 +691,9 @@ fn append_gate_decision_row_in_txn(
     if LEDGER.contains(store, wtxn, &record.decision_id)? {
         return Err(Error::InvariantViolation("gate decision id collision"));
     }
+    let (normalized, owed) = actor_append::prepare_record(store, wtxn, record)?;
+    let record = normalized.as_ref();
+    vet_gate_decision_record(record)?;
     let value = if let Some(claim) = record.claim_id {
         custody::sealed_claim_row_in_txn(store, wtxn, record, &claim)?
     } else if policy_sealed {
@@ -719,6 +724,9 @@ fn append_gate_decision_row_in_txn(
             ),
             &(),
         )?;
+    }
+    for actor in owed {
+        held_scrubs::owe_gate_actor_scrub_in_txn(store, wtxn, &actor, record.decision_id, at)?;
     }
     Ok(())
 }
