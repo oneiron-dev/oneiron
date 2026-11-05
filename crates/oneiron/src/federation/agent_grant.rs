@@ -286,11 +286,23 @@ impl Vault {
                 .ok()
                 .filter(|grant| grant.owner_agent)
                 .ok_or(Error::EntityNotFound)?;
+            let acknowledged_topology = crate::identity_topology::acknowledged_grant_seals_in_txn(
+                &self.store,
+                txn,
+                grant_ref,
+            )
+            .unwrap_or_else(|error| {
+                tracing::debug!(%error, "topology observations unavailable; revoke still lands");
+                BTreeSet::new()
+            });
             let act = self.append_agent_grant_act_in_txn(
                 txn,
                 owner,
                 surface,
-                AgentGrantAct::Revoke { grant: grant_ref },
+                AgentGrantAct::Revoke {
+                    grant: grant_ref,
+                    acknowledged_topology,
+                },
             )?;
             // The withdrawal stays known here and reaches its peers, in this
             // writer (FIX-LIST 5107, 10772).
@@ -330,7 +342,7 @@ impl Vault {
             let AuthorityOp::AgentGrantAct(record) = &entry.op else {
                 continue;
             };
-            if matches!(record.change, AgentGrantChange::Revoke)
+            if matches!(record.change, AgentGrantChange::Revoke { .. })
                 && fold.valid_entries.contains(&authority_entry_hash(&entry)?)
             {
                 revoked.insert(record.grant);
@@ -380,7 +392,7 @@ impl Vault {
                     AgentGrantChange::Mint { .. } => {
                         grants.mints.insert(record.grant, (record, row.learned_at));
                     }
-                    AgentGrantChange::Revoke => {
+                    AgentGrantChange::Revoke { .. } => {
                         grants.owner_revoked.insert(record.grant);
                     }
                 },

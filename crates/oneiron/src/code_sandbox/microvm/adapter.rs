@@ -77,6 +77,15 @@ impl MicroVmSandboxAdapter {
         })
     }
 
+    /// Attaches the SAME existing egress relay to the credential proxy for
+    /// per-decision receipts. Additive builder; the proxy stays silent
+    /// without it.
+    #[must_use]
+    pub fn with_credential_relay(mut self, relay: Arc<dyn oneiron_container::EgressRelay>) -> Self {
+        self.proxy.set_credential_relay(relay);
+        self
+    }
+
     #[must_use]
     pub fn session_manifest(&self) -> Option<oneiron_container::SessionManifest> {
         self.backend.session_manifest(&self.vm)
