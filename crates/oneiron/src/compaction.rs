@@ -65,6 +65,7 @@ mod epoch;
 mod epoch_floor;
 mod epoch_intent;
 pub(crate) mod epoch_vector;
+mod fold_kinds;
 mod fold_words;
 mod folds;
 mod gate;
@@ -75,6 +76,7 @@ mod self_writer;
 mod stored_epoch;
 mod withdrawn;
 
+pub use fold_kinds::{FoldKind, FoldedOutput};
 pub use folds::{
     FoldCompactAsk, FoldCompactAsked, FoldCompactInput, FoldDescription, FoldLedger, FoldList,
     FoldMark, FoldMarkInput, FoldMarked, FoldPending, FoldRecord, FoldReply, FoldSpan, FoldUnfold,
