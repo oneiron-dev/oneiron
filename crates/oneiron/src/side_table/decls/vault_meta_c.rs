@@ -71,6 +71,12 @@ side_tables! {
     /// erase or retirement and by its actor's erase. Key: id16 (request ref).
     CHANNEL_IDENTITY_LIFECYCLE_REQUEST: VaultMeta b"channel_identity_lifecycle_request:v1:" Named
         => crate::channel_identity_lifecycle::erase_lifecycle_request_actor_in_txn;
+    /// Owner-enabled line settings, keyed by ChannelIdentity id16. No read grant is minted.
+    CHANNEL_IDENTITY_PHONE_LINE: VaultMeta b"channel_identity_phone_line:v1:" Named Engine
+        => crate::phone_line::erase_line_actor_in_txn;
+    /// Quarantined arrival metadata or an erased marker, keyed by line/call digest32.
+    CHANNEL_IDENTITY_PHONE_ARRIVAL: VaultMeta b"channel_identity_phone_arrival:v1:" Named Authored [accepts: crate::phone_line::arrival_accepts_masked]
+        => crate::phone_line::erase_arrival_actor_in_txn;
     /// Channel-identity selection rule set. Key: ().
     CHANNEL_IDENTITY_SELECTION_RULES: VaultMeta b"channel_identity_selection:v1:rules" Raw
         => crate::channel_identity_selection::erase_rule_actor_in_txn;
