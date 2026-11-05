@@ -72,6 +72,27 @@ fn outbound_payload_digest(outbound: &CampaignProgramOutbound) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
+/// The native facts the leg's selected target must equal, whether its
+/// retained snapshot was usable or the leg kept the live request.
+pub(super) fn leg_facts(
+    event: &CampaignEnrollmentEvent,
+    step: &CampaignProgramStep,
+    outbound: &CampaignProgramOutbound,
+    consequence_id: AttemptId,
+) -> CampaignLegFacts {
+    CampaignLegFacts {
+        query_ref: event.query_ref,
+        campaign_ref: event.campaign_ref,
+        entity_ref: event.entity_ref,
+        epoch: event.epoch,
+        program_ref: step.program_ref,
+        step_ref: step.step_ref,
+        consequence_id: *consequence_id.as_bytes(),
+        call_seq: outbound.call_seq,
+        payload_digest: outbound_payload_digest(outbound),
+    }
+}
+
 /// The ask on the request `event`, `step` and `outbound` prepare for
 /// `consequence_id`'s call, read against the request retained for it. With
 /// `retain`, a request none retained yet is retained now, before the
@@ -86,17 +107,7 @@ pub(super) fn leg_ask(
     consequence_id: AttemptId,
     retain: bool,
 ) -> LegAsk {
-    let live = CampaignLegFacts {
-        query_ref: event.query_ref,
-        campaign_ref: event.campaign_ref,
-        entity_ref: event.entity_ref,
-        epoch: event.epoch,
-        program_ref: step.program_ref,
-        step_ref: step.step_ref,
-        consequence_id: *consequence_id.as_bytes(),
-        call_seq: outbound.call_seq,
-        payload_digest: outbound_payload_digest(outbound),
-    };
+    let live = leg_facts(event, step, outbound, consequence_id);
     let key = (
         live.consequence_id,
         live.call_seq,

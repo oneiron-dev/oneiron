@@ -71,7 +71,7 @@ pub(super) struct EnrollmentLegDispatch {
     pub(super) first_asked_event_ref: Option<EntityId>,
 }
 
-/// What the v1 envelope derivation resolved to (FIX 11670).
+/// What the native envelope derivation resolved to (FIX 11670).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum CampaignEnvelopeBytes {
     /// The envelope bytes, frozen exactly as the outward leg freezes them.
@@ -84,8 +84,9 @@ pub(super) enum CampaignEnvelopeBytes {
     BodyUnpinned,
 }
 
-/// Derives the v1 envelope bytes the outward leg freezes: the five base
-/// keys, never the raw body (FIX 11513), plus the three email keys
+/// Derives the envelope bytes the outward leg freezes: the five base
+/// keys, never the raw body (FIX 11513), its native campaign-leg identity,
+/// plus the three email keys
 /// (`subject`, `composed_at`, `sender_ref`) iff the step's channel is
 /// email (FIX 11641). Both resolutions are read-only fns of `(vault,
 /// event, step)`, so the membership leg calls this too and
@@ -118,13 +119,14 @@ pub(super) fn campaign_envelope_bytes(
     else {
         return Ok(CampaignEnvelopeBytes::BodyUnpinned);
     };
-    // The wire payload is the v1 envelope the channel sender decodes with
+    // The wire payload is the envelope the channel sender decodes with
     // `deny_unknown_fields`, never the raw body: the five base keys, none
-    // of the chokepoint-sniffed ones (FIX 11513), plus the email keys iff
-    // the step's channel is email (FIX 11641). `composed_at` is the
+    // of the chokepoint-sniffed ones (FIX 11513), its native campaign-leg
+    // identity, plus the email keys iff the channel is email (FIX 11641).
+    // `composed_at` is the
     // event's detection time, never now(): a redrive must freeze the same
     // bytes, or the ledger would mint a fresh intent — a second send.
-    let envelope = if step.channel == EMAIL_CHANNEL {
+    let mut envelope = if step.channel == EMAIL_CHANNEL {
         let Some(subject) = outbound.subject.as_ref() else {
             return Err(invalid("a campaign email step's subject is absent"));
         };
@@ -147,6 +149,15 @@ pub(super) fn campaign_envelope_bytes(
             "trigger_ref": event.event_ref.to_hex(),
         })
     };
+    let facts = super::approval::leg_facts(
+        event,
+        step,
+        outbound,
+        enrollment_consequence_id(event, step)?,
+    );
+    envelope["campaign_leg"] =
+        serde_json::to_value(super::FrozenCampaignLeg::new(&facts, step.sender_ref))
+            .map_err(|_| invalid("a campaign leg identity is not JSON-encodable"))?;
     let envelope_bytes = serde_json::to_vec(&envelope)
         .map_err(|_| invalid("a campaign envelope is not JSON-encodable"))?;
     Ok(CampaignEnvelopeBytes::Resolved(envelope_bytes))

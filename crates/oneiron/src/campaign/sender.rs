@@ -40,12 +40,12 @@ use crate::outbound_intent_ledger::{
     ProviderWait, RemoteTaskHandle,
 };
 
-/// The enrollment leg's frozen envelope, v1: the resolved target, the
+/// The enrollment leg's frozen envelope: the resolved target, the
 /// pinned step-body ref, the member's party key (so erasing the person
 /// stops the send), and the enrollment event's owner actor and ref. Email
 /// steps (FIX 11641) carry three more keys: the program subject, the
-/// composition time, and the sticky sender. No other keys; a non-email
-/// leg emits exactly the five base keys.
+/// composition time, and the sticky sender. Every leg also carries its
+/// native campaign identity; no other keys are admitted.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CampaignOutboundEnvelope {
@@ -54,6 +54,7 @@ struct CampaignOutboundEnvelope {
     counterparty_ref: String,
     actor: String,
     trigger_ref: String,
+    campaign_leg: super::enrollment::FrozenCampaignLeg,
     /// Email-only: the program row's subject.
     #[serde(default)]
     subject: Option<String>,
@@ -384,8 +385,8 @@ impl OutboundResultSender for CampaignChannelSender {
         let intent_id_hex = bytes_to_hex_lower(intent_id);
         // FIX 11641: the leg freezes the email keys iff the step's channel
         // is email; the sender requires them iff the frozen server is
-        // email, and refuses them otherwise, so slack/line envelopes stay
-        // exactly the five base keys.
+        // email, and refuses them otherwise. Slack/LINE keep the five
+        // base keys plus the native campaign identity.
         let email_keys = match (
             call.server() == EMAIL_CHANNEL,
             envelope.subject.as_ref(),
