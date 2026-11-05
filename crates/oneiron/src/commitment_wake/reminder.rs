@@ -61,7 +61,7 @@ const MAX_QUOTED_PROMISE_CHARS: usize = 400;
 /// `voice`, when set, has the host's model word each reminder, the owner's
 /// own and a third party's nudge alike (FIX 12000); unset, reminders keep
 /// the fixed wording.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommitmentReminderRoute {
     pub channel: String,
