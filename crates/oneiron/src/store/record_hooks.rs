@@ -130,6 +130,14 @@ pub trait StoreRecordHooks: Send + Sync {
         actor: &EntityId,
     ) -> Result<()>;
 
+    /// The engine's `comm::is_restrictive_comm_predicate`.
+    fn is_restrictive_comm_predicate(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        predicate: &str,
+    ) -> Result<bool>;
+
     /// The engine's `secret_custody::read_secret_custody_meta_in_txn`.
     fn read_secret_custody_meta_in_txn(
         &self,
@@ -138,11 +146,12 @@ pub trait StoreRecordHooks: Send + Sync {
         id: &EntityId,
     ) -> Result<Option<SecretCustodyRecord>>;
 
-    /// The engine's `comm::is_restrictive_comm_predicate`.
-    fn is_restrictive_comm_predicate(
+    /// The engine's `affect::state_inputs::spoke_in`.
+    fn spoke_in(
         &self,
-        store: &Store,
+        vault: &crate::Vault,
         txn: &RoTxn<'_>,
-        predicate: &str,
+        subject: &EntityId,
+        turn: &EntityId,
     ) -> Result<bool>;
 }

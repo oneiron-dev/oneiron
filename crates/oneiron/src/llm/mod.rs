@@ -18,7 +18,9 @@ pub use defaults::{
     PurposeDefaultSubmitter, purpose_default_grant_target,
 };
 mod inference_admission;
+mod tagger_admission;
 pub use inference_admission::admitted_as;
+pub use tagger_admission::{TaggerCall, TaggerCallContext, TaggerEgressPredicate};
 mod role_defaults;
 mod solo;
 pub use inference_admission::{
@@ -210,3 +212,4 @@ pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::routing::llm_routed_seat_accepts_masked;
+pub(crate) use self::step::dreamer_step_state_accepts_masked;
