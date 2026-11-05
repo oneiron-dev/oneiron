@@ -62,8 +62,6 @@ mod verbs;
 
 #[cfg(feature = "sync")]
 pub(crate) use carried::{CarriedDocument, DocumentMerge, moved_pointer_row_in_txn};
-#[cfg(feature = "sync")]
-pub(crate) use record_carried::{CarriedRecordDocument, export_skill_record_document_in_txn};
 pub use doc_actor::DocActor;
 pub use document::{Birth, EntityDoc, TextChange};
 pub use forks::{
@@ -82,6 +80,11 @@ pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 pub(crate) use pins::PinMerge;
 pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
 pub(crate) use pins::{erase_pin_actor_in_txn, erase_purge_actor_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use record_carried::{
+    CarriedRecordDocument, RecordDocumentCandidate, RecordDocumentPreparation,
+    export_skill_record_document_in_txn,
+};
 pub(crate) use registry::EntityDocRegistry;
 pub use registry::{EntityDocumentHead, EntityDocumentView, RegistryStatus};
 pub use storage::TextField;

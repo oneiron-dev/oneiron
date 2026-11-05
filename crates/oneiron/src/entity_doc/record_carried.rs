@@ -4,6 +4,9 @@
 //! binding only. The selected-window ingest door must still run ordinary
 //! record admission before installing either view in its parent writer.
 
+mod candidate;
+pub(crate) use candidate::{RecordDocumentCandidate, RecordDocumentPreparation};
+
 use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 

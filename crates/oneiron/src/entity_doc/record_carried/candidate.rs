@@ -1,0 +1,358 @@
+//! A private scratch candidate for the selected record/document transport.
+//!
+//! Preparation joins the actual current local document before projecting its
+//! record body. This is data for ordinary admission, not permission to persist.
+
+use heed::RwTxn;
+use loro::VersionVector;
+
+use super::CarriedRecordDocument;
+use crate::EntityId;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::entity_doc::carried::{CarriedDocument, DocumentMerge};
+use crate::entity_doc::storage::{self, ENTITY_DOC_HEAD, Head};
+use crate::entity_doc::{EntityDoc, invalid};
+use crate::error::{Error, Result};
+use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreRead, UpdateSeq};
+use crate::registry::ENTITY_TYPE_SKILL;
+use crate::side_table::HexId;
+use crate::sync::SelectedRecordDocument;
+
+pub(crate) enum RecordDocumentPreparation<'selected, 'carrier> {
+    Candidate(RecordDocumentCandidate<'selected, 'carrier>),
+    /// The selected import returned or another import is current now.
+    TransportEnded,
+    /// Actual local slot rows still need reconciliation before there is a
+    /// whole candidate. This is not a refusal of ordinary row admission.
+    UnheadedText {
+        slots: Vec<DocumentSlot>,
+    },
+    /// The local native head stands; no pointer or document was written.
+    Stands(DocumentMerge),
+}
+
+/// Both record views, read and joined in one actual applying writer.
+/// No constructor accepts arbitrary logical bytes, an actor or a permission.
+pub(crate) struct RecordDocumentCandidate<'selected, 'carrier> {
+    selected: &'selected SelectedRecordDocument<'carrier>,
+    prior_raw: Option<Vec<u8>>,
+    prior_head: Option<Vec<u8>>,
+    prior_document: Option<[u8; 32]>,
+    prior_logical: Option<Vec<u8>>,
+    logical: Vec<u8>,
+    head: Head,
+    document: EntityDoc,
+    before: Option<VersionVector>,
+    left_document: Option<String>,
+    deferred_purge: Option<DocumentMerge>,
+}
+
+impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
+    pub(crate) fn prepare_in_txn(
+        selected: &'selected SelectedRecordDocument<'carrier>,
+        txn: &mut RwTxn<'_>,
+    ) -> Result<RecordDocumentPreparation<'selected, 'carrier>> {
+        let vault = selected.vault();
+        let store = &vault.store;
+        if !selected.recheck_transport_in_txn(store, txn)? {
+            return Ok(RecordDocumentPreparation::TransportEnded);
+        }
+        let source = selected.head();
+        let entity = source.entity()?;
+        if crate::ports::removed_in_txn(store, txn, &entity)? {
+            return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Refused(
+                "erased here",
+            )));
+        }
+        let incoming = source.document(selected.raw(), selected.snapshot())?;
+        let prior_raw = store.port_entity_raw(txn, &entity)?.map(|raw| raw.to_vec());
+        let prior_head = storage::record_head_bytes(store, txn, &entity)?;
+        let local = ENTITY_DOC_HEAD.get(store, txn, &HexId(entity))?;
+        let prior_document = local
+            .as_ref()
+            .map(|head| document_rows_digest(store, txn, &head.document))
+            .transpose()?;
+        let (head, document, before, left_document, deferred_purge, prior_logical) = match local {
+            None => {
+                // SKILL has no lazy native birth: its existing text may
+                // still live in the entity slot's sequence rows. A carried
+                // destination can also already hold retained physical rows.
+                // Do not silently overwrite either or claim a joined view.
+                let mut slots = vec![DocumentSlot::of(entity)];
+                let destination = DocumentSlot::from_hex(&source.native().document)?;
+                if destination != slots[0] {
+                    slots.push(destination);
+                }
+                let mut occupied = Vec::new();
+                for slot in slots {
+                    if store.port_document_present(txn, slot)? {
+                        occupied.push(slot);
+                    }
+                }
+                if !occupied.is_empty() {
+                    return Ok(RecordDocumentPreparation::UnheadedText { slots: occupied });
+                }
+                // No native head is not a claim that the revision ledger
+                // is empty. Its actual generic bindings remain untouched.
+                let prior_logical = prior_raw.as_ref().and_then(|raw| {
+                    EntityMetadataHeader::parse(raw)
+                        .filter(|header| header.entity_type == ENTITY_TYPE_SKILL)
+                        .map(|_| raw[ENTITY_METADATA_HEADER_LEN..].to_vec())
+                });
+                let native = source.native();
+                let head = Head {
+                    entity: native.entity.clone(),
+                    incarnation: native.incarnation.clone(),
+                    document: native.document.clone(),
+                    field: source.field().clone(),
+                    generation: 0,
+                    pending: 0,
+                    // The sender's birth frontier stays separate source
+                    // evidence, never a local birth of this carried doc.
+                    birth_frontier: None,
+                };
+                (head, incoming, None, None, None, prior_logical)
+            }
+            Some(mut head) => {
+                let raw = prior_raw
+                    .as_deref()
+                    .ok_or(Error::CorruptedIndex("record document head without entity"))?;
+                let header = EntityMetadataHeader::parse(raw)
+                    .ok_or(Error::CorruptedIndex("record document owner header"))?;
+                if header.entity_type != ENTITY_TYPE_SKILL || head.entity != entity.to_hex() {
+                    return Err(Error::CorruptedIndex("record document owner mismatch"));
+                }
+                let native = source.native();
+                if head.incarnation != native.incarnation || head.field != *source.field() {
+                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Conflict));
+                }
+                let document = storage::load(store, txn, &head)?;
+                let prior_logical = Some(storage::body_with_document(
+                    &head.field,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                    &document,
+                )?);
+                let held = local_native(&head, &document);
+                let switched = native.replaces(&held);
+                if head.document != native.document && !switched {
+                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Conflict));
+                }
+                // Preserve the ordinary owned-row identity check. Only
+                // the actual Switch may change its pointer spelling.
+                if raw.get(..ENTITY_METADATA_HEADER_LEN)
+                    != selected.raw().get(..ENTITY_METADATA_HEADER_LEN)
+                    || !same_pointer_body(raw, selected.raw(), switched, &native.document)?
+                {
+                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Refused(
+                        "record core differs from its native head",
+                    )));
+                }
+                if document.birth().at != incoming.birth().at {
+                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Refused(
+                        "record document birth differs",
+                    )));
+                }
+                if switched && !shares_switch_base(native, &document, &incoming) {
+                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Conflict));
+                }
+                let before = document.doc.oplog_vv();
+                if !document
+                    .doc
+                    .import(selected.snapshot())
+                    .is_ok_and(|status| status.pending.is_none())
+                {
+                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Refused(
+                        "snapshot does not join this vault's document",
+                    )));
+                }
+                let mut deferred_purge = None;
+                let document = if !switched && native.purges(&held) {
+                    match crate::entity_doc::carried::purged_at_carried_floor(
+                        vault, txn, &entity, &head, &document, native, &incoming,
+                    )? {
+                        Ok(shallow) => shallow,
+                        Err(waits) => {
+                            // As on the existing carried-document path,
+                            // a deferred purge does not discard joined ops.
+                            deferred_purge = Some(waits);
+                            document
+                        }
+                    }
+                } else {
+                    document
+                };
+                let left = switched
+                    .then(|| std::mem::replace(&mut head.document, native.document.clone()));
+                (
+                    head,
+                    document,
+                    Some(before),
+                    left,
+                    deferred_purge,
+                    prior_logical,
+                )
+            }
+        };
+        let logical = storage::body_with_document(
+            source.field(),
+            &selected.raw()[ENTITY_METADATA_HEADER_LEN..],
+            &document,
+        )?;
+        crate::skill::decode_skill_record(&logical)?;
+        Ok(RecordDocumentPreparation::Candidate(Self {
+            selected,
+            prior_raw,
+            prior_head,
+            prior_document,
+            prior_logical,
+            logical,
+            head,
+            document,
+            before,
+            left_document,
+            deferred_purge,
+        }))
+    }
+
+    /// Recheck before ordinary staging, not against a previously returned
+    /// import or a head another operation replaced in this same writer.
+    pub(crate) fn recheck_in_txn(&self, txn: &mut RwTxn<'_>) -> Result<bool> {
+        let store = &self.selected.vault().store;
+        if !self.selected.recheck_transport_in_txn(store, txn)? {
+            return Ok(false);
+        }
+        let entity = self.selected.head().entity()?;
+        if store.port_entity_raw(txn, &entity)?.as_deref() != self.prior_raw.as_deref()
+            || storage::record_head_bytes(store, txn, &entity)? != self.prior_head
+        {
+            return Ok(false);
+        }
+        // Erasure and retained-history writes can change physical slot rows
+        // without changing the encoded head or current logical text.
+        let current = ENTITY_DOC_HEAD
+            .get(store, txn, &HexId(entity))?
+            .map(|head| document_rows_digest(store, txn, &head.document))
+            .transpose()?;
+        Ok(current == self.prior_document)
+    }
+
+    pub(crate) fn entity(&self) -> Result<EntityId> {
+        self.selected.head().entity()
+    }
+
+    pub(crate) fn physical_raw(&self) -> &[u8] {
+        self.selected.raw()
+    }
+
+    pub(crate) fn logical_body(&self) -> &[u8] {
+        &self.logical
+    }
+
+    /// The local logical body BEFORE the incoming operations joined, never
+    /// the updated final record returned as an overwrite's prior.
+    pub(crate) fn logical_prior_body(&self) -> Option<&[u8]> {
+        self.prior_logical.as_deref()
+    }
+
+    pub(crate) fn source(&self) -> &CarriedRecordDocument {
+        self.selected.head()
+    }
+}
+
+fn local_native(head: &Head, document: &EntityDoc) -> CarriedDocument {
+    CarriedDocument {
+        entity: head.entity.clone(),
+        document: head.document.clone(),
+        incarnation: head.incarnation.clone(),
+        version: document.doc.oplog_vv().encode(),
+        shallow: if document.doc.is_shallow() {
+            document.doc.shallow_since_vv().to_vv().encode()
+        } else {
+            Vec::new()
+        },
+        switched: None,
+    }
+}
+
+fn shares_switch_base(native: &CarriedDocument, local: &EntityDoc, incoming: &EntityDoc) -> bool {
+    native
+        .switched
+        .as_ref()
+        .and_then(|from| crate::entity_doc::document::decode_frontier(&from.base).ok())
+        .is_some_and(|base| {
+            incoming.doc.frontiers_to_vv(&base).is_some()
+                && (local.doc.frontiers_to_vv(&base).is_some()
+                    || incoming.doc.oplog_vv().includes_vv(&local.doc.oplog_vv()))
+        })
+}
+
+fn same_pointer_body(old: &[u8], incoming: &[u8], switched: bool, document: &str) -> Result<bool> {
+    let old = &old[ENTITY_METADATA_HEADER_LEN..];
+    let incoming = &incoming[ENTITY_METADATA_HEADER_LEN..];
+    if !switched {
+        return Ok(old == incoming);
+    }
+    let mut cursor = old;
+    let rmpv::Value::Map(mut fields) = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| Error::CorruptedIndex("document pointer row"))?
+    else {
+        return Err(Error::CorruptedIndex("document pointer row"));
+    };
+    let mut pointers = fields
+        .iter_mut()
+        .filter(|(key, _)| key.as_str() == Some("entity_doc_ref"));
+    let (_, pointer) = pointers.next().ok_or(invalid("document pointer missing"))?;
+    *pointer = rmpv::Value::from(document);
+    if !cursor.is_empty() || pointers.next().is_some() {
+        return Err(Error::CorruptedIndex("document pointer row"));
+    }
+    let mut moved = Vec::new();
+    rmpv::encode::write_value(&mut moved, &rmpv::Value::Map(fields))
+        .map_err(|_| invalid("document pointer encoding"))?;
+    Ok(moved == incoming)
+}
+
+/// Fingerprint the actual stored rows, not a re-encoded Loro snapshot. No
+/// token, source authority or durable format is made from this local read.
+fn document_rows_digest(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    document: &str,
+) -> Result<[u8; 32]> {
+    let slot = DocumentSlot::from_hex(document)?;
+    let mut digest = blake3::Hasher::new();
+    for row in DocumentRow::ALL {
+        let bytes = store.port_document_row(txn, slot, row)?;
+        digest_bytes(&mut digest, bytes.as_deref());
+    }
+    for update in store.port_document_updates(txn, slot)? {
+        match update
+            .seq
+            .ok_or(Error::CorruptedIndex("document update key"))?
+        {
+            UpdateSeq::Sequence(sequence) => {
+                digest.update(&[0]);
+                digest.update(&sequence.to_be_bytes());
+            }
+            UpdateSeq::Generation(generation) => {
+                digest.update(&[1]);
+                digest.update(&generation.to_be_bytes());
+            }
+        }
+        digest_bytes(&mut digest, Some(&update.bytes));
+    }
+    Ok(*digest.finalize().as_bytes())
+}
+
+fn digest_bytes(digest: &mut blake3::Hasher, bytes: Option<&[u8]>) {
+    match bytes {
+        None => {
+            digest.update(&[0]);
+        }
+        Some(bytes) => {
+            digest.update(&[1]);
+            digest.update(&bytes.len().to_be_bytes());
+            digest.update(bytes);
+        }
+    }
+}
