@@ -2021,7 +2021,7 @@
      "path": "src/anchored_annotation/reanchor.rs",
      "purpose": "Edit-manifest lowering, locator replay math, and the re-anchor sweep (own-txn plus caller-txn)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
