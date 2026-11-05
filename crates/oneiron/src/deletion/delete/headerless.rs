@@ -274,6 +274,8 @@ impl Vault {
                 &marker_key,
                 &tombstone.encode().to_vec(),
             )?;
+            crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id)
+                .erase_planned_pack_revision()?;
             let mut erase = crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id);
             crate::feedback::erase_handoff_as_in_txn(&mut erase)?;
             crate::attempt_queue::erase_feedback_triage_as_in_txn(&mut erase)?;
