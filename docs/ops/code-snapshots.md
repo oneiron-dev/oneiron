@@ -38,4 +38,7 @@ through the snapshot writer. Incremental growth never waits while retaining
 earlier buffers: pressure returns a memory refusal and drops this capture.
 The door adds no fixed file-count, file-byte or total byte limit and no timed wait. This is not a claim that all pre-existing
 indexing, parser or response allocations are covered by that lease. The separate
-repo-mutation recovery capture retains its existing bounds and encoding.
+repo-mutation recovery capture retains its existing bounds and encoding. It uses
+the same held-directory walker, reads each file through its opened handle and
+applies recovery custody to those bytes. Its symlink targets are read relative
+to the held parent, without following their contents.
