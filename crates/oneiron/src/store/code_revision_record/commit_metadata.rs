@@ -1,4 +1,5 @@
-//! Authorship, message and file modes are canonical revision data, not export input.
+//! Message and file modes are canonical revision data, not export input;
+//! authorship is erasable attribution beside them (FIX 6258).
 use crate::store::code_commit_metadata::CodeCommitMetadata;
 use crate::{EntityId, Error, Result};
 use rmpv::Value;
@@ -24,6 +25,14 @@ pub(crate) fn validate(revision: &super::CodeRevision) -> Result<()> {
 
     Ok(())
 }
+fn modes_value(meta: &CodeCommitMetadata) -> Value {
+    Value::Array(
+        meta.file_modes
+            .iter()
+            .map(|(id, mode)| Value::Array(vec![Value::Binary(id.to_vec()), Value::from(*mode)]))
+            .collect(),
+    )
+}
 pub(crate) fn to_value(meta: Option<&CodeCommitMetadata>) -> Value {
     meta.map_or(Value::Nil, |m| {
         Value::Array(vec![
@@ -31,16 +40,14 @@ pub(crate) fn to_value(meta: Option<&CodeCommitMetadata>) -> Value {
                 Value::Binary(author.as_bytes().to_vec())
             }),
             Value::from(m.message.clone()),
-            Value::Array(
-                m.file_modes
-                    .iter()
-                    .map(|(id, mode)| {
-                        Value::Array(vec![Value::Binary(id.to_vec()), Value::from(*mode)])
-                    })
-                    .collect(),
-            ),
+            modes_value(m),
         ])
     })
+}
+/// The content the revision fold binds: the message and the modes, never
+/// the erasable author or whether one is named (FIX 6258).
+pub(crate) fn integrity_value(meta: &CodeCommitMetadata) -> Value {
+    Value::Array(vec![Value::from(meta.message.clone()), modes_value(meta)])
 }
 pub(crate) fn from_value(value: &Value) -> Result<Option<CodeCommitMetadata>> {
     if value.is_nil() {
