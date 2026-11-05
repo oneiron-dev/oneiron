@@ -48,7 +48,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
 
 async fn serve_with_handles(
     args: &ServeArgs,
-    managed: ManagedArgs,
+    mut managed: ManagedArgs,
     handles: &mut StartingHandles,
 ) -> anyhow::Result<std::io::Result<()>> {
     // The supervisor names a personal vault's owner by the contract's copy of
@@ -78,6 +78,7 @@ async fn serve_with_handles(
     let mut host =
         super::host::ManagedHost::new(&managed, HostLimits::unbounded(), shutdown.clone())?;
     let http = host.listener()?;
+    let host_legal = crate::managed::host_legal::HostLegalListener::take(&mut managed)?;
     // A cold restore's plan, on its own pipe before the credential frame: no
     // socket below listens until the restore is verified and kept.
     let mut restore = super::restore::ManagedRestore::begin(&managed, &mut config)?;
@@ -437,6 +438,10 @@ async fn serve_with_handles(
     // go out before ctl serves or ready is said.
     if let Some(restore) = restore {
         restore.verified(&vault)?;
+    }
+
+    if let Some(listener) = host_legal {
+        handles.host_legal = Some(listener.start(Arc::clone(&vault), shutdown.clone())?);
     }
 
     handles.ctl_task = Some(tokio::spawn({
