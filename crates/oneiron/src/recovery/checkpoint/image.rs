@@ -101,12 +101,12 @@ pub(super) fn decode_image(
     Option<crate::store::CustodyRequirement>,
 )> {
     let mut image: CheckpointImage =
-        rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
-    image.checkpoint_sequence = Some(opened.sequence);
-    image.snapshot = Some(opened.snapshot);
+        rmp_serde::from_slice(opened.image()).map_err(|_| codec_error())?;
+    image.checkpoint_sequence = Some(opened.sequence());
+    image.snapshot = Some(opened.snapshot());
     if image.version != IMAGE_VERSION
-        || image.created_at != opened.created_at
-        || !carried_bodies::matches_artifact(&image, &opened.bodies.list())
+        || image.created_at != opened.created_at()
+        || !carried_bodies::matches_artifact(&image, &opened.bodies().list())
         || image.databases.len() != DB_MANIFEST.len()
         || DB_MANIFEST
             .iter()
@@ -137,6 +137,7 @@ pub(super) fn decode_image(
     {
         return Err(codec_error());
     }
-    let id = blake3::Hash::from(opened.image_id).to_hex().to_string();
-    Ok((image, id, opened.bodies, opened.custody))
+    let id = blake3::Hash::from(opened.image_id()).to_hex().to_string();
+    let (bodies, custody) = opened.into_bodies_and_custody();
+    Ok((image, id, bodies, custody))
 }

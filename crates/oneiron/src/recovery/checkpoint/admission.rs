@@ -120,8 +120,8 @@ impl Vault {
             };
             Rejected::new(reason, error).at(P::ArtifactOpen)
         })?;
-        if opened.commitment_digest != evidence.commitment_digest
-            || opened.image_id != expected.checkpoint_id
+        if opened.commitment_digest() != evidence.commitment_digest
+            || opened.image_id() != expected.checkpoint_id
         {
             return Err(Rejected::new(
                 R::ArtifactIdentityMismatch,
@@ -129,7 +129,7 @@ impl Vault {
             )
             .at(P::ArtifactOpen));
         }
-        let checkpoint = opened.image_id;
+        let checkpoint = opened.image_id();
         let (mut image, checkpoint_id, bodies, required) = image::decode_image(opened)
             .map_err(|error| because(R::CodecInvalid)(error).at(P::ArtifactOpen))?;
         let source = source::verified(
