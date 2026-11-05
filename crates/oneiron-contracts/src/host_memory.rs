@@ -292,6 +292,27 @@ impl MemoryLease {
         self.bytes
     }
 
+    /// Checks whether this lease's whole required peak fits on an idle machine.
+    /// `pinned` names distinct caller-held input outside this lease; `additional`
+    /// is the unreserved growth needed at that peak. Count overlapping input
+    /// once, and do not include bytes already held by this lease in either.
+    ///
+    /// This only checks the floor: it neither reserves nor changes the line.
+    /// Pinned input is not added to the shared ledger. Every future allocation
+    /// still needs its normal admission, which keeps its existing FIFO wait.
+    pub fn check_irreducible_peak(
+        &self,
+        pinned: u64,
+        additional: u64,
+    ) -> Result<(), MemoryRefusal> {
+        let needed = self.bytes.saturating_add(additional).saturating_add(pinned);
+        let available = self.shared.total.saturating_sub(self.shared.reserve);
+        if needed > available {
+            return Err(MemoryRefusal::Floor { needed, available });
+        }
+        Ok(())
+    }
+
     /// Grows this lease by `more` bytes on its original line, behind every
     /// waiter already there. The fit check excludes this lease's own bytes,
     /// not any other holder's, so a multi-step allocation cannot wait on its
@@ -345,15 +366,8 @@ impl MemoryLease {
         stopped: &dyn Fn() -> bool,
         own_pending_credit: u64,
     ) -> Result<(), MemoryRefusal> {
-        let whole = self.bytes.saturating_add(more);
+        self.check_irreducible_peak(0, more)?;
         let shared = Arc::clone(&self.shared);
-        let most = shared.total.saturating_sub(shared.reserve);
-        if whole > most {
-            return Err(MemoryRefusal::Floor {
-                needed: whole,
-                available: most,
-            });
-        }
         let started = Instant::now();
         let mut line = lock(&shared.line);
         if line.waiting.is_empty()
