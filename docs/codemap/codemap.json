@@ -9314,15 +9314,17 @@
       "EsignSignatureRevision",
       "EsignVerdict",
       "SealDegrade",
+      "SealDegradeReason",
       "SealProfile",
+      "SealProfileEvidence",
       "SealVerdict"
      ],
      "path": "src/blob_artifact/esign/sealer.rs",
      "purpose": "The seal port: how the engine reaches a PAdES sealer it does not link",
      "surface": {
-      "enum": 3,
+      "enum": 4,
       "fn": 2,
-      "struct": 6,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -15856,7 +15858,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 9
      }
     },
@@ -41020,7 +41022,7 @@
      "path": "src/inference_snapshot/seal.rs",
      "purpose": "Sealing and opening one inference snapshot: a fresh random data key per snapshot, wrapped under the vault's…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 5,
       "re-export": 1,
       "struct": 1
@@ -49105,7 +49107,7 @@
      "path": "src/memory/structural/affiliated.rs",
      "purpose": "Attributed takes and imported-claim admission verbs",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5
      }
     },
@@ -64155,6 +64157,16 @@
      "purpose": "`self.use` under a secret grant (FIX 4313): the holder names a grant in place of a handle",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/use_handle/native_mail.rs",
+     "purpose": "The host's native mail readiness check as a `self.use` table operation",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -87188,7 +87200,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
       "mod": 1,
       "re-export": 2,
       "struct": 6,
@@ -92015,7 +92027,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 78,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92409,7 +92421,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6455,
+   "source_files": 6456,
    "test_files": 895
   },
   "oneiron-android": {
@@ -135246,8 +135258,12 @@
       "SealCheckReceipt",
       "SealCheckRequest",
       "SealCompleteRequest",
+      "SealDegrade",
+      "SealDegradeReason",
       "SealLevel",
       "SealPendingRequest",
+      "SealProfile",
+      "SealProfileEvidence",
       "SealReceiptView",
       "SealRunReceipt",
       "SealedAttemptReceipt",
@@ -136189,8 +136205,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1108,
-      "struct": 3374
+      "enum": 1110,
+      "struct": 3376
      }
     },
     {
