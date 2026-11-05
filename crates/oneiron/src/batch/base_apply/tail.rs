@@ -124,11 +124,15 @@ pub(super) fn apply_tail(
         crate::dreamer_runner::reelect_home_in_txn(store, wtxn, config.privacy.posture);
     }
 
+    state
+        .question_arrival_ids
+        .extend(&state.materialized_entity_ids);
     finalize_batch_indexes(
         store,
         config,
         wtxn,
         &state.materialized_entity_ids,
+        &state.question_arrival_ids,
         state.pending_hnsw_rebuild,
         state.had_graph_mutation,
         state.had_vector_mutation,
