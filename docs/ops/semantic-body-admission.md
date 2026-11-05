@@ -9,8 +9,12 @@ On the existing transfer worker, one lease from the process-wide MachineMemory
 line admits that entire raw buffer before a fallible exact reserve. This is not
 an incremental grow while holding part of the request. The vector's actual
 capacity is named materialized after its storage is filled, so the live memory
-reading does not count the pending reservation twice. The raw vector is dropped
-before its lease, on parsing success and on errors.
+reading does not count the pending reservation twice. After a successful parse
+the same lease adopts the genuinely allocated decoded text with
+materialized(0, actual); this is not a second lease, grow, wait or refusal.
+The raw vector is dropped before its lease, on parsing success and on errors;
+on success the decoded text is adopted before the raw drop, then the raw drop
+happens first and the lease shrinks by the raw actual capacity.
 
 The waiting request owns a cancellation flag. Dropping the request sets it even
 when the body feed already finished. A worker waiting for the whole-buffer lease
@@ -23,11 +27,16 @@ spool I/O and transport failure under the existing incomplete-body 400 shape.
 
 The configured semantic_query_bytes row still asks and serves the whole query.
 No body cap, fixed concurrency, queue deadline or truncation is added here.
-The endpoint-only route change and post-read question hook in PR5296 are separate
-changes; this collector does not copy their unmerged source.
+The endpoint-only route change and post-read question hook landed separately in
+PR5296 and remain unchanged here.
 
-This is custody of the complete raw input vector only. The transport's frame and
-spool-piece buffers, disk pre-admission, serde scratch, decoded query String and
-later copies, embedding concurrency and runtime behavior remain unproved. The
-returned decoded query does not retain the raw-buffer lease. This is not a claim
-of whole-request heap coverage, a runtime no-hang result or a speed improvement.
+This is custody of the complete raw input vector plus the adopted original
+decoded text, with no decoded preadmission and no raw-multiplier guard. The
+transport's frame and spool-piece buffers, disk pre-admission, serde scratch,
+path-key and error-payload temporaries, question, provider and probe copies,
+embedding concurrency and runtime behavior remain not owned and unproved. The
+returned decoded body retains its own raw lease as the holder of the adopted
+text: params is declared first so the query String frees before the guard on
+every drop path, and the handler binds the guard before the owned params so
+reverse-local order holds. This is not a claim of whole-request heap coverage,
+a runtime no-hang result or a speed improvement.
