@@ -6634,7 +6634,7 @@
      "path": "src/batch/builder/preflight.rs",
      "purpose": "Claim-gate preflight loop including CommitmentGapDecay arms",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -7328,7 +7328,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -29619,7 +29619,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 4
      }
     },
@@ -33284,7 +33284,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 11,
-      "fn": 8,
+      "fn": 9,
       "re-export": 3
      }
     },
@@ -107219,7 +107219,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/seal/fetch.rs",
-     "purpose": "The seal's `net.fetch`: the host's guarded fetch, for a timestamp or a CRL only, each fetch inside the fetch…",
+     "purpose": "The seal's `net.fetch`: the host's guarded fetch, for a timestamp or a CRL/OCSP reply, each fetch inside the…",
      "surface": {
       "crate-vis": 1
      }
@@ -109392,9 +109392,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/native/profile/material.rs",
-     "purpose": "B-LT validation-material gather: CRL DP discovery, key-bound issuer resolution, fetch+validate CRLs",
+     "purpose": "B-LT validation material: working CRLs first, then OCSP for uncovered certificates",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/profile/material/ocsp.rs",
+     "purpose": "OCSP fallback for a certificate not covered by a working CRL",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -109480,7 +109490,7 @@
      "path": "src/native/verify/verify_dss_core.rs",
      "purpose": "DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -109719,7 +109729,7 @@
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)"
     },
     "native": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -109735,7 +109745,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 51,
+   "source_files": 52,
    "test_files": 12
   },
   "oneiron-server": {
@@ -115904,6 +115914,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/harness_evaluation_routes.rs",
+     "purpose": "Owner-supplied scores for the native Dreamer tuning harness",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/history_routes.rs",
      "purpose": "`/v1/owner/history`: the owner's erase history (ARCH-0038), behind the same owner door as every other owner…",
      "surface": {
@@ -117826,7 +117846,7 @@
      "purpose": "—",
      "surface": {
       "enum": 11,
-      "fn": 3,
+      "fn": 4,
       "re-export": 19,
       "struct": 20
      }
@@ -121942,6 +121962,46 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mac_worker_bootstrap/entry.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mac_worker_bootstrap/mod.rs",
+     "purpose": "Private real-CLI entry before Tokio is constructed",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mac_worker_bootstrap/sys.rs",
+     "purpose": "Descriptor and kernel-event operations before the child has a runtime",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mac_worker_bootstrap/wire.rs",
+     "purpose": "The original launch bytes on the private bootstrap socket",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -124598,13 +124658,33 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/worker_host/process.rs",
      "purpose": "One running worker process in its supervisor's custody: started in a process group of its own, reaped by one…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/process/guarded.rs",
+     "purpose": "The registered Mac CLI keeps W direct and delegates only parent-death watching to G",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/process/guarded/controller.rs",
+     "purpose": "One native thread owns each private G child, independently of Tokio teardown",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -127820,7 +127900,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 662,
+     "files": 663,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128134,6 +128214,13 @@
      "layout": "file+dir",
      "purpose": "What the binaries write to their log sinks, and the panic hook"
     },
+    "mac_worker_bootstrap": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Private real-CLI entry before Tokio is constructed"
+    },
     "machine": {
      "files": 2,
      "impl_vault": false,
@@ -128170,7 +128257,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 110,
+     "files": 112,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128326,7 +128413,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1537,
+   "source_files": 1544,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
