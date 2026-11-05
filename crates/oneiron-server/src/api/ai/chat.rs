@@ -78,6 +78,7 @@ mod hook_ask;
 mod hooks;
 mod recall;
 mod segments;
+mod session_invocation;
 pub(crate) use segments::ActionSession;
 mod sitting;
 mod sources;
@@ -448,8 +449,12 @@ pub(super) async fn chat_turn(
     let claim = match (invocation(&headers), &payload) {
         (Ok(Some(named)), Ok(Json(request))) => {
             let body = turn_invocation_body(&auth, locality, request);
-            match facade::claim_door_invocation(&server, named, body, auth.principal_entity()).await
-            {
+            let (claimed, binding) =
+                match session_invocation::claim(&server, &auth, locality, named, body).await {
+                    Ok(claimed) => claimed,
+                    Err(refused) => return *refused,
+                };
+            match claimed {
                 DoorClaim::Run(claim) => Some(claim),
                 DoorClaim::Answered(outcome) => {
                     // The waiter's credential is judged again once the wait
@@ -465,7 +470,12 @@ pub(super) async fn chat_turn(
                     // The first call's reply, released again for this
                     // waiter through the same release record as a facade
                     // waiter's (FIX 10499).
-                    return facade::door_replay_for(server.vault(), &auth, "chat", outcome);
+                    return session_invocation::replay(
+                        server.vault(),
+                        &auth,
+                        binding.as_ref(),
+                        outcome,
+                    );
                 }
                 DoorClaim::InFlight => {
                     return refusal(
@@ -537,7 +547,11 @@ fn turn_invocation_body(
     facade::invocation_body(
         Some(auth),
         locality,
-        &[b"chat".as_slice(), request.as_slice()],
+        &[
+            b"chat".as_slice(),
+            auth.off_record_session().unwrap_or_default().as_bytes(),
+            request.as_slice(),
+        ],
     )
 }
 

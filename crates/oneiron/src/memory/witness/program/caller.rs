@@ -4,6 +4,7 @@ use super::*;
 use crate::memory::support::verify_actor_binding_in_txn;
 
 mod binding;
+mod claims;
 pub use binding::SessionWitnessBinding;
 
 /// An admitted caller's live session and its captured mode generation.
