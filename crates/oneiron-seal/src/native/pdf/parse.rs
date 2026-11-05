@@ -166,6 +166,8 @@ fn scan_catalog_mode(
     doc: &Document,
     root: &Dictionary,
     reject_signatures: bool,
+    limits: &SealResourceLimits,
+    stage: SealStage,
 ) -> Result<(), SealError> {
     if root.has(b"OpenAction") {
         return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
@@ -192,7 +194,7 @@ fn scan_catalog_mode(
     if root.has(b"AF") {
         return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
     }
-    for page_id in walk::pages(doc) {
+    for page_id in walk::pages(doc, limits).map_err(|refusal| refusal.seal_error(stage))? {
         if let Some(page_dict) = walk::dictionary(doc, page_id)
             && page_dict.has(b"AF")
         {
@@ -214,10 +216,15 @@ fn scan_catalog_mode(
 /// Shared security analysis: prepared input rejects existing signatures;
 /// verification permits their presence but still refuses active content and
 /// embedded files. Both doors resolve the same reference chains.
-pub(crate) fn analyze_security(doc: &Document, reject_signatures: bool) -> Result<(), SealError> {
+pub(crate) fn analyze_security(
+    doc: &Document,
+    reject_signatures: bool,
+    limits: &SealResourceLimits,
+    stage: SealStage,
+) -> Result<(), SealError> {
     scan_objects_mode(doc, reject_signatures)?;
     let root = walk::catalog(doc).ok_or_else(|| input_invalid(InputInvalidCode::MalformedXref))?;
-    scan_catalog_mode(doc, root, reject_signatures)
+    scan_catalog_mode(doc, root, reject_signatures, limits, stage)
 }
 #[cfg(test)]
 pub(super) fn scan_objects(doc: &Document) -> Result<(), SealError> {
@@ -298,7 +305,8 @@ pub(super) fn revision_state(
         _ => None,
     };
     let prev = last_startxref(bytes)?;
-    let first_page = walk::pages(doc)
+    let first_page = walk::pages(doc, limits)
+        .map_err(memory_error)?
         .first()
         .copied()
         .ok_or_else(|| input_invalid(InputInvalidCode::MissingPage))?;
@@ -471,10 +479,13 @@ fn checked_state(bytes: &[u8], limits: &SealResourceLimits) -> Result<RevisionSt
     if !xref_offsets_consistent(&doc, bytes) {
         return Err(input_invalid(InputInvalidCode::MalformedXref));
     }
-    if walk::pages(&doc).is_empty() {
+    if walk::pages(&doc, limits)
+        .map_err(|refusal| refusal.seal_error(SealStage::InputValidation))?
+        .is_empty()
+    {
         return Err(input_invalid(InputInvalidCode::MissingPage));
     }
-    analyze_security(&doc, true)?;
+    analyze_security(&doc, true, limits, SealStage::InputValidation)?;
     match super::revision_facts::analyze(bytes, limits) {
         Ok(_) => {}
         // Memory the analysis needed is not a malformed xref.
@@ -503,7 +514,7 @@ pub(crate) fn admit_prior_revisions(
         let _pass = limits.memory.pass();
         let doc = load_strict(snapshot, limits)
             .map_err(|err| err.seal_error(SealStage::InputValidation, malformed))?;
-        analyze_security(&doc, true)?;
+        analyze_security(&doc, true, limits, SealStage::InputValidation)?;
         if walk::catalog(&doc).is_none_or(|root| root.has(b"DSS")) {
             return Err(malformed());
         }

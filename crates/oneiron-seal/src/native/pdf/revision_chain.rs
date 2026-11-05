@@ -6,6 +6,7 @@
 //! long it is: only CR and LF bytes, never the next revision's content.
 //! Every snapshot's decodes reserve their memory first (FIX 7654); a refusal
 //! ends the walk as itself (`Err`), never as a revision that did not parse.
+use super::admitted;
 use super::decode::{self, LoadError};
 use crate::api::{Counter, SealResourceLimits};
 use crate::memory::SealMemoryRefusal;
@@ -189,7 +190,8 @@ fn section_prev(
 
 /// Return exact EOF ends in revision order, or no proof (`Ok(None)`). A
 /// malicious or unsupported xref chain never becomes an empty/clean change
-/// list, and memory a snapshot was refused never becomes no proof.
+/// list, and memory a snapshot was refused never becomes no proof. The
+/// ends themselves grow under the operation's ledger first (FIX 14203).
 pub(crate) fn revision_ends(
     bytes: &[u8],
     doc: &Document,
@@ -206,7 +208,7 @@ pub(crate) fn revision_ends(
             return Ok(None);
         };
         work = work.saturating_add(end);
-        ends.push(end);
+        admitted::push(limits, &mut ends, end)?;
         limits.observed.note(Counter::Revisions, ends.len());
         limits.observed.note(Counter::PrefixBytes, work);
         let Some(prev) = section_prev(&parsed, bytes, xref, marker, limits) else {
