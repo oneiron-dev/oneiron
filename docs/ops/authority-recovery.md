@@ -38,6 +38,67 @@ The core-only authority-transcript signer is for the existing same-vault
 `re_root_authority` writer's callback. It does not expose a general signing door
 or implement the checkpoint-root signer trait.
 
-This is the crypto/material supplier slice of FIX3934. Counted enrollment and
-lost-owner consume integration, plus CLI/HTTP surfaces, are separate lane work.
-This document does not claim those paths are implemented by the supplier alone.
+The signer is the crypto/material supplier slice of FIX3934. It does not by
+itself implement counted enrollment, lost-owner consumption or CLI/HTTP surfaces.
+
+## Public Vault operations
+
+Before loss, call `Vault::enrol_recovery_authority_key_as` with the live owner's
+act, a live holding machine, the recovery seed and the existing predecessor's
+signer. `enrol_recovery_authority_key_as_host` uses the normal host predecessor.
+Both derive the key from this vault's actual authority identity and return only
+a committed, counted `OwnerKeyEnrollmentReceipt`. They do not publish a kit or
+make the separate kit-issue operation atomic with enrollment. Publish successful
+recovery setup only after enrollment succeeds.
+
+After loss, pass the existing `RestoredKitSecret` for a RecoveryRoot kit and the
+fresh successor's `DeviceAuthority` to `Vault::recover_owner_authority_from_kit`.
+It derives the same key using this vault's actual identity and runs the existing
+ReRoot frontier joins and counted transition in one write transaction. It needs
+neither the lost host's secret nor a current-owner proof. Unenrolled or revoked
+keys and successors that fail the existing ReRoot rules still fail; no failed
+call commits a recovery or a partial frontier join. The old roster retires under
+the same normal ReRoot transition.
+
+## Pre-loss CLI enrollment
+
+After issuing a recovery-root kit, explicitly enroll its authority key while the
+owner can still act:
+
+```sh
+oneiron recovery-kit enroll-authority --config serve.toml \
+  --piece /private/kit/piece-1.txt --piece /private/kit/piece-2.txt
+```
+
+The holding machine is this install unless `--machine <32-hex-id>` names another
+live holding machine. The command uses this install's existing host predecessor
+and the existing self-host owner act. A hosted operator cannot turn a writer lease
+into the vault owner's enrollment proof; the stopped command uses the normal
+host-owner boundary, while the running HTTP door requires the owner's proof.
+It returns the committed entry, machine and public key
+as hex. It neither activates the world kit nor publishes or replaces its pieces.
+Issuing the kit and enrolling its authority key are separate operations; issuance
+alone is not successful recovery setup.
+
+The usual `--unlock` and `--unlock-*` inputs open a sealed vault. A kit's
+passphrase comes from `--secret-file` or stdin, never an argument. Exact kept
+pieces count before choosing stdin; the unlock and kit passphrases cannot both
+come from the same stream. No kit material is printed.
+
+## Pre-loss HTTP enrollment
+
+On the kit's own target install, `POST /v1/owner/recovery-kit/enroll-authority`
+takes `target`, recovery-code `pieces`, an optional `passphrase`, and an optional
+holding `machine` (the target when omitted). It requires the live owner's proof
+and returns the same committed hex receipt as the command. Kit material stays in
+this target's one request; no bare seed is accepted, stored, logged or returned.
+
+This uses the existing kit recipient rules: hosted and managed installs take no
+kit body, and the named target must prove to be this install and an allowed kit
+recipient before its kit is parsed. It does not change those rules or make kit
+issuance atomic with enrollment.
+
+Post-loss CLI and HTTP recovery remain separate from these pre-loss enrollment
+surfaces. The public Rust operations do not themselves claim those surfaces are
+implemented, nor do they change kit confirmation, piece-count options, kit
+replacement or ordinary key revocation.
