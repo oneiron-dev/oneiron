@@ -314,9 +314,8 @@ impl Vault {
         {
             return Err(Error::EntityNotFound);
         }
-        if crate::comm::route_projector_only_comm_put_in_txn(self, txn, id, body)? {
-            return Ok(());
-        }
+        // This admitted room row already owns its selected identity. The
+        // generic projector router would author a different derived head.
         let mut ops = self.claim_put_ops_in_txn(txn, id, body, occurred, learned_at, false)?;
         // Current source edge metadata, including its claim_of weight and
         // stamp, replaces the native default for that same edge.
