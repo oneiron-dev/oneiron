@@ -64,6 +64,18 @@ fn tree_in_force_in_txn(
     reads: &mut Reads,
 ) -> Result<TaskTypeTree> {
     let vault_skill = team_shape_root_in_txn(vault, txn)?;
+    tree_in_force_with_root_in_txn(vault, txn, project, vault_skill, reads)
+}
+
+/// The same tree selection over an already resolved team-shape root, so the
+/// sourced load reuses the exact algorithm once without a second lookup.
+fn tree_in_force_with_root_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    vault_skill: EntityId,
+    reads: &mut Reads,
+) -> Result<TaskTypeTree> {
     if project.is_some() {
         // A project's visibility folds rows this module cannot name.
         reads.unknown();
@@ -80,6 +92,22 @@ fn tree_in_force_in_txn(
         }
         None => TaskTypeTree::seeded(),
     })
+}
+
+/// [`load_team_type_tree_in_txn`] with the actual default-hub alias and pin
+/// the initial root selection consulted in `txn`: `Some` even when no
+/// installed holder matched that alias, `None` only when no lookup
+/// occurred. The tree is the same selection from the same resolved root
+/// once; the lookup is audit metadata only, never a complete
+/// entity-source set, a read grant, or the donor tree's source.
+pub(crate) fn load_team_type_tree_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+) -> Result<(TaskTypeTree, Option<crate::skill_hub::HubRef>)> {
+    let (vault_skill, lookup) = super::team_shape::team_shape_root_sourced_in_txn(vault, txn)?;
+    let tree = tree_in_force_with_root_in_txn(vault, txn, project, vault_skill, &mut Reads::Off)?;
+    Ok((tree, lookup))
 }
 
 /// The vault's task-type tree in force as one read loaded it (FIX 7103):
