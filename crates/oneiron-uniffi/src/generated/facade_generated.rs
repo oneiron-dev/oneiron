@@ -4659,12 +4659,12 @@ export_facade! {
 "ai.image" => fn ai_image(&self, input: AiCallRequest) -> AiAnswer = |client| {
     let input: oneiron::task_verb::sdk::AiCallRequest = crate::codec::lower_record("ai.image", input)?;
     let output = client.ai_image(&input)?;
-    crate::codec::lift_record("ai.image", &output)
+    crate::codec::lift_ai_answer("ai.image", output)
 };
 "ai.speech" => fn ai_speech(&self, input: AiCallRequest) -> AiAnswer = |client| {
     let input: oneiron::task_verb::sdk::AiCallRequest = crate::codec::lower_record("ai.speech", input)?;
     let output = client.ai_speech(&input)?;
-    crate::codec::lift_record("ai.speech", &output)
+    crate::codec::lift_ai_answer("ai.speech", output)
 };
 "vault.voices.packs.put" => fn vault_voices_packs_put(&self, input: VoiceBankPackPutRequest) -> VoiceBankPackReceipt = |client| {
     let input: oneiron::task_verb::sdk::VoiceBankPackPutRequest = crate::codec::lower_record("vault.voices.packs.put", input)?;
@@ -4699,12 +4699,12 @@ export_facade! {
 "ai.transcribe" => fn ai_transcribe(&self, input: AiCallRequest) -> AiAnswer = |client| {
     let input: oneiron::task_verb::sdk::AiCallRequest = crate::codec::lower_record("ai.transcribe", input)?;
     let output = client.ai_transcribe(&input)?;
-    crate::codec::lift_record("ai.transcribe", &output)
+    crate::codec::lift_ai_answer("ai.transcribe", output)
 };
 "ai.embed" => fn ai_embed(&self, input: AiCallRequest) -> AiAnswer = |client| {
     let input: oneiron::task_verb::sdk::AiCallRequest = crate::codec::lower_record("ai.embed", input)?;
     let output = client.ai_embed(&input)?;
-    crate::codec::lift_record("ai.embed", &output)
+    crate::codec::lift_ai_answer("ai.embed", output)
 };
 "ai.video" => fn ai_video(&self, input: AiCallRequest) -> AiVideoTicket = |client| {
     let input: oneiron::task_verb::sdk::AiCallRequest = crate::codec::lower_record("ai.video", input)?;

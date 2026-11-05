@@ -251,3 +251,14 @@ receipt, selection reach and cursor bytes retain the existing record codec.
 Native read checks, exact-frame resolution, inputs and typed client calls do
 not change. Exported `pack_json` remains opaque text; this conversion never
 parses or rewrites JSON carried inside a string.
+
+
+`ai.image`, `ai.speech`, `ai.transcribe` and `ai.embed` consume the provider
+usage JSON by ownership before converting finite answer fields. Provider
+receipts and nested usage metadata stay intact; null provider JSON remains
+absent. The same finite record codec keeps part order, base64 strings, optional
+video fields, count defaults and embedding-number conversion. It also keeps
+each verb's original finite conversion diagnostics. This does not change
+native calls, inputs, public records, clients, hooks or media admission, and
+does not cover the nested video-job answer or claim depth, heap or runtime
+closure.
