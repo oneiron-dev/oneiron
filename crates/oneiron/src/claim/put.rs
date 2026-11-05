@@ -159,6 +159,7 @@ impl Vault {
                     end: header.occurred_end,
                 },
                 learned_at: header.learned_at,
+                row_version: Some(header.row_version),
                 data: data.to_vec(),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -224,6 +225,36 @@ impl Vault {
         learned_at: u64,
         allow_reserved_predicate: bool,
     ) -> Result<()> {
+        let ops = self.claim_put_ops_in_txn(
+            wtxn,
+            id,
+            body,
+            occurred,
+            learned_at,
+            allow_reserved_predicate,
+        )?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    }
+
+    fn claim_put_ops_in_txn(
+        &self,
+        wtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+        allow_reserved_predicate: bool,
+    ) -> Result<Vec<BatchOp>> {
         let data = encode_claim_body(body)?;
         // Full structural validation runs here and again at the BatchOp write
         // chokepoint with the exact same reserved-door setting.
@@ -234,6 +265,7 @@ impl Vault {
             entity_type: ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate,
@@ -252,17 +284,45 @@ impl Vault {
                 vad: Vad::NEUTRAL,
             });
         }
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            wtxn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )
+        Ok(ops)
+    }
+
+    /// The ordinary typed claim program, landed only for the actual selected
+    /// room closure and the saver its closed capability proves.
+    pub(crate) fn put_saved_claim_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+        saver: crate::WriteActor,
+        grant: &crate::off_record::PromoteReplayGrant,
+        edges: Vec<BatchOp>,
+    ) -> Result<()> {
+        if !grant.exempts(id) || grant.selected_saver() != Some(saver) {
+            return Err(Error::InvariantViolation(
+                "claim is outside the selected save",
+            ));
+        }
+        crate::memory::guard_existing_claim_in_txn(self, txn, saver, *id)?;
+        if is_expression_preference_predicate(&body.predicate) {
+            return Err(Error::InvalidClaimBody(
+                "expression preference lifecycle is owned by set_expression_preference",
+            ));
+        }
+        if let ClaimSubject::Edge { .. } = body.subject
+            && !self.owner_reads_edge_subject_in(txn, &body.subject)?
+        {
+            return Err(Error::EntityNotFound);
+        }
+        // This admitted room row already owns its selected identity. The
+        // generic projector router would author a different derived head.
+        let mut ops = self.claim_put_ops_in_txn(txn, id, body, occurred, learned_at, false)?;
+        // Current source edge metadata, including its claim_of weight and
+        // stamp, replaces the native default for that same edge.
+        ops.extend(edges);
+        crate::batch::BatchBuilder::promotion_replay(self, ops, grant).apply_actor(txn, &saver)
     }
 
     /// `landing` runs first in the write transaction; its refusal writes
@@ -485,6 +545,7 @@ impl Vault {
                         end: now,
                     },
                     learned_at: old_header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
