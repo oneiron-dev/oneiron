@@ -237,6 +237,8 @@ impl LimitRow {
         Self::Engine(EngineLimit::CodebaseManifestFiles),
         Self::Engine(EngineLimit::RequestedResultRows),
         Self::Engine(EngineLimit::EmbeddingDimensions),
+        Self::Engine(EngineLimit::MemoryReasonEvidenceRows),
+        Self::Engine(EngineLimit::MemoryReasonTokens),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.

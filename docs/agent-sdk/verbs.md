@@ -13,6 +13,8 @@ both bindings and their export-census tests in one change.
 - `vault.commitments.fulfill`
 - `vault.commitments.release`
 - `vault.commitments.supersede`
+- `vault.commitments.reminder_route.get`
+- `vault.commitments.reminder_route.set`
 - `fetch`
 - `crawl`
 - `report`
@@ -366,6 +368,7 @@ both bindings and their export-census tests in one change.
 - `vault.federation.burst.baseline`
 - `vault.federation.burst.policy`
 - `vault.federation.burst.policy.set`
+- `vault.sync.quarantine.held_edits`
 - `vault.sync.retained_work.wait.set`
 - `vault.federation.burst.ingress`
 - `vault.federation.burst.disposition`
