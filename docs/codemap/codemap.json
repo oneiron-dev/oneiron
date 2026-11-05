@@ -9637,6 +9637,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/versions/checked.rs",
+     "purpose": "Checked append decisions shared by direct and Memory transaction doors",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -26516,7 +26526,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "mod": 5,
       "re-export": 25
      }
@@ -26712,14 +26722,14 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "Partition planning: cuts dirty turns into consolidation partitions",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 6,
       "re-export": 1,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PartitionThing"
@@ -26727,7 +26737,7 @@
      "path": "src/dreamer_consolidation/partition/payload.rs",
      "purpose": "The consolidation payload codec (FIX 7524): a branch's world and facet, the thing a nightly child is cut…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
@@ -31045,7 +31055,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/nightly/things.rs",
@@ -33221,6 +33231,16 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle/pending/output_retention.rs",
+     "purpose": "Native-output row preparation and direct-append retention",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -44217,7 +44237,7 @@
      "surface": {
       "crate-vis": 12,
       "mod": 11,
-      "re-export": 27
+      "re-export": 28
      }
     },
     {
@@ -48994,6 +49014,7 @@
      "notable": [
       "AdmitImportedClaimInput",
       "BlobArtifactInput",
+      "BlobVersionAppendOutcome",
       "BlobVersionView",
       "EntityRefReceipt",
       "HabitCheckinInput",
@@ -49004,6 +49025,7 @@
      "path": "src/memory/structural/types.rs",
      "purpose": "Read-facing views and per-verb inputs for structural puts",
      "surface": {
+      "enum": 1,
       "re-export": 1,
       "struct": 8
      }
@@ -90498,7 +90520,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 87,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90960,7 +90982,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91970,7 +91992,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6417,
+   "source_files": 6419,
    "test_files": 895
   },
   "oneiron-android": {
@@ -105665,6 +105687,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "TokenScore"
+     ],
+     "path": "src/llm/logprobs.rs",
+     "purpose": "Borrowed views over a reply token's reported scores",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AiMediaDoor",
       "ImageMedia",
       "MediaBackend",
@@ -105781,7 +105816,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 32
+      "re-export": 33
      }
     },
     {
@@ -106057,7 +106092,7 @@
      "purpose": "Extraction-quality evaluation facade"
     },
     "llm": {
-     "files": 50,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -106080,7 +106115,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 51,
+   "source_files": 52,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -106204,6 +106239,7 @@
      "notable": [
       "NapiAdmitImportedClaimInput",
       "NapiBlobArtifactInput",
+      "NapiBlobVersionAppendOutcome",
       "NapiBlobVersionView",
       "NapiCalendarEventRead",
       "NapiCalendarEventView",
@@ -106268,7 +106304,7 @@
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
       "crate-vis": 2,
-      "struct": 61
+      "struct": 62
      }
     },
     {
@@ -130855,6 +130891,7 @@
      "notable": [
       "AdmitImportedClaimInput",
       "BlobArtifactInput",
+      "BlobVersionAppendOutcome",
       "BlobVersionView",
       "CitedMessage",
       "ClaimInput",
@@ -130925,7 +130962,7 @@
      "path": "src/dto.rs",
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
-      "enum": 13,
+      "enum": 14,
       "struct": 55
      }
     },
