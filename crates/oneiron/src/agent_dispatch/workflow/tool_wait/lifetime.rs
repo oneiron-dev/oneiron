@@ -82,6 +82,7 @@ pub(crate) fn settle_payloads_in_txn(
     source: &EntityId,
     disposition: PayloadDisposition,
 ) -> Result<()> {
+    let mut bodies = super::body_sources::matching_in_txn(store, txn, source)?;
     let mut matched = Vec::new();
     for found in TABLE.iter_raw_from(store, txn, &[])? {
         let (raw_key, bytes) = found?;
@@ -94,24 +95,40 @@ pub(crate) fn settle_payloads_in_txn(
         let Some(binding) = row.binding() else {
             continue;
         };
-        if !depends_on(&binding, source) {
+        if !depends_on(&binding, source) && !bodies.contains_key(&binding.body_owner) {
             continue;
         }
         if row_key != key(row.attempt)? || binding.body_owner != body_owner(row.attempt)? {
             return Err(invalid("workflow checkpoint payload has foreign owner"));
         }
-        matched.push((row_key, row, binding));
-    }
-    for (row_key, row, binding) in matched {
-        if matches!(disposition, PayloadDisposition::Erase)
-            && let Some(content) = &row.content
-        {
-            release_in_txn(store, txn, content)?;
+        let digests = bodies.entry(binding.body_owner).or_default();
+        for digest in &binding.published_digests {
+            if !digests.contains(digest) {
+                digests.push(*digest);
+            }
         }
-        settle_binding_in_txn(store, txn, source, &binding, disposition)?;
-        if matches!(disposition, PayloadDisposition::Erase) {
+        matched.push((row_key, row));
+    }
+    if matches!(disposition, PayloadDisposition::Erase) {
+        for (row_key, row) in matched {
+            if let Some(content) = &row.content {
+                release_in_txn(store, txn, content)?;
+            }
             TABLE.put_erased(store, txn, &row_key, Erased::of(row)?)?;
         }
+    }
+    for (body_owner, published_digests) in bodies {
+        settle_binding_in_txn(
+            store,
+            txn,
+            source,
+            &body_owner,
+            &published_digests,
+            disposition,
+        )?;
+    }
+    if matches!(disposition, PayloadDisposition::Erase) {
+        super::body_sources::forget_source_in_txn(store, txn, source)?;
     }
     Ok(())
 }
@@ -120,19 +137,20 @@ fn settle_binding_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     erase_source: &EntityId,
-    binding: &CheckpointBinding,
+    body_owner: &EntityId,
+    published_digests: &[[u8; 32]],
     disposition: PayloadDisposition,
 ) -> Result<()> {
     #[cfg(not(unix))]
-    let _ = erase_source;
+    let _ = (erase_source, published_digests);
     #[cfg(unix)]
     if matches!(disposition, PayloadDisposition::Erase) {
         crate::store::erase_bodies_for_owner_in_txn(
             store,
             txn,
             erase_source,
-            &binding.body_owner,
-            &binding.published_digests,
+            body_owner,
+            published_digests,
             false,
         )?;
     }
@@ -140,7 +158,7 @@ fn settle_binding_in_txn(
         store,
         txn,
         Subtype::AttachmentOccurrence,
-        binding.body_owner.as_bytes(),
+        body_owner.as_bytes(),
         disposition,
     )
 }

@@ -17,6 +17,7 @@ use crate::{ContentPart, EdgeActorClass, EntityId, Error, LlmRequest, LlmRespons
 
 use super::super::{AgentDispatcher, SpendScopeId, agent_dispatch_run_actor};
 
+mod body_sources;
 pub(crate) mod checkpoint;
 mod erased;
 mod fence;
@@ -341,6 +342,25 @@ pub(crate) fn put_in_txn(
             "workflow checkpoint metadata changed during admission",
         ));
     }
+    let mut sources = vec![content.actor];
+    for source in content
+        .progress
+        .known_sources
+        .iter()
+        .copied()
+        .chain(content.room)
+    {
+        if !sources.contains(&source) {
+            sources.push(source);
+        }
+    }
+    body_sources::record_in_txn(
+        &vault.store,
+        txn,
+        content.body_owner,
+        &content.published_digests,
+        &sources,
+    )?;
     TABLE.put(vault, txn, &k, &row)?;
     fence::put(&vault.store, txn, &actual)
 }

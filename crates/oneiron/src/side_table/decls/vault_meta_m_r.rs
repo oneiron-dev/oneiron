@@ -588,6 +588,11 @@ side_tables! {
     /// write-time stamps name; it outlives the row, so an erase of the owner retires every
     /// image's copy. Key: id16 (owner) + bytes16 (instance); value: the row's carrier.
     PROVENANCE_BODY_RESPONSE_OWNER: VaultMeta b"provenance:body_response_owner:v1:" Raw;
+    /// Each actual historical source of a body's owner, by the real vault instance that
+    /// published it; it outlives the live row, so a later erase of the source still finds
+    /// the bodies after ActorScrub. Ids only. Key: id16 (source) + id16 (body owner) +
+    /// bytes32 (BLAKE3) + bytes16 (instance); value: empty.
+    PROVENANCE_BODY_SOURCE: VaultMeta b"provenance:body_source:v1:" Raw;
     /// One row's immutable birth envelope (Rule A made_by); an erase of its process actor drops
     /// it (FIX 6074). Key: id16.
     PROVENANCE_ROW_BIRTH: VaultMeta b"provenance:row_birth:v1:" Named

@@ -63,6 +63,14 @@ pub(crate) fn body_dependencies(
         }
         dependencies.insert(binding.body_owner, sources);
     }
+    for (owner, sources) in super::body_sources::body_dependencies(dbs, txn)? {
+        let known = dependencies.entry(owner).or_default();
+        for source in sources {
+            if !known.contains(&source) {
+                known.push(source);
+            }
+        }
+    }
     Ok(dependencies)
 }
 
