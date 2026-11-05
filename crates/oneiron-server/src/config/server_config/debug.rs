@@ -67,6 +67,7 @@ impl fmt::Debug for ServeConfig {
         f.debug_struct("ServeConfig")
             .field("vault_path", &self.vault_path)
             .field("config_path", &self.config_path)
+            .field("embedded_holder_overrides", &self.embedded_holder_overrides)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)
