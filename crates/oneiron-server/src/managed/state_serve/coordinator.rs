@@ -8,11 +8,11 @@ mod teardown;
 use teardown::StartingHandles;
 
 use super::{
-    Arc, BoundServeListener, CONTRACT_VERSION, Host, HostLimits, ManagedArgs, ManagedCtl,
-    ManagedShutdown, ManagedState, Path, ServeArgs, ServeListener, SyncServer, UnixTs, WakeLedger,
-    WriteKind, admission, build_managed_app, build_managed_artifact_app, escrow_vault_key,
-    managed_page_seal, open_managed_vault, provision_host_authority, spawn_sigterm_shutdown,
-    spool_vault_key_escrow, watch,
+    Arc, BoundServeListener, CONTRACT_VERSION, Host, ManagedArgs, ManagedCtl, ManagedShutdown,
+    ManagedState, Path, ServeArgs, ServeListener, SyncServer, UnixTs, WakeLedger, WriteKind,
+    admission, build_managed_app, build_managed_artifact_app, escrow_vault_key, managed_page_seal,
+    open_managed_vault, provision_host_authority, spawn_sigterm_shutdown, spool_vault_key_escrow,
+    watch,
 };
 
 /// Boots the engine as a supervised child process.
@@ -75,8 +75,7 @@ async fn serve_with_handles(
     // opened. Refusing here costs nothing and consumes nothing; `bind` below
     // is still the only adoption.
     let shutdown = ManagedShutdown::new();
-    let mut host =
-        super::host::ManagedHost::new(&managed, HostLimits::unbounded(), shutdown.clone())?;
+    let mut host = super::host::ManagedHost::new(&managed, managed.host_limits, shutdown.clone())?;
     let http = host.listener()?;
     // A cold restore's plan, on its own pipe before the credential frame: no
     // socket below listens until the restore is verified and kept.
@@ -138,8 +137,9 @@ async fn serve_with_handles(
     // kept in this install's keystore slot under the supervisor's key
     // directory (FIX-LIST 3018): never the delivered DEK, which escrow
     // recipients hold, nor the per-spawn token or caller headers. A fresh
-    // spawn of this install loads the same seed, so the same logged root;
-    // with none, the vault serves rootless and still as a managed vault.
+    // spawn of this install loads the same seed, so the same logged root.
+    // Explicit hosted service requires that issuer before workers or ready;
+    // non-hosted supervision retains its rootless warning behavior.
     let (issuer, readiness) = provision_host_authority(
         &vault,
         &config.keystore,
@@ -250,7 +250,9 @@ async fn serve_with_handles(
         .as_ref()
         .is_some_and(|models| models.extraction_egress)
     {
-        sync_server = sync_server.with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true));
+        sync_server = sync_server
+            .with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true))
+            .with_tagger_egress(Arc::new(|_: &oneiron::llm::TaggerCall<'_>| true));
     }
     sync_server.managed_issuer = Some(crate::server::ManagedIssuer::new(issuer));
     if managed.artifact_socket.is_some() {
@@ -295,7 +297,7 @@ async fn serve_with_handles(
     // server's check, installed before any worker takes it up (FIX 11090).
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Served sends reach this host's provider APIs and mail server (FIX 4435).
-    crate::builtin_host::install_served_transports(&sync_server);
+    crate::builtin_host::install_served_transports(&sync_server, config.models.as_ref());
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
@@ -459,6 +461,7 @@ async fn serve_with_handles(
             Arc::clone(&state),
             Arc::clone(&sync_server),
             shutdown.clone(),
+            managed.vm_outbox_companion_admitted,
         );
         // Its carrier as it stands, and the recipients it delivers later.
         super::carrier_watch::spawn(

@@ -35,6 +35,7 @@ mod diverged;
 mod endpoint;
 mod guest;
 mod host;
+mod host_status;
 mod link;
 mod local;
 mod scan;
@@ -49,6 +50,7 @@ pub(super) use self::endpoint::{
 };
 pub use self::guest::run_vm_outbox;
 pub use self::host::{VmOutboxAttachment, VmOutboxHostRoots, read_vm_backup_label};
+pub use self::host_status::{VmOutboxHostMemberStatus, read_vm_outbox_member_statuses};
 pub(crate) use self::store::DivergedAnswer;
 
 use self::local::Owner;
@@ -387,6 +389,18 @@ impl Gate {
     fn set(&self, to: Mode) {
         *self.lock() = to;
         self.changed.notify_all();
+    }
+
+    /// Applies a guest lifecycle request only while its companion is not stopping.
+    fn set_unless_draining(&self, to: Mode) -> bool {
+        let mut mode = self.lock();
+        if *mode == Mode::Draining {
+            return false;
+        }
+        *mode = to;
+        drop(mode);
+        self.changed.notify_all();
+        true
     }
 
     /// Parks the end before a snapshot: an in-flight commit finishes first,

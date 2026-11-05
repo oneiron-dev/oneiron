@@ -19,6 +19,7 @@
 //! assembly of the current turn's spans ([`current_message_spans`]).
 
 mod backbone;
+mod classifier;
 mod heads;
 mod window;
 
@@ -39,6 +40,7 @@ use backbone::{Backbone, Config};
 use heads::{Affect, CharacterBoundary, Coreference};
 use window::{Named, Span, conversation_tokenizer, decode};
 
+pub(crate) use classifier::{QuestionHead, QuestionTokenizer};
 pub(crate) use window::InferenceWindows;
 pub(super) use window::{
     CHAR_REFINE_K, CHAR_REFINE_TAU, CharacterFeatures, Characters, DecodeLayers,
