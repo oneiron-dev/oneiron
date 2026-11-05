@@ -243,10 +243,11 @@ pub(crate) fn commit_keyframe_in_txn(
 /// prepared suffix that asks of them goes, and every result forgets them.
 /// Withdrawn words are never sent again; the epoch moves on.
 pub(crate) fn erase_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     turns: &[EntityId],
 ) -> Result<()> {
+    let store = write.store;
     if turns.is_empty() {
         return Ok(());
     }
@@ -284,7 +285,7 @@ pub(crate) fn erase_in_txn(
             state::save_in_txn(store, txn, &session)?;
         }
     }
-    state::forget_results_in_txn(store, txn, turns)
+    state::forget_results_in_txn(write, txn, turns)
 }
 
 /// The exclusion hook, in the setter's transaction (FIX 12551(a)): the
@@ -317,7 +318,7 @@ pub(crate) fn exclude_in_txn(
             turns.push(turn);
         }
     }
-    erase_in_txn(store, txn, &turns)
+    erase_in_txn(&crate::secret_custody::CustodyWrite::of(vault), txn, &turns)
 }
 
 impl Vault {

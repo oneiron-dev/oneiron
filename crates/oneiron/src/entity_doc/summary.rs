@@ -151,9 +151,12 @@ pub(crate) fn birth_summary_in_txn(
         &row.body,
         &pointer,
     )?;
-    vault
-        .store
-        .port_entity_document_pointer_put(txn, &entity, &pointer)?;
+    vault.store.port_entity_document_pointer_put(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        &entity,
+        &pointer,
+    )?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),

@@ -808,7 +808,12 @@ fn settle_one(
             )?;
             h.storage_document = storage::free_document_storage(&vault.store, txn, &record.fork)?;
             h.document = record.fork.clone();
-            storage::move_pointer(&vault.store, txn, &entity, &h.document)?;
+            storage::move_pointer(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                txn,
+                &entity,
+                &h.document,
+            )?;
             let settled = SettledDocument {
                 vault,
                 entity,
