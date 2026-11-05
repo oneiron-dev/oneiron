@@ -15,6 +15,7 @@ use super::super::support::utf8_trimmed;
 use super::super::types::RepoForkHash;
 use super::super::worktree::{create_queue_worktree, remove_queue_worktree};
 use crate::error::{Error, Result};
+use crate::store::code_tree_blob::MODE_GITLINK;
 
 /// A symlink's Git mode; its bytes are its target text.
 const MODE_SYMLINK: u32 = 0o120_000;
@@ -125,6 +126,7 @@ pub(in crate::repo_mutation) fn apply_prepared_bundle_files(
         repo_root,
         &[
             "read-tree".to_owned(),
+            "--no-recurse-submodules".to_owned(),
             "-m".to_owned(),
             "-u".to_owned(),
             prepared.base_head.clone(),
@@ -169,6 +171,8 @@ pub(in crate::repo_mutation) fn bundle_post_snapshot(
                 String::from_utf8(content.clone())
                     .map_err(|_| Error::InvalidClaimBody("symlink target must be UTF-8"))?,
             )
+        } else if edit.mode == MODE_GITLINK {
+            custody.gitlink(edit.path.clone(), content.clone())
         } else {
             custody.file(
                 edit.path.clone(),

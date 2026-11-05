@@ -1,3 +1,6 @@
+//! TASK execution lanes and the receipts each transition answers with.
+//! Entry [`TaskRouteLane`]; driven by `lifecycle_facade` through dispatch.
+//! Owned by `task_verb`; assignee kinds resolve via `verb_kind`, never here.
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimApprovalStatus;
 use crate::context_board::TasksSection;
