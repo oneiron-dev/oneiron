@@ -649,23 +649,33 @@ impl Vault {
             .any(|grant| grant.bound().contains(&required)))
     }
 
+    /// The settle's early check, before its writer opens: as
+    /// [`Self::authorize_settle_in_txn`] decides it, on a read of its own.
+    /// The writer decides again.
     pub(super) fn authorize_settle(
         &self,
         consent: &SettleConsent,
         actor: WriteActor,
     ) -> Result<()> {
-        match consent {
-            SettleConsent::OwnerConsent { .. } => Ok(()),
-            SettleConsent::StandingGrant { brief_ref } => {
-                if self.settle_standing_grant_authorizes(actor, brief_ref)? {
-                    Ok(())
-                } else {
-                    Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
-                        "no standing actor×artifact.settle×brief grant covers this settle",
-                    )))
-                }
+        if matches!(consent, SettleConsent::OwnerConsent { .. }) {
+            let txn = self.store.env.read_txn()?;
+            if self.settle_owner_in_txn(&txn, actor) {
+                return Ok(());
             }
         }
+        let brief_ref = consent.brief_ref().ok_or_else(owner_or_grant_required)?;
+        if self.settle_standing_grant_authorizes(actor, brief_ref)? {
+            Ok(())
+        } else {
+            Err(no_covering_grant())
+        }
+    }
+
+    /// Whether `actor` settles as the vault's owner (FIX 9620): a human
+    /// actor bound to the vault's owner in `txn`, never a person because
+    /// they are a person.
+    fn settle_owner_in_txn(&self, txn: &heed::RoTxn<'_>, actor: WriteActor) -> bool {
+        self.verify_owner_write_actor_in_txn(txn, &actor).is_ok()
     }
 
     /// The transaction-composable form of [`Vault::authorize_settle`], run
@@ -686,22 +696,25 @@ impl Vault {
         consent: &SettleConsent,
         actor: WriteActor,
     ) -> Result<Option<String>> {
-        match consent {
-            SettleConsent::OwnerConsent { .. } => Ok(None),
-            SettleConsent::StandingGrant { brief_ref } => {
-                let required = settle_grant_bound(actor, brief_ref)?;
-                let covering = self
-                    .active_standing_consent_grants_in_txn(wtxn)?
-                    .into_iter()
-                    .find(|grant| grant.bound().contains(&required));
-                if let Some(grant) = covering {
-                    Ok(Some(grant.bound().digest().to_hex()))
-                } else {
-                    Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
-                        "no standing actor×artifact.settle×brief grant covers this settle",
-                    )))
-                }
-            }
+        // The owner's consent stands only for the vault's owner, verified in
+        // this writer (FIX 9620). Any other person settles as an agent does,
+        // under a standing grant on the brief it names, or not at all: the
+        // proposal stays as it is.
+        if matches!(consent, SettleConsent::OwnerConsent { .. })
+            && self.settle_owner_in_txn(wtxn, actor)
+        {
+            return Ok(None);
+        }
+        let brief_ref = consent.brief_ref().ok_or_else(owner_or_grant_required)?;
+        let required = settle_grant_bound(actor, brief_ref)?;
+        let covering = self
+            .active_standing_consent_grants_in_txn(wtxn)?
+            .into_iter()
+            .find(|grant| grant.bound().contains(&required));
+        if let Some(grant) = covering {
+            Ok(Some(grant.bound().digest().to_hex()))
+        } else {
+            Err(no_covering_grant())
         }
     }
 
@@ -920,4 +933,19 @@ fn validate_settle_proposal_ref(run_ref: &str) -> Result<()> {
     }
     secret_scan::scan_metadata_field(run_ref)?;
     Ok(())
+}
+
+/// No standing grant covers this settle.
+fn no_covering_grant() -> Error {
+    Error::Artifact(ArtifactError::SettleNotAuthorized(
+        "no standing actor×artifact.settle×brief grant covers this settle",
+    ))
+}
+
+/// A person who is not the vault's owner named no brief a grant could cover
+/// (FIX 9620).
+fn owner_or_grant_required() -> Error {
+    Error::Artifact(ArtifactError::SettleNotAuthorized(
+        "only the vault's owner settles without a standing grant; name the brief one covers",
+    ))
 }
