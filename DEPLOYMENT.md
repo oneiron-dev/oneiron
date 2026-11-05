@@ -312,11 +312,12 @@ seal_prefix_bytes = 2147483648    # prefix bytes one seal pass over a revision c
 seal_dss_decode_bytes = 268435456 # bytes one extraction of a PDF's DSS material decodes in all; past it the material is read whole and the row asks (each stream decodes whole; the largest also meets seal_stream_decode_bytes)
 seal_identity_asks = 1            # signing-identity asks one seal call makes; past it the pinned identity is answered again and the row asks
 seal_sign_asks = 3                # signature asks one seal call makes (still one issuance per revision the engine wrote); past it each is answered and the row asks
-seal_fetch_asks = 32              # fetch asks (timestamps, CRLs) one seal call makes; past it each allowlisted fetch runs and the row asks
+seal_fetch_asks = 32              # fetch asks (timestamps, CRLs, OCSP) one seal call makes; past it each allowlisted fetch runs and the row asks
 seal_asks = 36                    # asks of every verb one seal call makes; past it they are answered and the row asks
 seal_answer_bytes = 67108864      # answer bytes one seal call is lent (identity, signatures, fetched bodies); past it the call's booking grows and the row asks
 seal_memory_asks = 256            # memory.grow asks one seal call makes, its own buffers reserved, counted apart from seal_asks and seal_answer_bytes; past it each is answered and the row asks
 seal_crl_bytes = 8388608          # bytes of one CRL a seal fetches; past it the CRL is read whole and the row asks
+seal_ocsp_bytes = 1048576         # bytes of one OCSP reply a seal fetches; past it the reply is read whole and the row asks
 seal_tsa_bytes = 1048576          # bytes of one timestamp reply a seal fetches; past it the reply is read whole and the row asks
 seal_report_json_bytes = 8388608  # bytes of one seal verdict's report JSON; past it the report is carried whole and the row asks
 seal_prepared_stream_bytes = 67108864 # bytes the largest object stream of a prepared PDF decodes to, read where the engine writes its signature revisions; past it the PDF is read whole and the row asks (each stream decodes whole)
@@ -369,6 +370,7 @@ identity_excerpt_bytes = 65536       # whole source message for an identity ment
 community_cache_bytes = 67108864  # bytes one community-cache family holds, read or published whole; past it the snapshot is still served whole and the row asks
 connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
 requested_result_rows = 1048576 # result rows one search, recall or context-pack door was asked for; past it the whole requested count is served and the row asks
+embedding_dimensions = 1048576 # embedding vector dimensions one vault opened with, measured where its host serves it; past it the vault serves as opened and the row asks
 ```
 
 Run the engine with `Delegate=yes` so each organ gets a cgroup cell; without

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1228 facade rows, 4474 declarations.
-Inputs: 1159 of 1228 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1064 of 1228 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1231 facade rows, 4481 declarations.
+Inputs: 1162 of 1231 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1066 of 1231 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -134,6 +134,21 @@ class CommitmentFulfillRequest(TypedDict):
 class CommitmentCloseRequest(TypedDict):
     commitment_ref: str
     evidence_turn_refs: list[str]
+class EmptyRequest(TypedDict):
+    ...
+class CommitmentReminderVoice(TypedDict):
+    persona_ref: NotRequired[str | None]
+class CommitmentReminderRoute(TypedDict):
+    channel: str
+    verb: str
+    target: str
+    utc_offset_minutes: NotRequired[int | None]
+    iana_timezone: NotRequired[str | None]
+    voice: NotRequired[CommitmentReminderVoice | None]
+class CommitmentReminderRouteReply(TypedDict):
+    route: NotRequired[CommitmentReminderRoute | None]
+class CommitmentReminderRouteSetRequest(TypedDict):
+    route: NotRequired[CommitmentReminderRoute | None]
 class WebFetchRequest(TypedDict):
     url: str
 RendererKind = Literal["readability", "headless", "firecrawl"]
@@ -367,8 +382,6 @@ class StandingBlockView(TypedDict):
     world_ref: EntityId
     name: str
     token_floor: int
-class EmptyRequest(TypedDict):
-    ...
 class StandingBlockEditRequest(TypedDict):
     world_ref: EntityId
     field: str
@@ -3527,6 +3540,7 @@ class RetrievalRunRecord(TypedDict):
     policy_trace: NotRequired[RetrievalPolicyTrace | None]
     replay_inputs: NotRequired[RetrievalReplayInputs | None]
     turn: NotRequired[RetrievalTurn | None]
+    query_expander_id: NotRequired[str | None]
     signals: list[RetrievalSignal]
     result_ids: list[list[int]]
     score_breakdown: list[RetrievalScoreBreakdown]
@@ -7370,6 +7384,15 @@ class FederationBurstPolicy(TypedDict):
 class FederationBurstPolicySetRequest(TypedDict):
     peer: FederationBurstPeerRequest
     policy: FederationBurstPolicy
+QuarantineContainer = Literal["entities", "edges", "tombstones", "leases"]
+class SyncHeldEditEvidence(TypedDict):
+    window_key: str
+    container: QuarantineContainer
+    crdt_key_hash: str
+    crdt_key_len: int
+    reason_code: str
+    payload_hash: str
+    quarantined_at: int
 RetainedWorkQueue = Literal["federation_burst", "maintenance_ingest", "facet_stamp"]
 class RetainedWorkWaitSetRequest(TypedDict):
     queue: RetainedWorkQueue
@@ -10073,7 +10096,7 @@ class SpaceMove(TypedDict):
     last_check: NotRequired[SpaceMoveCheck | None]
 SwitchOwner = str
 TrainingOwner = str
-ModelRole = Literal["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach", "browser_planner"]
+ModelRole = Literal["retrieval_embedder", "media_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "decision_head", "decision_band", "decision_escalation", "policy_safeguard", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach", "browser_planner"]
 ModelTierRef = str
 ModelDisposition = Literal["offline", "served"]
 class ModelBinding(TypedDict):
@@ -15423,6 +15446,7 @@ class NativeOutputRequest(TypedDict):
     content_base64: str
     report: NotRequired[Any]
     made_by: NotRequired[MadeBy | None]
+    read_rows: NotRequired[list[str]]
 class VersionReconciliation(TypedDict):
     base_version: int
     kept_head: ArtifactVersionView
@@ -20325,6 +20349,11 @@ class BlobVersionView(TypedDict):
     created_at: int
     artifact: NotRequired[RecordRef | None]
     claim: NotRequired[RecordRef | None]
+class BlobVersionAppendOutcomeLanded(TypedDict):
+    landed: BlobVersionView
+class BlobVersionAppendOutcomeProposed(TypedDict):
+    proposed: PendingProposalView
+BlobVersionAppendOutcome = BlobVersionAppendOutcomeLanded | BlobVersionAppendOutcomeProposed
 class ReadBlobVersionRequest(TypedDict):
     artifact_ref: str
     version: int
