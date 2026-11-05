@@ -1,7 +1,7 @@
-//! One ledger row's transition in the caller's writer (FIX 7188): the body
-//! the ledger's own transition doors commit in a writer of their own, and a
-//! writer that composes it with other work (an owner's Stop) commits with
-//! that work. It opens no writer.
+//! One ledger row's transition and completion commit (FIX 7188).
+//! The transaction form opens no writer: a caller can compose it with an
+//! owner's Stop. The completion wrapper commits and syncs its own writer
+//! before returning the record and any newly fired budget events.
 
 use super::super::types::{
     IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
@@ -95,8 +95,8 @@ pub(super) fn transition_record_with_outcome_and(
     let mut wtxn = vault.store.env.write_txn()?;
     let (mut record, budget_events) =
         match transition_record_in_txn(vault, &mut wtxn, id, next, outcome, now_ms)? {
-            transition::Transitioned::Moved(record, budget_events) => (record, budget_events),
-            transition::Transitioned::Replayed(mut record) => {
+            Transitioned::Moved(record, budget_events) => (record, budget_events),
+            Transitioned::Replayed(mut record) => {
                 open_payload_in_txn(vault, &wtxn, &mut record)?;
                 drop(wtxn);
                 return Ok(IntentCompletion {
