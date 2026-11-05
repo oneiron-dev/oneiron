@@ -49,6 +49,9 @@ const VERB_HOOK_HIDDEN: &str = "verb_hook_hidden";
 /// step asks the door again.
 const PROVIDER_UNAVAILABLE: &str = "provider_unavailable";
 
+/// A media call's admission trapped before its physical effect ran.
+const MEDIA_STEP_TRAPPED: &str = "media_step_trapped";
+
 impl HostSelfDispatcher<'_> {
     /// A refused verb is the guest's to handle, like any typed refusal: it
     /// does not halt the run, and the verb's own gate owns its writes.
@@ -213,6 +216,22 @@ impl HostSelfDispatcher<'_> {
                     0,
                     &SelfCall::AgentVerb(call),
                     &never_ran_mark(PROVIDER_UNAVAILABLE),
+                    0,
+                    0,
+                )?);
+                self.storage
+                    .put_code_run_replay_record_if_generation_with_heal(
+                        &receipt,
+                        Some(generation),
+                        None,
+                    )?;
+                return Err(error);
+            }
+            Err(error @ Error::DurableStepTrapped) => {
+                receipt.bridge_calls.push(CodeRunBridgeCall::record(
+                    0,
+                    &SelfCall::AgentVerb(call),
+                    &never_ran_mark(MEDIA_STEP_TRAPPED),
                     0,
                     0,
                 )?);
@@ -595,8 +614,8 @@ fn meets(receipt: &CodeRunReplayRecord, made: &CodeRunBridgeCall) -> bool {
 }
 
 /// The mark a write's receipt keeps when it never ran: a verb hook stopped it
-/// ([`VERB_HOOK_STOPPED`]), or no provider answered it
-/// ([`PROVIDER_UNAVAILABLE`]).
+/// ([`VERB_HOOK_STOPPED`]), no provider answered it ([`PROVIDER_UNAVAILABLE`]),
+/// or its media admission trapped ([`MEDIA_STEP_TRAPPED`]).
 fn never_ran_mark(why: &str) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(SelfDeniedResult {
         effect: SelfEffect::AgentVerb,
@@ -612,6 +631,7 @@ fn never_ran(row: &CodeRunBridgeCall) -> bool {
         Ok(SelfDispatchOutcome::Denied(refused))
             if refused.reason_codes == [VERB_HOOK_STOPPED]
                 || refused.reason_codes == [PROVIDER_UNAVAILABLE]
+                || refused.reason_codes == [MEDIA_STEP_TRAPPED]
     )
 }
 
