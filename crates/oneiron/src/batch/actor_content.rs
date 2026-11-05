@@ -313,7 +313,11 @@ pub(super) fn apply_actor_ops_admitted(
     gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
-    if !matches!(origin, BaseWriteOrigin::Ordinary) {
+    let admitted = match origin {
+        BaseWriteOrigin::Ordinary => true,
+        BaseWriteOrigin::PromoteReplay(grant) => grant.selected_saver() == Some(*actor),
+    };
+    if !admitted {
         return Err(Error::InvariantViolation(
             "actor content cannot be replay origin",
         ));
