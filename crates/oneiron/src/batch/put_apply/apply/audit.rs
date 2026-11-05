@@ -40,9 +40,9 @@ pub(super) fn audit_and_stage_body(
     if fixed.replicated {
         crate::tagging::release_held_id_in_txn(store, wtxn, &fixed.id)?;
     }
-    crate::ports::withdraw_before_rewrite_in_txn(store, wtxn, &fixed.id)?;
+    crate::ports::withdraw_before_rewrite_in_txn(write, wtxn, &fixed.id)?;
     crate::ingest::invalidate_docs_source_before_put(
-        store,
+        write,
         wtxn,
         &fixed.id,
         fixed.entity_type,
@@ -50,7 +50,7 @@ pub(super) fn audit_and_stage_body(
         fixed.options.storage.asset_file,
     )?;
     crate::ports::keep_worlds_of_unmade_epoch_in_txn(
-        store,
+        write,
         wtxn,
         &fixed.id,
         fixed.entity_type,
@@ -89,7 +89,7 @@ pub(super) fn audit_and_stage_body(
         crate::dreamer_consolidation::mark_person_about_moved_in_txn(store, wtxn, fixed.id, body)?;
     }
     stage_claim_projection(
-        store,
+        write,
         wtxn,
         fixed.id,
         dispatch.decoded_claim_body.as_ref(),
@@ -97,7 +97,7 @@ pub(super) fn audit_and_stage_body(
     )?;
     stage_optional_side_row(store, wtxn, markers.hub_origin_marker)?;
     crate::skill_hub::stage_source_custody_put(
-        store,
+        write,
         wtxn,
         &fixed.id,
         fixed.entity_type,

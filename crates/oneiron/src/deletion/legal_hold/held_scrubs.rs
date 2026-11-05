@@ -26,7 +26,10 @@ impl Vault {
     pub(super) fn settle_held_scrubs_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
         super::super::actor_fields::rerun_birth_actor_scrubs_in_txn(self, txn)?;
         self.store.settle_gate_scrubs_in_txn(txn)?;
-        self.store.settle_owed_staged_erases_in_txn(txn)?;
+        self.store.settle_owed_staged_erases_in_txn(
+            &crate::secret_custody::CustodyWrite::of(self),
+            txn,
+        )?;
         Ok(())
     }
 }

@@ -112,7 +112,11 @@ pub(super) fn erase_actor_fields_in_txn(
         vault
             .store
             .attempt_operations
-            .erase_attempt_payload_actor_in_txn(&vault.store, wtxn, &actor)?;
+            .erase_attempt_payload_actor_in_txn(
+                &crate::secret_custody::CustodyWrite::of(&vault),
+                wtxn,
+                &actor,
+            )?;
     }
     Ok(())
 }
@@ -205,7 +209,11 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     vault
         .store
         .attempt_operations
-        .erase_attempt_payload_actors_in_txn(&vault.store, wtxn, &erased)?;
+        .erase_attempt_payload_actors_in_txn(
+            &crate::secret_custody::CustodyWrite::of(&vault),
+            wtxn,
+            &erased,
+        )?;
     Ok(())
 }
 

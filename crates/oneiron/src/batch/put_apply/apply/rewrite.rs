@@ -68,7 +68,7 @@ pub(super) fn rewrite_put_body(
         ));
     }
     let evicted_shell_sources = if dispatch.authority_dominates_key_squatter || revision.squatter {
-        evict_authority_log_store_key_squatter(store, wtxn, &fixed.id)?
+        evict_authority_log_store_key_squatter(write, wtxn, &fixed.id)?
     } else {
         BTreeSet::new()
     };
