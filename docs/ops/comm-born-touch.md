@@ -2,8 +2,8 @@
 
 A reader-bound or actor-bound batch can project a canonical `comm.last_touch`
 Put with an explicit `RowBirth` without replacing its original claim id. It can
-also project one whose only noncanonical context is a non-base world, using
-the scoped source described in `comm-scoped-touch-source.md`.
+also project one whose noncanonical position is a world, facet or project,
+using the scoped source described in `comm-scoped-touch-source.md`.
 
 The batch keeps that Put, its `ClaimOf` edges, and its birth in the ordinary
 native write. Its existing input, caller-envelope, source, policy, actor or
@@ -29,9 +29,11 @@ keep that source record. Retrying an original Put
 still reconciles its current live head even if the source already projected;
 `minted = false` is not used to skip this reconciliation.
 
-This applies only to the canonical and world-only explicit-born touches
-admitted through these bound batch paths. Other explicit births, STOPs,
-thread events, other noncanonical scope/context, and unsupported cases retain
+This applies only to explicit-born touches whose remaining context matches
+the canonical constructor, admitted through these bound batch paths. World,
+facet and project can differ; their native position is frozen in the source.
+Other explicit births, STOPs, thread events, noncanonical relationship,
+opaque scope, sensitivity or session context, and unsupported cases retain
 the fully gated raw path. Ordinary no-birth source creation is unchanged.
 LastTouch slot selection compares the full context for every source, so a
 base event and a world-bearing head cannot supersede each other.

@@ -1,10 +1,13 @@
 # Scoped, explicitly born touch sources
 
-The bound batch router can project an explicitly born LastTouch whose only
-noncanonical context is a non-base world. The original Put, ClaimOf edge and
-native birth still land through their existing gates before its source is
-created in the same writer. Other noncanonical contexts and unsupported births
-keep their full native raw path.
+The bound batch router can project an explicitly born LastTouch with a
+noncanonical world, facet or project. The original Put, ClaimOf edge and native
+birth still land through their existing gates before its source is created in
+the same writer. The source freezes the actual admitted native position; it
+does not copy position into a new head or supply a grant. Other noncanonical
+relationship, opaque scope, sensitivity or session contexts and unsupported
+births keep their full native raw path. No-birth inputs still require the
+canonical position before routing.
 
 `COMM_RECORD` has a required `source_position` key. Ordinary events without an
 original head, gates and receipts encode `nil`. Every explicitly born
@@ -54,8 +57,11 @@ missing, closed or retracted never recreates that original.
 LastTouch winner selection compares the event's frozen context with every
 candidate's actual CLAIM context before supersession: normalized world,
 relationship, facet, project, opaque scope, native sensitivity and session tag.
-This applies to both scoped events and ordinary canonical events. A base event
-cannot close a world-bearing head, nor the reverse. Other communication rules
+This applies to both scoped events and ordinary canonical events. An event
+cannot close a head in another world, facet or project. Its comparison body
+uses the frozen source position, not a mutable current-original position.
+The current original still supplies the conjunctive native read requirements.
+Other communication rules
 keep their existing matching and admission. Canonical born sources meet the
 same original-CLAIM disclosure and audience requirements as world-bearing
 ones; a COMM_RECORD-only selector cannot expose their CLAIM data.
