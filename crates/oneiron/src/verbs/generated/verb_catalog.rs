@@ -14791,7 +14791,7 @@ impl AgentVerb {
                 "The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place."
             }
             Self::VaultMailSourcesSync => {
-                "The vault's owner runs one bounded import step of a mail or calendar source on this device: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."
+                "The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."
             }
             Self::VaultMailInbox => {
                 "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."

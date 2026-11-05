@@ -5802,7 +5802,7 @@ class Oneiron:
             """The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_import_mbox(json.dumps(spec))))
         def sync(self, spec):
-            """The vault's owner runs one bounded import step of a mail or calendar source on this device: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
+            """The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_sync(json.dumps(spec))))
     class _VaultMailSourcesSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:

@@ -20,7 +20,6 @@
 //!
 //! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
@@ -28,14 +27,14 @@ use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::calendar::{MailCalendarPull, MailCalendarRead, MailCalendarWire};
+use super::calendar::{MailCalendarPull, MailCalendarRead, MailCalendarWire, landed_uid};
 use super::credential::WireReads;
 use super::gmail::reads_google_mail;
-use super::rest::{self, RestAnswer, array, bearer_header, refused, text_of};
+use super::rest::{self, RestAnswer, VerifiedCredentials, array, bearer_header, refused, text_of};
 use super::wire::MailSyncSource;
+use crate::Vault;
 use crate::calendar::{RemoteCalendarChange, RemoteCalendarObject};
 use crate::error::{Error, Result};
-use crate::{EntityId, Vault};
 
 /// The custody effector a Google Calendar credential is bound to.
 pub const GOOGLE_CALENDAR_CONNECTOR_EFFECTOR: &str = "connector:google_calendar";
@@ -58,8 +57,8 @@ struct GoogleCalendarCursor {
 pub struct HttpGoogleCalendarWire<'v> {
     vault: &'v Vault,
     client: reqwest::blocking::Client,
-    /// The sources whose credential this wire has seen own their calendar.
-    verified: RefCell<BTreeSet<EntityId>>,
+    /// The credentials this wire has seen own their source's calendar.
+    verified: VerifiedCredentials,
 }
 
 impl<'v> HttpGoogleCalendarWire<'v> {
@@ -72,7 +71,7 @@ impl<'v> HttpGoogleCalendarWire<'v> {
         Ok(Self {
             vault,
             client: rest::https_client()?,
-            verified: RefCell::new(BTreeSet::new()),
+            verified: VerifiedCredentials::new(),
         })
     }
 
@@ -86,6 +85,12 @@ impl<'v> HttpGoogleCalendarWire<'v> {
         if !reads_google_mail(source.provider) {
             return Err(refused("google_calendar_wire_reads_google_calendars_only"));
         }
+        let calendar = source.address.trim();
+        require_id(calendar)?;
+        let entry_url = format!(
+            "{CALENDAR_API_URL}/users/me/calendarList/{}",
+            path_segment(calendar)
+        );
         let mut answer: Option<RestAnswer> = None;
         let _receipt = self.vault.with_source_token_at_door(
             source,
@@ -93,7 +98,30 @@ impl<'v> HttpGoogleCalendarWire<'v> {
             GOOGLE_CALENDAR_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
                 let auth = bearer_header(token)?;
-                let request = self.client.get(url).query(query).header(AUTHORIZATION, auth);
+                // The credential presented here is the one checked: its user
+                // owns the calendar the source names.
+                if !self.verified.holds(source.source_ref, token) {
+                    let request = self
+                        .client
+                        .get(&entry_url)
+                        .header(AUTHORIZATION, auth.clone());
+                    let entry = rest::send(request)?
+                        .found_or_gone("google_calendar")?
+                        .ok_or_else(|| {
+                            refused("google_calendar_not_in_the_credentials_calendar_list")
+                        })?;
+                    if entry.get("accessRole").and_then(Value::as_str) != Some("owner") {
+                        return Err(refused(
+                            "google_calendar_credential_does_not_own_the_calendar",
+                        ));
+                    }
+                    self.verified.insert(source.source_ref, token);
+                }
+                let request = self
+                    .client
+                    .get(url)
+                    .query(query)
+                    .header(AUTHORIZATION, auth);
                 answer = Some(rest::send(request)?);
                 Ok(())
             },
@@ -108,29 +136,6 @@ impl<'v> HttpGoogleCalendarWire<'v> {
             "{CALENDAR_API_URL}/calendars/{}",
             path_segment(calendar)
         ))
-    }
-
-    /// Checks once per source that its credential's user owns the calendar
-    /// the source names.
-    fn verify(&self, source: &MailSyncSource) -> Result<()> {
-        if self.verified.borrow().contains(&source.source_ref) {
-            return Ok(());
-        }
-        let calendar = source.address.trim();
-        require_id(calendar)?;
-        let url = format!(
-            "{CALENDAR_API_URL}/users/me/calendarList/{}",
-            path_segment(calendar)
-        );
-        let entry = self
-            .get(source, &url, &[])?
-            .found_or_gone("google_calendar")?
-            .ok_or_else(|| refused("google_calendar_not_in_the_credentials_calendar_list"))?;
-        if entry.get("accessRole").and_then(Value::as_str) != Some("owner") {
-            return Err(refused("google_calendar_credential_does_not_own_the_calendar"));
-        }
-        self.verified.borrow_mut().insert(source.source_ref);
-        Ok(())
     }
 
     /// Every event of the series with iCalendar UID `uid`: its master and
@@ -161,7 +166,6 @@ impl<'v> HttpGoogleCalendarWire<'v> {
 
 impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
     fn pull(&self, source: &MailSyncSource, cursor: Option<&str>) -> Result<MailCalendarRead> {
-        self.verify(source)?;
         let cursor: GoogleCalendarCursor = match cursor {
             Some(cursor) => serde_json::from_str(cursor)
                 .map_err(|_| refused("google_calendar_cursor_unreadable"))?,
@@ -188,27 +192,69 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
                 )));
             }
         };
+        // All-day exceptions name their occurrence in the calendar's zone.
+        let zone = text_of(page.get("timeZone")).filter(|zone| {
+            zone.chars().all(|ch| ch.is_ascii_graphic())
+                && crate::calendar::utc_to_wall(0, zone).is_ok()
+        });
         let mut by_uid: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        // UIDs whose series is read again whole, and deleted resources by UID.
+        let mut reread: BTreeSet<String> = BTreeSet::new();
+        let mut gone: BTreeMap<String, String> = BTreeMap::new();
         for event in array(&page, "items") {
-            let Some(uid) = text_of(event.get("iCalUID")) else {
+            if let Some(uid) = text_of(event.get("iCalUID")) {
+                require_id(&uid)?;
+                by_uid.entry(uid).or_default().push(event.clone());
+                continue;
+            }
+            // A deleted event may carry no more than its id: its UID is the
+            // one landed for it, or for its series' master. One never
+            // landed here has nothing to take back.
+            let Some(id) = text_of(event.get("id")) else {
                 continue;
             };
-            require_id(&uid)?;
-            by_uid.entry(uid).or_default().push(event.clone());
+            require_id(&id)?;
+            if let Some(uid) = landed_uid(self.vault, source.source_ref, &id)? {
+                if event.get("status").and_then(Value::as_str) == Some("cancelled") {
+                    gone.insert(uid, id);
+                } else {
+                    reread.insert(uid);
+                }
+                continue;
+            }
+            let master = text_of(event.get("recurringEventId"))
+                .or_else(|| id.rsplit_once('_').map(|(master, _)| master.to_owned()));
+            if let Some(master) = master
+                && let Some(uid) = landed_uid(self.vault, source.source_ref, &master)?
+            {
+                reread.insert(uid);
+            }
         }
         let mut changes = Vec::new();
         for (uid, events) in by_uid {
-            let series_member = events.iter().any(|event| {
-                event.get("recurrence").is_some() || event.get("recurringEventId").is_some()
-            });
+            let series_member = reread.remove(&uid)
+                || events.iter().any(|event| {
+                    event.get("recurrence").is_some() || event.get("recurringEventId").is_some()
+                });
             let series = if series_member {
                 self.series(source, &uid)?
             } else {
                 events
             };
-            if let Some(change) = resource_change(&uid, &series)? {
+            gone.remove(&uid);
+            if let Some(change) = resource_change(&uid, &series, zone.as_deref())? {
                 changes.push(change);
             }
+        }
+        for uid in reread {
+            gone.remove(&uid);
+            let series = self.series(source, &uid)?;
+            if let Some(change) = resource_change(&uid, &series, zone.as_deref())? {
+                changes.push(change);
+            }
+        }
+        for (uid, href) in gone {
+            changes.push(RemoteCalendarChange::Delete { href, uid });
         }
         let (next_cursor, complete) = match (
             text_of(page.get("nextPageToken")),
@@ -243,14 +289,19 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
                     .map_err(|_| refused("google_calendar_cursor_unencodable"))?,
             ),
             complete,
+            covers: None,
         }))
     }
 }
 
 /// One UID's resource from its events: a delete when its master is
 /// cancelled, the master with its instances otherwise, nothing when no
-/// master is among them.
-fn resource_change(uid: &str, events: &[Value]) -> Result<Option<RemoteCalendarChange>> {
+/// master is among them. `zone` is the calendar's time zone.
+fn resource_change(
+    uid: &str,
+    events: &[Value],
+    zone: Option<&str>,
+) -> Result<Option<RemoteCalendarChange>> {
     let Some(master) = events
         .iter()
         .find(|event| event.get("recurringEventId").is_none())
@@ -266,7 +317,7 @@ fn resource_change(uid: &str, events: &[Value]) -> Result<Option<RemoteCalendarC
     }
     let mut ics = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n");
     ics.push_str("PRODID:-//oneiron//mail-pack google calendar//EN\r\n");
-    write_vevent(&mut ics, uid, master, None)?;
+    write_vevent(&mut ics, uid, master, None, zone)?;
     for instance in events
         .iter()
         .filter(|event| event.get("recurringEventId").is_some())
@@ -274,7 +325,7 @@ fn resource_change(uid: &str, events: &[Value]) -> Result<Option<RemoteCalendarC
         let Some(original) = instance.get("originalStartTime") else {
             continue;
         };
-        write_vevent(&mut ics, uid, instance, Some(original))?;
+        write_vevent(&mut ics, uid, instance, Some(original), zone)?;
     }
     ics.push_str("END:VCALENDAR\r\n");
     let ics = ics.into_bytes();
@@ -290,12 +341,15 @@ fn resource_change(uid: &str, events: &[Value]) -> Result<Option<RemoteCalendarC
 
 /// One event as a VEVENT: a series master (with its recurrence lines) when
 /// `original` is `None`, else the instance that replaced the occurrence
-/// starting at `original`.
+/// starting at `original`. An all-day occurrence is named by its day's
+/// midnight in the calendar's zone `zone` (UTC when it has none), as a
+/// recurrence id names an instant.
 fn write_vevent(
     ics: &mut String,
     uid: &str,
     event: &Value,
     original: Option<&Value>,
+    zone: Option<&str>,
 ) -> Result<()> {
     let cancelled = event.get("status").and_then(Value::as_str) == Some("cancelled");
     ics.push_str("BEGIN:VEVENT\r\n");
@@ -309,8 +363,10 @@ fn write_vevent(
         line(ics, "DTSTAMP", &utc_stamp(stamp)?);
     }
     if let Some(original) = original {
-        let Some(recurrence_id) = time_property("RECURRENCE-ID", original)? else {
-            return Err(refused("google_calendar_instance_without_original_start"));
+        let recurrence_id = match original.get("date").and_then(Value::as_str) {
+            Some(date) => day_recurrence_id(date, zone)?,
+            None => time_property("RECURRENCE-ID", original)?
+                .ok_or_else(|| refused("google_calendar_instance_without_original_start"))?,
         };
         ics.push_str(&recurrence_id);
     }
@@ -366,12 +422,20 @@ fn write_vevent(
     });
     let transparent =
         declined || event.get("transparency").and_then(Value::as_str) == Some("transparent");
-    line(ics, "TRANSP", if transparent { "TRANSPARENT" } else { "OPAQUE" });
+    line(
+        ics,
+        "TRANSP",
+        if transparent { "TRANSPARENT" } else { "OPAQUE" },
+    );
     if let Some(organizer) = event.get("organizer")
         && let Some(email) = text_of(organizer.get("email"))
     {
         let name = cn_param(organizer.get("displayName"));
-        line(ics, &format!("ORGANIZER{name}"), &format!("mailto:{}", text(&email)));
+        line(
+            ics,
+            &format!("ORGANIZER{name}"),
+            &format!("mailto:{}", text(&email)),
+        );
     }
     for attendee in array(event, "attendees") {
         let Some(email) = text_of(attendee.get("email")) else {
@@ -430,6 +494,19 @@ fn time_property(name: &str, time: &Value) -> Result<Option<String>> {
         )));
     }
     Ok(Some(format!("{name}:{}\r\n", utc_stamp(instant)?)))
+}
+
+/// The recurrence id of the all-day occurrence on `date` (`YYYY-MM-DD`):
+/// its midnight in `zone`, or in UTC.
+fn day_recurrence_id(date: &str, zone: Option<&str>) -> Result<String> {
+    let digits: String = date.chars().filter(char::is_ascii_digit).collect();
+    if digits.len() != 8 {
+        return Err(refused("google_calendar_date_unreadable"));
+    }
+    Ok(match zone {
+        Some(zone) => format!("RECURRENCE-ID;TZID={zone}:{digits}T000000\r\n"),
+        None => format!("RECURRENCE-ID:{digits}T000000Z\r\n"),
+    })
 }
 
 fn utc_stamp(seconds: u64) -> Result<String> {

@@ -129,6 +129,9 @@ pub enum MailHistoryChange {
         labels: Vec<String>,
         trash_or_spam: bool,
     },
+    /// A folder or label the provider no longer has: each copied message
+    /// under it is looked up again (REVIEW-5754).
+    LabelGone { label: String },
 }
 
 /// One page of changes since an anchor.

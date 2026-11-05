@@ -25715,10 +25715,16 @@ async fn execute_agent_verb_row_on(
             mcp_agent_verb_output(output, source)
         }
         "vault.mail.sources.sync" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.mail.sources.sync", &input)
+                .map_err(mcp_facade_error)?;
             let input: oneiron::mail_pack::MailSourceSyncRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::vault_mail_sources_sync(&memory, input)
-                .map_err(mcp_facade_error)?;
+            let output = Box::pin(crate::api::facade::host_doors::vault_mail_sources_sync(
+                server, auth, input,
+            ))
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
