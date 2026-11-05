@@ -16,6 +16,7 @@
 //! eviction runs here.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
@@ -31,6 +32,18 @@ use crate::store::key_custody::{
 
 /// The context an artifact's 16-byte id derives its key incarnation under.
 const DRAFTER_INCARNATION_CONTEXT: &str = "oneiron/drafter-artifact/erasable-incarnation/v1";
+
+/// The directory under the vault root that sealed drafter corpora live in
+/// (FIX 14973): one directory per version, sealed files only, never a key.
+const DRAFTER_CORPUS_DIR: &str = "drafter-corpora";
+
+impl Store {
+    /// This vault's sealed drafter corpus directory, `drafter-corpora/`
+    /// under the root it opened at.
+    pub(crate) fn drafter_corpus_dir(&self) -> PathBuf {
+        self.owner._registered_path.path.join(DRAFTER_CORPUS_DIR)
+    }
+}
 
 /// The incarnation of the key that seals artifact `artifact`.
 fn incarnation(artifact: &[u8; 16]) -> [u8; 32] {

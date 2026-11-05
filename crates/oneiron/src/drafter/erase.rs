@@ -14,8 +14,10 @@
 //!   and is refused;
 //! - returns to stock every binding that served one, even where an older
 //!   private head looks clean;
-//! - stages the retirement of every key of each version's sealed artifact,
-//!   so no restored image and no late receipt opens it again.
+//! - stages the retirement of every key of each version's sealed artifact
+//!   and of both sides of its corpus (FIX 14973), so no restored image and
+//!   no late receipt opens them again; the corpus sweep removes the sealed
+//!   files after.
 //!
 //! Only content-free evidence stays: the erase event names the versions and
 //! the jobs it fenced, never the source.
@@ -171,6 +173,8 @@ pub(crate) fn erase_drafters_for_source_in_txn(
         version.state = DrafterVersionState::Erased;
         version.generation += 1;
         version.artifact = None;
+        // FIX 14973: its corpus keys retire above; its digests go too.
+        version.corpus = None;
         version.dependencies = DrafterDependencies {
             precise: true,
             ..DrafterDependencies::default()

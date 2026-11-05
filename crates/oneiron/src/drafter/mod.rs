@@ -24,10 +24,15 @@
 //! artifact sits under its own erasable key ([`DrafterSealing`]).
 //!
 //! The nightly job, `coach.drafter_retrain`, pins the policy revision and
-//! its cutoff and records how the night ended. No trainer recipe is wired
-//! on any host yet, so every night holds with `no_trainer_recipe`, nothing
-//! trains, and every target serves stock.
+//! its cutoff and records how the night ended. With a recipe chosen and a
+//! target its host serves a drafter for, the night exports the vault's own
+//! corpus for that target (FIX 14973, `corpus.rs`) and writes a `prepared`
+//! version with the corpus sealed under the version's keys, its split and
+//! its dependency set. No trainer recipe is wired on any host yet, so every
+//! night with the policy on holds with `no_trainer_recipe`, nothing trains,
+//! and every target serves stock.
 
+mod corpus;
 mod custody;
 mod doors;
 mod erase;
