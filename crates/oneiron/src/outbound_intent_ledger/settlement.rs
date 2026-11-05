@@ -13,8 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::types::{IntentId, IntentLedgerRecord, IntentLedgerResult, IntentState};
 use crate::Vault;
 use crate::connector_key::{
-    ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetDebit, EffectorBudgetRowSource,
-    EffectorSpendReservationRow,
+    ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetDebit, EffectorSpendReservationRow,
 };
 use crate::side_table::{self, Named, SideTable};
 
@@ -274,9 +273,9 @@ pub(crate) fn keep_reported_cost(
     Ok(())
 }
 
-/// Releases a certain non-delivery's key-only budget in the outcome writer.
-/// Prior possible delivery keeps it. Charter rows also keep today's behavior:
-/// charter re-stamping resets positional usage, which retries must not revive.
+/// Releases a certain non-delivery's budget in the outcome writer.
+/// Prior possible delivery keeps it. Each charter debit must still name its
+/// original approval before release can touch the current usage row.
 pub(super) fn release_non_delivery_reservation_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -289,16 +288,7 @@ pub(super) fn release_non_delivery_reservation_in_txn(
     let Some(reservation) = settlement.reservation.as_mut() else {
         return Ok(());
     };
-    if reservation.status != ReservationStatus::Reserved
-        || reservation
-            .debits
-            .iter()
-            .any(|debit| debit.row.source == EffectorBudgetRowSource::Charter)
-        || reservation
-            .spend_rows
-            .iter()
-            .any(|location| location.row.source == EffectorBudgetRowSource::Charter)
-    {
+    if reservation.status != ReservationStatus::Reserved {
         return Ok(());
     }
     crate::connector_key::release_effector_debits_in_txn(&vault.store, wtxn, &reservation.debits)?;
@@ -345,8 +335,8 @@ pub(super) fn restore_retry_reservation_in_txn(
 /// writer that moved it (FIX 7964). Delivery keeps the charge and reconciles
 /// preauthorized spend to reported actual cost (FIX 11662); a certain stop
 /// releases it once. Possible delivery and accepted remote tasks retain it.
-/// A certain key-only non-delivery releases in its outcome writer and
-/// restores only at retry claim, so a later stop cannot release it twice.
+/// A certain non-delivery releases in its outcome writer and restores only
+/// at retry claim, so a later stop cannot release it twice.
 ///
 /// # Errors
 /// Storage faults.

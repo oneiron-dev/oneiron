@@ -33,11 +33,13 @@ entry and writes a fresh settled actual-cost entry before marking the surviving
 reservation set. Zero estimates and unpriced targets have no estimate entry to
 mark. Other actual-cost and approval checks stay unchanged.
 
-A certain release removes only its exact IDs. The existing key-only interim
-non-delivery retry restores the original ID, amount, and accounting time as
-reserved, only after the existing all-row capacity preflight. Uncertain, mixed,
-and charter-backed retry behavior is unchanged. Charter approval guards still
-protect current counters.
+A certain release removes only its exact IDs. Key, charter, and mixed
+non-delivery retries restore the original ID, amount, and accounting time as
+reserved, only after the existing all-row capacity preflight. Each charter
+debit's original approval must still match before it joins that preflight;
+obsolete approvals cannot recreate usage in a newly approved positional row.
+Uncertain delivery retains its reservation. Original zero and unpriced spend
+targets remain available for the same approval-checked actual-cost settlement.
 
 Both states expire under the same rolling or calendar window rules. Missing or
 reset entries are not recreated by marking or release. The raw usage codec
@@ -48,5 +50,6 @@ require `entry_id`. There is no old-format reader or migration.
 
 FIX11027 remains PART. Ladder signals still fire from combined charge-time usage;
 no Done-time steering channel or settled-only ladder policy is added. Charter
-non-delivery retry release remains separate. This document states the source
-contract, not a compile, runtime, delivery, or timing result.
+non-delivery retry release and restoration use the original approval binding.
+This document states the source contract, not a compile, runtime, delivery, or
+timing result.
