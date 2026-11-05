@@ -4,7 +4,10 @@
 use super::{
     ledger::{append, events_in, state_in},
     model::*,
-    render::{PdfPreparation, PdfPreparationError, SignatureRaster, prepare_esign_pdf_within},
+    render::{
+        PdfPreparation, PdfPreparationError, SignatureRaster,
+        prepare_esign_pdf_with_replayed_audit, replay_esign_audit,
+    },
     sealer::{
         EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict,
         SealProfile, SealProfileEvidence, SealVerdict,
@@ -183,20 +186,27 @@ impl Vault {
         };
         let fingerprint = snapshot_hash(&rows)?;
         let mut outputs = Vec::new();
+        let document_hex = document.to_hex();
         for (index, (_, original)) in originals.iter().enumerate() {
-            let prepared = prepare_esign_pdf_within(
-                original,
-                PdfPreparation {
-                    document_ref: &document.to_hex(),
-                    item: index as u32,
-                    state: &state,
-                    audit: &rows,
-                    canonical_url,
-                    signature_images: &images,
-                },
-                self.limit_watch()
-                    .bound(EngineLimit::EsignStreamDecodeBytes),
-            )?;
+            let prep = PdfPreparation {
+                document_ref: &document_hex,
+                item: index as u32,
+                state: &state,
+                audit: &rows,
+                canonical_url,
+                signature_images: &images,
+            };
+            let (chain, trail) = replay_esign_audit(&prep)?;
+            let prepared = match sealer.prepare_esign_pdf(original, &prep, chain, &trail)? {
+                Some(prepared) => prepared,
+                None => prepare_esign_pdf_with_replayed_audit(
+                    original,
+                    &prep,
+                    self.esign_stream_decode_bytes(),
+                    chain,
+                    trail,
+                )?,
+            };
             // The seal holds the item whole, however large: past the `[limits]
             // esign_pdf_bytes` row it asks whether everything is okay, and
             // seals it anyway (OF-520).
