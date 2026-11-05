@@ -901,19 +901,7 @@ pub(super) fn project_in_txn(
         TimeRange { start: at, end: at },
         at,
     )?;
-    if let Some(estimate) = estimate {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let outcomes = estimate.runs as u32;
-        super::floor::floor_check_in_txn(
-            vault,
-            txn,
-            skill,
-            Some(executor),
-            posterior,
-            outcomes,
-            at,
-        )?;
-    }
+    super::floor::check_floor_cells_in_txn(vault, txn, skill, Some(executor), at)?;
     Ok(posterior)
 }
 
