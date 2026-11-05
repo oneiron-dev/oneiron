@@ -295,8 +295,12 @@ impl StoreRecordHooks for EngineRecordHooks {
         store: &Store,
         wtxn: &mut RwTxn<'_>,
         id: &EntityId,
+        deindex: &dyn Fn(
+            &mut heed::RwTxn<'_>,
+            &EntityId,
+        ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
     ) -> Result<()> {
-        crate::memory::release_asset_blob_in_txn(store, wtxn, id)
+        crate::memory::release_asset_blob_in_txn(store, wtxn, id, deindex)
     }
 
     fn reject_audience_edit_unlink(
@@ -352,8 +356,12 @@ impl StoreRecordHooks for EngineRecordHooks {
         store: &Store,
         txn: &mut RwTxn<'_>,
         id: &EntityId,
+        deindex: &dyn Fn(
+            &mut heed::RwTxn<'_>,
+            &EntityId,
+        ) -> Result<(bool, bool, bool, Vec<EntityId>)>,
     ) -> Result<()> {
-        crate::workspace_roster::erase_room_side_rows(store, txn, id)
+        crate::workspace_roster::erase_room_side_rows(store, txn, id, deindex)
     }
 
     fn erase_recognition_for_subject_in_txn(

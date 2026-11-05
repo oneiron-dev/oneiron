@@ -239,11 +239,12 @@ fn entity_type_in(dbs: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Res
 /// not reached as an earlier mark, so each row is withdrawn for the worlds
 /// of the marks that covered it, as two walks would give it.
 pub(super) fn begin_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     document: &EntityId,
     door: DependentWalkDoor,
 ) -> Result<()> {
+    let store = write.store;
     let prefix = [DEP, document.as_bytes()].concat();
     let highest = [prefix.as_slice(), &[0xFF; ROW]].concat();
     let last = store
@@ -297,17 +298,18 @@ pub(super) fn begin_in_txn(
             .collect();
         walk.earlier = mark::keep_apart(earlier, &walk.mark);
     }
-    batch_in_txn(store, txn, document, walk)
+    batch_in_txn(write, txn, document, walk)
 }
 
 /// Withdraws the next batch of `walk`, then keeps what is left of it, or
 /// retires it once no row it covers is left.
 fn batch_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     document: &EntityId,
     mut walk: WalkRow,
 ) -> Result<()> {
+    let store = write.store;
     let policy = policy_in(store, txn)?;
     let prefix = [DEP, document.as_bytes()].concat();
     let lower = walk.mark.after.map_or_else(
@@ -342,7 +344,7 @@ fn batch_in_txn(
         }
     }
     for (dependent, worlds) in &dependents {
-        integrity::withdraw_dependent_in_txn(store, txn, document, dependent, worlds)?;
+        integrity::withdraw_dependent_in_txn(write, txn, document, dependent, worlds)?;
     }
     walk.walked = walk.walked.saturating_add(dependents.len() as u64);
     if walk.walked > policy.check_threshold && !CHECK.contains(store, txn, document)? {
@@ -535,10 +537,11 @@ pub(super) fn settle_admitted_in_txn(
 /// them by. Its regeneration then meets the same fence as after a
 /// single-transaction walk.
 pub(crate) fn withdraw_before_rewrite_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let Some(worlds) = pending_withdrawal_in(store, txn, id)? else {
         return Ok(());
     };
@@ -550,7 +553,7 @@ pub(crate) fn withdraw_before_rewrite_in_txn(
         };
         let settled = SETTLED.get(store, txn, &(document, row))?;
         if let Some(worlds) = walk.worlds_for(&row, settled) {
-            integrity::withdraw_dependent_in_txn(store, txn, &document, id, &worlds)?;
+            integrity::withdraw_dependent_in_txn(write, txn, &document, id, &worlds)?;
             SETTLED.put(store, txn, &(document, row), &walk.mark.generation)?;
             direct = true;
         }
@@ -560,7 +563,7 @@ pub(crate) fn withdraw_before_rewrite_in_txn(
     // chain, and never again for a put that repeats (its regeneration's own
     // revision would fence it).
     if !direct {
-        integrity::withdraw_source_chain_in_txn(store, txn, vec![*id], &worlds)?;
+        integrity::withdraw_source_chain_in_txn(write, txn, vec![*id], &worlds)?;
     }
     Ok(())
 }
@@ -606,7 +609,12 @@ impl Vault {
             }
             let batch =
                 self.with_write_txn_grouped(|txn| match WALK.get(&self.store, txn, &document)? {
-                    Some(walk) => batch_in_txn(&self.store, txn, &document, walk),
+                    Some(walk) => batch_in_txn(
+                        &crate::secret_custody::CustodyWrite::of(self),
+                        txn,
+                        &document,
+                        walk,
+                    ),
                     None => Ok(()),
                 });
             if let Err(error) = batch {
