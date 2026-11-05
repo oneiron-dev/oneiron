@@ -307,17 +307,21 @@ async fn read(
     ))
 }
 
-/// `generation` within the work time the caller's own clock has left (FIX 9904): `None`
-/// once that time is spent with no reply. A durable step keeps its admission-only rule and
+/// `generation` within the work time the caller's own clock has left (FIX 9904), or until
+/// the caller cancels: `None` once that time is spent with no reply, or on caller
+/// cancellation. A durable step keeps its admission-only rule and
 /// never runs under this bound. Dropping an admitted generation settles its reservation
 /// ([`Reserved`]); a raw generation's lease stays its caller's to settle.
 async fn within_work_time<T>(
     deadline: &RetrievalDeadline,
     generation: impl std::future::Future<Output = T>,
 ) -> Option<T> {
-    tokio::time::timeout(deadline.decision_time_left(), generation)
-        .await
-        .ok()
+    let cancel = deadline.work_cancel();
+    tokio::select! {
+        biased;
+        () = cancel.cancelled() => None,
+        result = tokio::time::timeout(deadline.decision_time_left(), generation) => result.ok(),
+    }
 }
 
 /// A generation the call's work time cut: [`take`] reads it once that time is spent as the

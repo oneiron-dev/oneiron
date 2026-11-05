@@ -267,6 +267,38 @@ impl AiHandle {
         }
     }
 
+    /// Tells the Dreamer's session policy the app opened, and waits the
+    /// hint's ACTUAL apply before returning its effect (FIX 784): the
+    /// tracked enqueue and the apply wait run together inside ONE
+    /// [`crate::server::blocking`] closure, since the caller must wait
+    /// anyway — no fast path, no second scheduling decision. `None` without
+    /// a running Dreamer, or when the hint was not kept / the apply never
+    /// ran (warned, never a refusal): the caller continues its existing
+    /// witness derivation either way.
+    pub fn session_app_open_applied(
+        &self,
+        key: oneiron::session_lifecycle::SessionKey,
+        deadline: Option<std::time::Instant>,
+    ) -> Option<oneiron_driver::SessionHintEffect> {
+        let hints = self.hints.as_ref()?;
+        crate::server::blocking(|| {
+            let applied = match hints.push_app_open_tracked_waiting(key, None, deadline) {
+                Ok(handle) => handle.wait(),
+                Err(error) => {
+                    tracing::warn!(?error, "dreamer session AppOpen hint not kept");
+                    return None;
+                }
+            };
+            match applied {
+                Ok(effect) => Some(effect),
+                Err(error) => {
+                    tracing::warn!(?error, "dreamer session AppOpen apply wait ended");
+                    None
+                }
+            }
+        })
+    }
+
     /// A turn landed: a due turn queues the running Dreamer's Micro wake
     /// (ARCH-0026 RD-26), off the request path. A no-op without a running
     /// Dreamer, so a model-free vault queues nothing that never runs.

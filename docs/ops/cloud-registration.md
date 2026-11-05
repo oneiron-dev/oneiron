@@ -81,6 +81,15 @@ issuer when no pins name one, and the revoke tried after. The local
 result and the revoke's own result are reported apart. A delete keeps
 the tokens. Switching the feature off does nothing to them.
 
+A running server also ends a pending login whose owner was hard-erased
+(FIX 10947 S1): after each hold or put-back, finalization re-probes the
+committed delete marker, and a background watch re-checks held flows on
+local delete wakes; a proven erase ends only that owner's exact pending
+flow as `cancelled`, leaving other owners' flows untouched with no
+global cancel. A setup failure still answers `failed` while cleaning up
+the same way. Revoking provider-side tokens already issued (S2) stays a
+separate concern.
+
 ## Key rollover
 
 Rollover is a new pins file plus a restart. The client reads the pins

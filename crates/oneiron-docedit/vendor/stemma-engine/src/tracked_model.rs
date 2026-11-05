@@ -2690,6 +2690,9 @@ fn normalize_deleted_final_mark(
             final_paragraph.numbering_suppressed = accepted_final_properties.numbering_suppressed;
             final_paragraph.materialized_numbering =
                 accepted_final_properties.materialized_numbering.clone();
+            // The final section lives in body/sectPr, not on this carrier.
+            final_paragraph.section_properties = None;
+            final_paragraph.section_property_change = None;
 
             let current =
                 crate::edit::snapshot_paragraph_formatting(final_paragraph, &deleted_revision);

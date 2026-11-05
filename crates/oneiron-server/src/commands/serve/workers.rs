@@ -184,6 +184,7 @@ pub(crate) async fn start_desktop_workers(
     };
     workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
+    workers.push(sync_server.spawn_cloud_erase_watch());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     workers.push(crate::wire_health::spawn(&sync_server, admitted()));
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).

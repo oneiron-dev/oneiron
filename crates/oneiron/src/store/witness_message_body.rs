@@ -47,11 +47,6 @@ const RESERVED_METADATA_KEYS: [&str; 7] = [
 /// unknown value and fails closed.
 const MAX_WITNESS_MESSAGE_TYPE_BYTES: usize = 128;
 
-/// The highest position a message may claim inside one turn. Ordering is a
-/// signal readers sort by; an unbounded one is a channel rather than a
-/// position.
-pub(crate) const MAX_WITNESS_MESSAGE_ORDER: u32 = 65_535;
-
 /// Metadata nesting bound. Depth beyond this is a structure no transcript
 /// reader consumes and a decode cost every reader pays.
 const MAX_WITNESS_METADATA_DEPTH: usize = 8;
@@ -150,9 +145,6 @@ pub(crate) fn witness_message_envelope_denial(
     if !valid_message_type(envelope.message_type) {
         return malformed;
     }
-    if envelope.order > MAX_WITNESS_MESSAGE_ORDER {
-        return malformed;
-    }
     // A user's own words are never invisible. `companion`/`system` rows may be
     // hidden (an executor's kept-to-itself reasoning is a real, gated shape);
     // an invisible row attributed to the owner is a forgery with no reader.
@@ -208,7 +200,7 @@ pub(crate) enum WitnessMessageBodyAuthor {
 ///
 /// [`RecordError::InvalidWitnessMessageBody`](crate::error::RecordError::InvalidWitnessMessageBody) when the bytes are not decodable, are
 /// not the canonical key set in canonical order, carry an unknown author or
-/// type token, exceed the order ceiling, hide a `user` row, carry malformed
+/// type token, hide a `user` row, carry malformed
 /// metadata, or do not re-encode byte-identically.
 pub(crate) fn validate_canonical_witness_message_body(
     body: &[u8],

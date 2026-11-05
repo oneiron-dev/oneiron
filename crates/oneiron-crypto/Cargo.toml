@@ -13,7 +13,7 @@ publish = false
 doctest = false
 
 # Every primitive is pinned to an exact release; see README.md for the choice and
-# its audit status. A bump is a reviewed change with its known-answer tests rerun.
+# its audit status.
 [dependencies]
 aes-gcm = { version = "=0.11.1", default-features = false, features = ["aes", "alloc", "zeroize"] }
 argon2 = { version = "=0.6.0", default-features = false, features = ["alloc", "zeroize"] }

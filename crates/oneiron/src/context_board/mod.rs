@@ -88,6 +88,7 @@ pub(crate) use scratchpad::{
 };
 pub(crate) use scratchpad::{sealed_pad_reask_text, sealed_pad_review_text};
 
+pub(crate) use stream::task_body_for_announcement;
 pub(crate) use stream::task_for_announcement;
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,

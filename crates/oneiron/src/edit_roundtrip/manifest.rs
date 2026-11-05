@@ -26,6 +26,8 @@ pub enum WarningCode {
     ChartsPresentMinimalMutation,
     MacrosPresentMinimalMutation,
     SessionReported,
+    /// The current worksheet repair does not cover this XML or structural edit.
+    WorksheetPreservationIncomplete,
     /// Laid-out deck text changed, or a text frame was resized, with no
     /// rendered fit proof.
     FitUnverified,

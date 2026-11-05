@@ -499,7 +499,15 @@ impl SyncConnection {
                 changed = mode_rx.changed() => {
                     if changed.is_ok() {
                         self.queue_on_exit(&mut gate, debounce_buffer).await;
-                        let _ = write.send(Message::Close(None)).await;
+                        let mut send_left = self.left.subscribe();
+                        tokio::select! {
+                            biased;
+                            () = async { let _ = send_left.wait_for(|left| *left).await; } => {
+                                self.publish_leave_unqueued(debounce_buffer);
+                                break LoopExit::Shutdown;
+                            }
+                            _ = write.send(Message::Close(None)) => {}
+                        }
                         return LoopExit::Renegotiate;
                     }
                 }
@@ -514,7 +522,12 @@ impl SyncConnection {
                 () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
                     self.queue_on_exit(&mut gate, debounce_buffer).await;
                     self.publish_leave_unqueued(debounce_buffer);
-                    let _ = write.send(Message::Close(None)).await;
+                    let mut send_left = self.left.subscribe();
+                    tokio::select! {
+                        biased;
+                        _ = write.send(Message::Close(None)) => {}
+                        () = async { let _ = send_left.wait_for(|left| *left).await; } => {}
+                    }
                     break LoopExit::Shutdown;
                 }
 
@@ -523,7 +536,14 @@ impl SyncConnection {
                     // Flush any remaining buffered updates to queue
                     self.queue_on_shutdown(&mut gate, debounce_buffer).await;
                     // Send close frame
-                    let _ = write.send(Message::Close(None)).await;
+                    let mut send_left = self.left.subscribe();
+                    tokio::select! {
+                        biased;
+                        () = async { let _ = send_left.wait_for(|left| *left).await; } => {
+                            self.publish_leave_unqueued(debounce_buffer);
+                        }
+                        _ = write.send(Message::Close(None)) => {}
+                    }
                     break LoopExit::Shutdown;
                 }
             }

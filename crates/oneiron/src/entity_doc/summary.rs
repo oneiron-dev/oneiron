@@ -29,6 +29,18 @@ fn summary_doc(
     Ok((head, doc))
 }
 
+// A generic metadata clear and an empty native memo read identically.
+fn keep_memo(doc: &EntityDoc) -> Result<String> {
+    let metadata = doc.metadata()?;
+    match metadata.get("keep") {
+        None | Some(rmpv::Value::Nil) => Ok(String::new()),
+        Some(value) => value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or(Error::CorruptedIndex("summary keep metadata")),
+    }
+}
+
 pub(crate) fn summary_meta_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -41,12 +53,7 @@ pub(crate) fn summary_meta_in_txn(
             &map_get_bytes(&meta, "purpose")
                 .ok_or(Error::CorruptedIndex("summary purpose metadata"))?,
         )?,
-        keep: doc
-            .metadata()?
-            .get("keep")
-            .and_then(rmpv::Value::as_str)
-            .ok_or(Error::CorruptedIndex("summary keep metadata"))?
-            .to_owned(),
+        keep: keep_memo(&doc)?,
         derivation: storage::decode(
             &map_get_bytes(&meta, "derivation")
                 .ok_or(Error::CorruptedIndex("summary derivation metadata"))?,
@@ -267,14 +274,8 @@ pub(crate) fn open_summary_proposal(
         let (_, live) = summary_doc(vault, txn, &request.entity)?;
         if let Some(keep) = keep {
             let base = live.fork(&request.base)?;
-            let base_keep = base
-                .metadata()?
-                .get("keep")
-                .and_then(rmpv::Value::as_str)
-                .map(str::to_owned);
-            if summary_meta_in_txn(vault, txn, &request.entity)?.keep != keep
-                || base_keep.as_deref() != Some(keep)
-            {
+            let base_keep = keep_memo(&base)?;
+            if summary_meta_in_txn(vault, txn, &request.entity)?.keep != keep || base_keep != keep {
                 return Err(Error::ConcurrentWrite("summary keep memo changed").into());
             }
         }

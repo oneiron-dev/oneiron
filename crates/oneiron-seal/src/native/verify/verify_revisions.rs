@@ -121,17 +121,26 @@ fn is_written_xref_stream(before: &Document, after: &Document, id: ObjectId) -> 
                 && index.iter().all(|v| matches!(v, Object::Integer(n) if *n >= 0)))
 }
 
-fn without(dict: &lopdf::Dictionary, keys: &[&[u8]]) -> lopdf::Dictionary {
+fn without(
+    dict: &lopdf::Dictionary,
+    keys: &[&[u8]],
+    limits: &SealResourceLimits,
+) -> Result<lopdf::Dictionary, SealMemoryRefusal> {
+    pdf::admitted::dictionary(limits, dict)?;
     let mut clone = dict.clone();
     for key in keys {
         clone.remove(key);
     }
-    clone
+    Ok(clone)
 }
 /// Native incremental appends preserve effective document metadata. `/Size`
 /// and xref-stream decoding/index fields are structural; every other trailer
 /// entry (notably `/Root`, `/Info`, `/ID`) must remain byte-for-byte equal.
-fn preserves_trailer(before: &Document, after: &Document) -> bool {
+fn preserves_trailer(
+    before: &Document,
+    after: &Document,
+    limits: &SealResourceLimits,
+) -> Result<bool, SealMemoryRefusal> {
     let structural = [
         b"Size".as_slice(),
         b"Prev",
@@ -142,13 +151,15 @@ fn preserves_trailer(before: &Document, after: &Document) -> bool {
         b"Filter",
         b"DecodeParms",
     ];
+    pdf::admitted::dictionary(limits, &before.trailer)?;
     let mut old = before.trailer.clone();
+    pdf::admitted::dictionary(limits, &after.trailer)?;
     let mut new = after.trailer.clone();
     for key in structural {
         old.remove(key);
         new.remove(key);
     }
-    old == new
+    Ok(old == new)
 }
 
 fn ref_id(obj: &Object) -> Option<ObjectId> {
@@ -167,8 +178,8 @@ fn dss_allowed(
     let (Some(old_catalog), Some(new_catalog)) = (pdf::catalog(before), pdf::catalog(after)) else {
         return Ok(false);
     };
-    if !preserves_trailer(before, after)
-        || without(old_catalog, &[b"DSS"]) != without(new_catalog, &[b"DSS"])
+    if !preserves_trailer(before, after, limits)?
+        || without(old_catalog, &[b"DSS"], limits)? != without(new_catalog, &[b"DSS"], limits)?
     {
         return Ok(false);
     }
@@ -254,8 +265,9 @@ fn doc_timestamp_allowed(
     let (Some(old_catalog), Some(new_catalog)) = (pdf::catalog(before), pdf::catalog(after)) else {
         return Ok(false);
     };
-    if !preserves_trailer(before, after)
-        || without(old_catalog, &[b"AcroForm"]) != without(new_catalog, &[b"AcroForm"])
+    if !preserves_trailer(before, after, limits)?
+        || without(old_catalog, &[b"AcroForm"], limits)?
+            != without(new_catalog, &[b"AcroForm"], limits)?
     {
         return Ok(false);
     }
@@ -280,7 +292,9 @@ fn doc_timestamp_allowed(
         let Some(old_af) = pdf::resolve(before, old_af_obj).and_then(|o| o.as_dict().ok()) else {
             return Ok(false);
         };
-        if without(old_af, &[b"Fields", b"SigFlags"]) != without(af, &[b"Fields", b"SigFlags"]) {
+        if without(old_af, &[b"Fields", b"SigFlags"], limits)?
+            != without(af, &[b"Fields", b"SigFlags"], limits)?
+        {
             return Ok(false);
         }
         let Some(old_fields) = old_af

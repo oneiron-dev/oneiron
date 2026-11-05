@@ -22,6 +22,8 @@ use crate::store::{
     GateDecisionId, GateDecisionRetentionPolicy, Store, StoreActorScrubs, StoreDeleteGuards,
     StoreGateHooks, StoreHooks, StoreProjectWrites, StoreRecordHooks, StoreScopeStamps,
 };
+#[cfg(unix)]
+use crate::store::{ResponseOwners, ResponseScan, StoreVoiceBankResponse};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::claim_body::ClaimBody;
@@ -41,6 +43,8 @@ pub(crate) const ENGINE_STORE_HOOKS: StoreHooks = StoreHooks {
     #[cfg(feature = "sync")]
     sync_hooks: &EngineSyncHooks,
     attempt_operations: &EngineAttemptOperations,
+    #[cfg(unix)]
+    voice_bank_response: &EngineVoiceBankResponse,
     core_write_operations: &EngineCoreWriteOperations,
 };
 
@@ -667,6 +671,27 @@ impl crate::store::StoreAttemptOperations for EngineAttemptOperations {
         record: &mut crate::store::attempt_record::AttemptRecord,
     ) {
         crate::attempt_queue::scrub_hard_erased_payload_in_txn(store, txn, record);
+    }
+}
+
+/// The engine's voice bank response operations.
+#[cfg(unix)]
+struct EngineVoiceBankResponse;
+
+#[cfg(unix)]
+impl StoreVoiceBankResponse for EngineVoiceBankResponse {
+    fn voice_bank_scan(&self, key: &[u8], value: &[u8]) -> ResponseScan {
+        crate::voice_identity::ref_bank::voice_bank_scan(key, value)
+    }
+
+    fn voice_bank_owners(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<ResponseOwners> {
+        crate::voice_identity::ref_bank::voice_bank_owners(store, txn, key, value)
     }
 }
 

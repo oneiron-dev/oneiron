@@ -92,12 +92,15 @@ impl DoorClock {
             .now_recorded_at()
             .saturating_sub(clock.anchor_recorded_at);
         let evaluated_at = request.occurred_at.saturating_add(spent);
+        // Prefer the frozen zone's offset at delivery; fall back to the frozen offset.
+        let offset_minutes = request
+            .delivery_window_iana_timezone
+            .as_deref()
+            .and_then(|zone| crate::commitment_wake::zone_offset_minutes_at(zone, evaluated_at))
+            .unwrap_or(clock.utc_offset_minutes);
         Self {
             evaluated_at,
-            local_minute_of_day: Some(local_minute_of_day_at(
-                evaluated_at,
-                clock.utc_offset_minutes,
-            )),
+            local_minute_of_day: Some(local_minute_of_day_at(evaluated_at, offset_minutes)),
         }
     }
 }
@@ -216,7 +219,7 @@ fn outbound_delivery_window_channel(intent: &OutboundIntent) -> String {
     normalize_channel_class(&intent.channel)
 }
 
-/// Derive wall-clock minute from the frozen host offset, never a timezone database.
+/// Derive wall-clock minute from the selected host offset.
 pub(crate) fn local_minute_of_day_at(epoch_secs: u64, utc_offset_minutes: i16) -> u16 {
     (((epoch_secs / 60) as i64 + i64::from(utc_offset_minutes)).rem_euclid(1440)) as u16
 }

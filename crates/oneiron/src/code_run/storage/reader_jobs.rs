@@ -1288,7 +1288,9 @@ impl ExecutorStorage<'_> {
     /// Stores `text` as summary job `task`'s finding while it is live at
     /// `generation`: a stored value of the job's own run (a record with no
     /// executor, its one name `summary`), marked with its members' taint,
-    /// then reported as the job's finding. The run's end settles it.
+    /// then reported as the job's finding. Its replay save stamps the
+    /// spawning actor's response ownership in the same transaction. The
+    /// run's end settles it.
     pub(crate) fn store_summary_job_text(
         &self,
         task: EntityId,
@@ -1342,7 +1344,12 @@ impl ExecutorStorage<'_> {
             Some(held) => *held = binding,
             None => record.bindings.push(binding),
         }
-        self.put_code_run_replay_record_if_generation_with_heal(&record, expected, None)?;
+        self.put_owned_code_run_replay_record(
+            &record,
+            expected,
+            job.run,
+            job.binding.actor.entity,
+        )?;
         let rows = members.iter().try_fold(Vec::new(), |mut all, member| {
             all.extend(member.rows.clone()?);
             Some(all)

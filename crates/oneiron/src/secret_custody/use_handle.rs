@@ -38,6 +38,7 @@
 
 mod bind;
 mod lease;
+mod native_mail;
 mod output;
 mod receipt;
 mod seal_key;
@@ -52,8 +53,8 @@ use super::reveal::parse_secret_handle;
 use super::run_bound::{RunSecretHolder, run_secret_effector};
 use super::types::{SecretBinding, SecretCustodyStatus};
 use crate::connector_key::{
-    GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, PackConnectionCheck,
-    ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK,
+    GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, NATIVE_MAIL_JMAP_CHECK,
+    PackConnectionCheck, ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -91,10 +92,11 @@ pub const SECRET_USE_CONNECTOR_CALL: &str = "connector.call";
 
 /// The operations `self.use` hands a secret to, each a trusted door that
 /// already takes a credential at T0 through the credential door: the
-/// read-only provider checks the engine ships, each to one fixed provider
-/// endpoint. A call on the canon rows waits for its own entry (the FIX-LIST
-/// names them). One table, so a ruling changes one entry.
-pub static SECRET_USE_OPERATIONS: [SecretUseOperation; 4] = [
+/// read-only provider checks the engine ships, to their fixed provider
+/// endpoints or the native mail server the host installed. Other canon
+/// rows wait for their own entry (the FIX-LIST names them). One table, so a
+/// ruling changes one entry.
+pub static SECRET_USE_OPERATIONS: [SecretUseOperation; 5] = [
     SecretUseOperation {
         name: SLACK_AUTH_TEST_CHECK,
         effector: "connector:slack",
@@ -118,6 +120,12 @@ pub static SECRET_USE_OPERATIONS: [SecretUseOperation; 4] = [
         effector: "connector:linkedin",
         what: "LinkedIn's own profile with the session cookie: the member it signs in as",
         consume: linkedin_session,
+    },
+    SecretUseOperation {
+        name: NATIVE_MAIL_JMAP_CHECK,
+        effector: "connector:native_mail",
+        what: "The host's native mail JMAP discovery and domain read with the credential",
+        consume: native_mail::check,
     },
 ];
 

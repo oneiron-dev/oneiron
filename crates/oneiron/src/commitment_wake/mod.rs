@@ -40,6 +40,7 @@ mod wake_event;
 mod wake_fire;
 mod wake_proposal;
 
+pub(crate) use self::reminder::zone_offset_minutes_at;
 pub use self::reminder::{
     COMMITMENT_REMINDER_CONTENT_PREFIX, CommitmentReminderPlanner, CommitmentReminderRoute,
 };

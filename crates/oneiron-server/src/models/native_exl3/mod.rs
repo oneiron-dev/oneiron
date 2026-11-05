@@ -104,6 +104,17 @@ impl NativeExl3Transport {
         worker_host::native_route(&self.provider, wire_model)
     }
 
+    /// The HTTP fallback's tie (FIX 9296): the managed launch evidence for
+    /// this call's wire model now, before its HTTP send.
+    fn http_tie(&self, body: &JsonValue) -> Option<Tie> {
+        let wire_model = body.get("model").and_then(JsonValue::as_str)?;
+        let evidence = worker_host::managed_http_evidence(&self.provider, wire_model)?;
+        Some(Tie {
+            manifest_sha256: evidence.manifest_sha256,
+            epoch: evidence.backend_epoch,
+        })
+    }
+
     /// The body as HTTP would send it: its output cap and response format.
     fn shaped(&self, mut body: JsonValue) -> JsonValue {
         self.http.cap.apply(&mut body);
@@ -123,7 +134,8 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         lease: &'a BudgetLease,
     ) -> OpenAiCompatFuture<'a> {
         let Some(route) = self.route(&request.body) else {
-            return self.http.execute(request, lease);
+            let tie = self.http_tie(&request.body);
+            return self.http.execute_with_tie(request, lease, tie);
         };
         let segments = request.host_segments;
         let body = self.shaped(request.body);
@@ -142,7 +154,8 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         lease: &'a BudgetLease,
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
         let Some(route) = self.route(&request.body) else {
-            return self.http.stream(request, lease);
+            let tie = self.http_tie(&request.body);
+            return self.http.stream_with_tie(request, lease, tie);
         };
         let segments = request.host_segments;
         let body = self.shaped(request.body);
@@ -166,22 +179,30 @@ impl OpenAiCompatTransport for NativeExl3Transport {
     }
 }
 
-/// What a sent call answers to: its manifest and epoch check (FIX 9195).
-struct Tie {
-    manifest_sha256: String,
-    epoch: String,
+/// What a sent call answers to: its manifest and epoch check (FIX 9195, FIX 9296).
+#[derive(Clone)]
+pub(super) struct Tie {
+    manifest_sha256: Option<String>,
+    epoch: Option<String>,
 }
 
 impl Tie {
     /// Keeps each receipt's verified-artifacts claim only when the answer
     /// echoes this launch's manifest and the receipt names this epoch;
-    /// otherwise the receipt's build is unknown.
-    fn apply(&self, body: &mut JsonValue) {
+    /// otherwise the receipt's build is unknown. Both expected facts must be
+    /// known: a missing fact never matches, so it downgrades a claimed
+    /// verification to unknown instead of keeping it.
+    pub(super) fn apply(&self, body: &mut JsonValue) {
         let Some(usage) = body.get_mut("usage").and_then(JsonValue::as_object_mut) else {
             return;
         };
-        let echoed = usage.get(LAUNCH_MANIFEST_KEY).and_then(JsonValue::as_str)
-            == Some(self.manifest_sha256.as_str());
+        let echoed = match (
+            self.manifest_sha256.as_deref(),
+            usage.get(LAUNCH_MANIFEST_KEY).and_then(JsonValue::as_str),
+        ) {
+            (Some(expected), Some(echoed)) => echoed == expected,
+            _ => false,
+        };
         let Some(JsonValue::Array(calls)) = usage.get_mut(INFERENCE_CALLS_KEY) else {
             return;
         };
@@ -197,8 +218,12 @@ impl Tie {
                 .get("identity")
                 .and_then(|identity| identity.get("backend_epoch"))
                 .and_then(JsonValue::as_str);
+            let epoch_matches = match (self.epoch.as_deref(), epoch) {
+                (Some(expected), Some(actual)) => actual == expected,
+                _ => false,
+            };
             if claimed
-                && !(echoed && epoch == Some(self.epoch.as_str()))
+                && !(echoed && epoch_matches)
                 && let Ok(unknown) = serde_json::to_value(WorkerBuildEvidence::Unknown)
             {
                 worker.insert("build_evidence".to_owned(), unknown);
@@ -375,8 +400,8 @@ async fn begin(
             Ok(Begun::Sent(Sent {
                 call,
                 tie: Tie {
-                    manifest_sha256,
-                    epoch,
+                    manifest_sha256: Some(manifest_sha256),
+                    epoch: Some(epoch),
                 },
                 physical,
                 registration,
@@ -598,11 +623,9 @@ fn record_receipt(
     if let Some(mut receipt) = receipt {
         receipt.scheduling = scheduling;
         receipt.physical = Some(sent.physical);
-        worker_host::report_receipt(
-            &route.worker.spec().worker_id,
-            &sent.tie.epoch,
-            receipt.clone(),
-        );
+        if let Some(epoch) = sent.tie.epoch.as_deref() {
+            worker_host::report_receipt(&route.worker.spec().worker_id, epoch, receipt.clone());
+        }
         Some(receipt)
     } else {
         None

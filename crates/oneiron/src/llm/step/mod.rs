@@ -89,7 +89,8 @@ pub(crate) use self::response_pins::{
     retire_erased_step_responses_in_rows,
 };
 pub(crate) use self::step_state::{
-    erase_step_state_owner_in_txn, owner_gone_in_txn, step_state_carriage, step_state_owners,
+    dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, owner_gone_in_txn,
+    step_state_carriage, step_state_owners,
 };
 pub(crate) use self::submission_custody::{
     erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,

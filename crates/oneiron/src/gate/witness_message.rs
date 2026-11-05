@@ -49,8 +49,7 @@ use super::resolution::PolicyManifestResolution;
 
 use crate::store::witness_message_body::witness_message_envelope_denial;
 pub(crate) use crate::store::witness_message_body::{
-    MAX_WITNESS_MESSAGE_ORDER, WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM,
-    WITNESS_AUTHOR_USER, WitnessMessageEnvelope,
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER, WitnessMessageEnvelope,
 };
 
 /// One authorized MESSAGE write.

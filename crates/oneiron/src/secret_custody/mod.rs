@@ -194,7 +194,8 @@ pub(crate) use self::storage_seal::{
     stored_value_held_in_txn, stored_value_opens_in_txn, withheld_credential_row,
 };
 pub(crate) use self::storage_seal::{
-    open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
+    open_connector_resume_in_txn, read_back_connector_resume_for_activation,
+    retire_connector_resume_in_txn, seal_connector_resume_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::moves_custody_floor;

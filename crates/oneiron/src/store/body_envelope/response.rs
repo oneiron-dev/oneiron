@@ -40,7 +40,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideKey, SideTable, SideTableDbs};
-use crate::store::{ManifestDbs, MediaKey, Store, StoreAttemptOperations};
+use crate::store::{ManifestDbs, MediaKey, Store, StoreAttemptOperations, StoreVoiceBankResponse};
 pub(crate) use shared_wait::{response_owed_to_all_in_txn, settle_shared_response_in_txn};
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
@@ -279,7 +279,7 @@ impl ResponseFamily {
                     .then_some(Self::WaitSettled)
             })
             .or_else(|| {
-                crate::voice_identity::ref_bank::voice_bank_row(key).then_some(Self::VoiceBank)
+                crate::store::voice_bank_response::voice_bank_row(key).then_some(Self::VoiceBank)
             }),
             ResponseDb::Entities => EntityMetadataHeader::parse(value)
                 .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
@@ -344,6 +344,7 @@ impl ResponseFamily {
     pub(crate) fn scan(
         self,
         operations: &dyn StoreAttemptOperations,
+        voice: &dyn StoreVoiceBankResponse,
         key: &[u8],
         value: &[u8],
     ) -> ResponseScan {
@@ -381,27 +382,38 @@ impl ResponseFamily {
             }
             Self::MessageReplyAssertions => crate::memory::reply_assertions_scan(value),
             Self::ReportCluster => crate::feedback::intake::report_cluster_carriage(value),
-            Self::VoiceBank => crate::voice_identity::ref_bank::voice_bank_scan(key, value),
+            Self::VoiceBank => voice.voice_bank_scan(key, value),
             Self::TypedQuestion => {
                 crate::llm::decision::questions::typed_question_carriage(key, value)
             }
         }
     }
 
-    /// Whether a checkpoint's payload placement gives the row `key` to the
-    /// response client (FIX 9179): it holds a response, or the erased form
-    /// one leaves (the explicit marker, a wait's erased reply). Any other
-    /// row of a mixed family stays where its family is classed.
-    pub(crate) fn placed_as_response(
-        self,
+    /// Whether a mixed attempt/wait row carries a response for checkpoint payload
+    /// placement (FIX 9179): a queue row or a wait index row the response client
+    /// takes, by the same family and scan the census reads (a response, the erased
+    /// marker, a wait's erased reply). Any other family is not a mixed family.
+    pub(crate) fn mixed_response_placed_as_response(
         operations: &dyn StoreAttemptOperations,
+        db: ResponseDb,
         key: &[u8],
         value: &[u8],
     ) -> bool {
-        is_opaque_erased(value)
-            || self.scan(operations, key, value) != ResponseScan::NotResponse
-            || (matches!(self, Self::WaitDelivery | Self::WaitSettled)
-                && crate::store::executor_wait_delivery::wait_reply_erased(value))
+        match Self::of_row(db, key, value) {
+            Some(ResponseFamily::AttemptPayload) => {
+                is_opaque_erased(value)
+                    || crate::store::attempt_payload_response::attempt_payload_scan(
+                        operations, key, value,
+                    ) != ResponseScan::NotResponse
+            }
+            Some(ResponseFamily::WaitDelivery | ResponseFamily::WaitSettled) => {
+                is_opaque_erased(value)
+                    || crate::store::executor_wait_delivery::wait_reply_scan(value)
+                        != ResponseScan::NotResponse
+                    || crate::store::executor_wait_delivery::wait_reply_erased(value)
+            }
+            _ => false,
+        }
     }
 
     /// Who owns the opaque response in the row `key`, as far as its key
@@ -435,7 +447,9 @@ impl ResponseFamily {
             return Ok(ResponseOwners::Partial(owners));
         }
         if self == Self::VoiceBank {
-            return crate::voice_identity::ref_bank::voice_bank_owners(store, txn, key, value);
+            return store
+                .voice_bank_response
+                .voice_bank_owners(store, txn, key, value);
         }
         if self == Self::MessageReplyAssertions {
             return Ok(crate::memory::reply_assertions_opaque_owners(key, value));
@@ -495,8 +509,9 @@ impl ResponseFamily {
             // A bank row's are its subject's or creator's, as far as the
             // bank's own rows prove them; the rest are reported.
             Self::VoiceBank => {
-                let owners =
-                    crate::voice_identity::ref_bank::voice_bank_owners(store, txn, key, value)?;
+                let owners = store
+                    .voice_bank_response
+                    .voice_bank_owners(store, txn, key, value)?;
                 if !owners.proved() {
                     tracing::warn!(
                         "a voice bank row is bound under the owners the bank proves; the rest \

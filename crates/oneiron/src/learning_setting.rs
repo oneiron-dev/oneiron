@@ -398,6 +398,22 @@ pub(crate) fn setting_value_in_txn(
     setting_value_scoped_in_txn(store, txn, spec, None, None)
 }
 
+/// The vault override for `spec`, when an owner row or fitted value decided
+/// the same resolution as [`setting_value_in_txn`]. A catalog seed is not an
+/// override, so a caller may retain its own shipped fallback.
+pub(crate) fn setting_override_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+) -> Result<Option<f64>> {
+    let (value, decided) =
+        resolution::resolve_in_txn(store, txn, spec, &[SettingScope::Vault], None)?;
+    Ok(match decided {
+        resolution::Decided::Catalog => None,
+        resolution::Decided::Owner | resolution::Decided::Fit { .. } => Some(value),
+    })
+}
+
 /// The value in force for `spec` where `project` and `type_ref` apply: the
 /// narrowest pin (the project's goal's, then the project's, then the
 /// type's, then the vault's); else the goal's fit, else the goal's seed;

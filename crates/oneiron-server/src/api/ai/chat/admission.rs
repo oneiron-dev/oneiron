@@ -5,13 +5,13 @@
 use super::{
     Answer, AnswerOpen, AnswerRefused, Arc, ChatTurnRequest, CoreAuth, CoreScope, EntityId,
     HOST_TURN_GENERATE, HistoryRole, IntoResponse, Json, JsonRejection, LlmMessage, LlmMessageRole,
-    MessageWriteMode, Refused, ReplyAssertionCollector, RoleRefusal, SessionHint, Started,
-    StatusCode, StreamCadence, StreamSyncVisibility, SyncServer, TurnCredential, Value, VerbCall,
-    WITNESS_ROW, WakeTurnSubject, WitnessAuthor, WriteActor, after_turn, assistant,
-    begin_sourced_answer, compaction, credential_memory, hook_ask, hook_stopped, invocation,
-    keepalive_every, mark_history_end, principal, recall, refused, resolve_entity_ref,
-    room_launch_funding, segments, sitting, sources, text_message, turn_generate_pre,
-    verb_hook_boundary, witness_through_row, witness_turn,
+    MessageWriteMode, Refused, ReplyAssertionCollector, RoleRefusal, Started, StatusCode,
+    StreamCadence, StreamSyncVisibility, SyncServer, TurnCredential, Value, VerbCall, WITNESS_ROW,
+    WakeTurnSubject, WitnessAuthor, WriteActor, after_turn, assistant, begin_sourced_answer,
+    compaction, credential_memory, hook_ask, hook_stopped, invocation, keepalive_every,
+    mark_history_end, principal, recall, refused, resolve_entity_ref, room_launch_funding,
+    segments, sitting, sources, text_message, turn_generate_pre, verb_hook_boundary,
+    witness_through_row, witness_turn,
 };
 use crate::api::ai::room_place::{reply_place, stamp_reply};
 
@@ -411,10 +411,11 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // Nor its context's records (FIX 6921): a session-only turn keeps none.
     let context = context.filter(|_| generate_session.is_none() && witness_session.is_none());
     if signals {
-        // A turn carries no deadline, so none bounds the hint's wait.
-        server
-            .ai
-            .session_hint(session_key, SessionHint::AppOpen, None);
+        // A turn carries no deadline, so none bounds the hint's wait. The
+        // apply's effect is advisory: every outcome continues the SAME
+        // witness below.
+        let _applied: Option<oneiron_driver::SessionHintEffect> =
+            server.ai.session_app_open_applied(session_key, None);
     }
     let mut written = None;
     let user = crate::server::blocking(|| {

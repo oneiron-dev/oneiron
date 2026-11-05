@@ -751,6 +751,56 @@ pub(super) fn native_route(provider: &str, wire_model: &str) -> Option<NativeRou
     route.launch().is_some().then_some(route)
 }
 
+/// What an HTTP answer from a managed EXL3 worker must echo to keep a
+/// verified-artifacts claim (FIX 9296): the manifest digest of the launch
+/// this host started and the epoch the worker qualified with, each absent
+/// when that fact has no current record. Outer `None` is only a call no
+/// managed EXL3 worker is bound to.
+#[derive(Clone, Debug)]
+pub(super) struct ManagedLaunchEvidence {
+    pub(super) manifest_sha256: Option<String>,
+    pub(super) backend_epoch: Option<String>,
+}
+
+/// The managed EXL3 worker bound to `provider` calling `wire_model`, as its
+/// slot and readiness stand now, without waiting: `None` only when no
+/// managed EXL3 worker is bound there. A bound worker with no launch record
+/// or no ready epoch still returns `Some`, with those facts `None`, so its
+/// answers downgrade verification instead of passing unfiltered. Two
+/// snapshots racing only lose verification, never a refusal.
+pub(super) fn managed_http_evidence(
+    provider: &str,
+    wire_model: &str,
+) -> Option<ManagedLaunchEvidence> {
+    let host = HOST.get()?;
+    let (worker, slot) = {
+        let workers = host.lock();
+        let hosted = workers.values().find(|hosted| {
+            hosted.native_slot().is_some()
+                && hosted.row.binding.provider == provider
+                && hosted.row.binding.model == wire_model
+        })?;
+        (hosted.worker.clone(), Arc::clone(hosted.native_slot()?))
+    };
+    let manifest_sha256 = slot
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+        .map(|record| record.manifest_sha256.clone());
+    let backend_epoch = match worker.status().readiness {
+        oneiron::llm::WorkerReadiness::Ready { observed } => observed
+            .identity
+            .backend_epoch
+            .as_ref()
+            .map(|epoch| epoch.as_str().to_owned()),
+        _ => None,
+    };
+    Some(ManagedLaunchEvidence {
+        manifest_sha256,
+        backend_epoch,
+    })
+}
+
 impl WorkerHost {
     /// Starts a new supervisor's work: a managed worker launches where this
     /// process may launch, an external one gets its initial probe.

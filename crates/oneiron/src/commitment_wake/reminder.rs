@@ -139,7 +139,7 @@ impl CommitmentReminderRoute {
 
 /// The UTC offset, in whole minutes, the IANA `zone` observes at `at`; `None`
 /// for a zone the embedded database does not know.
-fn zone_offset_minutes_at(zone: &str, at: u64) -> Option<i16> {
+pub(crate) fn zone_offset_minutes_at(zone: &str, at: u64) -> Option<i16> {
     let wall = crate::calendar::tz::utc_to_wall(at, zone).ok()?;
     let local = chrono::NaiveDate::from_ymd_opt(wall.y, u32::from(wall.mo), u32::from(wall.d))?
         .and_hms_opt(u32::from(wall.h), u32::from(wall.mi), u32::from(wall.s))?

@@ -90,7 +90,9 @@ pub(crate) use self::references::{
     artifacts_claiming, claimed_hash_rows_exist, record_version_claim,
 };
 #[cfg(feature = "sync")]
-pub(crate) use self::references::{readmit_held_asset_in_txn, release_fenced_only};
+pub(crate) use self::references::{
+    readmit_held_asset_in_txn, readmit_held_asset_with_facts_in_txn, release_fenced_only,
+};
 pub use self::review_request::SlideReviewLimitsInput;
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};

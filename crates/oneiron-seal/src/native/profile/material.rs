@@ -211,8 +211,13 @@ pub(super) async fn gather_validation_material(
     let signer_chain_ders: Vec<Vec<u8>> = std::iter::once(identity.signer_certificate_der.clone())
         .chain(identity.certificate_chain_der.iter().cloned())
         .collect();
-    if verify::validate_chain(&signer_chain_ders, &anchors, ctx.clock_ms / 1000).is_err() {
-        return Ok(None);
+    match verify::validate_chain(&signer_chain_ders, &anchors, ctx.clock_ms / 1000, &memory) {
+        Ok(()) => {}
+        Err(SealError::Fatal {
+            code: FatalCode::CertificatePathInvalid,
+            ..
+        }) => return Ok(None),
+        Err(error) => return Err(error),
     }
     let empty_chain: &[Vec<u8>] = &[];
     let tsa_chain = token.map_or(empty_chain, |t| t.tsa_chain_ders.as_slice());

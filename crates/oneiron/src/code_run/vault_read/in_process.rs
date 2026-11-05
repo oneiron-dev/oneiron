@@ -435,7 +435,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .read_named(&[PointRead::short(&short_id, content_hash)], None)
             .map_err(|error| engine_failure(method, &error))?;
         let mut narrowing = hydrated.receipt;
-        let row = named_row(method, hydrated.value)?;
+        let row = named_row(method, hydrated.value)
+            .map_err(|error| error.with_read_receipt(narrowing.clone()))?;
         self.project_hydrate(
             method,
             short_id,
