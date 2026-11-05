@@ -120,6 +120,27 @@ fn digest_instances_in_txn<D: SideTableDbs>(
     Ok(instances)
 }
 
+/// The governed instances that exist before an erase releases its body
+/// references: current and remembered digest instances, plus actual inline
+/// ASSET bindings. Unlike ERASED notes, this inventory precedes the erase.
+pub(crate) fn governed_body_instances_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    digests: &[[u8; 32]],
+    inline_assets: &[EntityId],
+) -> Result<BTreeSet<[u8; 16]>> {
+    let mut instances = BTreeSet::new();
+    for digest in digests {
+        instances.extend(digest_instances_in_txn(store, txn, digest)?);
+    }
+    for asset in inline_assets {
+        if let Some(instance) = INLINE_ASSETS.get(store, txn, asset)? {
+            instances.insert(instance);
+        }
+    }
+    Ok(instances)
+}
+
 /// Drops the remembered `instances` of `digest`, each retired now.
 fn forget_remembered_in_txn<D: SideTableDbs>(
     dbs: &D,

@@ -426,6 +426,13 @@ where
                 }
             },
         };
+        super::capture_fact::record_in_txn(
+            &self.vault.store,
+            wtxn,
+            request.attempt_id,
+            artifact_id,
+            &version,
+        )?;
         Ok(ByoaTerminalReceipt {
             attempt,
             artifact_id,
