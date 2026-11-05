@@ -40,7 +40,7 @@ pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, Win
 pub use self::driver::EngineNativeExecutor;
 // DOOR-141 PR3b: a turn program's pinned entry, for its runtime alone.
 pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
-pub(crate) use self::record::parked_wait_now;
+pub(crate) use self::record::{code_run_complete_in_txn, parked_wait_now};
 #[cfg(test)]
 use self::record::step_state_hash;
 pub use self::record::{EnteredRun, entered_run};
