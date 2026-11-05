@@ -160,6 +160,11 @@ pub(super) fn admit_recognition_candidate_in(
     if !record.consented_purposes.contains(purpose) {
         return Ok(false);
     }
+    if let Some(world) = record.world_ref
+        && crate::store::world_pad_rows::world_keys_destroyed_in_txn(&vault.store, txn, world)?
+    {
+        return Ok(false);
+    }
     let raw = vault.store.port_entity_raw(txn, &record.subject_ref)?;
     if crate::deletion::row_deletion_marked(&vault.store, txn, &record.subject_ref, raw.as_deref())?
     {

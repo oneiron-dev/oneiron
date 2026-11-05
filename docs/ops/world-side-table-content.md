@@ -67,7 +67,10 @@ The device secret is read before the transaction, never loaded inside the writer
 
 Stored print rows separate vector-free metadata from their material. Matching
 checks the existing space, expiry, purpose, consent, subject and machine-world
-admission before opening a centroid. Each open uses its stored exact retained
+admission before opening a centroid. A world's native key-destruction fact excludes
+its prints in that same snapshot and again in the roster writer; a surviving
+metadata row cannot abort matching other worlds' valid prints. Missing WORLD rows
+or unexpected key/open/storage errors are not treated as destruction. Each open uses its stored exact retained
 world key id in that snapshot, not a current-key retry. Key requirements follow
 the stored material, not the presence of a world id: public unsealed rows need no
 key, while a sealed row widened later still opens its exact retained key.
