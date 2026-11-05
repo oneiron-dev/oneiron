@@ -118,7 +118,12 @@ pub(super) fn apply_claim_candidate(
         )?;
     }
     let applied_put = apply_put(
-        store,
+        &crate::secret_custody::CustodyWrite {
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+        },
         wtxn,
         PutRequest {
             row: PutRow {

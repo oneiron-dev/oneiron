@@ -196,6 +196,11 @@ pub enum AuthorityOp {
     /// install key of the act it leads to, or by the host's slip issuer for a
     /// host-issued op (FIX 7908). A main-log entry with no semantic payload.
     FrontierJoin(FrontierJoin),
+    /// One owner cut of a repository's origin authority: the epoch it opens
+    /// and the one machine that writes the repository's refs at it, signed
+    /// by the install key of a live machine of the vault, in any role (FIX
+    /// 15740). A main-log entry, so every machine the owner admits folds it.
+    OriginCut(OriginCut),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -262,6 +267,7 @@ impl AuthorityLogEntry {
             AuthorityOp::ConversationTrainingVaultSet(set) => set.validate_entry(self)?,
             AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate_entry(self)?,
             AuthorityOp::FrontierJoin(join) => join.validate_entry(self)?,
+            AuthorityOp::OriginCut(cut) => cut.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -499,6 +505,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::ExportAct(record) => record.validate(),
         AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate(),
         AuthorityOp::FrontierJoin(_) => Ok(()),
+        AuthorityOp::OriginCut(cut) => cut.validate(),
     }
 }
 
