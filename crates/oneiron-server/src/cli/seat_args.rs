@@ -84,20 +84,32 @@ pub struct SeatLoginPlanArgs {
     /// Judge dryness at this epoch second instead of the host clock.
     #[arg(long, default_value_t = 0)]
     pub now: u64,
-    /// Sign in with ChatGPT: our app registration's client id.
+    /// Sign in with ChatGPT: dynamic_agent_client for initial registration,
+    /// or the issued client id for this account's later sign-ins.
     #[arg(long = "siwc-client-id")]
     pub siwc_client_id: Option<String>,
-    /// Sign in with ChatGPT: the registered redirect URI.
+    /// Sign in with ChatGPT: the exact registered 127.0.0.1 loopback URI.
     #[arg(long = "siwc-redirect-uri")]
     pub siwc_redirect_uri: Option<String>,
     /// Sign in with ChatGPT: your PKCE verifier. Only its S256 challenge is
     /// printed, inside the authorize URL; the verifier is never stored.
     #[arg(long = "siwc-verifier")]
     pub siwc_verifier: Option<String>,
-    /// Sign in with ChatGPT: OAuth state value.
+    /// Sign in with ChatGPT: fresh OAuth state, kept to validate the callback.
     #[arg(long = "siwc-state")]
     pub siwc_state: Option<String>,
-    /// Sign in with ChatGPT: OAuth scope, when the registration asks for one.
+    /// Sign in with ChatGPT: fresh OIDC nonce, kept for ID-token validation.
+    #[arg(long = "siwc-nonce")]
+    pub siwc_nonce: Option<String>,
+    /// Sign in with ChatGPT: this host's stable id, reused across sign-ins.
+    #[arg(long = "siwc-agent-host-id")]
+    pub siwc_agent_host_id: Option<String>,
+    /// Sign in with ChatGPT: the app's actual name, required and sent only
+    /// for initial dynamic_agent_client registration.
+    #[arg(long = "siwc-agent-name-hint")]
+    pub siwc_agent_name_hint: Option<String>,
+    /// Sign in with ChatGPT: explicit scope override; otherwise the official
+    /// direct-token identity and plan-use scopes are requested.
     #[arg(long = "siwc-scope")]
     pub siwc_scope: Option<String>,
 }
