@@ -99,6 +99,26 @@ impl LiveSheet {
     }
 }
 
+/// One story's top-level and direct cell paragraphs share the same native id
+/// space and the same whole-document frontier.
+fn story_paragraphs(story: docx::DocxStoryBody) -> Vec<docx::StoryParagraph> {
+    let mut paragraphs = story.paragraphs;
+    paragraphs.extend(
+        story
+            .tables
+            .into_iter()
+            .flat_map(|table| table.cells)
+            .flat_map(|cell| cell.paragraphs)
+            .map(|paragraph| docx::StoryParagraph {
+                id: paragraph.id,
+                locked: paragraph.locked,
+                text: paragraph.text,
+                runs: Vec::new(),
+            }),
+    );
+    paragraphs
+}
+
 impl Vault {
     /// `artifact`'s live body where it stands now; `None` when it has none.
     pub(crate) fn office_body_pin(&self, artifact: &EntityId) -> Result<Option<LivePin>> {
@@ -193,7 +213,7 @@ impl Vault {
                     .into_iter()
                     .find(|story| &story.scope == scope)
                     .into_iter()
-                    .flat_map(|story| story.paragraphs)
+                    .flat_map(story_paragraphs)
                     .map(|paragraph| {
                         let mut hasher = blake3::Hasher::new();
                         hasher.update(format!("story|{}|", paragraph.locked).as_bytes());
@@ -416,7 +436,7 @@ impl Vault {
             .stories
             .into_iter()
             .find(|story| &story.scope == scope)
-            .map(|story| story.paragraphs)
+            .map(story_paragraphs)
             .unwrap_or_default();
         Ok(Some((pin, paragraphs)))
     }

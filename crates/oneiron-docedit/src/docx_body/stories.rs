@@ -103,8 +103,8 @@ pub fn read_docx_body(bytes: &[u8], limits: ArchiveLimits) -> Result<DocxRead, D
     })
 }
 
-/// Read the exact story's top-level blocks. An omitted scope is the existing
-/// body-only read; a missing story has no units, never a body fallback.
+/// Read the exact story's blocks and direct cell paragraphs. An omitted scope
+/// is the existing body-only read; a missing story never falls back to the body.
 pub fn read_docx_scoped_blocks(
     bytes: &[u8],
     limits: ArchiveLimits,
@@ -113,12 +113,30 @@ pub fn read_docx_scoped_blocks(
     let Some(scope) = scope else {
         return super::read_docx_blocks(bytes, limits);
     };
-    Ok(read_docx_body(bytes, limits)?
+    let mut blocks = read_docx_body(bytes, limits)?
         .stories
         .into_iter()
         .find(|story| &story.scope == scope)
         .map(|story| story.blocks)
-        .unwrap_or_default())
+        .unwrap_or_default();
+    let paragraphs = blocks
+        .iter()
+        .flat_map(|block| {
+            block.cells.iter().flat_map(move |cell| {
+                cell.paragraphs.iter().map(move |paragraph| DocxBlock {
+                    id: paragraph.id.clone(),
+                    kind: super::DocxBlockKind::Paragraph,
+                    role: None,
+                    text: paragraph.text.clone(),
+                    runs: Vec::new(),
+                    cells: Vec::new(),
+                    locked: paragraph.locked.or(block.locked),
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    blocks.extend(paragraphs);
+    Ok(blocks)
 }
 
 /// The authored native stories, in the same order for reads and anchors.

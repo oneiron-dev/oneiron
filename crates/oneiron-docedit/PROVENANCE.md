@@ -241,3 +241,18 @@ version quote and live frontier. Top-level paragraphs only; cell ParagraphAsk,
 comment-story alternatives and full FIX 14487 remain open. No numeric constant,
 cap, default, schema integer, dependency, old reader, migration, test or runtime
 proof is added.
+
+The direct story-cell paragraph-question extension (2026-11-06, FIX 14487) adds
+native paragraph-id lookup inside direct cells of the exact selected story.
+It keeps BODY's original top-level lookup and the existing kind, tracked-status,
+paragraph semantic-guard, quote and marker-splice checks. Named-story reads
+append the existing native per-cell paragraph projections and their locks,
+including the enclosing table lock. Engine live-head and scoped change reads
+use those same native paragraph ids, lock and text at the whole-document pin.
+Carry and standing questions reuse the scoped reader without a new identity or
+wire shape. Marker scan, reply, removal and serialization already descend into
+table cells; their bodies are unchanged. The earlier top-level-only limit is
+therefore lifted for direct cells in named stories, not BODY or nested cells.
+Comment-content alternatives, structural history and full FIX 14487 remain open.
+No numeric constant, cap, default, schema integer, dependency, old reader,
+migration, test, compiler result or runtime/Word proof is added.
