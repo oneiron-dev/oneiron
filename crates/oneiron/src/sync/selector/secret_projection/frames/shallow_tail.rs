@@ -308,7 +308,7 @@ fn root_snapshot(
             None => None,
             Some(id) => match by_id.get(&id)? {
                 Payload::Value(value) => Some(value.clone()),
-                Payload::Message(_) => return None,
+                Payload::Message(_) | Payload::Key(_) => return None,
             },
         };
         if winners
