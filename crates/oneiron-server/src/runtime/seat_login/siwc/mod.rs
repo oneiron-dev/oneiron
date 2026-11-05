@@ -1,10 +1,12 @@
 //! Runtime-local Sign in with ChatGPT. Token-bearing records never enter
 //! seat settings, a vault, or the official CLI environment.
 
+mod credential;
 mod identity;
 mod login;
 mod record;
 
+pub(crate) use credential::CredentialSource;
 pub(crate) use login::{LoginOptions, login};
 
 const ISSUER: &str = "https://auth.openai.com";
