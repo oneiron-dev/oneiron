@@ -4,7 +4,7 @@
 //! and every binding it names checked against this start's argv, and in a
 //! vault VM its carrier, before anything is touched.
 
-use std::io::{ErrorKind, Read as _};
+use std::io::Read as _;
 use std::os::fd::{FromRawFd as _, RawFd};
 use std::path::PathBuf;
 
@@ -16,7 +16,7 @@ use oneiron_vault_contract::restore::{
 
 use crate::managed::ManagedArgs;
 #[cfg(target_os = "linux")]
-use crate::managed::state_serve::carrier_recipient;
+use crate::managed::state_serve::carrier_recipients_snapshot;
 
 /// An SLH-DSA-SHA2-256s public key's length in bytes.
 const SLHDSA_PUBLIC_LEN: usize = 64;
@@ -60,7 +60,7 @@ pub(in crate::managed) struct CheckedRecipients {
 /// is one of the plan's fresh recipients of that role, never a released
 /// one or one the plan did not authorize. In a vault VM a role argv names
 /// no file for is checked the same way against the carrier's file for it,
-/// as it stands now ([`vm_carrier_recipient`]). Returns the argv bytes it
+/// as it stands now ([`vm_carrier_recipients`]). Returns the argv bytes it
 /// read and verified, for the start to seal (FIX 11988).
 pub(super) fn check(
     plan: &ManagedRestorePlan,
@@ -115,6 +115,7 @@ pub(super) fn check(
         managed: None,
         break_glass: None,
     };
+    let carrier = vm_carrier_recipients(managed);
     for (role, file) in [
         (EscrowRole::Managed, &managed.escrow_recipient),
         (EscrowRole::BreakGlass, &managed.break_glass_recipient),
@@ -125,12 +126,13 @@ pub(super) fn check(
                     .map_err(|_| "an escrow recipient file argv names did not read")?,
                 false,
             )
-        } else if let Some(file) = vm_carrier_recipient(managed, role) {
-            match std::fs::read(file) {
-                Ok(public_key) => (public_key, true),
-                Err(error) if error.kind() == ErrorKind::NotFound => continue,
-                Err(_) => return Err("the carrier's escrow recipient file did not read"),
-            }
+        } else if let Some(public_key) = carrier
+            .iter()
+            .flatten()
+            .find(|(carried, _, _)| *carried == role)
+            .map(|(_, _, public_key)| public_key.clone())
+        {
+            (public_key, true)
         } else {
             continue;
         };
@@ -166,16 +168,19 @@ pub(in crate::managed) fn fresh_authorizes(
         .any(|fresh| fresh.role == role && fresh.public_key.as_slice() == public_key)
 }
 
-/// The file a vault VM's carrier delivers `role`'s escrow recipient in, for
-/// a role argv names no file for: the host may send one after this start's
-/// argv was built, and the carrier watch seals to it once the vault serves
-/// (FIX 11078). `None` outside a vault VM.
-fn vm_carrier_recipient(managed: &ManagedArgs, role: EscrowRole) -> Option<PathBuf> {
+/// The escrow recipients a vault VM's carrier delivers, for the roles argv
+/// names no file for, as they stood at one point between the carrier's
+/// sets: the host may send them after this start's argv was built, and the
+/// carrier watch seals to them once the vault serves (FIX 11078). `None`
+/// outside a vault VM, and while the carrier has a recipients set
+/// unfinished, published one as they were read, or they do not read: the
+/// watch checks them at the first look that reads them whole (FIX 7543).
+fn vm_carrier_recipients(managed: &ManagedArgs) -> Option<Vec<(EscrowRole, PathBuf, Vec<u8>)>> {
     #[cfg(target_os = "linux")]
     if managed.vsock_guest {
-        return Some(carrier_recipient(role));
+        return carrier_recipients_snapshot();
     }
     #[cfg(not(target_os = "linux"))]
-    let _ = (managed, role);
+    let _ = managed;
     None
 }
