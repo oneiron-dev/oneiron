@@ -58,13 +58,22 @@ private-world path. This is not a legacy reader or a migration.
 Voice enrolment seals a private world's centroid and each complete sample
 payload under the current counted world key selected in the same writer as
 its source-world resolution and consent admission. Base reality is an explicit
-unsealed variant and does not require a working machine key. The device secret
-is read before the transaction, never loaded from inside the writer.
+unsealed variant. A non-base world with `EffectiveRead::Everywhere` uses a separate
+unsealed variant that retains its actual world id. Neither needs a working machine
+key or counted world key. The material writer rechecks the native Everywhere
+predicate in that same transaction before accepting an unsealed world payload.
+Private worlds still require their actual current counted key for enrollment.
+The device secret is read before the transaction, never loaded inside the writer.
 
 Stored print rows separate vector-free metadata from their material. Matching
 checks the existing space, expiry, purpose, consent, subject and machine-world
 admission before opening a centroid. Each open uses its stored exact retained
-world key id in that snapshot, not a current-key retry. The actual native row
+world key id in that snapshot, not a current-key retry. Key requirements follow
+the stored material, not the presence of a world id: public unsealed rows need no
+key, while a sealed row widened later still opens its exact retained key.
+Privacy edits do not rewrite old rows. An already-public row remains decodable
+when the world narrows; existing current machine-world admission still runs before
+its material is read. No new migration, refusal or current-key gate is added. The actual native row
 key is checked against its subject and active space before it supplies a
 binding. The public admitted print record still carries its vector; the
 node-local stored row has a new required layout with no old-format reader.

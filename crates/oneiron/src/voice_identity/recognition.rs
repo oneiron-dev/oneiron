@@ -20,7 +20,7 @@
 //!
 //! Private-world centroid and sample payloads are sealed by `stored`; only
 //! vector-free metadata is read before these native admission checks. Base
-//! reality remains the explicit native unsealed case.
+//! reality and Everywhere worlds have explicit world-bound unsealed cases.
 
 use heed::RoTxn;
 

@@ -3,6 +3,7 @@
 use std::collections::{BTreeSet, HashSet};
 
 use crate::Vault;
+use crate::authority::EffectiveRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -128,7 +129,7 @@ impl Vault {
         let calibration = calibration_for(&sample_languages);
 
         // This reads the device keystore before the writer. Its error belongs
-        // only to a private-world seal; base enrollment does not need a key.
+        // only to a private-world seal; base and public worlds need no key.
         let machine = self.machine_secret_outside_txn();
         let store = &self.store;
         let subject = request.subject_ref;
@@ -181,16 +182,20 @@ impl Vault {
             let space_digest = digest16(b"voice_identity.space", request.space.space_id.as_bytes());
             let content_key = match record.world_ref {
                 Some(world) => {
-                    let machine = machine?;
                     let fold = self.authority_view_readonly_in_txn(wtxn)?;
-                    let key_id = fold.current_world_key(world)
-                        .ok_or_else(|| invalid_voice("the voice print world has no counted content key"))?
-                        .id;
-                    Some(self.world_content_key_in_txn(wtxn, &machine, &key_id)?)
+                    if fold.world_privacy(world).read == EffectiveRead::Everywhere {
+                        None
+                    } else {
+                        let machine = machine?;
+                        let key_id = fold.current_world_key(world)
+                            .ok_or_else(|| invalid_voice("the voice print world has no counted content key"))?
+                            .id;
+                        Some(self.world_content_key_in_txn(wtxn, &machine, &key_id)?)
+                    }
                 }
                 None => None,
             };
-            let stored = StoredPrint::new(self, &record, content_key.as_ref())?;
+            let stored = StoredPrint::new(self, wtxn, &record, content_key.as_ref())?;
             PRINT_RECORD.put(store, wtxn, &(subject, space_digest), &stored)?;
             PRINT_POINTER.put(store, wtxn, &subject, &request.space.space_id)?;
             if let Some(delete_after) = record.delete_after {
@@ -198,7 +203,7 @@ impl Vault {
             }
             for sample in &ordered {
                 let digest = sample_digest(&subject, &sample.sample_id);
-                let sample = StoredSample::new(self, sample, &stored.metadata, content_key.as_ref())?;
+                let sample = StoredSample::new(self, wtxn, sample, &stored.metadata, content_key.as_ref())?;
                 SAMPLE.put(store, wtxn, &digest, &sample)?;
             }
             // The owner's typed question a third party's print owes, kept with

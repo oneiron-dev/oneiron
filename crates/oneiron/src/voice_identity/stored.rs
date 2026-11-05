@@ -1,4 +1,4 @@
-//! Node-local recognition vectors: explicit base bytes or exact-world sealed bytes.
+//! Node-local recognition vectors: explicit base/public bytes or exact-world sealed bytes.
 
 use heed::RoTxn;
 use oneiron_crypto::Envelope;
@@ -6,6 +6,7 @@ use rmpv::Value;
 use zeroize::Zeroizing;
 
 use crate::Vault;
+use crate::authority::EffectiveRead;
 use crate::error::Result;
 use crate::side_table::{CodecError, RawValue};
 use crate::world_keys::{MachineSecret, WorldKey, WorldKeyId, WorldSideRowBinding};
@@ -31,18 +32,30 @@ pub(super) struct StoredSample {
 
 enum Material {
     Base(Vec<u8>),
-    Sealed { key: WorldKeyId, envelope: Vec<u8> },
+    Public {
+        world: crate::EntityId,
+        bytes: Vec<u8>,
+    },
+    Sealed {
+        key: WorldKeyId,
+        envelope: Vec<u8>,
+    },
 }
 
 impl StoredPrint {
+    pub(super) fn needs_world_key(&self) -> bool {
+        matches!(&self.material, Material::Sealed { .. })
+    }
+
     pub(super) fn new(
         vault: &Vault,
+        txn: &RoTxn<'_>,
         record: &VoicePrintRecordV1,
         key: Option<&WorldKey>,
     ) -> Result<Self> {
         let metadata = PrintMetadata::from(record);
         let bytes = Zeroizing::new(write_body(&encode_vector(&record.centroid))?);
-        let material = Material::seal(vault, &metadata, None, key, &bytes)?;
+        let material = Material::seal(vault, txn, &metadata, None, key, &bytes)?;
         Ok(Self { metadata, material })
     }
 
@@ -63,15 +76,20 @@ impl StoredPrint {
 }
 
 impl StoredSample {
+    pub(super) fn needs_world_key(&self) -> bool {
+        matches!(&self.material, Material::Sealed { .. })
+    }
+
     pub(super) fn new(
         vault: &Vault,
+        txn: &RoTxn<'_>,
         sample: &VoiceEnrollmentSampleV1,
         metadata: &PrintMetadata,
         key: Option<&WorldKey>,
     ) -> Result<Self> {
         let bytes = Zeroizing::new(encode_sample(sample)?);
         Ok(Self {
-            material: Material::seal(vault, metadata, Some(&sample.sample_id), key, &bytes)?,
+            material: Material::seal(vault, txn, metadata, Some(&sample.sample_id), key, &bytes)?,
         })
     }
 
@@ -99,6 +117,7 @@ impl StoredSample {
 impl Material {
     fn seal(
         vault: &Vault,
+        txn: &RoTxn<'_>,
         metadata: &PrintMetadata,
         sample_id: Option<&str>,
         key: Option<&WorldKey>,
@@ -106,6 +125,18 @@ impl Material {
     ) -> Result<Self> {
         match (metadata.world_ref, key) {
             (None, None) => Ok(Self::Base(bytes.to_vec())),
+            (Some(world), None)
+                if vault
+                    .authority_view_readonly_in_txn(txn)?
+                    .world_privacy(world)
+                    .read
+                    == EffectiveRead::Everywhere =>
+            {
+                Ok(Self::Public {
+                    world,
+                    bytes: bytes.to_vec(),
+                })
+            }
             (Some(world), Some(key)) if key.id().world == world => {
                 let row = row_aad(metadata, sample_id)?;
                 let binding = WorldSideRowBinding {
@@ -134,6 +165,9 @@ impl Material {
     ) -> Result<Zeroizing<Vec<u8>>> {
         match (self, metadata.world_ref, secret) {
             (Self::Base(bytes), None, _) => Ok(Zeroizing::new(bytes.clone())),
+            (Self::Public { world, bytes }, Some(bound), _) if *world == bound => {
+                Ok(Zeroizing::new(bytes.clone()))
+            }
             (Self::Sealed { key, envelope }, Some(world), Some(secret)) if key.world == world => {
                 let content_key = vault.world_content_key_in_txn(txn, secret, key)?;
                 let row = row_aad(metadata, sample_id)?;
@@ -153,6 +187,9 @@ impl Material {
     fn value(&self) -> Value {
         match self {
             Self::Base(bytes) => Value::Binary(bytes.clone()),
+            Self::Public { world, bytes } => {
+                Value::Array(vec![encode_entity_ref(world), Value::Binary(bytes.clone())])
+            }
             Self::Sealed { key, envelope } => Value::Array(vec![
                 encode_entity_ref(&key.world),
                 Value::from(key.generation),
@@ -165,6 +202,15 @@ impl Material {
     fn decode(value: &Value) -> Result<Self> {
         match value {
             Value::Binary(bytes) => Ok(Self::Base(bytes.clone())),
+            Value::Array(parts) if parts.len() == 2 => {
+                let Value::Binary(bytes) = &parts[1] else {
+                    return Err(corrupt_voice_row());
+                };
+                Ok(Self::Public {
+                    world: decode_entity_ref(&parts[0])?,
+                    bytes: bytes.clone(),
+                })
+            }
             Value::Array(parts) if parts.len() == 4 => {
                 let (Value::Binary(mint), Value::Binary(envelope)) = (&parts[2], &parts[3]) else {
                     return Err(corrupt_voice_row());
@@ -189,6 +235,7 @@ impl Material {
     fn matches_world(&self, world: Option<crate::EntityId>) -> bool {
         match (self, world) {
             (Self::Base(_), None) => true,
+            (Self::Public { world: held, .. }, Some(world)) => *held == world,
             (Self::Sealed { key, .. }, Some(world)) => key.world == world,
             _ => false,
         }

@@ -124,9 +124,10 @@ pub(super) fn read_sample(
     let Some(sample) = SAMPLE.get(&vault.store, rtxn, &sample_digest(subject, sample_id))? else {
         return Ok(None);
     };
-    let secret = match print.metadata.world_ref {
-        Some(_) => Some(machine?),
-        None => None,
+    let secret = if sample.needs_world_key() {
+        Some(machine?)
+    } else {
+        None
     };
     sample
         .sample(vault, rtxn, &print.metadata, sample_id, secret.as_ref())
@@ -502,12 +503,13 @@ pub(super) fn load_match_candidates(
         if !super::recognition::admit_recognition_candidate_in(vault, rtxn, &record, purpose)? {
             continue;
         }
-        let secret = match record.world_ref {
-            Some(_) => Some(match machine {
+        let secret = if stored.needs_world_key() {
+            Some(match machine {
                 Ok(ref secret) => secret,
                 Err(error) => return Err(error),
-            }),
-            None => None,
+            })
+        } else {
+            None
         };
         let centroid = stored.centroid(vault, rtxn, secret)?;
         candidates.push(VoiceMatchCandidate {
