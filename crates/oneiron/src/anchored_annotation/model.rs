@@ -33,6 +33,8 @@ pub(super) const FORMAT_PPTX: &str = "pptx";
 
 pub(super) const FORMAT_HTML: &str = "html";
 
+pub(super) const FORMAT_FILE: &str = "file";
+
 pub(super) const STATE_OPEN: &str = "open";
 
 pub(super) const STATE_RESOLVED: &str = "resolved";
@@ -141,6 +143,16 @@ pub enum Locator {
         /// Exclusive character-span end.
         char_end: u64,
     },
+    /// File `{char_span}` in the whole decoded `text/plain` version text
+    /// (FIX 4252). Coordinates always name the raw immutable text, counted
+    /// in Unicode characters; serving projects the quote to the caller's
+    /// sight, never raw bytes to a masked reader.
+    File {
+        /// Inclusive character-span start in the whole text.
+        char_start: u64,
+        /// Exclusive character-span end in the whole text.
+        char_end: u64,
+    },
 }
 
 impl Locator {
@@ -203,6 +215,22 @@ impl Locator {
         })
     }
 
+    /// Builds a file locator: a char span in the whole decoded `text/plain`
+    /// text, counted in Unicode characters. Coordinates always name the raw
+    /// immutable text (bounds read against the version's bytes); only the
+    /// span order is validated here.
+    pub fn file(char_start: u64, char_end: u64) -> Result<Self> {
+        if char_start > char_end {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "file locator char span is inverted",
+            )));
+        }
+        Ok(Self::File {
+            char_start,
+            char_end,
+        })
+    }
+
     /// The format discriminator string.
     #[must_use]
     pub fn format(&self) -> &'static str {
@@ -211,6 +239,7 @@ impl Locator {
             Self::Docx { .. } => FORMAT_DOCX,
             Self::Pptx { .. } => FORMAT_PPTX,
             Self::Html { .. } => FORMAT_HTML,
+            Self::File { .. } => FORMAT_FILE,
         }
     }
 }

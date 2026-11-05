@@ -19,7 +19,9 @@ use std::collections::HashMap;
 use oneiron_docedit::{DocxAnchorBlock, docx_anchor_blocks};
 use serde::{Deserialize, Serialize};
 
-use super::anchor_text::{TextLimits, UnitFormat, anchor_text, find_text, html_blocks, remap_span};
+use super::anchor_text::{
+    TextLimits, UnitFormat, anchor_text, file_text, find_text, html_blocks, remap_span,
+};
 use super::codec::{ThreadHead, decode_locator, encode_locator};
 use super::model::{AnnotationThread, Locator, ReanchorOutcome, ReanchorSummary};
 use super::threads::thread_from_head;
@@ -311,6 +313,72 @@ impl HtmlReanchor {
             *char_end,
         )
         .and_then(|(start, end)| Locator::html(new.block_id.clone(), start, end).ok())
+        {
+            Some(locator) => ReanchorOutcome::Mapped(locator),
+            None => ReanchorOutcome::Drifted,
+        }
+    }
+}
+
+/// The file-text side of one sweep: both versions' whole decoded text. A
+/// span remaps across the whole before/after texts with `remap_span`, on
+/// the actual surviving characters; no line pairing is ever guessed.
+pub(super) struct FileReanchor {
+    before: Option<String>,
+    after: Option<String>,
+}
+
+impl FileReanchor {
+    pub(super) fn load(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        artifact: &EntityId,
+        from: u64,
+        to: u64,
+        threads: &[AnnotationThread],
+    ) -> Result<Option<Self>> {
+        if !threads.iter().any(|thread| {
+            thread.anchor.version == from
+                && !thread.is_drifted()
+                && matches!(thread.anchor.locator, Locator::File { .. })
+        }) {
+            return Ok(None);
+        }
+        let body = vault
+            .get_blob_artifact_in_txn(txn, artifact)?
+            .ok_or(Error::EntityNotFound)?;
+        if !matches!(
+            UnitFormat::from_media_type(&body.media_type),
+            Some(UnitFormat::FileText)
+        ) {
+            return Ok(None);
+        }
+        let read = |version| -> Result<Option<String>> {
+            let Some(bytes) = vault.read_blob_artifact_version_in_txn(txn, artifact, version)?
+            else {
+                return Ok(None);
+            };
+            file_text(&bytes)
+        };
+        Ok(Some(Self {
+            before: read(from)?,
+            after: read(to)?,
+        }))
+    }
+
+    pub(super) fn rebind(&self, locator: &Locator) -> ReanchorOutcome {
+        let Locator::File {
+            char_start,
+            char_end,
+        } = locator
+        else {
+            return ReanchorOutcome::Drifted;
+        };
+        let (Some(before), Some(after)) = (&self.before, &self.after) else {
+            return ReanchorOutcome::Drifted;
+        };
+        match remap_span(before, after, *char_start, *char_end)
+            .and_then(|(start, end)| Locator::file(start, end).ok())
         {
             Some(locator) => ReanchorOutcome::Mapped(locator),
             None => ReanchorOutcome::Drifted,
