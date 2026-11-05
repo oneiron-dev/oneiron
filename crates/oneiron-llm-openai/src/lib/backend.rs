@@ -11,6 +11,9 @@ use oneiron::{
 };
 use std::collections::BTreeMap;
 
+/// The default chat-completions endpoint path (FIX 11467).
+pub(crate) const DEFAULT_CHAT_ENDPOINT_PATH: &str = "/v1/chat/completions";
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenAiCompatConfig {
     pub endpoint_path: String,
@@ -45,7 +48,7 @@ impl OpenAiCompatConfig {
     #[must_use]
     pub fn from_catalog(models: impl IntoIterator<Item = LlmCatalogEntry>) -> Self {
         Self {
-            endpoint_path: "/v1/chat/completions".to_owned(),
+            endpoint_path: DEFAULT_CHAT_ENDPOINT_PATH.to_owned(),
             models: models
                 .into_iter()
                 .map(|entry| (entry.model.clone(), entry))
