@@ -424,7 +424,7 @@ impl Memory<'_> {
     /// and free. Another person's mailbox is not listed or counted.
     pub fn mail_sources_list(&self) -> MemoryResult<Vec<MailSourceView>> {
         let vault = self.vault();
-        let txn = vault.store.env.read_txn()?;
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         let mut views = Vec::new();
         for row in SOURCES.iter_from(&vault.store, &txn, &[])? {
             let (id, row) = row?;
@@ -528,7 +528,7 @@ impl Memory<'_> {
     ) -> MemoryResult<Vec<SourceAudienceEventView>> {
         let id = EntityId::from_hex(&input.source_ref)?;
         let vault = self.vault();
-        let txn = vault.store.env.read_txn()?;
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         let row = SOURCES
             .get(&vault.store, &txn, &id)?
             .ok_or_else(unknown_source)?;
