@@ -58004,7 +58004,7 @@
      "path": "src/ports/lmdb_query/checkpoint.rs",
      "purpose": "The checkpoint getter of the entity and edge rows (KS7-2): each raw entity row by its own entity tree, and…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
