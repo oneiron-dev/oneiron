@@ -100,6 +100,7 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                 ));
             }
             observations::keep_observations(&mut entries, &answer.observations)?;
+            session_hooks::keep_hooks(&mut entries, &answer.hooks)?;
             request_map(entries)
         }
         SelfDispatchOutcome::Failed(result) => request_map(vec![
@@ -316,6 +317,7 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                 .map(|rows| decode_array(rows, entity_value))
                 .transpose()?,
             observations: observations::decode_observations(entries)?,
+            hooks: session_hooks::decode_hooks(entries)?,
         })),
         "failed" => {
             let code = match map_get(entries, "code")? {
