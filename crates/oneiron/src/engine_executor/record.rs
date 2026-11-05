@@ -159,6 +159,19 @@ pub(super) fn record_config_marker(
     record_text_output(storage, record, CONFIG_OUTPUT_PATH.to_owned(), &text)
 }
 
+pub(super) fn executor_config_marker_bytes(
+    storage: &ExecutorStorage<'_>,
+    config: &EngineExecutorConfig,
+    prompt_fingerprint: &str,
+    continuation: Option<&[u8; 32]>,
+) -> EngineExecutorResult<Vec<u8>> {
+    Ok(serde_json::to_vec(&ExecutorConfigMarker {
+        schema_version: REPLAY_METADATA_SCHEMA_VERSION,
+        config_hash: executor_config_hash_hex(storage, config, continuation),
+        prompt_fingerprint: prompt_fingerprint.to_owned(),
+    })?)
+}
+
 /// Verifies run identity and reports whether the deployed prompt drifted.
 ///
 /// Identity mismatch is always a refusal, before anything is read or written.
