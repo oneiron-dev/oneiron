@@ -117,6 +117,7 @@ mod managed_owner_check;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
+mod origin_cut;
 mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
@@ -327,6 +328,9 @@ pub use mesh_machine::{
     MeshMachineBinding,
 };
 pub use observation_policy::*;
+// The origin cut a carried repo manifest is judged by (FIX 15740).
+#[cfg(feature = "sync")]
+pub(crate) use origin_cut::OriginCutStanding;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{
     GrantStanding, authority_refusal_as, authority_refused, grant_omission, grant_standing_in_txn,

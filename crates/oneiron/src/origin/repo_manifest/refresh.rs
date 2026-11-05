@@ -187,6 +187,50 @@ impl Vault {
         self.served_repo_id(&dir).map(Some)
     }
 
+    /// The portable ids served repo `origin_name` stands under here, each
+    /// with its CODE anchor (FIX 15740): every standing manifest that names
+    /// that served name and whose CODE anchor's stored path is the served
+    /// store `dir` (`code_serves_dir`, as refresh judges it). The owner's cut
+    /// of the repo is signed once for each.
+    pub(in crate::origin) fn served_repo_portable_ids(
+        &self,
+        origin_name: &str,
+        dir: &std::path::Path,
+    ) -> Result<Vec<(EntityId, RepoPortableId)>> {
+        let mut bound = Vec::new();
+        for manifest in self.standing_repo_manifests(|_| true)? {
+            if manifest.origin_name.as_deref() == Some(origin_name)
+                && self.code_serves_dir(manifest.code, dir)?
+            {
+                bound.push((manifest.code, manifest.portable));
+            }
+        }
+        Ok(bound)
+    }
+
+    /// Whether each of `bound` ([`Self::served_repo_portable_ids`]) still
+    /// stands in `txn` as it was resolved: its CODE's standing id, naming
+    /// served repo `origin_name`.
+    pub(in crate::origin) fn served_repo_portable_ids_stand_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        origin_name: &str,
+        bound: &[(EntityId, RepoPortableId)],
+    ) -> Result<bool> {
+        for (code, portable) in bound {
+            if BY_CODE.get(&self.store, txn, code)?.as_ref() != Some(&portable.0) {
+                return Ok(false);
+            }
+            let Some(manifest) = MANIFESTS.get(&self.store, txn, &portable.0)? else {
+                return Ok(false);
+            };
+            if manifest.code != *code || manifest.origin_name.as_deref() != Some(origin_name) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Refreshes each standing manifest that names served repo
     /// `origin_name`: the origin mirror pass's hook (ruling 8). It never
     /// fails its caller; a fault is logged and the next pass retries.
