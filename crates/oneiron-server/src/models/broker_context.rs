@@ -8,6 +8,8 @@
 //! is the key read at the door (effector `broker:model`, zeroizing bytes) and
 //! handed over with that one request. No key is read once into a long-lived
 //! bearer or a default header.
+mod secret_use;
+
 use std::sync::Arc;
 use std::time::Duration;
 

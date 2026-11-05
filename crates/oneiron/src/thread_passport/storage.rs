@@ -1,3 +1,6 @@
+//! Thread-passport claim storage: channel-identity checks and alias writes.
+//! Entry [`validate_thread_claim_in_txn`]; written through `vault_doors`, never directly.
+//! Owned by `thread_passport`; passports file only against live `ChannelIdentity` rows.
 use super::*;
 use crate::ports::EntityStoreRead;
 use crate::store::Store;

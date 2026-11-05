@@ -1,3 +1,8 @@
+//! Prepared cosine query with a cached norm for HNSW candidate scoring.
+//! The kernel is chosen once per query by the same predicates the legacy
+//! per-call dispatcher applies, so a prepared query always lands where the
+//! legacy path would have put it for the same operands.
+//! Owned by `oneiron-retrieval` distance; entry [`PreparedCosine::new`].
 use super::*;
 
 /// Which kernel a prepared query scores with. Chosen once per query by the
