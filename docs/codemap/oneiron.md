@@ -1872,7 +1872,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/plugin/validate.rs` | src | s | 2 fn · 1 const · 3 crate-vis | — | Bounded-shape checks and the two-phase validation gate |
 | `src/context_board/read_set.rs` | src | m | 6 struct · 3 enum · 16 fn · 1 re-export · 8 crate-vis | ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange, ProposalReason, ServedWhy +1 | Session read-set tracking, separate from the stateless board renderer |
 | `src/context_board/readers.rs` | src | s | 1 fn · 1 crate-vis | — | The READERS board block (ARCH-0067 #inbox-section, ARCH-0032 #private-reads): an agent sees who may read its… |
-| `src/context_board/room.rs` | src | m | 3 struct · 2 enum · 1 trait · 3 fn · 4 crate-vis | RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty | Stateless ROOM projection and the one roster-to-Scope function |
+| `src/context_board/room.rs` | src | m | 4 struct · 2 enum · 1 trait · 3 fn · 4 crate-vis | RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RoomStretch, RosterParty | Stateless ROOM projection and the one roster-to-Scope function |
 | `src/context_board/room/tests.rs` | test | L | — | — | ARCH-0067 §8 acceptance: one roster-to-Scope function, and every read a room turn makes runs inside the… |
 | `src/context_board/room_offer.rs` | src | s | 1 crate-vis | — | Time bounds used to project a room offer |
 | `src/context_board/room_verbs.rs` | src | m | 3 fn · 1 re-export · 16 crate-vis | — | The rooms.* facade family delegates to existing reads, witness and claim gates |
@@ -4200,6 +4200,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/lifecycle/room.rs` | src | m | 12 fn · 1 type · 12 crate-vis | — | Participants in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10) |
 | `src/off_record/lifecycle/room/export_roots.rs` | src | s | 2 crate-vis | — | The threads an off-record room's copy carries, for its export's audit and notices (FIX 6427, 6681), split… |
 | `src/off_record/lifecycle/room/message_result.rs` | src | s | 1 crate-vis | — | The result a room's off-record MESSAGE carries, found for someone in the room outside any run (FIX 3620)… |
+| `src/off_record/lifecycle/room/stretches.rs` | src | s | 1 crate-vis | — | Live room-stretch identity for member-bound ROOM projections |
 | `src/off_record/lifecycle/room_births.rs` | src | s | 6 crate-vis | — | What a room write stages beside its row (FIX 4280, 4281; Engine 10-22): the row's birth and, for a NOTE, its… |
 | `src/off_record/lifecycle/save_grant.rs` | src | m | 5 fn · 9 crate-vis | — | Who may bring a room's talk into this vault (ARCH-0052 #d5-save-grant, owner ruling 2026-10-16): a holder of… |
 | `src/off_record/lifecycle/saving.rs` | src | m | 5 crate-vis | — | Saving a stretch's whole talk (ARCH-0052 D5): which turns one save keeps, and what a saved copy of a turn… |
@@ -5081,7 +5082,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/run_tree/tests.rs` | test | m | — | — | — |
 | `src/run_tree/types.rs` | src | s | 1 re-export | — | Run-tree view vocabulary is defined beside attempt lifecycle values |
 | `src/run_tree/wire.rs` | src | s | 1 re-export | — | Run-tree wire codec is defined with the projected values |
-| `src/runtime_hooks/apply.rs` | src | m | 3 crate-vis | — | Applying saved intents (ARCH-0080 §4 Crash-safe outcomes, §6 authority) |
+| `src/runtime_hooks/apply.rs` | src | m | 4 crate-vis | — | Applying saved intents (ARCH-0080 §4 Crash-safe outcomes, §6 authority) |
 | `src/runtime_hooks/block.rs` | src | s | 2 struct · 1 enum · 3 fn · 10 crate-vis | HookBlock, HookBlockLifetime, HookTurnTarget | Hook blocks (ARCH-0080 §11): the timed pins an AddBlock outcome leaves for a recipient's next board deliveries |
 | `src/runtime_hooks/body.rs` | src | m | 8 struct · 2 trait · 13 fn · 1 type · 2 const · 2 crate-vis | HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun, HookPreparation, HookRunContext, HookSettledCallRef, HookVerdict +2 | The seam between the runner and the hook sandbox (ARCH-0080 §6) |
 | `src/runtime_hooks/dial.rs` | src | s | 2 fn | — | The vault's hook switch, `hooks.enabled` (ARCH-0080 §10) |
@@ -5101,6 +5102,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime_hooks/replay/page.rs` | src | m | 2 struct · 3 fn · 1 crate-vis | HookReplayCursor, HookReplayEntryPage | `hooks.replay` a page at a time (FIX 8629): at most [`MAX_REPLAY_ENTRIES`] entries a page, and a cursor to… |
 | `src/runtime_hooks/runner.rs` | src | m | 2 struct · 4 fn · 1 type · 2 const · 5 crate-vis | FactHookRunner, HookPassReport | The fact-hook runner (ARCH-0080 §4 Delivery) |
 | `src/runtime_hooks/runner/body.rs` | src | m | 10 crate-vis | — | A fact-hook run's body call and what comes of it (ARCH-0080 §4, §6): its `ai.verdict` asks and their pins… |
+| `src/runtime_hooks/runner/evaluation.rs` | src | s | 3 crate-vis | — | One evaluation, kept intact until its memo and completion tail commit |
+| `src/runtime_hooks/runner/retained.rs` | src | s | 9 crate-vis | — | Owned background fact evaluations |
 | `src/runtime_hooks/sandbox/mod.rs` | src | m | 1 struct · 3 fn · 2 const · 1 mod | HookSandbox | The pinned QuickJS sandbox a hook body runs in |
 | `src/runtime_hooks/scope.rs` | src | s | 4 crate-vis | — | A hook's scope (ARCH-0080 §3): a world, facet, room or project, named `<axis>:<32 hex>` |
 | `src/runtime_hooks/source.rs` | src | m | 3 struct · 3 enum · 7 fn · 1 const · 1 re-export · 15 crate-vis | ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SettlementPosition | Fact sources and their typed positions (ARCH-0080 §4 Sources and cursors) |
