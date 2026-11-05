@@ -161,7 +161,9 @@ impl Vault {
 
     /// [`Self::record_board_turn_with_tasks_layout_now`] without a TASKS
     /// layout candidate: every existing caller keeps its exact signature and
-    /// behavior (chat answers and trusted doors never activate a layout).
+    /// behavior (queued actions via `None`, no-TURN hydrates, explicit
+    /// overrides, and trusted doors never activate a layout; ONE live chat
+    /// turn uses the candidate-taking method).
     pub fn record_board_turn_now(
         &self,
         turn: EntityId,
@@ -200,15 +202,17 @@ impl Vault {
     /// its budget with the receipt in it) records nothing, and gets `None`.
     ///
     /// `candidate` is the exact ROOT TASKS selection this explicit TURN
-    /// projected (FIX 12570, HTTP slice): it activates in the SAME returned
-    /// `RwTxn` after `stage_board_turn` succeeded and before accept/commit,
-    /// so it commits if and only if the accepted response commits. A
-    /// candidate whose actor is not `owner` is the existing `NotTurnAuthor`;
-    /// any other drift (erased row, incarnation ABA, or a live revision
-    /// another TURN already advanced) skips silently, keeps any newer
-    /// pending batch, and never refuses the current board. `None` (chat
-    /// answers, no-TURN hydrates, explicit per-request overrides, and all
-    /// pre-existing callers) writes no layout.
+    /// projected (FIX 12570, HTTP slice + ONE live chat pending consumer):
+    /// it activates in the SAME returned `RwTxn` after `stage_board_turn`
+    /// succeeded and before accept/commit, so it commits if and only if the
+    /// accepted response commits. A candidate whose actor is not `owner` is
+    /// the existing `NotTurnAuthor`; any other drift (erased row,
+    /// incarnation ABA, or a live revision another TURN already advanced)
+    /// skips silently, keeps any newer pending batch, and never refuses the
+    /// current board. `None` (queued actions, no-TURN hydrates, explicit
+    /// per-request overrides, trusted doors, and all pre-existing callers)
+    /// writes no layout; ONE live chat turn passes its SAME captured
+    /// candidate.
     pub fn record_board_turn_with_tasks_layout_now(
         &self,
         turn: EntityId,

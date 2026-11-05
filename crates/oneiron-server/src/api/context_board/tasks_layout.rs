@@ -3,9 +3,10 @@
 //! `GET|POST /v1/core/context-board/layout/tasks`: one actor's durable ROOT
 //! TASKS-row token budget. GET reads the caller's own live default plus its
 //! one pending staged write; POST stages ONE pending batch for a later
-//! explicit TURN. This is parent 12570 PART, ROOT raw HTTP only: no fork
-//! store or copy, no MCP/run/chat integration, no full-board shares, folds,
-//! filters, notes or owner defaults. See
+//! explicit TURN. This is parent 12570 PART, ROOT raw HTTP plus ONE live chat
+//! pending consumer: no fork store or copy, no MCP/run integration (queued
+//! actions stay old behavior), no full-board shares, folds, filters, notes or
+//! owner defaults. See
 //! `docs/ops/context-board-tasks-layout.md`.
 //!
 //! POST `budget_tok` is REQUIRED nullable unsigned: missing is 400 and never
@@ -143,19 +144,24 @@ pub(crate) async fn context_board_tasks_layout_stage(
     Ok(Json(tasks_layout_dto(state)?))
 }
 
-/// Selects the caller's ROOT TASKS budget for hydration: the effective
-/// projection budget plus the exact candidate the SAME accepted TURN commit
-/// must activate (or `None` when no activation follows).
+/// Selects the ROOT TASKS budget for hydration: the effective projection
+/// budget plus the exact candidate the SAME accepted TURN commit must
+/// activate (or `None` when no activation follows).
 ///
 /// Call only when the explicit per-request budget is `None` (explicit `Some`
 /// wins with its exact budget and never consumes pending, so hydration
-/// skips selection entirely then). Without TURN this reads LIVE only and
-/// never activates; with TURN it projects PENDING when present else LIVE.
+/// skips selection entirely then). `chat_layout_actor` carries ONE live chat
+/// turn's answering agent: when `Some` it selects EXACTLY that actor with
+/// native `has_turn=true`; when `None` it keeps the auth-derived caller
+/// actor with the native `has_turn` untouched. Without TURN (and without a
+/// chat actor) this reads LIVE only and never activates; with TURN it
+/// projects PENDING when present else LIVE.
 pub(crate) fn hydrate_tasks_selection(
     server: &SyncServer,
     auth: &CoreAuth,
     has_turn: bool,
     cap_tok: usize,
+    chat_layout_actor: Option<EntityId>,
 ) -> Result<
     (
         Option<usize>,
@@ -163,6 +169,12 @@ pub(crate) fn hydrate_tasks_selection(
     ),
     ApiError,
 > {
+    if let Some(actor) = chat_layout_actor {
+        return server
+            .vault
+            .select_tasks_layout(actor, true, cap_tok)
+            .map_err(|error| core_engine_error("tasks layout selection failed", error));
+    }
     let Some(actor) = tasks_layout_actor(auth) else {
         return Ok((None, None));
     };

@@ -1,11 +1,12 @@
-//! Durable per-actor TASKS token budgets for HTTP board hydration.
+//! Durable per-actor TASKS token budgets for HTTP board hydration and live chat.
 //!
 //! A TURN projects one pending snapshot before its accepted history commit
 //! activates it. Polls read live state only. Revisions preserve newer pending
 //! writes and reject late overwrites without refusing the board; a fresh row
 //! incarnation prevents activation after erase and recreation.
 //!
-//! This does not implement fork layouts or MCP/model-turn integration.
+//! This does not implement fork layouts or MCP/run integration; queued
+//! actions, program turns, forks, shares, folds and owner defaults stay open.
 //! Checkpoint rows remain unclassified. See
 //! `docs/ops/context-board-tasks-layout.md` for the supported scope.
 
@@ -51,8 +52,9 @@ pub(crate) struct TasksBudgetPending {
     pub(crate) revision: u64,
 }
 
-/// The TURN-committed TASKS selection: the exact pending snapshot one
-/// explicit TURN projected, bound to its actor and row incarnation.
+/// The TASKS selection a turn projects before its accepted history commit,
+/// bound to its actor and row incarnation. A chat answer's TURN may be
+/// minted after capture; only its actual history writer activates this.
 ///
 /// Public through `oneiron::context_board` so the HTTP crate can carry it
 /// from hydration to the history writer; all fields are private and are
@@ -173,13 +175,14 @@ impl Vault {
     ///
     /// Call only when the explicit per-request budget is `None` (explicit
     /// `Some` wins with its exact budget and never consumes pending, so the
-    /// caller skips selection entirely in that case). `has_turn` is whether
-    /// this hydration names an explicit TURN; `cap_tok` is the SAME resolved
+    /// caller skips selection entirely in that case). `has_turn` is true
+    /// for an explicit HTTP TURN or the native live-chat turn whose answer
+    /// history will carry this selection. `cap_tok` is the same resolved
     /// global board cap the final frame renders under.
     ///
-    /// Without TURN this selects LIVE only and never returns a candidate.
-    /// With TURN it selects PENDING when present else LIVE, and returns the
-    /// exact candidate the SAME accepted TURN commit must activate. Stored
+    /// With `has_turn=false` this selects LIVE only and returns no candidate.
+    /// Otherwise it selects PENDING when present else LIVE, returning the
+    /// exact candidate the same accepted history commit must activate. Stored
     /// `None` selects `None` (100-row path); stored values clamp with
     /// `min(stored_u64, cap_as_u64)` before the `usize` cast, proven to fit.
     /// Missing rows select `(None, None)`.

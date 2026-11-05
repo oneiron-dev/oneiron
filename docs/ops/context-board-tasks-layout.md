@@ -1,11 +1,13 @@
-# ROOT TASKS layout over raw HTTP (FIX 12570, HTTP slice)
+# ROOT TASKS layout for HTTP and live chat (FIX 12570)
 
-Status: parent 12570 PART, ROOT raw HTTP only. Not full 12570.
+Status: parent 12570 PART. Supports ROOT raw HTTP and the native live-chat
+`start_turn` path, not full BOARD-LAYOUT.
 
 ## Partial scope
 
 One authenticated actor's ROOT TASKS-row token budget, durably staged and
-commit-linked to an explicit actual TURN. Nothing else in 12570 ships here.
+commit-linked to an explicit actual TURN or a live chat answer's TURN.
+Nothing else in 12570 ships here.
 
 Covered:
 
@@ -14,6 +16,12 @@ Covered:
 - Actor-keyed durable live default plus ONE pending staged write.
 - Explicit TURN projects the staged pending snapshot NOW before render; the
   SAME accepted history transaction activates the exact candidate.
+- Live `POST /v1/ai/chat` projects its answering agent's ROOT layout before
+  render and activates the exact captured candidate in the accepted answer
+  history commit. It uses the agent already selected for the answer, not a
+  second lookup or the payer. The caller's stored layout does not set chat
+  sizing, but its content read authority and HTTP TURN path are unchanged.
+  The agent stages its layout through the native POST with its credential.
 - Explicit per-request `tasks_budget_tok` still wins for that render and
   never consumes pending.
 - Existing 5426 renderer (`render_with_token_budget`), metadata
@@ -22,7 +30,8 @@ Covered:
 
 Explicitly OPEN (full 12570 PART):
 
-- MCP/run/chat next-turn application of the staged layout.
+- MCP/run/program next-turn application of the staged layout; queued
+  Continue/Retry stay old behavior (caller live-only, no candidate).
 - Fork-specific store, eager fork copy, or independent fork layout. Forks
   hold no copy in this slice and must not pretend otherwise.
 - Full shares summed across all sections, folds, filters, keep/note rows,
@@ -58,11 +67,14 @@ rows ride outside the allotment.
   `pending: null` is no pending; `{"budget_tok": null}` is a staged reset;
   `{"budget_tok": N}` is a staged set. Staged reset is never flattened with
   no pending. GET never mutates. Revision numbers stay internal.
-- A hydration without TURN reads LIVE only and never activates pending.
+- A hydration without TURN and without a chat layout actor reads LIVE only
+  and never activates pending; A live chat turn projects its answering
+  agent's pending when present else live.
 - Staging needs `core:write` plus an entity principal and declared actor
   class. Reading needs `core:read`; without an entity identity it returns
   an empty state without reading storage. An identified HTTP caller reads
-  or stages only its own actor's row.
+  or stages only its own actor's row. A live chat turn projects its
+  answering agent's row for sizing only; content still reads as the caller.
 
 ## Overrides
 
@@ -70,12 +82,21 @@ rows ride outside the allotment.
   budget for that render (validated against the SAME effective board cap
   before ANY retrieval, FIX 14248) and never selects or consumes pending.
   This slice ignores pending entirely then: no candidate. Newer staged
-  writes wait for a later actual TURN that uses the stored layout.
+  writes wait for a later actual TURN that uses the stored layout. Chat
+  sends none today.
 - Explicit TURN with no per-request override projects the SELECTED pending
   snapshot NOW before render (pending when present, else live), clamped to
   the SAME resolved global board cap the final frame renders under. The SAME
   accepted history transaction then activates the exact candidate.
-- No-turn reads never activate, even when pending exists.
+- A live chat turn with no per-request override projects its answering
+  agent's SELECTED pending snapshot NOW before render (pending when
+  present, else live), clamped to the SAME resolved global board cap the
+  final frame renders under. The SAME accepted answer-history commit then
+  activates the exact candidate. Omitted or unadmitted boards, a mismatched
+  MEMORIES capture, session-only turns, and empty or unsaved answers activate
+  nothing: the existing gates discard the capture or skip its records.
+- No-turn reads without a chat layout actor never activate, even when
+  pending exists.
 
 ## Concurrency
 
@@ -98,6 +119,15 @@ rows ride outside the allotment.
 - Keyed-retry idempotency and the once-only TURN anchor keep their existing
   semantics; the TURN gate (`board_turn_target`) still parses/auths first
   and the SAME-writer history still proves author/once-only finally.
+- A live chat turn inherits the SAME activation semantics: a concurrent
+  HTTP TURN advancing agent live between chat capture and chat commit skips
+  silently (rendered bytes stand, live keeps newer); a pending-revision
+  move alone still activates the exact rendered candidate while retaining
+  the newer pending batch; erased/ABA rows never resurrect or activate. No
+  new refusal, retry, timer, or gate.
+- Chat keeps NO idempotency cache (a fresh answer TURN per turn; once-only
+  per TURN holds). A refused/unanswered/unboarded turn commits nothing;
+  pending stays pending.
 
 ## Restore limitations
 

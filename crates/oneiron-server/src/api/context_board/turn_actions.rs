@@ -60,7 +60,8 @@ pub(crate) async fn action_board(
         },
         PeerMachine::Unknown,
     );
-    let board = match super::chat_board(server, auth, Some(action.conversation), agent, query).await
+    let board = match super::chat_board(server, auth, Some(action.conversation), agent, query, None)
+        .await
     {
         Ok(board) if !board.block.trim().is_empty() => board,
         Ok(_) => return None,
