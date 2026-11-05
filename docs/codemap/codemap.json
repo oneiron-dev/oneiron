@@ -1089,7 +1089,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 2,
       "re-export": 25
      }
@@ -1647,7 +1647,7 @@
      "path": "src/agent_dispatch/widen_record.rs",
      "purpose": "Exact, durable widen intents",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "struct": 1
      }
     },
@@ -17141,13 +17141,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/payload/request.rs",
      "purpose": "Canonical request values used by code-run replay",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -24558,7 +24558,7 @@
      "path": "src/critic/review/persistence.rs",
      "purpose": "Transactional review bundles",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -24568,7 +24568,7 @@
      "path": "src/critic/review/persistence/dissent_rows.rs",
      "purpose": "A review's dissent rows: the dissent each critique keeps so far, the claim one caller holds while it authors…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -27185,13 +27185,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/scope_summary_attempt/arc_reduce.rs",
      "purpose": "The Arc assembled from its parts (FIX 7509 PR3): no model call, an ordered and lossless assembly; only the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -27241,7 +27241,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt/durable_labels.rs",
      "purpose": "Summary text in durable names (FIX 10359), as a nightly narrative's is (FIX 7576)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -34101,7 +34101,17 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 61
+      "crate-vis": 62
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/store/script_context.rs",
+     "purpose": "The model-only view of a stored program; execution always reads its original bytes",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -34244,6 +34254,14 @@
      "surface": {
       "crate-vis": 10
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_store_hooks/record_hooks.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -43658,7 +43676,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 16
      }
     },
@@ -43858,7 +43876,7 @@
      "path": "src/llm/decision/questions/store.rs",
      "purpose": "Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 7
      }
     },
@@ -47376,7 +47394,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 40,
       "re-export": 69
      }
@@ -48810,7 +48828,7 @@
      "path": "src/memory/structural/affiliated.rs",
      "purpose": "Attributed takes and imported-claim admission verbs",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5
      }
     },
@@ -48841,7 +48859,7 @@
      "path": "src/memory/structural/mod.rs",
      "purpose": "Structural puts (habit checkins, imported-claim admission, blob artifacts) and `author_take`",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 2
      }
     },
@@ -59103,7 +59121,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 5,
       "re-export": 19
      }
@@ -59132,7 +59150,7 @@
      "path": "src/receipt/pack_attribution.rs",
      "purpose": "Frozen execution and actual-use facts on an attempt's pack receipt",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 6
      }
@@ -73631,7 +73649,7 @@
       "StoreRecordHooks"
      ],
      "path": "src/store/record_hooks.rs",
-     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation, room and…",
+     "purpose": "The record hooks the store layer's write, erase and read paths run: identity-topology, federation, room…",
      "surface": {
       "trait": 1
      }
@@ -90868,17 +90886,17 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Engine-native JS code-mode executor"
     },
     "engine_store_hooks": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "L",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
     "entity_doc": {
@@ -91864,7 +91882,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6408,
+   "source_files": 6410,
    "test_files": 895
   },
   "oneiron-android": {
@@ -102274,6 +102292,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/inference_worker/startup.rs",
+     "purpose": "A replacement's startup follows the retirement of every pending predecessor",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -102570,7 +102599,7 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102600,7 +102629,7 @@
    },
    "over_bar": 2,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 34,
+   "source_files": 35,
    "test_files": 10
   },
   "oneiron-ffi": {
@@ -108750,6 +108779,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AdmittedBytes",
+      "AdmittedStr"
+     ],
+     "path": "src/buffers.rs",
+     "purpose": "Shared output buffers; native accounting constructors are feature-gated",
+     "surface": {
+      "crate-vis": 12,
+      "fn": 6,
+      "struct": 2,
+      "type": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -108774,14 +108819,13 @@
      "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
      "surface": {
       "mod": 2,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "AdmittedBytes",
       "SealMemory",
       "SealMemoryProvider",
       "SealMemoryRefusal"
@@ -108789,12 +108833,11 @@
      "path": "src/memory.rs",
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 21,
       "enum": 1,
-      "fn": 4,
-      "struct": 2,
-      "trait": 1,
-      "type": 1
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -108918,6 +108961,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/native/pdf/admitted.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/native/pdf/decode.rs",
      "purpose": "Strict loads with every stream decoded whole (Rule 5), each decode's memory reserved before it is allocated…",
      "surface": {
@@ -108925,7 +108978,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/incremental.rs",
@@ -108951,7 +109004,7 @@
      "path": "src/native/pdf/mod.rs",
      "purpose": "Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -109019,7 +109072,7 @@
      "path": "src/native/profile/assembly.rs",
      "purpose": "B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -109342,6 +109395,13 @@
      "layout": "file+dir",
      "purpose": "Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5)"
     },
+    "buffers": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Shared output buffers; native accounting constructors are feature-gated"
+    },
     "error": {
      "files": 1,
      "impl_vault": false,
@@ -109357,7 +109417,7 @@
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)"
     },
     "native": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -109373,7 +109433,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 49,
+   "source_files": 51,
    "test_files": 12
   },
   "oneiron-server": {
@@ -111523,7 +111583,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_pack/response.rs",
@@ -120224,7 +120284,7 @@
      "path": "src/embedder/local/model_manager.rs",
      "purpose": "Where the local model's files live, and how they get there",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -127929,7 +127989,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 47,
+   "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1534,
    "test_files": 182
