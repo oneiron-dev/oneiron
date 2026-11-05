@@ -70,6 +70,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_commitments_reminder_route_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commitments.reminder_route.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_commitments_reminder_route_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commitments.reminder_route.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn fetch(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("fetch", js_json(input))
@@ -2085,6 +2103,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_fit_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.fit.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skills_permissions_approve(
         &self,
         input: serde_json::Value,
@@ -3105,6 +3132,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_sync_retained_work_wait_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sync.retained_work.wait.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_federation_burst_ingress(
         &self,
         input: serde_json::Value,
@@ -3732,6 +3768,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.records.erase_sweep", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_outbound_calls_request_erase(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.outbound_calls.request.erase", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

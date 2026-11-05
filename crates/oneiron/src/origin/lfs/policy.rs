@@ -56,8 +56,8 @@ impl LfsAdmission {
 /// byte count: a size threshold would silently reclassify a build input the
 /// day it grew, which is exactly the failure this seam exists to prevent.
 pub trait LfsPathPolicy: Send + Sync {
-    /// Classifies one repository path within one repository.
-    fn classify(&self, repo_id: EntityId, path: &str) -> Result<LfsAssetClass>;
+    /// Classifies one repository's exact path bytes, without a text conversion.
+    fn classify(&self, repo_id: EntityId, path: &[u8]) -> Result<LfsAssetClass>;
 }
 
 /// The v1 default: every path is [`LfsAssetClass::RepositoryLarge`].
@@ -69,7 +69,7 @@ pub trait LfsPathPolicy: Send + Sync {
 pub struct DefaultRepositoryLargeLfsPathPolicy;
 
 impl LfsPathPolicy for DefaultRepositoryLargeLfsPathPolicy {
-    fn classify(&self, _repo_id: EntityId, _path: &str) -> Result<LfsAssetClass> {
+    fn classify(&self, _repo_id: EntityId, _path: &[u8]) -> Result<LfsAssetClass> {
         Ok(LfsAssetClass::RepositoryLarge)
     }
 }

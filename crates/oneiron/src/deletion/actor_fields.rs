@@ -32,6 +32,15 @@ impl<'write, 'env> ActorErasureWriter<'write, 'env> {
         Self { vault, wtxn, actor }
     }
 
+    /// Removes only this hard-erased target's frozen pattern revision witness.
+    pub(crate) fn erase_planned_pack_revision(&mut self) -> Result<()> {
+        crate::agent_dispatch::AgentDispatcher::erase_planned_pack_revision_in_txn(
+            &self.vault.store,
+            self.wtxn,
+            &self.actor,
+        )
+    }
+
     pub(crate) fn parts(&mut self) -> (&Vault, &mut heed::RwTxn<'env>, EntityId) {
         (self.vault, &mut *self.wtxn, self.actor)
     }
@@ -76,6 +85,11 @@ pub(super) fn erase_actor_fields_in_txn(
     if hard {
         let erased = BTreeSet::from([*actor]);
         crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
+        crate::agent_dispatch::AgentDispatcher::erase_planned_pack_revision_in_txn(
+            &vault.store,
+            wtxn,
+            actor,
+        )?;
     }
     if act.is_some() {
         crate::self_heal::blocked_reports::erase_blocked_source_actor_as_in_txn(
@@ -199,6 +213,7 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     for actor in &erased {
         {
             let mut erase = ActorErasureWriter::new(vault, wtxn, *actor);
+            erase.erase_planned_pack_revision()?;
             scrub_actor_fields_in_txn(&mut erase)?;
         }
         // The image's cleanup rows name it again; they go once more (FIX 7517).

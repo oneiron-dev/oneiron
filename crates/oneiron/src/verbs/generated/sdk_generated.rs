@@ -52,6 +52,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.commitments.reminder_route.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.commitments.reminder_route.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentReminderRouteSetRequest,
+                >(),
+            ),
+            (
                 "fetch",
                 crate::code_run::vault_read::request_schema::<crate::web_fetch::WebFetchRequest>(),
             ),
@@ -1271,6 +1281,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<SkillCodeAutoInstallRequest>(),
             ),
             (
+                "vault.skills.fit.set",
+                crate::code_run::vault_read::request_schema::<SkillFitSetRequest>(),
+            ),
+            (
                 "vault.skills.permissions.approve",
                 crate::code_run::vault_read::request_schema::<HubSkillPermissionRequest>(),
             ),
@@ -1864,6 +1878,13 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             #[cfg(feature = "sync")]
             (
+                "vault.sync.retained_work.wait.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetainedWorkWaitSetRequest,
+                >(),
+            ),
+            #[cfg(feature = "sync")]
+            (
                 "vault.federation.burst.ingress",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectDelivery>(
                 ),
@@ -2280,6 +2301,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::erase_sweep::RecordEraseSweepRequest,
                 >(),
+            ),
+            (
+                "vault.outbound_calls.request.erase",
+                crate::code_run::vault_read::request_schema::<OutboundCallRequestEraseRequest>(),
             ),
             (
                 "vault.research.create_child",
@@ -7068,6 +7093,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.commitments.fulfill",
     "vault.commitments.release",
     "vault.commitments.supersede",
+    "vault.commitments.reminder_route.get",
+    "vault.commitments.reminder_route.set",
     "fetch",
     "crawl",
     "feedback.preview",
@@ -7234,6 +7261,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.skills.fork",
     "vault.skills.rules.set",
     "vault.skills.code_auto_install.set",
+    "vault.skills.fit.set",
     "vault.skills.permissions.approve",
     "vault.skills.optimize.start",
     "vault.skills.optimize.result",
@@ -7314,6 +7342,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.federation.burst.baseline",
     "vault.federation.burst.policy",
     "vault.federation.burst.policy.set",
+    "vault.sync.retained_work.wait.set",
     "vault.federation.burst.ingress",
     "vault.federation.burst.disposition",
     "vault.federation.burst.review",
@@ -7376,6 +7405,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.off_record.rooms.confirm_save",
     "vault.off_record.rooms.decline_save",
     "vault.records.erase_sweep",
+    "vault.outbound_calls.request.erase",
     "vault.research.create_child",
     "vault.research.archive",
     "vault.research.archive.install",
@@ -7936,6 +7966,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.commitments.supersede" => crate::code_run::vault_read::request_schema::<
             crate::memory::commitment_doors::CommitmentView,
         >(),
+        "vault.commitments.reminder_route.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentReminderRouteReply,
+        >(),
+        "vault.commitments.reminder_route.set" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentReminderRouteReply,
+        >(),
         "fetch" => crate::code_run::vault_read::request_schema::<crate::web_fetch::FetchResult>(),
         "crawl" => crate::code_run::vault_read::request_schema::<crate::web_fetch::CrawlResult>(),
         "feedback.preview" => crate::code_run::vault_read::request_schema::<
@@ -8424,6 +8460,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.skills.code_auto_install.set" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::HubConsentReceipt,
         >(),
+        "vault.skills.fit.set" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::HubConsentReceipt,
+        >(),
         "vault.skills.permissions.approve" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::HubConsentReceipt,
         >(),
@@ -8676,6 +8715,8 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::sync::federation_burst::FederationBurstPolicy,
         >(),
         #[cfg(feature = "sync")]
+        "vault.sync.retained_work.wait.set" => crate::code_run::vault_read::request_schema::<u64>(),
+        #[cfg(feature = "sync")]
         "vault.federation.burst.ingress" => crate::code_run::vault_read::request_schema::<
             crate::sync::federation_burst::FederationBurstReceipt,
         >(),
@@ -8869,6 +8910,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.records.erase_sweep" => crate::code_run::vault_read::request_schema::<
             Option<crate::memory::erase_sweep::RecordEraseSweep>,
+        >(),
+        "vault.outbound_calls.request.erase" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OutboundCallRequestErased,
         >(),
         "vault.research.create_child" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ResearchChildReceipt,
@@ -10609,6 +10653,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.commitments.reminder_route.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.reminder_route.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "fetch" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -12333,6 +12391,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.skills.fit.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.skills.permissions.approve" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13146,6 +13211,14 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         #[cfg(feature = "sync")]
+        "vault.sync.retained_work.wait.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.ingress" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13624,6 +13697,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.records.erase_sweep" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.outbound_calls.request.erase" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19187,6 +19267,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::commitment_doors::CommitmentCloseRequest =
                 decode(value.clone())?;
         }
+        "vault.commitments.reminder_route.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.commitments.reminder_route.set" => {
+            let _input: crate::memory::commitment_doors::CommitmentReminderRouteSetRequest =
+                decode(value.clone())?;
+        }
         "fetch" => {
             let _input: crate::web_fetch::WebFetchRequest = decode(value.clone())?;
         }
@@ -19991,6 +20078,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.skills.code_auto_install.set" => {
             let _input: SkillCodeAutoInstallRequest = decode(value.clone())?;
         }
+        "vault.skills.fit.set" => {
+            let _input: SkillFitSetRequest = decode(value.clone())?;
+        }
         "vault.skills.permissions.approve" => {
             let _input: HubSkillPermissionRequest = decode(value.clone())?;
         }
@@ -20358,6 +20448,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 decode(value.clone())?;
         }
         #[cfg(feature = "sync")]
+        "vault.sync.retained_work.wait.set" => {
+            let _input: crate::task_verb::sdk::RetainedWorkWaitSetRequest = decode(value.clone())?;
+        }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.ingress" => {
             let _input: crate::task_verb::sdk::ConnectDelivery = decode(value.clone())?;
         }
@@ -20584,6 +20678,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.records.erase_sweep" => {
             let _input: crate::memory::erase_sweep::RecordEraseSweepRequest =
                 decode(value.clone())?;
+        }
+        "vault.outbound_calls.request.erase" => {
+            let _input: OutboundCallRequestEraseRequest = decode(value.clone())?;
         }
         "vault.research.create_child" => {
             let _input: crate::task_verb::sdk::ResearchChildWire = decode(value.clone())?;
@@ -23521,6 +23618,14 @@ pub fn invoke(
         "vault.commitments.supersede" => {
             encode(vault_commitments_supersede(memory, decode(value)?)?)
         }
+        "vault.commitments.reminder_route.get" => encode(vault_commitments_reminder_route_get(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.commitments.reminder_route.set" => encode(vault_commitments_reminder_route_set(
+            memory,
+            decode(value)?,
+        )?),
         "fetch" => encode(fetch(memory, decode(value)?)?),
         "crawl" => encode(crawl(memory, decode(value)?)?),
         "report" => encode(report(memory, decode(value)?)?),
@@ -23873,6 +23978,7 @@ pub fn invoke(
         "vault.skills.code_auto_install.set" => {
             encode(vault_skills_code_auto_install_set(memory, decode(value)?)?)
         }
+        "vault.skills.fit.set" => encode(vault_skills_fit_set(memory, decode(value)?)?),
         "vault.skills.permissions.approve" => {
             encode(vault_skills_permissions_approve(memory, decode(value)?)?)
         }
@@ -24135,6 +24241,10 @@ pub fn invoke(
             encode(vault_federation_burst_policy_set(memory, decode(value)?)?)
         }
         #[cfg(feature = "sync")]
+        "vault.sync.retained_work.wait.set" => {
+            encode(vault_sync_retained_work_wait_set(memory, decode(value)?)?)
+        }
+        #[cfg(feature = "sync")]
         "vault.federation.burst.ingress" => {
             encode(vault_federation_burst_ingress(memory, decode(value)?)?)
         }
@@ -24310,6 +24420,9 @@ pub fn invoke(
             encode(vault_records_erase_confirm(memory, decode(value)?)?)
         }
         "vault.records.erase_sweep" => encode(vault_records_erase_sweep(memory, decode(value)?)?),
+        "vault.outbound_calls.request.erase" => {
+            encode(vault_outbound_calls_request_erase(memory, decode(value)?)?)
+        }
         "vault.research.create_child" => {
             encode(vault_research_create_child(memory, decode(value)?)?)
         }
@@ -26147,6 +26260,23 @@ pub fn vault_commitments_supersede(
 ) -> MemoryResult<crate::memory::commitment_doors::CommitmentView> {
     memory.commitments_supersede_as(
         &memory.embedded_owner("vault.commitments.supersede")?,
+        input,
+    )
+}
+pub fn vault_commitments_reminder_route_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentReminderRouteReply> {
+    memory.commitments_reminder_route_get_as(
+        &memory.embedded_owner("vault.commitments.reminder_route.get")?,
+    )
+}
+pub fn vault_commitments_reminder_route_set(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentReminderRouteSetRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentReminderRouteReply> {
+    memory.commitments_reminder_route_set_as(
+        &memory.embedded_owner("vault.commitments.reminder_route.set")?,
         input,
     )
 }
@@ -28104,6 +28234,16 @@ pub fn vault_skills_code_auto_install_set(
         &input,
     )
 }
+pub fn vault_skills_fit_set(
+    memory: &Memory<'_>,
+    input: SkillFitSetRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubConsentReceipt> {
+    crate::task_verb::sdk::skill_fit_set_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.fit.set")?,
+        &input,
+    )
+}
 pub fn vault_skills_permissions_approve(
     memory: &Memory<'_>,
     input: HubSkillPermissionRequest,
@@ -29081,6 +29221,17 @@ pub fn vault_federation_burst_policy_set(
     )
 }
 #[cfg(feature = "sync")]
+pub fn vault_sync_retained_work_wait_set(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetainedWorkWaitSetRequest,
+) -> MemoryResult<u64> {
+    crate::task_verb::sdk::set_retained_work_wait_secs_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sync.retained_work.wait.set")?,
+        input,
+    )
+}
+#[cfg(feature = "sync")]
 pub fn vault_federation_burst_ingress(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ConnectDelivery,
@@ -29606,6 +29757,16 @@ pub fn vault_records_erase_sweep(
     input: crate::memory::erase_sweep::RecordEraseSweepRequest,
 ) -> MemoryResult<Option<crate::memory::erase_sweep::RecordEraseSweep>> {
     memory.record_erase_sweep_as(&memory.embedded_owner("vault.records.erase_sweep")?, input)
+}
+pub fn vault_outbound_calls_request_erase(
+    memory: &Memory<'_>,
+    input: OutboundCallRequestEraseRequest,
+) -> MemoryResult<crate::task_verb::sdk::OutboundCallRequestErased> {
+    crate::task_verb::sdk::erase_outbound_call_request_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.outbound_calls.request.erase")?,
+        input,
+    )
 }
 pub fn vault_research_create_child(
     memory: &Memory<'_>,
@@ -35043,7 +35204,7 @@ pub fn vault_artifacts_body_deck_preview(
 pub fn vault_artifacts_append(
     memory: &Memory<'_>,
     input: AppendBlobVersionRequest,
-) -> MemoryResult<crate::memory::BlobVersionView> {
+) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
     if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
         return Err(MemoryError::bad_request(
             "blob base64 exceeds the content ceiling",

@@ -19,11 +19,6 @@ pub(crate) const MAX_INTERLOCUTOR_THIRD_PARTIES: usize = 32;
 /// instead of an engine error.
 pub(crate) const MAX_INTERLOCUTOR_COUNTERPARTY_BYTES: usize = 512;
 
-/// Display labels ride stamps, notices, and receipts; bounded to the same
-/// scale as the counterparty key so up to [`MAX_INTERLOCUTOR_THIRD_PARTIES`]
-/// labels stay a bounded echo/work cost.
-pub(crate) const MAX_INTERLOCUTOR_LABEL_BYTES: usize = 512;
-
 /// Edge expansion depth controls for context-pack assembly.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextPackDepthControls {
@@ -181,7 +176,7 @@ pub(crate) struct CoreInterlocutorParty {
     #[serde(default)]
     #[schema(example = "kenji@example.com")]
     pub(super) counterparty: Option<String>,
-    /// Display label for an untyped party.
+    /// Display label for an untyped party, echoed in stamps, notices and receipts.
     #[serde(default)]
     #[schema(example = "unknown speaker 2")]
     pub(super) label: Option<String>,
@@ -339,8 +334,8 @@ pub(crate) struct CoreContextPackRequest {
     /// sit.
     #[serde(default, alias = "queryAffect")]
     pub(super) query_affect: Option<ContextPackQueryAffect>,
-    /// Maximum primary candidates to retrieve. A limit past 1,000 is served
-    /// at 1,000 and the response's `limit_clamped` says so.
+    /// Maximum primary candidates to retrieve, served whole. The response's
+    /// `limit_clamped` stays false.
     #[serde(default = "default_limit")]
     #[schema(default = default_limit, example = 10)]
     pub(super) limit: usize,
@@ -390,7 +385,8 @@ pub(crate) struct CoreContextPackRequest {
     /// Optional reader whose profile narrows this pack's optional recall.
     #[serde(default)]
     pub(super) reader: Option<ContextPackReaderControls>,
-    /// Set by [`Self::clamp_limits`] when `limit` was past the ceiling.
+    /// Whether `limit` was lowered to serve it; always false, since the
+    /// whole requested limit is served.
     #[serde(skip)]
     pub(super) limit_clamped: bool,
 }
@@ -441,34 +437,6 @@ impl CoreContextPackRequest {
                 "type_ref",
             )),
             Err(error) => Err(refused(&error.to_string(), "axis")),
-        }
-    }
-
-    /// Serves `limit` and each per-kind retrieval budget at the ceiling
-    /// (1,000 rows), remembering whether `limit` was lowered. Run before
-    /// anything reads them; running it again changes nothing.
-    pub(crate) fn clamp_limits(&mut self) {
-        let clamp = oneiron::memory::caps::clamp_search_limit;
-        let (limit, clamped) = clamp(self.limit);
-        self.limit = limit;
-        self.limit_clamped |= clamped;
-        if let Some(retrieval) = self
-            .budget
-            .as_mut()
-            .and_then(|budget| budget.retrieval.as_mut())
-        {
-            for rows in [
-                &mut retrieval.claims,
-                &mut retrieval.turns,
-                &mut retrieval.summaries,
-                &mut retrieval.facets,
-                &mut retrieval.other,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                *rows = clamp(*rows).0;
-            }
         }
     }
 

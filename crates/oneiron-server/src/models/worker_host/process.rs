@@ -1,11 +1,15 @@
 //! One running worker process in its supervisor's custody: started in a
 //! process group of its own, reaped by one task, checked for liveness on its
 //! health route, asked what it holds on its native socket when it has one
-//! (a media worker on its bearer `/stats`), asked there to drain and shut
+//! (a media worker on its bearer `/stats`, a llama worker on its `/metrics`),
+//! asked there to drain and shut
 //! down before it is stopped, and stopped by signals to that group alone.
 //! An abort kills that group at once and waits for its reaper, asking the
 //! worker nothing.
+use std::future::{Future, poll_fn};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::time::Duration;
 
 use oneiron_driver::{LauncherFuture, RunningWorker, WorkerActivity, WorkerExit};
@@ -18,10 +22,15 @@ use super::media_worker::StatsRoute;
 /// It only paces the next check; no worker is stopped for it.
 const LIVENESS_REQUEST: Duration = Duration::from_secs(5);
 
+/// The owned leader and every signal share the reaper's short poll lock.
+struct Custody {
+    group: i32,
+    child: tokio::process::Child,
+}
+
 /// A worker process the supervisor started.
 pub(super) struct ProcessWorker {
-    /// The process group: the worker's own pid.
-    group: i32,
+    state: Arc<Mutex<Custody>>,
     exit: watch::Receiver<Option<WorkerExit>>,
     health: String,
     client: reqwest::Client,
@@ -29,6 +38,8 @@ pub(super) struct ProcessWorker {
     native: Option<PathBuf>,
     /// A media worker's stats route (FIX 8318).
     stats: Option<StatsRoute>,
+    /// A llama worker's metrics route (FIX 9190): bound only for llama.
+    llama_metrics: Option<super::llama_metrics::MetricsRoute>,
 }
 
 impl ProcessWorker {
@@ -53,18 +64,32 @@ impl ProcessWorker {
                     .map_err(std::io::Error::from)
             });
         }
-        let mut child = command.spawn()?;
+        let child = command.spawn()?;
         let group = child
             .id()
             .and_then(|pid| i32::try_from(pid).ok())
             .ok_or_else(|| std::io::Error::other("the worker exited before it was named"))?;
         let (sender, exit) = watch::channel(None);
+        let state = Arc::new(Mutex::new(Custody { group, child }));
+        let reaper = Arc::clone(&state);
         tokio::spawn(async move {
-            let description = match child.wait().await {
-                Ok(status) => status.to_string(),
-                Err(error) => format!("its wait failed: {error}"),
-            };
-            sender.send_replace(Some(WorkerExit { description }));
+            poll_fn(|cx| {
+                let mut custody = reaper.lock().unwrap_or_else(|poison| poison.into_inner());
+                let status = {
+                    let mut wait = std::pin::pin!(custody.child.wait());
+                    match wait.as_mut().poll(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(status) => status,
+                    }
+                };
+                let description = match status {
+                    Ok(status) => status.to_string(),
+                    Err(error) => format!("its wait failed: {error}"),
+                };
+                sender.send_replace(Some(WorkerExit { description }));
+                Poll::Ready(())
+            })
+            .await;
         });
         let client = reqwest::Client::builder()
             .no_proxy()
@@ -74,17 +99,35 @@ impl ProcessWorker {
             .build()
             .map_err(std::io::Error::other)?;
         Ok(Self {
-            group,
+            state,
             exit,
             health,
             client,
             native,
             stats,
+            llama_metrics: None,
         })
     }
 
+    /// Binds this worker's llama.cpp `/metrics` route, for a llama worker
+    /// only: the launcher calls it right after [`Self::spawn`].
+    pub(super) fn with_llama_metrics(
+        mut self,
+        metrics: super::llama_metrics::MetricsRoute,
+    ) -> Self {
+        self.llama_metrics = Some(metrics);
+        self
+    }
+
     fn signal(&self, signal: Signal) {
-        if let Some(group) = Pid::from_raw(self.group) {
+        let custody = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if self.exit.borrow().is_some() {
+            return;
+        }
+        if let Some(group) = Pid::from_raw(custody.group) {
             let _ = kill_process_group(group, signal);
         }
     }
@@ -122,9 +165,15 @@ impl RunningWorker for ProcessWorker {
     fn activity(&self) -> LauncherFuture<'_, Option<WorkerActivity>> {
         // An EXL3 worker reports its queue, its open calls and its allocator
         // reservation on its native socket (a cheap `stats`, never a walk of
-        // its tensors), a media worker the same on its bearer `/stats`; a
-        // worker with neither reports nothing.
+        // its tensors), a media worker the same on its bearer `/stats`, a
+        // llama worker on its `/metrics`; a worker with none of them reports
+        // nothing.
         Box::pin(async move {
+            // Only an explicit `/metrics` route is read: a (None, None)
+            // worker without one is unknown, never assumed to be llama.
+            if let (None, None, Some(metrics)) = (&self.native, &self.stats, &self.llama_metrics) {
+                return llama_activity(&self.client, metrics).await;
+            }
             match (&self.native, &self.stats) {
                 (Some(socket), _) => super::super::native_exl3::activity(socket).await,
                 (None, Some(stats)) => super::media_worker::activity(stats).await,
@@ -168,4 +217,54 @@ impl RunningWorker for ProcessWorker {
             self.exited().await
         })
     }
+}
+
+/// Reads llama.cpp's deferred and processing gauges. Both are required;
+/// missing or unreadable samples mean unknown, not idle. The pinned server
+/// exposes no resident-memory gauge.
+async fn llama_activity(
+    client: &reqwest::Client,
+    metrics: &super::llama_metrics::MetricsRoute,
+) -> Option<WorkerActivity> {
+    let reply = metrics.request(client).send().await.ok()?;
+    if !reply.status().is_success() {
+        return None;
+    }
+    let body = reply.text().await.ok()?;
+    let mut queued = None;
+    let mut active = None;
+    for line in body.lines() {
+        let mut parts = line.split_whitespace();
+        let name = match parts.next() {
+            Some(name) => name,
+            None => continue,
+        };
+        if name == "llamacpp:requests_processing" {
+            let value = parts.next()?;
+            active = Some(llama_count(value)?);
+        } else if name == "llamacpp:requests_deferred" {
+            let value = parts.next()?;
+            queued = Some(llama_count(value)?);
+        }
+    }
+    Some(WorkerActivity {
+        queued: queued?,
+        active: active?,
+        resident_mib: None,
+    })
+}
+
+/// Reads integer gauge values, including the server's scientific notation.
+fn llama_count(text: &str) -> Option<u64> {
+    if let Ok(value) = text.parse::<u64>() {
+        return Some(value);
+    }
+    let value: f64 = text.parse().ok()?;
+    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+        return None;
+    }
+    if value >= u64::MAX as f64 {
+        return None;
+    }
+    Some(value as u64)
 }

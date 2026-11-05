@@ -4,7 +4,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::edit_settle::{MadeByReader, NativeOutput, PendingProposalView};
+use crate::edit_settle::{MadeByReader, PendingProposalView};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
@@ -34,6 +34,7 @@ use crate::write_envelope::provenance::made_by::MadeBy;
 
 // The version chain's reads: the head, the tree, one version's metadata
 // and its bytes, with the gate on a compaction step's response (FIX 5977).
+mod checked;
 mod reads;
 pub use reads::BlobBytes;
 
@@ -259,89 +260,26 @@ impl Vault {
         learned_at: u64,
     ) -> Result<BlobArtifactAppendOutcome> {
         let (version, fork_base) = self.with_write_txn_grouped(|wtxn| {
-            let later =
-                read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?.is_some();
-            let content_hash = blake3::hash(bytes);
-            let dedupe = fork_parent.is_none()
-                && read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
-                    .is_some_and(|head| head.content_hash == *content_hash.as_bytes());
-            if later && !dedupe && matches!(provenance, BlobVersionProvenance::AgentRun { .. }) {
-                if let Some(named) = made_by {
-                    validate_version_made_by_in_txn(self, wtxn, named)?;
-                }
-                let fork_base = match fork_parent {
-                    Some(parent) => {
-                        let record =
-                            match read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)? {
-                                Some(head) if parent > 0 && parent <= head.version => {
-                                    VERSIONS.get(&self.store, wtxn, &(*artifact_id, parent))?
-                                }
-                                _ => None,
-                            };
-                        let Some(record) = record else {
-                            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                                "fork parent version does not exist",
-                            )));
-                        };
-                        if record.version != parent {
-                            return Err(Error::CorruptedIndex("blob artifact fork parent"));
-                        }
-                        Some((parent, record.content_hash))
-                    }
-                    None => None,
-                };
-                return Ok((None, fork_base));
-            }
-            let version = match made_by {
-                Some(made_by) => self.append_blob_artifact_version_made_by_in_txn(
-                    wtxn,
-                    artifact_id,
-                    fork_parent,
-                    bytes,
-                    provenance,
-                    made_by,
-                    actor,
-                    occurred,
-                    learned_at,
-                )?,
-                None => self.append_blob_artifact_version_with_parent_in_txn(
-                    wtxn,
-                    artifact_id,
-                    bytes,
-                    provenance,
-                    actor,
-                    occurred,
-                    learned_at,
-                    fork_parent,
-                )?,
-            };
-            Ok((Some(version), None))
+            self.decide_blob_artifact_append_in_txn(
+                wtxn,
+                artifact_id,
+                fork_parent,
+                bytes,
+                provenance,
+                made_by,
+                actor,
+                occurred,
+                learned_at,
+            )
         })?;
         if let Some(version) = version {
             return Ok(BlobArtifactAppendOutcome::Landed(version));
         }
-        let BlobVersionProvenance::AgentRun { run_ref } = provenance else {
-            unreachable!("only a later AgentRun append takes the proposal path")
-        };
         let body = self
             .get_blob_artifact(artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        // A normal AgentRun append omitting made_by keeps the submitting
-        // actor's own default, so Keep records the submitter, not the keeper
-        // (blind review of #4387). No input rows: the envelope names only its
-        // writer, so retention admits nothing new and no door refuses more.
-        let output = NativeOutput {
-            run_ref: run_ref.clone(),
-            name: body.name,
-            media_type: body.media_type,
-            bytes: bytes.to_vec(),
-            report: serde_json::json!({}),
-            made_by: made_by.cloned().or_else(|| {
-                Some(default_version_made_by(
-                    &actor, provenance, None, learned_at,
-                ))
-            }),
-        };
+        let output =
+            checked::direct_append_output(body, bytes, provenance, made_by, actor, learned_at);
         self.propose_native_output_with_write_grant(
             artifact_id,
             &output,
