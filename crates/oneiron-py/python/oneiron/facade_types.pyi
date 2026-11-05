@@ -2200,6 +2200,7 @@ class SpendScope(TypedDict):
     parent: NotRequired[SpendScopeId | None]
     unit: LeaseUnit
     cap_units: int
+    ceiling_units: NotRequired[int | None]
     hard: bool
     spent_units: int
     held_units: int

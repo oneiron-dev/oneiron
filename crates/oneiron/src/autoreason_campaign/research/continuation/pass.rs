@@ -198,6 +198,9 @@ impl Pass<'_> {
                 return Err(invalid("a held-out basis dispatches no run"));
             }
         };
+        let reservation = self
+            .reservation(running.reservation)?
+            .ok_or(invalid("the running research task has no reservation"))?;
         let outcome = AgentDispatcher::new(self.vault).dispatch_with_context(
             DispatchAgent {
                 target: AgentDispatchTarget::Custom(agent),
@@ -212,6 +215,7 @@ impl Pass<'_> {
                 now: self.now,
             },
             AgentSpawnContext::default()
+                .with_token_ceiling(reservation.units)
                 .with_context_spec(ContextSpec::excluded().with_briefing(briefing)),
         );
         let reason = match outcome {

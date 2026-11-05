@@ -94,6 +94,7 @@ pub(super) struct WorkflowIntent {
     /// The spawn's `budget`: a hard carve for the whole workflow.
     #[serde(default)]
     pub budget: Option<u64>,
+    pub token_ceiling: Option<u64>,
     /// A root workflow's spend scope.
     #[serde(default)]
     pub spend: Option<super::SpendScopeId>,
