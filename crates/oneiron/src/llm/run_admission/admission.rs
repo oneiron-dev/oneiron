@@ -558,6 +558,10 @@ impl RunAdmission {
 }
 
 impl RunInner {
+    pub(super) fn instance(&self) -> crate::EntityId {
+        self.instance
+    }
+
     /// `offer` as this run binds it: with the run's payer when a room's root
     /// spend scope funds the run (OF-531). Admission and the gate both take
     /// this one binding, so the permit's offer identity is the one the gate

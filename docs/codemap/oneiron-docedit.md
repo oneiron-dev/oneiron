@@ -56,6 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit/text.rs` | src | m | 14 crate-vis | — | `set_text`, `replace_run_text` and `set_run_props` |
 | `src/edit/text/build.rs` | src | s | 4 crate-vis | — | The new XML the text mapping writes: a run with new text, a run of the paragraph's end properties, and new… |
 | `src/edit/text/field_cut.rs` | src | s | 1 crate-vis | — | A table cell's field-aware cut (FIX 12227): where the retained text mapping refuses because new text would… |
+| `src/edit/text/parse.rs` | src | s | 2 crate-vis | — | Paragraph text as the generic deck mapping or the native cell reader counts it |
 | `src/edit/transaction.rs` | src | m | 10 struct · 8 enum · 1 trait · 14 fn · 1 const · 1 re-export | AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets +11 | Deck transaction grammar, reports and runner seam |
 | `src/edit/transaction/run.rs` | src | m | 1 fn · 6 crate-vis | — | Ordered deck transaction execution |
 | `src/edit/wire.rs` | src | m | 4 struct · 5 enum · 2 fn | DeckAnchorCandidate, DeckIdentityAmbiguity, DeckInspection, DeckNativeRefusal, DeckShapeInspection, DeckShapeKind, DeckSlideInspection, DeckStepRefusal +1 | Owned wire forms for the deck edit door (ARCH-0077, "Identities" and "The 23 named refusals"): the native… |
@@ -80,8 +81,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/convert.rs` | src | m | 12 crate-vis | — | Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office… |
 | `src/live/convert/chart.rs` | src | m | 2 crate-vis | — | A chart payload settled into the form its export writes (OF-510): the plots Change Chart Type lays out… |
 | `src/live/convert/chart/special.rs` | src | m | 7 crate-vis | — | A chart's stock, surface and of-pie settlement (OF-510, FIX 3493 D9c): each stock plot's prices bound to its… |
-| `src/live/deck_export.rs` | src | XL | 7 struct · 1 enum · 11 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
+| `src/live/deck_export.rs` | src | m | 7 struct · 1 enum · 7 fn · 1 const · 2 re-export | ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
 | `src/live/deck_export/chart.rs` | src | s | 3 crate-vis | — | A chart at export, by series identity: a bound chart's changed data written over its retained chart part… |
+| `src/live/deck_export/evidence.rs` | src | s | 3 fn | — | — |
+| `src/live/deck_export/payload.rs` | src | m | 5 crate-vis | — | — |
+| `src/live/deck_export/projector.rs` | src | m | 1 fn | — | — |
 | `src/live/deck_export/table.rs` | src | s | 3 crate-vis | — | A table at export, by row and column identity: a bound table's grid rewritten where its rows, columns or… |
 | `src/live/diagram.rs` | src | m | 3 crate-vis | — | SmartArt structure (OF-510, FIX 3697): nodes added, removed, re-levelled or moved, as PowerPoint's text pane… |
 | `src/live/held.rs` | src | m | 13 crate-vis | — | What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a… |
