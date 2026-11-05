@@ -262,6 +262,20 @@ impl Store {
             });
             memory.materialized(0, bytes);
         }
+        if let Some(memory) = replay_inputs_memory.as_mut() {
+            let bytes = (record.signals.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<super::types::RetrievalSignal>() as u64)
+                .saturating_add(
+                    (record.result_ids.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
+                )
+                .saturating_add(
+                    (record.score_breakdown.capacity() as u64).saturating_mul(
+                        std::mem::size_of::<super::types::RetrievalScoreBreakdown>() as u64,
+                    ),
+                );
+            memory.materialized(0, bytes);
+        }
         let record = ProvisionalRetrievalRun {
             record,
             _replay_inputs_memory: replay_inputs_memory,
