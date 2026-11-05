@@ -343,7 +343,9 @@ impl HostLegalCaptures {
         {
             let registry = self.registry.lock().map_err(|_| poisoned())?;
             if let Some(order) = registry.orders.get(&key) {
-                if self.stopped.load(Ordering::Acquire) {
+                if self.stopped.load(Ordering::Acquire)
+                    || registry.released.contains(&(key.order, key.generation))
+                {
                     return Err(interrupted().into());
                 }
                 return order.attach(attempt);
@@ -370,14 +372,15 @@ impl HostLegalCaptures {
             registry
                 .released
                 .insert((release.order, release.generation));
-            let keys: Vec<_> = registry
+            // Overlapping releases must see the SAME draining orders. The
+            // tombstone stops new attempts, but removal waits for the drain.
+            registry
                 .orders
-                .keys()
-                .filter(|key| key.order == release.order && key.generation == release.generation)
+                .values()
+                .filter(|order| {
+                    order.key.order == release.order && order.key.generation == release.generation
+                })
                 .cloned()
-                .collect();
-            keys.into_iter()
-                .filter_map(|key| registry.orders.remove(&key))
                 .collect::<Vec<_>>()
         };
         let mut attempts = Vec::new();
@@ -389,6 +392,16 @@ impl HostLegalCaptures {
         }
         for attempt in &attempts {
             let _ = attempt.wait(vault);
+        }
+        let mut registry = self.registry.lock().map_err(|_| poisoned())?;
+        for order in &orders {
+            if registry
+                .orders
+                .get(&order.key)
+                .is_some_and(|current| Arc::ptr_eq(current, order))
+            {
+                registry.orders.remove(&order.key);
+            }
         }
         Ok(())
     }
