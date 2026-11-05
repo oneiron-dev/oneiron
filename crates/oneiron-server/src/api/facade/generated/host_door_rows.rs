@@ -27,6 +27,11 @@
 //! - `vault.weave.lens`
 //! - `vault.weave.link.wrong`
 //! - `vault.weave.item.wrong`
+//! - `vault.weave.admin.report`
+//! - `vault.weave.admin.lens`
+//! - `vault.weave.admin.digest`
+//! - `vault.weave.admin.link.wrong`
+//! - `vault.weave.admin.item.wrong`
 //! - `vault.inbox.groups.resolve`
 //! - `vault.skills.optimize.tradeoff_asks.resolve`
 //! - `vault.packs.sections.propose`

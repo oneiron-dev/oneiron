@@ -19,7 +19,13 @@
 //! (CALLS `FIX 11694 first passkey`). An erase of the person drops every
 //! row here with them.
 
+mod admin_inputs;
 mod webauthn;
+
+pub use admin_inputs::{
+    WeaveAdminDigestRequest, WeaveAdminItemWrongRequest, WeaveAdminLensRequest,
+    WeaveAdminLinkWrongRequest, WeaveAdminReportRequest,
+};
 
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};

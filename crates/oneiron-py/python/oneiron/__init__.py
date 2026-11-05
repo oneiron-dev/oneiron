@@ -1799,6 +1799,9 @@ class Oneiron:
         @property
         def item(self) -> "Oneiron._VaultWeaveItemVerbs":
             return Oneiron._VaultWeaveItemVerbs(self._client)
+        @property
+        def admin(self) -> "Oneiron._VaultWeaveAdminVerbs":
+            return Oneiron._VaultWeaveAdminVerbs(self._client)
         def enqueue(self, spec):
             """Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."""
             return json.loads(_translate(lambda: self._client.vault_weave_enqueue(json.dumps(spec))))
@@ -1865,6 +1868,36 @@ class Oneiron:
         def wrong(self, spec):
             """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_item_wrong(json.dumps(spec))))
+    class _VaultWeaveAdminVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def report(self, spec):
+            """A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_report(json.dumps(spec))))
+        def lens(self, spec):
+            """A weave Admin's live report rendered into its lens on the server's model, under the stepped-up Admin proof; the server holds its frame for the card's events."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_lens(json.dumps(spec))))
+        def digest(self, spec):
+            """One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_digest(json.dumps(spec))))
+        @property
+        def link(self) -> "Oneiron._VaultWeaveAdminLinkVerbs":
+            return Oneiron._VaultWeaveAdminLinkVerbs(self._client)
+        @property
+        def item(self) -> "Oneiron._VaultWeaveAdminItemVerbs":
+            return Oneiron._VaultWeaveAdminItemVerbs(self._client)
+    class _VaultWeaveAdminLinkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            """A weave Admin labels a link its Admin report shows as wrong, under the stepped-up Admin proof, with the grant on the label; the link stays."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_link_wrong(json.dumps(spec))))
+    class _VaultWeaveAdminItemVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            """A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_item_wrong(json.dumps(spec))))
     class _VaultWeaveSchedulesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
