@@ -170,6 +170,8 @@ async fn act(
     let place = blocking(|| vault.turn_room_work(action.assistant_turn))
         .map_err(|error| error.to_string())?;
     let (room, branch) = place.map_or((action.conversation, None), |work| (work.room, work.branch));
+    let model_call_no_record_at_arrival =
+        crate::api::ai::chat::model_call_keeps_no_record(vault, actor, None, Some(room), None);
     let funding = blocking(|| room_launch_funding(vault, room, branch, context.agent, actor))
         .map_err(|fault| fault.to_string())?;
     let seat = ai
@@ -282,7 +284,6 @@ async fn act(
         }
         None => None,
     };
-    let answers = messages.len();
     messages.push(text_message(LlmMessageRole::User, context.user_text));
     // FIX 6676: the craft joins once the restored history and the user's
     // turn are in, where the session layout places it, and before any saved
@@ -292,6 +293,7 @@ async fn act(
         place_craft(&mut messages, lead, craft, layout);
     }
     let action_messages = action_log.as_ref().map(|_| messages.clone());
+    let answers = messages.len() - 1;
     if action.action == TurnAction::Continue && !context.saved.is_empty() {
         today_sources.add(Some(&[action.assistant_turn, action.message]));
     }
@@ -402,6 +404,9 @@ async fn act(
             payer: WriteActor::new(actor, class),
             funding,
             budget_units: settings.turn_budget_units,
+            model_call_caller: actor,
+            model_call_room: Some(room),
+            model_call_no_record_at_arrival,
             credential: TurnCredential::Action {
                 action: Box::new(action),
                 vault: Arc::clone(vault),

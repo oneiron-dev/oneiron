@@ -34,6 +34,7 @@ use oneiron::{
     LlmStreamEvent, Vault, WriteActor,
 };
 
+use super::model_call::Recorder;
 use super::{CONTINUE_INSTRUCTION, TurnSources, text_message};
 use crate::ai_host::{AiHandle, CHAT_ROLE, ChatBreakpointCall, ChatSelfMode};
 use crate::models::RoleCall;
@@ -355,9 +356,10 @@ pub(super) fn open_stream(
     admitted: RoleCall,
     today: Option<RoleCall>,
     pending: Option<&PendingSeed>,
+    recorder: &Recorder,
 ) -> LlmResult<LlmStream<'static>> {
     let Some(today) = today else {
-        return admitted.ladder.stream(run, admitted.request, None);
+        return recorder.stream(run, admitted);
     };
     let live = pending.map_or_else(
         || Arc::new(AtomicBool::new(true)),
@@ -366,10 +368,16 @@ pub(super) fn open_stream(
     if let Err(reason) = live_attempt_headroom(run) {
         live.store(false, Ordering::Release);
         live_fork_unavailable(reason);
-        return today.ladder.stream(today_run, today.request, None);
+        return recorder.stream(today_run, today);
     }
-    match admitted.ladder.stream(run, admitted.request, None) {
-        Ok(stream) => Ok(first_or_today(stream, today_run.clone(), today, live)),
+    match recorder.stream(run, admitted) {
+        Ok(stream) => Ok(first_or_today(
+            stream,
+            today_run.clone(),
+            today,
+            live,
+            recorder.clone(),
+        )),
         Err(error)
             if matches!(
                 &error,
@@ -380,7 +388,7 @@ pub(super) fn open_stream(
         }
         Err(_) => {
             live.store(false, Ordering::Release);
-            today.ladder.stream(today_run, today.request, None)
+            recorder.stream(today_run, today)
         }
     }
 }
@@ -421,6 +429,7 @@ struct FirstLeg {
     run: RunAdmission,
     today: RoleCall,
     used: Arc<AtomicBool>,
+    recorder: Recorder,
 }
 
 /// `live`, unless its first event is a failure: then `today`'s stream.
@@ -429,12 +438,14 @@ fn first_or_today(
     run: RunAdmission,
     today: RoleCall,
     used: Arc<AtomicBool>,
+    recorder: Recorder,
 ) -> LlmStream<'static> {
     let first = Leg::First(Box::new(FirstLeg {
         live,
         run,
         today,
         used,
+        recorder,
     }));
     LlmStream::new(futures_util::stream::unfold(first, |leg| async move {
         match leg {
@@ -444,6 +455,7 @@ fn first_or_today(
                     run,
                     today,
                     used,
+                    recorder,
                 } = *first;
                 match live.next().await {
                     Some(Ok(event)) => Some((Ok::<LlmStreamEvent, _>(event), Leg::Rest(live))),
@@ -460,7 +472,7 @@ fn first_or_today(
                     _ => {
                         used.store(false, Ordering::Release);
                         drop(live);
-                        match today.ladder.stream(&run, today.request, None) {
+                        match recorder.stream(&run, today) {
                             Ok(mut stream) => {
                                 stream.next().await.map(|item| (item, Leg::Rest(stream)))
                             }

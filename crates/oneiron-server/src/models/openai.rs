@@ -18,26 +18,13 @@ use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use super::cache_usage::carry_chat_evidence;
+use super::exl3_evidence::{Tie, external_tie};
 use super::http::{HttpFailure, ProviderHttp, SseItem};
 use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver, execution_mode};
-#[cfg(unix)]
-use super::native_exl3::Tie;
 use super::output_cap::OutputCap;
 use super::served::record_served_model;
 use super::worker_host;
 use crate::config::models::ResponseFormatWire;
-
-/// The managed-launch tie off Unix (FIX 9296): native EXL3 exists only on
-/// Unix, so no HTTP fallback ever carries one here; the direct route passes
-/// `None`.
-#[cfg(not(unix))]
-#[derive(Clone)]
-pub(super) struct Tie;
-
-#[cfg(not(unix))]
-impl Tie {
-    fn apply(&self, _body: &mut JsonValue) {}
-}
 
 pub(super) struct OpenAiHttp {
     pub(super) http: ProviderHttp,
@@ -52,7 +39,7 @@ pub(super) struct OpenAiHttp {
     pub(super) engine_models: BTreeMap<String, ModelId>,
     /// The external chat workers bound at construction, by wire id (FIX 9200):
     /// a serving answer observed on a row requalifies that row's worker only.
-    pub(super) external_workers: BTreeMap<String, InferenceWorker>,
+    pub(super) external_workers: BTreeMap<String, worker_host::ExternalWorker>,
 }
 
 impl OpenAiHttp {
@@ -67,8 +54,8 @@ impl OpenAiHttp {
         self.identities.resolve(&self.http, returned, target).await
     }
 
-    /// A buffered call tied to its managed launch when `tie` names one (FIX
-    /// 9296): `None` is the direct HTTP route, as before.
+    /// A buffered call checked against its managed launch or captured external
+    /// EXL3 manifest pin (FIX 9296); other HTTP routes carry no tie.
     pub(super) fn execute_with_tie<'a>(
         &'a self,
         request: OpenAiCompatHttpRequest,
@@ -82,10 +69,11 @@ impl OpenAiHttp {
             let target = configured_target(&body);
             let execution = execution_mode(&body);
             // The bound external worker, if any, captured before any send (FIX 9200).
-            let observed = target
+            let bound = target
                 .as_deref()
-                .and_then(|wire| self.external_workers.get(wire))
-                .cloned();
+                .and_then(|wire| self.external_workers.get(wire));
+            let observed = bound.map(|bound| bound.worker.clone());
+            let tie = tie.or_else(|| bound.and_then(external_tie));
             // One physical request, observed from its send (FIX 9417).
             let publisher = InferencePublisher::begin(lease);
             let mut reply = self
@@ -129,8 +117,8 @@ impl OpenAiHttp {
         })
     }
 
-    /// A streamed call tied to its managed launch when `tie` names one (FIX
-    /// 9296): `None` is the direct HTTP route, as before.
+    /// A streamed call checked against its managed launch or captured external
+    /// EXL3 manifest pin (FIX 9296); other HTTP routes carry no tie.
     pub(super) fn stream_with_tie<'a>(
         &'a self,
         request: OpenAiCompatHttpRequest,
@@ -143,10 +131,11 @@ impl OpenAiHttp {
         let target = configured_target(&body);
         let execution = execution_mode(&body);
         // The bound external worker, if any, captured before any send (FIX 9200).
-        let observed = target
+        let bound = target
             .as_deref()
-            .and_then(|wire| self.external_workers.get(wire))
-            .cloned();
+            .and_then(|wire| self.external_workers.get(wire));
+        let observed = bound.map(|bound| bound.worker.clone());
+        let tie = tie.or_else(|| bound.and_then(external_tie));
         // One physical request, observed from its send (FIX 9417).
         let publisher = InferencePublisher::begin(lease);
         let model = target
