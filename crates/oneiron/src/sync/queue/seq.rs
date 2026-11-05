@@ -29,16 +29,19 @@ pub(crate) fn push_embed_job_in_txn(
     priority: u8,
 ) -> Result<()> {
     let key = encode_embed_key(entity_id);
-    let (priority, queued_at) = match store.sync_queue.get(wtxn, &key)? {
+    let value = match store.sync_queue.get(wtxn, &key)? {
         Some(existing) => match decode_embed_job_value(&existing) {
-            Ok((existing_priority, existing_queued_at)) if existing_priority <= priority => {
-                (existing_priority, existing_queued_at)
+            Ok((existing_priority, _)) if existing_priority <= priority => return Ok(()),
+            Ok(_) => {
+                let mut value = existing.into_owned();
+                value[0] = priority;
+                value[1..9].copy_from_slice(&unix_millis_now().to_be_bytes());
+                value
             }
-            _ => (priority, unix_millis_now()),
+            Err(_) => encode_embed_job_value(priority, unix_millis_now()),
         },
-        None => (priority, unix_millis_now()),
+        None => encode_embed_job_value(priority, unix_millis_now()),
     };
-    let value = encode_embed_job_value(priority, queued_at);
     store.sync_queue.put(wtxn, &key, &value)?;
     Ok(())
 }

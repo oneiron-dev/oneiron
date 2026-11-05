@@ -6,7 +6,7 @@
 //!
 //! Key format (per ARCH-023b §5.4):
 //! - `q:{seq:8BE}` → `[window_key_len:1][window_key][encoded_update]`
-//! - `e:{entity_id:16}` → `[priority:1][queued_at:8BE]`
+//! - `e:{entity_id:16}` → `[priority:1][queued_at:8BE][home_claim_copy_len:4BE][sealed_copy]`
 //! - `h:{seq:8BE}` → ARCH-0038 hard-delete historical-carrier sweep job
 //! - `d:{seq:8BE}` → `[1]` — engine-internal DELETE-BEARING sidecar marker
 //!   (ONE-1135): the matching `q:{seq}` row carries a tombstone-commit
