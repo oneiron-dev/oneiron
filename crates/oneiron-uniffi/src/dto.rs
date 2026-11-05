@@ -702,6 +702,16 @@ pub struct BlobVersionView {
     /// Unix seconds.
     pub created_at: i64,
 }
+/// A checked append's landed version or complete retained proposal.
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+pub enum BlobVersionAppendOutcome {
+    Landed {
+        view: BlobVersionView,
+    },
+    Proposed {
+        proposal: crate::PendingProposalView,
+    },
+}
 
 // ── recall ──────────────────────────────────────────────────────────────
 
