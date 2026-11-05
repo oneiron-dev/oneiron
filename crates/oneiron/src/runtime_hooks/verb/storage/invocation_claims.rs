@@ -1,7 +1,8 @@
 //! Invocation replies live under the actual session and captured mode route.
 
 use super::*;
-use crate::runtime_hooks::{InvocationEntry, InvocationId};
+use crate::runtime_hooks::InvocationId;
+use crate::runtime_hooks::verb::InvocationEntry;
 
 pub(super) struct SessionInvocations {
     route: SessionWriteRoute,

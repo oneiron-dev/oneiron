@@ -1,7 +1,8 @@
 //! Caller-bound invocation outcomes use the actual session's RAM keep.
 
 use super::*;
-use crate::runtime_hooks::{InvocationEntry, InvocationId};
+use crate::runtime_hooks::InvocationId;
+use crate::runtime_hooks::verb::InvocationEntry;
 
 impl SessionWitnessContext<'_> {
     /// Rechecks the original credential, session instance, membership and

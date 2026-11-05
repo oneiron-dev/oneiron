@@ -83,7 +83,7 @@ impl SessionWitnessBinding {
         vault: &crate::Vault,
         invocation: crate::runtime_hooks::InvocationId,
         body: [u8; 32],
-    ) -> MemoryResult<crate::runtime_hooks::InvocationEntry> {
+    ) -> MemoryResult<crate::runtime_hooks::verb::InvocationEntry> {
         self.context(vault)?.claim_invocation(invocation, body)
     }
 
