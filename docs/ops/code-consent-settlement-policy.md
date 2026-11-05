@@ -1,4 +1,4 @@
-# Code-consent settlement policy supplier
+# Code-consent settlement policy
 
 `code_consent_settlement` is an optional typed field in a trusted
 `POLICY_MANIFEST`. It names who may settle a held code effect. It is not an
@@ -60,16 +60,27 @@ capability and does not mint a marker or a receipt.
 
 ## Integration state
 
-This supplier is not the complete non-Owner answer route. The immutable
-code-wait binding carries `holder_settlement`, including the exact policy
-witness, action bound and candidates. Its canonical typed MessagePack bytes
+The immutable code-wait binding carries `holder_settlement`, including the
+exact policy witness, action bound and candidates. Its canonical typed MessagePack bytes
 are length-bound into the binding digest before the effect's own digest is
 composed. Encoding errors propagate; no missing or placeholder policy bytes
 stand in for the value. Connector minting freezes inside the pending call's
 writer while it still holds the native HOLD-TIME input. Browser minting uses
 its engine-stamped facts and the same private pinned-input builder as the
-send's approval digest. The question, word and answer hooks must use that
-binding.
+send's approval digest.
+
+The question addresses the frozen Owners union the frozen eligible holders.
+The original Owner set stays unchanged in the binding. A wait with neither
+Owners nor holders is not minted. Human word admission accepts an asked live
+Owner or a live frozen holder; a word is evidence, not settlement authority.
+The answering writer requires native Owner authority or the current typed
+holder policy and action power before inspecting first-answer state. The
+public status read applies the same current admission in its read snapshot.
+An Owner's narrowed person credential does not acquire Owner authority from
+the person's identity: it needs the holder policy and power like any other
+person credential. The original opener-lineage exclusion still applies to
+answers, not to an Owner's status read.
+
 The native holder receipt projector now writes the real human actor to the
 existing Gate ledger without an Owner stamp. It retains actual grant, policy
 citations and frontier. Its holder-denied reason differs from the Owner-denial
@@ -90,14 +101,23 @@ receipt. The wake fires only after committed group durability, never before
 commit; rollback drops it. An already-answered or refused-target result does
 not queue a new answer wake. This event is not permission to run the effect.
 
-The answer hook must still record the returned decision and actual identity
-in its native first-answer stamp in that same writer. Admission, once
-consumption and settlement retain their existing proof requirements. A later
-holder settlement uses the saved policy/grant basis and the actual answer
-stamp's identity; it does not manufacture an Owner stamp. Stop-asking still
-requires its separate setting power. The existing Owner route remains
-unchanged. Do not expose an Owner/System shim or treat the policy evidence
-reader or receipt projector as that act.
+The answer hook calls this closed act before recording its first-answer stamp,
+in the same writer. A result with no act does not create an answer stamp.
+The stamp records the returned decision and actual person, authentication and
+policy frontier. Its optional typed `holder_basis` retains only the actual
+grant reference and resolved policy; it does not duplicate the identity fields.
+An Owner answer has no holder basis. Admission, once consumption and settlement
+retain their existing proof requirements.
+
+A later holder settlement reconstructs the historical holder attribution from
+that stamp and basis, then appends its actual settlement receipt through the
+holder projector. It does not reauthenticate the historical actor, manufacture
+an Owner stamp or write a System receipt in place of the holder. The original
+Owner and unanswered-settlement paths retain their existing receipt door.
+Stop-asking still requires its separate setting power; effect-settlement power
+alone cannot change a connector setting. The existing Owner three-choice
+route remains unchanged. The consumer adds no second consent-answer wake.
+The policy evidence reader and receipt projector are not approval doors.
 
 No new runtime timeout, count cap or default duration is introduced. The
 shipped row's citation version is `1`. The binding schema is `6` (was `5`)

@@ -177,7 +177,12 @@ pub(crate) fn mint_code_consent_wait_in_txn(
     let owners: BTreeSet<EntityId> = crate::policy_model::owners_in_txn(vault, txn)?
         .into_iter()
         .collect();
-    if owners.is_empty() {
+    if owners.is_empty()
+        && draft
+            .holder_settlement
+            .as_ref()
+            .is_none_or(|settlement| settlement.holders.is_empty())
+    {
         return Ok(None);
     }
     let question = CodeConsentQuestion {
