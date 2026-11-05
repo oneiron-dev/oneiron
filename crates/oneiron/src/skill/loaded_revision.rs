@@ -22,7 +22,7 @@ use super::codec::decode_skill_record;
 /// SKILL body is the `record` that loaded. A body read some other way (a
 /// proposal through its trial basis) keeps an unpinned row, and a pin never
 /// fails a load: an unreadable row is simply left unpinned.
-pub(super) fn pin_loaded_in_txn(
+pub(crate) fn pin_loaded_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     entity: &EntityId,

@@ -9691,6 +9691,14 @@ fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinati
         let matches = |status: &TrackingStatus| match status {
             TrackingStatus::Inserted(revision) => inserted && revision.identity == identity,
             TrackingStatus::Deleted(revision) => !inserted && revision.identity == identity,
+            TrackingStatus::InsertedThenDeleted(stacked) => {
+                let revision = if inserted {
+                    &stacked.inserted
+                } else {
+                    &stacked.deleted
+                };
+                revision.identity == identity
+            }
             _ => false,
         };
         matches(&block.status)
