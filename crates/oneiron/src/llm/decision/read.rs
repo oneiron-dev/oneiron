@@ -12,12 +12,12 @@ use super::ladder::{
 use super::questions::QuestionCriteria;
 use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
-use crate::Result;
 use crate::llm::{
-    BudgetGuard, BudgetLease, LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout,
-    LabelSet, LlmResult, LlmUsage, joint_marginals,
+    BudgetGuard, BudgetLease, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
+    LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmResult, LlmUsage, joint_marginals,
 };
 use crate::retrieval_depth::RetrievalDeadline;
+use crate::{Error, Result};
 use std::time::Instant;
 
 /// A read's label probabilities sum to one within this tolerance.
@@ -232,7 +232,13 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             }
             GatedRead::Read(Ok(read)) => read,
             GatedRead::Read(Err(error)) => {
-                return Err(invalid(&format!("decision read failed: {error}")));
+                let message = format!("decision read failed: {error}");
+                return Err(match error {
+                    LlmError::Fatal(FatalLlmError::LabelRead(LabelReadFailure::TokenCap)) => {
+                        Error::DecisionTokenCap(message)
+                    }
+                    _ => invalid(&message),
+                });
             }
         };
         let unit = |p: &f64| p.is_finite() && (0.0..=1.0).contains(p);
