@@ -37,8 +37,8 @@ pub use self::floor::{
     check_reliability_floor_for_executor, set_skill_reliability_floor, skill_reliability_floor,
 };
 pub(crate) use self::ledger::{
-    attributed_outcome_receipts, attributed_outcome_results, attributed_outcomes_weighted,
-    mark_displaced_outcome_in_txn, record_skill_settled_loss,
+    attributed_outcome_receipts, attributed_outcome_results, attributed_outcome_results_sourced,
+    attributed_outcomes_weighted, mark_displaced_outcome_in_txn, record_skill_settled_loss,
 };
 pub use self::ledger::{
     effective_skill_outcome, record_resident_skill_contributing_win, record_skill_contributing_win,
