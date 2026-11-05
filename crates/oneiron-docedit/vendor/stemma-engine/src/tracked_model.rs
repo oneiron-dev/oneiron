@@ -9833,6 +9833,10 @@ fn apply_move_destination_deletion_cascade(
                 {
                     continue;
                 }
+                // Zero-width markers have no source characters to retag.
+                if deletion.text.is_empty() {
+                    continue;
+                }
                 let status = TrackingStatus::Deleted(deletion.revision.clone());
                 if let Some(range) = &deletion.source_range {
                     overlay_text_range_status(source_paragraph, range.clone(), status, true);

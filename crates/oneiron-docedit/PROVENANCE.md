@@ -89,6 +89,8 @@ source text, inner deletions retain their character ranges instead of searching
 for unique substrings. Repeated text maps to its own occurrence; empty material
 ranges leave the source unchanged. Hard breaks and opaque inlines retain their
 nodes and receive the deletion status when their one-character span is selected.
-Nonaligned clones keep the existing unique-text mapping, including its non-text
-statuses. Move eligibility, pairing, marker repair and resolution order are
-unchanged; nonaligned ambiguity and suppressed destination pilcrows remain open.
+Empty material deletions also leave nonaligned sources unchanged, matching the
+exact-range no-op; destination revision repair still runs. Nonempty nonaligned
+clones keep the existing unique-text mapping, including its non-text statuses.
+Move eligibility, pairing, marker repair and resolution order are unchanged;
+nonaligned ambiguity and suppressed destination pilcrows remain open.
