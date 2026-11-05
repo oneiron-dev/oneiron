@@ -6,15 +6,13 @@
 
 use super::batch::CoreWriteLane;
 use super::shape::{
-    ActorAnnouncementAuthority, AnnouncementAuthority, core_body_for_write, core_text_pairs,
-    core_write_times, entity_id, stage_core_put, text_pairs, write_id,
+    AnnouncementAuthority, core_body_for_write, core_text_pairs, core_write_times, entity_id,
+    stage_core_put, text_pairs, write_id,
 };
 use super::{ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt};
 use crate::authority::VerifiedSlip;
 use crate::claim::ScopedRead;
 use crate::edge::EdgeActorClass;
-use crate::memory::Memory;
-use crate::ports::ClaimReadStatus;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::store::conversation_body::ConversationBody;
 use crate::{EntityId, Vault, WriteActor};
@@ -62,7 +60,7 @@ impl Vault {
             // the same transaction.
             self.with_write_txn_grouped(|txn| {
                 admitted(txn)?;
-                crate::conversation::create_in_txn(
+                self.store.core_write_operations.create_conversation_in_txn(
                     self,
                     txn,
                     id,
@@ -172,13 +170,15 @@ impl Vault {
         let Ok(holder) = EntityId::from_hex(&claims.holder_ref) else {
             return Ok(false);
         };
-        let owner =
-            crate::memory::actor_is_vault_owner_in_txn(self, txn, holder, EdgeActorClass::Human)
-                .map_err(|refusal| {
-                    crate::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
-                        refusal,
-                    )))
-                })?;
+        let owner = self
+            .store
+            .core_write_operations
+            .actor_is_vault_owner_in_txn(self, txn, holder, EdgeActorClass::Human)
+            .map_err(|refusal| {
+                crate::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
+                    refusal,
+                )))
+            })?;
         Ok(owner && self.capability_slip_is_live_in_txn(txn, proof)?)
     }
 
@@ -244,38 +244,5 @@ impl Vault {
             times.learned_at,
             core_body_for_write(ENTITY_TYPE_TURN, &input.body, announcement).into_owned(),
         )))
-    }
-}
-
-impl Memory<'_> {
-    /// `vault.conversations.create`: a conversation, its membership
-    /// authored as the bound actor, held to this handle's write lane (FIX
-    /// 10781): its read, or the bounds of what a credential that grants no
-    /// read may write to.
-    /// # Errors
-    /// As [`Vault::write_core_conversation`], and the write lane's refusal.
-    pub fn conversations_create(
-        &self,
-        input: &ConversationCreateInput,
-    ) -> MemoryResult<CoreEntityWriteReceipt> {
-        let actor = self.write_actor();
-        let lane = self.core_write_lane()?;
-        self.vault()
-            .write_core_conversation(input, Some(actor), &lane)
-    }
-
-    /// `vault.conversations.turns.create`: one TURN under a conversation,
-    /// held to this handle's own read lane (FIX 5939), a platform
-    /// announcement only while the bound actor is a live owner.
-    /// # Errors
-    /// As [`Vault::write_core_conversation_turn`].
-    pub fn conversations_turns_create(
-        &self,
-        input: &ConversationTurnCreateInput,
-    ) -> MemoryResult<CoreEntityWriteReceipt> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
-        self.vault()
-            .write_core_conversation_turn(input, &lane, announcement)
     }
 }

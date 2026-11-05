@@ -113,6 +113,64 @@ impl Vault {
         self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)
     }
 
+    /// A selected value-field redaction keeps the existing subject edge
+    /// byte-for-byte, including its current weight and recorded-at stamp.
+    /// Only the exact-field transform constructs this row; ordinary body,
+    /// family and source-trust admission still run on its actual bytes.
+    pub(crate) fn put_claim_value_redaction_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        row: &crate::vault::entity_revision::ClaimValueRedactionRow,
+    ) -> Result<()> {
+        let raw = row.raw();
+        let header = EntityMetadataHeader::parse(raw)
+            .ok_or(Error::CorruptedIndex("claim redaction header"))?;
+        let data = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+        let body = validate_claim_body_and_decode_in_txn(&self.store, txn, data, false)?;
+        if is_expression_preference_predicate(&body.predicate) {
+            return Err(Error::InvalidClaimBody(
+                "expression preference lifecycle is owned by set_expression_preference",
+            ));
+        }
+        match body.subject {
+            ClaimSubject::Edge { .. }
+                if !self.owner_reads_edge_subject_in(txn, &body.subject)? =>
+            {
+                return Err(Error::EntityNotFound);
+            }
+            ClaimSubject::Entity(subject)
+                if self.store.port_entity_record(txn, &subject)?.is_none() =>
+            {
+                return Err(Error::EntityNotFound);
+            }
+            _ => {}
+        }
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            txn,
+            vec![BatchOp::Put {
+                id: *id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                learned_at: header.learned_at,
+                data: data.to_vec(),
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    }
+
     /// Whether any live Owner of the vault may read `subject`'s exact live
     /// edge and both its endpoints in `txn` (OF-063, 1222): the union of
     /// every live Owner's scoped reader, so no Owner's place in the roster
