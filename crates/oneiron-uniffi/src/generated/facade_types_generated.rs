@@ -3942,6 +3942,12 @@ pub struct ShapePlanCard {
     pub undeclared: u32,
     #[serde(rename = "run", default, skip_serializing_if = "Option::is_none")]
     pub run: Option<ShapeApplyRun>,
+    #[serde(
+        rename = "conversation_learning",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub conversation_learning: Option<ShapeLearningOutcome>,
 }
 
 /// `oneiron::memory::shape_card_doors::ShapePlanCardView`.

@@ -1230,6 +1230,7 @@ class ShapePlanCard(TypedDict):
     items: list[ShapePlanCardItem]
     undeclared: int
     run: NotRequired[ShapeApplyRun | None]
+    conversation_learning: NotRequired[ShapeLearningOutcome | None]
 class ShapePlanCardView(TypedDict):
     plan: ShapePlan
     card: ShapePlanCard

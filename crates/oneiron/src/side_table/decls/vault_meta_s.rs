@@ -277,9 +277,9 @@ side_tables! {
     /// The owner's Responses `store` switch (OF-602): on, a provider keeps each response and a
     /// reconnected socket resumes the chain. Absent is off. Key: ().
     MODEL_OWNER_RESPONSES_STORE: VaultMeta b"settings:models:v1:responses_store" Named;
-    /// The owner's act on a vault-wide setting (the dreamer's wake policy, the inference
-    /// defaults), recorded in the commit that changed it (WILL-PLAN L13 row 01). Key:
-    /// u64be(sequence).
+    /// The owner's act on the dreamer's wake policy, inference defaults or an agent's
+    /// free-time policy, recorded in the commit that changed it (WILL-PLAN L13 row 01).
+    /// Key: u64be(sequence).
     POLICY_SETTING_ACT: VaultMeta b"settings:owner_act:v1:" Named;
     /// The owner's grant/revoke act on an access grant in the commit that changed it
     /// (FIX 10980). Writer-trusted local receipt, not a signed op. Key: u64be(sequence).
