@@ -1,0 +1,115 @@
+/* ── the today page — the day as one calm page (Fable breadboard, 08-15 eve).
+   mostly serif; mono only for times; one door per line; no widgets, no
+   charts, no calendar grid. every selector is scoped under .today so the
+   handles (bundle · head · title · sec-voice) never collide with another
+   page's sheet if two stylesheets ride together. ── */
+
+main.pane.today {
+  overflow: hidden;
+  flex-direction: row; padding: 0; gap: 0;
+}
+.today .pane-body {
+  flex: 1; min-width: 0;
+  padding: var(--pane-pad-y) var(--pane-pad-x) 40px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+/* the head: the title, then the day's stamp. a date is system DATA, so it
+   rides the mono register like every other date in the app */
+.today .pane-head { gap: 14px; }
+.today .pane-head .today-date {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.02em;
+  font-feature-settings: "tnum" 1; color: var(--silver-3);
+}
+
+/* ── bundles = flat sections on the one sheet; dividers are space ── */
+.today .bundle { display: flex; flex-direction: column; }
+.today .bundle + .bundle { margin-top: 20px; }
+.today .bundle.closed + .bundle { margin-top: 0; }   /* collapsed heads stack tight */
+.today .bundle .head { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 6px; cursor: pointer; }
+.today .bundle .head:focus-visible { outline: 2px solid var(--safelight); outline-offset: 3px; border-radius: 5px; }
+.today .bundle .head .title { font-family: var(--serif); font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+.today .bundle .head .fold-hint { flex: none; color: var(--silver-4); opacity: 0; transform: translateY(-1px); transition: opacity 160ms ease, transform 180ms ease-out; }
+.today .bundle .head:hover .fold-hint, .today .bundle .head:focus-visible .fold-hint { opacity: 1; }
+.today .bundle.closed .head .fold-hint { opacity: 1; transform: translateY(-1px) rotate(-90deg); }
+/* the head count exists ONLY when the rows are hidden (one place per fact) */
+.today .bundle .head .meta-line { margin-left: auto; display: none; }
+.today .bundle.closed .head .meta-line { display: inline; }
+.today .bundle.closed .body { display: none; }
+.today .bundle .body { display: flex; flex-direction: column; }
+
+/* the agent's words under a heading: serif voice, name-fronted */
+.today .sec-voice {
+  display: flex; gap: 9px; align-items: baseline;
+  font-family: var(--serif); font-size: 13.5px; line-height: 1.5;
+  color: var(--silver-3); max-width: 76ch; padding: 1px 6px 4px;
+}
+.today .sec-voice .act { margin-left: 4px; }
+
+/* ── one-line rows: the whole line is the door; the act is its label.
+   hover = the soft 5px highlight; the brackets light with the row ── */
+.today .trow {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 6px 8px 6px 6px; border-radius: 5px;
+  color: inherit; cursor: pointer;
+  transition: background 160ms ease;
+}
+.today .trow:hover, .today .trow:focus-visible {
+  background: color-mix(in srgb, var(--silver-4) 10%, transparent);
+}
+.today .trow:hover .act, .today .trow:focus-visible .act { color: var(--safelight); }
+.today .trow:hover .act::before, .today .trow:hover .act::after,
+.today .trow:focus-visible .act::before, .today .trow:focus-visible .act::after { opacity: 1; }
+.today .trow .act { margin-left: auto; flex: none; }
+/* time column: mono, tabular, right-aligned, 48px */
+.today .t-time {
+  font-family: var(--mono); font-size: 12px; font-feature-settings: "tnum" 1;
+  color: var(--silver-3); width: 48px; flex: none; text-align: right;
+}
+.today .t-what { font-family: var(--serif); font-size: 14px; line-height: 1.45; color: var(--silver-1); flex: none; }
+.today .t-who {
+  font-family: var(--serif); font-size: 13.5px; line-height: 1.45; color: var(--silver-3);
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* a past row cools: the ink steps down one rung, the door stays */
+.today .trow.past .t-time { color: var(--silver-4); }
+.today .trow.past .t-what { color: var(--silver-3); }
+.today .trow.past .t-who { color: var(--silver-4); }
+
+/* now — the live rows: name in ink + serif doing text; still, no shimmer
+   (the agent line carries the live motion; the page just names it) */
+.today .nrow .aname { font-family: var(--serif); font-size: 14px; }
+.today .nrow .t-what { color: var(--silver-2); }
+
+/* the now marker: a tinted band, never a hairline — a well divides, a
+   line does not. the time rides the time column; never red */
+.today .now-mark {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 4px 8px 4px 6px; margin: 5px 0 4px;
+  background: var(--bg-well); border-radius: 5px;
+}
+.today .now-mark .t-time { color: var(--silver-2); }
+.today .now-mark .label { color: var(--silver-4); }
+
+/* a quiet serif line: "2 wait for you." + a door · "Nothing else booked." */
+.today .quiet {
+  display: flex; align-items: baseline; gap: 10px;
+  font-family: var(--serif); font-size: 13.5px; line-height: 1.5;
+  color: var(--silver-3); padding: 4px 6px 0;
+}
+.today .quiet.empty { padding-top: 2px; }
+
+/* the receipts: mono time + serif what, one line each, each a door */
+.today .rrow { padding-top: 4px; padding-bottom: 4px; }
+.today .rrow .t-what { font-size: 13.5px; color: var(--silver-3); }
+.today .rrow:hover .t-what, .today .rrow:focus-visible .t-what { color: var(--silver-2); }
+
+/* the week: day tokens ride the time column */
+.today .wrow .t-time { text-transform: lowercase; }
+.today .wrow.none { cursor: default; }
+.today .wrow.none:hover { background: none; }
+.today .wrow.none .t-what { color: var(--silver-4); }
+
+/* the (?) line rides the chassis .dial-why; the hint copy stays serif */
+.today .dial-why { padding: 0 0 2px; }
