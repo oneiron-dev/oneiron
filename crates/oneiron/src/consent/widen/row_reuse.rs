@@ -1,7 +1,5 @@
 //! Reuse the admitted row only when the acting writer sees its exact bytes.
 
-use std::io::{self, Write};
-
 use super::{
     AuthenticatedOwner, ConsentReceipt, StoredProposal, StoredSettlement, VerifiedSlip,
     WIDEN_PROPOSALS, WidenDelta, decode_delta, invalid_row, validate_reference_shape,
@@ -10,35 +8,9 @@ use super::{
 use crate::error::GateError;
 use crate::{Error, Result, Vault};
 
-struct StoredRowComparison<'a> {
-    remaining: &'a [u8],
-    equal: bool,
-}
-
-impl Write for StoredRowComparison<'_> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if self.equal {
-            match self.remaining.strip_prefix(bytes) {
-                Some(remaining) => self.remaining = remaining,
-                None => self.equal = false,
-            }
-        }
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 fn stored_row_matches(row: &StoredProposal, raw: &[u8]) -> bool {
-    let mut comparison = StoredRowComparison {
-        remaining: raw,
-        equal: true,
-    };
-    serde_json::to_writer(&mut comparison, row).is_ok()
-        && comparison.equal
-        && comparison.remaining.is_empty()
+    let mut comparison = super::byte_comparison::ByteComparison::new(raw);
+    serde_json::to_writer(&mut comparison, row).is_ok() && comparison.is_equal()
 }
 
 fn validate_owned_row(row: &StoredProposal, reference: &str, principal_ref: &str) -> Result<()> {

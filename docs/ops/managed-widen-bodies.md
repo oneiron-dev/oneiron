@@ -204,9 +204,17 @@ Any stored-byte difference, including a metadata-only change or a different JSON
 spelling, takes the original native row decode, validation and owner checks. An
 encoding failure also takes that path. No new refusal, memory wait, file replay or
 request-size bound is added. This fallback's second canonical vector remains
-unaccounted, as do row metadata, validation trees, typed values, re-encoding,
-overlay-owned raw row copies and allocator RSS. The unchanged-row reuse is not a
+unaccounted, as do row metadata, validation trees, typed values, stored-row output
+encoding, overlay-owned raw row copies and allocator RSS. The unchanged-row reuse is not a
 claim of complete native-answer heap admission.
+
+Canonical-delta validation writes the same bound or contact-disclosure encoding
+into a fixed-size byte comparator instead of retaining another encoded delta
+vector. It still requires byte-exact equality and the same final length, using
+the same typed encoders and validation errors. After typed decoding, the original
+parsed value tree drops before canonical reconstruction. The typed result and
+reconstructed value tree still allocate; this is not whole-validation heap
+admission.
 
 For an accept, file comparison runs outside every LMDB transaction. It compares
 exact bytes to the proposal's stored canonical delta, not just a digest.
