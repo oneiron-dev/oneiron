@@ -596,6 +596,20 @@ impl HostReservation {
         Some(())
     }
 
+    /// Releases credit no longer needed by the remaining allocation phase.
+    pub(super) fn release_excess(&mut self, keep: u64) {
+        let excess = self.bytes.saturating_sub(keep);
+        if excess == 0 {
+            return;
+        }
+        let mut reserved = copies()
+            .reserved
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *reserved = reserved.saturating_sub(excess);
+        self.bytes -= excess;
+    }
+
     /// Registers a covered copy without charging its reserved bytes twice.
     pub(super) fn hold<T>(&mut self, vault: VaultRef, copy: T, bytes: u64) -> HostCopy<T> {
         HostCopy::hold_reserved(vault, copy, bytes, Some(self))
