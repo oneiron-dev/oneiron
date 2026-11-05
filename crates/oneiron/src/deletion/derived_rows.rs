@@ -148,6 +148,7 @@ pub(crate) fn tear_derived_rows_in_txn(
             .record_hooks
             .forget_claim_reassignments_in_txn(store, wtxn, id)?;
         crate::store::identity_redirect_rows::forget_deleted_in_txn(store, wtxn, id)?;
+        crate::ingest::erase_connector_archive_occurrence_in_txn(store, wtxn, id)?;
     }
     Ok(())
 }
