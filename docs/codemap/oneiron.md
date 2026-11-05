@@ -1774,7 +1774,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/code_wait_state.rs` | src | s | 3 enum · 3 fn · 6 crate-vis | CodeConsentChoice, CodeConsentSettleOutcome, CodeConsentWaitState | Consent-wait choices, settlement outcomes and bound call identities |
 | `src/consent/codec.rs` | src | m | 2 fn · 2 const · 15 crate-vis | — | — |
 | `src/consent/contact_clearance.rs` | src | m | 3 struct · 3 enum · 12 fn · 8 const · 4 crate-vis | ContactClearanceAct, ContactDisclosureOffer, ContactDisclosureOutcome, ContactDisclosureProposal, DisclosureConfirmationReceipt, DisclosureOfferMode | Contact clearance: the owner's authenticated answer to one frozen contact-disclosure offer (OF-365, the… |
-| `src/consent/contact_clearance/engine_offer.rs` | src | s | 1 fn · 1 crate-vis | — | The engine's own contact-disclosure offer for a PERSON's first entry into a room (OF-365 P5, FIX 2288): an… |
+| `src/consent/contact_clearance/engine_offer.rs` | src | s | 1 fn · 2 crate-vis | — | The engine's own contact-disclosure offer for a PERSON's first entry into a room (OF-365 P5, FIX 2288): an… |
 | `src/consent/contact_clearance/standing.rs` | src | s | 4 fn · 2 crate-vis | — | The owner's disclosure-mode knob, trusted-set pre-clearance and the bound-use receipts |
 | `src/consent/doors.rs` | src | m | 2 struct · 11 fn · 25 crate-vis | AuthenticatedOwner, ConsentEvaluation | — |
 | `src/consent/doors/decision_slot.rs` | src | s | 2 crate-vis | — | The owner-decision slots: one 32-byte key per thing an owner decides, taken once beside the approve-once… |
@@ -1803,7 +1803,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/tool_scope.rs` | src | s | 4 struct · 4 enum · 7 fn · 2 crate-vis | DataClass, ScopedMcpBatchVerdict, ScopedMcpCall, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason, ScopedMcpGrantRef, ToolGrantDataClass | Payload-aware scope axes, consent decisions, and batch evaluation |
 | `src/consent/widen/contact_verdict_index.rs` | src | s | 3 crate-vis | — | The (contact, verdict) index over settled contact-disclosure offers (FIX 1338): the once lister used to scan… |
 | `src/consent/widen/mod.rs` | src | m | 1 struct · 1 enum · 11 fn · 1 const · 6 crate-vis | WidenKind, WidenProposal | Propose-only authority widening |
-| `src/consent/widen/offers.rs` | src | s | 1 fn | — | Owner-scoped pages of the existing open contact-disclosure offers |
+| `src/consent/widen/offers.rs` | src | s | 1 fn · 1 crate-vis | — | Owner-scoped pages of the existing open contact-disclosure offers |
 | `src/consent_graduation/api.rs` | src | m | 15 struct · 5 enum · 11 fn | GraduationAnswer, GraduationAnswerReceipt, GraduationAnswerRequest, GraduationChanged, GraduationDemoteRequest, GraduationDemotionReason, GraduationMode, GraduationOffer +12 | Typed consent-graduation public door |
 | `src/consent_graduation/doors.rs` | src | m | 11 fn · 1 crate-vis | — | Public Vault doors plus the shared accept-offer txn helper used by ED-05 |
 | `src/consent_graduation/fold.rs` | src | m | 16 crate-vis | — | Txn-level counters projection, incremental maintenance, and CID-7 rebuild fold |
@@ -1927,7 +1927,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_projection/resolution.rs` | src | m | 3 struct · 3 fn · 1 const · 1 re-export · 7 crate-vis | ContextResolutionRequest, ResolvedContextProjection, WorkflowOutputContextRef | Dispatch-time resolution of a `ContextSpec` against live vault state |
 | `src/context_projection/spec.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
 | `src/contract_oracle/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Persisted, deterministic Rust API, schema and command-output contracts |
-| `src/conversation/attendee.rs` | src | m | 2 struct · 1 enum · 6 fn · 3 crate-vis | ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent | An attendee's first entry into a chat or room (OF-365, ILDF2 P5) |
+| `src/conversation/attendee.rs` | src | m | 2 struct · 1 enum · 7 fn · 3 crate-vis | ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent | An attendee's first entry into a chat or room (OF-365, ILDF2 P5) |
 | `src/conversation/body.rs` | src | s | 4 fn · 1 re-export · 4 crate-vis | — | Forward-compatible room body codec and the all-writer membership guard |
 | `src/conversation/chat_breakpoint.rs` | src | m | 2 struct · 1 enum · 6 fn · 2 crate-vis | ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale | `chat_breakpoint_storage` (FIX 4465 D): a self agent's per-reply chat breakpoint, the restart-readable seed… |
 | `src/conversation/deletion/mod.rs` | src | m | 3 fn · 7 crate-vis | — | Actor-bound room deletion and per-person erasure over the existing delete door |
