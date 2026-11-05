@@ -39,6 +39,17 @@ pub(super) struct DecisionsFile {
     booking_parse: Option<BookingParseFile>,
     connector_slate: Option<ConnectorSlateFile>,
     import_audience: Option<ImportAudienceFile>,
+    owner_policy: Option<OwnerPolicyFile>,
+}
+
+/// `[models.decisions.owner_policy]`: the registered owner-policy row read.
+/// All question text, snapshot revision and time budget come from the host.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnerPolicyFile {
+    revision: String,
+    wording: String,
+    budget_ms: u64,
 }
 
 /// `[models.decisions.import_audience]`: the two questions an imported topic is asked
@@ -160,6 +171,15 @@ pub struct DecisionsSettings {
     pub booking_parse: Option<BookingParseSettings>,
     pub connector_slate: Option<ConnectorSlateSettings>,
     pub import_audience: Option<ImportAudienceSettings>,
+    pub owner_policy: Option<OwnerPolicySettings>,
+}
+
+/// The host's explicit registered owner-policy question; absent is unbound.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnerPolicySettings {
+    pub revision: String,
+    pub wording: String,
+    pub budget: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -376,6 +396,19 @@ impl DecisionsFile {
                 })
             })
             .transpose()?;
+        let owner_policy = self
+            .owner_policy
+            .map(|policy| -> anyhow::Result<_> {
+                if policy.budget_ms == 0 {
+                    anyhow::bail!("models.decisions.owner_policy.budget_ms must be above 0");
+                }
+                Ok(OwnerPolicySettings {
+                    revision: filled("owner_policy.revision", policy.revision)?,
+                    wording: filled("owner_policy.wording", policy.wording)?,
+                    budget: Duration::from_millis(policy.budget_ms),
+                })
+            })
+            .transpose()?;
         Ok(DecisionsSettings {
             auto_check,
             wire_health,
@@ -386,6 +419,7 @@ impl DecisionsFile {
             booking_parse,
             connector_slate,
             import_audience,
+            owner_policy,
         })
     }
 }
