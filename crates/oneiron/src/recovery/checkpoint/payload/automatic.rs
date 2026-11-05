@@ -80,7 +80,39 @@ impl Selection {
             }
             out.captured_rows(&bodies);
         }
+        #[cfg(feature = "sync")]
+        out.queue_rows(&vault.store, txn)?;
         Ok(out)
+    }
+
+    #[cfg(feature = "sync")]
+    fn queue_rows(&mut self, store: &crate::store::Store, txn: &RoTxn<'_>) -> Result<()> {
+        if self.worlds.is_empty() {
+            return Ok(());
+        }
+        for row in store.sync_queue.iter(txn)? {
+            let (key, value) = row?;
+            let Some((window, has_sidecar)) =
+                crate::sync::queue::checkpoint_update_window(store, txn, key, value)?
+            else {
+                continue;
+            };
+            // Pending deletes must still replay after restore. Keep the entire
+            // pair, including an undecodable sidecar, until its own projection.
+            if has_sidecar {
+                continue;
+            }
+            if WindowKey::try_new(window)
+                .and_then(|window| window.world())
+                .is_some_and(|world| self.worlds.contains(&world))
+            {
+                self.rows
+                    .entry(RowDb::SyncQueue)
+                    .or_default()
+                    .insert(key.to_vec());
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn keeps_owner(&self, owner: OwnerRef) -> bool {

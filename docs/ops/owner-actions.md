@@ -81,13 +81,16 @@ rows whose native body getter binds every part to that record are also left out,
 their body descriptors and digest-holder rows, before body files are counted. A shared body
 file still travels when another included row names it; its digest is never a world identity.
 The selection also leaves out known Off worlds' window snapshots and durable window updates.
-Shared document proposals keep their other owners' fragments. Authority-log rows and
-non-payload links stay intact.
+It leaves out valid queued updates for those windows only when their exact sequence has no
+delete-bearing sidecar. Any matching sidecar, including an undecodable one, keeps the update
+and marker unchanged so pending deletes can still replay after restore. Shared document
+proposals keep their other owners' fragments. Authority-log rows and non-payload links stay intact.
 
 This is partial world selection, not a guarantee that an Off world's every byte is absent.
 Unknown or mixed world placement keeps its existing behavior. Other body or response references,
-queued or mixed carriers and exterior custody publication still need their own world
-projection. The read setting **One machine** alone does not exclude a sealed backup.
+delete-bearing or unclassified queued updates, other mixed carriers and exterior custody
+publication still need their own world projection. The read setting **One machine** alone
+does not exclude a sealed backup.
 
 Backup watermark markers use schema 2 and record `whole_vault` or `automatic` selection.
 Content and custody positions must match exactly. A whole-vault artifact can satisfy an
