@@ -200,6 +200,17 @@ behavior stay unchanged. Source resolution, cell reads, cloning, allocation and
 boxing still have unpolled spans; native work-budget and hard-time coverage
 remain partial.
 
+TOCOL, TOROW, EXPAND, WRAPROWS and WRAPCOLS reuse one full caller token through
+their materialization, flattening, wrapping and output walks, with checkpoints
+at row/cell boundaries and before result boxing. Their private error carrier
+keeps native evaluation cancellation distinct from stored error values: only
+native cancellation exits as a typed error; stored cancellation errors and all
+other errors keep their original result path. Ignore modes, scan order, ragged
+blank/pad behavior, omitted sizes, truncation, dimension checks, padding,
+original buffers and regular no-token execution stay unchanged. Row buffering,
+width scans, individual reads/coercion/cloning, allocation and boxing still have
+unpolled spans; native work-budget and hard-time coverage remain partial.
+
 GCD and LCM poll the same full token through argument reduction and their
 Euclidean recursion. COMBIN, PERMUT, FACTDOUBLE and COMBINA poll their product
 loops. SUMSQ polls argument and range-cell traversal. SUMX2MY2, SUMX2PY2 and
@@ -414,7 +425,7 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.36): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.37): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
 stage 2's linked workbooks and caller-context functions, five commits picked from upstream's
@@ -465,7 +476,7 @@ The formula bounds admit every formula Excel saves (measured at fork `f01d8eff` 
 linked-workbook forms above, 2026-10-09): the 5 that fell back over the old token bound recalculate
 natively and match Excel on every scored cell.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.36`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.37`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 
