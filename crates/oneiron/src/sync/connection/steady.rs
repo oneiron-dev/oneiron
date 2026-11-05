@@ -534,7 +534,15 @@ impl SyncConnection {
                 // Shutdown signal
                 _ = &mut *shutdown_rx => {
                     // Flush any remaining buffered updates to queue
-                    self.queue_on_shutdown(&mut gate, debounce_buffer).await;
+                    let mut shutdown_left = self.left.subscribe();
+                    tokio::select! {
+                        biased;
+                        () = async { let _ = shutdown_left.wait_for(|left| *left).await; } => {
+                            self.queue_on_exit(&mut gate, debounce_buffer).await;
+                            self.publish_leave_unqueued(debounce_buffer);
+                        }
+                        _ = self.queue_on_shutdown(&mut gate, debounce_buffer) => {}
+                    }
                     // Send close frame
                     let mut send_left = self.left.subscribe();
                     tokio::select! {
