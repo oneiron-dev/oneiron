@@ -167,6 +167,7 @@ struct BatchApplyState {
     claim_materializations: VecDeque<ClaimMaterialization>,
     claim_transitions: VecDeque<super::VerifiedClaimTransition>,
     preflight_gate_decision_ids: HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
+    pending_auto_probes: HashMap<crate::store::GateDecisionId, super::gate_mode::PendingAutoProbe>,
     pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::store::text_index::AnalyzedText>>>,
     nsw_plans: HashMap<EntityId, VecDeque<crate::store::vector_insert_plan::InsertPlan>>,
     masked_files: super::secret_scan::MaskedFiles,
@@ -270,6 +271,7 @@ pub(super) fn apply_ops_with_authority_beside(
     require_gated_claim_materializations(claim_gate_prechecked, &claim_materializations)?;
     let mut preflight_gate_decision_ids =
         std::mem::take(&mut gate_mode.preflight_gate_decision_ids);
+    let pending_auto_probes = std::mem::take(&mut gate_mode.pending_auto_probes);
     let mut pre_analyzed_text = std::mem::take(&mut gate_mode.pre_analyzed_text);
     let mut nsw_plans = std::mem::take(&mut gate_mode.nsw_plans);
 
@@ -370,6 +372,7 @@ pub(super) fn apply_ops_with_authority_beside(
         claim_materializations,
         claim_transitions,
         preflight_gate_decision_ids,
+        pending_auto_probes,
         pre_analyzed_text,
         nsw_plans,
         masked_files,
