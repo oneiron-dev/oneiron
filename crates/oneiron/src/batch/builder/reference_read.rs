@@ -14,9 +14,10 @@ use crate::Vault;
 use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::gate::{GateReasonCode, RecordedClaimGateDecision};
+use crate::gate::RecordedClaimGateDecision;
 use crate::store::GateRetentionContext;
 use crate::store::Store;
+use crate::store::gate_reason::GateReasonCode;
 use crate::write_envelope::claim_body::ClaimBody;
 
 /// One CLAIM body the batch's preflight gates, as it gates it.
@@ -188,6 +189,7 @@ pub(super) fn staged_reference_denial(
             defer_metrics_until_commit: true,
             transition: None,
             owner_authored: None,
+            pending_prompt: None,
         },
         &policy,
         crate::store::GateWriteMode {

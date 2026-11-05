@@ -1884,6 +1884,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_inbox_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_done(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.done", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_later(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.later", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skills_bootstrap(
         &self,
         input: serde_json::Value,
@@ -2064,6 +2082,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.skills.code_auto_install.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_fit_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.fit.set", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -3087,6 +3114,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_sync_retained_work_wait_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sync.retained_work.wait.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_federation_burst_ingress(
         &self,
         input: serde_json::Value,
@@ -3714,6 +3750,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.records.erase_sweep", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_outbound_calls_request_erase(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.outbound_calls.request.erase", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -4356,6 +4401,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_legal_holds_withdraw_erase(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.legal_holds.withdraw_erase", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_courtesy_delete_send(
         &self,
         input: serde_json::Value,
@@ -4878,6 +4932,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.settings.learning.clear", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_code_run_lifts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.code_run_lifts", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -7675,6 +7738,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.skills.callables", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_callable_amend(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.callable.amend", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

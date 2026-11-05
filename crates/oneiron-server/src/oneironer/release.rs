@@ -25,7 +25,6 @@
 //! placed bundle is never added to: more platforms go under a fresh root.
 
 use std::fs::OpenOptions;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use reqwest::header::HeaderValue;
@@ -56,11 +55,6 @@ const CLASS_DIR: &str = "oneironer";
 
 /// Names the fetch in a transfer failure.
 const FETCH_TOOL: &str = "oneironer-model-download";
-
-/// Progress prints every this many bytes of one file (FIX 6971): stderr
-/// only, monotonic milestones, so the ~1.2GB fetch is not silent. Small
-/// files print nothing; a resumed fetch prints from where it resumes.
-const PROGRESS_EVERY_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Why a `404` stops a fetch.
 const UNPUBLISHED: &str = "not found (404): the release is not published yet";
@@ -382,12 +376,15 @@ pub(crate) enum OneironerFetchError {
 /// `0644` on Unix, an extracted tree keeping its entries' modes. A transfer
 /// that fails keeps its partial for the next run; a file of the wrong size
 /// or digest loses it. A second fetch of the same stack waits on the lock,
-/// then finds the bundle placed.
+/// then finds the bundle placed. Each file's written and pinned bytes are
+/// reported to `on_progress` as they land; byte counts only, never a
+/// verdict on the bytes.
 pub(crate) fn fetch_release(
     release: &OneironerRelease,
     source: &ReleaseSource,
     models_root: &Path,
     selected: Platforms,
+    on_progress: &mut dyn FnMut(&str, u64, u64),
 ) -> Result<OneironerFetchOutcome, OneironerFetchError> {
     let dir = bundle_dir(models_root, release);
     if dir.symlink_metadata().is_ok() {
@@ -413,7 +410,14 @@ pub(crate) fn fetch_release(
         .iter()
         .filter(|file| file.platform.is_none())
         .collect();
-    if let Some(refused) = stage_all(release, source, &staging, &placed, &mut moved)? {
+    if let Some(refused) = stage_all(
+        release,
+        source,
+        &staging,
+        &placed,
+        &mut moved,
+        &mut *on_progress,
+    )? {
         return Ok(refused);
     }
     // The staged manifest names the platform rows, and so which archives
@@ -426,7 +430,14 @@ pub(crate) fn fetch_release(
         platforms::clear(&staging, file, row)?;
     }
     let archives: Vec<&ReleaseFile> = chosen.iter().map(|(_, file, _)| *file).collect();
-    if let Some(refused) = stage_all(release, source, &staging, &archives, &mut moved)? {
+    if let Some(refused) = stage_all(
+        release,
+        source,
+        &staging,
+        &archives,
+        &mut moved,
+        &mut *on_progress,
+    )? {
         return Ok(refused);
     }
     for (_, file, row) in &chosen {
@@ -447,17 +458,19 @@ pub(crate) fn fetch_release(
 }
 
 /// Stages `files` in order: the refusal that stopped one, if any. `moved`
-/// counts the bytes kept from an earlier run and those fetched.
+/// counts the bytes kept from an earlier run and those fetched. Each file's
+/// written and pinned bytes go to `on_progress` as they land.
 fn stage_all(
     release: &OneironerRelease,
     source: &ReleaseSource,
     staging: &Path,
     files: &[&ReleaseFile],
     moved: &mut (u64, u64),
+    on_progress: &mut dyn FnMut(&str, u64, u64),
 ) -> Result<Option<OneironerFetchOutcome>, OneironerFetchError> {
     for file in files {
         let name = file.artifact.file.to_string();
-        match stage(release, source, staging, &file.artifact)? {
+        match stage(release, source, staging, &file.artifact, &mut *on_progress)? {
             Staged::Ready { kept, fetched } => {
                 moved.0 += kept;
                 moved.1 += fetched;
@@ -497,17 +510,19 @@ enum Staged {
 
 /// Makes `<staging>/<file>` the pinned file: kept when an earlier run staged
 /// it and it still checks, else fetched to its partial, checked there and
-/// renamed.
+/// renamed. Either way its written and pinned bytes go to `on_progress`.
 fn stage(
     release: &OneironerRelease,
     source: &ReleaseSource,
     staging: &Path,
     artifact: &PinnedArtifact,
+    on_progress: &mut dyn FnMut(&str, u64, u64),
 ) -> Result<Staged, OneironerFetchError> {
     let file: &str = &artifact.file;
     let staged = staging.join(file);
     if staged.is_file() {
         if check(&staged, artifact).is_ok() {
+            on_progress(file, artifact.bytes, artifact.bytes);
             return Ok(Staged::Ready {
                 kept: artifact.bytes,
                 fetched: 0,
@@ -520,31 +535,14 @@ fn stage(
     let partial = staging.join(format!("{file}.partial"));
     let url = model_manager::hub_url(&source.repo, release.stack_sha16, file);
     let auth = source.authorization();
-    let expected = artifact.bytes;
-    // The first report sets the next milestone past what is already held,
-    // so a resumed fetch never reprints old ground; each milestone prints
-    // once, in order, and a stderr that is closed stays silent.
-    let mut next: Option<u64> = None;
-    let mut on_progress = |held: u64| {
-        let threshold =
-            next.get_or_insert_with(|| (held / PROGRESS_EVERY_BYTES + 1) * PROGRESS_EVERY_BYTES);
-        while held >= *threshold {
-            let _ = writeln!(
-                std::io::stderr().lock(),
-                "oneironer fetch: {file} {} of {} MiB",
-                held / (1024 * 1024),
-                expected / (1024 * 1024),
-            );
-            *threshold += PROGRESS_EVERY_BYTES;
-        }
-    };
+    let mut report = |written: u64, expected: u64| on_progress(file, written, expected);
     let answer = model_manager::fetch_resumable_with_progress(
         &url,
         &partial,
         artifact,
         auth,
         FETCH_TOOL,
-        on_progress,
+        &mut report,
     );
     let (kept, fetched) = match answer.map_err(transfer_error(file))? {
         ResumableFetch::Written { kept, fetched } => (kept, fetched),

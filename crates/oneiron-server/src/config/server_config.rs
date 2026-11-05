@@ -171,11 +171,12 @@ pub struct SyncServerConfig {
     /// init passes from its config drive's list (FIX 7889). Listing a digest is
     /// the operator's statement that the build is reviewed first-party code
     /// (ARCH-0075: first party means reviewed repo code). A pack organ build not
-    /// listed here installs as third party, which the organ host refuses to start
-    /// until filesystem confinement for organs lands. No config file, settings
-    /// file or environment sets it, and nothing a pack carries (manifest, facet,
-    /// receipt, publisher, hub or name) adds to it. Empty: every pack organ build
-    /// is third party; a seal organ program the host names stays first party.
+    /// listed here installs as third party, which the organ host starts only
+    /// inside a filesystem fence (Landlock ABI 3 on Linux, Seatbelt on macOS) and
+    /// refuses on a host with none. No config file, settings file or environment
+    /// sets it, and nothing a pack carries (manifest, facet, receipt, publisher,
+    /// hub or name) adds to it. Empty: every pack organ build is third party; a
+    /// seal organ program the host names stays first party.
     pub trusted_organ_builds: std::collections::BTreeSet<String>,
     /// The private origins a managed node's egress guard admits, from
     /// `--hosted-private-origin` in managed boot alone (FIX 7657); empty
@@ -286,6 +287,9 @@ impl SyncServerConfig {
 #[derive(Clone, PartialEq, Eq)]
 pub struct ServeConfig {
     pub vault_path: PathBuf,
+    /// The resolved file first-run model setup may rewrite, `None` for managed
+    /// argv/settings-only serving or a binding started without a file.
+    pub config_path: Option<PathBuf>,
     pub host: String,
     pub port: u16,
     /// The artifact-only listener's port on `host`; `0` takes any free one,
@@ -460,6 +464,7 @@ impl Default for ServeConfig {
 
         Self {
             vault_path: PathBuf::from(LEGACY_DEFAULT_VAULT_PATH),
+            config_path: None,
             host: "0.0.0.0".to_owned(),
             port: 9090,
             artifact_port: 0,

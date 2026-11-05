@@ -94,6 +94,10 @@ pub struct LimitsConfig {
     /// is refused with the typed 413 naming this bound, and raises the
     /// OF-520 question once per caller, door and field.
     pub retrieval_query_bytes: usize,
+    /// Original text bytes one semantic search may carry before its row
+    /// raises the OF-520 question. The query still runs whole past this row;
+    /// only the embedder's own input window cuts it.
+    pub semantic_query_bytes: usize,
     /// Stored body bytes one multi-row read decodes. A row past it is served
     /// with a `bodyOmitted` marker in place of its body; a single-entity read
     /// returns its body whole, whatever its size.
@@ -182,6 +186,7 @@ impl Default for LimitsConfig {
             // Format bounds far above a question or a page of bodies: 128
             // times the facade's 8 KiB query and 64 times one entity payload.
             retrieval_query_bytes: 1 << 20,
+            semantic_query_bytes: 8_388_608,
             projection_body_bytes: 4 << 20,
             git_scan_blob_bytes: ScanBounds::machine_blob_bytes(),
             git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
@@ -251,6 +256,7 @@ impl LimitsConfig {
             lfs_quota_bytes,
             transfer_idle_timeout_ms,
             retrieval_query_bytes,
+            semantic_query_bytes,
             projection_body_bytes,
             git_scan_blob_bytes,
             git_scan_disk_floor_bytes,
@@ -358,6 +364,8 @@ impl LimitsConfig {
             seal_dss_reference_work,
             seal_field_tree_work,
             seal_contents_bytes,
+            seal_operation_id_bytes,
+            seal_backend_operation_id_bytes,
             organ_asks,
             organ_ask_per_verb,
             organ_answer_bytes,
@@ -378,6 +386,8 @@ impl LimitsConfig {
             organ_note_bytes,
             organ_loss_code_bytes,
             organ_memory_bytes,
+            organ_mesh_object_bytes,
+            organ_mesh_staged_bytes,
             deadline_jobs_per_caller,
             backup_handoff_pending_backups,
             backup_handoff_pending_bytes,
@@ -394,6 +404,7 @@ impl LimitsConfig {
             identity_excerpt_bytes,
             community_cache_bytes,
             connector_manifest_entries,
+            requested_result_rows,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -413,6 +424,7 @@ impl LimitsConfig {
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
         set(&mut self.retrieval_query_bytes, retrieval_query_bytes);
+        set(&mut self.semantic_query_bytes, semantic_query_bytes);
         set(&mut self.projection_body_bytes, projection_body_bytes);
         set(&mut self.git_scan_blob_bytes, git_scan_blob_bytes);
         set(
@@ -572,6 +584,11 @@ impl LimitsConfig {
             (EngineLimit::SealDssReferenceWork, seal_dss_reference_work),
             (EngineLimit::SealFieldTreeWork, seal_field_tree_work),
             (EngineLimit::SealContentsBytes, seal_contents_bytes),
+            (EngineLimit::SealOperationIdBytes, seal_operation_id_bytes),
+            (
+                EngineLimit::SealBackendOperationIdBytes,
+                seal_backend_operation_id_bytes,
+            ),
             (EngineLimit::OrganAsks, organ_asks),
             (EngineLimit::OrganAskPerVerb, organ_ask_per_verb),
             (EngineLimit::OrganAnswerBytes, organ_answer_bytes),
@@ -595,6 +612,8 @@ impl LimitsConfig {
             (EngineLimit::OrganNoteBytes, organ_note_bytes),
             (EngineLimit::OrganLossCodeBytes, organ_loss_code_bytes),
             (EngineLimit::OrganMemoryBytes, organ_memory_bytes),
+            (EngineLimit::OrganMeshObjectBytes, organ_mesh_object_bytes),
+            (EngineLimit::OrganMeshStagedBytes, organ_mesh_staged_bytes),
             (EngineLimit::DeadlineJobsPerCaller, deadline_jobs_per_caller),
             (
                 EngineLimit::BackupHandoffPendingBackups,
@@ -635,6 +654,7 @@ impl LimitsConfig {
                 EngineLimit::ConnectorManifestEntries,
                 connector_manifest_entries,
             ),
+            (EngineLimit::RequestedResultRows, requested_result_rows),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -665,6 +685,7 @@ impl LimitsConfig {
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
             ("retrieval_query_bytes", self.retrieval_query_bytes as u64),
+            ("semantic_query_bytes", self.semantic_query_bytes as u64),
             ("projection_body_bytes", self.projection_body_bytes as u64),
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
             ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),

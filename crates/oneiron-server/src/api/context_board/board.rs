@@ -408,9 +408,10 @@ pub(super) fn board_parts(
         Some(actor) => {
             let mut rows = Vec::new();
             let slice = vault
-                .agent_inbox_slice(actor, BOARD_INBOX_CAP, None)
+                .agent_inbox_board_slice(actor, BOARD_INBOX_CAP, vault.now_recorded_at())
                 .map_err(|error| core_engine_error("board inbox failed", error))?;
-            for mut item in slice {
+            let later = slice.later;
+            for (mut item, state) in slice.rows {
                 let mut admitting = Vec::new();
                 for participant in item
                     .participants
@@ -448,10 +449,10 @@ pub(super) fn board_parts(
                     }
                     inbox_sources.extend(admitting);
                     inbox_sources.extend(inbox_named_sources(read, &item, actor)?);
-                    rows.push(item);
+                    rows.push((item, state));
                 }
             }
-            oneiron::context_board::assemble_inbox_section(actor, &rows, people)
+            oneiron::context_board::assemble_inbox_section(actor, &rows, later, people)
                 .map_err(board_frame_error)?
         }
         None => None,
@@ -575,7 +576,7 @@ pub(super) async fn board_people(
         .applied;
     let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
     people
-        .set_about(&mut |person| server.vault.person_about(person, ceiling))
+        .set_about(&mut |person| server.vault.person_about_sourced(person, ceiling))
         .map_err(|error| core_engine_error("board people failed", error))?;
     people
         .disclose_names(&server.vault, read.actor_key())

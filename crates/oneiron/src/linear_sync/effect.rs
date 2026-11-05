@@ -14,9 +14,80 @@ use crate::linear_sync::{
     LinearWait, MirroredTaskFields, linear_operation_id,
 };
 use crate::outbound::OutboundDispatchRequest;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::task_verb::linear_effect_state_in_txn;
 
-const EFFECT_AUTH_KEY: &[u8] = b"linear:effect_authorized:v1/";
+/// A frozen authorization and the exact ids it names, retained together so
+/// hard erase can retire the binding in the same writer.
+#[derive(Clone, Copy)]
+struct EffectBinding {
+    digest: [u8; 32],
+    writer: EntityId,
+    scheduler: EntityId,
+    task: EntityId,
+}
+
+impl RawValue for EffectBinding {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut bytes = Vec::with_capacity(80);
+        bytes.extend_from_slice(&self.digest);
+        bytes.extend_from_slice(self.writer.as_bytes());
+        bytes.extend_from_slice(self.scheduler.as_bytes());
+        bytes.extend_from_slice(self.task.as_bytes());
+        Ok(bytes)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let corrupt = || Error::CorruptedIndex("linear effect authorized value").into();
+        if bytes.len() != 80 {
+            return Err(corrupt());
+        }
+        let digest = bytes[..32].try_into().map_err(|_| corrupt())?;
+        let writer = EntityId::from_bytes(bytes[32..48].try_into().map_err(|_| corrupt())?)
+            .map_err(|_| corrupt())?;
+        let scheduler = EntityId::from_bytes(bytes[48..64].try_into().map_err(|_| corrupt())?)
+            .map_err(|_| corrupt())?;
+        let task = EntityId::from_bytes(bytes[64..80].try_into().map_err(|_| corrupt())?)
+            .map_err(|_| corrupt())?;
+        Ok(Self {
+            digest,
+            writer,
+            scheduler,
+            task,
+        })
+    }
+}
+
+const EFFECT_AUTHORIZED: SideTable<[u8; 32], EffectBinding, Raw> =
+    SideTable::new(&side_table::LINEAR_EFFECT_AUTHORIZED);
+
+/// Drops authorization bindings that positively name the hard-erased id.
+/// A malformed row names nothing and is left for the damage report.
+///
+/// # Errors
+/// A storage failure.
+pub(crate) fn erase_effect_authorized_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::error::Result<()> {
+    let mut dropped = Vec::<[u8; 32]>::new();
+    for row in EFFECT_AUTHORIZED.iter_raw_from(&vault.store, wtxn, &[])? {
+        let (key, value) = row?;
+        let Ok(binding) = EFFECT_AUTHORIZED.decode_value(&value) else {
+            continue;
+        };
+        if (binding.writer == *actor || binding.scheduler == *actor || binding.task == *actor)
+            && let Ok(operation_id) = <[u8; 32]>::try_from(&key[..])
+        {
+            dropped.push(operation_id);
+        }
+    }
+    for operation_id in dropped {
+        EFFECT_AUTHORIZED.delete(&vault.store, wtxn, &operation_id)?;
+    }
+    Ok(())
+}
 
 /// What the admission closure returns to drop its transaction when every
 /// full budget row only paces (FIX 8788); never surfaces as an error.
@@ -31,9 +102,7 @@ pub(super) fn effect_bound_in(
     txn: &heed::RoTxn<'_>,
     operation_id: &[u8; 32],
 ) -> crate::error::Result<bool> {
-    let mut key = EFFECT_AUTH_KEY.to_vec();
-    key.extend_from_slice(operation_id);
-    Ok(vault.store.vault_meta.get(txn, &key)?.is_some())
+    EFFECT_AUTHORIZED.contains(&vault.store, txn, operation_id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,17 +242,23 @@ pub(crate) fn linear_effect_writer_in_txn(
         crate::provenance::validate_actor_class(entity_type, actor_class)?;
     }
     let digest = binding(request, writer.actor_ref).map_err(linear)?;
-    let mut key = EFFECT_AUTH_KEY.to_vec();
-    key.extend_from_slice(&request.operation_id);
-    let bound = vault
-        .store
-        .vault_meta
-        .get(txn, &key)?
-        .map(|raw| raw.as_ref() == digest.as_slice());
+    let bound = EFFECT_AUTHORIZED
+        .get(&vault.store, txn, &request.operation_id)?
+        .map(|kept| kept.digest == digest);
     match bound {
         Some(false) => return Err(refused()),
         Some(true) => {}
-        None => vault.store.vault_meta.put(txn, &key, &digest)?,
+        None => EFFECT_AUTHORIZED.put(
+            &vault.store,
+            txn,
+            &request.operation_id,
+            &EffectBinding {
+                digest,
+                writer: writer.actor_ref,
+                scheduler: request.scheduler_actor,
+                task: request.task_ref,
+            },
+        )?,
     }
     Ok(effect(writer.actor_ref, class, request))
 }
@@ -333,10 +408,10 @@ impl Vault {
                 crate::provenance::validate_actor_class(entity_type, actor_class)?;
             }
             let digest = binding(request, writer.actor_ref)?;
-            let mut key = EFFECT_AUTH_KEY.to_vec();
-            key.extend_from_slice(&request.operation_id);
-            let previously_authorized = if let Some(raw) = self.store.vault_meta.get(txn, &key)? {
-                if raw.as_ref() != digest.as_slice() {
+            let previously_authorized = if let Some(kept) =
+                EFFECT_AUTHORIZED.get(&self.store, txn, &request.operation_id)?
+            {
+                if kept.digest != digest {
                     return Err(LinearSyncError::AuthorizationDenied);
                 }
                 true
@@ -392,10 +467,24 @@ impl Vault {
                         (writer.actor_ref, &writer_effect),
                     ],
                 );
-                return Ok((LinearEffectAdmission::Held(hold), [None, None]));
+                return Ok((
+                    LinearEffectAdmission::Held(hold),
+                    [None, None],
+                    writer.actor_ref,
+                ));
             };
             if !previously_authorized {
-                self.store.vault_meta.put(txn, &key, &digest)?;
+                EFFECT_AUTHORIZED.put(
+                    &self.store,
+                    txn,
+                    &request.operation_id,
+                    &EffectBinding {
+                        digest,
+                        writer: writer.actor_ref,
+                        scheduler: request.scheduler_actor,
+                        task: request.task_ref,
+                    },
+                )?;
             }
             let gate_ref = format!("gate:{}", id.to_hex());
             // The push's provenance row keeps this admission (OF-427 C9).
@@ -403,9 +492,10 @@ impl Vault {
             Ok((
                 LinearEffectAdmission::Admitted { gate_ref },
                 pair.spent_presses,
+                writer.actor_ref,
             ))
         });
-        let (admission, spent) = match admitted {
+        let (admission, spent, writer) = match admitted {
             Err(LinearSyncError::Waiting(LinearWait::RateWindow {
                 next_eligible_at: 0,
             })) => {
@@ -418,7 +508,13 @@ impl Vault {
             admitted => admitted?,
         };
         // FIX 6424 part 2a: the presses it spent, kept once it committed.
-        super::approval::keep_spent_presses(self, request.operation_id, spent)?;
+        super::approval::keep_spent_presses(
+            self,
+            request.operation_id,
+            (request.scheduler_actor, writer),
+            request.task_ref,
+            spent,
+        )?;
         Ok(admission)
     }
 
@@ -454,8 +550,8 @@ impl Vault {
         let Some(door) = super::door_recheck::door_scheduler(self, request, door_request)? else {
             return Ok(());
         };
-        // The binding row is never removed, so this admission observes it
-        // too and charges no budget.
+        // A binding retained for non-erased replay is observed by this
+        // admission too, so it charges no budget.
         match self.admit_linear_effect(request, Some(&door))? {
             LinearEffectAdmission::Admitted { .. } => Ok(()),
             LinearEffectAdmission::Held(hold) => Err(super::door_recheck::hold_error(hold)),
@@ -481,19 +577,15 @@ impl Vault {
         request: &LinearEffectRequest,
         gate_ref: &str,
     ) -> LinearSyncResult<()> {
-        let mut key = EFFECT_AUTH_KEY.to_vec();
-        key.extend_from_slice(&request.operation_id);
         self.try_with_write_txn_grouped::<_, _, LinearSyncError>(|txn| {
             let state = linear_effect_state_in_txn(self, txn, request.task_ref)?;
             let Some(writer) = state.writer else {
                 return Ok(());
             };
             let digest = binding(request, writer.actor_ref)?;
-            let bound = self
-                .store
-                .vault_meta
-                .get(txn, &key)?
-                .is_some_and(|raw| raw.as_ref() == digest.as_slice());
+            let bound = EFFECT_AUTHORIZED
+                .get(&self.store, txn, &request.operation_id)?
+                .is_some_and(|kept| kept.digest == digest);
             if bound {
                 super::mirror_event::note_outbound_admitted_in(
                     self, txn, request, writer, gate_ref,

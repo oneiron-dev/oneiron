@@ -117,9 +117,10 @@ fn persist_structural(
     // batches merge. A refused commit leaves the durable document unchanged.
     let markdown = doc.view()?.markdown;
     super::validate_markdown(&markdown)?;
-    if markdown.len() > super::document::MAX_NOTE_BYTES {
-        return Err(invalid("NOTE body exceeds bound"));
-    }
+    // No body length refuses a NOTE (rule 5, FIX 10345). Its snapshot still
+    // goes whole in one STATE document frame, an 18-byte head and the
+    // snapshot within the transport's 8 MiB frame
+    // (`sync::transport::encode_document`); this bound protects that frame.
     if doc.snapshot()?.len() > super::operations::MAX_RECEIPT_PAYLOAD - 18 {
         return Err(invalid("NOTE snapshot exceeds wire bound"));
     }
@@ -220,7 +221,8 @@ impl Vault {
     /// Viewer-facing code must use the scope-checked brief/lens render doors.
     pub fn note_document(&self, id: EntityId) -> Result<NoteDocumentView> {
         let txn = self.store.env.read_txn()?;
-        load(self, &txn, id)?.view()
+        // Its authorship's stamp tokens read as their actors (FIX 11964).
+        super::operations::resolved_view_in_txn(self, &txn, load(self, &txn, id)?.view()?)
     }
 
     /// [`Self::note_document`] with the keys the lift marked in its texts
@@ -235,6 +237,7 @@ impl Vault {
     ) -> Result<(NoteDocumentView, crate::batch::secret_scan::LiftedKeys)> {
         let txn = self.store.env.read_txn()?;
         let view = load(self, &txn, id)?.view()?;
+        let view = super::operations::resolved_view_in_txn(self, &txn, view)?;
         let mut texts = vec![view.markdown.as_str()];
         texts.extend(view.title.as_deref());
         for pin in &view.pins {
@@ -388,7 +391,7 @@ impl Memory<'_> {
                     &doc,
                     &super::NoteAuthorship {
                         operation: self.vault().new_entity_id()?,
-                        actor: super::NoteActor::Actor(self.actor()),
+                        actor: super::NoteActor::Actor(stamp.token),
                         actor_class: self.actor_class().gate_actor_class().to_owned(),
                         grant: None,
                         command_hash: *blake3::hash(&body).as_bytes(),
@@ -467,11 +470,11 @@ impl Memory<'_> {
     }
 
     /// [`Self::purge_note_history`] as `owner`, whose proof is rechecked in the
-    /// transaction that commits. Without `through` it erases up to the oldest
-    /// pin, or up to the head when nothing pins the note. The receipt lands
-    /// beside the entity-text purge receipts. A legal hold on the note refuses
-    /// it (OF-470); with two or more live Owners it runs only through the
-    /// vault's `erase` veto window ([`Vault::start_text_history_erase`],
+    /// transaction that commits. Without `through` it erases up to the causal
+    /// floor shared by every pin, or up to the head when nothing pins the note.
+    /// The receipt lands beside the entity-text purge receipts. A legal hold on
+    /// the note refuses it (OF-470); with two or more live Owners it runs only
+    /// through the vault's `erase` veto window ([`Vault::start_text_history_erase`],
     /// Docs Q05).
     pub fn purge_note_history_as(
         &self,
@@ -554,13 +557,25 @@ impl Memory<'_> {
                 let through = match requested {
                     Some(bytes) => frontier(bytes)?,
                     None if pins.is_empty() => doc.doc.oplog_frontiers(),
-                    None => pins
-                        .iter()
-                        .find(|oldest| pins.iter().all(|pin| at_or_before(*oldest, pin)))
-                        .cloned()
-                        .ok_or_else(|| {
-                            invalid("NOTE pins are causally incomparable; name a frontier")
-                        })?,
+                    None => {
+                        let oldest = pins
+                            .iter()
+                            .find(|oldest| pins.iter().all(|pin| at_or_before(*oldest, pin)));
+                        match oldest {
+                            Some(oldest) => oldest.clone(),
+                            None => {
+                                let mut allowed = doc.doc.oplog_vv();
+                                for pin in &pins {
+                                    let vv = doc
+                                        .doc
+                                        .frontiers_to_vv(pin)
+                                        .ok_or_else(|| invalid("NOTE pin frontier unavailable"))?;
+                                    allowed = allowed.intersection(&vv);
+                                }
+                                doc.doc.vv_to_frontiers(&allowed)
+                            }
+                        }
+                    }
                 };
                 if !pins.iter().all(|pin| at_or_before(&through, pin)) {
                     return Err(invalid("NOTE purge would pass a cited frontier").into());
@@ -591,6 +606,9 @@ impl Memory<'_> {
                 };
                 self.vault()
                     .put_text_purge_receipt_in_txn(txn, &note, receipt_id, &receipt)?;
+                self.vault()
+                    .store
+                    .roll_checkpoint_payload_for_purge_in_txn(txn, &note)?;
                 Ok(receipt)
             })
         })

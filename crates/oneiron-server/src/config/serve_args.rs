@@ -217,6 +217,12 @@ pub struct ServeArgs {
     #[arg(long = "artifact-http-socket")]
     pub artifact_http_socket: Option<PathBuf>,
 
+    /// Managed mode: the supervisor-selected absolute native preview socket.
+    /// It routes only already-held private preview bindings, not the vault API.
+    /// The supervisor passes this flag only at its installed-engine build floor.
+    #[arg(long = "preview-socket")]
+    pub preview_socket: Option<PathBuf>,
+
     /// The vault's owner settings, one TOML file in the server's own config
     /// schema, `[models]`, `[embedder]` and `[gpu]` included. Flags stand
     /// over it. On a plain serve it is read as a config file layered over
@@ -349,11 +355,12 @@ pub struct ServeArgs {
     /// An organ build this server runs as first party, by its blake3 (64
     /// hex); repeat it for each (FIX 7644). Listing one is the operator's
     /// statement that the build is reviewed first-party code. A pack organ
-    /// build not listed runs as third party, which the organ host refuses to
-    /// start until filesystem confinement for organs lands. Plain or managed
-    /// serve; no config file, settings file or environment sets it. A vault
-    /// VM's init passes one per line of its config drive's
-    /// `trusted-organ-builds` (FIX 7889), argv as on a node.
+    /// build not listed runs as third party, which the organ host starts
+    /// only inside a filesystem fence (Landlock ABI 3 on Linux, Seatbelt on
+    /// macOS) and refuses on a host with none. Plain or managed serve; no
+    /// config file, settings file or environment sets it. A vault VM's init
+    /// passes one per line of its config drive's `trusted-organ-builds`
+    /// (FIX 7889), argv as on a node.
     #[arg(long = "trusted-organ-build", value_parser = blake3_hex)]
     pub trusted_organ_builds: Vec<String>,
 

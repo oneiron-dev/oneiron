@@ -11,7 +11,16 @@ use oneiron_model::llm::{Scope, ScopeResource};
 use std::collections::BTreeSet;
 
 impl BranchResources<'_> {
-    pub(super) fn admit_priors(&mut self) -> Result<()> {
+    /// The exact prior heads this branch admitted. A window slot's
+    /// finish compares its opening set against the re-opened branch's:
+    /// a prefix rendered over priors an earlier finish closed must
+    /// never parse against pins that no longer hold them (FIX 12487
+    /// round 1).
+    pub(in crate::dreamer_consolidation) fn admitted_prior_ids(&self) -> BTreeSet<EntityId> {
+        self.priors.keys().copied().collect()
+    }
+
+    pub(super) fn admit_priors(&mut self, context_only: &BTreeSet<EntityId>) -> Result<()> {
         // Only explicit exact document rights can introduce persisted heads.
         // Signal/output projections never grant a stored-head write right.
         let documents: BTreeSet<_> = self
@@ -25,7 +34,7 @@ impl BranchResources<'_> {
             })
             .collect();
         for id in documents {
-            if self.sources.contains_key(&id) {
+            if self.sources.contains_key(&id) || context_only.contains(&id) {
                 continue;
             }
             let (kind, learned_at, bytes) = if let Some(wake) = self.prepared_wake {

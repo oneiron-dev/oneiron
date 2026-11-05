@@ -23,25 +23,17 @@ use crate::outbound::linkedin_policy::LinkedInSeatSandboxPolicy;
 use crate::outbound_intent_ledger::email_headers::ListUnsubscribeTarget;
 use crate::receipt::{ContextReceiptFields, ReceiptRecord};
 
-/// Actor context supplied to the outbound dispatch gate.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OutboundDispatchActor {
-    pub actor_class: String,
-    pub actor_ref: Option<String>,
-    pub actor_entity_ref: Option<EntityId>,
+pub use crate::store::outbound_actor::{
+    OutboundDispatchActor, OutboundDispatchGate, OutboundDispatchPolicyRisk,
+};
+
+pub(in crate::outbound) trait OutboundDispatchActorGate {
+    fn gate_actor(&self) -> GateActor;
+    fn provenance(&self) -> GateProvenanceHandles;
 }
 
-impl OutboundDispatchActor {
-    #[must_use]
-    pub fn agent(agent_ref: EntityId) -> Self {
-        Self {
-            actor_class: "agent".to_owned(),
-            actor_ref: Some(agent_ref.to_hex()),
-            actor_entity_ref: Some(agent_ref),
-        }
-    }
-
-    pub(super) fn gate_actor(&self) -> GateActor {
+impl OutboundDispatchActorGate for OutboundDispatchActor {
+    fn gate_actor(&self) -> GateActor {
         GateActor {
             actor_class: self.actor_class.clone(),
             actor_ref: self.actor_ref.clone(),
@@ -49,7 +41,7 @@ impl OutboundDispatchActor {
         }
     }
 
-    pub(super) fn provenance(&self) -> GateProvenanceHandles {
+    fn provenance(&self) -> GateProvenanceHandles {
         GateProvenanceHandles {
             actor_entity_ref: self.actor_entity_ref,
             ..GateProvenanceHandles::default()
@@ -57,38 +49,15 @@ impl OutboundDispatchActor {
     }
 }
 
-/// ExternalEffect policy-risk dial for outbound dispatch.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
-pub enum OutboundDispatchPolicyRisk {
-    #[default]
-    Normal,
-    HoldToProposal,
+pub(in crate::outbound) trait OutboundDispatchRiskGate {
+    fn to_gate(self) -> ExternalEffectPolicyRisk;
 }
 
-impl OutboundDispatchPolicyRisk {
-    pub(super) const fn to_gate(self) -> ExternalEffectPolicyRisk {
+impl OutboundDispatchRiskGate for OutboundDispatchPolicyRisk {
+    fn to_gate(self) -> ExternalEffectPolicyRisk {
         match self {
             Self::Normal => ExternalEffectPolicyRisk::Normal,
             Self::HoldToProposal => ExternalEffectPolicyRisk::HoldToProposal,
-        }
-    }
-}
-
-/// Gate facts supplied by the trigger source or caller.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct OutboundDispatchGate {
-    pub has_opted_in: bool,
-    pub has_permission: bool,
-    pub policy_risk: OutboundDispatchPolicyRisk,
-}
-
-impl OutboundDispatchGate {
-    #[must_use]
-    pub const fn allow_when_policy_grants() -> Self {
-        Self {
-            has_opted_in: true,
-            has_permission: true,
-            policy_risk: OutboundDispatchPolicyRisk::Normal,
         }
     }
 }
@@ -195,6 +164,11 @@ pub struct OutboundDispatchRequest {
     /// when the delivery window degrades this send to its surface, the
     /// pipeline sends it as a send of its own. `None` keeps today's park.
     pub ambient_alternative: Option<Box<super::OutboundAmbientAlternative>>,
+    /// Set when the pipeline resolves this send's sender: its outbound send
+    /// runs under the posture the default manifest ships, because the
+    /// vault's manifests name no act row for its pairing. The dispatch
+    /// receipt names that fallback. In memory only, never persisted.
+    pub(crate) sender_posture_fallback: bool,
 }
 
 /// A drain's clock for one send's delivery window (FIX 8817): the frozen host
@@ -249,6 +223,7 @@ impl OutboundDispatchRequest {
             send_autonomy: None,
             publisher_signature: None,
             ambient_alternative: None,
+            sender_posture_fallback: false,
         }
     }
 
@@ -275,6 +250,16 @@ impl OutboundDispatchRequest {
         explicit_class: Option<&str>,
     ) -> Self {
         self.send_autonomy = Some(SendAutonomyContext::from_host(relationship, explicit_class));
+        self
+    }
+
+    /// The host's whole handoff from sender selection: the context its
+    /// selection query asked with, its scope keys and identity faces
+    /// included ([`SendAutonomyContext::with_selection`]), so an unpinned
+    /// send's dispatch selects its sender by the vault's selection rules.
+    #[must_use]
+    pub fn send_autonomy_context(mut self, context: SendAutonomyContext) -> Self {
+        self.send_autonomy = Some(context);
         self
     }
 

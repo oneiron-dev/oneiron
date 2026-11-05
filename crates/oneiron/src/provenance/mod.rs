@@ -146,8 +146,9 @@ mod actor_stamp;
 pub use actor_stamp::ActorStamp;
 pub(crate) use actor_stamp::{
     actor_stamp, actor_stamp_in_txn, actor_stamp_tokens_remain_in_txn,
-    erase_actor_stamp_cache_in_txn, erase_actor_stamp_tokens_in_txn,
-    release_held_actor_stamps_in_txn, resolve_actor_stamp, resolve_actor_stamp_in_txn,
+    erase_actor_stamp_cache_in_txn, erase_actor_stamp_tokens_in_txn, erase_actor_stamp_uses_in_txn,
+    record_actor_stamp_uses_in_txn, release_held_actor_stamps_in_txn, resolve_actor_stamp,
+    resolve_actor_stamp_in, resolve_actor_stamp_in_txn, tokens_named_since,
 };
 mod actor_substrate;
 mod archive;
@@ -272,7 +273,9 @@ pub(crate) fn erase_row_provenance_without_attempt_payloads_in_txn(
     birth::erase_row_birth_in_txn(store, txn, row)?;
     // The cause is read before the descriptors go.
     let held: Vec<[u8; 32]> = if erase {
-        body::owned_bodies_in_txn(store, txn, row)?
+        let bodies = body::owned_bodies_in_txn(store, txn, row)?;
+        crate::code_run::erase_retained_result_marks_in_txn(store, txn, &bodies)?;
+        bodies
             .iter()
             .filter_map(|body| body.state.held().map(|held| held.blake3))
             .collect()

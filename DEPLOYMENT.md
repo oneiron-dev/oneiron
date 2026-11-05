@@ -165,6 +165,20 @@ connection floor and each address's unauthenticated share. Managed serve
 socket the supervisor names with `--artifact-http-socket` (an absolute path);
 without one, its `/a/` answers on the API socket alone.
 
+Managed serve's native preview listener is the unix socket the supervisor
+names with `--preview-socket` (an absolute path), only for an explicitly
+configured preview domain and installed engines at or after this flag's build
+floor (`oneiron-vault-contract`'s `CONTRACT_VERSION` docs). It serves only an
+already-held private preview on the exact origin the supervisor bound to that
+lease, never the vault API. The same owner, invitation, sharing tokens and
+revocations protect both origins; a public DNS name does not publish the app.
+Without the flag there is no registration caller or preview data socket, and
+the standalone loopback preview is unchanged. Losing a held registration stops
+hosted ingress and its streams, not the still-live loopback lease or its tokens.
+The trusted session runtime must install the actual process connector; HTTP
+input cannot install one. This ingress is native-only: the vault-VM typed
+ledger bridge does not carry preview registration.
+
 `artifact_domains` (flag `--artifact-domains`, env `ONEIRON_ARTIFACT_DOMAINS`,
 comma-separated) and `artifact_vault_name` (flag `--artifact-vault-name`, env
 `ONEIRON_ARTIFACT_VAULT_NAME`, a DNS label) put this vault on a subdomain of
@@ -316,6 +330,8 @@ seal_reference_hops = 128         # reference links of one other chain the seal 
 seal_dss_reference_work = 16384   # reference steps one measurement of a PDF's DSS coverage takes; past it every chain is followed and the row asks
 seal_field_tree_work = 16384      # nodes one descent of a PDF's AcroForm field tree visits; past it the tree is walked whole and the row asks
 seal_contents_bytes = 262144      # DER bytes of the largest CMS or timestamp token one seal writes into a signature hole; past it a revision the seal writes grows its hole and the row asks
+seal_operation_id_bytes = 224     # bytes of one seal's caller operation id; past it the seal's backend sees the id's alias and the row asks
+seal_backend_operation_id_bytes = 256 # bytes of the longest operation id one seal sends its backend, its own suffix counted; past it the id is sent whole and the row asks
 organ_asks = 32                   # asks of every verb one organ call makes (an install naming its own count is measured at it); past it each granted ask is answered and the row asks
 organ_ask_per_verb = 32           # asks of one verb one organ call makes, measured at the count the install grant names for it; past it each is answered and the row asks
 organ_answer_bytes = 16777216     # answer bytes one organ call is lent (an install naming its own is measured at it); past it the call's booking grows and the row asks
@@ -336,6 +352,8 @@ organ_note_items = 64             # notes of one kind (touched, warnings, losses
 organ_note_bytes = 256            # bytes of one note (an encoded locator, a warning, a loss's detail) an organ call's receipt keeps; past it the note is kept whole and the row asks
 organ_loss_code_bytes = 64        # bytes of one loss's code an organ call's receipt keeps; past it the code is kept whole and the row asks
 organ_memory_bytes = 2147483648   # bytes the organ host's budget holds when a live call grows past it (measured at the host's own budget); one elected call goes on with its overcommit on its receipt, new calls wait for the drain, and the row asks
+organ_mesh_object_bytes = 1073741824 # bytes of one object a peer stages on this node for a mesh organ call, spilled to disk; past it the object is staged whole and the row asks
+organ_mesh_staged_bytes = 1073741824 # bytes one mesh connection holds staged at once, both ways, spilled to disk; past it every object is staged and the row asks
 deadline_jobs_per_caller = 2048   # recalls and searches one caller has running at once under a deadline, each counted until its work ends; past it the job runs on and the row asks (the deadline_jobs_high check, naming the caller and the count, once per caller per minute)
 authority_record_items = 4096     # items one signed authority record carries for its owner (custody recipients, checkpoint roots, model routes, mesh addresses or ALPN grants, a machine revision's acknowledged acts); past it the record is signed and kept whole and the row asks
 connector_live_questions = 64     # rounds of foreign MCP questions (elicitation) one server holds live for connector callers; past it the question registers and waits like any other and the row asks; only the memory floor and a round's 120 s deadline end one
@@ -350,6 +368,7 @@ identity_decision_state_bytes = 65536 # whole encoded identity-decision state; p
 identity_excerpt_bytes = 65536       # whole source message for an identity mention; past it the row asks and the whole message is still kept and sent
 community_cache_bytes = 67108864  # bytes one community-cache family holds, read or published whole; past it the snapshot is still served whole and the row asks
 connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
+requested_result_rows = 1048576 # result rows one search, recall or context-pack door was asked for; past it the whole requested count is served and the row asks
 ```
 
 Run the engine with `Delegate=yes` so each organ gets a cgroup cell; without

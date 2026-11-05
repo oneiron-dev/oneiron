@@ -155,6 +155,13 @@ impl StoreCore {
         self.key_custody.archived_at_open() || self.env.is_sealed()
     }
 
+    /// Whether every write on this handle refuses: its vault opened archived,
+    /// or a restore's swap has sealed it since. An admission that writes
+    /// nothing before its reply reads it (FIX 12023 W0).
+    pub(crate) fn writes_sealed(&self) -> bool {
+        self.env.is_sealed()
+    }
+
     /// The page size this store writes in: the creating host's, which LMDB
     /// keeps with the file. A value too large for a leaf takes whole pages
     /// of it.
@@ -239,6 +246,34 @@ pub struct StoreCore {
     /// Forks the project folds over committed snapshots found (decision 10
     /// evidence). Never persisted.
     pub(crate) project_forks: crate::workspace_roster::ProjectForks,
+    /// The engine's delete guards, supplied by the open door: a store never
+    /// exists without them.
+    pub(crate) delete_guards: &'static dyn crate::store::StoreDeleteGuards,
+    /// The engine's record-scope stamp hooks, supplied by the open door with
+    /// the delete guards.
+    pub(crate) scope_stamps: &'static dyn crate::store::StoreScopeStamps,
+    /// The engine's project write hooks, supplied by the open door with the
+    /// delete guards.
+    pub(crate) project_writes: &'static dyn crate::store::StoreProjectWrites,
+    /// The engine's record hooks, supplied by the open door with the delete
+    /// guards.
+    pub(crate) record_hooks: &'static dyn crate::store::StoreRecordHooks,
+    /// The engine's side-table actor scrubs, supplied by the open door with
+    /// the delete guards.
+    pub(crate) actor_scrubs: &'static dyn crate::store::StoreActorScrubs,
+    /// The engine's gate hooks, supplied by the open door with the delete
+    /// guards.
+    pub(crate) gate_hooks: &'static dyn crate::store::StoreGateHooks,
+    /// The engine's sync hooks, supplied by the open door with the delete
+    /// guards.
+    #[cfg(feature = "sync")]
+    pub(crate) sync_hooks: &'static dyn crate::store::StoreSyncHooks,
+    /// The engine's attempt queue operations, supplied by the open door with
+    /// the delete guards.
+    pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
+    /// The engine's core write operations, supplied by the open door with the
+    /// delete guards.
+    pub(crate) core_write_operations: &'static dyn crate::store::StoreCoreWriteOperations,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
@@ -283,7 +318,7 @@ pub struct StoreCore {
     /// and host runtime port every handle on this vault shares (V2-R3). A
     /// lock closes the gate and waits for the runtime's release before the
     /// key goes. Never persisted.
-    pub(crate) inference_snapshots: crate::inference_snapshot::SnapshotLifecycle,
+    pub(crate) inference_snapshots: crate::store::snapshot_lifecycle::SnapshotLifecycle,
     pub(crate) clock: crate::ports::StoreClock,
     /// The single writer's group commit (ARCH-0019, OF-536): concurrent
     /// logical writes share one write transaction and one fsync.
@@ -292,7 +327,9 @@ pub struct StoreCore {
     /// per-process: see [`Diagnostics`] for why the three families moved here.
     pub(crate) diagnostics: Diagnostics,
     /// Bounded, content-addressed L2 render cache. Never persisted.
-    pub(crate) l2_base_cache: Mutex<crate::context_pack::L2BaseCache>,
+    pub(crate) l2_base_cache: Mutex<crate::store::l2_evidence::L2BaseCache>,
+    pub(in crate::store) ppr_cache_invalidation:
+        &'static dyn crate::store::ppr_cache_invalidation::PprCacheInvalidation,
     /// Legal-hold refusals waiting for their hold log: the refusing
     /// transaction rolls back (OF-470). Never persisted.
     pub(crate) legal_hold_refusals: super::legal_hold::LegalHoldRefusals,
@@ -320,11 +357,11 @@ pub struct StoreCore {
     pub(crate) credential_revocations: tokio::sync::watch::Sender<u64>,
     /// The container output guard: each container's last attendee-entry
     /// mark (OF-365 P5). Per vault, in memory, never persisted.
-    pub(crate) container_output: crate::conversation::ContainerOutputGuard,
+    pub(crate) container_output: crate::store::container_output::ContainerOutputGuard,
     /// The voice calls live in each room, by host token (FIX 1388/1389 C1).
     /// Per vault, in memory, never persisted: hosts register again after a
     /// restart.
-    pub(crate) live_speakers: crate::conversation::LiveSpeakers,
+    pub(crate) live_speakers: crate::store::live_speaker_calls::LiveSpeakers,
     /// Content-free local invalidations. Readers always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,
@@ -372,6 +409,10 @@ pub struct StoreOwner {
     // has closed the LMDB environment — a reopen racing this drop can never
     // observe the path as free while the old environment is still live.
     pub(in crate::store) _registered_path: RegisteredPath,
+    /// This open took the vault's writer lease ([`Store::open_with_writer_lease`]),
+    /// read while the handle assembles, before its lease is set on it: a
+    /// lease holder's open alone replays the slip-spend journal (FIX 12023 W0).
+    pub(in crate::store) opened_with_writer_lease: bool,
 }
 
 /// LMDB environment and database handles for a vault.
@@ -524,6 +565,13 @@ impl SessionStoreView<'_> {
         self.overlay.install_txn_segment()
     }
 
+    /// Captures every accessor at the current write-segment position.
+    /// Sequential writers use this when a later index mutation must read the
+    /// preceding mutation's overlay writes rather than the original snapshot.
+    pub(crate) fn write_snapshot(&self) -> Result<SessionStoreView<'_>> {
+        self.base.session_view(self.overlay.clone())
+    }
+
     /// Captures entity rows at the current write-segment position for admission.
     /// Earlier staged dependencies are visible, but future ops are not. The
     /// caller's logical read view keeps its original immutable snapshot.
@@ -645,7 +693,9 @@ macro_rules! manifest_dbs {
                       attempt_ready, attempt_dedupe) have no write-target-parameterized caller \
                       after P4a and are on the ONE-1728 seg-4 post-merge delete-list"
         )]
-        pub(crate) trait ManifestDbs: policy_fold::PolicyFoldSource {
+        pub(crate) trait ManifestDbs:
+            policy_fold::PolicyFoldSource + oneiron_store::vector_index::VectorIndexDbs
+        {
             $(fn $name(&self) -> &$ty;)+
 
             /// The diagnostic counters of the vault this write target belongs
@@ -654,7 +704,7 @@ macro_rules! manifest_dbs {
             /// writing, and the write target is the only handle it holds.
             fn diagnostics(&self) -> &Diagnostics;
             /// The scan checks this vault holds until its next write
-            /// ([`crate::scan_check::ScanCount::defer`]).
+            /// ([`crate::store::scan_count::ScanCount::defer`]).
             fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks;
             fn clock(&self) -> &crate::ports::StoreClock;
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody;
@@ -694,6 +744,41 @@ macro_rules! manifest_dbs {
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { true }
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
+                &self.core.manifest_memo
+            }
+        }
+
+        /// The vault's canonical accessors built over its shared core, for a
+        /// write that runs where no [`Store`] view is held: the store's own
+        /// leader thread runs detached writes there (FIX 12023). It reads and
+        /// writes base rows, as [`Store`]'s accessors do.
+        pub(crate) struct CoreDbs<'c> {
+            core: &'c StoreCore,
+            $($name: $ty,)+
+        }
+
+        impl StoreCore {
+            /// This core's canonical accessors as a write target.
+            pub(crate) fn canonical_dbs(&self) -> CoreDbs<'_> {
+                CoreDbs {
+                    core: self,
+                    $($name: <$ty>::canonical(self.raw.$name),)+
+                }
+            }
+        }
+
+        impl ManifestDbs for CoreDbs<'_> {
+            $(fn $name(&self) -> &$ty { &self.$name })+
+
+            fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
+            fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks {
+                &self.core.pending_scan_checks
+            }
+            fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
+            fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
+            fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
+            fn is_union(&self) -> bool { false }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.core.manifest_memo
             }
@@ -743,9 +828,11 @@ impl std::ops::Deref for Store {
 /// The deferred-commit leader holds a clone of the core (Engine ruling 10-30
 /// 23:09): it ends first, after the group it leads commits, so a clean close
 /// keeps every write it answered and no `Arc<StoreCore>` outlives the owner
-/// when `core` and then `owner` drop in their declared order.
+/// when `core` and then `owner` drop in their declared order. The detached
+/// writes still queued run before it ends, on this thread (FIX 12023).
 impl Drop for Store {
     fn drop(&mut self) {
+        self.finish_detached_writes(None);
         self.core.group_commit.stop_deferred_commit_leader();
     }
 }
@@ -770,6 +857,7 @@ impl Drop for StoreOwner {
 }
 
 pub(super) fn seed_default_policy_manifest_in_txn(
+    gate_hooks: &dyn crate::store::StoreGateHooks,
     entities: &OverlayDb,
     sync_state: &OverlayStrDb,
     type_index: &OverlayDb,
@@ -783,8 +871,8 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     if entities.get(wtxn, id.as_bytes())?.is_some() {
         return Err(Error::CorruptedIndex("default policy manifest id occupied"));
     }
-    let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
-    let body = crate::gate::default_policy_manifest()?;
+    let timestamp = crate::store::policy_record::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
+    let body = gate_hooks.default_policy_manifest()?;
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     payload.push(ENTITY_TYPE_POLICY_MANIFEST);
     payload.extend_from_slice(&timestamp.to_be_bytes());
@@ -794,12 +882,12 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     entities.put(wtxn, id.as_bytes(), &payload)?;
     sync_state.put(
         wtxn,
-        &crate::gate::trusted_manifest_key(id),
+        &oneiron_store::manifest_origin_keys::trusted_manifest_key(id),
         blake3::hash(&body).as_bytes(),
     )?;
     sync_state.put(
         wtxn,
-        &crate::gate::seeded_manifest_key(id),
+        &oneiron_store::manifest_origin_keys::seeded_manifest_key(id),
         blake3::hash(&body).as_bytes(),
     )?;
     type_index.put(
@@ -813,6 +901,26 @@ pub(super) fn seed_default_policy_manifest_in_txn(
 }
 
 impl Store {
+    /// The vault directory's identity from the descriptor the open bound,
+    /// never a fresh pathname lookup: a rename after open cannot redirect
+    /// it (REVIEW-4381 P1). None where the open retained no descriptor.
+    pub(crate) fn bound_root_identity(&self) -> Option<(u64, u64)> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            self.owner
+                .env
+                ._bound_root_dir
+                .as_ref()
+                .and_then(|dir| dir.metadata().ok())
+                .map(|meta| (meta.dev(), meta.ino()))
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
     /// Upload staging is anchored to the root held by this environment.
     pub(crate) fn lfs_staging_file(&self) -> Result<std::fs::File> {
         #[cfg(unix)]

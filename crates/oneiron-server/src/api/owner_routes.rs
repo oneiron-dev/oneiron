@@ -29,7 +29,7 @@ use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
 use super::error_map::core_engine_error;
-use super::openapi::OwnerRoute;
+use super::openapi::{ByteBody, CHANGED, OwnerRoute, RestShape};
 use super::query_params;
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -48,6 +48,7 @@ pub(super) mod browser_takeover_routes;
 pub(super) mod budget_hold_routes;
 pub(super) mod checkpoint_policy_routes;
 mod cleanup_decide;
+pub(super) mod code_run_secret_lift_routes;
 mod commitment_routes;
 pub(super) mod concern_routes;
 pub(super) mod conflict_routes;
@@ -92,6 +93,7 @@ pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
 pub(super) mod recovery_kit_routes;
 pub(super) mod recovery_kit_target_routes;
+mod removal_archive_routes;
 pub(super) mod room_thread_setting_routes;
 pub(super) mod root_routes;
 pub(super) mod schema;
@@ -110,6 +112,7 @@ mod support_repair_routes;
 mod training_swap_routes;
 mod usage_repair_routes;
 pub(super) mod vault_key_routes;
+pub(super) mod weave_digest_channel_routes;
 pub(super) mod weave_routes;
 pub(super) mod widen_proposal_routes;
 pub(super) mod wire_health_routes;
@@ -166,6 +169,7 @@ fn owner_tables() -> OwnerTable {
         agent_grant_routes::owner_table(),
         proactivity_routes::owner_table(),
         weave_routes::owner_table(),
+        weave_digest_channel_routes::owner_table(),
         pack_routes::owner_table(),
         pack_preview_routes::owner_table(),
         courtesy_delete_routes::owner_table(),
@@ -185,6 +189,7 @@ fn owner_tables() -> OwnerTable {
         secret_use_routes::owner_table(),
         secret_reveal_routes::owner_table(),
         secret_found_routes::owner_table(),
+        code_run_secret_lift_routes::owner_table(),
         secret_lift_routes::owner_table(),
         steer_routes::owner_table(),
         stream_recovery_routes::owner_table(),
@@ -198,6 +203,7 @@ fn owner_tables() -> OwnerTable {
         owner_work_routes::owner_table(),
         root_routes::owner_table(),
         recovery_kit_target_routes::owner_table(),
+        removal_archive_routes::owner_table(),
         super::owner_origin::owner_table(),
         super::packs::owner_table(),
         carrier_table(),
@@ -456,7 +462,7 @@ struct OwnerStatus {
     location: location::Location,
     embedder: crate::owner::embedder::EmbedderReport,
     feedback: feedback::FeedbackStatus,
-    /// Every sync link since this process started, summed per inner frame
+    /// Every sync and LLM mesh link since this process started, summed per inner frame
     /// tag: raw bytes against the bytes on the wire, each way (OF-604).
     link_bytes: Vec<oneiron::sync::transport::TagBytesRow>,
     /// The browser readiness a managed `Ping` carries, read from the same
@@ -1008,7 +1014,12 @@ async fn witness_off_record(
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let receipt = blocking(move || {
-        off_record::witness(server.vault(), &owner, &request, server.embedder.as_ref())
+        off_record::witness(
+            server.vault(),
+            &owner,
+            &request,
+            server.embedder_slot().as_ref(),
+        )
     })
     .await?;
     Ok(Json(receipt))

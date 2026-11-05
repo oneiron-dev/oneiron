@@ -117,6 +117,7 @@ mod slip_renewal;
 // error envelope whose `code` is the engine's raw string rather than this
 // crate's closed `ErrorCode`.
 mod facade;
+pub(crate) use facade::is_slim_lifecycle_observation;
 pub(crate) mod legal_hold_schema;
 // FIX 2222: who a host credential acts as at every door, through one resolver.
 pub(crate) mod host_action;
@@ -132,6 +133,8 @@ pub(crate) use self::facade::{
 // FIX 11190, FIX 11201: the binding door's decision on a call over a damaged
 // authority clock floor.
 pub(crate) use self::facade::clock_ingress;
+// FIX 12323: a facade route's caller, as its receipt layer resolved it.
+pub(crate) use self::facade::resolved_facade_caller;
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
@@ -147,6 +150,7 @@ mod linear_push;
 mod llm;
 #[cfg(feature = "mesh")]
 pub(crate) use llm::MeshLlm;
+pub(crate) use llm::record_raw_response;
 mod mcp_gateway;
 mod memory;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the

@@ -4,11 +4,11 @@
 
 use super::*;
 use crate::result_body::ResultBodyPin;
+use crate::store::result_body_rows::body_handle;
+pub(crate) use crate::store::result_body_rows::code_run_body_row_key;
 
 mod host_occurrence;
 mod reader;
-
-pub(crate) use self::reader::CodeRunResultBodyReader;
 
 impl Vault {
     /// A writer for one result body, into this vault's `bodies/`. Each value
@@ -683,12 +683,6 @@ pub(crate) fn code_run_inline_body_of_row<'v>(
     }
 }
 
-/// Whether a raw result body row holds its body inline, whoever holds the
-/// body.
-pub(crate) fn code_run_row_inline(value: &[u8]) -> bool {
-    matches!(split_row(value), Some((STORED_INLINE, _)))
-}
-
 /// Whether the result body row of `digest` holds its body on its own: a raw
 /// output no descriptor holds (FIX 5399b). Another holder's release of the
 /// same bytes neither queues nor collects it. `false` with no row.
@@ -726,20 +720,6 @@ pub(crate) fn lift_code_run_file_hold_in_txn(
     };
     RAW_OUTPUTS.put(dbs, wtxn, &handle, &StoredBody::File { len, held: false })?;
     crate::provenance::body::queue_pruned_file_in_txn(dbs, wtxn, digest)
-}
-
-/// The raw `vault_meta` key of the result body row of `digest`.
-pub(crate) fn code_run_body_row_key(digest: &[u8; 32]) -> Vec<u8> {
-    RAW_OUTPUTS.key_bytes(&body_handle(digest))
-}
-
-/// The content handle the result body row of `digest` is keyed by.
-fn body_handle(digest: &[u8; 32]) -> String {
-    CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
-        hash: *digest,
-        byte_len: 0,
-    })
-    .handle
 }
 
 /// The digest a raw result body row's key names by its handle.

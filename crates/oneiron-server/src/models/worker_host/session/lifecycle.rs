@@ -79,7 +79,7 @@ struct Counts {
     imports: AtomicU64,
     replays: AtomicU64,
     restores_cold: AtomicU64,
-    skips: [AtomicU64; 7],
+    skips: [AtomicU64; 8],
 }
 
 /// One park or restore event, as the status counts it.
@@ -116,6 +116,9 @@ pub(super) enum Skip {
     Oversize,
     /// What it was computed with is not named whole.
     Unsupported,
+    /// Its dependency set is imprecise (a world or author did not read),
+    /// so a park cannot tell it from a row with no producer at all.
+    Imprecise,
     /// Its checkpoint restores slower than it recomputes: too short to
     /// pay back its transfer.
     Short,
@@ -315,8 +318,14 @@ async fn lock_vault(vault: VaultRef, bound: Duration) -> SnapshotRelease {
     }
     releases.abort_all();
     // The releases cut every export or import in flight; their owners drop
-    // what they hold, inside the same bound.
+    // what they hold, inside the same bound. A seal's blocking publish is
+    // not cut mid-write, only bounded by the same deadline; its copy drops
+    // when the write lands.
     registry::copies_dropped(&vault, deadline).await;
+    // What the graceful path left: read before the abort storm, whose
+    // incarnation kills drop every copy and would mask whether the wait
+    // above finished the work (FIX 11288).
+    let host_copies_left = registry::host_copies(&vault);
     // Every abort starts at once, each on a task of its own that also does
     // its cleanup, so it finishes even when the engine stops waiting.
     let aborts: Vec<_> = owed
@@ -351,7 +360,7 @@ async fn lock_vault(vault: VaultRef, bound: Duration) -> SnapshotRelease {
         timed_out,
         elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         host_copies,
-        host_copies_left: registry::host_copies(&vault),
+        host_copies_left,
     }
 }
 
@@ -438,6 +447,7 @@ pub(in crate::models::worker_host) fn status() -> SnapshotStatus {
             kept_local: skip(Skip::KeptLocal),
             oversize: skip(Skip::Oversize),
             unsupported: skip(Skip::Unsupported),
+            imprecise: skip(Skip::Imprecise),
             short: skip(Skip::Short),
         },
     };

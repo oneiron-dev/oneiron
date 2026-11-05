@@ -304,7 +304,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
 - trigger phrases:
   - "what does the house model read for this question?"
   - "probe the decision read"
-- safety: Writes and decides nothing; requires an owner-grade bearer. Each probe is a paid model call on the raw inference meter; past `limits.decision_reads` it waits its turn.
+- safety: Decides nothing; may retain per-call evidence, never request bodies or probability readouts, subject to the caller's actor/session recording gates. Requires an owner-grade bearer. Each probe is a paid model call on the raw inference meter; past `limits.decision_reads` it waits its turn.
 
 #### mcp-gateway - `POST /mcp`
 
@@ -367,7 +367,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "semantic search this vault"
   - "find memories about"
   - "search by meaning"
-- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving and with `PAYLOAD_TOO_LARGE` when the query text passes `[limits].retrieval_query_bytes` (1 MiB unless set).
+- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving. Original text bytes past `[limits].semantic_query_bytes` (8 MiB unless set) raise a row question; this row does not truncate or refuse the query. Transport and embedder input-window limits remain separate.
 
 #### search-text - `GET /api/search/text`
 
@@ -670,6 +670,8 @@ Body (JSON, at most 256 KiB): `{ "question": "...", "options": ["...", "..."], "
 
 `200` returns `{ "model", "revision", "primary": [...], "paired_yes", "person_yes", "usage" }`. `primary` holds the options' probabilities in order (yes, then no, for a yes/no question), `paired_yes` is P(more thinking), and `person_yes`, present when the recipe asks the person question, is P(ask a person). Each is normalized over its own labels. `revision` names the served weights and the recipe.
 
+Best-effort evidence records each settled read attempt under the caller's resolved actor. It retains a fingerprint of the ordered reader-bound request, the served model/revision and the terminal outcome. Reader failures have unknown usage; a malformed returned pack keeps its observed usage. Request bodies and probability readouts are not retained. Evidence is skipped when the actor is unresolved or conflicting, or when the bound session is off-record at arrival or settlement. A record covers the logical read attempt, not each internal completion or tokenizer request.
+
 Errors: `400 invalid_request` (a bad question, options or state); `402 budget_denied`; `502 label_read`, whose `error.llm` names the failed check (`EmittedText`, `NotEosStop`, `MissingLabels` or `Malformed`; a failed read is never a probability of zero); `503 decision_read_unavailable` (no `[models.decision_read]`, or its recipe has no `[probe]`); `503 decision_read_waited_out` (the probe waited past `limits.queue_wait_timeout_ms` for its turn, and nothing was started).
 
 ### OpenAPI Schema
@@ -874,7 +876,7 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 
 Request body:
 
-- `text` required: the natural-language question, at most `[limits].retrieval_query_bytes` (1 MiB unless set). The server prepends the model's query instruction and embeds it; the caller sends no vector.
+- `text` required: the natural-language question. Original text bytes past `[limits].semantic_query_bytes` (8 MiB unless set) raise a row question without row truncation or refusal. The server prepends the model's query instruction and embeds it; the caller sends no vector. Transport and embedder input-window limits remain separate.
 - `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
@@ -889,7 +891,6 @@ Response:
 Refusals:
 
 - `BAD_REQUEST` (400): `text` is empty, or the body does not parse.
-- `PAYLOAD_TOO_LARGE` (413): `text` is past `[limits].retrieval_query_bytes`; the error names the field, the bound and the bytes received. A query is a question; a document belongs on the write path.
 - `EMBEDDER_UNAVAILABLE` (503): no embedder is configured, or the configured one is not serving yet. Writes still land and text search still answers; retry later, or send your own vector to `GET /api/search/vector`.
 
 Example request:

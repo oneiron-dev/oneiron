@@ -9,10 +9,13 @@ use crate::{
         ENTITY_TYPE_TURN,
     },
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Mutex;
 
 mod covers;
+mod gate_anchors;
 mod private_sources;
+pub(crate) use gate_anchors::{gate_claim_anchors_in, gate_claim_anchors_store_in};
 pub(crate) use private_sources::{
     private_thread_word_turns_in, private_threads_readable_raw_in,
     private_threads_readable_with_read_in,
@@ -24,10 +27,118 @@ pub(crate) use private_sources::{
 pub(crate) struct AudienceCache {
     rows: BTreeMap<(EntityId, u64), Vec<MembershipRow>>,
     ledger_reads: usize,
+    /// Own-entry windows and answers kept for one committed snapshot
+    /// ([`OwnEntryMemo`]).
+    own_entry: Mutex<OwnEntryMemo>,
 }
+
+/// What [`AudienceCache::own_entry_readable_raw`] keeps for the one
+/// committed snapshot `at` names. Both read only that snapshot and the
+/// vault's fixed posture, never a clock, so one recall's rows share them.
+#[derive(Default)]
+struct OwnEntryMemo {
+    /// An unbound reader's own windows per `(room, reader)`
+    /// ([`crate::workspace_roster::own_room_windows_in_txn`]): every row that
+    /// sits in a room shares them, and each still tests its own time.
+    windows: HashMap<(EntityId, EntityId), Option<Vec<MembershipWindow>>>,
+    /// Whole answers per `(row, reader, BLAKE3 of the revision served)`, over
+    /// base rows only: a row judged again by a later stage of one recall.
+    answers: HashMap<(EntityId, EntityId, [u8; 32]), bool>,
+    /// The store (its environment's address) and snapshot kept, and whether
+    /// that snapshot keeps anything.
+    at: Option<(usize, usize, bool)>,
+}
+
+/// What [`AudienceCache::own_entry_readable_raw`]'s judgement found.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OwnEntry {
+    /// Every window and source admits the row.
+    Reads,
+    /// A window the row sits in does not admit it.
+    Denied,
+    /// A header, a room door or a source did not read: the row is omitted
+    /// as before, and the memo keeps nothing for it.
+    Omitted,
+}
+
+/// Whether a row that occurred at `at` stands inside one of `windows`: no
+/// windows bind it at all (not on the roster, or a derived roster).
+fn own_windows_admit(windows: &Option<Vec<MembershipWindow>>, at: u64) -> bool {
+    windows
+        .as_ref()
+        .is_none_or(|windows| windows.iter().any(|w| w.contains(at)))
+}
+
+/// Whether `reader`'s live own-entry windows admit a candidate's header
+/// time in every anchored room. No row is fabricated for this check.
+/// An unreadable roster omits the candidate, as an ordinary own-entry read.
+pub(crate) fn anchors_own_windows_admit_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rooms: &[EntityId],
+    reader: EntityId,
+    at: u64,
+) -> bool {
+    for &room in rooms {
+        let Ok(windows) =
+            crate::workspace_roster::own_room_windows_in_txn(vault, txn, room, reader)
+        else {
+            return false;
+        };
+        if !own_windows_admit(&windows, at) {
+            return false;
+        }
+    }
+    true
+}
+
 impl AudienceCache {
     pub(crate) fn ledger_reads(&self) -> usize {
         self.ledger_reads
+    }
+
+    /// Whether the own-entry memo may be served and kept for `txn`,
+    /// emptied when `txn` reads another snapshot. As the policy fold's
+    /// per-snapshot cache: a write never keeps any (its staged rows can move
+    /// a roster under it, and an aborted write's id is reused), and a
+    /// transaction keeps them only when a probe shows it reads the committed
+    /// snapshot, which a write transaction (one past it) never does. The
+    /// probe runs once per snapshot, on its own thread: a second read
+    /// transaction on this one fails while `txn` lives. A poisoned lock
+    /// keeps nothing.
+    fn own_windows_keep(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> bool {
+        if crate::store::active_write_txn_depth() > 0 {
+            return false;
+        }
+        let Ok(mut own) = self.own_entry.lock() else {
+            return false;
+        };
+        let store = std::ptr::from_ref(&vault.store.env) as usize;
+        let id = txn.id();
+        if let Some((kept_store, kept, keeps)) = own.at
+            && (kept_store, kept) == (store, id)
+        {
+            return keeps;
+        }
+        own.windows.clear();
+        own.answers.clear();
+        let committed = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    vault
+                        .store
+                        .env
+                        .read_txn()
+                        .ok()
+                        .map(|committed| committed.id())
+                })
+                .join()
+                .ok()
+                .flatten()
+        });
+        let keeps = committed == Some(id);
+        own.at = Some((store, id, keeps));
+        keeps
     }
 }
 impl AudienceCache {
@@ -96,6 +207,45 @@ impl AudienceCache {
         raw: &[u8],
         reader: EntityId,
     ) -> Result<bool> {
+        let keep = self.own_windows_keep(vault, txn);
+        // A whole answer is kept over base rows only: a session's composed
+        // view moves no snapshot id under its overlay rows.
+        let key = (keep && !dbs.is_union()).then(|| (id, reader, *blake3::hash(raw).as_bytes()));
+        if let Some(key) = &key
+            && let Some(kept) = self
+                .own_entry
+                .lock()
+                .ok()
+                .and_then(|own| own.answers.get(key).copied())
+        {
+            return Ok(kept);
+        }
+        let judged = self.own_entry_judged(vault, dbs, txn, id, raw, reader, keep)?;
+        let answer = judged == OwnEntry::Reads;
+        // A row omitted because a header, a door or a source did not read is
+        // never kept: only a judgement is (L09 11-04 14:02).
+        if let Some(key) = key
+            && judged != OwnEntry::Omitted
+            && let Ok(mut own) = self.own_entry.lock()
+        {
+            own.answers.insert(key, answer);
+        }
+        Ok(answer)
+    }
+
+    /// [`Self::own_entry_readable_raw`]'s judgement, room windows kept when
+    /// `keep` says the snapshot allows it.
+    #[expect(clippy::too_many_arguments)]
+    fn own_entry_judged(
+        &self,
+        vault: &Vault,
+        dbs: &crate::store::StoreRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+        reader: EntityId,
+        keep: bool,
+    ) -> Result<OwnEntry> {
         let mut pending = vec![(id, raw.to_vec())];
         for live in base_and_view_rows_in(vault, dbs, txn, id)? {
             if live.as_slice() != raw {
@@ -105,24 +255,46 @@ impl AudienceCache {
         let mut seen = BTreeSet::from([id]);
         while let Some((id, bytes)) = pending.pop() {
             let Some(h) = EntityMetadataHeader::parse(&bytes) else {
-                return Ok(false);
+                return Ok(OwnEntry::Omitted);
             };
             // The room's own record is the room, not its history.
             for room in rooms_of_revision_in(vault, dbs, txn, id, &bytes)? {
                 if room == id {
                     continue;
                 }
-                match crate::workspace_roster::own_room_windows_in_txn(vault, txn, room, reader) {
-                    Ok(None) => {}
-                    Ok(Some(windows)) if windows.iter().any(|w| w.contains(h.occurred_start)) => {}
-                    Ok(Some(_)) | Err(_) => return Ok(false),
+                let kept = keep
+                    .then(|| {
+                        let own = self.own_entry.lock().ok()?;
+                        own.windows
+                            .get(&(room, reader))
+                            .map(|windows| own_windows_admit(windows, h.occurred_start))
+                    })
+                    .flatten();
+                let admits = match kept {
+                    Some(admits) => admits,
+                    None => {
+                        // A door that errs omits the row, and keeps nothing.
+                        let Ok(windows) = crate::workspace_roster::own_room_windows_in_txn(
+                            vault, txn, room, reader,
+                        ) else {
+                            return Ok(OwnEntry::Omitted);
+                        };
+                        let admits = own_windows_admit(&windows, h.occurred_start);
+                        if keep && let Ok(mut own) = self.own_entry.lock() {
+                            own.windows.insert((room, reader), windows);
+                        }
+                        admits
+                    }
+                };
+                if !admits {
+                    return Ok(OwnEntry::Denied);
                 }
             }
             let mut sources =
                 match crate::scope_summary::word_sources_through_in(vault, dbs, txn, &id, &bytes) {
                     Ok(crate::scope_summary::WordSources::From(sources)) => sources,
                     Ok(_) => Vec::new(),
-                    Err(_) => return Ok(false),
+                    Err(_) => return Ok(OwnEntry::Omitted),
                 };
             if h.entity_type == ENTITY_TYPE_CLAIM
                 && let Some(body) = bytes.get(ENTITY_METADATA_HEADER_LEN..)
@@ -139,7 +311,7 @@ impl AudienceCache {
                 }
             }
         }
-        Ok(true)
+        Ok(OwnEntry::Reads)
     }
     /// The row's own rules at `depth` under the row asked about, its covers
     /// aside: they are walked on the heap ([`covers`], FIX 9113). A cover
@@ -401,36 +573,7 @@ fn reaction_covers(claim: &crate::ClaimBody) -> Result<Option<Vec<EntityId>>> {
     )
 }
 
-/// The records a persisted `conversation.summary` claim covers, or `None` for
-/// any other claim. A value that is not a map with a `covers` array of 16-byte
-/// ids is malformed, and a malformed summary is denied like any other.
-pub(crate) fn conversation_summary_covers(
-    claim: &crate::ClaimBody,
-) -> Result<Option<Vec<EntityId>>> {
-    if claim.predicate != "conversation.summary" {
-        return Ok(None);
-    }
-    let malformed = || Error::Record(RecordError::InvalidScopeSummary("summary coverage"));
-    let rmpv::Value::Map(entries) = &claim.value else {
-        return Err(malformed());
-    };
-    let Some((_, rmpv::Value::Array(covers))) =
-        entries.iter().find(|(k, _)| k.as_str() == Some("covers"))
-    else {
-        return Err(malformed());
-    };
-    covers
-        .iter()
-        .map(|covered| {
-            let rmpv::Value::Binary(raw) = covered else {
-                return Err(malformed());
-            };
-            let bytes: [u8; 16] = raw.as_slice().try_into().map_err(|_| malformed())?;
-            EntityId::from_bytes(bytes).map_err(|_| malformed())
-        })
-        .collect::<Result<Vec<_>>>()
-        .map(Some)
-}
+pub(crate) use crate::store::conversation_summary::conversation_summary_covers;
 
 pub(crate) fn room_for_record_in(
     vault: &Vault,

@@ -314,7 +314,7 @@ impl Memory<'_> {
         })?;
         let applied = read.read_receipt(None, 0)?.applied;
         let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
-        people.set_about(&mut |person| self.vault.person_about(person, ceiling))?;
+        people.set_about(&mut |person| self.vault.person_about_sourced(person, ceiling))?;
         people.disclose_names(self.vault, read.actor_key())?;
         Ok(people)
     }
@@ -448,6 +448,7 @@ impl Memory<'_> {
                     author,
                     message_type: "text".to_owned(),
                     content: text.to_owned(),
+                    parts: None,
                     metadata: None,
                     is_visible: true,
                     order: 0,

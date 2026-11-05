@@ -48,7 +48,7 @@ use async_trait::async_trait;
 use oneiron_organ_protocol::{
     ASK_MEMORY_GROW, ASK_NET_FETCH, Answer, AnswerMemory, AskCode, AskRefusal, AskReply, Asker,
     ByteBuf, CallContext, ErrorCode, FetchAnswer, FetchAsk, MemoryAnswer, MemoryAsk, Organ,
-    OrganError, OrganIdentity, OutputBytes, VerbSpec, decoded_len, frame_body_len,
+    OrganError, OrganIdentity, OutputBytes, Value, VerbSpec, read_cost,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -61,7 +61,9 @@ use crate::api::{
     SignatureAlgorithm, SigningIdentity, TsaEndpoint,
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
-use crate::memory::{AdmittedBytes, SealMemory, SealMemoryProvider, SealMemoryRefusal};
+use crate::memory::{
+    AdmittedBytes, AdmittedStr, SealMemory, SealMemoryProvider, SealMemoryRefusal,
+};
 use crate::native::NativeSealEngine;
 
 mod report;
@@ -85,8 +87,8 @@ pub const REVISIONS: &str = "application/octet-stream";
 pub const SEALED_OUTPUT: &str = "sealed.pdf";
 /// The report JSON a verdict carries past which the engine's `[limits]`
 /// row asks (`seal_report_json_bytes`). Every report is carried whole,
-/// however many signatures it names (Rule 5), inside the reply frame's own
-/// `u32` length.
+/// however many signatures it names (Rule 5), across as many reply frames
+/// as it takes.
 pub const MAX_REPORT_JSON_BYTES: usize = 8 * 1024 * 1024;
 const PDF: &str = "application/pdf";
 
@@ -213,6 +215,11 @@ enum Failure {
     InputInvalid {
         code: InputInvalidCode,
     },
+    /// The engine's revisions held too little: the CMS needed `needed` DER
+    /// bytes, for the engine to write a larger revision (FIX 6270).
+    ContentsShort {
+        needed: u64,
+    },
 }
 
 impl Failure {
@@ -271,8 +278,18 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
         .collect::<Result<Vec<_>, OrganError>>()?;
     let (observed, engine) = engine(args.config, args.now_ms, began, call.asker())?;
     let failed = |err: SealError| -> Result<Answer, OrganError> {
-        let failure = SealReport::Failed(Failure::of(err, None, &memory)?);
-        report(&failure, &observed, &memory)
+        let failure = match err {
+            // Past the largest revision the engine wrote, the DER bytes the
+            // CMS needed are the call's own count (FIX 6270).
+            SealError::Fatal {
+                stage: SealStage::PdfIncrementalUpdate,
+                code: FatalCode::ContentsCapacityExceeded,
+            } => Failure::ContentsShort {
+                needed: observed.observed().contents_bytes,
+            },
+            err => Failure::of(err, None, &memory)?,
+        };
+        report(&SealReport::Failed(failure), &observed, &memory)
     };
     let engine = match engine {
         Ok(engine) => engine,
@@ -301,6 +318,12 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
             },
         })
         .collect();
+    // A shared output buffer is copied for the reply, so its bytes ride
+    // this call's reply reservation first; a sole owner's buffer moves
+    // without copying (FIX 8452).
+    if Arc::strong_count(&sealed.bytes) != 1 {
+        memory.reserve(sealed.bytes.len() as u64)?;
+    }
     let mut answer = report(
         &SealReport::Sealed {
             evidence_sha256: ByteBuf::from(sealed.evidence_sha256.to_vec()),
@@ -317,7 +340,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     answer.outputs.push(OutputBytes {
         name: SEALED_OUTPUT.to_owned(),
         media_type: PDF.to_owned(),
-        bytes: sealed.bytes,
+        bytes: crate::memory::AdmittedBytes::into_vec(sealed.bytes),
     });
     Ok(answer)
 }
@@ -374,13 +397,11 @@ impl ReplyMemory {
         }
     }
 
-    /// `value` read as `T`, its encoded copy and what it decodes into, about
-    /// as much again, reserved first.
-    fn args<T: DeserializeOwned>(&self, value: &rmpv::Value, what: &str) -> Result<T, OrganError> {
-        let encoded = frame_body_len(value).map_err(|err| bad(format!("{what}: {err}")))?;
-        // A typed `T` holds its fields, not a Value for each marker, so its
-        // encoding's size again measures it; `decoded_len` counts Values.
-        self.reserve(encoded.saturating_mul(2))?;
+    /// `value` read as `T`, its encoded copy and the most it decodes into
+    /// (the codec's own count, [`read_cost`]) reserved first.
+    fn args<T: DeserializeOwned>(&self, value: &Value, what: &str) -> Result<T, OrganError> {
+        let cost = read_cost(value).map_err(|err| bad(format!("{what}: {err}")))?;
+        self.reserve(cost)?;
         from_value(value, what)
     }
 }
@@ -430,7 +451,7 @@ struct CallAsks {
 }
 
 impl CallAsks {
-    fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
+    fn ask(&self, verb: &str, value: Value) -> Result<AskReply, AskRefusal> {
         self.asker.ask(verb, value)
     }
 }
@@ -553,7 +574,7 @@ impl SealBackend for AskedBackend {
         }
         let reply = self
             .asks
-            .ask(ASK_IDENTITY, rmpv::Value::Map(Vec::new()))
+            .ask(ASK_IDENTITY, Value::Map(Vec::new()))
             .map_err(|refusal| backend_error(&refusal, BackendRejectCode::IdentityUnavailable))?;
         let answer: IdentityAnswer =
             from_value(&reply.value, "identity").map_err(|_| BackendError::Rejected {
@@ -668,11 +689,19 @@ impl SealFetcher for AskedFetcher {
                     .then(|| Box::new(memory) as Box<dyn Send>);
                 AdmittedBytes::adopt(&self.memory, bytes, held).map_err(FetchError::Memory)?
             }
-            None => AdmittedBytes::empty(),
+            None => AdmittedBytes::shared_empty(&self.memory).map_err(FetchError::Memory)?,
+        };
+        // The answer's text is admitted before it is copied, and shared
+        // (FIX 8455): the reservation is the copy's own.
+        let content_type = match answer.content_type {
+            None => None,
+            Some(text) => Some(Arc::new(
+                AdmittedStr::copy_from(&self.memory, &text).map_err(FetchError::Memory)?,
+            )),
         };
         Ok(FetchResponse {
             body: Arc::new(body),
-            content_type: answer.content_type,
+            content_type,
         })
     }
 }
@@ -719,30 +748,20 @@ fn bad(detail: impl Into<String>) -> OrganError {
 }
 
 /// The outcome as the report's one tagged entry, and the call's counts
-/// beside it as `observed`. Its encoded copy is reserved before it is made,
-/// then the value it becomes, as its markers count it (`decoded_len`; its
-/// encoding's size again where the count refuses it), before that is
-/// decoded (FIX 6195, 10576).
+/// beside it as `observed`. Its encoded copy and the most the value it
+/// becomes takes ([`read_cost`]) are reserved before either is made
+/// (FIX 6195, 10576).
 fn report<T: Serialize>(
     report: &T,
     observed: &SealObservations,
     memory: &ReplyMemory,
 ) -> Result<Answer, OrganError> {
-    let internal = |err: &dyn std::fmt::Display| {
-        OrganError::new(ErrorCode::Internal, format!("encode: {err}"))
-    };
-    let encoded = frame_body_len(report).map_err(|err| internal(&err))?;
-    memory.reserve(encoded)?;
-    let bytes = rmp_serde::to_vec_named(report).map_err(|err| internal(&err))?;
-    memory.reserve(decoded_len(&bytes).unwrap_or(encoded))?;
-    let mut value =
-        rmpv::decode::read_value(&mut bytes.as_slice()).map_err(|err| internal(&err))?;
-    drop(bytes);
-    if let rmpv::Value::Map(entries) = &mut value {
-        entries.push((
-            rmpv::Value::from("observed"),
-            to_value(&observed.observed())?,
-        ));
+    let cost = read_cost(report)
+        .map_err(|err| OrganError::new(ErrorCode::Internal, format!("encode: {err}")))?;
+    memory.reserve(cost)?;
+    let mut value = to_value(report)?;
+    if let Value::Map(entries) = &mut value {
+        entries.push((Value::from("observed"), to_value(&observed.observed())?));
     }
     Ok(Answer {
         report: value,
@@ -750,17 +769,13 @@ fn report<T: Serialize>(
     })
 }
 
-/// MessagePack with named fields, so any reader can follow it.
-fn to_value<T: Serialize>(value: &T) -> Result<rmpv::Value, OrganError> {
-    let internal = |err: &dyn std::fmt::Display| {
-        OrganError::new(ErrorCode::Internal, format!("encode: {err}"))
-    };
-    let bytes = rmp_serde::to_vec_named(value).map_err(|err| internal(&err))?;
-    rmpv::decode::read_value(&mut bytes.as_slice()).map_err(|err| internal(&err))
+/// MessagePack with named fields, so any reader can follow it, in the
+/// protocol's codec, which does not recurse over a value's depth.
+fn to_value<T: Serialize>(value: &T) -> Result<Value, OrganError> {
+    oneiron_organ_protocol::to_value(value)
+        .map_err(|err| OrganError::new(ErrorCode::Internal, format!("encode: {err}")))
 }
 
-fn from_value<T: DeserializeOwned>(value: &rmpv::Value, what: &str) -> Result<T, OrganError> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).map_err(|err| bad(format!("{what}: {err}")))?;
-    rmp_serde::from_slice(&bytes).map_err(|err| bad(format!("{what}: {err}")))
+fn from_value<T: DeserializeOwned>(value: &Value, what: &str) -> Result<T, OrganError> {
+    oneiron_organ_protocol::from_value(value).map_err(|err| bad(format!("{what}: {err}")))
 }

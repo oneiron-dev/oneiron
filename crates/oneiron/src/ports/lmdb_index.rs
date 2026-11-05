@@ -125,7 +125,7 @@ impl Vault {
                 .ok_or(Error::CorruptedIndex("staged vector key"))?;
             ids.insert(id);
             let Some(raw) = value else { continue };
-            let vector = crate::le_bytes_to_f32_vec(&raw, self.config.dimensions)?;
+            let vector = crate::store::decode_vector_row(&raw, self.config.dimensions)?;
             if live_in(store, txn, &id)? && admits(txn, &id)? {
                 scored.push(ScoredEntity {
                     id,
@@ -155,7 +155,7 @@ impl Vault {
         let Some(raw) = store.vectors().get(txn, id.as_bytes())? else {
             return Ok(None);
         };
-        let vector = crate::le_bytes_to_f32_vec(&raw, self.config.dimensions)?;
+        let vector = crate::store::decode_vector_row(&raw, self.config.dimensions)?;
         if vector.len() != self.config.dimensions {
             return Err(Error::CorruptedIndex("vector value"));
         }
@@ -215,7 +215,9 @@ impl RetrievalIndex for Vault {
         batch.apply(txn)
     }
     fn port_retrieval_mark_stale(&self, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, txn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, txn, id)?;
         super::integrity::mark_stale_in_txn(&self.store, txn, id)
     }
     fn port_retrieval_vector_search(
@@ -399,7 +401,9 @@ impl TombstoneStore for Vault {
     ) -> Result<()> {
         // Standalone tombstone carries deletion intent even after active row removal.
         // Publishing to peers and historical erasure remain the deletion facade's job.
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, txn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, txn, id)?;
         self.store
             .vault_meta
             .put(txn, &super::integrity::tombstone_key(id), &value.encode())?;
@@ -474,7 +478,7 @@ impl super::RetrievalIndexMaintenance for Vault {
     fn port_retrieval_validate_rebuild(&self, txn: &RoTxn<'_>) -> Result<()> {
         for row in self.store.vectors.iter(txn)? {
             let (id, value) = row?;
-            crate::maintain::validate_rebuild_vector(self, &id, &value)?;
+            crate::store::vector_index::rebuild::validate_rebuild_vector(self, &id, &value)?;
         }
         Ok(())
     }

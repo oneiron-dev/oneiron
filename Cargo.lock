@@ -589,17 +589,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-lock"
-version = "3.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290f7f2596bd5b78a9fec8088ccd89180d7f9f55b94b0576823bbbdc72ee8311"
-dependencies = [
- "event-listener",
- "event-listener-strategy",
- "pin-project-lite",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3109,26 +3098,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "120339709b24832c07464b0838828361b735d793c409b8ca3147db0dae601542"
 
 [[package]]
-name = "event-listener"
-version = "5.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
-dependencies = [
- "parking",
- "pin-project-lite",
-]
-
-[[package]]
-name = "event-listener-strategy"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
-dependencies = [
- "event-listener",
- "pin-project-lite",
-]
-
-[[package]]
 name = "expat-sys"
 version = "2.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3198,9 +3167,6 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
-dependencies = [
- "getrandom 0.4.3",
-]
 
 [[package]]
 name = "fdeflate"
@@ -7919,6 +7885,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "gix",
+ "gix-quote",
  "half",
  "heed",
  "icalendar",
@@ -7938,18 +7905,26 @@ dependencies = [
  "oneiron-base",
  "oneiron-browser",
  "oneiron-code-check",
+ "oneiron-code-source",
  "oneiron-container",
  "oneiron-contracts",
  "oneiron-crypto",
+ "oneiron-delivery-vocabulary",
  "oneiron-docedit",
  "oneiron-guest",
  "oneiron-keystore",
+ "oneiron-lens-wire",
+ "oneiron-linkedin-policy",
  "oneiron-model",
+ "oneiron-policy-vocabulary",
  "oneiron-retrieval",
+ "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
  "oneiron-vault-contract",
+ "oneiron-web-fetch",
  "oneiron-xlsx-formula",
  "oxc_allocator",
  "oxc_ast",
@@ -7978,6 +7953,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "sha2 0.10.9",
+ "similar",
  "tar",
  "tempfile",
  "thiserror 2.0.20",
@@ -7997,7 +7973,6 @@ dependencies = [
  "whichlang",
  "windows-sys 0.61.2",
  "xxhash-rust",
- "yrs",
  "zeroize",
  "zip 0.6.6",
  "zstd 0.13.3",
@@ -8041,8 +8016,11 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-model",
  "oneiron-retrieval",
+ "rand 0.8.8",
+ "rand_distr 0.4.3",
  "schemars 0.8.22",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "tiktoken-rs",
  "tokio",
@@ -8137,6 +8115,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-code-source"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "oneiron-base",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_codegen",
+ "oxc_parser",
+ "oxc_semantic",
+ "oxc_span",
+ "oxc_transformer",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-container"
 version = "0.1.0"
 dependencies = [
@@ -8196,6 +8191,15 @@ dependencies = [
  "thiserror 2.0.20",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-delivery-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "schemars 0.8.22",
+ "serde",
 ]
 
 [[package]]
@@ -8313,6 +8317,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-lens-wire"
+version = "0.1.0"
+dependencies = [
+ "jsonschema",
+ "oneiron-base",
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-linear"
 version = "0.1.0"
 dependencies = [
@@ -8325,6 +8341,14 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "oneiron-linkedin-policy"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "serde",
 ]
 
 [[package]]
@@ -8486,6 +8510,7 @@ dependencies = [
  "ipnet",
  "libc",
  "oneiron",
+ "oneiron-container",
  "oneiron-mesh-transport",
  "oneiron-organ-protocol",
  "oneiron-sandbox-contract",
@@ -8516,6 +8541,20 @@ dependencies = [
  "serde",
  "serde_bytes",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "oneiron-policy-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "oneiron-base",
+ "oneiron-contracts",
+ "oneiron-model",
+ "regex",
+ "rmpv",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -8572,6 +8611,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-run-budget"
+version = "0.1.0"
+dependencies = [
+ "oneiron-model",
+ "schemars 0.8.22",
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "oneiron-sandbox-contract"
 version = "0.1.0"
 
@@ -8620,6 +8669,7 @@ name = "oneiron-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "axum",
  "base64 0.22.1",
  "blake3",
@@ -8695,6 +8745,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-skill-attribution"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+]
+
+[[package]]
 name = "oneiron-spawn"
 version = "0.1.0"
 dependencies = [
@@ -8706,11 +8763,29 @@ dependencies = [
 name = "oneiron-store"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "blake3",
  "getrandom 0.4.3",
+ "half",
  "heed",
+ "oneiron-authority",
+ "oneiron-base",
  "oneiron-contracts",
+ "oneiron-crypto",
+ "oneiron-docedit",
+ "oneiron-model",
+ "rmp-serde",
+ "rmpv",
+ "rustix",
+ "schemars 0.8.22",
  "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+ "uuid",
+ "xxhash-rust",
  "zeroize",
 ]
 
@@ -8744,6 +8819,21 @@ dependencies = [
  "tempfile",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-web-fetch"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dom_smoothie",
+ "encoding_rs",
+ "reqwest 0.12.28",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -11732,15 +11822,6 @@ dependencies = [
  "typenum",
  "zerocopy",
  "zeroize",
-]
-
-[[package]]
-name = "smallstr"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "862077b1e764f04c251fe82a2ef562fd78d7cadaeb072ca7c2bcaf7217b1ff3b"
-dependencies = [
- "smallvec",
 ]
 
 [[package]]
@@ -14983,24 +15064,6 @@ dependencies = [
  "quote",
  "syn 3.0.6",
  "synstructure 0.14.0",
-]
-
-[[package]]
-name = "yrs"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6893d39bc55d014e4a1d0e71d06c0c41590d5cdeac35c126be44998bc320cff"
-dependencies = [
- "arc-swap",
- "async-lock",
- "async-trait",
- "dashmap",
- "fastrand",
- "serde",
- "serde_json",
- "smallstr",
- "smallvec",
- "thiserror 2.0.20",
 ]
 
 [[package]]

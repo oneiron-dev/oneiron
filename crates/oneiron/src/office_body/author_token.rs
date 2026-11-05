@@ -9,7 +9,7 @@
 //! typed is document content and lands as typed.
 //!
 //! A copy leaving the vault reads each token it carries through the export
-//! rows: the actor's hex while the actor stands, [`ERASED_CALL_IDENTITY`]
+//! and per-group author rows: the actor's hex while the actor stands, [`ERASED_CALL_IDENTITY`]
 //! once its erase forgot it. Only `word/document.xml` is read, as XML: a
 //! token is read only as the whole value of a tracked revision's `w:author`
 //! (FIX 9993), and only that value's quoted source is rewritten; text,
@@ -21,18 +21,19 @@
 //! [`ERASED_CALL_IDENTITY`]: crate::receipt::ERASED_CALL_IDENTITY
 
 mod carrier;
+pub(super) mod index;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use heed::RoTxn;
-use oneiron_docedit::ooxml::{Node, XmlError, XmlTree};
-use oneiron_docedit::resource::Resources;
+use oneiron_docedit::ooxml::{Node, XmlTree};
 use oneiron_docedit::retained_opc::Package;
 
-use super::{EXPORTS, OfficeBodyExportRequest, OfficeBodyKind};
+use super::{OfficeBodyExportRequest, OfficeBodyKind};
 use crate::Vault;
 use crate::error::Result;
+use crate::receipt::ERASED_CALL_IDENTITY;
 
 /// What a default author's token starts with; a new id's 32 hex characters
 /// follow. It is no actor's id and no other marker's (FIX 4513).
@@ -159,27 +160,42 @@ impl Vault {
         let Ok(Some(document)) = package.part(DOCUMENT_PART) else {
             return Ok(bytes);
         };
-        // Every row, by token: an undo, a restore or a fork copies a
-        // version's bytes into another version, so the version is no key.
-        let authors: BTreeMap<Vec<u8>, String> = EXPORTS
-            .scan(&self.store, txn)?
-            .into_iter()
-            .filter_map(|(_, record)| Some((record.token?.into_bytes(), record.actor.to_hex())))
+        let tree = match XmlTree::parse(&document, package.resources()) {
+            Ok(tree) => tree,
+            Err(error) => match error.resource() {
+                Some(refusal) => return Err(super::resources::document_refused(refusal)),
+                None => return Ok(bytes),
+            },
+        };
+        let tokens: BTreeSet<Vec<u8>> = tree
+            .nodes
+            .iter()
+            .filter_map(revision_token)
+            .map(|token| token.as_bytes().to_vec())
             .collect();
+        if tokens.is_empty() {
+            return Ok(bytes);
+        }
+        // Token keys follow copies across undo, restore and forks. The index
+        // holds only canonical row keys; each lookup reads the current row.
+        let mut authors: BTreeMap<Vec<u8>, String> =
+            index::lookup_exports(&self.store, txn, &tokens)?
+                .into_iter()
+                .filter_map(|(_, record)| Some((record.token?.into_bytes(), record.actor.to_hex())))
+                .collect();
+        for (_, record) in index::lookup_authors(&self.store, txn, &tokens)? {
+            let shown = record
+                .actor
+                .map_or_else(|| ERASED_CALL_IDENTITY.to_owned(), |actor| actor.to_hex());
+            authors.insert(record.token.into_bytes(), shown);
+        }
         // With no row naming a token, the copy holds none of ours. A token is
         // matched decoded, so no raw-byte scan stands in for this one.
         if authors.is_empty() {
             return Ok(bytes);
         }
-        let resolved = match swap_tokens(&document, &authors, package.resources()) {
-            Ok(Some(resolved)) => resolved,
-            Ok(None) => return Ok(bytes),
-            // Memory or a deadline stopped the read: that refusal, never a
-            // copy left unread as if it held no token.
-            Err(error) => match error.resource() {
-                Some(refusal) => return Err(super::resources::document_refused(refusal)),
-                None => return Ok(bytes),
-            },
+        let Some(resolved) = swap_tokens(&document, &tree, &authors) else {
+            return Ok(bytes);
         };
         match package
             .replace_xml_part(DOCUMENT_PART, resolved)
@@ -197,10 +213,9 @@ impl Vault {
 /// other byte stays.
 fn swap_tokens(
     document: &[u8],
+    tree: &XmlTree,
     authors: &BTreeMap<Vec<u8>, String>,
-    resources: &Resources,
-) -> std::result::Result<Option<Vec<u8>>, XmlError> {
-    let tree = XmlTree::parse(document, resources)?;
+) -> Option<Vec<u8>> {
     let mut splices: Vec<(Range<usize>, &str)> = Vec::new();
     for node in &tree.nodes {
         let Some(value) = revision_token(node) else {
@@ -224,7 +239,7 @@ fn swap_tokens(
         }
     }
     if splices.is_empty() {
-        return Ok(None);
+        return None;
     }
     splices.sort_by_key(|(range, _)| range.start);
     let mut out = Vec::with_capacity(document.len());
@@ -243,7 +258,7 @@ fn swap_tokens(
         at = range.end;
     }
     out.extend_from_slice(document.get(at..).unwrap_or_default());
-    Ok(Some(out))
+    Some(out)
 }
 
 /// The whole token a tracked revision carries as its `w:author`, or none.

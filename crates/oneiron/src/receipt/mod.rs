@@ -134,6 +134,7 @@ pub(crate) use self::kernel::{
     FIELD_SKILL_EDIT_SKILL, FIELD_SKILL_EDIT_TARGET_DIGEST, FIELD_SKILL_EDIT_TRADEOFF_RESOLUTION,
     FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower, retain_newest_receipt,
 };
+pub(crate) use self::ledgers::durable_send_receipts_lenient;
 #[cfg(test)]
 pub(crate) use self::ledgers::persist_send_receipt;
 pub(crate) use self::ledgers::{
@@ -229,4 +230,6 @@ pub(crate) use archive_source::{receipt_archive_holder, receipt_archive_matches_
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
+pub(crate) use self::direct_dispatch::outbound_direct_receipt_accepts_masked;
 pub(crate) use self::dispatch_observation::dispatch_observation_accepts_masked;
+pub(crate) use self::pack_attribution::attempt_pack_attribution_accepts_masked;

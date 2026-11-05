@@ -31,6 +31,8 @@ mod wire;
 #[cfg(target_os = "linux")]
 pub use launcher::launch as launch_fenced;
 #[cfg(target_os = "linux")]
+pub use linux::{landlock_abi, landlock_restrict, landlock_ruleset};
+#[cfg(target_os = "linux")]
 pub use supervisor::{NativeFenceGuard, serve_native as serve_native_fence};
 
 use crate::cli_env::ApplyCliEnv as _;
@@ -245,6 +247,7 @@ impl ContainerRuntime {
             image_release::SelectedImage::Oci(&spec.image),
             &image_release::ObservedArtifacts::from_image_ref(&spec.image),
             &image_release::NoVerifierConfigured,
+            crate::image_release::LaunchBackend::Container,
         );
         let mut child = oneiron_spawn::command(&self.program)
             .args(&args)
@@ -345,6 +348,7 @@ impl ContainerRuntime {
                 image_release::SelectedImage::Oci(&spec.image),
                 &image_release::ObservedArtifacts::from_image_ref(&spec.image),
                 &image_release::NoVerifierConfigured,
+                crate::image_release::LaunchBackend::Container,
             );
             let mut child = oneiron_spawn::command(&self.program)
                 .args(&args)

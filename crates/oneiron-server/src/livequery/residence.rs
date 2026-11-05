@@ -18,6 +18,8 @@ mod pad_objects;
 mod pad_refill;
 mod pages;
 mod search;
+mod work;
+pub(crate) use work::{ResidenceWorkCall, ResidenceWorkState};
 
 use base64::Engine;
 use oneiron::EntityId;
@@ -44,6 +46,7 @@ use serde_json::{Value, json};
 use self::authority::*;
 use self::bundles::*;
 pub(super) use self::home_handoff::{machine_method, run_machine};
+pub(crate) use self::index::ResidenceTouchStage;
 use self::index::*;
 use self::search::*;
 use super::{AppError, CoreAuth, CoreScope, RpcRequest};
@@ -93,6 +96,28 @@ struct TouchRequest {
     window: String,
     selector: String,
     entity_id: String,
+}
+
+/// A part of a touched item's row or document a touch named by reference
+/// (FIX 12116): the touch's own fields, which of the two, its BLAKE3 in
+/// base64, and the byte offset the part starts at.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TouchPartRequest {
+    window: String,
+    selector: String,
+    entity_id: String,
+    item: TouchItem,
+    hash: String,
+    offset: u64,
+}
+
+/// Which of a touch's two items a part reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum TouchItem {
+    Blob,
+    Document,
 }
 
 #[derive(Deserialize)]
@@ -211,7 +236,7 @@ impl ForwardedSearchCaller {
             self.caller.caller(),
             carrier,
             self.locality,
-            crate::handler::selector_grant_scope(),
+            crate::handler::selector_scope::selector_grant_scope(),
             selector,
         )
         .map_err(|_| AppError::not_found("item", None))
@@ -385,6 +410,7 @@ pub(super) fn run(
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
     append_stage: &mut Option<AuthorityAppendStage>,
+    touch_stage: &mut Option<ResidenceTouchStage>,
 ) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
     let call = super::RpcCall::of(&request);
     // A forwarded search's verified caller, whom its receipt names (FIX 3550).
@@ -397,7 +423,8 @@ pub(super) fn run(
         let budgets = operation_budgets(server)?;
         match request.method.as_str() {
             "residence.index" => index(server, auth, peer, request.params, index_cache, budgets),
-            "residence.touch" => touch(server, auth, peer, request.params),
+            "residence.touch" => touch(server, auth, peer, request.params, touch_stage),
+            "residence.touch.part" => touch_part(server, auth, peer, request.params, touch_stage),
             "residence.promote" => promote(server, auth, peer, request.params),
             "residence.window.vv" => window_vv(server, auth, peer, request.params),
             "residence.search" => search(
@@ -414,7 +441,7 @@ pub(super) fn run(
                 bundle_commit::bundle_commit(server, auth, peer, request.params)
             }
             "residence.bundle.commit.status" => {
-                bundle_commit::bundle_commit_status(server, peer, request.params)
+                bundle_commit::bundle_commit_status(server, auth, peer, request.params)
             }
             "residence.bundle.list" => bundle_list(server, peer, request.params),
             "residence.bundle.get" => bundle_get(server, peer, request.params),
@@ -500,7 +527,7 @@ fn bound_selector(
     }
     oneiron::sync::authorize_sync_selector(
         &server.vault,
-        crate::handler::selector_grant_scope(),
+        crate::handler::selector_scope::selector_grant_scope(),
         &selector,
     )
     .map_err(|_| AppError::not_found("item", None))?;
@@ -520,7 +547,7 @@ fn admitted<'v>(
         &server.vault,
         proof,
         peer,
-        crate::handler::selector_grant_scope(),
+        crate::handler::selector_scope::selector_grant_scope(),
         selector,
     )
     .map_err(|_| AppError::not_found("item", None))

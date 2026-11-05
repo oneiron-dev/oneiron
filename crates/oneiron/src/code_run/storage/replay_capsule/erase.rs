@@ -18,11 +18,10 @@
 
 use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::super::replay_capsule::{CapsuleContent, CapsuleRequest, StepReplayCapsule};
-use super::super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS};
 use super::super::response_erase::erase_actor_responses_in_txn;
 use super::{CAPSULES, FORKS, ForkRow};
 use crate::compaction::output::OutputRef;
-use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::EntityStoreRead;
 use crate::provenance::body::release_body_in_txn;
 use crate::side_table::{Erased, ErasedForm, SideKey, SideTableDbs};
 use crate::store::Store;
@@ -178,8 +177,7 @@ fn release_bodies_in_txn(
         };
         let occurrence = ResultOccurrence::of(Some(owner), &output)?;
         let marks = occurrence.mark_key(&output.handle);
-        RAW_OUTPUT_TAINTS.delete(&vault.store, wtxn, &marks)?;
-        RAW_OUTPUT_SECRETS.delete(&vault.store, wtxn, &marks)?;
+        crate::code_run::drop_code_run_result_marks_in_txn(&vault.store, wtxn, &marks)?;
         release_body_in_txn(&vault.store, wtxn, &owner, &occurrence.id())?;
     }
     Ok(())
@@ -210,20 +208,8 @@ pub(in crate::code_run::storage) fn names_no_actor(
 /// its row other than an archive), or hard-deleted and erased. A capsule's
 /// content is then never captured, finalized or added to. A marker that
 /// cannot be read counts as gone.
-pub(in crate::code_run::storage) fn actor_gone_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    actor: &EntityId,
-) -> bool {
-    let gone = (|| -> Result<bool> {
-        Ok(crate::ports::removed_in_txn(&vault.store, txn, actor)?
-            || vault
-                .store
-                .port_deletion_marked(txn, DeletionMarker::HardDelete, actor)?
-            || vault
-                .store
-                .port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, actor)?)
-    })();
+pub(crate) fn actor_gone_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> bool {
+    let gone = crate::ports::owner_gone_in_txn(&vault.store, txn, actor);
     gone.unwrap_or_else(|error| {
         tracing::warn!(
             kind = ?error.kind(),

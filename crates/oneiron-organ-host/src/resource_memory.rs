@@ -18,10 +18,46 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use oneiron_organ_protocol::{AskCode, AskRefusal, MemoryAnswer, MemoryAsk};
+use oneiron_organ_protocol::{AskCode, AskRefusal, MemoryAnswer, MemoryAsk, Value};
 
 use crate::budget::NativeRefusal;
 use crate::handlers::{Answered, AskHandler, AskRequest};
+
+/// One machine-floor lease, growable as the value it covers takes shape.
+pub trait FloorLease: Send {
+    /// Grows this lease on its original line, waiting no later than
+    /// `deadline` and no longer than `stopped` allows. A refused growth
+    /// leaves the original lease and the line's byte counts unchanged.
+    /// Earlier unallocated reservations remain charged against live memory;
+    /// growing a handle alone does not establish that they were allocated.
+    ///
+    /// # Errors
+    /// The machine's floor when the cumulative lease cannot fit even with
+    /// nothing else leased; [`FloorRefusal::Deadline`] when it does not fit
+    /// before the deadline, or `stopped` says so first.
+    fn grow(
+        &mut self,
+        more: u64,
+        deadline: Instant,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), FloorRefusal>;
+
+    /// Names `reserved` pending bytes allocated as `actual` bytes now held.
+    /// The live memory reading already counts that allocation, so growth
+    /// must not charge it again as pending. Never waits or refuses; a
+    /// reservation alone is not evidence of allocation.
+    fn materialized(&mut self, reserved: u64, actual: u64);
+
+    /// Gives back at most `bytes` previously reserved by this lease. Never
+    /// waits; used to roll back growth whose budget admission failed.
+    fn shrink(&mut self, bytes: u64);
+
+    /// [`Self::grow`] with no deadline: only `stopped` ends the wait.
+    ///
+    /// # Errors
+    /// As [`Self::grow`].
+    fn grow_untimed(&mut self, more: u64, stopped: &dyn Fn() -> bool) -> Result<(), FloorRefusal>;
+}
 
 /// The machine's memory, as the host leases it to organs' own buffers. The
 /// server's implementation is its machine memory line, shared with every
@@ -40,7 +76,7 @@ pub trait MachineFloor: Send + Sync {
         bytes: u64,
         deadline: Instant,
         stopped: &dyn Fn() -> bool,
-    ) -> Result<Box<dyn Send>, FloorRefusal>;
+    ) -> Result<Box<dyn FloorLease>, FloorRefusal>;
 
     /// [`Self::lease`] with no deadline, as a frame's bytes wait (FIX 10580):
     /// only `stopped` ends the wait. A floor with no untimed line of its own
@@ -53,7 +89,7 @@ pub trait MachineFloor: Send + Sync {
         &self,
         bytes: u64,
         stopped: &dyn Fn() -> bool,
-    ) -> Result<Box<dyn Send>, FloorRefusal> {
+    ) -> Result<Box<dyn FloorLease>, FloorRefusal> {
         let deadline = Instant::now() + Duration::from_secs(60 * 60 * 24 * 365);
         self.lease(bytes, deadline, stopped)
     }
@@ -123,19 +159,13 @@ impl AskHandler for MemoryGrow {
 }
 
 /// A `memory.grow` ask's value, as the wire names its fields.
-fn decode(value: &rmpv::Value) -> Result<MemoryAsk, AskRefusal> {
-    let bad = |err: &dyn fmt::Display| {
-        AskRefusal::new(AskCode::BadRequest, format!("not a memory ask: {err}"))
-    };
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).map_err(|err| bad(&err))?;
-    rmp_serde::from_slice(&bytes).map_err(|err| bad(&err))
+fn decode(value: &Value) -> Result<MemoryAsk, AskRefusal> {
+    MemoryAsk::from_value(value)
+        .map_err(|err| AskRefusal::new(AskCode::BadRequest, format!("not a memory ask: {err}")))
 }
 
 /// The answer as a wire value, with named fields.
-fn encode(answer: &MemoryAnswer) -> Result<rmpv::Value, AskRefusal> {
-    let failed =
-        |err: &dyn fmt::Display| AskRefusal::new(AskCode::Failed, format!("answer: {err}"));
-    let bytes = rmp_serde::to_vec_named(answer).map_err(|err| failed(&err))?;
-    rmpv::decode::read_value(&mut bytes.as_slice()).map_err(|err| failed(&err))
+fn encode(answer: &MemoryAnswer) -> Result<Value, AskRefusal> {
+    oneiron_organ_protocol::to_value(answer)
+        .map_err(|err| AskRefusal::new(AskCode::Failed, format!("answer: {err}")))
 }

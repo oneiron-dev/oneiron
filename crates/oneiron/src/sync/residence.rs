@@ -36,6 +36,14 @@ pub use authority_tail::{
     authority_tail_for, authority_wanted, held_authority_entries, held_authority_history,
     import_authority_page,
 };
+pub use bundle::work::{
+    SEALED_BUNDLE_WORK_PART_BYTES, SealedBundleCommitInput, SealedBundleWorkOutcome,
+    SealedBundleWorkStatus, begin_sealed_bundle_work, begin_sealed_bundle_work_authorized,
+    cleanup_sealed_bundle_work, sealed_bundle_work_for_request, sealed_bundle_work_id,
+    sealed_bundle_work_memory_bytes, sealed_bundle_work_memory_room, sealed_bundle_work_status,
+    sealed_bundle_work_validation_bytes, step_sealed_bundle_work,
+    step_sealed_bundle_work_authorized, step_sealed_bundle_work_in_turn,
+};
 pub use bundle::{
     BundlePartRead, PadObjectRefill, PadObjectUnavailable, SEALED_BUNDLE_PUT_PART_MAX,
     SEALED_BUNDLE_READ_PART_MAX, SealedBundleCommitReceipt, SealedBundleEntry, SealedBundleIndex,
@@ -62,6 +70,7 @@ pub use bundle_access::{
 pub use bundle_payload::RecoveryCheckpointTrust;
 pub use bundle_payload::SealedBundleTake;
 pub use bundle_payload::SealedKitRestore;
+pub(crate) use bundle_payload::sealed_bundle_awaiting_reader;
 pub use bundle_stage::{SealedBundleStaged, sealed_bundle_stages};
 pub(crate) use bundle_turn::SEALED_BUNDLE_PUBLISH_LEASE_SECS;
 pub use bundle_turn::ask_sealed_bundle_turn;
@@ -649,6 +658,7 @@ pub fn promotion_covers_full_window_for(
             super::room_facts::ROOM_FACTS_MAP,
             super::document_pins::DOCUMENT_PINS_MAP,
             super::message_docs::MESSAGE_DOCS_MAP,
+            super::repo_manifests::REPO_MANIFESTS_MAP,
             super::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
             super::ingest::PEER_ORIGIN_MAP,
         ] {

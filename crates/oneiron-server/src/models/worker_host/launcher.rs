@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use oneiron::llm::{CacheDigest, CacheIdentity, WorkerFailure, WorkerKind, parse_llama_alias};
 use oneiron_driver::{LaunchFailure, LauncherFuture, RunningWorker, WorkerLauncher, WorkerSpec};
 
-use super::bundle::{EXL3_SERVER, LLAMA_IDENTITY, sha256_hex};
+use super::bundle::{EXL3_SERVER, LLAMA_IDENTITY, bundle_sha256_for, sha256_hex};
 use super::install::{self, Exl3Digests, InstalledEnv, InstalledWeights, permanent, transient};
 use super::launch_manifest::{
     self, BuildSection, LaunchManifest, LaunchRecord, LaunchSlot, launch_nonce,
@@ -76,6 +76,7 @@ pub(super) struct Installation {
     pub(super) weights: InstalledWeights,
     draft: Option<InstalledWeights>,
     pub(super) bundle_dir: PathBuf,
+    /// Kind-scoped code digest, not the whole installed directory's digest.
     pub(super) bundle_sha256: String,
     pub(super) env: Option<InstalledEnv>,
     native_binary_sha256: Option<String>,
@@ -134,7 +135,8 @@ impl ProcessLauncher {
             Some(draft) => Some(install::weights(store, draft, kind, true, token).await?),
             None => None,
         };
-        let (bundle_dir, bundle_sha256) = install::bundle(&runtime_root).await?;
+        let (bundle_dir, _) = install::bundle(&runtime_root).await?;
+        let bundle_sha256 = bundle_sha256_for(kind);
         let media = matches!(kind, WorkerKind::VoxCpm2 | WorkerKind::Asr);
         // A media worker's environment is its row's own lock, never EXL3's.
         let lock = match self.launch.env_lock.as_deref() {
@@ -226,6 +228,11 @@ impl ProcessLauncher {
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
             .and_then(|record| record.native_socket.clone());
+        // A llama worker's activity is read on its `/metrics` (FIX 9190):
+        // only llama binds a route, never guessed from (None, None).
+        let llama_metrics = matches!(self.row.kind, WorkerKind::LlamaCpp).then(|| {
+            super::llama_metrics::MetricsRoute::new(self.route("/metrics"), &self.launch.args, &env)
+        });
         spawn(
             &program,
             &args,
@@ -234,6 +241,7 @@ impl ProcessLauncher {
             &self.route("/health"),
             native,
             stats,
+            llama_metrics,
         )
     }
 
@@ -382,6 +390,9 @@ impl ProcessLauncher {
         if let Some((draft, _)) = installation.draft.as_ref().and_then(InstalledWeights::gguf) {
             args.extend(["--model-draft".to_owned(), draft.display().to_string()]);
         }
+        // FIX 9190: `/metrics` needs `--metrics`; before the operator's args
+        // so theirs win.
+        args.push("--metrics".to_owned());
         args.extend(self.launch.args.iter().cloned());
         args.extend([
             "--host".to_owned(),
@@ -595,8 +606,9 @@ async fn prepare_identity(
 }
 
 /// Starts the worker in the bundle directory with `env` alone; `native` is
-/// its native socket and `stats` a media worker's stats route, where its
-/// activity is read.
+/// its native socket, `stats` a media worker's stats route and
+/// `llama_metrics` a llama worker's `/metrics` route, where its activity is
+/// read.
 fn spawn(
     program: &Path,
     args: &[String],
@@ -605,6 +617,7 @@ fn spawn(
     health: &str,
     native: Option<PathBuf>,
     stats: Option<StatsRoute>,
+    llama_metrics: Option<super::llama_metrics::MetricsRoute>,
 ) -> Result<Box<dyn RunningWorker>, LaunchFailure> {
     #[cfg(unix)]
     {
@@ -625,11 +638,24 @@ fn spawn(
                 format!("starting {}: {error}", program.display()),
             )
         })?;
+        let worker = match llama_metrics {
+            Some(metrics) => worker.with_llama_metrics(metrics),
+            None => worker,
+        };
         Ok(Box::new(worker))
     }
     #[cfg(not(unix))]
     {
-        let _ = (program, args, dir, env, health, native, stats);
+        let _ = (
+            program,
+            args,
+            dir,
+            env,
+            health,
+            native,
+            stats,
+            llama_metrics,
+        );
         Err(permanent(
             WorkerFailure::LoadFailed,
             "managed workers run on Unix only".to_owned(),

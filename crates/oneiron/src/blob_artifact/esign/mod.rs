@@ -51,6 +51,7 @@ pub use door::{
     EsignSigningRequest, EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,
 };
 mod escalation;
+pub(crate) use escalation::erase_held_signing_actor_in_txn;
 pub use escalation::{
     ESIGN_ASK_CLIMB_HOURS, HOLD_ALLOW, HOLD_DECLINE, HeldAskWait, HeldSigning, HeldSigningAnswer,
     HeldSigningState,
@@ -89,6 +90,7 @@ pub use signature_revision::SEAL_CONTENTS_LADDER;
 mod reseal;
 
 mod public_read;
+pub use public_read::EsignLeasedReadError;
 
 mod artifact_actor;
 pub(crate) use artifact_actor::actor as artifact_machine;

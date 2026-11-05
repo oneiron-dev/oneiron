@@ -318,6 +318,19 @@ class Oneiron:
         """
         return Oneiron(_translate(lambda: self._client.in_off_record_session(session_ref)))
 
+    def with_read_credential(self, credential: str) -> "Oneiron":
+        """Returns a NEW handle whose every read runs under a delegated reader's credential.
+
+        ``credential`` is the paired credential ``pair`` returned, verified once
+        against this vault as the server's door verifies a served request's.
+        Reads refuse when the slip's holder is not this handle's actor;
+        rebindings keep the same proof, so every read still checks it against
+        the bound actor. A handle without one reads as before. On a connected
+        handle this raises ``FORBIDDEN``: it already reads under the credential
+        it connected with.
+        """
+        return Oneiron(_translate(lambda: self._client.with_read_credential(credential)))
+
     def last_receipt_ref(self) -> str | None:
         """The lasting call receipt the last verb's reply stated, as ``call:<32hex>``.
 
@@ -688,6 +701,9 @@ class Oneiron:
         def federation(self) -> "Oneiron._VaultFederationVerbs":
             return Oneiron._VaultFederationVerbs(self._client)
         @property
+        def sync(self) -> "Oneiron._VaultSyncVerbs":
+            return Oneiron._VaultSyncVerbs(self._client)
+        @property
         def trusted_contacts(self) -> "Oneiron._VaultTrustedContactsVerbs":
             return Oneiron._VaultTrustedContactsVerbs(self._client)
         @property
@@ -708,6 +724,9 @@ class Oneiron:
         @property
         def records(self) -> "Oneiron._VaultRecordsVerbs":
             return Oneiron._VaultRecordsVerbs(self._client)
+        @property
+        def outbound_calls(self) -> "Oneiron._VaultOutboundCallsVerbs":
+            return Oneiron._VaultOutboundCallsVerbs(self._client)
         @property
         def research(self) -> "Oneiron._VaultResearchVerbs":
             return Oneiron._VaultResearchVerbs(self._client)
@@ -1921,6 +1940,9 @@ class Oneiron:
         def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs":
             return Oneiron._VaultSkillsCodeAutoInstallVerbs(self._client)
         @property
+        def fit(self) -> "Oneiron._VaultSkillsFitVerbs":
+            return Oneiron._VaultSkillsFitVerbs(self._client)
+        @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
             return Oneiron._VaultSkillsPermissionsVerbs(self._client)
         @property
@@ -1929,6 +1951,9 @@ class Oneiron:
         @property
         def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs":
             return Oneiron._VaultSkillsGovernanceVerbs(self._client)
+        @property
+        def callable(self) -> "Oneiron._VaultSkillsCallableVerbs":
+            return Oneiron._VaultSkillsCallableVerbs(self._client)
         def pack_receipt(self, spec):
             """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
             return json.loads(_translate(lambda: self._client.vault_skills_pack_receipt(json.dumps(spec))))
@@ -1950,6 +1975,12 @@ class Oneiron:
         def set(self, spec):
             """The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."""
             return json.loads(_translate(lambda: self._client.vault_skills_code_auto_install_set(json.dumps(spec))))
+    class _VaultSkillsFitVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner chooses the existing rule fit or owner-asked fit for ordinary skill installs; requested permissions remain inert."""
+            return json.loads(_translate(lambda: self._client.vault_skills_fit_set(json.dumps(spec))))
     class _VaultSkillsPermissionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2025,6 +2056,12 @@ class Oneiron:
         def set(self, spec):
             """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
             return json.loads(_translate(lambda: self._client.vault_skills_governance_set(json.dumps(spec))))
+    class _VaultSkillsCallableVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def amend(self, spec):
+            """The caller of one callable call, never the skill's author, records the answer it should have given; that call's frozen case then expects it, and a call with no case stores nothing."""
+            return json.loads(_translate(lambda: self._client.vault_skills_callable_amend(json.dumps(spec))))
     class _VaultSkillsOutcomesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2739,6 +2776,24 @@ class Oneiron:
         def receive(self, spec):
             """The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers."""
             return json.loads(_translate(lambda: self._client.vault_federation_connect_world_privacy_receive(json.dumps(spec))))
+    class _VaultSyncVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs":
+            return Oneiron._VaultSyncRetainedWorkVerbs(self._client)
+    class _VaultSyncRetainedWorkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def wait(self) -> "Oneiron._VaultSyncRetainedWorkWaitVerbs":
+            return Oneiron._VaultSyncRetainedWorkWaitVerbs(self._client)
+    class _VaultSyncRetainedWorkWaitVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait."""
+            return json.loads(_translate(lambda: self._client.vault_sync_retained_work_wait_set(json.dumps(spec))))
     class _VaultTrustedContactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2942,6 +2997,18 @@ class Oneiron:
         def erase_sweep(self, spec):
             """Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep."""
             return json.loads(_translate(lambda: self._client.vault_records_erase_sweep(json.dumps(spec))))
+    class _VaultOutboundCallsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def request(self) -> "Oneiron._VaultOutboundCallsRequestVerbs":
+            return Oneiron._VaultOutboundCallsRequestVerbs(self._client)
+    class _VaultOutboundCallsRequestVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def erase(self, spec):
+            """The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting."""
+            return json.loads(_translate(lambda: self._client.vault_outbound_calls_request_erase(json.dumps(spec))))
     class _VaultResearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3197,6 +3264,9 @@ class Oneiron:
         def lift_and_erase(self, spec):
             """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
             return json.loads(_translate(lambda: self._client.vault_legal_holds_lift_and_erase(json.dumps(spec))))
+        def withdraw_erase(self, spec):
+            """The owner withdraws the erase that still waits on each named record, one their lift-and-erase confirm or their own delete left waiting."""
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_withdraw_erase(json.dumps(spec))))
     class _VaultCourtesyDeleteVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3500,6 +3570,9 @@ class Oneiron:
     class _VaultSecretsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def code_run_lifts(self, spec):
+            """The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_code_run_lifts(json.dumps(spec))))
         def lift_history(self, spec):
             """The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."""
             return json.loads(_translate(lambda: self._client.vault_secrets_lift_history(json.dumps(spec))))
@@ -5823,6 +5896,15 @@ class Oneiron:
         def lens(self, spec):
             """Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."""
             return json.loads(_translate(lambda: self._client.self_inbox_lens(json.dumps(spec))))
+        def get(self, spec):
+            """Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done."""
+            return json.loads(_translate(lambda: self._client.self_inbox_get(json.dumps(spec))))
+        def done(self, spec):
+            """Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it."""
+            return json.loads(_translate(lambda: self._client.self_inbox_done(json.dumps(spec))))
+        def later(self, spec):
+            """Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it."""
+            return json.loads(_translate(lambda: self._client.self_inbox_later(json.dumps(spec))))
     class _SelfInboxConcernVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

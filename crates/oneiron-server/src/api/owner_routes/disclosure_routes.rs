@@ -36,14 +36,18 @@ use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
+mod offers;
+
 pub(super) fn owner_table() -> OwnerTable {
     vec![
+        offers::route(),
         (
             OwnerRoute {
                 method: "get",
                 path: "/disclosure/offer",
                 summary: "One frozen contact-disclosure offer, the private ask the owner answers.",
                 row: None,
+                shape: None,
             },
             get(offer),
         ),
@@ -53,6 +57,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/disclosure/confirm",
                 summary: "The owner's answer to one frozen offer, against the exact delta it was shown.",
                 row: None,
+                shape: None,
             },
             post(confirm),
         ),
@@ -62,6 +67,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/disclosure/narrow",
                 summary: "Narrows a contact's standing clearance to a Scope inside the current one.",
                 row: None,
+                shape: None,
             },
             post(narrow),
         ),
@@ -71,6 +77,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/disclosure/revoke",
                 summary: "Consent.revoke_contact_disclosure, the one-tap revoke of a contact's standing clearance.",
                 row: None,
+                shape: None,
             },
             post(revoke),
         ),
@@ -80,6 +87,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/disclosure/preclear",
                 summary: "The owner clears a named trusted set for one Scope in advance, each contact with its own receipt.",
                 row: None,
+                shape: None,
             },
             post(preclear),
         ),
@@ -89,6 +97,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/disclosure/mode",
                 summary: "The disclosure-mode knob, auto when never set.",
                 row: None,
+                shape: None,
             },
             get(mode),
         ),
@@ -98,6 +107,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/disclosure/mode",
                 summary: "Turns the knob.",
                 row: None,
+                shape: None,
             },
             put(set_mode),
         ),
@@ -107,6 +117,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/disclosure/attendee",
                 summary: "The owner's answer to one unknown-attendee ask, once.",
                 row: None,
+                shape: None,
             },
             post(attendee),
         ),
@@ -116,6 +127,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/disclosure/entry",
                 summary: "One attendee's first entry into a chat or room, the P5 question the owner answers once.",
                 row: None,
+                shape: None,
             },
             get(entry),
         ),
@@ -125,6 +137,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/disclosure/entry/confirm",
                 summary: "The owner's yes to one entry's P5 question: the entry's contact is cleared standing under the frozen offer, the entry sees the history chosen, and the entry is decided once.",
                 row: None,
+                shape: None,
             },
             post(confirm_entry),
         ),
@@ -134,6 +147,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/disclosure/entry/decline",
                 summary: "The owner's no to one entry's P5 question: the offer settles denied, nothing widens, and the entry is decided once.",
                 row: None,
+                shape: None,
             },
             post(decline_entry),
         ),
@@ -387,24 +401,7 @@ async fn offer(
         let widen = vault
             .widen_proposal(&query.proposal_ref)?
             .ok_or_else(not_found)?;
-        let offer = proposal.offer;
-        Ok(OfferView {
-            canonical_delta: hex_bytes(&widen.canonical_delta),
-            proposal_ref: widen.proposal_ref,
-            proposer: widen.proposer,
-            owner_ref: widen.owner_ref,
-            created_at: widen.created_at,
-            expires_at: widen.expires_at,
-            contact: offer.contact_ref.to_hex(),
-            grant_ref: contact_clearance_ref(&offer.contact_ref),
-            revoke_command: CONTACT_CLEARANCE_REVOKE_COMMAND,
-            scope: offer.scope,
-            purpose: offer.purpose,
-            channel: offer.channel,
-            beneficiary: offer.beneficiary_ref,
-            ask: offer.ask_ref,
-            prior_clearance_digest: hex_bytes(&proposal.prior_clearance_digest),
-        })
+        Ok(OfferView::from((widen, proposal)))
     })
     .await?;
     Ok(Json(view))

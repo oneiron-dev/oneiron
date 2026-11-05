@@ -78,6 +78,9 @@ pub struct SenderHealthProjection {
     pub clamp: IdentitySendRateClamp,
     /// The suppression a hard bounce wrote, if any.
     pub suppression: Option<crate::write_envelope::cohort_claims::suppression::SuppressionReceipt>,
+    /// The campaign-pause owner ask this signal committed, or the existing
+    /// open ask for the same [campaign, identity] when already Paused.
+    pub campaign_pause_ask: Option<u64>,
 }
 
 /// Projects one campaign email webhook, opening its own transaction.
@@ -123,6 +126,14 @@ pub(crate) fn project_campaign_email_webhook_in_txn(
     let mut reputation = current;
     reputation.apply_adapter_signal(IdentityReputationSignal::EmailWebhook(event.aggregate))?;
     let clamp = reputation.clamp_send_rate(event.identity_ref, requested_daily_cap);
+    let campaign_pause_ask = crate::campaign::surface::project_campaign_complaint_pause_in_txn(
+        vault,
+        wtxn,
+        event.campaign_ref,
+        event.identity_ref,
+        event.evidence_ref,
+        reputation.complaint_rate,
+    )?;
     let suppression = match event.disposition {
         EmailDeliveryDisposition::HardBounce => Some(apply_suppression_in_txn(
             vault,
@@ -145,5 +156,6 @@ pub(crate) fn project_campaign_email_webhook_in_txn(
         reputation,
         clamp,
         suppression,
+        campaign_pause_ask,
     })
 }

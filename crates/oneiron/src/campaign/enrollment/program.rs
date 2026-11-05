@@ -1,6 +1,7 @@
 //! Persisted campaign program and step state authorizing both halves of the consequence.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 use super::step_connector::descriptor_checked;
 use super::storage::{
@@ -39,8 +40,8 @@ pub use crate::memory::campaign_records::program_definition::CampaignProgramStep
 /// Persists a campaign program row, raw.
 ///
 /// An audience is validated here: the query and the campaign share an
-/// owner, the campaign is active, and the entry step is one of this
-/// program's own steps. Any number of programs may enroll from one query;
+/// owner, the campaign is Draft, Active or Paused, and the entry step is one
+/// of this program's own steps. Any number of programs may enroll from one query;
 /// only a second program of the SAME campaign on the same query is refused
 /// (`audience_taken_by`). That check shares the write's transaction.
 ///
@@ -139,8 +140,8 @@ fn audience_taken_by(other: &CampaignProgram, program: &CampaignProgram) -> bool
 }
 
 /// The audience rules that need no write transaction: the query and the
-/// campaign share an owner, the campaign is active, and the entry step is
-/// this program's own.
+/// campaign share an owner, the campaign is Draft, Active or Paused, and the
+/// entry step is this program's own.
 fn validate_audience(
     vault: &Vault,
     program: &CampaignProgram,
@@ -152,7 +153,7 @@ fn validate_audience(
         .ok_or_else(|| {
             invalid("the campaign is absent or not owned by the audience query's owner")
         })?;
-    if campaign.definition.lifecycle != CampaignLifecycle::Active {
+    if !campaign_program_edits_open(&campaign) {
         return Err(invalid("an archived campaign takes no audience"));
     }
     if campaign_program_step(vault, program.program_ref, audience.entry_step_ref)?.is_none() {
@@ -220,7 +221,7 @@ pub use crate::memory::campaign_records::program_definition::CampaignProgramStep
 ///
 /// The owner is the campaign's, read through `owned_campaign_in_txn`, the
 /// check `update_campaign` makes, so a caller who does not own the campaign
-/// gets the answer an absent one gets. The campaign must be active. The
+/// gets the answer an absent one gets. The campaign must be Draft, Active or Paused. The
 /// sender, audience and binding checks (`write_program_in_txn`) share the
 /// write's one transaction.
 ///
@@ -253,7 +254,7 @@ pub fn create_campaign_program(
             campaign_ref,
             campaign_kind,
         )?;
-        require_active_campaign(&campaign)?;
+        require_campaign_program_edits_open(&campaign)?;
         write_program_in_txn(
             vault,
             wtxn,
@@ -269,7 +270,7 @@ pub fn create_campaign_program(
                 definition: CampaignProgramDefinition {
                     name: draft.name.clone(),
                     definition_version: 1,
-                    lifecycle: CampaignLifecycle::Active,
+                    lifecycle: campaign.definition.lifecycle,
                     step_refs: draft.steps.iter().map(|step| step.step_ref).collect(),
                     created_at: now,
                     updated_at: now,
@@ -359,8 +360,8 @@ pub fn update_campaign_program(
         let (program, current) = authored_program_in_txn(vault, wtxn, &campaign, program_ref)?
             .ok_or(Error::EntityNotFound)?;
         require_expected_program_version(&current, expected_definition_version)?;
-        require_active_campaign(&campaign)?;
-        if current.lifecycle != CampaignLifecycle::Active {
+        require_campaign_program_edits_open(&campaign)?;
+        if current.lifecycle == CampaignLifecycle::Archived {
             return Err(invalid("an archived campaign program is read-only"));
         }
         write_program_in_txn(
@@ -419,6 +420,9 @@ pub fn archive_campaign_program(
             authored_program_in_txn(vault, wtxn, &campaign, program_ref)?
                 .ok_or(Error::EntityNotFound)?;
         require_expected_program_version(&definition, expected_definition_version)?;
+        if definition.lifecycle == CampaignLifecycle::Archived {
+            return Err(invalid("an archived campaign program is read-only"));
+        }
         definition.definition_version = next_program_version(definition.definition_version)?;
         definition.lifecycle = CampaignLifecycle::Archived;
         definition.updated_at = now;
@@ -458,7 +462,7 @@ pub(super) fn require_program_step_enrolls(
     let rtxn = vault.store.env.read_txn()?;
     if !program_enrolls_in_txn(vault, &rtxn, campaign_kind, program)? {
         return Err(invalid(
-            "the campaign program or its campaign is archived; nothing enrolls into it",
+            "the campaign program or its campaign is not active (draft, paused or archived); nothing enrolls into it",
         ));
     }
     let dropped = stored_program_in_txn(vault, &rtxn, program.program_ref)?
@@ -473,7 +477,7 @@ pub(super) fn require_program_step_enrolls(
 }
 
 /// Whether `program` enrolls now: its campaign exists and is active, and its
-/// authored definition, when a checked door wrote one, is not archived.
+/// authored definition, when a checked door wrote one, is active.
 fn program_enrolls_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -488,6 +492,62 @@ fn program_enrolls_in_txn(
     Ok(stored_program_in_txn(vault, txn, program.program_ref)?
         .and_then(|(_, definition)| definition)
         .is_none_or(|definition| definition.lifecycle == CampaignLifecycle::Active))
+}
+
+/// P1-2 #4499: the campaign leg's under-writer lifecycle recheck.
+///
+/// The enrollment leg prepares its gate input from live rows, then the
+/// chokepoint admits under its own writer; a pause that commits in between
+/// must stop the send. Both writers call this under the same transaction
+/// that would record the decision (New) or re-govern the retry (live
+/// retry), so a refusal records nothing new and sends nothing.
+///
+/// Scoped by the gate's existing `ApprovalTarget::Campaign` facts only:
+/// any other effect passes through with no storage read. A campaign leg
+/// must still bind to its program, and both the campaign and the program
+/// must still enroll (`program_enrolls_in_txn`, so definition-less raw
+/// rows keep today's pass-through), and an authored step the program
+/// dropped still fails closed. No version lock: the facts carry no
+/// definition version, and a pause already flips lifecycle text, which
+/// this recheck reads.
+///
+/// # Errors
+///
+/// `IntentLedgerError::InvalidInput` when the leg is not a sendable
+/// campaign leg now; storage failures surface as `IntentLedgerError::Engine`.
+pub(crate) fn admit_campaign_leg_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    gate: &crate::gate::ExternalEffectGateInput,
+) -> std::result::Result<(), crate::outbound_intent_ledger::IntentLedgerError> {
+    use crate::gate::ApprovalTarget;
+    use crate::outbound_intent_ledger::IntentLedgerError;
+
+    let Some(ApprovalTarget::Campaign(facts)) = gate.provenance.approval_target.as_ref() else {
+        return Ok(());
+    };
+    let campaign_kind = campaign_type_byte(vault)?;
+    let Some((program, definition)) = stored_program_in_txn(vault, txn, facts.program_ref)? else {
+        return Err(IntentLedgerError::InvalidInput(
+            "the campaign program or its campaign is not active (draft, paused or archived); nothing enrolls into it",
+        ));
+    };
+    if program.campaign_ref != facts.campaign_ref {
+        return Err(IntentLedgerError::InvalidInput(
+            "campaign program does not belong to the prepared campaign",
+        ));
+    }
+    if !program_enrolls_in_txn(vault, txn, campaign_kind, &program)? {
+        return Err(IntentLedgerError::InvalidInput(
+            "the campaign program or its campaign is not active (draft, paused or archived); nothing enrolls into it",
+        ));
+    }
+    if definition.is_some_and(|definition| !definition.step_refs.contains(&facts.step_ref)) {
+        return Err(IntentLedgerError::InvalidInput(
+            "the step is no longer part of its campaign program",
+        ));
+    }
+    Ok(())
 }
 
 /// Everything one checked definition write lands.
@@ -720,11 +780,18 @@ fn validate_outbound_subject(channel: &str, outbound: &CampaignProgramOutbound) 
     }
 }
 
-fn require_active_campaign(campaign: &CampaignRecord) -> Result<()> {
-    if campaign.definition.lifecycle == CampaignLifecycle::Active {
+fn campaign_program_edits_open(campaign: &CampaignRecord) -> bool {
+    matches!(
+        campaign.definition.lifecycle,
+        CampaignLifecycle::Draft | CampaignLifecycle::Active | CampaignLifecycle::Paused
+    )
+}
+
+fn require_campaign_program_edits_open(campaign: &CampaignRecord) -> Result<()> {
+    if campaign_program_edits_open(campaign) {
         return Ok(());
     }
-    Err(invalid("an archived campaign's programs are read-only"))
+    Err(invalid("a campaign's programs are read-only after archive"))
 }
 
 fn require_expected_program_version(
@@ -737,6 +804,75 @@ fn require_expected_program_version(
     Err(Error::ConcurrentWrite(
         "campaign program definition version is not current",
     ))
+}
+
+/// Moves every authored program of `campaign_ref` to the campaign's new
+/// lifecycle in the caller's write. Archived programs stay archived. Before a
+/// Draft/Paused campaign becomes Active, prove that all its unarchived rows,
+/// including definition-less raw rows, hold at most one audience per query.
+/// Draft/Paused deliberately do not hold a query, so this transition closes
+/// the duplicate-bind race. Moved programs bump their definition versions;
+/// callers re-read them after the campaign transition.
+pub(crate) fn transition_campaign_programs_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    campaign_ref: EntityId,
+    lifecycle: CampaignLifecycle,
+    now: u64,
+) -> Result<()> {
+    let mut programs = Vec::new();
+    for (program_ref, mut row) in PROGRAM.scan(&vault.store, &*wtxn)? {
+        let definition = row
+            .definition
+            .take()
+            .map(decode_program_definition)
+            .transpose()?;
+        let program = decode_program(program_ref, row)?;
+        if program.campaign_ref == campaign_ref {
+            programs.push((program, definition));
+        }
+    }
+    if lifecycle == CampaignLifecycle::Active {
+        let mut audiences = BTreeSet::new();
+        for (program, definition) in &programs {
+            if definition
+                .as_ref()
+                .is_some_and(|definition| definition.lifecycle == CampaignLifecycle::Archived)
+            {
+                continue;
+            }
+            if let Some(audience) = program.audience
+                && !audiences.insert(audience.query_ref)
+            {
+                return Err(invalid(
+                    "another unarchived program of this campaign already binds this saved query",
+                ));
+            }
+        }
+    }
+    for (program, definition) in programs {
+        let Some(mut definition) = definition else {
+            continue;
+        };
+        let next_lifecycle = if definition.lifecycle == CampaignLifecycle::Archived {
+            CampaignLifecycle::Archived
+        } else {
+            lifecycle
+        };
+        if next_lifecycle == definition.lifecycle {
+            continue;
+        }
+        definition.definition_version = next_program_version(definition.definition_version)?;
+        definition.lifecycle = next_lifecycle;
+        definition.updated_at = now;
+        PROGRAM.put(
+            &vault.store,
+            wtxn,
+            &program.program_ref,
+            &encode_authored_program(&program, &definition),
+        )?;
+    }
+    Ok(())
 }
 
 fn next_program_version(current: u64) -> Result<u64> {

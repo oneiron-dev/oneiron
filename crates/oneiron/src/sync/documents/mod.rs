@@ -237,6 +237,28 @@ impl DocumentRegistry {
         Ok(out)
     }
 
+    /// Rebuild one current subscription's REQUEST after its remote open waited.
+    /// The stored key is the wire id, including a copy alias; never replace it
+    /// with the source id the server uses only to open the document.
+    pub(crate) fn retry_request_frame(&self, id: EntityId) -> Result<Option<Vec<u8>>> {
+        let bytes = {
+            let txn = self.vault.store.env.read_txn()?;
+            DS_E.get(&self.vault.store, &txn, &HexId(id))?
+        };
+        let Some(bytes) = bytes else {
+            return Ok(None);
+        };
+        if self.vault.get_raw(&id)?.is_none() {
+            return Ok(None);
+        }
+        if bytes.is_empty() {
+            self.owner_request_frame(id).map(Some)
+        } else {
+            let selector = super::selector::decode_sync_selector(&bytes)?;
+            self.request_frame(id, &selector).map(Some)
+        }
+    }
+
     fn request_frame(
         &self,
         id: EntityId,
@@ -406,7 +428,9 @@ impl EntityDocument {
     /// repo item's copy lineage, sent under its copy id (FIX 7608 slice 4):
     /// the same admission in the same writer, then the lineage takes the
     /// peer's operations and the visible diff lands their text here, all
-    /// before any acknowledgement. A ruled hold lands and keeps nothing.
+    /// before any acknowledgement. A ruled hold lands and applies nothing:
+    /// its held record is kept and it answers the vector to acknowledge the
+    /// edit with (FIX 10598); `None` for an edit that landed.
     pub fn import_copy_from_peer(
         &self,
         bytes: &[u8],
@@ -414,7 +438,7 @@ impl EntityDocument {
         selector: &super::selector::SyncSelector,
         peer: crate::authority::PeerMachine,
         session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
-    ) -> Result<()> {
+    ) -> Result<Option<Vec<u8>>> {
         self.refuse_raw_note()?;
         let _writer = self.lock()?;
         super::selector::secret_projection::import_document_copy(

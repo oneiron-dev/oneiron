@@ -15,13 +15,13 @@
 //! any server request on a reply stream is refused.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader, Read};
 use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::connector_key::qualification::{
-    ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool, ProbeTraceEvent, ProbeWrite,
-    QualificationConnection, QualificationConnector, QualificationFailure,
+    ProbeCapturedRequest, ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool, ProbeToolsList,
+    ProbeTraceEvent, ProbeWrite, QualificationConnection, QualificationConnector,
+    QualificationFailure,
 };
 use oneiron::connector_key::{
     ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
@@ -56,6 +56,11 @@ const METHOD_HEADER: &str = "mcp-method";
 const NAME_HEADER: &str = "mcp-name";
 const ACCEPT_BOTH: &str = "application/json, text/event-stream";
 
+mod issuer_rerun;
+mod reply_read;
+pub(crate) use issuer_rerun::rerun_issuer_dependents;
+use reply_read::read_reply;
+
 fn refused(reason: &str) -> oneiron::Error {
     oneiron::Error::InvalidConfig(reason.to_owned())
 }
@@ -73,7 +78,10 @@ pub(crate) fn client() -> oneiron::Result<Client> {
 
 /// Runs `work` with the connector's credential as an `Authorization`
 /// header, inside the credential door, or with none when the key names no
-/// custody record. The header never leaves `work`.
+/// custody record. The header never leaves `work`. Inside the door, the
+/// connector's durable issuer bindings are read again: while one meets an
+/// issuer change the owner has not accepted, `work` never runs and the
+/// hold reason refuses it (FIX 9303).
 pub(crate) fn with_credential<T>(
     vault: &Vault,
     secret_ref: Option<&str>,
@@ -81,18 +89,29 @@ pub(crate) fn with_credential<T>(
     work: impl FnOnce(Option<&HeaderValue>) -> T,
 ) -> oneiron::Result<T> {
     let Some(secret_ref) = secret_ref else {
+        if let Some(reason) = vault.connector_issuer_hold_for_connector(connector)? {
+            return Err(refused(reason));
+        }
         return Ok(work(None));
     };
     let effector = format!("connector:{connector}");
     let mut work = Some(work);
     let mut done = None;
+    let mut held = None;
     let _receipt = vault.inject_secret_at_door(secret_ref, &effector, &mut |value: &[u8]| {
+        held = vault.connector_issuer_hold_for_connector(connector)?;
+        if held.is_some() {
+            return Ok(());
+        }
         let header = authorization_header(value)?;
         if let Some(work) = work.take() {
             done = Some(work(Some(&header)));
         }
         Ok(())
     })?;
+    if let Some(reason) = held {
+        return Err(refused(reason));
+    }
     done.ok_or_else(|| refused("the connector credential door did not open"))
 }
 
@@ -257,7 +276,7 @@ pub(crate) fn discover(
     pinned: Option<&str>,
 ) -> oneiron::Result<Discovery> {
     let mut session = Session::open(client, endpoint, auth, pinned).map_err(refused)?;
-    let tools = session.list_tools().map_err(refused)?;
+    let tools = session.list_tools(None).map_err(refused)?;
     Ok(Discovery {
         revision: std::mem::take(&mut session.revision),
         tools,
@@ -406,14 +425,16 @@ struct HttpQualificationConnection<'a> {
 }
 
 impl QualificationConnection for HttpQualificationConnection<'_> {
-    fn tools_list(&mut self) -> Result<Vec<ProbeTool>, QualificationFailure> {
-        Ok(self
+    fn tools_list(&mut self) -> Result<ProbeToolsList, QualificationFailure> {
+        let mut requests = Vec::new();
+        let tools = self
             .session
-            .list_tools()
-            .map_err(|_| QualificationFailure::Transport)?
-            .iter()
-            .map(ListedTool::probe_tool)
-            .collect())
+            .list_tools(Some(&mut requests))
+            .map_err(|_| QualificationFailure::Transport)?;
+        Ok(ProbeToolsList {
+            tools: tools.iter().map(ListedTool::probe_tool).collect(),
+            requests,
+        })
     }
 
     fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
@@ -642,7 +663,10 @@ impl<'a> Session<'a> {
     /// Every `tools/list` page, in the connector's order, however many it
     /// lists (FIX 8196). Each page has its own timeout; only a cursor the
     /// connector already gave, which would page forever, is refused.
-    fn list_tools(&self) -> Result<Vec<ListedTool>, &'static str> {
+    fn list_tools(
+        &self,
+        mut requests: Option<&mut Vec<ProbeCapturedRequest>>,
+    ) -> Result<Vec<ListedTool>, &'static str> {
         let mut tools = Vec::new();
         let mut cursor: Option<String> = None;
         let mut seen = std::collections::BTreeSet::new();
@@ -650,12 +674,30 @@ impl<'a> Session<'a> {
             let params = cursor
                 .take()
                 .map_or_else(|| json!({}), |cursor| json!({ "cursor": cursor }));
-            let result = self.rpc(
-                &format!("tools/list:{page}"),
-                "tools/list",
-                params,
-                HANDSHAKE_TIMEOUT,
-            )?;
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": format!("tools/list:{page}"),
+                "method": "tools/list",
+                "params": params,
+            });
+            let built = self.build(&body, HANDSHAKE_TIMEOUT)?;
+            if let Some(requests) = requests.as_mut() {
+                let (request_body, request_headers) =
+                    captured(&built).map_err(|_| "a tools/list request could not be captured")?;
+                requests.push(ProbeCapturedRequest {
+                    request_body,
+                    request_headers,
+                });
+            }
+            let response = self
+                .client
+                .execute(built)
+                .map_err(|_| "the connector did not answer")?;
+            let message = self.answer(response, &body["id"])?;
+            let result = message
+                .get("result")
+                .cloned()
+                .ok_or("the connector answered with an error")?;
             let listed = result
                 .get("tools")
                 .and_then(Value::as_array)
@@ -710,79 +752,4 @@ impl Drop for Session<'_> {
         }
         drop(end.send());
     }
-}
-
-const UNREADABLE: &str = "the connector's reply is unreadable";
-
-/// Reads one reply body, JSON or an event stream, until the response that
-/// answers `id`, whatever its size (FIX 9281): only a body that does not
-/// parse is unreadable. Server requests on a stream go to `refuse`;
-/// notifications are dropped.
-fn read_reply(
-    response: Response,
-    id: &Value,
-    refuse: &mut dyn FnMut(&Value),
-) -> Result<Value, &'static str> {
-    let stream = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.trim_start().starts_with("text/event-stream"));
-    let mut body = response;
-    if !stream {
-        let mut bytes = Vec::new();
-        body.read_to_end(&mut bytes).map_err(|_| UNREADABLE)?;
-        let value: Value = serde_json::from_slice(&bytes).map_err(|_| UNREADABLE)?;
-        let found = match value {
-            Value::Array(batch) => batch.into_iter().find(|message| answers(message, id)),
-            message => answers(&message, id).then_some(message),
-        };
-        return found.ok_or(UNREADABLE);
-    }
-    let mut reader = BufReader::new(body);
-    let mut data = String::new();
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let n = reader.read_line(&mut line).map_err(|_| UNREADABLE)?;
-        let trimmed = line.trim_end_matches(['\r', '\n']);
-        if n == 0 || trimmed.is_empty() {
-            if let Some(message) = finished_event(&mut data, id, refuse) {
-                return Ok(message);
-            }
-            if n == 0 {
-                return Err(UNREADABLE);
-            }
-            continue;
-        }
-        if let Some(field) = trimmed.strip_prefix("data:") {
-            if !data.is_empty() {
-                data.push('\n');
-            }
-            data.push_str(field.strip_prefix(' ').unwrap_or(field));
-        }
-    }
-}
-
-/// One finished event: the answer to `id`, else nothing. A server request
-/// in it is refused.
-fn finished_event(data: &mut String, id: &Value, refuse: &mut dyn FnMut(&Value)) -> Option<Value> {
-    if data.is_empty() {
-        return None;
-    }
-    let message = serde_json::from_str::<Value>(&std::mem::take(data)).ok()?;
-    if answers(&message, id) {
-        return Some(message);
-    }
-    if message.get("method").is_some() && message.get("id").is_some() {
-        refuse(&message);
-    }
-    None
-}
-
-/// A response (not a request) carrying exactly this id.
-fn answers(message: &Value, id: &Value) -> bool {
-    message.get("method").is_none()
-        && message.get("id") == Some(id)
-        && (message.get("result").is_some() || message.get("error").is_some())
 }

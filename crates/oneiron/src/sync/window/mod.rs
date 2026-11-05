@@ -31,6 +31,7 @@ mod pad_custody;
 mod project_history;
 mod rebootstrap;
 mod replacement;
+mod repo_manifest_conflict;
 mod reverse;
 mod sealed_membership;
 mod shallow;
@@ -78,6 +79,10 @@ pub use self::pad_custody::{
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::replacement::{ReplacementByteBound, prepare_bounded_replacement};
+pub use self::repo_manifest_conflict::{
+    RepoManifestConflictDiscard, RepoManifestConflictReview,
+    discard_reviewed_repo_manifest_carrier_as, review_repo_manifest_conflict,
+};
 pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;
 pub use self::reverse::reverse_rematerialize;
 pub(crate) use self::reverse::reverse_rematerialize_for_sealing;
@@ -133,6 +138,8 @@ pub struct LoadedWindow {
     /// Observer B for the MESSAGE document map (FIX 853), on a base window
     /// only.
     _observer_message_docs: Option<Subscription>,
+    /// Observer B for the repo manifest map (FIX 6870), on base and world windows.
+    _observer_repo_manifests: Option<Subscription>,
     /// Observer A state for pending bytes tracking.
     pub observer_a_state: Arc<ObserverAState>,
 }
@@ -212,6 +219,12 @@ impl LoadedWindow {
         let observer_message_docs = key.world().is_none().then(|| {
             bridge::register_message_docs_observer(&doc, vault, materializer, key.as_str())
         });
+        let observer_repo_manifests = Some(bridge::register_repo_manifests_observer(
+            &doc,
+            vault,
+            materializer,
+            key.as_str(),
+        ));
 
         Self {
             doc,
@@ -223,6 +236,7 @@ impl LoadedWindow {
             _observer_room_facts: observer_room_facts,
             _observer_document_pins: observer_document_pins,
             _observer_message_docs: observer_message_docs,
+            _observer_repo_manifests: observer_repo_manifests,
             observer_a_state,
         }
     }

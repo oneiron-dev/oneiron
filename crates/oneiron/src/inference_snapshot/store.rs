@@ -149,18 +149,7 @@ fn write_body(dir: &Path, id: &SnapshotId, body: &[u8]) -> Result<()> {
     written
 }
 
-/// Takes the row `id` out of the catalog and stages its key's retirement,
-/// both in `wtxn`: from the commit on no open finds it, and a restored
-/// earlier image cannot open its key. The body file and the custody entry
-/// go after the commit. `true` when a row was there.
-///
-/// # Errors
-/// Custody and storage faults.
-pub(super) fn retire_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &SnapshotId) -> Result<bool> {
-    let gone = CATALOG.delete(store, wtxn, id)?;
-    store.stage_inference_snapshot_retirement_in_txn(wtxn, &id.0)?;
-    Ok(gone)
-}
+pub(super) use crate::store::snapshot_catalog::retire_in_txn;
 
 /// The wrapped key's bytes, checked to be the custody entry's width.
 fn checked_key(wrapped: WrappedSnapshotKey) -> Result<WrappedSnapshotKey> {
@@ -282,6 +271,12 @@ impl Vault {
                 .collect();
             store.publish_inference_snapshot_key_in_txn(&mut wtxn, &record.id.0, wrapped)?;
             CATALOG.put(store, &mut wtxn, &record.id, record)?;
+            catalog::put_conversation_entry(
+                store,
+                &mut wtxn,
+                &record.manifest.conversation,
+                &record.id,
+            )?;
             for id in earlier {
                 retire_in_txn(store, &mut wtxn, &id)?;
             }
@@ -410,6 +405,20 @@ impl Vault {
             .collect())
     }
 
+    /// Every kept snapshot's row of `conversation` that decodes and may
+    /// serve a restore, by the conversation index: the host's restore
+    /// candidates for one conversation, with no other row read.
+    ///
+    /// # Errors
+    /// Storage errors.
+    pub fn inference_snapshot_records_for(
+        &self,
+        conversation: &crate::entity_id::EntityId,
+    ) -> Result<Vec<SnapshotRecord>> {
+        let txn = self.store.env.read_txn()?;
+        catalog::rows_of_conversation(&self.store, &txn, conversation)
+    }
+
     /// The worlds the owner's sealed-copies setting keeps off a machine of
     /// this kind (`hosted` for one he does not own), by id bytes: a snapshot
     /// whose dependency set names one is never parked there (PAD-FLIP
@@ -536,12 +545,21 @@ impl Vault {
         let dir = store.inference_snapshot_dir();
         let mut wtxn = store.env.write_txn()?;
         for (id, record) in catalog::rows(store, &wtxn)? {
-            let whole = record.is_some_and(|record| {
+            let whole = record.as_ref().is_some_and(|record| {
                 fs::metadata(dir.join(body_name(&id)))
                     .is_ok_and(|meta| meta.is_file() && meta.len() == record.sealed_bytes)
             });
-            if !whole && retire_in_txn(store, &mut wtxn, &id)? {
-                retired += 1;
+            if !whole {
+                if retire_in_txn(store, &mut wtxn, &id)? {
+                    retired += 1;
+                }
+            } else if let Some(record) = record.as_ref() {
+                catalog::put_conversation_entry(
+                    store,
+                    &mut wtxn,
+                    &record.manifest.conversation,
+                    &id,
+                )?;
             }
         }
         wtxn.commit()?;
