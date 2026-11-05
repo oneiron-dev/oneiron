@@ -40,6 +40,28 @@ fn route_prompt_digest(prompt: Option<&str>) -> Option<[u8; 32]> {
 }
 
 impl OfferLadder {
+    /// This admitted one-model call under the frozen prompt that actually
+    /// answered its capsule, including an owner's fallback prompt. Only
+    /// this call-local ladder changes; its offer and all admission stay put.
+    pub(crate) fn for_replay_binding(
+        mut self,
+        binding: &oneiron::code_run::CapsuleRungBinding,
+    ) -> Option<Self> {
+        let [rung] = self.rungs.as_mut_slice() else {
+            return None;
+        };
+        if !self.picked
+            || self.name != binding.model
+            || rung.model != binding.model
+            || rung.offer.binding.model != binding.model
+            || rung.offer.binding.locality != binding.locality
+        {
+            return None;
+        }
+        rung.prompt = binding.prompt.clone();
+        Some(self)
+    }
+
     /// The route this ladder's one picked rung sends on, as a capsule pins
     /// it: what a strict replay compares with the route its capsule's call
     /// was answered on. `None` for any other ladder: a seat's walk names no

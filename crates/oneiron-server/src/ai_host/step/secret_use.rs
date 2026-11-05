@@ -142,6 +142,7 @@ impl<'a> StepSecretUse<'a> {
         run: &RunAdmission,
         lease: &LiveLease<'_>,
         mut request: LlmRequest,
+        capture: impl FnOnce(&LlmRequest) -> Option<oneiron::code_run::WorkflowCaptureHandle>,
     ) -> LlmResult<(LlmResponse, ModelCallBinding, bool, LlmRequest)> {
         // A rung that cannot read reasoning back is never sent it.
         let reasoning = ladder.supports(&request.model, &LlmCapability::Reasoning);
@@ -151,17 +152,22 @@ impl<'a> StepSecretUse<'a> {
         };
         let mut uses = 0_u64;
         let mut rounds = false;
+        let mut capture = Some(capture);
         loop {
             // The step's requester craft is read again before each round
             // (FIX 11395): a note erased between rounds is not sent again.
             // The planner craft stays as built at the start.
             self.refresh_requester_craft(&mut request);
+            let staged = capture.take().and_then(|capture| capture(&request));
             let (response, binding) = runtime.block_on(ladder.generate_recorded_while(
                 run,
                 request.clone(),
                 None,
                 &may_send,
             ))?;
+            if let Some(staged) = staged {
+                staged.finalize(self.vault, binding.rung.clone(), binding.route.clone());
+            }
             let calls: Vec<(String, String, Value)> = response
                 .message
                 .content

@@ -116,7 +116,8 @@ pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_
 pub use self::replay_capsule::{
     CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
     ExposureKind, ExposureSlot, ReplayRoutePin, StepReplayCapsule, StoredSpan, TaskExposure,
-    capture_workflow_step, finalize_step_captures, note_answering_route_pin, note_answering_rung,
+    WorkflowCaptureHandle, capture_workflow_step, finalize_step_captures, note_answering_route_pin,
+    note_answering_rung,
 };
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub use self::repo_calls::RepoRunCall;

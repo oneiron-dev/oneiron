@@ -683,35 +683,42 @@ impl StepRunner {
         // The admitted request is the step's replay capsule (FIX 3028),
         // finalized with the rung that answers it. A capture that fails
         // leaves none and never fails the step.
-        oneiron::code_run::capture_workflow_step(
-            vault,
-            attempt.id,
-            attempt.attempt_count,
-            actor,
-            &request,
-            sources,
-        );
+        let capture = |request: &LlmRequest| {
+            oneiron::code_run::capture_workflow_step(
+                vault,
+                attempt.id,
+                attempt.attempt_count,
+                actor,
+                request,
+                sources,
+            )
+        };
         let may_send = || {
             live.book_and_revise();
             true
         };
         let generated = match &uses {
             Some(uses) => uses
-                .converse(runtime, &call.ladder, &run, &live, request)
+                .converse(runtime, &call.ladder, &run, &live, request, capture)
                 .map(|(response, binding, rounds, final_request)| {
                     ((response, binding, final_request), rounds)
                 }),
             None => {
+                let staged = capture(&request);
                 let final_request = request.clone();
                 runtime
                     .block_on(
                         call.ladder
                             .generate_recorded_while(&run, request, None, &may_send),
                     )
-                    .map(|(response, binding)| ((response, binding, final_request), false))
+                    .map(|(response, binding)| {
+                        if let Some(staged) = staged {
+                            staged.finalize(vault, binding.rung.clone(), binding.route.clone());
+                        }
+                        ((response, binding, final_request), false)
+                    })
             }
         };
-        oneiron::code_run::finalize_step_captures(vault);
         // What this try spent and no call's look booked goes on the lease
         // whatever the call answered; the replayed tries recorded their own.
         live.book_rest()?;
