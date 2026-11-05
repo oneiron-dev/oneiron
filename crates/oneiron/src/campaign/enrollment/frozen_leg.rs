@@ -39,7 +39,7 @@ impl FrozenCampaignLeg {
         }
     }
 
-    fn facts(&self, record: &IntentLedgerRecord) -> CampaignLegFacts {
+    fn facts(&self, call: CampaignLegCall<'_>) -> CampaignLegFacts {
         CampaignLegFacts {
             query_ref: self.query_ref,
             campaign_ref: self.campaign_ref,
@@ -47,8 +47,8 @@ impl FrozenCampaignLeg {
             epoch: self.epoch,
             program_ref: self.program_ref,
             step_ref: self.step_ref,
-            consequence_id: *record.attempt_id.as_bytes(),
-            call_seq: record.call_seq,
+            consequence_id: *call.attempt_id.as_bytes(),
+            call_seq: call.call_seq,
             payload_digest: self.payload_digest,
         }
     }
@@ -93,15 +93,51 @@ pub(super) fn gate_input(
     }
 }
 
-/// The leg's existing no-send outcomes under the send writer. These outcomes
-/// are not errors: in particular, a home-node handoff must keep its lease.
-pub(crate) enum CampaignLegReadiness {
-    Unsupported,
-    Ready,
+/// Actual call axes borrowed from preparation or its retained ledger row.
+/// This view carries neither authority nor a local-node identity.
+#[derive(Clone, Copy)]
+pub(crate) struct CampaignLegCall<'a> {
+    pub(crate) attempt_id: crate::attempt_queue::AttemptId,
+    pub(crate) call_seq: u64,
+    pub(crate) channel: &'a str,
+    pub(crate) verb: &'a str,
+    pub(crate) payload: &'a [u8],
+}
+
+impl<'a> From<&'a IntentLedgerRecord> for CampaignLegCall<'a> {
+    fn from(record: &'a IntentLedgerRecord) -> Self {
+        Self {
+            attempt_id: record.attempt_id,
+            call_seq: record.call_seq,
+            channel: &record.server,
+            verb: &record.tool,
+            payload: record.payload(),
+        }
+    }
+}
+
+/// A native no-send outcome, not a failed attempt or a transport success.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CampaignLegHold {
     NotHomeNode(super::home_node::CampaignHomeNodeDesignation),
     NoHomeNode,
     MembershipNotReady,
     UnresolvableBody,
+}
+
+pub(crate) enum CampaignLegReadiness {
+    Unsupported,
+    Ready,
+    Held(CampaignLegHold),
+}
+
+impl CampaignLegReadiness {
+    pub(crate) fn hold(self) -> Option<CampaignLegHold> {
+        match self {
+            Self::Unsupported | Self::Ready => None,
+            Self::Held(hold) => Some(hold),
+        }
+    }
 }
 
 /// Rebuilds the exact native family-2 target. This is data, not consent or
@@ -109,11 +145,11 @@ pub(crate) enum CampaignLegReadiness {
 pub(crate) fn frozen_campaign_effect(
     record: &IntentLedgerRecord,
 ) -> Result<Option<ExternalEffectGateInput>, IntentLedgerError> {
-    Ok(frozen_campaign_input(record)?.map(|(_, gate)| gate))
+    Ok(frozen_campaign_input(record.into())?.map(|(_, gate)| gate))
 }
 
 fn frozen_campaign_input(
-    record: &IntentLedgerRecord,
+    call: CampaignLegCall<'_>,
 ) -> Result<
     Option<(
         crate::campaign::sender::CampaignOutboundEnvelope,
@@ -121,7 +157,7 @@ fn frozen_campaign_input(
     )>,
     IntentLedgerError,
 > {
-    let Ok(envelope) = crate::campaign::sender::decode_campaign_outbound_envelope(record.payload())
+    let Ok(envelope) = crate::campaign::sender::decode_campaign_outbound_envelope(call.payload)
     else {
         return Ok(None);
     };
@@ -133,12 +169,12 @@ fn frozen_campaign_input(
         frozen.campaign_ref,
         frozen.program_ref,
         frozen.step_ref,
-    )? != record.attempt_id
+    )? != call.attempt_id
     {
         return Ok(None);
     }
     let email_keys_match = match (
-        record.server == crate::channel_identity_provider::EMAIL_CHANNEL,
+        call.channel == crate::channel_identity_provider::EMAIL_CHANNEL,
         envelope.subject.as_ref(),
         envelope.composed_at,
         envelope.sender_ref.as_deref(),
@@ -153,10 +189,10 @@ fn frozen_campaign_input(
         return Ok(None);
     }
     let gate = gate_input(
-        frozen.facts(record),
+        frozen.facts(call),
         frozen.sender_ref,
-        &record.server,
-        &record.tool,
+        call.channel,
+        call.verb,
         &envelope.trigger_ref,
     );
     Ok(Some((envelope, gate)))
@@ -169,30 +205,34 @@ fn frozen_campaign_input(
 pub(crate) fn admit_frozen_campaign_leg_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    record: &IntentLedgerRecord,
+    call: CampaignLegCall<'_>,
     local_node_id: u64,
 ) -> Result<CampaignLegReadiness, IntentLedgerError> {
-    let Some((envelope, gate)) = frozen_campaign_input(record)? else {
+    let Some((envelope, gate)) = frozen_campaign_input(call)? else {
         return Ok(CampaignLegReadiness::Unsupported);
     };
     let frozen = &envelope.campaign_leg;
     match super::home_node::require_campaign_home_node_in_txn(vault, txn, local_node_id)? {
         super::home_node::CampaignHomeNodeAdmission::Designated(_) => {}
         super::home_node::CampaignHomeNodeAdmission::NotHomeNode(designation) => {
-            return Ok(CampaignLegReadiness::NotHomeNode(designation));
+            return Ok(CampaignLegReadiness::Held(CampaignLegHold::NotHomeNode(
+                designation,
+            )));
         }
         super::home_node::CampaignHomeNodeAdmission::NoHomeNode => {
-            return Ok(CampaignLegReadiness::NoHomeNode);
+            return Ok(CampaignLegReadiness::Held(CampaignLegHold::NoHomeNode));
         }
     }
     super::program::admit_campaign_leg_in_txn(vault, txn, &gate)?;
     if !super::runner::membership_sends_in_txn(vault, txn, frozen.entity_ref, frozen.campaign_ref) {
-        return Ok(CampaignLegReadiness::MembershipNotReady);
+        return Ok(CampaignLegReadiness::Held(
+            CampaignLegHold::MembershipNotReady,
+        ));
     }
     let expected_artifact = crate::campaign::step_body::campaign_step_body_artifact_id(
         frozen.program_ref,
         frozen.step_ref,
-        record.call_seq,
+        call.call_seq,
     )?;
     let expected_prefix = format!(
         "{}{}@",
@@ -200,15 +240,21 @@ pub(crate) fn admit_frozen_campaign_leg_in_txn(
         expected_artifact.to_hex(),
     );
     if !envelope.content_ref.starts_with(&expected_prefix) {
-        return Ok(CampaignLegReadiness::UnresolvableBody);
+        return Ok(CampaignLegReadiness::Held(
+            CampaignLegHold::UnresolvableBody,
+        ));
     }
     let Some(body) = vault.campaign_step_body_text_in_txn(txn, &envelope.content_ref)? else {
-        return Ok(CampaignLegReadiness::UnresolvableBody);
+        return Ok(CampaignLegReadiness::Held(
+            CampaignLegHold::UnresolvableBody,
+        ));
     };
     if super::approval::payload_digest(body.as_bytes(), envelope.subject.as_deref())
         != frozen.payload_digest
     {
-        return Ok(CampaignLegReadiness::UnresolvableBody);
+        return Ok(CampaignLegReadiness::Held(
+            CampaignLegHold::UnresolvableBody,
+        ));
     }
     Ok(CampaignLegReadiness::Ready)
 }

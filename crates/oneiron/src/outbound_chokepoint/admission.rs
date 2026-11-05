@@ -245,6 +245,14 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
 
     // P1-2 #4499: a prepared campaign leg re-proves its lifecycle under
     // this writer before any decision is recorded; other effects pass through.
+    if let Some(held) = super::campaign_leg::prepared_hold_in_txn(
+        vault,
+        &wtxn,
+        &prepared,
+        transport.campaign_local_node_id(),
+    )? {
+        return Ok(held);
+    }
     crate::campaign::enrollment::admit_campaign_leg_in_txn(vault, &wtxn, &prepared.gate)?;
 
     let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;

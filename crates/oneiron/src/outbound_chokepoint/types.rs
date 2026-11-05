@@ -56,6 +56,8 @@ pub(crate) struct OutboundEffectResult {
     /// instant, Unix seconds, its windows all open again: nothing was
     /// recorded, charged or sent.
     pub(crate) paced_until: Option<u64>,
+    /// Native no-send outcome; the enrollment driver preserves home handoffs.
+    pub(crate) campaign_leg: Option<crate::campaign::enrollment::CampaignLegHold>,
 }
 
 impl OutboundEffectResult {
@@ -291,6 +293,12 @@ pub(crate) trait OutboundTransport {
     /// The transport's own refusal, or the failure of its read.
     fn admit_in(&self, _txn: &heed::RoTxn<'_>) -> Result<(), IntentLedgerError> {
         Ok(())
+    }
+
+    /// The live campaign driver's actual supplied node. It is never part of
+    /// the frozen request. Other transports keep their existing behavior.
+    fn campaign_local_node_id(&self) -> Option<u64> {
+        None
     }
 }
 
