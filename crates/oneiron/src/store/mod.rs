@@ -229,6 +229,7 @@ pub mod resident_budget_rows;
 pub mod restore_admission;
 pub mod result_body_pins;
 pub mod result_memory;
+pub mod storage_disk;
 pub use oneiron_store::retained_memory;
 pub mod sandbox_import;
 pub mod verb_invocation;
