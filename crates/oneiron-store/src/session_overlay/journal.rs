@@ -1,3 +1,6 @@
+//! Typed session-overlay journal: entries, promotion plans, and replay.
+//! Entry [`PublishedEntry`]; consumed by `snapshot` and the `overlay` segment/retire machinery.
+//! Owned by `session_overlay`; the overlay lifecycle is the sole promoter (ONE-1730).
 use zeroize::Zeroize;
 
 use super::overlay::PlanCharge;

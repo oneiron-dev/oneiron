@@ -1,3 +1,6 @@
+//! Embedding pipeline root: attach, decide, and reconcile under one budget dial.
+//! Entry [`PendingEmbeddingReconciler`]; driven from `pipeline::builder::terminal`.
+//! Children own each stage (`binding_move`, `device`, `media`); the root only declares and re-exports.
 mod binding_move;
 mod cold_attach;
 mod device;
