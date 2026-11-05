@@ -52,6 +52,13 @@ impl Leased {
             _held: Mutex::new(held),
         }
     }
+
+    pub(crate) fn materialized(&self, reserved: u64, actual: u64) {
+        self._held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .materialized(reserved, actual);
+    }
 }
 
 impl fmt::Debug for Leased {

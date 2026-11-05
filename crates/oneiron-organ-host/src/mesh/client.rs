@@ -384,8 +384,15 @@ async fn received(
     }
     let mut outputs = Vec::with_capacity(wire.len());
     for (output, line) in wire.into_iter().zip(&receipt.outputs) {
+        let reserved = match &output.bytes {
+            Carried::Staged { len, .. } => *len,
+            Carried::Inline(_) => 0,
+        };
         let leased = here.hold(&output.bytes)?;
         let bytes = take(conn, output.bytes).await.map_err(absent)?;
+        if let Some(leased) = &leased {
+            leased.materialized(reserved, bytes.capacity() as u64);
+        }
         let content_hash = Hash32::of(&bytes);
         if content_hash != output.content_hash
             || content_hash != line.content_hash
