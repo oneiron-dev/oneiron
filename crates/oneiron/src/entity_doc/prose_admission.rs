@@ -1,24 +1,7 @@
-//! OF-063 prose links for entity text (FIX 1227, 1351, 1672): the prose an
-//! AI writer lands in an entity document (an anchored edit's text, a whole
-//! update's text, a proposed fork's rewrite or edits) is read for
-//! `oneiron://` links its writer cannot resolve, as a NOTE's markdown and a
-//! KV value are. The text is read as its writer said it, each secret still
-//! its handle (OF-067): a link inside a value a known handle writes again is
-//! not this writer's speech. An anchored edit's text is read in its place in
-//! the document, whose rest is its Markdown context (code fences, reference
-//! definitions) and never read as new speech; a text that lands past the
-//! parser's reach in its document is read on its own. Text equal to what it
-//! replaced says nothing new.
-//!
-//! The links are taken from the text inside the writer, which reads no
-//! record; they are resolved once the write has landed, so a refused or
-//! rolled-back write and a partial diff it discarded earn nothing, and a
-//! settlement that merges admitted operations is no new speech. A slot with
-//! a link that does not resolve earns one receipt with the outcome
-//! `unlinked`; the text is neither refused nor rewritten, and a read or
-//! receipt that fails is logged while the write's answer stands.
+//! Core half of `entity_doc::prose_admission`: its store-layer items live in `oneiron_store::entity_doc::prose_admission` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::ops::Range;
+pub(crate) use oneiron_store::entity_doc::prose_admission::*;
 
 use super::EntityDoc;
 use super::verbs::Admitted;
@@ -34,15 +17,7 @@ use crate::store::record_links::{
 use crate::store::record_references::{NamedRecordRef, ReferenceRefusal};
 use crate::store::reference_refusal::{ReferenceOutcome, ReferenceRefusalFacts};
 use crate::write_envelope::WriteActor;
-
-/// The row an anchored edit lands through.
-pub(super) const EDIT_ROW: &str = "vault.entity_text.edit";
-/// The row a whole-text update lands through.
-pub(super) const UPDATE_ROW: &str = "vault.entity_text.update";
-/// The row a text proposal's forks land through.
-pub(super) const PROPOSAL_ROW: &str = "vault.entity_text.propose";
-/// The row a SUMMARY change's fork lands through.
-pub(super) const SUMMARY_ROW: &str = "vault.summaries.propose";
+use std::ops::Range;
 
 /// One prose slot a write landed: its writer, its pointer in the write and
 /// the refs of the links it authored, as written.
@@ -86,11 +61,6 @@ impl LandedProse {
     }
 }
 
-/// Only an AI writer's prose is read (OF-063).
-fn reads(actor: WriteActor) -> bool {
-    actor.actor_class() != EdgeActorClass::Human
-}
-
 /// The refs `text` authored at `place` in `body`, the document's stored
 /// text: read in the document's own Markdown while its parser reaches it,
 /// else on its own.
@@ -118,20 +88,6 @@ fn in_place(body: &str, place: usize, text: &Admitted, lifted: &LiftedKeys) -> V
         return authored(said, 0..said.len());
     }
     within(links, &span)
-}
-
-/// The refs of `carrier`'s links that overlap `span`.
-fn authored(carrier: &str, span: Range<usize>) -> Vec<String> {
-    within(parse_record_links(carrier), &span)
-}
-
-/// The refs of `links` that overlap `span`.
-fn within(links: Vec<ProseLink>, span: &Range<usize>) -> Vec<String> {
-    links
-        .into_iter()
-        .filter(|link| link.start < span.end && span.start < link.end)
-        .map(|link| link.reference)
-        .collect()
 }
 
 /// Receipts `landed`'s unresolved links under `row`, once its write has

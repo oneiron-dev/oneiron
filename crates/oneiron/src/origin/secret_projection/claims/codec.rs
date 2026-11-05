@@ -1,9 +1,7 @@
-//! The strict codec of a masked copy's records (FIX 7608 slice 2b-i,
-//! CALL M): each record's fields at schema 1, the graph record's strict
-//! decoder, and the value helpers every reader shares. Moved out of
-//! `claims.rs` whole.
+//! Core half of `origin::secret_projection::claims::codec`: its store-layer items live in `oneiron_store::origin::secret_projection::claims::codec` and are
+//! re-exported here; the items below stay in the engine.
 
-use rmpv::Value;
+pub(crate) use oneiron_store::origin::secret_projection::claims::codec::*;
 
 use super::{
     REPO_SECRET_PROJECTION_PREDICATE, RepoProjectionAudience, RepoProjectionClaim,
@@ -14,18 +12,7 @@ use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 use crate::write_envelope::claim_body::ClaimBody;
 use oneiron_contracts::claim::ClaimSource;
-
-/// A copy every masked reader is served, as a record names it.
-const AUDIENCE_MASKED: &str = "masked";
-
-/// A copy one proven recipient is served (FIX 9328), as a record names it.
-const AUDIENCE_RECIPIENT: &str = "recipient";
-
-/// CALL P2, as a record names it.
-const POLICY_PRESERVE_PAYLOAD: &str = "preserve_payload";
-
-/// CALL P3, as a record names it.
-const LIFETIME_SOURCE_BOUND: &str = "source_bound";
+use rmpv::Value;
 
 pub(super) fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str, Value)> {
     match record {
@@ -194,21 +181,6 @@ pub(super) fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str,
     }
 }
 
-pub(super) fn place_value(place: &RepoProjectionPlace) -> Value {
-    match place {
-        RepoProjectionPlace::TreeEntry { mode, name } => Value::Array(vec![
-            Value::from("tree_entry"),
-            Value::from(*mode),
-            Value::Binary(name.clone()),
-        ]),
-        RepoProjectionPlace::CommitTree => Value::Array(vec![Value::from("commit_tree")]),
-        RepoProjectionPlace::CommitParent { index } => {
-            Value::Array(vec![Value::from("commit_parent"), Value::from(*index)])
-        }
-        RepoProjectionPlace::TagTarget => Value::Array(vec![Value::from("tag_target")]),
-    }
-}
-
 fn audience_value(audience: &RepoProjectionAudience) -> Value {
     Value::from(match audience {
         RepoProjectionAudience::Masked => AUDIENCE_MASKED,
@@ -236,66 +208,12 @@ fn released_value(audience: &RepoProjectionAudience) -> Value {
     )
 }
 
-/// The place `value` names, as [`place_value`] wrote it.
-pub(super) fn decode_place(value: &Value) -> Result<RepoProjectionPlace> {
-    let parts = value.as_array().ok_or_else(corrupt)?;
-    let number = |value: &Value| {
-        value
-            .as_u64()
-            .and_then(|number| u32::try_from(number).ok())
-            .ok_or_else(corrupt)
-    };
-    match (parts.first().and_then(Value::as_str), parts.as_slice()) {
-        (Some("tree_entry"), [_, mode, Value::Binary(name)]) => {
-            Ok(RepoProjectionPlace::TreeEntry {
-                mode: number(mode)?,
-                name: name.clone(),
-            })
-        }
-        (Some("commit_tree"), [_]) => Ok(RepoProjectionPlace::CommitTree),
-        (Some("commit_parent"), [_, index]) => Ok(RepoProjectionPlace::CommitParent {
-            index: number(index)?,
-        }),
-        (Some("tag_target"), [_]) => Ok(RepoProjectionPlace::TagTarget),
-        _ => Err(corrupt()),
-    }
-}
-
-/// An object's or a parent's occurrence: its byte path, or `nil`.
-pub(super) fn occurrence_value(occurrence: Option<&[u8]>) -> Value {
-    occurrence.map_or(Value::Nil, |path| Value::Binary(path.to_vec()))
-}
-
 /// An optional recipient binding, `nil` when none was proved.
 pub(super) fn optional_binding(value: &Value) -> Result<Option<RepoProjectionRevealBinding>> {
     match value {
         Value::Nil => Ok(None),
         value => RepoProjectionRevealBinding::decode(value).map(Some),
     }
-}
-
-pub(super) fn oid(oid: &GitOid) -> Value {
-    Value::from(oid.as_str())
-}
-
-pub(super) fn ids(ids: &[EntityId]) -> Value {
-    Value::Array(ids.iter().map(|id| Value::from(id.to_hex())).collect())
-}
-
-pub(super) fn fields(entries: Vec<(&str, Value)>) -> Value {
-    Value::Map(
-        entries
-            .into_iter()
-            .map(|(key, value)| (Value::from(key), value))
-            .collect(),
-    )
-}
-
-pub(super) fn packed(value: &Value) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, value)
-        .map_err(|_| Error::InvariantViolation("a masked copy record part did not encode"))?;
-    Ok(out)
 }
 
 /// The graph record at `id`, at schema 1 only, rebuilt and checked against
@@ -359,40 +277,4 @@ pub(super) fn decode_graph(id: &EntityId, body: &ClaimBody) -> Result<RepoProjec
         return Err(corrupt());
     }
     Ok(claim)
-}
-
-pub(super) fn field<'v>(map: &'v [(Value, Value)], key: &str) -> Result<&'v Value> {
-    map.iter()
-        .find(|(name, _)| name.as_str() == Some(key))
-        .map(|(_, value)| value)
-        .ok_or_else(corrupt)
-}
-
-pub(super) fn text(value: &Value) -> Result<&str> {
-    value.as_str().ok_or_else(corrupt)
-}
-
-pub(super) fn entity(value: &Value) -> Result<EntityId> {
-    EntityId::from_hex(text(value)?).map_err(|_| corrupt())
-}
-
-pub(super) fn digest_value(digest: &[u8; 32]) -> Value {
-    Value::from(crate::entity_id::bytes_to_hex_lower(digest))
-}
-
-pub(super) fn digest_of(value: &Value) -> Result<[u8; 32]> {
-    let hex = text(value)?.as_bytes();
-    let mut digest = [0_u8; 32];
-    if hex.len() != 64 {
-        return Err(corrupt());
-    }
-    for (at, pair) in hex.chunks(2).enumerate() {
-        let pair = std::str::from_utf8(pair).map_err(|_| corrupt())?;
-        digest[at] = u8::from_str_radix(pair, 16).map_err(|_| corrupt())?;
-    }
-    Ok(digest)
-}
-
-pub(super) fn git_oid(value: &Value) -> Result<GitOid> {
-    GitOid::parse_hex(text(value)?).map_err(|_| corrupt())
 }

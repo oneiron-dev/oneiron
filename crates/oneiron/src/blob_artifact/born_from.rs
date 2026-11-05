@@ -1,14 +1,9 @@
-//! Born-from (ARCH-0078 section 4): every artifact answers "born from what"
-//! the same way. An artifact's first version stamps the artifact row's birth
-//! (`provenance::birth`, so [`Vault::rows_born_from`] lists the artifacts a
-//! task, ask, run or skill produced). This index is the version-level
-//! complement over the version ledger: the trigger in every version's
-//! made_by, and the agent run in its provenance, read backwards, so a task
-//! also lists the versions it made of artifacts it did not create.
+//! Core half of `blob_artifact::born_from`: its store-layer items live in `oneiron_store::blob_artifact::born_from` and are
+//! re-exported here; the items below stay in the engine.
 
-use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize};
+pub use oneiron_store::blob_artifact::born_from::*;
 
+use super::versions::{BlobArtifactVersion, VERSIONS};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -17,20 +12,8 @@ use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::store::record_ref::RecordRef;
-
-use super::versions::{BlobArtifactVersion, VERSIONS};
-
-const SOURCE_TASK: u8 = b't';
-const SOURCE_ASK: u8 = b'a';
-const SOURCE_CODE_RUN: u8 = b'c';
-const SOURCE_SKILL: u8 = b's';
-const SOURCE_AGENT_RUN: u8 = b'r';
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BornFromRow {
-    at: u64,
-}
+use heed::{RoTxn, RwTxn};
+use serde::{Deserialize, Serialize};
 
 /// Key: source (kind byte + id16 or run-ref hash prefix) + artifact + version.
 const BORN_FROM: SideTable<([u8; 17], EntityId, u64), BornFromRow, Named> =

@@ -1,13 +1,14 @@
-//! Create-capable open door: `Store::open` and its helpers.
+//! Core half of `store::open_gates::open_create_door`: its store-layer items live in `oneiron_store::open_gates::open_create_door` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::path::Path;
-
-use crate::config::VaultConfig;
-use crate::error::{Error, Result};
-use crate::store::{Store, StoreHooks, VaultWriterLease};
+pub(crate) use oneiron_store::open_gates::open_create_door::*;
 
 use super::open_version_keys::{DefaultPolicySeedMode, STORAGE_ABI_VERSION};
 use super::vault_root_bind::{VaultRootPreflight, preflight_vault_root};
+use crate::config::VaultConfig;
+use crate::error::{Error, Result};
+use crate::store::{Store, StoreHooks, VaultWriterLease};
+use std::path::Path;
 
 impl Store {
     /// Opens or creates a store at `path` and initializes all named databases.
@@ -97,22 +98,4 @@ impl Store {
             clock,
         )
     }
-}
-
-/// Reads the LMDB pair through the bound root (`/proc/self/fd/<n>` on Linux)
-/// but names the root the caller asked for in a refusal: the descriptor path
-/// means nothing outside this process.
-pub(super) fn preflight_named_root(
-    storage_path: &Path,
-    canonical_path: &Path,
-) -> Result<VaultRootPreflight> {
-    preflight_vault_root(storage_path).map_err(|error| match error {
-        Error::Store(crate::error::StoreError::VaultRootPreflight { problem, .. }) => {
-            Error::Store(crate::error::StoreError::VaultRootPreflight {
-                path: canonical_path.to_path_buf(),
-                problem,
-            })
-        }
-        other => other,
-    })
 }

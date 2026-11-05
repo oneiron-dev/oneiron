@@ -2,6 +2,7 @@
 
 pub mod dependent_walk;
 pub mod document_fields;
+pub mod lmdb_query;
 pub mod manual_clock;
 pub mod point_read;
 pub mod read_result;

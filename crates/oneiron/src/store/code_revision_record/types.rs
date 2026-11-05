@@ -1,35 +1,12 @@
-//! Revision values and their unchanged pure constructors.
+//! Core half of `store::code_revision_record::types`: its store-layer items live in `oneiron_store::code_revision_record::types` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::code_revision_record::types::*;
 
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::store::code_document_values::CodeDocumentFrontier;
 use std::collections::BTreeMap;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CodeRevisionKind {
-    Commit,
-    Revert,
-}
-
-impl CodeRevisionKind {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Commit => "commit",
-            Self::Revert => "revert",
-        }
-    }
-
-    pub(crate) fn parse(value: &str) -> Result<Self> {
-        match value {
-            "commit" => Ok(Self::Commit),
-            "revert" => Ok(Self::Revert),
-            _ => Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-                "code revision kind must be commit or revert",
-            ))),
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]

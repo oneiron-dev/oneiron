@@ -1,18 +1,13 @@
-//! Window-compaction obligations written by an erase.
+//! Core half of `deletion::owed_window_compaction`: its store-layer items live in `oneiron_store::deletion::owed_window_compaction` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::deletion::owed_window_compaction::*;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::window_key::WindowKey;
 use std::collections::BTreeSet;
-
-/// Sweep-queue prefix of an owed window compaction, `hc:{window}`. Its value
-/// is a fresh id per raise, so a pass settles only the raise it read, then
-/// the receipts waiting on it.
-pub(crate) const OWED_COMPACTION_PREFIX: &[u8] = b"hc:";
-
-/// The bytes of one id in an owed row's value.
-const ID_LEN: usize = 16;
 
 /// Owes the erasure sweep a compaction of `window`, in the caller's
 /// transaction: an erase, or a hold release, whose scrub changed the window's
@@ -71,15 +66,4 @@ fn raise_in_txn(
     }
     vault.store.sync_queue.put(wtxn, &key, &value)?;
     Ok(key)
-}
-
-/// The receipts an owed row's `value` names after its raise; a tail that is
-/// no whole id names none past it.
-pub(crate) fn waiting_receipts(value: &[u8]) -> BTreeSet<EntityId> {
-    value
-        .get(ID_LEN..)
-        .unwrap_or_default()
-        .chunks_exact(ID_LEN)
-        .filter_map(|bytes| EntityId::from_bytes(bytes.try_into().ok()?).ok())
-        .collect()
 }

@@ -1,36 +1,21 @@
-//! An erased actor out of the Gate decision ledger (FIX 4230, 4231).
+//! Core half of `store::gate_decision::actor_erase`: its store-layer items live in `oneiron_store::gate_decision::actor_erase` and are
+//! re-exported here; the items below stay in the engine.
 
-use heed::RwTxn;
-
-use crate::Vault;
-use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+pub use oneiron_store::gate_decision::actor_erase::*;
 
 use super::ledger::{LEDGER, encode_gate_decision};
 use super::orcb;
 use super::types::GateDecisionRecord;
 use super::vet::vet_gate_decision_record;
-use crate::store::Store;
-use crate::store::key_custody::LocalCustody;
-
-/// What an actor's erase does with the Gate decisions that name it as the
-/// actor they judged.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GateAttributionErase {
-    /// Each decision stays in place with its id, its time, its outcome, its
-    /// reasons, its class, its policy, its grant, its diff and its frontier,
-    /// and names no actor.
-    ClearActorRefOnly,
-}
-
-/// A Gate decision is the receipt of what was decided, so it stays; who
-/// asked for it goes with that actor's erase (FIX 4230, 4231; a call).
-pub const ACTOR_ERASE_GATE_ATTRIBUTION: GateAttributionErase =
-    GateAttributionErase::ClearActorRefOnly;
-
+use crate::Vault;
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the ledger.
 use crate::deletion::names_no_actor;
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
+use crate::store::Store;
+use crate::store::key_custody::LocalCustody;
+use heed::RwTxn;
 
 /// Erasing `actor` from the Gate decisions (FIX 4230, 4231): each decision
 /// whose actor it is names no actor, as [`ACTOR_ERASE_GATE_ATTRIBUTION`]

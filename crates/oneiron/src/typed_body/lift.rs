@@ -1,17 +1,7 @@
-//! Typed bodies the historical lift sweep reads again (OF-067, Engine ruling
-//! G2 = b). A typed body's operation log is its receipt ledger: a new call
-//! that brings a key into a clean body is refused, and a body that held one
-//! before keeps it. The sweep marks the keys of each text in a body's state
-//! (owner ruling C2), under that text's hash: an office body's runs and
-//! cells, a deck's slide text and each stamped operation of its fork log.
-//! One door serves every typed body and each of its forks. The snapshot, the
-//! operations, the receipts and every frontier stay as they are. A reader
-//! other than the owner reads each lifted key as its handle, a writer that
-//! carries a handle back writes its value again, and a commit on a body that
-//! still reads as secret marks the texts it leaves.
+//! Core half of `typed_body::lift`: its store-layer items live in `oneiron_store::typed_body::lift` and are
+//! re-exported here; the items below stay in the engine.
 
-use heed::{RoTxn, RwTxn};
-use loro::LoroDoc;
+pub(crate) use oneiron_store::typed_body::lift::*;
 
 use super::{DOCS, FORK_DOCS, HEADS, load};
 use crate::Vault;
@@ -25,6 +15,8 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, SideTableDecl};
 use crate::store::Store;
 use crate::store::file_key_masks::masked_file_in_txn;
+use heed::{RoTxn, RwTxn};
+use loro::LoroDoc;
 
 /// One family of a typed body's stored documents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,23 +89,6 @@ fn state_of(doc: &LoroDoc) -> Result<(serde_json::Value, Vec<String>)> {
     let mut texts = Vec::new();
     collect_texts(&state, &mut texts);
     Ok((state, texts))
-}
-
-fn collect_texts(value: &serde_json::Value, texts: &mut Vec<String>) {
-    match value {
-        serde_json::Value::String(text) => texts.push(text.clone()),
-        serde_json::Value::Array(items) => {
-            for item in items {
-                collect_texts(item, texts);
-            }
-        }
-        serde_json::Value::Object(fields) => {
-            for item in fields.values() {
-                collect_texts(item, texts);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// The hit the write door finds in `state` with each key `texts`' marks
@@ -221,37 +196,6 @@ fn body_texts_in_txn(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Resul
         texts.extend(state_of(&load(Some(bytes), None)?)?.1);
     }
     Ok(texts)
-}
-
-/// The custody records the marks of a typed body's lifted texts name: each
-/// key once, in custody-id order. Only
-/// [`Vault::typed_body_lifted_sources_in_txn`] and
-/// [`Vault::typed_body_read_lifted_in_txn`] make one, so a read's sight
-/// ([`Vault::typed_body_sight`]) is judged over the keys the body holds,
-/// never over keys a caller names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LiftedSources(Vec<EntityId>);
-
-impl LiftedSources {
-    /// Whether the body's texts name no key: every reader reads it alike.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// The keys, each once, in custody-id order.
-    pub(crate) fn keys(&self) -> &[EntityId] {
-        &self.0
-    }
-
-    /// These keys and `keys`, the custody records the marks of what a read
-    /// shows name, each once, in custody-id order: the keys of the parts a
-    /// deck preview's asked slides draw (FIX 10453).
-    pub(crate) fn with_keys(mut self, keys: impl IntoIterator<Item = EntityId>) -> Self {
-        self.0.extend(keys);
-        self.0.sort_unstable();
-        self.0.dedup();
-        self
-    }
 }
 
 /// The custody records the marks of `texts` name, a key in a marked member

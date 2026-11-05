@@ -1,48 +1,16 @@
-//! Wake deadlines: when a retirement sweep next has work, read without a scan.
-//!
-//! A door that starts a retirement deadline notes it here in its own write
-//! transaction: a secret lease's expiry, a voice print's retention deadline, a
-//! critical confirm's window. Rows are keyed by sweep, deadline and a fresh id
-//! per note, so a sweep's earliest deadline is the first row under its tag and
-//! two notes of the same deadline are two rows. The schedule makes the sweep
-//! due at its earliest row, and a vault that is not running wakes for it. A
-//! run that covered its rows removes exactly the rows it read before it
-//! started; a row noted since stays for the next run. A deadline that moved or
-//! was settled early leaves a row that costs one run that finds nothing.
+//! Core half of `store::housekeeping_wake`: its store-layer items live in `oneiron_store::housekeeping_wake` and are
+//! re-exported here; the items below stay in the engine.
 
-use heed::{RoTxn, RwTxn};
+pub(crate) use oneiron_store::housekeeping_wake::*;
 
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::store::housekeeping_schedule::HousekeepingSweep;
 use crate::{EntityId, Vault};
-
-type WakeKey = ([u8; 1], u64, EntityId);
+use heed::{RoTxn, RwTxn};
 
 const WAKE: SideTable<WakeKey, (), Raw> = SideTable::new(&side_table::HOUSEKEEPING_WAKE);
-
-/// Rows one covering run removes at most; the rest go with the next run.
-const CLEAR_LIMIT: usize = 4096;
-
-/// The sweeps whose deadlines are noted. The erasure sweep needs no rows: an
-/// obligation waiting is the first `h:` row.
-pub(crate) const WAKE_SWEEPS: [HousekeepingSweep; 4] = [
-    HousekeepingSweep::SecretLeaseExpiry,
-    HousekeepingSweep::CriticalConfirmExpiry,
-    HousekeepingSweep::VoicePrintRetention,
-    HousekeepingSweep::SharedActMaturity,
-];
-
-fn tag(sweep: HousekeepingSweep) -> Option<[u8; 1]> {
-    match sweep {
-        HousekeepingSweep::SecretLeaseExpiry => Some([1]),
-        HousekeepingSweep::CriticalConfirmExpiry => Some([2]),
-        HousekeepingSweep::VoicePrintRetention => Some([3]),
-        HousekeepingSweep::SharedActMaturity => Some([4]),
-        _ => None,
-    }
-}
 
 /// Notes that `sweep` has work due at `at`, in the caller's transaction, so
 /// the note commits with the deadline it records. A sweep without notes

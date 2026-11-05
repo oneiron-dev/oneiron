@@ -3,6 +3,7 @@
 pub mod body;
 pub mod changed_scan;
 pub mod escaped_span;
+pub mod text;
 pub mod text_log;
 pub mod text_spans;
 pub mod wipe;

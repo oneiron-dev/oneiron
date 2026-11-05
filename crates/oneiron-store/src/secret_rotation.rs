@@ -213,3 +213,5 @@ pub fn decode_taint_refs_row(bytes: &[u8]) -> Result<Vec<SecretTaintRef>> {
     }
     taint_refs_from_value(&value).ok_or(invalid_body("taint refs row"))
 }
+
+pub mod revoke;

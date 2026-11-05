@@ -1,25 +1,7 @@
-//! Retained carriers with a door of their own (OF-067, Engine ruling D = a).
-//! Their bytes stay as they are; each is read the way its own new write is,
-//! and a hit gets the treatment a new write of it gets today, through the
-//! carrier's own module, then a value-free proposal:
-//!
-//! - a run's result body: the S7 mark on each occurrence of it;
-//! - a codebase snapshot: each file with a secret quarantined in the custody
-//!   report beside its fork, as a new snapshot keeps it out;
-//! - a repo snapshot: each file with a secret marked withheld, as a new
-//!   capture stores it;
-//! - an LFS object, which a new upload is refused for: marked, and withheld
-//!   from every reader off this device;
-//! - a code document's head, tested frontiers and ingress receipts, and a
-//!   typed body's state and each fork's (a deck's fork log among its texts),
-//!   which a new edit is refused for: each text's keys go to custody, marked
-//!   under the text's hash as a file's are (owner ruling C2; Engine ruling
-//!   G2 = b). A reader other than the owner reads each as its handle.
-//!
-//! A row the owning module cannot read is read as stored, and a hit in it
-//! still files a proposal.
+//! Core half of `batch::secret_scan::lift_history::retained`: its store-layer items live in `oneiron_store::batch::secret_scan::lift_history::retained` and are
+//! re-exported here; the items below stay in the engine.
 
-use heed::{RoTxn, RwTxn};
+pub(crate) use oneiron_store::batch::secret_scan::lift_history::retained::*;
 
 use super::{Done, LiftCause};
 use crate::Vault;
@@ -31,6 +13,7 @@ use crate::origin::lfs::LfsOid;
 use crate::side_table::{self as t, SideTableDecl};
 use crate::store::code_document_values::CodeDocumentRows;
 use crate::typed_body::{TypedBodyRows, lift_typed_body_in_txn, typed_body_lift_hit_in_txn};
+use heed::{RoTxn, RwTxn};
 
 /// One carrier with a door here, by the row key after its prefix.
 enum Row<'a> {
@@ -155,12 +138,4 @@ pub(super) const fn text_done(marked: CarrierText) -> Done {
         CarrierText::Unplaceable(reason) => Done::Propose(LiftCause::Unplaceable, reason),
         CarrierText::Clean | CarrierText::Marked => Done::Clean,
     }
-}
-
-/// A failure of the store, which the census does not read past.
-const fn stored_failure(kind: ErrorKind) -> bool {
-    matches!(
-        kind,
-        ErrorKind::Storage | ErrorKind::Io | ErrorKind::MapFull | ErrorKind::ConcurrentWrite
-    )
 }

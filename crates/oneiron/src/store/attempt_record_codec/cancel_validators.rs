@@ -1,11 +1,7 @@
-//! The cancel-receipt shape table and the landing and cancel-state
-//! validators the strict reader runs on a stored row's graceful-cancel
-//! state. The attempt queue's cancel protocol (`attempt_queue::validate`)
-//! keeps the receipt and event append mutators and the pressure counters.
-use crate::error::{ArtifactError, Error, Result};
-use crate::store::attempt_cancel::{
-    AttemptCancelReceipt, AttemptCancelReceiptKind, AttemptCancelState, AttemptLanding,
-};
+//! Core half of `store::attempt_record_codec::cancel_validators`: its store-layer items live in `oneiron_store::attempt_record_codec::cancel_validators` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::attempt_record_codec::cancel_validators::*;
 
 use super::field_validators::{
     ERR_CANCEL_NO_STANDING, ERR_CANCEL_RECEIPT_FIELD_FORBIDDEN, ERR_CANCEL_RECEIPT_FIELD_MISSING,
@@ -17,37 +13,10 @@ use super::field_validators::{
     validate_intervention_actor, validate_optional_cancel_status, validate_optional_failure_reason,
     validate_optional_resume_point,
 };
-
-/// Whether one optional receipt field is REQUIRED by, merely ALLOWED on, or
-/// FORBIDDEN to a given [`AttemptCancelReceiptKind`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FieldRule {
-    Required,
-    Allowed,
-    Forbidden,
-}
-
-/// The per-kind field contract of one cancel receipt.
-///
-/// Declared once and enforced on BOTH sides — the queue's `append_cancel_receipt` before
-/// a row is ever pushed, and [`validate_cancel_state`] on every decode — so a
-/// writer and a reader can never disagree about what a kind means. Without it
-/// a persisted row could contradict its own kind (a refusal with no reason, a
-/// resume-point row with no point, a reserve spend of zero units, a force with
-/// no grounds) and every projection downstream would faithfully report the
-/// contradiction.
-#[derive(Debug, Clone, Copy)]
-struct CancelReceiptShape {
-    standing: FieldRule,
-    trigger: FieldRule,
-    grounds: FieldRule,
-    status: FieldRule,
-    reason: FieldRule,
-    resume_point: FieldRule,
-    request_sequence: FieldRule,
-    /// `Required` means strictly positive, `Forbidden` means exactly zero.
-    reserve_units: FieldRule,
-}
+use crate::error::{ArtifactError, Error, Result};
+use crate::store::attempt_cancel::{
+    AttemptCancelReceipt, AttemptCancelReceiptKind, AttemptCancelState, AttemptLanding,
+};
 
 const fn cancel_receipt_shape(kind: AttemptCancelReceiptKind) -> CancelReceiptShape {
     use FieldRule::{Allowed, Forbidden, Required};
@@ -113,18 +82,6 @@ const fn cancel_receipt_shape(kind: AttemptCancelReceiptKind) -> CancelReceiptSh
     }
 }
 
-fn check_field(rule: FieldRule, present: bool, missing: &'static str) -> Result<()> {
-    match (rule, present) {
-        (FieldRule::Required, false) => Err(Error::Artifact(
-            ArtifactError::InvalidAttemptQueueRecord(missing),
-        )),
-        (FieldRule::Forbidden, true) => Err(Error::Artifact(
-            ArtifactError::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPT_FIELD_FORBIDDEN),
-        )),
-        _ => Ok(()),
-    }
-}
-
 /// Enforces one receipt's per-kind field contract.
 ///
 /// `standing` and `status` are never `Required`, so their "missing" message is
@@ -179,15 +136,6 @@ pub(crate) fn validate_cancel_receipt_fields(receipt: &AttemptCancelReceipt) -> 
         )));
     }
     Ok(())
-}
-
-fn check_reserve_units(rule: FieldRule, units: u64) -> Result<()> {
-    match (rule, units) {
-        (FieldRule::Required, 0) | (FieldRule::Forbidden, 1..) => Err(Error::Artifact(
-            ArtifactError::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPT_RESERVE_UNITS),
-        )),
-        _ => Ok(()),
-    }
 }
 
 fn validate_landing(landing: &AttemptLanding) -> Result<()> {

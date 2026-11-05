@@ -1,5 +1,8 @@
-//! The same credential-gated file projection for point reads and indexed
-//! hydration. A non-owner never receives a lifted value through raw bytes.
+//! Core half of `graph_fs::scoped_files`: its store-layer items live in `oneiron_store::graph_fs::scoped_files` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::graph_fs::scoped_files::*;
+
 use super::model::GraphFsResolver;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -92,28 +95,6 @@ impl GraphFsResolver<'_, '_> {
 
     pub(super) fn file_row(&self, id: EntityId) -> Result<ScopedReadResult<Option<ReadRow>>> {
         Ok(self.file_rows(&[PointRead::id(id)], None)?.single())
-    }
-}
-
-fn strings<'a>(value: &'a rmpv::Value, out: &mut Vec<&'a str>) {
-    match value {
-        rmpv::Value::String(text) => {
-            if let Some(text) = text.as_str() {
-                out.push(text);
-            }
-        }
-        rmpv::Value::Array(items) => {
-            for item in items {
-                strings(item, out);
-            }
-        }
-        rmpv::Value::Map(items) => {
-            for (key, value) in items {
-                strings(key, out);
-                strings(value, out);
-            }
-        }
-        _ => {}
     }
 }
 

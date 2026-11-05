@@ -1,4 +1,7 @@
-//! Two-phase staging: stage, commit-prepared, recovery, and keep-ref naming.
+//! Core half of `git_wire::wire_stage`: its store-layer items live in `oneiron_store::git_wire::wire_stage` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::git_wire::wire_stage::*;
 
 use super::argv::FrozenGitArgv;
 use super::failure::invalid;
@@ -265,22 +268,4 @@ fn resolve_plan_publications(
         });
     }
     Ok(publications)
-}
-
-fn stage_keep_ref_names(
-    key: &[u8; 32],
-    publications: &[GitRefPublication],
-) -> Result<Vec<GitRefName>> {
-    let scope = hex_lower(key);
-    let mut names = Vec::with_capacity(publications.len());
-    for index in 0..publications.len() {
-        names.push(GitRefName::parse_full(format!(
-            "{GIT_WIRE_KEEP_REF_PREFIX}stage/{scope}/{index}"
-        ))?);
-    }
-    Ok(names)
-}
-
-pub(super) fn object_keep_ref_name(oid: &GitOid) -> Result<GitRefName> {
-    GitRefName::parse_full(format!("{GIT_WIRE_KEEP_REF_PREFIX}object/{}", oid.as_str()))
 }

@@ -1,52 +1,18 @@
-//! The world pad compartments a restore left unopened, kept beside this
-//! host's custody (PAD-3, FIX 11133).
-//!
-//! Each sits in its pad's own subject directory as `.carried-<origin key id
-//! hex>`, apart from the pad's generation entries and markers: no census,
-//! generation scan or read takes it for an entry, and it is never read as a
-//! 32-byte pad. It is ciphertext under keys this host does not hold, and it
-//! leaves only inside a custody head, wrapped to the pad's world's admitted
-//! machines and roots as it came. A retirement of the pad unlinks it after
-//! the pad's marker, and an erase's receipt completes only once none is
-//! left. A pad no restore epoch owes any longer, rested here or erased, has
-//! its carried copies pruned once the transaction that settled it commits.
+//! Core half of `store::key_custody::carried_pads`: its store-layer items live in `oneiron_store::key_custody::carried_pads` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeSet;
-use std::fs;
-use std::path::{Path, PathBuf};
-
-use heed::RoTxn;
-
-use crate::error::Result;
-use crate::store::Store;
+pub(crate) use oneiron_store::key_custody::carried_pads::*;
 
 use super::files::{LocalCustody, custody_present, open_dir, read_whole, write_once};
 use super::head::{CARRIED_PREFIX, CarriedWorldPad};
 use super::identity::{CustodyKind, CustodySubject};
 use super::platform;
-
-/// Every carried compartment's file in the subject directory `dir`, in name
-/// order; none when it has no directory.
-fn carried_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    let names = match fs::read_dir(dir) {
-        Ok(names) => names,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => return Err(err.into()),
-    };
-    let mut files = Vec::new();
-    for name in names {
-        let entry = name?;
-        if entry
-            .file_name()
-            .to_str()
-            .is_some_and(|name| name.starts_with(CARRIED_PREFIX))
-        {
-            files.push(entry.path());
-        }
-    }
-    files.sort();
-    Ok(files)
-}
+use crate::error::Result;
+use crate::store::Store;
+use heed::RoTxn;
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 impl LocalCustody<'_> {
     /// Keeps `carried` beside its pad, synced, once per origin compartment.

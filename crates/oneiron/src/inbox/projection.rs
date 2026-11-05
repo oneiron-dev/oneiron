@@ -1,7 +1,15 @@
-//! Read-side inbox grouping projection, member classification, and dial surfacing.
+//! Core half of `inbox::projection`: its store-layer items live in `oneiron_store::inbox::projection` and are
+//! re-exported here; the items below stay in the engine.
 
-use sha2::{Digest, Sha256};
+pub(crate) use oneiron_store::inbox::projection::*;
 
+use super::model::{
+    INBOX_REASON_CHECKER_PREFIX, INBOX_RUN_BRIEF_INTENT_KEY, INBOX_SUBCLUSTER_MIN_MEMBERS,
+    InboxCheckInException, InboxExceptionClass, InboxGroup, InboxGroupMember, InboxGroupPage,
+    InboxPointerRow, InboxQuery, InboxReviewDial, InboxSubCluster, VERB_CLASS_CONFLICT,
+    VERB_CLASS_NEW_CLAIM, VERB_CLASS_UPDATE,
+};
+use super::root_group::{OpenTray, RunGroups, root_group_card};
 use crate::Vault;
 use crate::attempt_queue::AttemptQueue;
 use crate::calendar::outcome::{DueOutcomeCheckIn, check_in_is_still_due};
@@ -14,14 +22,7 @@ use crate::store::{GateDecisionRecord, PendingGateConsentRecord};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::write_envelope::claim_predicate::PREDICATE_CONFLICT_OPEN;
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
-
-use super::model::{
-    INBOX_REASON_CHECKER_PREFIX, INBOX_RUN_BRIEF_INTENT_KEY, INBOX_SUBCLUSTER_MIN_MEMBERS,
-    InboxCheckInException, InboxExceptionClass, InboxGroup, InboxGroupMember, InboxGroupPage,
-    InboxPointerRow, InboxQuery, InboxReviewDial, InboxSubCluster, VERB_CLASS_CONFLICT,
-    VERB_CLASS_NEW_CLAIM, VERB_CLASS_UPDATE,
-};
-use super::root_group::{OpenTray, RunGroups, root_group_card};
+use sha2::{Digest, Sha256};
 
 impl Vault {
     /// Projects one page of open dreamer-run groups, surfaced under the
@@ -71,28 +72,6 @@ impl Vault {
         }
         Ok(rows)
     }
-}
-
-/// Semantic claim hash for cross-run duplicate collapse. The consent
-/// binding (`diff_handle`) hashes the exact stored body, whose evidence
-/// carries the writing actor and run provenance — so re-proposals of the
-/// same fact by a later run would never match it. This hash keeps the claim
-/// identity (predicate, subject, value, world, scope, validity) and drops
-/// the per-write stamps.
-pub(crate) fn inbox_claim_hash(body: &ClaimBody) -> Result<[u8; 32]> {
-    let mut normalized = body.clone();
-    normalized.approval = ClaimApprovalStatus::Proposed;
-    normalized.lifecycle = ClaimLifecycleStatus::Active;
-    normalized.set_confidence(1.0, None);
-    normalized.salience = None;
-    normalized.evidence = None;
-    normalized.source = None;
-    normalized.stale = false;
-    let encoded = crate::write_envelope::claim_body::encode_claim_body(&normalized)?;
-    let mut hasher = Sha256::new();
-    hasher.update(b"oneiron.inbox.claim_hash.v1");
-    hasher.update(&encoded);
-    Ok(hasher.finalize().into())
 }
 
 #[derive(Clone)]
@@ -167,19 +146,6 @@ pub(super) fn resolve_run_identity(
         bytes_to_hex_lower(root_id.as_bytes()),
         run_brief_intent(&payload.input),
     ))
-}
-
-fn run_brief_intent(input: &rmpv::Value) -> Option<String> {
-    let rmpv::Value::Map(entries) = input else {
-        return None;
-    };
-    entries.iter().find_map(|(key, value)| {
-        if key.as_str() != Some(INBOX_RUN_BRIEF_INTENT_KEY) {
-            return None;
-        }
-        let intent = value.as_str()?.trim();
-        (!intent.is_empty()).then(|| intent.to_owned())
-    })
 }
 
 pub(super) fn classify_member(
@@ -272,71 +238,6 @@ fn would_supersede_active_truth(vault: &Vault, member: &OpenMember) -> Result<Op
         }
     }
     Ok(supersedes_any.then_some(supersedes_user_stated))
-}
-
-/// The dial rule, stated exactly.
-///
-/// `ApproveAll` is spelled as an explicit match over the non-waivable classes
-/// rather than a single `contains`: manifest-critical and plugin-install rows
-/// both REQUIRE an owner decision, and listing them here is what stops a
-/// future class from being waived by accident.
-pub(super) fn member_surfaces(dial: InboxReviewDial, classes: &[InboxExceptionClass]) -> bool {
-    match dial {
-        InboxReviewDial::ReviewEverything => true,
-        InboxReviewDial::ExceptionsOnly => !classes.is_empty(),
-        InboxReviewDial::ApproveAll => classes.iter().any(|class| {
-            matches!(
-                class,
-                InboxExceptionClass::ManifestCritical | InboxExceptionClass::PluginInstall
-            )
-        }),
-    }
-}
-
-pub(super) fn sub_cluster_key(body: &ClaimBody) -> String {
-    match body.subject {
-        ClaimSubject::Entity(subject) => format!("entity:{}", subject.to_hex()),
-        ClaimSubject::Edge { .. } => {
-            let theme = body.predicate.split('.').next().unwrap_or("misc");
-            format!("theme:{theme}")
-        }
-    }
-}
-
-fn group_headline(
-    intent: Option<&str>,
-    new_claims: usize,
-    updates: usize,
-    conflicts: usize,
-) -> String {
-    let mut parts = Vec::new();
-    if new_claims > 0 {
-        parts.push(format!(
-            "{new_claims} new claim{}",
-            if new_claims == 1 { "" } else { "s" }
-        ));
-    }
-    if updates > 0 {
-        parts.push(format!(
-            "{updates} update{}",
-            if updates == 1 { "" } else { "s" }
-        ));
-    }
-    if conflicts > 0 {
-        parts.push(format!(
-            "{conflicts} conflict{}",
-            if conflicts == 1 { "" } else { "s" }
-        ));
-    }
-    let counts = if parts.is_empty() {
-        "no open proposals".to_owned()
-    } else {
-        parts.join(", ")
-    };
-    match intent {
-        Some(intent) => format!("{intent}: {counts}"),
-        None => format!("Dreamer run: {counts}"),
-    }
 }
 
 pub(super) struct GroupDraft {

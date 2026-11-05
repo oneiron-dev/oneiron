@@ -1,25 +1,16 @@
-//! The AGENT_DEF memory profile's `optional_memory` sub-map codec
-//! (ZERO-RETRIEVAL = A): the pinned-key encode and the strict decode.
+//! Core half of `store::agent_definition_codec::optional_memory`: its store-layer items live in `oneiron_store::agent_definition_codec::optional_memory` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
-use std::num::NonZeroU64;
-
-use rmpv::Value;
+pub use oneiron_store::agent_definition_codec::optional_memory::*;
 
 use crate::error::{ArtifactError, Error, Result};
 use crate::store::agent_manifest::validate_text_field;
 use crate::store::agent_optional_memory::{OptionalMemory, OptionalMemoryProfile};
 use crate::store::agent_record::AGENT_REF_KEY_MAX_BYTES;
 use crate::store::context_field_profile::FieldProfile;
-
-/// The pinned sub-map keys for an [`OptionalMemoryProfile`], in encode order.
-pub const OPTIONAL_MEMORY_PROFILE_KEYS: [&str; 2] = ["default", "families"];
-
-/// The pinned sub-map keys for an [`OptionalMemory::Budget`], in encode order.
-pub const OPTIONAL_MEMORY_BUDGET_KEYS: [&str; 2] = ["tokens", "view"];
-
-/// The encoded form of [`OptionalMemory::None`].
-const NONE: &str = "none";
+use rmpv::Value;
+use std::collections::BTreeMap;
+use std::num::NonZeroU64;
 
 /// Encodes the sub-map, with `families` elided when empty.
 pub(crate) fn encode_optional_memory_profile(profile: &OptionalMemoryProfile) -> Value {
@@ -56,18 +47,6 @@ fn encode_choice(choice: OptionalMemory) -> Value {
             ),
         ]),
     }
-}
-
-const fn view_name(view: FieldProfile) -> &'static str {
-    match view {
-        FieldProfile::Minimal => "summary",
-        FieldProfile::Standard => "standard",
-        FieldProfile::Full => "full",
-    }
-}
-
-fn invalid(context: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidAgentDefBody(context))
 }
 
 /// Strict decode, in the same discipline as the parent map: unknown,
@@ -154,28 +133,4 @@ fn decode_choice(value: &Value) -> Result<OptionalMemory> {
         }
     };
     Ok(OptionalMemory::Budget { tokens, view })
-}
-
-/// The map's entries, each key one of `keys` and in `keys` order (so neither
-/// unknown nor duplicate).
-fn pinned_entries<'v>(
-    value: &'v Value,
-    keys: &[&'static str],
-    context: &'static str,
-) -> Result<Vec<(&'static str, &'v Value)>> {
-    let Value::Map(entries) = value else {
-        return Err(invalid(context));
-    };
-    let mut next = 0;
-    let mut out = Vec::with_capacity(entries.len());
-    for (key, value) in entries {
-        let index = key
-            .as_str()
-            .and_then(|key| keys.iter().position(|known| *known == key))
-            .filter(|index| *index >= next)
-            .ok_or_else(|| invalid(context))?;
-        next = index + 1;
-        out.push((keys[index], value));
-    }
-    Ok(out)
 }

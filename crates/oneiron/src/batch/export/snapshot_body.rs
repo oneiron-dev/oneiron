@@ -1,13 +1,7 @@
-//! FIX 3677: a live row's body as the whole-vault snapshot reads it. A row
-//! is read where the snapshot holds it, never copied for the serializer. A
-//! file-plane ASSET's stored file that the archive attaches as it is goes
-//! out as it streams, read under the snapshot and checked to its end; one a
-//! probe of the snapshot needs whole is read whole, as every body was.
+//! Core half of `batch::export::snapshot_body`: its store-layer items live in `oneiron_store::batch::export::snapshot_body` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::borrow::Cow;
-use std::io::{self, Read};
-
-use heed::RoTxn;
+pub(crate) use oneiron_store::batch::export::snapshot_body::*;
 
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -15,23 +9,9 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_NOTE};
 use crate::store::AssetFileManifest;
-
-/// A live row's body as the serializer takes it.
-pub(crate) enum ExportSnapshotEntityBody<'t> {
-    /// Its bytes: the row's own, borrowed from the snapshot, or projected.
-    Bytes(Cow<'t, [u8]>),
-    /// A file-plane ASSET's stored file, which the archive attaches as it is.
-    File(ExportSnapshotFile),
-}
-
-/// A file-plane ASSET's stored file, open under the snapshot that found its
-/// manifest: `bytes` long with BLAKE3 `blake3`, each checked as `reader`
-/// reads its end.
-pub(crate) struct ExportSnapshotFile {
-    pub(crate) bytes: u64,
-    pub(crate) blake3: [u8; 32],
-    pub(crate) reader: Box<dyn Read>,
-}
+use heed::RoTxn;
+use std::borrow::Cow;
+use std::io::{self, Read};
 
 /// One live row's body as the snapshot's probes read it.
 pub(super) enum RowBody<'t> {
@@ -161,25 +141,6 @@ fn plain_file(vault: &Vault, rtxn: &RoTxn<'_>, manifest: &AssetFileManifest) -> 
         let attaches = crate::serialize::attaches_as_file_read(ENTITY_TYPE_ASSET, &mut body)?;
         Ok(attaches && !matches!(body.lead, Some(b'{' | b'[')))
     })
-}
-
-/// A reader that notes the first byte past JSON whitespace it passes on.
-struct JsonLead<'r> {
-    body: &'r mut dyn Read,
-    lead: Option<u8>,
-}
-
-impl Read for JsonLead<'_> {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        let read = self.body.read(out)?;
-        if self.lead.is_none() {
-            self.lead = out[..read]
-                .iter()
-                .copied()
-                .find(|&byte| !matches!(byte, b' ' | b'\n' | b'\t' | b'\r'));
-        }
-        Ok(read)
-    }
 }
 
 /// Whether an ASSET body leaves the entity rows: an archived receipt source

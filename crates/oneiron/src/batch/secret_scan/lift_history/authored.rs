@@ -1,12 +1,7 @@
-//! The authored carriers whose writers already mask a new write: an
-//! owner-policy ruling or proposal, an eval case, and a stream's seed. An old
-//! row gets what a new write of it gets today (Engine ruling D = (a)): its
-//! writer's own door admits it again at its own key, each secret a rule
-//! places goes to custody and leaves its handle, and the row keeps its ids,
-//! links and times. Nothing is applied again, appended or notified. A hit the
-//! door does not place, and a row no door reads, files a proposal.
+//! Core half of `batch::secret_scan::lift_history::authored`: its store-layer items live in `oneiron_store::batch::secret_scan::lift_history::authored` and are
+//! re-exported here; the items below stay in the engine.
 
-use heed::RwTxn;
+pub(crate) use oneiron_store::batch::secret_scan::lift_history::authored::*;
 
 use super::super::write_payload_hit;
 use super::{Done, LiftCause};
@@ -14,17 +9,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self as t, SideTableDecl};
-
-/// The writer door that admits a carrier's rows again.
-#[derive(Clone, Copy)]
-enum Door {
-    /// `Vault::lift_policy_change_row_in_txn`, by whole key.
-    PolicyRow,
-    /// `Vault::lift_eval_case_in_txn`, by case id.
-    EvalCase,
-    /// `Vault::lift_stream_seed_in_txn`, by message id.
-    StreamSeed,
-}
+use heed::RwTxn;
 
 fn door_of(decl: &SideTableDecl) -> Option<Door> {
     [

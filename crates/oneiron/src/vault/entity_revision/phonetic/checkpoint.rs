@@ -1,13 +1,14 @@
-//! The checkpoint rows of the staged phonetic codes (KS7-2): the codes
-//! waiting to publish with the indexed text frontier, whole, under their
-//! entity's tree. The revision getter (`storage::checkpoint`) reads them.
+//! Core half of `vault::entity_revision::phonetic::checkpoint`: its store-layer items live in `oneiron_store::vault::entity_revision::phonetic::checkpoint` and are
+//! re-exported here; the items below stay in the engine.
+
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use heed::RoTxn;
+pub(crate) use oneiron_store::vault::entity_revision::phonetic::checkpoint::*;
 
+use heed::RoTxn;
 use super::super::RevisionRef;
 use super::PENDING;
 use crate::entity_id::EntityId;

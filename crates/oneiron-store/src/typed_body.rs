@@ -2,5 +2,6 @@
 
 pub mod body_actor;
 pub mod checkpoint;
+pub mod lift;
 pub mod live_pin;
 pub mod receipts;

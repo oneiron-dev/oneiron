@@ -1,4 +1,8 @@
-//! Entity-local four-rung birth fingerprints over the ingest pipeline's own segments.
+//! Core half of `store::blob_fingerprint`: its store-layer items live in `oneiron_store::blob_fingerprint` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::blob_fingerprint::*;
+
 use super::document_segments::{DocsSegment, docs_semantic_segments};
 use crate::error::Error;
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -6,40 +10,7 @@ use crate::store::Store;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FingerprintRung {
-    Asset,
-    TextRoot,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BlobBirthDecision {
-    Unchanged(FingerprintRung),
-    Changed {
-        sections: Vec<String>,
-        blocks: Vec<String>,
-    },
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BlobFingerprintSnapshot {
-    pub asset_hash: [u8; 32],
-    pub text_hash: [u8; 32],
-    pub sections: BTreeMap<String, [u8; 32]>,
-    pub blocks: BTreeMap<String, [u8; 32]>,
-}
-/// One section's hash and each of its blocks' hashes, by block id. The tree
-/// holds hashes and structural ids only, never source text.
-#[derive(Clone, Serialize, Deserialize)]
-struct Section {
-    hash: [u8; 32],
-    blocks: BTreeMap<String, [u8; 32]>,
-}
-#[derive(Clone, Serialize, Deserialize)]
-struct Tree {
-    asset_hash: [u8; 32],
-    text_hash: [u8; 32],
-    sections: BTreeMap<String, Section>,
-}
+
 pub(crate) struct FingerprintUpdate {
     tree: Tree,
     pub(crate) decision: BlobBirthDecision,
@@ -57,9 +28,11 @@ pub(crate) fn invalidate_blob_fingerprint(
     FINGERPRINT.delete(store, txn, id)?;
     Ok(())
 }
+
 fn load(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Option<Tree>> {
     FINGERPRINT.get(store, txn, id)
 }
+
 impl FingerprintUpdate {
     pub(crate) fn persist(
         &self,
@@ -76,6 +49,7 @@ impl FingerprintUpdate {
         Ok(())
     }
 }
+
 pub(crate) fn prepare_blob_birth(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -85,6 +59,7 @@ pub(crate) fn prepare_blob_birth(
 ) -> Result<FingerprintUpdate> {
     Ok(calculate(load(store, txn, id)?, bytes, text))
 }
+
 /// Binary blobs have no invented text segmentation. Their lower rungs stay
 /// empty until a real text adapter supplies text; exact bytes still deduplicate.
 pub(crate) fn prepare_blob_artifact_birth(
@@ -98,6 +73,7 @@ pub(crate) fn prepare_blob_artifact_birth(
     }
     prepare_binary_blob_artifact_birth(store, txn, id, *blake3::hash(bytes).as_bytes())
 }
+
 /// [`prepare_blob_artifact_birth`] for bytes that are no UTF-8 text, known
 /// by their BLAKE3 `asset_hash` alone: a body the asset plane holds as a
 /// file is never text, so its birth reads none of its bytes (FIX 12091).
@@ -124,9 +100,11 @@ pub(crate) fn prepare_binary_blob_artifact_birth(
         decision,
     })
 }
+
 pub(crate) fn prepare_new_blob_birth(bytes: &[u8], text: &str) -> FingerprintUpdate {
     calculate(None, bytes, text)
 }
+
 fn calculate(previous: Option<Tree>, bytes: &[u8], text: &str) -> FingerprintUpdate {
     let asset_hash = *blake3::hash(bytes).as_bytes();
     if let Some(tree) = previous
@@ -203,6 +181,7 @@ fn calculate(previous: Option<Tree>, bytes: &[u8], text: &str) -> FingerprintUpd
         },
     }
 }
+
 impl Vault {
     /// The tree is scoped to one entity, not a vault-wide identity/dedup oracle.
     pub fn blob_fingerprint(&self, id: &EntityId) -> Result<Option<BlobFingerprintSnapshot>> {

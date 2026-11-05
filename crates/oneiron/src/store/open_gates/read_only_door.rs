@@ -1,23 +1,18 @@
-//! Read-only door: rows of an existing vault's `vault_meta`, read without
-//! opening it as a vault, beside another process that may hold it (a side
-//! restore of the vault a running server serves).
+//! Core half of `store::open_gates::read_only_door`: its store-layer items live in `oneiron_store::open_gates::read_only_door` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::path::{Path, PathBuf};
-
-use heed::types::Bytes;
-use heed::{EnvFlags, EnvOpenOptions};
-
-use crate::error::{Error, Result, VaultRootProblem};
+pub(crate) use oneiron_store::open_gates::read_only_door::*;
 
 use super::manifest_storage_gates::{OwnedEnv, RegisteredPath, vault_root_open_guard};
 use super::open_version_keys::MODEL_ID_KEY;
 use super::vault_root_bind::vault_root_preflight_error;
+use crate::error::{Error, Result, VaultRootProblem};
+use heed::types::Bytes;
+use heed::{EnvFlags, EnvOpenOptions};
+use std::path::{Path, PathBuf};
 
-/// Rows of one existing vault's metadata database (its `vault_meta`, or the
-/// `hnsw_meta` that holds its model pin).
-pub(in crate::store) struct VaultMetaRows {
-    pub(in crate::store) rows: Vec<(Vec<u8>, Vec<u8>)>,
-}
+#[cfg(test)]
+mod tests;
 
 /// Reads the `vault_meta` rows under `prefixes` of the vault at `path`
 /// through a read-only LMDB environment.
@@ -118,26 +113,6 @@ fn read_existing_rows(
     drop(env);
     drop(registered);
     Ok(VaultMetaRows { rows: rows? })
-}
-
-/// The canonical root at `path`; a missing one refuses with nothing created.
-pub(super) fn canonical_existing_root(path: &Path) -> Result<PathBuf> {
-    match path.canonicalize() {
-        Ok(root) => Ok(root),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Err(not_an_existing_root(path, false))
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
-pub(in crate::store) fn not_an_existing_root(root: &Path, after_environment_open: bool) -> Error {
-    vault_root_preflight_error(
-        root,
-        VaultRootProblem::NotAnExistingVaultRoot {
-            after_environment_open,
-        },
-    )
 }
 
 /// [`open_read_only_with`] for a door that reads one named database.
@@ -249,6 +224,3 @@ pub(super) fn open_read_only_with(
     }
     Ok((env, registered))
 }
-
-#[cfg(test)]
-mod tests;

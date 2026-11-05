@@ -1,4 +1,7 @@
-//! Immutable task-authority fact row and edge deletion guards.
+//! Core half of `store::task_authority_guard`: its store-layer items live in `oneiron_store::task_authority_guard` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::task_authority_guard::*;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
@@ -52,10 +55,4 @@ pub(crate) fn reject_fact_delete(
         return Err(fact_removal_refused());
     }
     Ok(())
-}
-
-pub(crate) fn fact_removal_refused() -> Error {
-    Error::Record(RecordError::InvalidTaskBody(
-        "task authority facts are immutable",
-    ))
 }

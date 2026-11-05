@@ -22,3 +22,5 @@ pub mod codec;
 pub mod commit_metadata;
 pub mod file_frontiers;
 pub mod tree_codec;
+pub mod tree_inventory;
+pub mod types;

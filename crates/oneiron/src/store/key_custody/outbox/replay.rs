@@ -1,21 +1,7 @@
-//! The outstanding batch's keyless record, and the intake of its ack (FIX
-//! 5899).
-//!
-//! `<journal>/outbox/o.<target id hex>` (named MessagePack) records the one
-//! batch a member's slot holds: its position, head object id, set revision
-//! and whether its head is wrapped to the vault data key, and, once the
-//! control plane acknowledged it, that ack. It is written before a byte of
-//! the batch is staged and removed only once the journal accepted the ack,
-//! or once the batch left the outbox unacknowledged. A restart therefore
-//! takes the original batch's ack in without sealing it again, and never
-//! takes an ack against another batch. It holds no key.
+//! Core half of `store::key_custody::outbox::replay`: its store-layer items live in `oneiron_store::key_custody::outbox::replay` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::fs;
-use std::path::{Path, PathBuf};
-
-use serde::{Deserialize, Serialize};
-
-use crate::error::{Error, Result};
+pub(crate) use oneiron_store::key_custody::outbox::replay::*;
 
 use super::super::files::{open_dir, read_whole, replace_file};
 use super::super::log::Journal;
@@ -25,19 +11,10 @@ use super::super::protocol::{
     hex,
 };
 use super::{OutboxTarget, files};
-
-const OUTBOX: &str = "outbox";
-const RECORD_VERSION: u8 = 1;
-
-/// An answer in the outbox the vault's user does not own, owner-only.
-const NOT_OWNED: &str =
-    "the CP's custody answer in the outbox is not a 0600 file of the vault's user";
-const NOT_PARSED: &str = "the CP's custody acknowledgement is not an exact AckRecord";
-const NOT_MATCHED: &str = "the CP's custody acknowledgement does not match its batch";
-
-fn record_corrupt() -> Error {
-    Error::CorruptedIndex("key custody outbox record")
-}
+use crate::error::{Error, Result};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -132,30 +109,6 @@ pub(super) enum Found {
     /// An ack that is not the vault user's file, not an exact AckRecord,
     /// or not this batch's.
     Refused(&'static str),
-}
-
-enum Answer {
-    None,
-    NotOwned,
-    Bytes(Vec<u8>),
-}
-
-/// The file Hypnos wrote at `path`: a regular 0600 file of the vault's
-/// user, opened without following a link.
-fn answer(path: &Path) -> Result<Answer> {
-    match read_whole(path) {
-        Ok(Some(bytes)) => Ok(Answer::Bytes(bytes)),
-        Ok(None) => Ok(Answer::None),
-        Err(Error::CorruptedIndex(_)) => Ok(Answer::NotOwned),
-        Err(error) => Err(error),
-    }
-}
-
-fn failed(detail: &str) -> TargetPending {
-    TargetPending {
-        code: PendingCode::Failed,
-        detail: detail.to_owned(),
-    }
 }
 
 /// Reads the outstanding batch `facts` names in `slot` for `spec`. An ack

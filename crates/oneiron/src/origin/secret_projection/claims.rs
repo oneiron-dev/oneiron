@@ -1,45 +1,18 @@
-//! A masked Git copy's record (FIX 7608 slice 2b-i, CALL M): value-free
-//! `repo.secret_projection` claims at schema 1, one claim per record, no
-//! table and no restore row.
-//!
-//! The graph record names the copy: the canonical store, the frozen roots
-//! it copies (each Published ref's original, and a lease's private original
-//! when one is admitted), the audience, the payload policy and lifetime,
-//! and every readable mark it was made under. Its id is derived from all of
-//! that, so a copy made under other roots or other marks is another copy.
-//! Its subject is the edge `graph PartOf store`, as a mark's is, in the
-//! masked-file band. Every other record (an object's original and copy, a
-//! root ref's copy, the private root's copy, and each place a changed
-//! object occurs in a changed parent) is about the graph claim itself, so
-//! the graph's erasure reaches each of them, and each is idempotent at its
-//! derived id: the same record writes nothing, another under its id
-//! refuses.
-//!
-//! No record carries a secret byte, an excerpt, a hash of a key, or a hash
-//! of any content: object ids, ref names, tree entry names, mark ids and
-//! the store identity only. Identity mappings are recorded too, so every
-//! copy object names its original; a copy object may stand for several
-//! originals, and nothing reads a newest or equal-content guess into it.
-//! Each copy commit also names every original it stands for in one keyed
-//! record (FIX 10275), so a received push's base is one read.
+//! Core half of `origin::secret_projection::claims`: its store-layer items live in `oneiron_store::origin::secret_projection::claims` and are
+//! re-exported here; the items below stay in the engine.
 
 #![allow(
     dead_code,
     reason = "FIX 7608: some records are read only by later slices"
 )]
 
-use heed::{RoTxn, RwTxn};
-
-mod codec;
-mod lookup;
-use rmpv::Value;
+pub(crate) use oneiron_store::origin::secret_projection::claims::*;
 
 use self::codec::{
     decode_graph, decode_place, digest_of, digest_value, entity, field, fields, git_oid,
     occurrence_value, oid, optional_binding, packed, place_value, record_fields, text,
 };
 use super::recipient::RepoProjectionRevealBinding;
-
 use crate::Vault;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -49,26 +22,12 @@ use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::store::file_key_masks::MASKED_FILE_BAND;
 use crate::temporal::TimeRange;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use heed::{RoTxn, RwTxn};
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use rmpv::Value;
 
-/// The predicate of every masked Git copy record.
-pub(crate) const REPO_SECRET_PROJECTION_PREDICATE: &str = "repo.secret_projection";
-
-/// The derivation domain of a record's id.
-const REPO_SECRET_PROJECTION_DOMAIN: &[u8] = b"oneiron:repo-secret-projection:v1";
-
-/// Where a changed object occurs in a changed parent.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum RepoProjectionPlace {
-    /// A tree entry, by its stored mode and name bytes.
-    TreeEntry { mode: u32, name: Vec<u8> },
-    /// A commit's tree.
-    CommitTree,
-    /// A commit's parent at this position.
-    CommitParent { index: u32 },
-    /// A tag's target.
-    TagTarget,
-}
+mod codec;
+mod lookup;
 
 /// One record of a masked copy.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,28 +132,6 @@ pub(crate) enum RepoProjectionAudience {
     },
 }
 
-/// A checkout lease bound to a copy: the lease's checkout and epoch, its
-/// holder, the ORIGINAL it pins and the copy commit it checks out. Its id
-/// is derived from the checkout and epoch alone, so the lease finds it;
-/// it is about the graph, so the graph's erasure reaches it. Ids only.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RepoProjectionCheckout {
-    pub(crate) checkout: String,
-    pub(crate) epoch: u64,
-    pub(crate) holder: String,
-    pub(crate) original: GitOid,
-    pub(crate) copy: GitOid,
-}
-
-/// The private ingress seeded from a copy: its object-store identity and
-/// the canonical store it stands for. Its id is derived from the ingress
-/// identity alone, so a received row's store finds its copy.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RepoProjectionIngressStore {
-    pub(crate) ingress_store: String,
-    pub(crate) canonical_store: EntityId,
-}
-
 /// The ingress proof's record: the receive operation, the canonical store
 /// the copy stands for, the private ingress store it was received into and
 /// a digest of the canonical authority its admission bound (repo, CODE,
@@ -210,42 +147,6 @@ pub(crate) struct RepoProjectionIngress {
     /// (FIX 10271): what a live grant's clearance of its held files names.
     /// Never authority.
     pub(crate) reveal: Option<RepoProjectionRevealBinding>,
-}
-
-/// A received copy change's translation: its candidate and operation, the
-/// submitted COPY tip, the ORIGINAL base it maps onto, the canonical
-/// target tree it resolved (none while it holds) and its pins' digest.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RepoProjectionTranslation {
-    pub(crate) candidate: EntityId,
-    pub(crate) operation: EntityId,
-    pub(crate) submitted_new: GitOid,
-    pub(crate) canonical_base: GitOid,
-    pub(crate) canonical_target: Option<GitOid>,
-    pub(crate) pins: [u8; 32],
-}
-
-/// The owner's settlement of one held projected edit: the candidate, the
-/// cause, the digest of the exact file set it settles, the canonical
-/// target it approved and the owner who approved it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RepoProjectionClearance {
-    pub(crate) candidate: EntityId,
-    pub(crate) cause: String,
-    pub(crate) files: [u8; 32],
-    pub(crate) target: Option<GitOid>,
-    pub(crate) owner: EntityId,
-}
-
-/// One exact forward: the receive operation, the ref, its canonical old
-/// and new tips and the marks carried to the canonical store.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RepoProjectionExactForward {
-    pub(crate) operation: EntityId,
-    pub(crate) ref_name: String,
-    pub(crate) old: Option<GitOid>,
-    pub(crate) new: GitOid,
-    pub(crate) marks: Vec<EntityId>,
 }
 
 /// One record as it is kept: its graph (its own id, for the graph record)
@@ -451,10 +352,6 @@ impl RepoProjectionClaim {
     }
 }
 
-fn corrupt() -> Error {
-    Error::CorruptedIndex("a masked copy record does not decode")
-}
-
 fn derive_id(graph: Option<&EntityId>, identity: &Value) -> Result<EntityId> {
     let schema = RepoProjectionClaim::SCHEMA.to_be_bytes();
     let graph: &[u8] = match graph {
@@ -523,44 +420,4 @@ fn identity_part(record: &RepoProjectionRecord) -> Value {
         }
         RepoProjectionRecord::CommitOriginals { copy, .. } => commit_originals_key(copy),
     }
-}
-
-/// The identity an object record's id is derived from.
-fn object_key(original: &GitOid, occurrence: Option<&[u8]>) -> Value {
-    Value::Array(vec![
-        Value::from("object"),
-        oid(original),
-        occurrence_value(occurrence),
-    ])
-}
-
-/// The identity a copy commit's originals record's id is derived from.
-fn commit_originals_key(copy: &GitOid) -> Value {
-    Value::Array(vec![Value::from("commit_originals"), oid(copy)])
-}
-
-/// The identity a checkout recipient's id is derived from.
-fn checkout_recipient_key(checkout: &str, epoch: u64) -> Value {
-    Value::Array(vec![
-        Value::from("checkout_recipient"),
-        Value::from(checkout),
-        Value::from(epoch),
-    ])
-}
-
-/// The identity a checkout binding's id is derived from.
-fn checkout_key(checkout: &str, epoch: u64) -> Value {
-    Value::Array(vec![
-        Value::from("checkout"),
-        Value::from(checkout),
-        Value::from(epoch),
-    ])
-}
-
-/// The identity an ingress store's record id is derived from.
-fn ingress_store_key(ingress_store: &str) -> Value {
-    Value::Array(vec![
-        Value::from("ingress_store"),
-        Value::from(ingress_store),
-    ])
 }

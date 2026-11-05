@@ -1,4 +1,8 @@
-//! Commit-hash keyed LEDGER change identities. Trailers are hints, never keys.
+//! Core half of `origin::change_index`: its store-layer items live in `oneiron_store::origin::change_index` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::origin::change_index::*;
+
 use super::actor_erase::{ClaimRewrite, ORIGIN_ACTOR_ERASE_PROOF, OriginProofErase};
 use super::publication::{OriginActor, OriginPublicationRecord, origin_published_commit_id};
 use crate::Vault;
@@ -17,40 +21,6 @@ use rmpv::Value;
 const CHANGE_RECEIPTS: SideTable<EntityId, [u8; 32], Raw> =
     SideTable::new(&side_table::ORIGIN_CHANGE_RECEIPT);
 
-pub const ORIGIN_CHANGE_PREDICATE: &str = "repo.change";
-pub const ORIGIN_CHANGE_VALUE_KEYS: [&str; 7] = [
-    "schema_version",
-    "change_id",
-    "commit_hash",
-    "actor_id",
-    "provenance_claim_id",
-    "source",
-    "ref_name",
-];
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OriginChange {
-    pub change_id: EntityId,
-    pub claim_id: EntityId,
-    pub commit: GitOid,
-    pub repo_id: EntityId,
-    pub actor_id: OriginActor,
-    pub provenance_claim_id: EntityId,
-    pub source: String,
-    pub ref_name: String,
-}
-pub fn origin_change_id(repo: EntityId, commit: &GitOid) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:origin-change:v1",
-        &[repo.as_bytes(), commit.as_str().as_bytes()],
-    )
-}
-fn claim_id(repo: EntityId, commit: &GitOid) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:origin-change-claim:v1",
-        &[repo.as_bytes(), commit.as_str().as_bytes()],
-    )
-}
 impl Vault {
     pub fn origin_change_for_commit(
         &self,

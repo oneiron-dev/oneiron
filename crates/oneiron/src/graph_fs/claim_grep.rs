@@ -1,21 +1,17 @@
-//! Indexed claim grep with search and final-hydration narrowing receipts.
+//! Core half of `graph_fs::claim_grep`: its store-layer items live in `oneiron_store::graph_fs::claim_grep` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::graph_fs::claim_grep::*;
+
+use super::coreutils_text::LinePosition;
+use super::model::GraphFsResolver;
+use super::paging::CommandOutputBuilder;
 use crate::error::Result;
 use crate::ports::{PointRead, ReadRow};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::write_envelope::claim_body::decode_claim_body;
 use oneiron_contracts::claim::ScopedReadReceipt;
 use rmpv::Value;
-
-use super::coreutils_text::LinePosition;
-use super::model::GraphFsResolver;
-use super::paging::CommandOutputBuilder;
-
-pub(super) struct ClaimGrepPage {
-    pub(super) bytes: Vec<u8>,
-    pub(super) next_cursor: Option<String>,
-    pub(super) total: usize,
-    pub(super) receipt: ScopedReadReceipt,
-}
 
 impl GraphFsResolver<'_, '_> {
     /// The claims the text index ranks for `pattern`, a page at a time: each
@@ -95,20 +91,4 @@ impl GraphFsResolver<'_, '_> {
             receipt,
         })
     }
-}
-
-fn claim_value_text(value: &Value) -> String {
-    value
-        .as_str()
-        .map_or_else(|| format!("{value:?}"), str::to_owned)
-}
-
-fn sanitize_coreutils_field(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| match ch {
-            '\t' | '\n' | '\r' => ' ',
-            _ => ch,
-        })
-        .collect()
 }

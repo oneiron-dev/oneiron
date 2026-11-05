@@ -2,8 +2,12 @@
 
 pub mod body;
 pub mod body_tags;
+pub mod born_from;
+pub mod checkpoint;
+pub mod create;
 pub mod deck_context;
 pub mod deck_creation;
+pub mod deck_doors;
 pub mod deck_inspection;
 pub mod esign;
 pub mod native_output;

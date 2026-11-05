@@ -1,17 +1,12 @@
-//! The checkpoint getter of artifact hosting rows (FIX 10436): each blob
-//! artifact's channel pointers, publish admissions and serving descriptors
-//! under the artifact's own entity tree. A pointer or a serving descriptor
-//! names no actor and goes byte-exact; an admission's actor is an actor
-//! part, as a version's is. A code fork's pointer, or a blob row whose key
-//! does not name its artifact, has no proved owner and stays unclassified.
-//! Nothing calls this until KS7-5, and only once
-//! CHECKPOINT_PAYLOADS_ENABLED is on.
+//! Core half of `artifact_hosting::checkpoint`: its store-layer items live in `oneiron_store::artifact_hosting::checkpoint` and are
+//! re-exported here; the items below stay in the engine.
+
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use heed::RoTxn;
+pub(crate) use oneiron_store::artifact_hosting::checkpoint::*;
 
 use super::serving_blob::SERVING_BLOBS;
 use super::{ARTIFACT_ADMISSIONS, ARTIFACT_POINTERS, ArtifactExportRef, ArtifactPublishAdmission};
@@ -21,9 +16,7 @@ use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OwnerRef, RowLocator, Unresolved,
 };
-
-/// The field the publish's actor fills.
-const ACTOR: &str = "actor";
+use heed::RoTxn;
 
 /// Moves the admission's actor out, leaving `owner` in its place.
 fn take_actor(

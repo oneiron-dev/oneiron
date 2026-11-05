@@ -1,16 +1,15 @@
-//! The stamp tokens an entity document names, recorded as it is written
-//! (FIX 11965): its birth's token and each new commit's stamp, under the
-//! document's entity, so an actor erase's hold check finds a held record's
-//! tokens without a history walk (`provenance::actor_stamp`).
+//! Core half of `entity_doc::token_uses`: its store-layer items live in `oneiron_store::entity_doc::token_uses` and are
+//! re-exported here; the items below stay in the engine.
 
-use heed::RwTxn;
-use loro::VersionVector;
+pub(crate) use oneiron_store::entity_doc::token_uses::*;
 
 use super::EntityDoc;
 use super::document::{Stamped, parse_stamp};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
+use heed::RwTxn;
+use loro::VersionVector;
 
 /// Records the stamp tokens `doc`'s changes past `before` name under
 /// `entity`, in the writer's transaction: every change it retains, and its
@@ -69,13 +68,4 @@ pub(super) fn record_sequence_uses_in_txn(
 ) -> Result<()> {
     let tokens = crate::provenance::tokens_named_since(doc, Some(before), engine_stamp_token);
     crate::provenance::record_actor_stamp_uses_in_txn(store, txn, entity, tokens)
-}
-
-/// The token an entity document's engine stamp names (FIX 10930); none for
-/// a stamp that names no one, or any other message.
-pub(crate) fn engine_stamp_token(message: &str) -> Option<EntityId> {
-    match parse_stamp(Some(message)) {
-        Stamped::Live(stamp) => Some(stamp.token),
-        Stamped::Erased | Stamped::NotStamped => None,
-    }
 }

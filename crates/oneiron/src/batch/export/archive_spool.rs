@@ -1,16 +1,15 @@
-//! FIX 2766 (rule 5): the whole-vault archive is built through spool files and
-//! read member by member, so no archive, member, row group or file map is ever
-//! held whole. Each spool is an anonymous owner-only file under the vault's own
-//! pinned staging directory, never a path a caller names.
-use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+//! Core half of `batch::export::archive_spool`: its store-layer items live in `oneiron_store::batch::export::archive_spool` and are
+//! re-exported here; the items below stay in the engine.
 
-use serde_json::Value;
+pub(crate) use oneiron_store::batch::export::archive_spool::*;
 
 use super::{ArchiveFile, ArchiveRecordFile, ArchiveRecordKind};
 use crate::Vault;
 use crate::error::{Error, Result};
+use serde_json::Value;
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 
 impl Vault {
     /// An anonymous owner-only spool file under this vault's staging
@@ -121,35 +120,6 @@ impl RecordSpool {
         let mut line = Vec::new();
         reader.read_until(b'\n', &mut line)?;
         Ok(line)
-    }
-}
-
-/// A spool's rows read back in order.
-pub(crate) struct SpooledRows {
-    reader: BufReader<File>,
-    at: u64,
-}
-
-impl SpooledRows {
-    /// The next line and where it starts, its line end included.
-    pub(crate) fn next_line(&mut self) -> Result<Option<(u64, Vec<u8>)>> {
-        let mut line = Vec::new();
-        let read = self.reader.read_until(b'\n', &mut line)?;
-        if read == 0 {
-            return Ok(None);
-        }
-        let start = self.at;
-        self.at += read as u64;
-        Ok(Some((start, line)))
-    }
-
-    /// The next row and where it starts.
-    pub(crate) fn next_row(&mut self) -> Result<Option<(u64, Value)>> {
-        let Some((at, line)) = self.next_line()? else {
-            return Ok(None);
-        };
-        let row = serde_json::from_slice(&line).map_err(|_| spool_failed())?;
-        Ok(Some((at, row)))
     }
 }
 
@@ -319,53 +289,4 @@ impl FileSpool {
         }
         Ok(())
     }
-}
-
-/// A body staged at the end of a [`FileSpool`] and not yet indexed
-/// (FIX 7213), until [`FileSpool::commit_staged`] keeps it or
-/// [`FileSpool::discard_staged`] cuts it off.
-#[must_use]
-pub(crate) struct StagedFile {
-    at: u64,
-    bytes: u64,
-}
-
-/// A staged body read where it is spooled ([`FileSpool::scan_staged`]):
-/// exactly its bytes, through the file under the spool's writer.
-pub(crate) struct StagedReader<'f> {
-    file: &'f mut File,
-    at: u64,
-    bytes: u64,
-    pos: u64,
-}
-
-impl Read for StagedReader<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let left = self.bytes.saturating_sub(self.pos);
-        let take = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
-        let read = self.file.read(&mut buf[..take])?;
-        self.pos += read as u64;
-        Ok(read)
-    }
-}
-
-impl Seek for StagedReader<'_> {
-    fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
-        let pos = match to {
-            SeekFrom::Start(pos) => Some(pos),
-            SeekFrom::End(by) => self.bytes.checked_add_signed(by),
-            SeekFrom::Current(by) => self.pos.checked_add_signed(by),
-        };
-        let Some(pos) = pos else {
-            return Err(std::io::ErrorKind::InvalidInput.into());
-        };
-        let from = self.at.saturating_add(pos);
-        self.file.seek(SeekFrom::Start(from))?;
-        self.pos = pos;
-        Ok(pos)
-    }
-}
-
-pub(crate) fn spool_failed() -> Error {
-    Error::InvariantViolation("whole-vault archive spool failed")
 }
