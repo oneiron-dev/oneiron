@@ -109,8 +109,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // kept in this install's keystore slot under the supervisor's key
     // directory (FIX-LIST 3018): never the delivered DEK, which escrow
     // recipients hold, nor the per-spawn token or caller headers. A fresh
-    // spawn of this install loads the same seed, so the same logged root;
-    // with none, the vault serves rootless and still as a managed vault.
+    // spawn of this install loads the same seed, so the same logged root.
+    // Explicit hosted service requires that issuer before workers or ready;
+    // non-hosted supervision retains its rootless warning behavior.
     let (issuer, readiness) = provision_host_authority(
         &vault,
         &config.keystore,

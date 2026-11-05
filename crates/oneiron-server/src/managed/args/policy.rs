@@ -425,11 +425,17 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.failure_signal_training.is_some(),
         ArgvUse::Read,
     ),
-    // Contract v1 has no managed privacy override: refuse instead of dropping it.
+    // Hosting and checkpoint opt-out are explicit operator declarations,
+    // never derived from custody or read from the owner's settings file.
     (
         "privacy-posture",
         |args| args.privacy_posture.is_some(),
-        ArgvUse::Refused(NO_TENANT_LAYER_REASON),
+        ArgvUse::Read,
+    ),
+    (
+        "managed-checkpoint-host-opt-out",
+        |args| args.managed_checkpoint_host_opt_out,
+        ArgvUse::Read,
     ),
     (
         "hosted-kms-key-ref",
