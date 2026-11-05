@@ -73,8 +73,10 @@ unchanged.
 The move-deletion pairing change (2026-11-05, FIX 13294) touches `src/tracked_model.rs`.
 Within one tracked move range, each destination paragraph's inner deletions are
 paired with the source block at the same position, rather than always using the
-first source paragraph. The count includes siblings without inner deletions and
-non-paragraph blocks. Existing move and deletion gates, resolution order, and
+first source paragraph. The count includes siblings without inner deletions,
+non-paragraph blocks, and the matching insertion/deletion layer of stacked
+inserted-then-deleted siblings. The final source eligibility gate is unchanged.
+Existing move and deletion gates, resolution order, and
 serialization are unchanged.
 The same pack (FIX 13299) advances the text-overlay cursor over the
 existing hard-break and opaque-inline placeholders, matching `extract_inlines_text`.
